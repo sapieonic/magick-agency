@@ -1,5 +1,5 @@
 import { ENDPOINTS, ORIGINATOR, ORIGINATOR_HEADER } from '../config';
-import { toFetchError } from '../utils/errors';
+import { toFetchError } from '@magick-agency/web-ui/errors';
 import { captureApiError } from './error-analytics';
 import { redactInviteToken } from '../analytics/redact';
 import { apiFetch } from './client';
@@ -28,7 +28,7 @@ import type { ResendInviteResult } from '../types/team';
  * header is still sent, so invite traffic stays attributable to this client.
  *
  * `toFetchError` keeps the masking contract these hand-rolled paths would
- * otherwise lose — see `utils/errors.ts` — so a masked 5xx still carries its
+ * otherwise lose — see `@magick-agency/web-ui/errors` — so a masked 5xx still carries its
  * copyable request id into whatever renders the message.
  *
  * ── What dropping `apiFetch` DID cost, and what is bought back here ────────

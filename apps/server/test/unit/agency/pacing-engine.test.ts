@@ -31,7 +31,11 @@ const { repos, settings } = vi.hoisted(() => ({
       countOutstanding: vi.fn().mockResolvedValue(0),
       transitionStatus: vi.fn(),
     },
-    contact: { claimDialable: vi.fn().mockResolvedValue([]), unclaim: vi.fn().mockResolvedValue(undefined) },
+    contact: {
+      claimDialable: vi.fn().mockResolvedValue([]),
+      unclaim: vi.fn().mockResolvedValue(undefined),
+      unclaimMany: vi.fn().mockResolvedValue(undefined),
+    },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     // `setState` mirrors the winning reservation durably — the
     // supervisor's agents-by-state breakdown cannot see `reserved` otherwise.
@@ -68,6 +72,14 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: audit }));
 
 import { PacingEngine } from '../../../src/agency/pacing-engine.js';
 
+/** Every contact returned to the pool this test, one at a time or as a batch. */
+function returnedContactIds(): string[] {
+  return [
+    ...repos.contact.unclaim.mock.calls.map((c: any[]) => c[0] as string),
+    ...repos.contact.unclaimMany.mock.calls.flatMap((c: any[]) => c[0] as string[]),
+  ].sort();
+}
+
 // The window is deliberately ALL DAY, EVERY DAY (the pre-dial
 // calling-hours gate). These tests are about the tick's arithmetic, and a fixture
 // carrying the column defaults — 09:00–20:00, Mon–Fri — would make every dialing
@@ -94,12 +106,15 @@ function contact(id: string) {
 
 /** Agents whose Redis state the tick reads. */
 function makeAgents(states: Record<string, string>) {
+  // `since` defaults to "just became available", so ordering tests must set it
+  // explicitly — an undefined idle clock would make the fairness sort a no-op
+  // and quietly pass a test written to prove it works.
+  const get = vi.fn(async (id: string) => (
+    states[id] ? { state: states[id], attemptId: null, since: Date.now() } : null));
   return {
-    // `since` defaults to "just became available", so ordering tests must set it
-    // explicitly — an undefined idle clock would make the fairness sort a no-op
-    // and quietly pass a test written to prove it works.
-    get: vi.fn(async (id: string) => (
-      states[id] ? { state: states[id], attemptId: null, since: Date.now() } : null)),
+    get,
+    // The tick reads through the pipelined batch; same answer per agent as `get`.
+    getMany: vi.fn(async (ids: readonly string[]) => Promise.all(ids.map((id) => get(id)))),
     reserve: vi.fn(async (id: string) => (states[id] === 'available' ? 'reserved' : 'lost')),
     set: vi.fn().mockResolvedValue(undefined),
   };
@@ -424,7 +439,7 @@ describe('PacingEngine reserve-before-dial', () => {
 
     await e.tickOnce('camp-1');
 
-    expect(agents.set).toHaveBeenCalledWith('s2', 'available', expect.anything());
+    expect(agents.set).toHaveBeenCalledWith('s2', 'available');
   });
 
   it('reserves the longest-idle agent first, and does not let the pool order decide', async () => {
@@ -665,7 +680,7 @@ describe('PacingEngine reserve-before-dial', () => {
     expect(dispatch).not.toHaveBeenCalled();
     // The remainder is returned, not stranded: both agents back, both contacts
     // unclaimed.
-    expect(repos.contact.unclaim.mock.calls.map((c: any) => c[0]).sort()).toEqual(['c1', 'c2']);
+    expect(returnedContactIds()).toEqual(['c1', 'c2']);
   });
 });
 
@@ -1190,8 +1205,10 @@ describe('PacingEngine candidate fairness over a run', () => {
     repos.contact.claimDialable.mockImplementation(async (_c: string, limit: number) =>
       Array.from({ length: Math.min(limit, 1) }, (_, i) => contact(`c${i}`)));
 
+    const get = vi.fn(async (id: string) => ({ state: 'available', attemptId: null, since: since[id]! }));
     const agents = {
-      get: vi.fn(async (id: string) => ({ state: 'available', attemptId: null, since: since[id]! })),
+      get,
+      getMany: vi.fn(async (ids: readonly string[]) => Promise.all(ids.map((id) => get(id)))),
       reserve: vi.fn(async (id: string) => {
         counts[id]!++;
         // The call happens and the agent returns to the pool with a fresh idle
@@ -1444,5 +1461,172 @@ describe('`reserved` is NOT mirrored to the durable row', () => {
     // transient Redis owns; `on_call` IS mirrored, because `releaseAgent` mirrors
     // the return.
     expect(repos.session.setState).not.toHaveBeenCalledWith('s1', 'reserved');
+  });
+});
+
+describe('PacingEngine tick reads', () => {
+  it('reads every local agent\'s state in ONE batched read, not one per agent', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }, { id: 'remote' }, { id: 's3' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'on_call', s2: 'available', s3: 'available', remote: 'available' });
+    const { e, dispatch } = engine(makeStations(['s1', 's2', 's3']), agents);
+
+    await e.tickOnce('camp-1');
+
+    expect(agents.getMany).toHaveBeenCalledTimes(1);
+    // Only agents this replica can bridge, in the order the sessions came back.
+    expect(agents.getMany).toHaveBeenCalledWith(['s1', 's2', 's3']);
+    // (`get` is called by the double's own `getMany`, so it is not asserted here.)
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── per-campaign state is bounded by the campaigns that still exist ────────
+
+describe('PacingEngine per-campaign bookkeeping does not grow forever', () => {
+  it('forgets the revocation mark of a campaign that left `findActive`', async () => {
+    repos.campaign.findActive.mockResolvedValue([CAMPAIGN]);
+    const { e } = engine(makeStations([]), makeAgents({}));
+    await (e as any).superviseOnce();
+    expect(e.leading()).toContain('camp-1');
+
+    repos.campaign.findActive.mockResolvedValue([]);
+    await (e as any).superviseOnce(); // relinquishes: the mark is set
+    await (e as any).superviseOnce(); // the campaign is gone: the mark is pruned
+    expect((e as any).revoked.size).toBe(0);
+    await e.stop();
+  });
+
+  it('keeps the revocation mark while a tick for the campaign is still in flight', async () => {
+    repos.campaign.findActive.mockResolvedValue([]);
+    const held = gate<any>();
+    repos.campaign.findById.mockImplementationOnce(() => held.promise);
+    const { e } = engine(makeStations([]), makeAgents({}));
+    await (e as any).relinquish('camp-1');
+    const tick = e.tickOnce('camp-1');
+    await (e as any).superviseOnce();
+    expect((e as any).revoked.has('camp-1'), 'pruned under an in-flight tick').toBe(true);
+    held.open({ ...CAMPAIGN, status: 'paused' });
+    await tick;
+  });
+
+  it('does not hold the last status of a campaign that is terminal or gone', async () => {
+    const { e } = engine(makeStations([]), makeAgents({}));
+    repos.campaign.findById.mockResolvedValueOnce({ ...CAMPAIGN, status: 'stopped' });
+    await e.tickOnce('camp-1');
+    expect((e as any).lastStatus.has('camp-1')).toBe(false);
+
+    repos.campaign.findById.mockResolvedValueOnce({ ...CAMPAIGN, id: 'camp-2', status: 'paused' });
+    await e.tickOnce('camp-2');
+    // A paused campaign keeps it: the resume announcement is decided from it.
+    expect((e as any).lastStatus.get('camp-2')).toBe('paused');
+    repos.campaign.findById.mockResolvedValueOnce(null);
+    await e.tickOnce('camp-2');
+    expect((e as any).lastStatus.has('camp-2')).toBe(false);
+  });
+});
+
+// ─── a tick in flight when stop() is called ─────────────────────────────────
+//
+// `stop()` used to clear the timers and return, which does nothing about a tick
+// already parked on an await: it resumed after the runtime came down and could
+// reach `createBridgedCall` after the bridge's shutdown snapshot (an orphaned
+// carrier leg), or finalize a campaign whose completion notice was then never
+// drained.
+
+/** A promise the test resolves by hand. */
+function gate<T = void>() {
+  let open!: (v: T) => void;
+  const promise = new Promise<T>((resolve) => { open = resolve; });
+  return { promise, open };
+}
+
+async function flush(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+describe('PacingEngine.stop() and the tick in flight', () => {
+  it('waits for a tick that is already running', async () => {
+    const held = gate<any>();
+    repos.campaign.findById.mockImplementationOnce(() => held.promise);
+    const { e } = engine(makeStations([]), makeAgents({}));
+
+    const tick = e.tickOnce('camp-1');
+    let stopped = false;
+    const stopping = e.stop().then(() => { stopped = true; });
+    await flush();
+    expect(stopped, 'stop() returned while a tick was still in flight').toBe(false);
+
+    held.open({ ...CAMPAIGN, status: 'paused' });
+    await tick;
+    await stopping;
+    expect(stopped).toBe(true);
+  });
+
+  it('is bounded: a tick that never settles cannot hold stop() forever', async () => {
+    repos.campaign.findById.mockImplementationOnce(() => new Promise(() => { /* never */ }));
+    const { e } = engine(makeStations([]), makeAgents({}));
+    e.tickDrainTimeoutMs = 20;
+
+    void e.tickOnce('camp-1');
+    await expect(e.stop()).resolves.toBeUndefined();
+  });
+
+  it('a tick that sees stop() after the attempt insert does not dial, and returns what it took', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available' });
+    const { e, dispatch } = engine(makeStations(['s1']), agents);
+    let stopping: Promise<void> | null = null;
+    repos.attempt.create.mockImplementationOnce(async (p: any) => {
+      stopping = e.stop();
+      return { id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1 };
+    });
+
+    await e.tickOnce('camp-1');
+    await stopping;
+
+    expect(dispatch, 'a tick dialed after stop()').not.toHaveBeenCalled();
+    expect(repos.attempt.setState).toHaveBeenCalledWith('att-c1', 'ended', expect.objectContaining({ outcome: 'orphaned' }));
+    expect(returnedContactIds()).toEqual(['c1']);
+    expect(agents.set).toHaveBeenCalledWith('s1', 'available');
+  });
+
+  it('hands the dispatcher a check that turns false once the engine stops', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+
+    await e.tickOnce('camp-1');
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const opts = dispatch.mock.calls[0]![1] as { stillAuthorised: () => boolean };
+    expect(opts.stillAuthorised()).toBe(true);
+
+    await e.stop();
+    expect(opts.stillAuthorised(), 'the dial site could not see the stop').toBe(false);
+  });
+
+  it('drains a completion notice requested by the tick it waited for', async () => {
+    const held = gate<any>();
+    repos.campaign.findById.mockImplementationOnce(() => held.promise);
+    repos.campaign.countOutstanding.mockResolvedValue(0);
+    repos.campaign.transitionStatus.mockResolvedValue({ ...CAMPAIGN, status: 'completed' });
+    const notice = gate();
+    let noticeSettled = false;
+    const { e } = engine(makeStations([]), makeAgents({}));
+    e.registerCompletionNotifier({
+      notifyCampaignFinished: () => notice.promise.then(() => { noticeSettled = true; }),
+    });
+
+    void e.tickOnce('camp-1');
+    let stopped = false;
+    const stopping = e.stop().then(() => { stopped = true; });
+    held.open(CAMPAIGN);
+    await flush();
+    expect(repos.campaign.transitionStatus).toHaveBeenCalled();
+    expect(stopped, 'stop() returned before the final tick\'s notice settled').toBe(false);
+    notice.open();
+    await stopping;
+    expect(noticeSettled).toBe(true);
   });
 });

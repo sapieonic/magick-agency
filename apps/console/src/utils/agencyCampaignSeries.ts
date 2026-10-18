@@ -1,5 +1,8 @@
 import { addDays, differenceInCalendarDays, startOfDay } from 'date-fns';
-import { bucketDay } from './agencyAgentPerformance';
+import { bucketLabels } from './agency/buckets';
+import { formatCount } from './format/number';
+import { readerZone } from './format/date';
+import { ratePct } from './agency/metrics';
 import { RATE_MIN_ATTEMPTS } from './agencyCampaignPerformance';
 import { isTerminalCampaignStatus } from './agencyCampaignControls';
 import type { AgencyCampaignSeries } from '../types/agency-campaign-series';
@@ -389,7 +392,7 @@ export function campaignSeriesRangeNotes(range: CampaignSeriesRange): string[] {
   if (range.endUnknown) {
     notes.push(
       'We don’t have an end date for this campaign, so this covers the '
-      + `${range.days.toLocaleString()} days from when it started.`,
+      + `${formatCount(range.days)} days from when it started.`,
     );
   }
   if (range.clamped) {
@@ -444,17 +447,6 @@ export function campaignSeriesZoneNote(series: AgencyCampaignSeries | null): str
 
   return `Days are counted in ${zone} — this campaign's own time zone, the one its `
     + `calling window is enforced in.${partialEdges}`;
-}
-
-/** The reader's IANA zone, or `null` where the environment cannot say. */
-function readerZone(): string | null {
-  try {
-    return Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-  } catch {
-    // Never a render-time throw for a caption. An environment with no `Intl`
-    // resolution simply gets the short note.
-    return null;
-  }
 }
 
 /**
@@ -633,11 +625,8 @@ export function rateCeiling(max: number): number {
   return Math.min(100, Math.max(10, Math.ceil(max / 10) * 10));
 }
 
-/** `connected / attempts` as a percentage, or `null` — never `0` for `0/0`. */
-function rate(part: number, whole: number): number | null {
-  if (!Number.isFinite(part) || !Number.isFinite(whole) || whole <= 0) return null;
-  return (part / whole) * 100;
-}
+/** `connected / attempts` as a percentage, or `null` — never `0` for `0/0` (`ratePct`). */
+const rate = ratePct;
 
 function runsOf(values: (number | null)[]): RateRun[] {
   const runs: RateRun[] = [];
@@ -727,7 +716,6 @@ export function rateTrend(
   const buckets = series?.buckets ?? [];
 
   const points: RatePoint[] = buckets.map((bucket) => {
-    const parsed = bucketDay(bucket.bucket_start);
     /*
       NOT coerced to 0. `rate()` bails on a non-finite numerator, so passing an
       absent `successes` straight through makes the day a GAP — while `?? 0`
@@ -742,10 +730,7 @@ export function rateTrend(
     const successes = bucket.successes;
     return {
       start: bucket.bucket_start,
-      label: parsed ? String(parsed.getDate()) : bucket.bucket_start,
-      title: parsed
-        ? parsed.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-        : bucket.bucket_start,
+      ...bucketLabels(bucket.bucket_start),
       attempts: bucket.attempts,
       connected: bucket.connected,
       successes,
@@ -883,7 +868,7 @@ function withheldNote(days: number): string {
   // and agree with itself in number, which the first attempt did not ("Those day
   // show as gaps").
   const one = days === 1;
-  const subject = one ? 'One day is' : `${days.toLocaleString()} days are`;
+  const subject = one ? 'One day is' : `${formatCount(days)} days are`;
   const gap = one ? 'It shows as a gap' : 'They show as gaps';
   const dialed = one ? 'It was dialed' : 'They were dialed';
   return `${subject} left out — fewer than ${RATE_MIN_ATTEMPTS} calls behind the figure. `

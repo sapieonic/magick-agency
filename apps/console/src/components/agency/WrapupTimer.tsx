@@ -1,4 +1,5 @@
 import { wrapupView, type WrapupAnchor, type WrapupPanel } from '../../utils/agencyWrapup';
+import { useRepaintTick } from '../../hooks/useRepaintTick';
 import type { AgencyWrapupHold } from '../../types/agency';
 import styles from './WrapupTimer.module.css';
 
@@ -47,8 +48,13 @@ export const WRAPUP_HELD_FALLBACK_COPY = 'Waiting on a disposition';
 export interface WrapupTimerProps {
   /** Captured once on the wrap-up frame. Never rebuilt per render. */
   anchor: WrapupAnchor;
-  /** Corrected client-clock ms, from `useServerClock`. */
-  now: number;
+  /**
+   * Reads the present, from `useServerClock().now`. Called on every repaint.
+   *
+   * A reader rather than an instant because this component drives its own
+   * repaint (see the body): handed a number, it would repaint the same number.
+   */
+  now: () => number;
   dispositionSubmitted: boolean;
 }
 
@@ -62,7 +68,14 @@ export function wrapupPanelOf(
 }
 
 export function WrapupTimer({ anchor, now, dispositionSubmitted }: WrapupTimerProps) {
-  const view = wrapupView(anchor, now, dispositionSubmitted);
+  /**
+   * The repaint is this component's own, and only while there is a deadline to
+   * count towards. A held window has no digits and no bar, so nothing on it moves
+   * and a tick would re-render it for nothing. It used to be driven from the
+   * console root, which repainted the whole page to move this bar.
+   */
+  useRepaintTick(anchor.deadlineMs !== null);
+  const view = wrapupView(anchor, now(), dispositionSubmitted);
 
   const heldReason = anchor.heldReason ? HOLD_COPY[anchor.heldReason] : WRAPUP_HELD_FALLBACK_COPY;
 

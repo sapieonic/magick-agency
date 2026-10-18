@@ -7,16 +7,14 @@ import {
   createCallAnalysisProfile,
   updateCallAnalysisProfile,
 } from '../../api/call-analysis-profiles';
-import {
-  PageHeader,
-  PageDescription,
-  StatusBadge,
-  DataTable,
-  ErrorAlert,
-  EmptyState,
-  ConfirmDialog,
-} from '../../components/common';
-import { formatDate } from '../../utils/format';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
+import { DataTable } from '@magick-agency/web-ui/components/DataTable';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { PageDescription } from '../../components/common';
+import { formatDate } from '@magick-agency/web-ui/format';
 import { toDimensionKey } from '../../utils/snake-case';
 import type { CallAnalysisProfile, AnalyticsDimension } from '../../types/call-analysis-profile';
 import { MAX_ANALYSIS_DIMENSIONS } from '../../types/call-analysis-profile';

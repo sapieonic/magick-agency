@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Check } from 'lucide-react';
-import { truncateId } from '../../utils/format';
+import { truncateId } from '@magick-agency/web-ui/format';
 import styles from './TruncatedId.module.css';
 
 interface TruncatedIdProps {

@@ -12,6 +12,7 @@ import {
   updatePhoneNumberSchema,
   assignPhoneNumberSchema,
 } from '../validators/phone-number.validator.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'super-admin-phone-routes' });
 
@@ -61,10 +62,8 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
    * Create a new phone number.
    */
   app.post('/phone-numbers', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = createPhoneNumberSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(createPhoneNumberSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const input = parsed.data;
 
@@ -156,10 +155,8 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
    */
   app.put('/phone-numbers/:id', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id } = request.params;
-    const parsed = updatePhoneNumberSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(updatePhoneNumberSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const phoneNumber = await phoneNumberRepository.update(id, parsed.data);
     if (!phoneNumber) {
@@ -297,10 +294,8 @@ export async function superAdminPhoneRoutes(app: FastifyInstance): Promise<void>
    */
   app.post('/phone-numbers/:id/assign', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id } = request.params;
-    const parsed = assignPhoneNumberSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(assignPhoneNumberSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { tenant_id, is_default } = parsed.data;
 

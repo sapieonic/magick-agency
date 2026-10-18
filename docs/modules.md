@@ -36,7 +36,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 
 The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket and tokens, wrap-up, breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; and the campaign-management layer: CSV ingest and its jobs, staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment.
 
-Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster-errors.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-record.ts`, `agent-state-machine.ts`, `calling-hours.ts`, `campaign-behavioral-settings.ts`, `campaign-completion-notice.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `live-concurrency-metrics.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `wrapup-manager.ts`
+Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-record.ts`, `agent-state-machine.ts`, `calling-hours.ts`, `campaign-behavioral-settings.ts`, `campaign-completion-notice.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `live-concurrency-metrics.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `wrapup-manager.ts`
 
 | Test file | Cases |
 |---|---|
@@ -45,10 +45,15 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-agent-cas.test.ts` | ~6 |
 | `apps/server/test/integration/agency/agency-agent-identity.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-agent-state-cycle.test.ts` | ~1 |
+| `apps/server/test/integration/agency/agency-agent-state-get-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-analysis-profile-reference-check.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agency-campaign-create.test.ts` | ~3 |
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
+| `apps/server/test/integration/agency/agency-campaign-summaries.routes.test.ts` | ~9 |
+| `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
+| `apps/server/test/integration/agency/agency-contact-claim-limit.test.ts` | 2 |
+| `apps/server/test/integration/agency/agency-contact-unclaim-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-conversion-counting.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-crash-recovery.test.ts` | ~6 |
@@ -59,6 +64,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-double-reservation.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-duplicate-dial.test.ts` | ~11 |
 | `apps/server/test/integration/agency/agency-gate-skip-logging.test.ts` | ~2 |
+| `apps/server/test/integration/agency/agency-ingest-chunk-fate.test.ts` | 4 |
+| `apps/server/test/integration/agency/agency-ingest-concurrent-total.test.ts` | 1 |
 | `apps/server/test/integration/agency/agency-ingest-idempotency.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-ingest-job-repository-sql.test.ts` | ~12 |
 | `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | ~7 |
@@ -66,7 +73,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-migration.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~12 |
+| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~14 |
 | `apps/server/test/integration/agency/agency-retry-idempotency.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
@@ -75,12 +82,14 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-stats-enrichment.test.ts` | ~16 |
 | `apps/server/test/integration/agency/agent-grouped-read.test.ts` | ~14 |
 | `apps/server/test/integration/agency/agent-multi-session.test.ts` | ~7 |
+| `apps/server/test/integration/agency/agent-occupancy-carried-bound.test.ts` | 2 |
 | `apps/server/test/integration/agency/agent-occupancy-window.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agent-record-tenant-isolation.test.ts` | ~7 |
 | `apps/server/test/integration/agency/agent-stats-timezone-buckets.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agent-transition-ordering.test.ts` | ~11 |
 | `apps/server/test/integration/agency/agent-window-boundaries.test.ts` | ~11 |
 | `apps/server/test/integration/agency/campaign-behavioral-settings.test.ts` | ~4 |
+| `apps/server/test/integration/agency/campaign-stats-equivalence.test.ts` | 4 |
 | `apps/server/test/integration/agency/campaign-stats-series.test.ts` | ~16 |
 | `apps/server/test/integration/agency/chaos/abandonment-counter-vs-table.test.ts` | ~9 |
 | `apps/server/test/integration/agency/chaos/abandonment-predicate-agreement.test.ts` | ~3 |
@@ -91,13 +100,14 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/chaos/redis-expired-wholesale.test.ts` | ~8 |
 | `apps/server/test/integration/agency/chaos/restart-mid-bridge.test.ts` | ~2 |
 | `apps/server/test/integration/agency/chaos/roster-exactly-once.test.ts` | ~8 |
+| `apps/server/test/integration/agency/chaos/settle-write-failure.test.ts` | ~3 |
 | `apps/server/test/integration/agency/dnc-registry.test.ts` | ~12 |
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 26 |
+| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
@@ -108,13 +118,13 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-actor.test.ts` | 6 |
 | `apps/server/test/unit/agency/agency-agent-identity.test.ts` | 9 |
 | `apps/server/test/unit/agency/agency-call-read-routes.test.ts` | 25 |
-| `apps/server/test/unit/agency/agency-campaign-config.test.ts` | 79 |
+| `apps/server/test/unit/agency/agency-campaign-config.test.ts` | 80 |
 | `apps/server/test/unit/agency/agency-column-analysis.test.ts` | 14 |
 | `apps/server/test/unit/agency/agency-csv-ingest.isolation.test.ts` | 4 |
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 54 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 28 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 37 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 34 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -130,7 +140,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agent-record.test.ts` | 102 |
 | `apps/server/test/unit/agency/agent-roster-repository.test.ts` | 55 |
 | `apps/server/test/unit/agency/agent-session-events.test.ts` | 20 |
-| `apps/server/test/unit/agency/agent-state-machine.test.ts` | 15 |
+| `apps/server/test/unit/agency/agent-state-machine.test.ts` | 17 |
 | `apps/server/test/unit/agency/agent-stats-repository.test.ts` | 38 |
 | `apps/server/test/unit/agency/calling-hours.test.ts` | 31 |
 | `apps/server/test/unit/agency/campaign-abandon-config-route.test.ts` | 8 |
@@ -142,7 +152,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-conversion-stats.test.ts` | 9 |
 | `apps/server/test/unit/agency/campaign-health.test.ts` | 19 |
 | `apps/server/test/unit/agency/campaign-insert-param-types.test.ts` | 3 |
-| `apps/server/test/unit/agency/campaign-lifecycle-route.test.ts` | 7 |
+| `apps/server/test/unit/agency/campaign-lifecycle-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/campaign-lifecycle-timestamps.test.ts` | 19 |
 | `apps/server/test/unit/agency/campaign-retry-repository.test.ts` | 19 |
 | `apps/server/test/unit/agency/campaign-retry-route.test.ts` | 57 |
@@ -166,14 +176,15 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/exhaustion-completion.test.ts` | 21 |
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
-| `apps/server/test/unit/agency/late-binding.test.ts` | 30 |
+| `apps/server/test/unit/agency/late-binding.test.ts` | 31 |
 | `apps/server/test/unit/agency/left-session-guards.test.ts` | 37 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 18 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
+| `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 4 |
 | `apps/server/test/unit/agency/our-fault-redial.test.ts` | 20 |
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
-| `apps/server/test/unit/agency/pacing-engine.test.ts` | 67 |
+| `apps/server/test/unit/agency/pacing-engine.test.ts` | 76 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
 | `apps/server/test/unit/agency/profile-in-use-reference-check.test.ts` | 23 |
@@ -188,22 +199,22 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-campaign-series.routes.test.ts` | 41 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-stats-enrichment.routes.test.ts` | 26 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-transition-actor.routes.test.ts` | 30 |
-| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 137 |
-| `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 113 |
+| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 139 |
+| `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 111 |
 | `apps/server/test/unit/agency/proxy-agency-my-surfaces.routes.test.ts` | 78 |
-| `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 71 |
+| `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 29 |
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
-| `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 78 |
+| `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 10 |
-| `apps/server/test/unit/agency/reaper.test.ts` | 41 |
-| `apps/server/test/unit/agency/retry-policy.test.ts` | 22 |
+| `apps/server/test/unit/agency/reaper.test.ts` | 43 |
+| `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
 | `apps/server/test/unit/agency/runtime-collapses.test.ts` | 6 |
 | `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 13 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
-| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 20 |
+| `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 4 |
 | `apps/server/test/unit/agency/station-registry.test.ts` | 29 |
@@ -211,6 +222,24 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/station-token.test.ts` | 5 |
 | `apps/server/test/unit/agency/supervisor-stats.test.ts` | 26 |
 | `apps/server/test/unit/agency/wrapup-manager.test.ts` | 34 |
+
+### `apps/server/src/agency/agent-record/`
+
+The three agent-record reads, re-exported from `agency/agent-record.ts` (import from that path): `stats.ts` (the agent's own record: bucket vocabulary, query parsing, bucket SQL, occupancy fold), `roster.ts` (the supervisor's roster: vocabulary, parsing, percentiles, sort), `grouped.ts` (the grouped read: dimensions, zone rule, parsing). Tested through `agent-record.test.ts` and the agent-record route and repository suites above.
+
+Files: `grouped.ts`, `roster.ts`, `stats.ts`
+
+### `apps/server/src/agency/dialer/`
+
+The dialer's internals, split out of `agency-dialer.ts`: `live-attempt.ts` (the `LiveAttempt` record, `isUnannounced`, the panel builder) and `contact-settlement.ts` (`settleContact`: the our-fault / retry-policy routing of an ended attempt's contact). Tested through the `AgencyDialer` suites above (`agency-dialer`, `late-binding`, `canceled-outcome-ledger`, `our-fault-redial`, the chaos suites).
+
+Files: `contact-settlement.ts`, `live-attempt.ts`
+
+### `apps/server/src/agency/pacing/`
+
+The pacing engine's parts, split out of `pacing-engine.ts`: `leader-lease.ts` (the per-campaign Redis leader lease), `campaign-announcer.ts` (the `campaign_state` broadcasts and their `flagGated` / `reportedStuck` latches), `caller-id-pool.ts` (usable caller IDs and the round-robin pick), `in-flight.ts` (tracking in-flight ticks and completion notices so `stop()` can wait for them). Tested through the `PacingEngine` suites above.
+
+Files: `caller-id-pool.ts`, `campaign-announcer.ts`, `in-flight.ts`, `leader-lease.ts`
 
 ### `apps/server/src/ai/`
 
@@ -255,7 +284,7 @@ Files: `client.ts`, `llm-observability.ts`, `posthog.ts`
 
 ### `apps/server/src/api/`
 
-The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` (`core-dispatch.ts`) and the internal handler instance (`core-handlers.ts`), the id guard for agency routes, and profile-route auth.
+The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` and `forwardCore` (`core-dispatch.ts`; `forwardCore` answers the public request with the internal handler's status and body) and the internal handler instance (`core-handlers.ts`), the id guard for agency routes, and profile-route auth.
 
 Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dispatch.ts`, `core-handlers.ts`, `platform.plugin.ts`, `profile-route-auth.ts`, `voice.plugin.ts`
 
@@ -269,6 +298,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
 | `apps/server/test/integration/api/agency-runtime-routes.test.ts` | ~19 |
 | `apps/server/test/integration/api/agency-session-conflict-forward.test.ts` | ~13 |
+| `apps/server/test/integration/api/agency-spine-export.e2e.test.ts` | ~4 |
 | `apps/server/test/integration/api/agency-staffing.routes.test.ts` | ~51 |
 | `apps/server/test/integration/api/agency-tenant-isolation.test.ts` | ~12 |
 | `apps/server/test/integration/api/auth.routes.test.ts` | ~19 |
@@ -284,7 +314,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/unit/api/agency-agent-reach.test.ts` | 3 |
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
-| `apps/server/test/unit/api/core-dispatch.test.ts` | 11 |
+| `apps/server/test/unit/api/core-dispatch.test.ts` | 13 |
 | `apps/server/test/unit/api/platform-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/profile-route-auth.test.ts` | 13 |
 | `apps/server/test/unit/api/route-table.test.ts` | 3 |
@@ -292,9 +322,9 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 ### `apps/server/src/api/middleware/`
 
-App-wide middleware: rate limiter and its buckets, error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, internal tenancy headers.
+App-wide middleware: rate limiter and its buckets, error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers.
 
-Files: `agency-error-handler.ts`, `auth.middleware.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
+Files: `agency-error-handler.ts`, `auth.middleware.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
 | Test file | Cases |
 |---|---|
@@ -319,7 +349,11 @@ _No dedicated test files._
 
 Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`, `notification`, `feature-flags`, `super-admin*`, `proxy-agency-*`, `dnc`, `phone-number`, `call-analysis-profiles`. Internal handler instance: `agency.routes.ts`, `agency-campaigns.routes.ts`, `agency-agents.routes.ts`. Voice engine: `webhooks.routes.ts`, `webrtc-call.routes.ts`. Analysis: `webrtc-recordings.routes.ts`.
 
-Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency.routes.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/csv-attachment.ts`, `helpers/path-params.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
+Route families: a large plugin keeps its exported function, hooks and module note in `<family>.routes.ts` and registers its routes from `<family>/` on the same instance, so the hooks apply to every one of them and the area plugins are unchanged: `agency/` (sessions, attempts, shared helpers), `agency-campaigns/` (guards with the `ownedCampaign` preHandler, crud with the batched `GET /summaries`, stats, spine, retry, lifecycle), `proxy-agency-campaigns/` (ownership, crud, stats, activity, spine with the CSV export drain, lifecycle, retry, ingest), `proxy-agency-performance/` (the per-agent pairs, the whole-floor reads, shared), `proxy-agency-staffing/` (the `my-*` reads, campaign agents), `super-admin/` (login, own account, tenants, admins, concurrency). Source-text guards read a whole family (`test/helpers/route-source.ts`).
+
+Shared helpers (`helpers/`): `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe, and `stringField`), `csv-attachment.ts` (the CSV `Content-Disposition` pair), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `settled.ts` (`settledValue`: independent reads started together, answered in order).
+
+Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/helpers.ts`, `agency/sessions.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/core-campaign.ts`, `helpers/csv-attachment.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/settled.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
 
 | Test file | Cases |
 |---|---|
@@ -327,7 +361,9 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/call-analysis-profiles.test.ts` | 21 |
 | `apps/server/test/unit/api/routes/feature-flags-client.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/feature-flags-internal.test.ts` | 22 |
+| `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
+| `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/invites.routes.test.ts` | 48 |
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
@@ -336,7 +372,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` | 22 |
-| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 57 |
+| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 58 |
 | `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 10 |
 | `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 22 |
@@ -344,7 +380,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/user-cache-invalidation.wiring.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/user-invite-mailer-isolation.test.ts` | 6 |
 | `apps/server/test/unit/api/routes/user-offboarding-staffing.test.ts` | 30 |
-| `apps/server/test/unit/api/routes/user.routes.test.ts` | 46 |
+| `apps/server/test/unit/api/routes/user.routes.test.ts` | 47 |
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 
@@ -515,17 +551,25 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 58 |
+| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 62 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-session.test.ts` | 31 |
 | `apps/server/test/unit/core/webrtc-scenarios.test.ts` | 13 |
 
+### `apps/server/src/core/bridge/`
+
+Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping). None imports metrics. Tested through the bridge suites above.
+
+Files: `admission.ts`, `bridge-types.ts`, `ws-tokens.ts`
+
 ### `apps/server/src/db/`
 
 The agency repository (`agency.repository.ts`, decision B12), membership invites, notification deliveries and preferences, the telephony provider repository (uncached, so a status change is seen on the next read), and their models.
 
-Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`
+The agency repository is a folder, `repositories/agency/`, behind the `agency.repository.ts` barrel: every caller outside the folder imports the barrel and the unit suites `vi.mock` it, so a mock of the barrel replaces what callers use. One file per class: `campaign.repository.ts` (`AgencyCampaignRepository`; its retry and dashboard methods delegate to free functions in `campaign-retry.ts` and `campaign-stats.ts`), `contact.repository.ts`, `attempt.repository.ts`, `agent-session.repository.ts`, `fleet-metrics.repository.ts` (`AgencyAbandonmentRepository`, `AgencyLiveConcurrencyRepository`) and `agent-stats.repository.ts` (`AgencyAgentStatsRepository`; `roster` and `groupedStats` delegate to `agent-roster-stats.ts` and `agent-grouped-stats.ts`). Three leaves hold what more than one file emits: `sql-fragments.ts` (the shared SQL spellings: phone digits, resolved zone, occupancy intervals, the five attempt metrics, the campaign INSERT columns), `query-builders.ts` (parameter accumulator, filter and keyset builders) and `projections.ts` (row to wire shape). Files in the folder import only the leaves, the delegate files and external modules, never the barrel or another class.
+
+Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`
 
 | Test file | Cases |
 |---|---|
@@ -570,13 +614,14 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 
 ### `apps/server/src/invites/`
 
-Invite issuing and invite state.
+Invite issuing and invite state, and the membership provisioning `POST /users/invite` and the super-admin tenant create and add-user share (`membership-provisioning.ts`: the create-or-reactivate transactions, the proven-or-stub user, the guarded invitation).
 
-Files: `invite-issuer.ts`, `membership-invite-state.ts`
+Files: `invite-issuer.ts`, `membership-invite-state.ts`, `membership-provisioning.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/invites/invite-issuer.test.ts` | 16 |
+| `apps/server/test/unit/invites/membership-provisioning.test.ts` | 6 |
 | `apps/server/test/unit/invites/membership-invite-state.test.ts` | 6 |
 
 ### `apps/server/src/maintenance/`
@@ -675,7 +720,7 @@ Files: `s3.ts`
 
 Telephony provider factory and types; the carrier modules (each carrier's media-stream protocol and hangup style, which the bridge asks instead of branching on a provider name); the VoiceLink adapter, media protocol, webhook normaliser, token manager and carrier fixture. `factory.ts` builds the service's own adapters from env and BYOC adapters from tenant credentials (`getForCredentialId`, decisions B18–B22): it peeks the credential row on every use and refuses another tenant or provider before any secret is opened, calls `resolve` only on a cache miss (keyed by peek's version list), and drops cached adapters only on `CredentialUnavailableError`, rethrowing transient errors unchanged.
 
-Files: `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.media.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
+Files: `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `webhook-grace.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.media.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
 
 | Test file | Cases |
 |---|---|
@@ -731,9 +776,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, concurrency, decode gate, phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter, concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `webhook-base.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -788,22 +833,33 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 ### `packages/contracts/src/`
 
-Dialer types (`agency.ts`), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permission matrix (`rbac.ts`), barrel.
+Dialer types (`agency.ts`, a barrel over `agency/`), error-code unions and lists including the action error union (`errors.ts`), feature flags (`flags.ts`), roles and permission matrix (`rbac.ts`), shared primitives (`primitives.ts`: `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, the `AllListed` exhaustiveness check), barrel.
 
-Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `rbac.ts`
+Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
-| `packages/contracts/test/errors.test.ts` | 9 |
-| `packages/contracts/test/exports.test.ts` | 5 |
+| `packages/contracts/test/errors.test.ts` | 7 |
+| `packages/contracts/test/exports.test.ts` | 9 |
 | `packages/contracts/test/flags.test.ts` | 6 |
 | `packages/contracts/test/rbac.test.ts` | 48 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
+`packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
+
+### `packages/contracts/src/agency/`
+
+The dialer contract, one file per surface, re-exported by `../agency.ts`: shared enumerations (`enums.ts`), campaign-derived config and the session bootstrap (`session.ts`), the station socket and its close codes (`station.ts`), action and session-state routes with the Phase 2 pool (`actions.ts`), campaign stats and the campaign rate floor (`campaign-stats.ts`), the campaign config defaults the server applies and the console previews — built-in disposition catalog, our-fault redial bound (`campaign-defaults.ts`), lifecycle and retry campaigns (`campaign-lifecycle.ts`), series, agent record, roster and grouped reads (`performance.ts`), the attempt spine (`spine.ts`).
+
+Files: `actions.ts`, `campaign-defaults.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `performance.ts`, `session.ts`, `spine.ts`, `station.ts`
+
+_No dedicated test files._
+
 ### `packages/contracts/src/api/agency/`
 
-Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call; `CONTRACT-DIFF.md` lists where they differ from `agency.ts`.
+Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call. Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
 
 Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `dnc.ts`, `index.ts`, `shared.ts`, `webrtc-call.ts`
 
@@ -811,9 +867,9 @@ _No dedicated test files._
 
 ### `packages/contracts/src/api/platform/`
 
-Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, audit, super-admin and usage. `super-admin-telephony-credentials.ts` also exports `TELEPHONY_CREDENTIAL_ERROR_CODES`, the runtime list of its error-code union with an exhaustiveness guard (snapshot in `exports.test.ts`).
+Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, super-admin and usage. `super-admin-telephony-credentials.ts` also exports `TELEPHONY_CREDENTIAL_ERROR_CODES`, the runtime list of its error-code union with an exhaustiveness guard (snapshot in `exports.test.ts`).
 
-Files: `audit.ts`, `auth.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-telephony-credentials.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
+Files: `auth.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-telephony-credentials.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
 
 _No dedicated test files._
 
@@ -864,10 +920,11 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/audio-file.repository.test.ts` | ~11 |
 | `packages/db/test/integration/repositories/audit.repository.test.ts` | ~12 |
 | `packages/db/test/integration/repositories/call-analysis-profile.repository.test.ts` | ~6 |
+| `packages/db/test/integration/repositories/claim-limit.test.ts` | 5 |
 | `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~9 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
-| `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~3 |
+| `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 31 |
 | `packages/db/test/integration/repositories/tenant.repository.test.ts` | ~13 |
@@ -900,14 +957,16 @@ Files: `audit.repository.ts`
 
 ### `packages/db/src/utils/`
 
-Single-flight, SQL update builder, TTL cache.
+Single-flight, SQL update builder, TTL cache, and `withTransaction` (`transaction.ts`): BEGIN with an isolation level and READ ONLY, COMMIT, ROLLBACK on a throw, release on every path, destroy a client whose ROLLBACK failed, `tx.rollback()` to end early without throwing, and `client` to join a caller's open transaction (decision B8). Import-free: the caller passes its pool. Imported as `@magick-agency/db/utils/transaction`.
 
-Files: `single-flight.ts`, `sql-update.ts`, `ttl-cache.ts`
+Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
+| `packages/db/test/unit/utils/transaction.test.ts` | 14 |
 | `packages/db/test/unit/utils/ttl-cache.test.ts` | 51 |
 
 ### Cross-cutting tests (`packages/db`)
@@ -917,8 +976,10 @@ Scenario, flow, guard and setup tests that span several modules.
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~11 |
+| `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | ~2 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
+| `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
@@ -944,13 +1005,14 @@ Scenario, flow, guard and setup tests that span several modules.
 
 ### `packages/domain/src/`
 
-Pure dialer rules: abandonment predicate, break manager, keyset cursor, rates, retry campaign bounds and summary, success disposition, timers.
+Pure dialer rules: abandonment predicate, break manager, keyset cursor, rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement).
 
 Files: `abandonment-predicate.ts`, `break-manager.ts`, `index.ts`, `keyset-cursor.ts`, `rates.ts`, `retry-campaign-bounds.ts`, `retry-summary.ts`, `success-disposition.ts`, `timers.ts`
 
 | Test file | Cases |
 |---|---|
 | `packages/domain/test/unit/agency/break-manager.test.ts` | 18 |
+| `packages/domain/test/unit/agency/elapsed-seconds.test.ts` | 3 |
 | `packages/domain/test/unit/agency/keyset-cursor.test.ts` | 9 |
 | `packages/domain/test/unit/agency/retry-campaign-bounds.test.ts` | 4 |
 | `packages/domain/test/unit/agency/retry-summary.test.ts` | 19 |
@@ -977,13 +1039,88 @@ Files: `agency.ts`, `analysis.ts`, `platform.ts`, `shared.ts`, `voice.ts`
 
 _No dedicated test files._
 
+## `packages/web-ui`
+
+UI pieces shared by the console and super-admin, consumed as TypeScript source (decision B2; the
+`exports` map points at `src/`): each app imports a module by path, e.g.
+`@magick-agency/web-ui/components/Modal`. React, react-dom, react-router-dom and lucide-react are
+peer dependencies, so both apps keep one instance of each. Not built on its own: each app's Vite build
+compiles these files and their CSS modules. Has its own no-parent-brand scan (B17), since the apps'
+scans cover only their own `src/`.
+
+### `packages/web-ui/src/`
+
+The error-message helpers and request-id marker (`errors.ts`), the one reading of an API error body
+for both clients (`apiErrorBody.ts`: `parseApiErrorBody`, field-level `details` / `issues` before a
+generic `message`), date and number formatting (`format.ts`), customer-facing carrier aliases
+(`telephonyProviders.ts`), a bounded `allSettled`-style fan-out (`concurrency.ts`:
+`mapWithConcurrency`), and the stylesheet both apps' `main.tsx` import (`global.css`: theme tokens,
+base elements, `.toast-container`).
+
+Files: `apiErrorBody.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.css`, `telephonyProviders.ts`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/apiErrorBody.test.ts` | 14 |
+| `packages/web-ui/test/concurrency.test.ts` | 9 |
+| `packages/web-ui/test/errors.test.ts` | 21 |
+| `packages/web-ui/test/format.test.ts` | 50 |
+| `packages/web-ui/test/noParentBrand.test.ts` | 4 |
+| `packages/web-ui/test/telephonyProviders.test.ts` | 10 |
+| `packages/web-ui/test/themeTokenParity.test.ts` | 4 |
+
+### `packages/web-ui/src/components/`
+
+The 15 components both apps used as byte-identical copies, each with its CSS module.
+
+Files: `Breadcrumbs.module.css`, `Breadcrumbs.tsx`, `ConfirmDialog.module.css`, `ConfirmDialog.tsx`, `DataTable.module.css`, `DataTable.tsx`, `EmptyState.module.css`, `EmptyState.tsx`, `ErrorAlert.module.css`, `ErrorAlert.tsx`, `ErrorText.module.css`, `ErrorText.tsx`, `HelpTooltip.module.css`, `HelpTooltip.tsx`, `LiveDot.module.css`, `LiveDot.tsx`, `LoadingSpinner.module.css`, `LoadingSpinner.tsx`, `Modal.module.css`, `Modal.tsx`, `PageHeader.module.css`, `PageHeader.tsx`, `Pagination.module.css`, `Pagination.tsx`, `RequestId.module.css`, `RequestId.tsx`, `StatusBadge.module.css`, `StatusBadge.tsx`, `Toast.module.css`, `Toast.tsx`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/components/ConfirmDialog.test.tsx` | 12 |
+| `packages/web-ui/test/components/DataTable.test.tsx` | 27 |
+| `packages/web-ui/test/components/ErrorAlert.test.tsx` | 4 |
+| `packages/web-ui/test/components/ErrorText.test.tsx` | 4 |
+| `packages/web-ui/test/components/LiveDot.test.tsx` | 7 |
+| `packages/web-ui/test/components/Pagination.test.tsx` | 28 |
+| `packages/web-ui/test/components/StatusBadge.test.tsx` | 15 |
+| `packages/web-ui/test/components/Toast.test.tsx` | 2 |
+| `packages/web-ui/test/components/dataTableAlignCss.test.ts` | 5 |
+
+### `packages/web-ui/src/contexts/`
+
+`ToastProvider` / `useToast` (memoised context value).
+
+Files: `ToastContext.tsx`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/contexts/ToastContext.test.tsx` | 3 |
+
+### `packages/web-ui/src/hooks/`
+
+`useAsyncResource(fetcher, { initialData, errorMessage, enabled })`: `{ data, loading, error, reload }` where
+only the latest load may write state; `enabled: false` makes no request, resets `data` to `initialData` and keeps `loading` true. The super-admin list hooks and the console's team, account and
+phone-number hooks use it. `useDialogFocus({ open, dialogRef, onEscape?, initialFocusRef? })` is the one
+focus-in / Tab-trap / Escape / restore-focus implementation (`Modal`, `ConfirmDialog` and the console's
+dialog hooks call it; `trapTab` is its edge-wrap, used by the console's mobile drawer).
+
+Files: `useAsyncResource.ts`, `useDialogFocus.ts`
+
+| Test file | Cases |
+|---|---|
+| `packages/web-ui/test/hooks/useAsyncResource.test.ts` | 8 |
+| `packages/web-ui/test/hooks/useDialogFocus.test.tsx` | 4 |
+
+`packages/web-ui/test/setup.ts` registers the RTL cleanup (no `globals: true`).
+
 ## `apps/console`
 
 ### `apps/console/src/`
 
-App shell: `App.tsx` (routes), `main.tsx`, `config.ts` (API base, endpoints, originator), global CSS.
+App shell: `App.tsx` (routes), `main.tsx` (imports `@magick-agency/web-ui/global.css`), `config.ts` (API base, endpoints, originator).
 
-Files: `App.tsx`, `config.ts`, `global.css`, `main.tsx`, `vite-env.d.ts`
+Files: `App.tsx`, `config.ts`, `main.tsx`, `vite-env.d.ts`
 
 _No dedicated test files._
 
@@ -996,7 +1133,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/analytics/autocaptureOptOut.test.ts` | 4 |
-| `apps/console/src/__tests__/analytics/events.test.ts` | 5 |
+| `apps/console/src/__tests__/analytics/events.test.ts` | 6 |
 | `apps/console/src/__tests__/analytics/posthog.test.ts` | 22 |
 | `apps/console/src/__tests__/analytics/productSurface.test.tsx` | 12 |
 | `apps/console/src/__tests__/analytics/redact.test.ts` | 8 |
@@ -1038,9 +1175,9 @@ Files: `index.ts`, `load-brand.ts`, `types.ts`
 
 ### `apps/console/src/components/`
 
-UI components: `agency/` (station, state rail, wrap-up timer, campaign tabs, health strip and the rest of the agent and supervisor UI), `audio/`, `auth/` (route guards), `calls/` (call detail), `common/` (shared widgets, logo, page description), `layout/` (app and agency shells, sidebar).
+UI components: `agency/` (station, state rail, wrap-up timer, campaign tabs, health strip and the rest of the agent and supervisor UI), `audio/`, `auth/` (route guards), `calls/` (call detail), `common/` (the console's own shared widgets: logo, page description, filters, copyable fields; the widgets both apps use are in `packages/web-ui`), `layout/` (app and agency shells, sidebar).
 
-Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `agency/AgentAnalyticsSection.module.css`, `agency/AgentAnalyticsSection.tsx`, `agency/AgentAttemptsPanel.module.css`, `agency/AgentAttemptsPanel.tsx`, `agency/AgentBucketChart.module.css`, `agency/AgentBucketChart.tsx`, `agency/AgentFloor.module.css`, `agency/AgentFloor.tsx`, `agency/AgentFloorDrawer.module.css`, `agency/AgentFloorDrawer.tsx`, `agency/AgentLanding.module.css`, `agency/AgentLanding.tsx`, `agency/AgentNav.module.css`, `agency/AgentNav.tsx`, `agency/AgentPerformancePanel.module.css`, `agency/AgentPerformancePanel.tsx`, `agency/AgentSurfaceShell.module.css`, `agency/AgentSurfaceShell.tsx`, `agency/BestHours.tsx`, `agency/BestHoursMatrix.module.css`, `agency/BestHoursMatrix.tsx`, `agency/BreakMenu.module.css`, `agency/BreakMenu.tsx`, `agency/CampaignActivityChart.module.css`, `agency/CampaignActivityChart.tsx`, `agency/CampaignAgentAssignments.module.css`, `agency/CampaignAgentAssignments.tsx`, `agency/CampaignContribution.tsx`, `agency/CampaignHealthStrip.module.css`, `agency/CampaignHealthStrip.tsx`, `agency/CampaignLineageStrip.module.css`, `agency/CampaignLineageStrip.tsx`, `agency/CampaignPerformance.module.css`, `agency/CampaignPerformance.tsx`, `agency/CampaignRecordingField.module.css`, `agency/CampaignRecordingField.tsx`, `agency/CampaignRateChart.module.css`, `agency/CampaignRateChart.tsx`, `agency/CampaignSeriesSection.module.css`, `agency/CampaignSeriesSection.tsx`, `agency/CampaignTabs.module.css`, `agency/CampaignTabs.tsx`, `agency/CompareTray.tsx`, `agency/ContributionTable.tsx`, `agency/CueSettings.module.css`, `agency/CueSettings.tsx`, `agency/DialerUnavailable.module.css`, `agency/DialerUnavailable.tsx`, `agency/DispositionPad.module.css`, `agency/DispositionPad.tsx`, `agency/DncControl.module.css`, `agency/DncControl.tsx`, `agency/FilterChip.tsx`, `agency/FiltersCard.tsx`, `agency/HoldToConfirmButton.module.css`, `agency/HoldToConfirmButton.tsx`, `agency/MultiSelectFilter.tsx`, `agency/NotesField.module.css`, `agency/NotesField.tsx`, `agency/QueuedBreakPill.module.css`, `agency/QueuedBreakPill.tsx`, `agency/RailPresenceRegion.module.css`, `agency/RailPresenceRegion.tsx`, `agency/RosterTable.module.css`, `agency/RosterTable.tsx`, `agency/SpineListLayout.module.css`, `agency/StateRail.module.css`, `agency/StateRail.tsx`, `agency/StationIdentity.module.css`, `agency/StationIdentity.tsx`, `agency/StationMenu.module.css`, `agency/StationMenu.tsx`, `agency/WorkspaceExit.tsx`, `agency/WrapupTimer.module.css`, `agency/WrapupTimer.tsx`, `agency/useChartWidth.ts`, `audio/AudioWaveform.module.css`, `audio/AudioWaveform.tsx`, `auth/HomeRedirect.tsx`, `auth/RequireAuth.tsx`, `auth/RequireCapability.tsx`, `auth/RequireFlag.tsx`, `calls/CallDetailSections.tsx`, `calls/CallDetailView.tsx`, `common/AccountUnavailable.tsx`, `common/Breadcrumbs.module.css`, `common/Breadcrumbs.tsx`, `common/CapabilityUnavailable.tsx`, `common/ConfirmDialog.module.css`, `common/ConfirmDialog.tsx`, `common/CopyableField.module.css`, `common/CopyableField.tsx`, `common/DataTable.module.css`, `common/DataTable.tsx`, `common/DateRangeFilter.module.css`, `common/DateRangeFilter.tsx`, `common/EmptyState.module.css`, `common/EmptyState.tsx`, `common/ErrorAlert.module.css`, `common/ErrorAlert.tsx`, `common/ErrorText.module.css`, `common/ErrorText.tsx`, `common/FieldError.tsx`, `common/GlobalSearch.module.css`, `common/GlobalSearch.tsx`, `common/HelpTooltip.module.css`, `common/HelpTooltip.tsx`, `common/LiveDot.module.css`, `common/LiveDot.tsx`, `common/LoadingSpinner.module.css`, `common/LoadingSpinner.tsx`, `common/Logo.tsx`, `common/Modal.module.css`, `common/Modal.tsx`, `common/PageDescription.module.css`, `common/PageDescription.tsx`, `common/PageHeader.module.css`, `common/PageHeader.tsx`, `common/Pagination.module.css`, `common/Pagination.tsx`, `common/PhoneFilterInput.module.css`, `common/PhoneFilterInput.tsx`, `common/RequestId.module.css`, `common/RequestId.tsx`, `common/StatusBadge.module.css`, `common/StatusBadge.tsx`, `common/Toast.module.css`, `common/Toast.tsx`, `common/TruncatedId.module.css`, `common/TruncatedId.tsx`, `common/index.ts`, `layout/AccountSwitcher.module.css`, `layout/AccountSwitcher.tsx`, `layout/AgencyLayout.module.css`, `layout/AgencyLayout.tsx`, `layout/AgencySidebar.module.css`, `layout/AgencySidebar.tsx`, `layout/AppLayout.module.css`, `layout/AppLayout.tsx`, `layout/Sidebar.module.css`, `layout/Sidebar.tsx`, `layout/SwitcherDropdown.module.css`, `layout/SwitcherDropdown.tsx`, `layout/TenantSwitcher.module.css`, `layout/TenantSwitcher.tsx`, `layout/TopBar.module.css`, `layout/TopBar.tsx`
+Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `agency/AgentAnalyticsSection.module.css`, `agency/AgentAnalyticsSection.tsx`, `agency/AgentAttemptsPanel.module.css`, `agency/AgentAttemptsPanel.tsx`, `agency/AgentBucketChart.module.css`, `agency/AgentBucketChart.tsx`, `agency/AgentFloor.module.css`, `agency/AgentFloor.tsx`, `agency/AgentFloorDrawer.module.css`, `agency/AgentFloorDrawer.tsx`, `agency/AgentLanding.module.css`, `agency/AgentLanding.tsx`, `agency/AgentNav.module.css`, `agency/AgentNav.tsx`, `agency/AgentPerformancePanel.module.css`, `agency/AgentPerformancePanel.tsx`, `agency/AgentStation.module.css`, `agency/AgentSurfaceShell.module.css`, `agency/AgentSurfaceShell.tsx`, `agency/BestHours.tsx`, `agency/BestHoursMatrix.module.css`, `agency/BestHoursMatrix.tsx`, `agency/BreakMenu.module.css`, `agency/BreakMenu.tsx`, `agency/CampaignActivityChart.module.css`, `agency/CampaignActivityChart.tsx`, `agency/CampaignAgentAssignments.module.css`, `agency/CampaignAgentAssignments.tsx`, `agency/CampaignContribution.tsx`, `agency/CampaignHealthStrip.module.css`, `agency/CampaignHealthStrip.tsx`, `agency/CampaignLineageStrip.module.css`, `agency/CampaignLineageStrip.tsx`, `agency/CampaignPerformance.module.css`, `agency/CampaignPerformance.tsx`, `agency/CampaignRateChart.module.css`, `agency/CampaignRateChart.tsx`, `agency/CampaignRecordingField.module.css`, `agency/CampaignRecordingField.tsx`, `agency/CampaignSeriesSection.module.css`, `agency/CampaignSeriesSection.tsx`, `agency/CampaignTabs.module.css`, `agency/CampaignTabs.tsx`, `agency/CompareTray.tsx`, `agency/ConnectionHealthPill.tsx`, `agency/ContactDetail.tsx`, `agency/ContactPanel.tsx`, `agency/ContributionTable.tsx`, `agency/CueSettings.module.css`, `agency/CueSettings.tsx`, `agency/DialerUnavailable.module.css`, `agency/DialerUnavailable.tsx`, `agency/DispositionPad.module.css`, `agency/DispositionPad.tsx`, `agency/DncControl.module.css`, `agency/DncControl.tsx`, `agency/FilterChip.tsx`, `agency/FiltersCard.tsx`, `agency/GoogleMark.tsx`, `agency/HoldToConfirmButton.module.css`, `agency/HoldToConfirmButton.tsx`, `agency/IdleGuide.tsx`, `agency/JoinConflictScreen.tsx`, `agency/MultiSelectFilter.tsx`, `agency/NotesField.module.css`, `agency/NotesField.tsx`, `agency/PriorAttemptsList.tsx`, `agency/QueuedBreakPill.module.css`, `agency/QueuedBreakPill.tsx`, `agency/RailPresenceRegion.module.css`, `agency/RailPresenceRegion.tsx`, `agency/RosterTable.module.css`, `agency/RosterTable.tsx`, `agency/RosterToolbar.tsx`, `agency/SpineListLayout.module.css`, `agency/StateRail.module.css`, `agency/StateRail.tsx`, `agency/StationActionBar.tsx`, `agency/StationFatal.tsx`, `agency/StationHeader.tsx`, `agency/StationIdentity.module.css`, `agency/StationIdentity.tsx`, `agency/StationMenu.module.css`, `agency/StationMenu.tsx`, `agency/WorkspaceExit.tsx`, `agency/WrapupTimer.module.css`, `agency/WrapupTimer.tsx`, `agency/join/AddressMismatch.tsx`, `agency/join/AgencyJoin.module.css`, `agency/join/CredentialForm.tsx`, `agency/join/GuardedLink.tsx`, `agency/join/JoinCardHeader.tsx`, `agency/join/Unavailable.tsx`, `agency/join/Unreachable.tsx`, `agency/join/joinPending.ts`, `agency/useAgentAnalyticsNav.ts`, `agency/useChartWidth.ts`, `audio/AudioWaveform.module.css`, `audio/AudioWaveform.tsx`, `auth/HomeRedirect.tsx`, `auth/RequireAuth.tsx`, `auth/RequireCapability.tsx`, `auth/RequireFlag.tsx`, `calls/CallDetailSections.tsx`, `calls/CallDetailView.tsx`, `common/AccountUnavailable.tsx`, `common/CapabilityUnavailable.tsx`, `common/CopyableField.module.css`, `common/CopyableField.tsx`, `common/DateRangeFilter.module.css`, `common/DateRangeFilter.tsx`, `common/FieldError.tsx`, `common/GlobalSearch.module.css`, `common/GlobalSearch.tsx`, `common/Logo.tsx`, `common/PageDescription.module.css`, `common/PageDescription.tsx`, `common/PhoneFilterInput.module.css`, `common/PhoneFilterInput.tsx`, `common/TruncatedId.module.css`, `common/TruncatedId.tsx`, `common/index.ts`, `layout/AccountSwitcher.module.css`, `layout/AccountSwitcher.tsx`, `layout/AgencyLayout.module.css`, `layout/AgencyLayout.tsx`, `layout/AgencySidebar.module.css`, `layout/AgencySidebar.tsx`, `layout/AppLayout.module.css`, `layout/AppLayout.tsx`, `layout/Sidebar.module.css`, `layout/Sidebar.tsx`, `layout/SwitcherDropdown.module.css`, `layout/SwitcherDropdown.tsx`, `layout/TenantSwitcher.module.css`, `layout/TenantSwitcher.tsx`, `layout/TopBar.module.css`, `layout/TopBar.tsx`
 
 | Test file | Cases |
 |---|---|
@@ -1061,29 +1198,24 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/CallDetailSections.analysis.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CallDetailView.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 4 |
+| `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/CampaignPerformance.test.tsx` | 19 |
 | `apps/console/src/__tests__/components/CampaignSeriesSection.test.tsx` | 25 |
-| `apps/console/src/__tests__/components/CommonConfirmDialog.test.tsx` | 12 |
 | `apps/console/src/__tests__/components/CompareTray.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/ComposerSection.test.tsx` | 6 |
+| `apps/console/src/__tests__/components/ConnectionHealthPill.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/ContributionTable.test.tsx` | 18 |
-| `apps/console/src/__tests__/components/DataTable.test.tsx` | 27 |
 | `apps/console/src/__tests__/components/DialerUnavailable.test.tsx` | 3 |
-| `apps/console/src/__tests__/components/DispositionPad.test.tsx` | 28 |
+| `apps/console/src/__tests__/components/DispositionPad.test.tsx` | 29 |
 | `apps/console/src/__tests__/components/DncControl.test.tsx` | 7 |
-| `apps/console/src/__tests__/components/ErrorAlert.test.tsx` | 4 |
-| `apps/console/src/__tests__/components/ErrorText.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GlobalSearchDnc.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
-| `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 38 |
+| `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/HomeRedirect.test.tsx` | 8 |
-| `apps/console/src/__tests__/components/LiveDot.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/NotesField.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/PageDescription.test.tsx` | 3 |
-| `apps/console/src/__tests__/components/Pagination.test.tsx` | 28 |
 | `apps/console/src/__tests__/components/PhoneFilterInput.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/QueuedBreakPill.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/RailPresenceRegion.test.tsx` | 18 |
@@ -1092,67 +1224,60 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/RequireFlag.test.tsx` | 11 |
 | `apps/console/src/__tests__/components/RosterTable.test.tsx` | 49 |
 | `apps/console/src/__tests__/components/Sidebar.activeState.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/StateRail.test.tsx` | 25 |
+| `apps/console/src/__tests__/components/StateRail.test.tsx` | 26 |
 | `apps/console/src/__tests__/components/StationIdentity.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/StatusBadge.test.tsx` | 15 |
 | `apps/console/src/__tests__/components/SwitcherDropdown.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/TenantSwitcher.test.tsx` | 7 |
-| `apps/console/src/__tests__/components/Toast.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/TopBar.test.tsx` | 8 |
-| `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 23 |
+| `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 25 |
 | `apps/console/src/__tests__/components/campaignSeriesCharts.test.tsx` | 16 |
-| `apps/console/src/__tests__/components/dataTableAlignCss.test.ts` | 5 |
 | `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/switcherDropdownScrollCss.test.ts` | 4 |
 | `apps/console/src/components/common/DateRangeFilter.test.tsx` | 25 |
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
 | `apps/console/src/components/common/Logo.test.tsx` | 5 |
 
-### `apps/console/src/config/`
-
-Console configuration helpers.
-
-Files: `telephonyProviders.ts`
-
-_No dedicated test files._
-
 ### `apps/console/src/contexts/`
 
-React contexts: auth, tenant, theme and the rest.
+React contexts: auth, tenant, theme and the rest (the toast context is in `packages/web-ui`). `AuthContext.tsx`'s invite-credential flow is in `authInvite.ts` (`useInviteJoin`, `useInviteCredentialFlow`) and its 6-hour cap check in `useSessionWatchdog.ts`; the context API is unchanged.
 
-Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `TenantContext.tsx`, `ThemeContext.tsx`, `ToastContext.tsx`
+Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `TenantContext.tsx`, `ThemeContext.tsx`, `authInvite.ts`, `useSessionWatchdog.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/contexts/AuthContext.lazyInit.test.tsx` | 2 |
-| `apps/console/src/__tests__/contexts/AuthContext.test.tsx` | 45 |
+| `apps/console/src/__tests__/contexts/AuthContext.test.tsx` | 46 |
 | `apps/console/src/__tests__/contexts/FeatureFlagsContext.test.tsx` | 14 |
 | `apps/console/src/__tests__/contexts/GovernanceContext.test.tsx` | 6 |
-| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 32 |
+| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 33 |
 
 ### `apps/console/src/hooks/`
 
-React hooks for data loading and the station.
+React hooks for data loading and the station. `useTeam`, `useAccounts` and `usePhoneNumbers` sit on web-ui's `useAsyncResource` (its `enabled: false` waits for their scope); `useVisibleInterval` (visible-only, single-flight polling) and `useRefetchOnReturn` drive the campaign detail page and the campaigns home; `useDialogA11y` and `useModalFocus` are thin callers of web-ui's `useDialogFocus`.
 
-Files: `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCues.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignSeries.ts`, `useDialogA11y.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useTeam.ts`
+Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignSeries.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/hooks/agencyStationWsUrl.test.ts` | 7 |
 | `apps/console/src/__tests__/hooks/agentSurfacesStrictMode.test.tsx` | 9 |
+| `apps/console/src/__tests__/hooks/tenantListHooks.test.tsx` | 5 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.media.test.ts` | 10 |
-| `apps/console/src/__tests__/hooks/useAgencyStation.test.ts` | 75 |
+| `apps/console/src/__tests__/hooks/useAgencyStation.test.ts` | 77 |
 | `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 18 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/useCampaignSeries.test.tsx` | 16 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
-| `apps/console/src/__tests__/hooks/useServerClock.test.ts` | 15 |
+| `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
+| `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
+| `apps/console/src/__tests__/hooks/useServerClock.test.ts` | 16 |
+| `apps/console/src/__tests__/hooks/useVisibleInterval.test.ts` | 7 |
 
 ### `apps/console/src/pages/`
 
 Pages: `agency/` (agent home and station, campaigns and their tabs, contacts, attempts, activity, analytics, performance, DNC, login and join), `auth/`, `calls/`, `campaigns/` (campaign composer), `settings/` (analysis profiles, notifications), `team/`.
 
-Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/AgencyAnalyticsPage.tsx`, `agency/AgencyAttemptCallPage.module.css`, `agency/AgencyAttemptCallPage.tsx`, `agency/AgencyCampaignActivityPage.module.css`, `agency/AgencyCampaignActivityPage.tsx`, `agency/AgencyCampaignAttemptsPage.module.css`, `agency/AgencyCampaignAttemptsPage.tsx`, `agency/AgencyCampaignContactsPage.module.css`, `agency/AgencyCampaignContactsPage.tsx`, `agency/AgencyCampaignDetailPage.module.css`, `agency/AgencyCampaignDetailPage.tsx`, `agency/AgencyCampaignRosterPage.module.css`, `agency/AgencyCampaignRosterPage.tsx`, `agency/AgencyCampaignSettingsPage.module.css`, `agency/AgencyCampaignSettingsPage.tsx`, `agency/AgencyCampaignStatusBadge.tsx`, `agency/AgencyCampaignsPage.module.css`, `agency/AgencyCampaignsPage.tsx`, `agency/AgencyContactDetailPage.module.css`, `agency/AgencyContactDetailPage.tsx`, `agency/AgencyHomeRedirect.tsx`, `agency/AgencyJoinPage.module.css`, `agency/AgencyJoinPage.tsx`, `agency/AgencyLoginPage.module.css`, `agency/AgencyLoginPage.tsx`, `agency/AgentAttemptsPage.tsx`, `agency/AgentConsolePage.module.css`, `agency/AgentConsolePage.tsx`, `agency/AgentHomePage.module.css`, `agency/AgentHomePage.tsx`, `agency/AgentPerformancePage.module.css`, `agency/AgentPerformancePage.tsx`, `agency/CallerIdPicker.module.css`, `agency/CallerIdPicker.tsx`, `agency/DncPage.module.css`, `agency/DncPage.tsx`, `agency/useAgencyConsole.ts`, `auth/LoginPage.module.css`, `auth/VerifyEmailPage.tsx`, `calls/CallDetailPage.module.css`, `campaigns/agency/BuilderStepper.module.css`, `campaigns/agency/BuilderStepper.tsx`, `campaigns/agency/BuilderSummary.module.css`, `campaigns/agency/BuilderSummary.tsx`, `campaigns/agency/CampaignBehaviourSection.module.css`, `campaigns/agency/CampaignBehaviourSection.tsx`, `campaigns/agency/CampaignBuilderPage.module.css`, `campaigns/agency/CampaignBuilderPage.tsx`, `campaigns/agency/ColumnMapper.module.css`, `campaigns/agency/ColumnMapper.tsx`, `campaigns/agency/IngestSummary.module.css`, `campaigns/agency/IngestSummary.tsx`, `campaigns/agency/builderFlow.ts`, `campaigns/components/ComposerSection.module.css`, `campaigns/components/ComposerSection.tsx`, `settings/AnalysisProfilesPage.module.css`, `settings/AnalysisProfilesPage.tsx`, `settings/NotificationSettingsPage.module.css`, `settings/NotificationSettingsPage.tsx`, `settings/analysisProfileForm.ts`, `team/TeamPage.module.css`, `team/TeamPage.tsx`
+Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/AgencyAnalyticsPage.tsx`, `agency/AgencyAttemptCallPage.module.css`, `agency/AgencyAttemptCallPage.tsx`, `agency/AgencyCampaignActivityPage.module.css`, `agency/AgencyCampaignActivityPage.tsx`, `agency/AgencyCampaignAttemptsPage.module.css`, `agency/AgencyCampaignAttemptsPage.tsx`, `agency/AgencyCampaignContactsPage.module.css`, `agency/AgencyCampaignContactsPage.tsx`, `agency/AgencyCampaignDetailPage.module.css`, `agency/AgencyCampaignDetailPage.tsx`, `agency/AgencyCampaignRosterPage.module.css`, `agency/AgencyCampaignRosterPage.tsx`, `agency/AgencyCampaignSettingsPage.module.css`, `agency/AgencyCampaignSettingsPage.tsx`, `agency/AgencyCampaignStatusBadge.tsx`, `agency/AgencyCampaignsPage.module.css`, `agency/AgencyCampaignsPage.tsx`, `agency/AgencyContactDetailPage.module.css`, `agency/AgencyContactDetailPage.tsx`, `agency/AgencyHomeRedirect.tsx`, `agency/AgencyJoinPage.tsx`, `agency/AgencyLoginPage.module.css`, `agency/AgencyLoginPage.tsx`, `agency/AgentAttemptsPage.tsx`, `agency/AgentConsolePage.tsx`, `agency/AgentHomePage.module.css`, `agency/AgentHomePage.tsx`, `agency/AgentPerformancePage.module.css`, `agency/AgentPerformancePage.tsx`, `agency/CallerIdPicker.module.css`, `agency/CallerIdPicker.tsx`, `agency/DncPage.module.css`, `agency/DncPage.tsx`, `agency/campaign-detail/CampaignDetailHeader.tsx`, `agency/campaign-detail/CampaignOverviewPanel.tsx`, `agency/campaign-detail/useAgencyCampaignDetail.ts`, `agency/campaigns-home/ActiveCampaignCard.tsx`, `agency/campaigns-home/CampaignRow.tsx`, `agency/campaigns-home/GetStarted.tsx`, `agency/campaigns-home/Shortcuts.tsx`, `agency/campaigns-home/useCampaignsHome.ts`, `agency/station/useDncAction.ts`, `agency/station/useHangup.ts`, `agency/station/useStationExit.ts`, `agency/station/useStationJoin.ts`, `agency/station/useStationShortcuts.ts`, `agency/useAgencyConsole.ts`, `auth/LoginPage.module.css`, `auth/VerifyEmailPage.tsx`, `calls/CallDetailPage.module.css`, `campaigns/agency/BuilderStepper.module.css`, `campaigns/agency/BuilderStepper.tsx`, `campaigns/agency/BuilderSummary.module.css`, `campaigns/agency/BuilderSummary.tsx`, `campaigns/agency/CallingHoursFields.tsx`, `campaigns/agency/CampaignBehaviourSection.module.css`, `campaigns/agency/CampaignBehaviourSection.tsx`, `campaigns/agency/CampaignBuilderPage.module.css`, `campaigns/agency/CampaignBuilderPage.tsx`, `campaigns/agency/ColumnMapper.module.css`, `campaigns/agency/ColumnMapper.tsx`, `campaigns/agency/DispositionCatalogEditor.tsx`, `campaigns/agency/IngestSummary.module.css`, `campaigns/agency/IngestSummary.tsx`, `campaigns/agency/RetryPolicyTable.tsx`, `campaigns/agency/WrapupFields.tsx`, `campaigns/agency/builderFlow.ts`, `campaigns/agency/configFieldErrors.tsx`, `campaigns/components/ComposerSection.module.css`, `campaigns/components/ComposerSection.tsx`, `settings/AnalysisProfilesPage.module.css`, `settings/AnalysisProfilesPage.tsx`, `settings/NotificationSettingsPage.module.css`, `settings/NotificationSettingsPage.tsx`, `settings/analysisProfileForm.ts`, `team/InviteModal.tsx`, `team/MemberActionsMenu.tsx`, `team/ResendInviteModal.tsx`, `team/TeamPage.module.css`, `team/TeamPage.tsx`, `team/teamInvites.ts`, `team/teamRoles.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1161,7 +1286,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` | 6 |
-| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 95 |
+| `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 97 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 36 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
@@ -1173,9 +1298,10 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 47 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 31 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.cueVisual.test.tsx` | 22 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.renders.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 43 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 42 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/AgentHomePage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgentPerformancePage.test.tsx` | 51 |
 | `apps/console/src/__tests__/pages/AnalysisProfilesPage.test.tsx` | 9 |
@@ -1187,6 +1313,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/TeamPage.a11y.test.tsx` | 1 |
+| `apps/console/src/__tests__/pages/TeamPage.actionErrors.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/TeamPage.actionsMenu.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/TeamPage.analytics.test.tsx` | 2 |
 | `apps/console/src/__tests__/pages/TeamPage.inviteHandoff.test.tsx` | 28 |
@@ -1196,7 +1323,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/agencyRoutes.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/dialerEntryRoutes.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/useAgencyConsole.cues.test.ts` | 12 |
-| `apps/console/src/__tests__/pages/useAgencyConsole.test.ts` | 10 |
+| `apps/console/src/__tests__/pages/useAgencyConsole.test.ts` | 12 |
 | `apps/console/src/__tests__/pages/useAgencyConsole.wrapup.test.ts` | 16 |
 
 ### `apps/console/src/types/`
@@ -1209,27 +1336,27 @@ _No dedicated test files._
 
 ### `apps/console/src/utils/`
 
-Pure UI helpers: permissions, vocabulary, formatting, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more.
+Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more. `format/` is the one rendering of counts, percentages and plurals (`number.ts`, display locale `en-IN`), durations (`duration.ts`: live timers floor, aggregates round), dates with cached formatters (`date.ts`), a named zone's wall clock (`zone.ts`) and calling days (`weekdays.ts`). `agency/` holds `metrics.ts` (`ratio`, `ratePct`, `stateShares`, `ON_SHIFT_STATES`) and the pieces the large agency modules were split into — `agentWindows`, `buckets`, `agentReadouts`, `roster/`, `overview/`, `config/` — each re-exported by its original module so import paths are unchanged.
 
-Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `inviteJoin.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
+Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/utils/agencyActionErrorCodes.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/agencyActivityCopy.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 64 |
-| `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 70 |
-| `apps/console/src/__tests__/utils/agencyAgentRoster.test.ts` | 81 |
+| `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 73 |
+| `apps/console/src/__tests__/utils/agencyAgentRoster.test.ts` | 82 |
 | `apps/console/src/__tests__/utils/agencyAgentSurfaces.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyAssignmentEntry.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyAttemptFilters.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyBestHours.test.ts` | 45 |
-| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 69 |
+| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 75 |
 | `apps/console/src/__tests__/utils/agencyCampaignContribution.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/agencyCampaignControls.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/agencyCampaignLineage.test.ts` | 11 |
-| `apps/console/src/__tests__/utils/agencyCampaignOverview.test.ts` | 94 |
+| `apps/console/src/__tests__/utils/agencyCampaignOverview.test.ts` | 97 |
 | `apps/console/src/__tests__/utils/agencyCampaignPerformance.test.ts` | 65 |
 | `apps/console/src/__tests__/utils/agencyCampaignRecording.test.ts` | 35 |
 | `apps/console/src/__tests__/utils/agencyCampaignSeries.test.ts` | 91 |
@@ -1243,16 +1370,20 @@ Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.t
 | `apps/console/src/__tests__/utils/agencyContext.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/agencyCuePrefs.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyCues.test.ts` | 20 |
+| `apps/console/src/__tests__/utils/agencyDiagnostics.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyDispositionForm.test.ts` | 26 |
 | `apps/console/src/__tests__/utils/agencyDispositionSubmit.test.ts` | 34 |
 | `apps/console/src/__tests__/utils/agencyDncCopy.test.ts` | 20 |
+| `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyFieldFilter.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 46 |
 | `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 27 |
+| `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 21 |
 | `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyLiveSession.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyMedia.test.ts` | 18 |
 | `apps/console/src/__tests__/utils/agencyNotes.test.ts` | 43 |
+| `apps/console/src/__tests__/utils/agencyPadGate.test.ts` | 11 |
 | `apps/console/src/__tests__/utils/agencyPermissionMirror.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/agencyPersona.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyPriorAttempts.test.ts` | 13 |
@@ -1264,16 +1395,18 @@ Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.t
 | `apps/console/src/__tests__/utils/agencyStaleResponse.test.ts` | 18 |
 | `apps/console/src/__tests__/utils/agencyStationExit.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyStationIdle.test.ts` | 5 |
+| `apps/console/src/__tests__/utils/agencyStationLiveness.test.ts` | 8 |
+| `apps/console/src/__tests__/utils/agencyStationReducer.test.ts` | 21 |
 | `apps/console/src/__tests__/utils/agencyStatsConsumers.test.ts` | 37 |
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/agentPermissions.test.ts` | 22 |
+| `apps/console/src/__tests__/utils/agentWindows.timezone.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
-| `apps/console/src/__tests__/utils/concurrency.test.ts` | 9 |
-| `apps/console/src/__tests__/utils/errors.test.ts` | 21 |
-| `apps/console/src/__tests__/utils/format.test.ts` | 70 |
+| `apps/console/src/__tests__/utils/format.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/inviteJoin.test.ts` | 8 |
+| `apps/console/src/__tests__/utils/keyboardTarget.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/permissions.test.ts` | 41 |
 | `apps/console/src/__tests__/utils/phone.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/poll-backoff.test.ts` | 13 |
@@ -1281,7 +1414,6 @@ Files: `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.t
 | `apps/console/src/__tests__/utils/sessionRefusal.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/switcherFocus.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/switcherSearch.test.ts` | 6 |
-| `apps/console/src/__tests__/utils/telephonyProviders.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/vocabulary.analysis.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/vocabulary.test.ts` | 16 |
 
@@ -1301,34 +1433,33 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/console/src/__tests__/registration/analysis-profiles-registration.test.tsx` | 3 |
 | `apps/console/src/__tests__/session.test.ts` | 9 |
 | `apps/console/src/__tests__/snake-case.test.ts` | 19 |
-| `apps/console/src/__tests__/themeTokenParity.test.ts` | 4 |
 
 ## `apps/super-admin`
 
 ### `apps/super-admin/src/`
 
-App shell: `App.tsx`, `main.tsx`, `config.ts`, `brand.ts`, global CSS.
+App shell: `App.tsx`, `main.tsx` (imports `@magick-agency/web-ui/global.css`), `config.ts`, `brand.ts`.
 
-Files: `App.tsx`, `brand.ts`, `config.ts`, `global.css`, `main.tsx`, `vite-env.d.ts`
+Files: `App.tsx`, `brand.ts`, `config.ts`, `main.tsx`, `vite-env.d.ts`
 
 _No dedicated test files._
 
 ### `apps/super-admin/src/api/`
 
-`saFetch` and the super-admin API module (JWT in `sessionStorage`).
+`saFetch` and the super-admin API module (JWT in `sessionStorage`); error bodies are read by `parseApiErrorBody` from `packages/web-ui`, as in the console.
 
 Files: `saRoutes.ts`, `super-admin.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 29 |
+| `apps/super-admin/src/__tests__/api/saFetch.test.ts` | 35 |
 | `apps/super-admin/src/__tests__/api/saRoutes.test.ts` | 55 |
 
 ### `apps/super-admin/src/components/`
 
-Auth guard, shared widgets, layout, and super-admin components (tenant feature flags, settings, members and the rest).
+Auth guard, the super-admin's own shared widgets (`StatCard`, `AdvancedSection`, logo; the rest are in `packages/web-ui`), layout, and super-admin components (tenant feature flags, settings, members and the rest).
 
-Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `common/AdvancedSection.tsx`, `common/Breadcrumbs.module.css`, `common/Breadcrumbs.tsx`, `common/ConfirmDialog.module.css`, `common/ConfirmDialog.tsx`, `common/DataTable.module.css`, `common/DataTable.tsx`, `common/EmptyState.module.css`, `common/EmptyState.tsx`, `common/ErrorAlert.module.css`, `common/ErrorAlert.tsx`, `common/ErrorText.module.css`, `common/ErrorText.tsx`, `common/HelpTooltip.module.css`, `common/HelpTooltip.tsx`, `common/LiveDot.module.css`, `common/LiveDot.tsx`, `common/LoadingSpinner.module.css`, `common/LoadingSpinner.tsx`, `common/Logo.tsx`, `common/Modal.module.css`, `common/Modal.tsx`, `common/PageHeader.module.css`, `common/PageHeader.tsx`, `common/Pagination.module.css`, `common/Pagination.tsx`, `common/RequestId.module.css`, `common/RequestId.tsx`, `common/StatCard.module.css`, `common/StatCard.tsx`, `common/StatusBadge.module.css`, `common/StatusBadge.tsx`, `common/Toast.module.css`, `common/Toast.tsx`, `common/index.ts`, `layout/SuperAdminLayout.module.css`, `layout/SuperAdminLayout.tsx`, `layout/SuperAdminSidebar.module.css`, `layout/SuperAdminSidebar.tsx`, `super-admin/TenantFeatureFlags.module.css`, `super-admin/TenantFeatureFlags.tsx`, `super-admin/TenantPicker.module.css`, `super-admin/TenantPicker.tsx`, `super-admin/feature-flags/BooleanFlagCell.tsx`, `super-admin/feature-flags/BulkRolloutModal.tsx`, `super-admin/feature-flags/ConfirmDialog.tsx`, `super-admin/feature-flags/FlagDialog.tsx`, `super-admin/feature-flags/FlagPolicyWarning.tsx`, `super-admin/feature-flags/NumberFlagDialog.tsx`, `super-admin/feature-flags/NumericFlagCell.tsx`, `super-admin/feature-flags/OverrideReasonDialog.tsx`, `super-admin/feature-flags/TriStateControl.tsx`, `super-admin/feature-flags/featureFlags.module.css`, `super-admin/feature-flags/flagUtils.ts`
+Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `common/AdvancedSection.tsx`, `common/Logo.tsx`, `common/StatCard.module.css`, `common/StatCard.tsx`, `common/index.ts`, `layout/SuperAdminLayout.module.css`, `layout/SuperAdminLayout.tsx`, `layout/SuperAdminSidebar.module.css`, `layout/SuperAdminSidebar.tsx`, `super-admin/TenantFeatureFlags.module.css`, `super-admin/TenantFeatureFlags.tsx`, `super-admin/TenantPicker.module.css`, `super-admin/TenantPicker.tsx`, `super-admin/feature-flags/BooleanFlagCell.tsx`, `super-admin/feature-flags/BulkRolloutModal.tsx`, `super-admin/feature-flags/ConfirmDialog.tsx`, `super-admin/feature-flags/FlagDialog.tsx`, `super-admin/feature-flags/FlagPolicyWarning.tsx`, `super-admin/feature-flags/NumberFlagDialog.tsx`, `super-admin/feature-flags/NumericFlagCell.tsx`, `super-admin/feature-flags/OverrideReasonDialog.tsx`, `super-admin/feature-flags/TriStateControl.tsx`, `super-admin/feature-flags/featureFlags.module.css`, `super-admin/feature-flags/flagUtils.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1342,57 +1473,50 @@ Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `commo
 | `apps/super-admin/src/__tests__/components/TriStateControl.test.tsx` | 12 |
 | `apps/super-admin/src/__tests__/components/flagUtils.test.ts` | 9 |
 
-### `apps/super-admin/src/config/`
-
-Super-admin configuration helpers.
-
-Files: `telephonyProviders.ts`
-
-_No dedicated test files._
-
 ### `apps/super-admin/src/contexts/`
 
-Super-admin auth context and the rest.
+Super-admin auth context (memoised value; the toast context is in `packages/web-ui`).
 
-Files: `SuperAdminContext.tsx`, `ToastContext.tsx`
+Files: `SuperAdminContext.tsx`
 
 | Test file | Cases |
 |---|---|
-| `apps/super-admin/src/__tests__/contexts/SuperAdminContext.test.tsx` | 12 |
+| `apps/super-admin/src/__tests__/contexts/SuperAdminContext.test.tsx` | 13 |
 
 ### `apps/super-admin/src/hooks/`
 
-Data-loading hooks.
+Data-loading hooks. The tenant, user and admin lists are thin wrappers over `useAsyncResource` from `packages/web-ui`.
 
 Files: `useCountUp.ts`, `useSuperAdminAdmins.ts`, `useSuperAdminAudit.ts`, `useSuperAdminTenant.ts`, `useSuperAdminTenants.ts`, `useSuperAdminUsageCounts.ts`, `useSuperAdminUsers.ts`
 
 | Test file | Cases |
 |---|---|
+| `apps/super-admin/src/__tests__/hooks/useSuperAdminLists.test.ts` | 6 |
 | `apps/super-admin/src/__tests__/hooks/useSuperAdminTenant.test.ts` | 3 |
 | `apps/super-admin/src/__tests__/hooks/useSuperAdminUsageCounts.test.ts` | 15 |
 
 ### `apps/super-admin/src/pages/`
 
-Login, and the super-admin pages: tenants and tenant detail, users, admins, phone numbers, feature flags, usage, audit.
+Login, and the super-admin pages: tenants and tenant detail, users, admins, phone numbers, feature flags, usage, audit. The tenant detail page's Service and Members tabs and its account settings panel are in `super-admin/tenant-detail/`; the phone numbers page's create and edit modals and its bulk selection hook are in `super-admin/phone-numbers/`.
 
-Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `super-admin/SAAdminsPage.module.css`, `super-admin/SAAdminsPage.tsx`, `super-admin/SAAuditPage.module.css`, `super-admin/SAAuditPage.tsx`, `super-admin/SAFeatureFlagsPage.module.css`, `super-admin/SAFeatureFlagsPage.tsx`, `super-admin/SAPhoneNumbersPage.module.css`, `super-admin/SAPhoneNumbersPage.tsx`, `super-admin/SATelephonyCredentialsPage.module.css`, `super-admin/SATelephonyCredentialsPage.tsx`, `super-admin/SATenantDetailPage.module.css`, `super-admin/SATenantDetailPage.tsx`, `super-admin/SATenantsPage.module.css`, `super-admin/SATenantsPage.tsx`, `super-admin/SAUsagePage.module.css`, `super-admin/SAUsagePage.tsx`, `super-admin/SAUsersPage.module.css`, `super-admin/SAUsersPage.tsx`
+Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `super-admin/SAAdminsPage.module.css`, `super-admin/SAAdminsPage.tsx`, `super-admin/SAAuditPage.module.css`, `super-admin/SAAuditPage.tsx`, `super-admin/SAFeatureFlagsPage.module.css`, `super-admin/SAFeatureFlagsPage.tsx`, `super-admin/phone-numbers/PhoneNumberCreateModal.tsx`, `super-admin/phone-numbers/PhoneNumberEditModal.tsx`, `super-admin/phone-numbers/usePhoneNumberBulk.ts`, `super-admin/SAPhoneNumbersPage.module.css`, `super-admin/SAPhoneNumbersPage.tsx`, `super-admin/SATelephonyCredentialsPage.module.css`, `super-admin/SATelephonyCredentialsPage.tsx`, `super-admin/SATenantDetailPage.module.css`, `super-admin/SATenantDetailPage.tsx`, `super-admin/tenant-detail/AccountSettingsPanel.tsx`, `super-admin/tenant-detail/TenantMembersTab.tsx`, `super-admin/tenant-detail/TenantServiceTab.tsx`, `super-admin/SATenantsPage.module.css`, `super-admin/SATenantsPage.tsx`, `super-admin/SAUsagePage.module.css`, `super-admin/SAUsagePage.tsx`, `super-admin/SAUsersPage.module.css`, `super-admin/SAUsersPage.tsx`
 
 | Test file | Cases |
 |---|---|
 | `apps/super-admin/src/__tests__/pages/SAAuditPage.test.tsx` | 1 |
 | `apps/super-admin/src/__tests__/pages/SAFeatureFlagsPage.test.tsx` | 34 |
-| `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 5 |
+| `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 15 |
 | `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 8 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
-| `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 11 |
+| `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 16 |
 | `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 22 |
 | `apps/super-admin/src/__tests__/pages/SAUsersPage.test.tsx` | 9 |
 
 ### `apps/super-admin/src/utils/`
 
-Formatting and helpers.
+Helpers (error and format helpers are in `packages/web-ui`).
 
-Files: `errors.ts`, `format.ts`, `localDayBounds.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
+Files: `localDayBounds.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
 
 | Test file | Cases |
 |---|---|

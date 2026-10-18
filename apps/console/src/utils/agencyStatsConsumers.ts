@@ -57,13 +57,19 @@ export type StatsFieldConsumer =
  */
 export const SUPERVISOR_SOURCES = [
   'src/pages/agency/AgencyCampaignDetailPage.tsx',
+  'src/pages/agency/campaign-detail/CampaignOverviewPanel.tsx',
+  'src/pages/agency/campaign-detail/useAgencyCampaignDetail.ts',
   'src/pages/agency/AgencyCampaignsPage.tsx',
+  'src/pages/agency/campaigns-home/ActiveCampaignCard.tsx',
+  'src/pages/agency/campaigns-home/useCampaignsHome.ts',
   'src/components/agency/CampaignHealthStrip.tsx',
   'src/components/agency/CampaignPerformance.tsx',
   'src/components/agency/AgentFloor.tsx',
   'src/components/agency/AgentFloorDrawer.tsx',
   'src/utils/agencyHealthStrip.ts',
-  'src/utils/agencyCampaignOverview.ts',
+  'src/utils/agency/overview/funnel.ts',
+  'src/utils/agency/overview/pulse.ts',
+  'src/utils/agency/overview/lifecycle.ts',
   'src/utils/agencyCampaignPerformance.ts',
   'src/utils/agencyAgentFloor.ts',
 ] as const;
@@ -77,7 +83,9 @@ export type SupervisorSource = (typeof SUPERVISOR_SOURCES)[number];
   component above it does the reading. Naming the renderer would make the guard
   pass on a file that has no idea the field exists.
 */
-const OVERVIEW = 'src/utils/agencyCampaignOverview.ts';
+const FUNNEL = 'src/utils/agency/overview/funnel.ts';
+const PULSE = 'src/utils/agency/overview/pulse.ts';
+const LIFECYCLE = 'src/utils/agency/overview/lifecycle.ts';
 const STRIP = 'src/components/agency/CampaignHealthStrip.tsx';
 const PERFORMANCE = 'src/utils/agencyCampaignPerformance.ts';
 const FLOOR = 'src/components/agency/AgentFloor.tsx';
@@ -102,25 +110,26 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
 
   // ── the campaign counters ────────────────────────────────────────────────────────
   //
-  // These moved off the page and into `agencyCampaignOverview`: the
+  // These moved off the page and into `agencyCampaignOverview` (now split into
+  // `agency/overview/{funnel,pulse,lifecycle}.ts`): the
   // Overview panel no longer renders one tile per field, so every one of them
   // is now read by a derivation — the funnel's proportions, the "list worked"
   // ring, or a cell of the pulse strip — rather than by a `formatMetric` call
   // in JSX. The reader moving is exactly the staleness this map is here to
   // catch, so the entries move with it.
-  contacts_total: { consumedIn: OVERVIEW },
-  contacts_pending: { consumedIn: OVERVIEW },
-  contacts_in_flight: { consumedIn: OVERVIEW },
-  contacts_completed: { consumedIn: OVERVIEW },
-  contacts_suppressed: { consumedIn: OVERVIEW },
-  contacts_exhausted: { consumedIn: OVERVIEW },
-  retries_pending: { consumedIn: OVERVIEW },
-  attempts_total: { consumedIn: OVERVIEW },
-  attempts_connected: { consumedIn: OVERVIEW },
+  contacts_total: { consumedIn: FUNNEL },
+  contacts_pending: { consumedIn: FUNNEL },
+  contacts_in_flight: { consumedIn: FUNNEL },
+  contacts_completed: { consumedIn: FUNNEL },
+  contacts_suppressed: { consumedIn: FUNNEL },
+  contacts_exhausted: { consumedIn: FUNNEL },
+  retries_pending: { consumedIn: FUNNEL },
+  attempts_total: { consumedIn: PULSE },
+  attempts_connected: { consumedIn: PULSE },
   // Two readers, and the guard needs only one: the pulse strip renders it, and
   // the page's poll predicate reads it to decide whether the numbers are still
   // moving.
-  attempts_live: { consumedIn: OVERVIEW },
+  attempts_live: { consumedIn: PULSE },
   // Two readers, and the guard needs only one: the floor uses it to distinguish
   // “the roster did not load” from “nobody is on this campaign”, and the
   // Overview rail falls back to it when `agents_by_state` is absent — a total
@@ -169,6 +178,6 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   // sentence it fills. That is what let them ship as the lower-priority half of
   // the contract, and it is also why this map is the only thing standing between
   // "the server sends it" and "nobody notices it stopped arriving".
-  attempts_retried: { consumedIn: OVERVIEW },
-  agents_peak: { consumedIn: OVERVIEW },
+  attempts_retried: { consumedIn: PULSE },
+  agents_peak: { consumedIn: LIFECYCLE },
 };

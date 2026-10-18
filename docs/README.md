@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-10-09.
+are as of 2026-10-17.
 
 ## What Magick Agency is
 
@@ -21,7 +21,10 @@ and data, the voice engine, the dialer runtime, call analysis, the public API, t
 super-admin console. Manas's 2026-10-09 rulings on the open questions and branding are implemented.
 Last full run (2026-10-09): lint clean in 7 packages; server 6412 unit / 1172 integration;
 console 4367; super-admin 366; builds OK. Unit re-run 2026-10-10: server 6507, console 4374;
-2026-10-11 (brand logo): console 4389, super-admin 374 (`status.md`).
+2026-10-11 (brand logo): console 4389, super-admin 374. After the 2026-10-16/17 tidy-up (shared
+`packages/web-ui`, migrations 0003 and 0004, split modules, a batch-claim over-claim bug fixed): server 6703
+unit + 42 skipped / 1211 integration; db 426 / 469; console 4410; super-admin 421; web-ui 231
+(`status.md`).
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
@@ -31,7 +34,8 @@ from a local machine; a staging VM exists (`status.md`, next steps). Nothing has
 production data.
 
 **Needs Manas.** Ratify the launch defaults and Q3; `supervisor_hold`; shutdown grace (45 s,
-now in the production compose file) and in-flight pacing ticks; B15 roster supersede; vendor setup; the gated checks (real
+now in the production compose file) and the 5 s wait for in-flight pacing ticks; the tidy-up
+defaults (including the `en-IN` display locale) and the 25 vs 20 rate floors; B15 roster supersede; vendor setup; the gated checks (real
 VoiceLink call, real recording analysed, Playwright happy path, parity check, dark pilot); launch
 decisions.
 
@@ -45,7 +49,7 @@ Details and next steps: [`status.md`](status.md).
 | [`intent-and-plan.md`](intent-and-plan.md) | What it is for, the settled product decisions, why it is built this way, the delivery phases, invariants, out of scope |
 | [`architecture.md`](architecture.md) | How it is built: packages, server composition and start/stop order, the public API layer and internal handler instance, identity, dialer runtime, voice engine, analysis, DNC, audit, UIs, observability, tests, CI |
 | [`modules.md`](modules.md) | Every module and file group, what it does, and which test files cover it |
-| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B17, rulings Q1–Q9, still open with owner |
+| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B23, rulings Q1–Q9 and later rulings, still open with owner |
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |

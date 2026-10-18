@@ -15,11 +15,14 @@ and its pinning test, never by adapting one side to the other.
 |---|---|
 | Server modules | `apps/server/src/<area>/...` |
 | Repositories and models used by more than one area | `packages/db/src/repositories/`, `packages/db/src/models/` |
-| The agency repository, its model and the DNC outbox repository (they import about fifteen `apps/server/src/agency/` modules) | `apps/server/src/db/repositories/`, `apps/server/src/db/models/` (decision B12) |
+| The agency repository and its model (they import about fifteen `apps/server/src/agency/` modules) | `apps/server/src/db/repositories/agency.repository.ts`, a barrel over one file per repository class in `apps/server/src/db/repositories/agency/` (callers and `vi.mock` use the barrel path); `apps/server/src/db/models/` (decision B12) |
 | Logger, log context, crypto, metric instruments, tracing (`Traced`, `withSpan`) | `packages/observability/src/` |
 | Metric declarations | `packages/observability/src/metrics/<area>.ts` |
-| The dialer's wire contract | `packages/contracts/src/agency.ts` |
+| The dialer's wire contract | `packages/contracts/src/agency.ts`, a barrel over `packages/contracts/src/agency/` |
+| UI components, hooks and helpers used by both SPAs | `packages/web-ui/src/` (decision B23) |
 | Leaf dialer rules (no imports, or only contracts and other leaves: abandonment predicate, timers, rates, keyset cursor, success disposition, ...) | `packages/domain/src/` |
+| A route plugin's routes, once it is large | the exported plugin function, its hooks and module note stay in `apps/server/src/api/routes/<family>.routes.ts`; the routes go in `apps/server/src/api/routes/<family>/` as `register…(app)` functions it calls on the same instance, so its hooks apply to them and the area plugin does not change |
+| Helpers shared by several route files (ownership probe, parse-or-400, CSV attachment, page drain, ...) | `apps/server/src/api/routes/helpers/` |
 | Unit and integration tests | the package's `test/unit/<path>` and `test/integration/<path>`, mirroring `src/<path>` |
 
 ## 2. Module-area files in the shared server
@@ -79,7 +82,9 @@ export interface WebRtcLifecycleEvent {}
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 ```
 
-`WebRtcCallRecord` and `WebRtcCallStatus` come from `packages/db/src/models/agency-call.model.ts`.
+The exported types and `WebRtcCallError` are defined in `apps/server/src/core/bridge/bridge-types.ts`
+and re-exported unchanged from `webrtc-bridge-manager.ts`, which stays the seam's module path (import
+them from there). `WebRtcCallRecord` and `WebRtcCallStatus` come from `packages/db/src/models/agency-call.model.ts`.
 The constructor takes the `TelephonyGuardHost` (`apps/server/src/core/telephony-guard-host.ts`),
 which provides the concurrency guard (`acquireTelephonyConcurrency`, `releaseTelephonyLease`,
 `wakeSelfHeal`). A type-level test, `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts`,
@@ -99,7 +104,8 @@ implementation enqueues correctly.
 
 ### 3.3 Super-admin concurrency writes → guard
 
-`apps/server/src/seams/concurrency-control.ts`. The super-admin concurrency routes write the
+`apps/server/src/seams/concurrency-control.ts`. The super-admin concurrency routes
+(`api/routes/super-admin/concurrency.ts`) write the
 allocation through the shared repository, then invalidate in order: settings cache, account guard,
 provider guard (the two guard calls go through `getConcurrencyControl()`). The utilization read
 (`getAccountCount`) and the provider-mode migration's drain check (`getDistributedAccountCount`, on

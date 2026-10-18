@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { forceAgentAvailable } from '../../api/agency';
 import { ApiError } from '../../api/client';
-import { Modal } from '../common/Modal';
-import { ConfirmDialog } from '../common/ConfirmDialog';
+import { Modal } from '@magick-agency/web-ui/components/Modal';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import {
   AGENCY_FLOOR_STATE_LABELS,
   FORCE_AVAILABLE_CONFIRM,
@@ -20,6 +20,7 @@ import {
 import { formatDuration } from '../../utils/agencyClock';
 import { trackAgencyFloorIntervention } from '../../analytics/events';
 import type { AgencySupervisorAgent } from '../../types/agency-campaign';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgentFloorDrawer.module.css';
 
 /**
@@ -161,7 +162,7 @@ export function AgentFloorDrawer({
           </div>
           <div className={styles.fact}>
             <dt>Calls this shift</dt>
-            <dd>{agent.calls_handled.toLocaleString()}</dd>
+            <dd>{formatCount(agent.calls_handled)}</dd>
           </div>
           <div className={styles.fact}>
             <dt>Station</dt>

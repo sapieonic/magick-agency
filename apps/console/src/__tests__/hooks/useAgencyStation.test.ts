@@ -227,6 +227,32 @@ describe('useAgencyStation', () => {
       expect(view.result.current.live).not.toBeNull();
     });
 
+    it('records a diagnostic without re-rendering anything', async () => {
+      /**
+       * The buffer used to be React state copied whole on every entry, so each
+       * bridge `status` frame re-rendered the console to update a value nothing
+       * on screen reads. It is a ref-held log now: the entry lands, the render
+       * does not.
+       */
+      let renders = 0;
+      const view = renderHook(() => {
+        renders += 1;
+        return useAgencyStation(BOOTSTRAP);
+      });
+      await waitFor(() => expect(FakeSocket.instances.length).toBe(1));
+      act(() => latest().open());
+      await waitFor(() => expect(view.result.current.connection).toBe('open'));
+      const held = view.result.current.diagnostics;
+      const before = renders;
+
+      act(() => latest().emit({ event: 'status', status: 'ringing' }));
+      act(() => latest().emit({ event: 'ended', reason: 'remote_hangup' }));
+
+      expect(renders).toBe(before);
+      expect(held.map((d) => d.event).slice(-2)).toEqual(['status', 'ended']);
+      view.unmount();
+    });
+
     it('routes an unknown future frame to diagnostics without throwing', async () => {
       // The server ships independently; an unrecognised frame is expected traffic.
       const view = await mounted();
@@ -1733,6 +1759,37 @@ describe('useAgencyStation', () => {
 
         await vi.waitFor(() => expect(FakeSocket.instances.length).toBeGreaterThan(1));
         expect(latest().url).toContain('token=AFTER_TIMEOUT');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('clears the mint deadline once the mint answers', async () => {
+      /**
+       * The deadline is a timer raced against the request, and it used to be left
+       * running after the request won: one stray 15s timer per reconnect, each
+       * rejecting a promise nothing listened to any more.
+       */
+      vi.useFakeTimers();
+      try {
+        renderHook(() => useAgencyStation(BOOTSTRAP));
+        await vi.waitFor(() => expect(FakeSocket.instances.length).toBe(1));
+        mocks.mintStationToken.mockResolvedValue({
+          session_id: 'sess-1',
+          station_ws_url: '/proxy/agency/station/sess-1?token=MINTED',
+          expires_at: '2026-08-11T10:05:00.000Z',
+        });
+        act(() => latest().open());
+        act(() => latest().serverClose(1006, ''));
+
+        // The retry fires, the mint answers, and the second socket is created.
+        await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+        expect(FakeSocket.instances).toHaveLength(2);
+        expect(latest().url).toContain('token=MINTED');
+
+        // Nothing is pending: no retry (it fired), no heartbeat (not open yet), and
+        // no leftover mint deadline.
+        expect(vi.getTimerCount()).toBe(0);
       } finally {
         vi.useRealTimers();
       }

@@ -5,6 +5,7 @@ import {
   type BucketSeries,
   type SeriesPoint,
 } from '../../utils/agencyAgentPerformance';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgentBucketChart.module.css';
 
 /**
@@ -180,7 +181,7 @@ export function AgentBucketChart({ series, className }: AgentBucketChartProps) {
           data-testid="bucket-chart"
         >
           <title id={titleId}>
-            {`Dials and conversations by day, ${series.points.length} days, up to ${top.toLocaleString()} calls a day.`}
+            {`Dials and conversations by day, ${series.points.length} days, up to ${formatCount(top)} calls a day.`}
           </title>
 
           {/* Hairline, solid, one step off the surface. Three lines, not five —
@@ -197,7 +198,7 @@ export function AgentBucketChart({ series, className }: AgentBucketChartProps) {
                   y2={y}
                 />
                 <text className={styles.tick} x={PAD_LEFT - 8} y={y + 4} textAnchor="end">
-                  {Math.round(top * fraction).toLocaleString()}
+                  {formatCount(Math.round(top * fraction))}
                 </text>
               </g>
             );
@@ -213,7 +214,7 @@ export function AgentBucketChart({ series, className }: AgentBucketChartProps) {
               <g key={point.start} className={styles.group} data-testid={`bucket-${point.start}`}>
                 {/* One tooltip for the pair, because the reader's question is
                     always "how did these two compare on that day". */}
-                <title>{`${point.title}: ${point.attempts.toLocaleString()} dials, ${point.connected.toLocaleString()} conversations`}</title>
+                <title>{`${point.title}: ${formatCount(point.attempts)} dials, ${formatCount(point.connected)} conversations`}</title>
                 {/* A full-height hit target, so hovering does not require
                     landing on a two-pixel bar on a quiet day. */}
                 <rect
@@ -244,7 +245,7 @@ export function AgentBucketChart({ series, className }: AgentBucketChartProps) {
                     y={baseline - attemptsH - 6}
                     textAnchor="middle"
                   >
-                    {point.attempts.toLocaleString()}
+                    {formatCount(point.attempts)}
                   </text>
                 )}
                 {index % labelEvery === 0 && (
@@ -325,8 +326,8 @@ function NumbersTable({ points }: { points: SeriesPoint[] }) {
           {points.map((point) => (
             <tr key={point.start}>
               <th scope="row">{point.title}</th>
-              <td>{point.attempts.toLocaleString()}</td>
-              <td>{point.connected.toLocaleString()}</td>
+              <td>{formatCount(point.attempts)}</td>
+              <td>{formatCount(point.connected)}</td>
             </tr>
           ))}
         </tbody>

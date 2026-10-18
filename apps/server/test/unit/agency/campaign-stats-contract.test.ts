@@ -215,11 +215,11 @@ describe('attempts_retried counts dials PLACED, not retries queued', () => {
     // dialled third attempts: 65 without the gate, 15 with it. Same gate the series
     // aggregate applies to the same table.
     expect(sqlOf()).toMatch(
-      /attempt_number > 1\s+AND dialed_at IS NOT NULL\)::text AS attempts_retried/,
+      /FILTER \(WHERE attempt_number > 1 AND dialed_at IS NOT NULL\) AS attempts_retried/,
     );
     // And it is a different predicate from `retries_pending`, which is about
     // contacts whose `next_attempt_at` is in the future.
-    expect(sqlOf()).toContain('next_attempt_at > now())::text AS retries_pending');
+    expect(sqlOf()).toContain('next_attempt_at > now()) AS retries_pending');
   });
 
   it('is ALWAYS produced even though the contract types it optional', async () => {

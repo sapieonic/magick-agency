@@ -44,9 +44,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // The column types are read off the squashed BASELINE (one CREATE TABLE, no later
 // ALTERs); the INSERT has 20 columns.
 const BASELINE = resolve(__dirname, '../../../../../packages/db/migrations/0001_baseline.sql');
-const REPOSITORY = resolve(__dirname, '../../../src/db/repositories/agency.repository.ts');
+// The repository is a folder behind the `agency.repository.ts` barrel: `create()`
+// lives in the campaign class's file, and the column list it interpolates in the
+// shared SQL fragments (`retryFromCampaign` binds the same twenty).
+const REPOSITORY = resolve(__dirname, '../../../src/db/repositories/agency/campaign.repository.ts');
+const FRAGMENTS = resolve(__dirname, '../../../src/db/repositories/agency/sql-fragments.ts');
 
 const repoSource = readFileSync(REPOSITORY, 'utf8');
+const fragmentsSource = readFileSync(FRAGMENTS, 'utf8');
 
 /** Strip `--` line comments; the headers in this repo are enormous. */
 function withoutComments(sql: string): string {
@@ -128,13 +133,25 @@ const TEXT_ASSIGNABLE = /^(text|varchar(\(\d+\))?|character varying(\(\d+\))?|ch
 
 // ── The INSERT under test, parsed out of the repository source ───────────────
 
+/** The text of `CAMPAIGN_INSERT_COLUMNS_SQL`, read off the SQL fragments source. */
+function insertColumnsConstant(): string {
+  const m = /const CAMPAIGN_INSERT_COLUMNS_SQL = `([^`]*)`;/.exec(fragmentsSource);
+  expect(m, 'CAMPAIGN_INSERT_COLUMNS_SQL was not found — this parser is stale').toBeTruthy();
+  return m![1]!;
+}
+
 function createInsertPairs(): Array<{ column: string; expr: string }> {
   const at = repoSource.indexOf('INSERT INTO agency_campaigns');
   expect(at, 'the create() INSERT was not found — this parser is stale').toBeGreaterThan(-1);
 
   const colsOpen = repoSource.indexOf('(', at);
   const colsClose = matchParen(repoSource, colsOpen);
-  const columns = splitTopLevel(repoSource.slice(colsOpen + 1, colsClose));
+  // The column list is the shared `CAMPAIGN_INSERT_COLUMNS_SQL` constant (create()
+  // and retryFromCampaign bind the same twenty), interpolated: resolve it from the
+  // source so the pairing below is still against the real text.
+  const columns = splitTopLevel(
+    repoSource.slice(colsOpen + 1, colsClose).replace('${CAMPAIGN_INSERT_COLUMNS_SQL}', insertColumnsConstant()),
+  );
 
   const valuesAt = repoSource.indexOf('VALUES', colsClose);
   const vOpen = repoSource.indexOf('(', valuesAt);

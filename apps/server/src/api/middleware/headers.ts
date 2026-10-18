@@ -15,3 +15,25 @@ export const ORIGINATOR_HEADER = 'x-mgkvc-originator';
 /** Optional headers carrying human-readable tenant/account names. */
 export const TENANT_NAME_HEADER = 'x-mgkvc-tenant-name';
 export const ACCOUNT_NAME_HEADER = 'x-mgkvc-account-name';
+/**
+ * Internal only: the campaign whose ownership the public-API caller already proved on
+ * this request (`CoreCallRequest.provenCampaignId`), with the tenant and account it was
+ * proved under ({@link provenCampaignProof}). Set by `callCore` from its typed arguments
+ * alone, never forwarded from a caller's headers.
+ */
+export const PROVEN_CAMPAIGN_HEADER = 'x-mgkvc-proven-campaign';
+
+/**
+ * The {@link PROVEN_CAMPAIGN_HEADER} value: `<tenant>:<account>:<campaign>`, the account
+ * empty when the call has none. `callCore` builds it from the call's tenant, account and
+ * `provenCampaignId`; the spine page reads build it from their own tenant context and the
+ * campaign in their path, and honour the header only when the two are equal, so a proof
+ * made under one tenant or account proves nothing under another.
+ */
+export function provenCampaignProof(
+  tenantId: string,
+  accountId: string | undefined,
+  campaignId: string,
+): string {
+  return `${tenantId}:${accountId ?? ''}:${campaignId}`;
+}

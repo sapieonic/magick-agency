@@ -4,7 +4,7 @@ import { agencyPersona } from '../../utils/agencyPersona';
 import { AgentNav } from './AgentNav';
 import type { AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
 import { AccountUnavailable } from '../common/AccountUnavailable';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import styles from './AgentSurfaceShell.module.css';
 
 /**

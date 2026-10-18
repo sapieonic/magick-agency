@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, Calendar, Download, History, ListChecks, RefreshCw } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useToast } from '../../contexts/ToastContext';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadCampaignActivityCsv, getCampaignActivity } from '../../api/agencyActivity';
 import { ApiError } from '../../api/client';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import {
   trackAgencyActivityFiltered,
   trackAgencyActivityLoadMore,
@@ -26,11 +26,11 @@ import {
   retentionNotice,
   truncationNotice,
 } from '../../utils/agencyActivityCopy';
-import { Breadcrumbs } from '../../components/common/Breadcrumbs';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { TruncatedId } from '../../components/common/TruncatedId';
 import { PageDescription } from '../../components/common/PageDescription';
 import { MultiSelectFilter } from '../../components/agency/MultiSelectFilter';
@@ -334,10 +334,8 @@ export function AgencyCampaignActivityPage() {
     setFilters({});
   }, []);
 
-  const filtered = useMemo(
-    () => Boolean(filters.actions?.length || filters.from || filters.to),
-    [filters],
-  );
+  // The same question as the badge's count, asked once.
+  const filtered = activeFilterCount > 0;
 
   /**
    * The filter's options and the table's labels both come from the response.
@@ -658,81 +656,7 @@ export function AgencyCampaignActivityPage() {
                     <td className={styles.when}>{formatActivityTimestamp(row.at)}</td>
                     <td className={styles.action}>{activityActionLabel(row.action, actionLabels)}</td>
                     <td className={actorClassName(row)}>
-                      {actorKind(row) === 'system' ? (
-                        row.actor.display ?? 'Automatic'
-                      ) : actorKind(row) === 'api_key' ? (
-                        /*
-                         * A platform API key, named as the CREDENTIAL and never
-                         * as the person who minted it. The server used
-                         * to stamp that person here and now does not — so
-                         * `user_id` is null on these rows, and the pre-existing
-                         * `system` branch above would have rendered them
-                         * "Automatic": nothing human was involved in an action
-                         * somebody's credential performed. It does not, because
-                         * `actor.system` is false for a key; this branch is what
-                         * gives the row somewhere correct to go.
-                         *
-                         * `display` is the key's own NAME, resolved by the server
-                         * ("Nightly sync"), which is the thing a supervisor acts
-                         * on — the follow-up is to find and revoke that key. It
-                         * falls back to the server's own bare label rather than to a
-                         * uuid, so the id stays in the tooltip where it is
-                         * looked up rather than in the cell where it identifies
-                         * nobody.
-                         */
-                        <span
-                          className={styles.keyActorLabel}
-                          data-testid="activity-key-actor"
-                        >
-                          {/*
-                            * The marker is APPENDED to a resolved name, never
-                            * wrapped around the fallback — `{display ?? 'API
-                            * key'} (API key)` printed "API key (API key)" on
-                            * every row the server could not name, which is the
-                            * common case for a revoked key.
-                            */}
-                          {row.actor.display ? `${row.actor.display} (API key)` : 'API key'}
-                          {row.actor.api_key_id && (
-                            <>
-                              {' '}
-                              {/*
-                                * The id was a `title` on the label, i.e. hover
-                                * only — unreachable by keyboard or touch, and
-                                * this file already rejects that pattern for the
-                                * client actor immediately below. It is the
-                                * handle the key is looked up and revoked by, so
-                                * it gets a real control.
-                                */}
-                              <TruncatedId
-                                value={row.actor.api_key_id}
-                                label="API key ID"
-                                className={styles.keyActorId}
-                              />
-                            </>
-                          )}
-                        </span>
-                      ) : actorKind(row) === 'client' ? (
-                        // The dialer has no user table, so this is the CLIENT that
-                        // made the request, not a person. Rendered plainly it
-                        // reads as the name of whoever acted. The explanation
-                        // was a `title` — invisible to keyboard and
-                        // screen-reader users — so it is now reachable by tab
-                        // (`tabIndex`) and announced via `aria-describedby`,
-                        // pointing at the one shared node carrying
-                        // `CLIENT_ACTOR_TOOLTIP` (this varies row to row only
-                        // in whether it applies, not in what it says, so per
-                        // row it is a description behind focus, not a legend).
-                        <span
-                          className={styles.clientActorLabel}
-                          tabIndex={0}
-                          aria-describedby={CLIENT_ACTOR_DESC_ID}
-                          data-testid="activity-client-actor"
-                        >
-                          {row.actor.display ?? 'Unattributed'} (app)
-                        </span>
-                      ) : (
-                        row.actor.display ?? row.actor.user_id ?? 'Unattributed'
-                      )}
+                      <ActorCell row={row} />
                     </td>
                     <td className={styles.target}>
                       {row.target.id ? (
@@ -790,11 +714,93 @@ export function AgencyCampaignActivityPage() {
 }
 
 /**
- * The fallback for a row whose action this build does not summarise.
- *
- * Shown rather than hidden: an unrecognised audit row is exactly the one nobody
- * anticipated, and dropping it is the single omission this view cannot afford.
+ * The "Recorded by" cell — one branch per {@link activityActorKind}, so the four
+ * kinds of actor are a switch rather than a nested ternary that asked for the
+ * kind three times.
  */
+function ActorCell({ row }: { row: ActivityRow }) {
+  switch (activityActorKind(row)) {
+    case 'system':
+      return <>{row.actor.display ?? 'Automatic'}</>;
+    case 'api_key':
+      return (
+        /*
+         * A platform API key, named as the CREDENTIAL and never
+         * as the person who minted it. The server used
+         * to stamp that person here and now does not — so
+         * `user_id` is null on these rows, and the pre-existing
+         * `system` branch above would have rendered them
+         * "Automatic": nothing human was involved in an action
+         * somebody's credential performed. It does not, because
+         * `actor.system` is false for a key; this branch is what
+         * gives the row somewhere correct to go.
+         *
+         * `display` is the key's own NAME, resolved by the server
+         * ("Nightly sync"), which is the thing a supervisor acts
+         * on — the follow-up is to find and revoke that key. It
+         * falls back to the server's own bare label rather than to a
+         * uuid, so the id stays in the tooltip where it is
+         * looked up rather than in the cell where it identifies
+         * nobody.
+         */
+        <span
+          className={styles.keyActorLabel}
+          data-testid="activity-key-actor"
+        >
+          {/*
+            * The marker is APPENDED to a resolved name, never
+            * wrapped around the fallback — `{display ?? 'API
+            * key'} (API key)` printed "API key (API key)" on
+            * every row the server could not name, which is the
+            * common case for a revoked key.
+            */}
+          {row.actor.display ? `${row.actor.display} (API key)` : 'API key'}
+          {row.actor.api_key_id && (
+            <>
+              {' '}
+              {/*
+                * The id was a `title` on the label, i.e. hover
+                * only — unreachable by keyboard or touch, and
+                * this file already rejects that pattern for the
+                * client actor immediately below. It is the
+                * handle the key is looked up and revoked by, so
+                * it gets a real control.
+                */}
+              <TruncatedId
+                value={row.actor.api_key_id}
+                label="API key ID"
+                className={styles.keyActorId}
+              />
+            </>
+          )}
+        </span>
+      );
+    case 'client':
+      return (
+        // The dialer has no user table, so this is the CLIENT that
+        // made the request, not a person. Rendered plainly it
+        // reads as the name of whoever acted. The explanation
+        // was a `title` — invisible to keyboard and
+        // screen-reader users — so it is now reachable by tab
+        // (`tabIndex`) and announced via `aria-describedby`,
+        // pointing at the one shared node carrying
+        // `CLIENT_ACTOR_TOOLTIP` (this varies row to row only
+        // in whether it applies, not in what it says, so per
+        // row it is a description behind focus, not a legend).
+        <span
+          className={styles.clientActorLabel}
+          tabIndex={0}
+          aria-describedby={CLIENT_ACTOR_DESC_ID}
+          data-testid="activity-client-actor"
+        >
+          {row.actor.display ?? 'Unattributed'} (app)
+        </span>
+      );
+    case 'person':
+      return <>{row.actor.display ?? row.actor.user_id ?? 'Unattributed'}</>;
+  }
+}
+
 /**
  * A row whose "who" is not a person does not get the plain-person style.
  *
@@ -812,9 +818,12 @@ function actorClassName(row: ActivityRow): string | undefined {
   }
 }
 
-/** Local alias so the JSX below reads as a question about the row. */
-const actorKind = activityActorKind;
-
+/**
+ * The fallback for a row whose action this build does not summarise.
+ *
+ * Shown rather than hidden: an unrecognised audit row is exactly the one nobody
+ * anticipated, and dropping it is the single omission this view cannot afford.
+ */
 function RawDetail({ detail }: { detail: Record<string, unknown> }) {
   const entries = Object.entries(detail ?? {}).filter(([key]) => key !== 'campaign_id');
   if (entries.length === 0) return <span className={styles.noDetail}>—</span>;

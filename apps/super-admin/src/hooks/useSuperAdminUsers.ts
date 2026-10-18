@@ -1,26 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { listAllUsers } from '../api/super-admin';
 import type { SuperAdminUser } from '@magick-agency/contracts/api/platform/super-admin';
 
+// Module-level, so its identity is stable and the resource loads once per mount.
+const fetchUsers = async (): Promise<SuperAdminUser[]> => (await listAllUsers()).users;
+
 export function useSuperAdminUsers() {
-  const [users, setUsers] = useState<SuperAdminUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await listAllUsers();
-      setUsers(res.users);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load users');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  return { users, loading, error, reload: load };
+  const { data: users, loading, error, reload } = useAsyncResource(fetchUsers, {
+    initialData: [] as SuperAdminUser[],
+    errorMessage: 'Failed to load users',
+  });
+  return { users, loading, error, reload };
 }

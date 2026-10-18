@@ -844,6 +844,22 @@ describe('campaignTimeline', () => {
     expect(by(undefined)).toBeNull();
   });
 
+  it('renders the id of an actor the server could not name', () => {
+    /*
+      `{ user_id, name: null }` is an id-only actor: a caller that sent an id and
+      no display name. The server sends it as such (`name ?? null`), and the
+      contract's note says the console renders the id rather than inventing a
+      name or dropping the line.
+    */
+    const timeline = campaignTimeline(
+      campaign({ status: 'stopped', last_transition_by: { user_id: 'usr-1', name: null } }),
+      'stopped',
+      NOW,
+    );
+
+    expect(timeline.actor).toBe('usr-1');
+  });
+
   it('attributes nothing on a campaign that has not finished', () => {
     // `last_transition_by` describes the CURRENT status, which on a live
     // campaign is "running" — "Stopped by Priya" above a Pause button is a
@@ -1333,5 +1349,32 @@ describe('the funnel covers every state the roster can report', () => {
     const buckets = Object.values(CONTACT_STATE_BUCKET);
     expect(new Set(buckets).size).toBe(buckets.length);
     expect(buckets).toHaveLength(CONTACT_FUNNEL_STATES.length);
+  });
+});
+
+describe('drift fixes in the shared format and share helpers', () => {
+  it('skips a non-number state count rather than concatenating or NaN-ing the floor', () => {
+    // `?? 0` let a string through (`0 + '3'` is `'03'`) and a NaN poison the sum;
+    // the Agents tab's `floorStateSlices` already skipped non-numbers, so the
+    // rail and the tab read different floors off one payload.
+    const floor = floorSummary(stats({
+      agents_by_state: {
+        on_call: '3' as unknown as number,
+        wrapup: Number.NaN,
+        reserved: 0,
+        available: 2,
+        break: 0,
+        offline: 0,
+      },
+    }));
+    expect(floor.onShift).toBe(2);
+    expect(floor.slices.map((s) => [s.state, s.percent])).toEqual([['available', 100]]);
+  });
+
+  it('says “1 second”, not “1 seconds”, for a one-second wrap-up allowance', () => {
+    const campaign = (over: Partial<AgencyCampaign>): AgencyCampaign =>
+      ({ id: 'c1', name: 'Collections', status: 'stopped', ...over });
+    expect(howItRanLines(campaign({ wrapup_seconds: 1 }))[0]!.value).toBe('1 second');
+    expect(howItRanLines(campaign({ wrapup_seconds: 30 }))[0]!.value).toBe('30 seconds');
   });
 });

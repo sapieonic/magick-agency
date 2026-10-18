@@ -213,64 +213,7 @@
   flex-shrink: 0;
 }
 
-/* ── Modal ────────────────────────────────────── */
-
-.overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 9000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  animation: fadeIn 150ms ease-out;
-}
-
-.modal {
-  width: 100%;
-  max-width: 460px;
-  margin: 16px;
-  max-height: calc(100vh - 32px);
-  overflow-y: auto;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
-  animation: slideUp 200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.modalHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 20px 20px 0;
-}
-
-.modalTitle {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.modalClose {
-  padding: 4px;
-  background: transparent;
-  border: none;
-  color: var(--text-muted);
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: all var(--transition);
-}
-
-.modalClose:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.modalBody {
-  padding: 16px 20px 20px;
-}
+/* ── Modal footer (inside the shared <Modal>'s body) ── */
 
 .modalFooter {
   display: flex;

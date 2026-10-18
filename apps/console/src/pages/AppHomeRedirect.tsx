@@ -5,7 +5,7 @@ import { useFeatureFlags } from '../contexts/FeatureFlagsContext';
 import { hasPermission } from '../utils/permissions';
 import { isDedicatedAgent } from '../utils/agencyPersona';
 import { DialerUnavailable } from '../components/agency/DialerUnavailable';
-import { LoadingSpinner } from '../components/common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 
 /**
  * `/app`'s index — the platform zone's landing page.

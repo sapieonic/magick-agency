@@ -1,144 +1,88 @@
 /**
  * The console's view of the agency dialer wire contract.
  *
- * The frozen contract in `../../agency` is the wire truth. This file declares the
- * members the console renders, and the unions are declared WHOLE even where a
- * member is not yet reachable (`wrapup`, `break`), because a union that widens
- * later is a breaking change for every exhaustive switch.
+ * The frozen contract in `../../agency` is the wire truth. Every declaration it
+ * shares with the console unchanged is RE-EXPORTED below rather than copied, so
+ * the two cannot drift; this file declares only the shapes the console reads
+ * differently (see `CONTRACT-DIFF.md` §1) and the console's names for the
+ * rename-only pairs (§2). The unions are whole even where a member is not yet
+ * reachable (`wrapup`, `break`), because a union that widens later is a breaking
+ * change for every exhaustive switch.
  */
 
-export type AgencyAgentState =
-  | 'offline'
-  | 'available'
-  | 'reserved'
-  | 'on_call'
-  | 'wrapup'
-  | 'break';
+import type {
+  AgencyActionErrorResponse,
+  AgencyActiveAttempt,
+  AgencyAgentState,
+  AgencyAttemptOutcome,
+  AgencyAttemptState,
+  AgencyBreakReason,
+  AgencyCampaignChangeReason,
+  AgencyCampaignStatus,
+  AgencyContextDisplay,
+  AgencyDisposition,
+  AgencyMissedRelease,
+  AgencyNotesResponse,
+  AgencyPriorAttempt,
+  AgencyReleaseReason,
+  AgencyReservedAttempt,
+  AgencyRetryContext,
+  AgencyStationAgentStateFrame,
+  AgencyStationBridgeEndedFrame,
+  AgencyStationBridgedFrame,
+  AgencyStationCampaignStateFrame,
+  AgencyStationCountdownFrame,
+  AgencyStationErrorFrame,
+  AgencyStationMediaFrame,
+  AgencyStationPongFrame,
+  AgencyStationReleasedFrame,
+  AgencyStationReservedFrame,
+  AgencyStationTokenResponse,
+  AgencyWrapupHoldReason,
+} from '../../agency';
+import type * as Core from '../../agency';
+import type { AgencyActionErrorCode, AgencyStationErrorCode } from '../../errors';
 
-export type AgencyCampaignStatus =
-  | 'draft'
-  | 'running'
-  | 'paused'
-  | 'stopping'
-  | 'completed'
-  | 'stopped';
-
-export type AgencyAttemptOutcome =
-  | 'connected'
-  | 'no_answer'
-  | 'busy'
-  | 'failed'
-  | 'machine'
-  | 'invalid'
-  | 'abandoned'
-  | 'agent_disconnected'
-  | 'orphaned'
-  /**
-   * A dial we stopped before anyone picked up.
-   *
-   * Its own fact, not a shade of its two neighbours: `no_answer` is the customer
-   * letting it ring out and `abandoned` is the customer picking up and reaching
-   * nobody, while this is the phone stopping because WE stopped it — an agent, a
-   * supervisor or a lifecycle event ending an attempt mid-ring.
-   *
-   * Added after the 2026-09-08 pilot, where the dialer runtime labelled a cancelled ring
-   * `abandoned` — putting dials no customer ever heard into the
-   * compliance-facing bucket and making the pilot's numbers unreadable.
-   */
-  | 'canceled';
-
-/**
- * Why an attempt released the agent. The console must render copy for each, and
- * an unrecognised value falls back to the frame's own `message` rather than
- * blanking — an agent whose screen clears with no explanation concludes the app
- * is broken, which is a support ticket per unanswered call.
- *
- * ⚠️ **`canceled` is deliberately NOT a member**, even though it is now an
- * `AgencyAttemptOutcome`. The dialer runtime's `releaseReasonFor` maps it onto
- * `agent_hangup` or `completed`, both of which already have copy — under late
- * binding a pre-answer cancel reaches no agent at all (there is nobody to
- * release), and with the flag off the only producer is the agent's own hangup,
- * which the console already explains as "You ended the call." A member here
- * would be a copy string nothing can emit.
- */
-export type AgencyReleaseReason =
-  | 'completed'
-  | 'no_answer'
-  | 'busy'
-  | 'failed'
-  | 'invalid'
-  | 'abandoned'
-  | 'agent_disconnected'
-  | 'reservation_expired'
-  | 'agent_hangup'
-  | 'remote_hangup'
-  | 'campaign_paused'
-  | 'campaign_stopped'
-  | 'supervisor_released'
-  | 'orphaned';
-
-export type AgencyStationErrorCode =
-  | 'unauthorized'
-  | 'unknown_attempt'
-  | 'not_your_attempt'
-  | 'invalid_frame'
-  | 'campaign_not_running';
-
-/**
- * Which of a contact's arbitrary CSV columns matter, and in what order.
- *
- * Resolution rules, which BOTH clients must implement identically:
- *  1. `hero` first, pinned, in array order;
- *  2. then any column named in `order`, in array order;
- *  3. then every remaining column, in original CSV header order;
- *  4. minus anything in `hidden`, at every stage.
- * A name in more than one list is resolved by that precedence, so a column in
- * both `hero` and `hidden` is hidden. Empty/absent means "no operator opinion" —
- * render every column in original order.
- */
-export interface AgencyContextDisplay {
-  hero?: string[];
-  order?: string[];
-  hidden?: string[];
-}
-
-export interface AgencyDisposition {
-  code: string;
-  label: string;
-  is_success?: boolean;
-  requires_note?: boolean;
-  requires_datetime?: boolean;
-  terminal?: boolean;
-  suppress?: boolean;
-  retry?: { delay_minutes?: number; max_attempts: number };
-}
-
-/**
- * One entry in `agency_campaigns.break_reasons`.
- *
- * Campaign config is the **sole authority** on accepted break codes — the dialer runtime
- * validates `POST /sessions/:id/break` against this list and answers
- * `unknown_break_reason` with `allowed_codes`. An empty list is meaningful: the
- * workspace has configured none, and the console disables Break with a stated
- * reason rather than rendering an empty menu or guessing a code.
- */
-export interface AgencyBreakReason {
-  code: string;
-  label: string;
-  /** Whether the break is paid. Reporting only; the console does not branch on it. */
-  is_paid?: boolean;
-}
+export type {
+  AgencyActionErrorResponse,
+  AgencyActiveAttempt,
+  AgencyAgentState,
+  AgencyAttemptOutcome,
+  AgencyAttemptState,
+  AgencyBreakReason,
+  AgencyCampaignChangeReason,
+  AgencyCampaignStatus,
+  AgencyContextDisplay,
+  AgencyDisposition,
+  AgencyMissedRelease,
+  AgencyNotesResponse,
+  AgencyPriorAttempt,
+  AgencyReleaseReason,
+  AgencyReservedAttempt,
+  AgencyRetryContext,
+  AgencyStationAgentStateFrame,
+  AgencyStationBridgeEndedFrame,
+  AgencyStationBridgedFrame,
+  AgencyStationCampaignStateFrame,
+  AgencyStationCountdownFrame,
+  AgencyStationErrorFrame,
+  AgencyStationMediaFrame,
+  AgencyStationPongFrame,
+  AgencyStationReleasedFrame,
+  AgencyStationReservedFrame,
+  AgencyStationTokenResponse,
+  AgencyActionErrorCode,
+  AgencyStationErrorCode,
+};
+/** The runtime list of {@link AgencyActionErrorCode}; the console keys its copy off it. */
+export { AGENCY_ACTION_ERROR_CODES } from '../../errors';
 
 /**
  * Liveness parameters, in milliseconds. **No client constant may duplicate one
  * of these**: the console's countdown and the server's lease would drift the
  * first time either is retuned, and the drift is silent.
  */
-export interface AgencyStationIntervals {
-  heartbeat_ms: number;
-  heartbeat_grace_ms: number;
-  reservation_lease_ms: number;
-  countdown_ms: number;
+export interface AgencyStationIntervals extends Omit<Core.AgencyStationIntervals, 'deferred_hangup_ms'> {
   /**
    * How long a live call is held open after the station socket drops, waiting
    * for this session to reconnect. Optional here so a payload that lacks it
@@ -147,68 +91,17 @@ export interface AgencyStationIntervals {
   deferred_hangup_ms?: number;
 }
 
-export interface AgencySessionBootstrap {
-  session_id: string;
-  campaign_id: string;
-  campaign_name: string;
-  agent_user_id: string;
-  state: AgencyAgentState;
-  campaign_status: AgencyCampaignStatus;
-  station_ws_url: string;
+/**
+ * The dialer's bootstrap, read with the console's {@link AgencyStationIntervals}.
+ *
+ * `retry_context` is absent for every non-retry campaign, so `undefined` is the
+ * ordinary case and renders as nothing at all, not as an empty banner.
+ */
+export interface AgencySessionBootstrap
+  extends Omit<Core.AgencySessionBootstrap, 'station_token_expires_at' | 'intervals'> {
   /** ISO-8601. Single-use and short — re-mint before each connect attempt. */
   station_token_expires_at?: string;
-  disposition_catalog: AgencyDisposition[];
-  wrapup_seconds: number;
-  wrapup_auto_return: boolean;
-  record_calls: boolean;
-  break_reasons: AgencyBreakReason[];
-  context_display: AgencyContextDisplay;
   intervals: AgencyStationIntervals;
-  /**
-   * Set only when this campaign is a retry of another one.
-   *
-   * **Absent for every non-retry campaign**, which is 100% of them today — so an
-   * `undefined` here is the ordinary case and must render as *nothing at all*,
-   * not as an empty banner reserving space.
-   *
-   * ── Why it is on the bootstrap and not on the `reserved` frame ─────────────
-   * It is campaign-constant: it is the same three values for the whole shift.
-   * `AgencyStationReservedFrame` is the one payload whose latency the dialer
-   * design guards hardest — it is written synchronously, before the dial, with
-   * no interleaved `await` — and repeating a fixed sentence on it once per call
-   * would spend that budget on copy.
-   *
-   * ── `selection_summary` is BUILT SERVER-SIDE and rendered unchanged ─────────────
-   * The dialer runtime composes it from the frozen `retry_selector` on the child campaign row,
-   * so the sentence the agent reads and the query that produced their roster
-   * cannot disagree. Re-deriving it here from anything this client holds would
-   * be a second answer to the same question, and this client does not even have
-   * the input — the selector is not on the bootstrap, deliberately.
-   */
-  retry_context?: AgencyRetryContext;
-}
-
-/**
- * "Retry 1 of 'Q3 Winback' — these contacts were previously voicemail,
- * callback, no answer."
- *
- * The whole of what an agent is told about the campaign this one came from.
- */
-export interface AgencyRetryContext {
-  /** 1 = the first retry. A retry of a retry is 2. */
-  generation: number;
-  parent_campaign_name: string;
-  /**
-   * Human-readable rendering of the frozen selector, composed dialer-runtime-side.
-   *
-   * The server's rule, recorded here because a client that
-   * "tidies" this into its own join would silently start disagreeing with the
-   * roster: the selected `last_disposition` labels first — from the PARENT's
-   * catalog where a label exists, else the raw code — then the `last_outcome`
-   * values in the console's own outcome copy, then `never attempted` if set,
-   * comma-separated, in that order.
-   */
-  selection_summary: string;
 }
 
 /**
@@ -264,11 +157,8 @@ export interface AgencySessionConflict {
  * nothing. Everything else here is reconciliation only: `agent_state` frames remain
  * the sole authority for the rail.
  */
-export interface AgencySessionStateResponse {
-  session_id: string;
-  state: AgencyAgentState;
-  /** ISO-8601. */
-  since: string;
+export interface AgencySessionStateResponse
+  extends Omit<Core.AgencySessionStateResponse, 'campaign_id' | 'pending_state' | 'break_reason'> {
   /** Set when a break was requested mid-call and is queued until wrap-up ends. */
   pending_state?: AgencyAgentState | null;
   /**
@@ -290,161 +180,19 @@ export interface AgencySessionStateResponse {
 }
 
 /**
- * Why an agent action was refused — the dialer runtime's closed `AgencyActionErrorCode` union
- * (the public API layer allow-lists the same set through its error mask so these arrive
- * intact rather than as "contact support and quote this request id").
+ * The dialer's disposition answer without `campaign_id`, and with
+ * `contact_state` read as a string.
  *
- * **The console keys its copy off `code`**; `message` is only the fallback for a
- * code it does not recognise. That is the whole reason the union is closed.
- *
- * `AGENCY_ACTION_ERROR_CODES` below is the mechanical pin — a code added to
- * the union and forgotten in the list is a compile error, not a rediscovery of
- * this same drift.
- *
- * The pin only catches forgetting the list after editing the union; the
- * authority for the codes is the union itself.
+ * `agent_state` is ADVISORY: it races the socket by design, so the console reads
+ * it only through `advisoryAgentState()` in `utils/agencyStaleResponse.ts`,
+ * never directly. `callback_requested_at` is what the agent asked for, echoed
+ * unchanged; `next_attempt_at` is the window-adjusted instant the dialer will
+ * actually call, and when the two differ the console says what will happen
+ * (`confirmationCopy`).
  */
-export type AgencyActionErrorCode =
-  | 'missing_actor'
-  | 'not_your_attempt'
-  | 'unknown_disposition_code'
-  | 'invalid_dnc_scope'
-  | 'note_required'
-  | 'datetime_required'
-  | 'invalid_callback_at'
-  | 'attempt_not_dispositionable'
-  | 'already_dispositioned'
-  | 'unknown_break_reason'
-  | 'break_already_applied'
-  | 'session_ended'
-  /**
-   * `POST /sessions` refused: the agent already holds a live session on a
-   * DIFFERENT campaign in this tenant (one live session per (tenant, agent)
-   * by the dialer runtime). The only member that also sets `campaign_id` /
-   * `campaign_name` / `state` — {@link AgencySessionConflict} narrows this shape
-   * for it, which is why that interface pins the code as a literal discriminant
-   * rather than using this union.
-   */
-  | 'session_on_other_campaign'
-  /**
-   * `POST /sessions/:id/leave` refused: the replica is still driving an attempt
-   * for this session. Leaving would clear the lease and set `left_at`, dropping
-   * the row out of `uq_agency_agent_live_tenant` — so an `on_call` agent who
-   * left could join a second campaign and be bridged a second customer while the
-   * first call is still up.
-   *
-   * **The console has no copy for this one**, and that is a real if narrow gap
-   * rather than an oversight worth hiding: `agencyStationExit.ts` blocks Leave
-   * client-side for `reserved` / `on_call` / `wrapup`, so the dialer runtime's refusal is the
-   * backstop for the race where state changes between render and click. It is
-   * listed here because the union is the full contract, not a list of what this
-   * console happens to render — the drift below is exactly what listing only the
-   * handled ones produces.
-   */
-  | 'agent_on_live_call'
-  | 'no_station'
-  | 'attempt_not_live'
-  | 'campaign_not_running'
-  | 'feature_disabled';
-
-/**
- * Runtime list of the union above.
- *
- * `satisfies` pins it to the type in one direction (every listed value is a
- * valid code); {@link MissingAgencyActionErrorCode} below pins the other
- * (every code in the union is listed) — the same two-sided check
- * `AGENCY_ACTION_ERROR_CODES` uses, so this union cannot silently drift.
- */
-export const AGENCY_ACTION_ERROR_CODES = [
-  'missing_actor',
-  'not_your_attempt',
-  'unknown_disposition_code',
-  'invalid_dnc_scope',
-  'note_required',
-  'datetime_required',
-  'invalid_callback_at',
-  'attempt_not_dispositionable',
-  'already_dispositioned',
-  'unknown_break_reason',
-  'break_already_applied',
-  'session_ended',
-  'session_on_other_campaign',
-  'agent_on_live_call',
-  'no_station',
-  'attempt_not_live',
-  'campaign_not_running',
-  'feature_disabled',
-] as const satisfies readonly AgencyActionErrorCode[];
-
-/**
- * Exhaustiveness in the other direction: every member of the union appears in
- * {@link AGENCY_ACTION_ERROR_CODES}. `satisfies` alone only proves the list
- * holds *valid* codes, not *all* of them, and a code present in the union but
- * missing from the list is exactly the failure mode — a code
- * that compiles, is a real value of the type, and is simply never listed
- * anywhere that would have caught it.
- */
-type MissingAgencyActionErrorCode = Exclude<
-  AgencyActionErrorCode,
-  (typeof AGENCY_ACTION_ERROR_CODES)[number]
->;
-const _allAgencyActionErrorCodesListed: MissingAgencyActionErrorCode extends never
-  ? true
-  : MissingAgencyActionErrorCode = true;
-void _allAgencyActionErrorCodesListed;
-
-/** The body of every 4xx from an agency action route. */
-export interface AgencyActionErrorResponse {
-  error: string;
-  code: AgencyActionErrorCode;
-  message: string;
-  /**
-   * Set on `unknown_disposition_code` and `unknown_break_reason`: the codes that
-   * *are* valid, so a console holding a stale catalog recovers in one round trip
-   * instead of making the agent re-bootstrap mid-shift.
-   */
-  allowed_codes?: string[];
-}
-
-export interface AgencyDispositionResponse {
-  attempt_id: string;
-  contact_id: string;
-  disposition_code: string;
+export interface AgencyDispositionResponse
+  extends Omit<Core.AgencyDispositionResponse, 'campaign_id' | 'contact_state'> {
   contact_state: string;
-  /** ISO-8601; set when the disposition scheduled a retry or a callback. */
-  next_attempt_at: string | null;
-  /**
-   * What the agent ASKED for, echoed unchanged. `next_attempt_at` is the window-adjusted
-   * instant the dialer will actually call; when the two differ the console says what will
-   * happen (`confirmationCopy`).
-   */
-  callback_requested_at?: string | null;
-  /**
-   * The agent's state after release. **ADVISORY, NOT AUTHORITATIVE.**
-   *
-   * ⚠️ **This field races the socket by design, and assigning from it
-   * unconditionally drops a live call.** Submitting releases the agent; the pacing
-   * tick runs every 250ms; so a new call can be reserved and its `reserved` frame
-   * delivered **before this HTTP response lands**. A console that writes this
-   * value into its agent state then overwrites a fresh `reserved` with a stale
-   * `available` — and the panel for a customer who is already on the line
-   * disappears.
-   *
-   * The socket is the authority. This is a hint, usable **only** to reconcile when
-   * no `agent_state` frame has arrived within 3s, and only through
-   * `advisoryAgentState()` in `utils/agencyStaleResponse.ts`, which will not hand
-   * it over once the attempt has moved on. Do not read this property directly.
-   *
-   * It also must not be hard-coded around: after a submit with a queued break the
-   * correct state is `break`, not `available`.
-   */
-  agent_state: AgencyAgentState;
-}
-
-export interface AgencyNotesResponse {
-  attempt_id: string;
-  notes: string;
-  updated_at: string;
 }
 
 /**
@@ -457,92 +205,23 @@ export interface AgencyNotesResponse {
  * true. The dialer runtime populates it from the public API layer's answer and can only know it by asking —
  * so `false` is a real, reachable state, not a defensive default.
  */
-export interface AgencyDncResponse {
-  attempt_id: string;
-  contact_id: string;
-  phone_e164: string;
+export interface AgencyDncResponse
+  extends Omit<Core.AgencyDncResponse, 'campaign_id' | 'contact_state'> {
   /** Always `suppressed` on success. */
   contact_state: string;
-  /** False when the suppression landed locally but the list write is in flight. */
-  dnc_recorded: boolean;
-}
-
-export interface AgencyStationTokenResponse {
-  session_id: string;
-  station_ws_url: string;
-  expires_at: string;
-}
-
-export interface AgencyPriorAttempt {
-  /**
-   * 1-based, **per contact row and therefore per campaign**.
-   *
-   * ⚠️ It RESETS to 1 in a retry campaign (the child gets its
-   * own `agency_contacts` row with `attempt_count = 0`). So once this list spans
-   * a lineage it is no longer a global ordering and must never be rendered as
-   * one — "attempt 2" means nothing to an agent when two campaigns each have
-   * one. The dialer runtime's own read stopped ordering by it for exactly this reason.
-   */
-  attempt_number: number;
-  outcome: AgencyAttemptOutcome | null;
-  disposition_code: string | null;
-  notes: string | null;
-  ended_at: string | null;
-
-  // ── Lineage (retry campaigns) ────────────────────────────
-  //
-  // Declared REQUIRED because the contract declares them required. What is NOT assumed anywhere is that
-  // they are populated — `groupPriorAttempts` treats a blank `campaign_id` as
-  // "this campaign", which is the only thing an older server could have meant,
-  // and is why a stale payload degrades to today's flat list rather than to a
-  // group headed by nothing.
-
-  /** The campaign the dial belonged to. Not necessarily the one the agent is on. */
-  campaign_id: string;
-  /**
-   * That campaign's name, resolved by the dialer runtime from its own row.
-   *
-   * The agent gets the NAME and nothing else about an ancestor campaign — no
-   * stats, no connect rate, no roster counts, no agent roster. `agent` is
-   * level 5 and holds exactly four `agency.*` permissions; a supervisor-gated
-   * read reached from this screen would be the reason someone raises it.
-   */
-  campaign_name: string;
-  /** ISO-8601, or `null` if the attempt never dialled. */
-  dialed_at: string | null;
-}
-
-export interface AgencyReservedAttempt {
-  attempt_id: string;
-  campaign_id: string;
-  campaign_name: string;
-  contact_id: string;
-  phone_e164: string;
-  caller_id: string;
-  attempt_number: number;
-  /**
-   * Every non-phone CSV column unchanged. **Always treat as untrusted display
-   * text, never as markup** — it is operator-uploaded file content.
-   */
-  context: Record<string, unknown>;
-  prior_attempts: AgencyPriorAttempt[];
 }
 
 // ─── Station socket frames ──────────────────────────────────────────────────
 
-export interface AgencyStationReadyFrame {
-  event: 'ready';
-  session_id: string;
-  state: AgencyAgentState;
-  /**
-   * Set when the socket reconnected onto an attempt that is still live.
-   *
-   * **`AgencyActiveAttempt`, not `AgencyReservedAttempt`** — the difference is
-   * `bridged_at`, and it is the whole reconnect story. Typing it as
-   * the base type would drop `bridged_at`, and a reconnect onto a live call would
-   * render as ringing for the rest of the conversation.
-   */
-  active_attempt?: AgencyActiveAttempt;
+/**
+ * The dialer's `ready` frame, carrying the console's {@link AgencyWrapupState}.
+ *
+ * `missed_release` is consumed-on-read in the dialer runtime, so this frame is
+ * the only time it is offered: a console that drops it destroys it. `pending_state`
+ * `undefined` means nothing is queued, and must CLEAR a badge rather than leave
+ * one standing.
+ */
+export interface AgencyStationReadyFrame extends Omit<Core.AgencyStationReadyFrame, 'active_wrapup'> {
   /**
    * Set when the reconnecting socket is in `wrapup`.
    *
@@ -554,210 +233,6 @@ export interface AgencyStationReadyFrame {
    * to submit the disposition the dialer runtime is about to refuse `/available` over.
    */
   active_wrapup?: AgencyWrapupState;
-  /**
-   * The `released` this session missed while it was disconnected.
-   *
-   * **Consumed-on-read in the dialer runtime.** `takeMissedRelease` clears as it reads
-   * (`agency.routes.ts`, "read it here, not inline in the frame, because … a
-   * second call would return null"), so this frame is the *only* time it is ever
-   * offered. A console that drops it does not merely delay the information — it
-   * destroys it, and the agent who dropped mid-call comes back to an empty
-   * station with no account of the call they were on, which reads as data loss.
-   */
-  missed_release?: AgencyMissedRelease;
-  /**
-   * A break the agent asked for that dialer runtime has accepted and not yet applied — the
-   * same name, type and meaning as on `AgencyStationAgentStateFrame`, chosen that
-   * way deliberately so one badge renders from either frame with no new
-   * vocabulary.
-   *
-   * A
-   * queued break is announced exactly twice — on the HTTP response that queued it,
-   * and on the `agent_state` beside it — and both die with the socket. The next
-   * `agent_state` the agent gets is the one `releaseAgent` sends at the *end* of
-   * wrap-up, by which time the break has been applied. So a console that
-   * reconnected mid-wrap-up was told its state and its countdown and nothing about
-   * the break waiting behind them.
-   *
-   * **The dialer runtime reads the queue with `peek`, not `take`** (`agency.routes.ts`,
-   * `runtime.breaks.peek(sessionId)`), so reporting it here does not consume it:
-   * `releaseAgent` still `take`s it when wrap-up ends and the agent still leaves
-   * the pool. This is notice of something about to happen, not a receipt for a
-   * request.
-   *
-   * **Not gated on `active_wrapup`.** A break can also be queued from `reserved`
-   * or `on_call`, and those reconnects arrive carrying `active_attempt` instead.
-   *
-   * `undefined` means nothing is queued — the same load-bearing absence as on
-   * `agent_state`, so it must CLEAR a badge rather than leave one standing.
-   */
-  pending_state?: AgencyAgentState;
-  /** Present when `pending_state` is `break`. */
-  pending_break_reason?: string;
-}
-
-/**
- * A `released` the agent's socket was not present to receive.
- *
- * Deliberately **not** an `AgencyStationReleasedFrame`: it is history, not a live
- * transition, and it must not go through the `released` handler. That handler
- * fires the disconnect cue, clears `live` and hands the attempt to wrap-up — all
- * correct for a call ending now, all wrong for one that ended while the socket was
- * away. The missing `event` discriminator is what makes the mistake a compile
- * error rather than a judgement call.
- */
-export interface AgencyMissedRelease {
-  attempt_id: string;
-  reason: AgencyReleaseReason;
-  requires_disposition: boolean;
-  message: string;
-  /** ISO-8601. When the attempt actually ended — which is not now. */
-  ended_at: string;
-}
-
-/** Attempt lifecycle (`AgencyAttemptState`). */
-export type AgencyAttemptState =
-  | 'queued'
-  | 'dialing'
-  | 'ringing'
-  | 'answered'
-  | 'bridged'
-  | 'ended';
-
-/**
- * An attempt a reconnecting socket was found still holding.
- *
- * A superset of `AgencyReservedAttempt`, and the two extra fields live here rather
- * than on the base type **precisely so the `reserved` frame cannot carry them**: on
- * that frame `bridged_at` would be null by construction, and a nullable field that
- * is always null is one someone eventually reads as meaningful.
- *
- * **`bridged_at` is the ringing-vs-live discriminator and there is no client-side
- * substitute.** The dialer runtime does not re-emit `bridged` on reconnect — deliberately, because
- * the connect cue lives in that handler and dedupes per `attempt_id`, and a
- * reconnect after a full page load starts with an empty dedupe set, so a re-emitted
- * frame would play "customer connected" into a conversation nine minutes old
- * Anything waiting for a second `bridged` waits forever.
- */
-export interface AgencyActiveAttempt extends AgencyReservedAttempt {
-  /**
-   * ISO-8601 answer anchor, or `null` while still pre-answer. Non-null ⇒ media is
-   * live and the customer may already be speaking.
-   */
-  bridged_at: string | null;
-  /**
-   * The attempt's authoritative state, for finer copy than `bridged_at` alone
-   * supports — `dialing` and `ringing` are both pre-answer but read differently to
-   * an agent watching a panel appear out of nowhere.
-   */
-  state: AgencyAttemptState;
-}
-
-export interface AgencyStationReservedFrame {
-  event: 'reserved';
-  attempt: AgencyReservedAttempt;
-}
-
-/**
- * The 3-2-1 auto-connect countdown — **declared by the dialer runtime and emitted by nothing.**
- *
- * Kept in the union on purpose, with no console handler. The contract declares
- * this frame and there is **no `send` of it anywhere in the dialer runtime**:
- * `grep "'countdown'" src/` finds the type, `intervals.countdown_ms`, and
- * prose. Nothing produces one, so a console handler for it would be code that
- * could never run, writing fields nothing read.
- *
- * **Do not re-add a handler from this type.** The auto-connect countdown is a
- * feature that does not exist on either side; building the client half first
- * would make the console look like it works and leave the agent watching a
- * counter that never ticks. If the dialer runtime ever emits this, the handler comes back in
- * the same PR as the emitter.
- *
- * The declaration stays so that the union still describes the wire faithfully and
- * an `event: 'countdown'` on the socket is typed traffic rather than a surprise —
- * `useAgencyStation`'s default arm routes it to diagnostics like any other frame
- * the console does not act on.
- */
-export interface AgencyStationCountdownFrame {
-  event: 'countdown';
-  attempt_id: string;
-  seconds_remaining: number;
-}
-
-export interface AgencyStationBridgedFrame {
-  event: 'bridged';
-  attempt_id: string;
-  bridged_at: string;
-}
-
-export interface AgencyStationReleasedFrame {
-  event: 'released';
-  attempt_id: string;
-  reason: AgencyReleaseReason;
-  requires_disposition: boolean;
-  message: string;
-}
-
-export interface AgencyStationAgentStateFrame {
-  event: 'agent_state';
-  state: AgencyAgentState;
-  /** Present when `state` is `break` — the break in EFFECT, not a queued one. */
-  break_reason?: string;
-  since: string;
-  /**
-   * A transition the agent asked for that is accepted but not yet applied — a
-   * break requested while `on_call` or `reserved` lands at the end of wrap-up,
-   * never mid-conversation.
-   *
-   * **`undefined` means nothing is queued, and that is load-bearing rather than
-   * merely absent.** The dialer runtime's `/break/cancel` emits an `agent_state` with these
-   * fields omitted precisely to say the queue is empty (`agency.routes.ts`, "if
-   * (cancelled) … send agent_state"), so a console that reads absence as "no
-   * change" leaves a pill up for a break the agent already took back.
-   *
-   * The frame carries this and not just the HTTP response that queued it because
-   * **the queue outlives the request**: a supervisor can queue one console
-   * never issued, and an agent who queues a break and then loses their socket must
-   * still be told about it when the next transition frame lands.
-   */
-  pending_state?: AgencyAgentState;
-  /** Present when `pending_state` is `break`. */
-  pending_break_reason?: string;
-}
-
-export type AgencyCampaignChangeReason =
-  | 'list_exhausted'
-  | 'paused_by_supervisor'
-  | 'stopped_by_supervisor'
-  | 'auto_paused'
-  | 'resumed'
-  | 'started';
-
-export interface AgencyStationCampaignStateFrame {
-  event: 'campaign_state';
-  campaign_id: string;
-  status: AgencyCampaignStatus;
-  reason: AgencyCampaignChangeReason;
-  /**
-   * Whether the engine will produce further calls for this agent. **Drive the
-   * idle copy from this, not from `status`** — deriving the predicate from
-   * `status` forces every client to re-derive it and they will disagree.
-   */
-  dialing: boolean;
-  /** Fallback copy for a reason the console does not recognise. */
-  message: string;
-}
-
-export interface AgencyStationPongFrame {
-  event: 'pong';
-  ts?: number;
-  server_ts: number;
-}
-
-export interface AgencyStationErrorFrame {
-  event: 'error';
-  code: AgencyStationErrorCode;
-  message: string;
 }
 
 /**
@@ -769,43 +244,22 @@ export interface AgencyStationErrorFrame {
  * `status: 'answered'` means the far end went off-hook, which is NOT the same
  * as audio reaching this agent.
  */
-export interface AgencyStationBridgeStatusFrame {
-  event: 'status';
+export interface AgencyStationBridgeStatusFrame
+  extends Omit<Core.AgencyStationBridgeStatusFrame, 'status'> {
+  /** Deliberately wide: the dialer's ten-member union, read as a string. */
   status: string;
-}
-
-export interface AgencyStationBridgeEndedFrame {
-  event: 'ended';
-  reason: string;
-}
-
-/**
- * Bridge-originated **audio**, relayed onto the borrowed station socket.
- *
- * This shares an origin with the two frames above and is emphatically NOT
- * diagnostic: it is the customer's voice. `payload` is base64 **PCM16, mono,
- * 16 kHz, little-endian** — the voice engine normalises both carriers to that before it
- * writes to this socket, transcoding VoiceLink's A-law 8 kHz and passing VoBiz's
- * L16 16 kHz through unchanged.
- *
- * The uplink frame is the **same envelope in the same encoding**
- * — the asymmetry is entirely on the voice engine's far
- * side, where it transcodes per carrier. The console therefore has one format to
- * produce and one to consume, and neither depends on which carrier is dialling.
- */
-export interface AgencyStationMediaFrame {
-  event: 'media';
-  media: { payload: string };
 }
 
 /**
  * Why wrap-up is being held open rather than counting down. `null` when it is
- * simply running against a deadline.
+ * simply running against a deadline. The console's name for the dialer
+ * contract's `AgencyWrapupHoldReason`.
+ *
+ * `supervisor_hold` means "a supervisor is holding this agent out of the pool
+ * deliberately"; the console's `WrapupTimer` names it. Nothing produces it yet: no
+ * code path sets `held_reason: 'supervisor_hold'`.
  */
-// `supervisor_hold` means "a supervisor is holding this agent out of the pool
-// deliberately"; the console's `WrapupTimer` names it. Nothing produces it yet: no
-// code path sets `held_reason: 'supervisor_hold'`.
-export type AgencyWrapupHold = 'disposition_required' | 'supervisor_hold';
+export type AgencyWrapupHold = AgencyWrapupHoldReason;
 
 /**
  * The wrap-up window.
@@ -822,12 +276,8 @@ export type AgencyWrapupHold = 'disposition_required' | 'supervisor_hold';
  * the timer has lapsed into a hold. Rendering it as an elapsed or zero countdown
  * tells the agent they are out of time when they are not.
  */
-export interface AgencyWrapupState {
-  attempt_id: string;
-  /** ISO-8601, absolute. Null ⇒ no deadline; see above. */
-  ends_at: string | null;
-  requires_disposition: boolean;
-  disposition_submitted: boolean;
+export interface AgencyWrapupState
+  extends Omit<Core.AgencyWrapupState, 'seconds_total' | 'held_reason'> {
   /**
    * Why the window is held rather than counting down. Set **at entry** for a
    * timerless wrap-up, not only on a later expiry — there is no countdown that
@@ -835,17 +285,6 @@ export interface AgencyWrapupState {
    * no reason and nothing to act on.
    */
   held_reason?: AgencyWrapupHold | null;
-  /**
-   * Whether the window will return the agent to the pool on its own.
-   *
-   * **Trust this, not the campaign config.** For a timerless wrap-up the dialer runtime reports
-   * `false` even when the campaign sets `wrapup_auto_return: true`, because with
-   * no window it cannot mean what it says. Echoing the config would pair
-   * `auto_return: true` with `ends_at: null`, which is indistinguishable from
-   * "the countdown frame failed to arrive" — and the console would render a
-   * spinner on a wrap-up that is actually waiting for the agent.
-   */
-  auto_return: boolean;
 }
 
 /**
@@ -891,15 +330,7 @@ export type AgencyStationServerFrame =
   | AgencyStationMediaFrame;
 
 /**
- * Close codes the dialer runtime uses. The distinction that matters is **re-mint and retry**
- * versus **re-bootstrap**: retrying a dead session forever is indistinguishable
- * from a network problem to the agent, and gives them nothing to act on.
+ * The station socket's close codes (re-mint and retry versus re-bootstrap), declared
+ * once in the dialer contract.
  */
-export const AGENCY_STATION_CLOSE = {
-  /** Token missing, expired, already used or wrong. Re-mint and retry. */
-  TOKEN_REJECTED: 4401,
-  /** Session unknown or already left. Re-bootstrap; do not retry this session. */
-  SESSION_GONE: 4404,
-  /** Superseded by a newer socket for this session. Do not retry. */
-  SUPERSEDED: 4409,
-} as const;
+export { AGENCY_STATION_CLOSE } from '../../agency';

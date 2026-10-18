@@ -1,4 +1,5 @@
 import type { AgencyStall, AgencyStallCode } from '../types/agency-campaign';
+import { formatCount, pct, plural } from './format/number';
 
 /**
  * The supervisor health strip and the two read-outs beside it — as pure functions, because every sentence here is derived from wire
@@ -132,20 +133,11 @@ function diagnosis(parts: { headline: string; facts: StallFact[]; advice?: strin
   return { ...parts, evidence: joined(parts.facts) };
 }
 
-function pct(value: number): string {
-  // One decimal, trailing zero trimmed: "3%" and "3.4%" both read as rates,
-  // "3.0%" reads as a measurement with false precision.
-  return `${Number(value.toFixed(1))}%`;
-}
-
 /** The emphasised form of a number — the exact substring a fact leads with. */
-function num(value: number): string {
-  return value.toLocaleString();
-}
+const num = formatCount;
 
-function count(value: number, singular: string, plural = `${singular}s`): string {
-  return `${num(value)} ${value === 1 ? singular : plural}`;
-}
+/** A count and its noun, agreeing (`format/number.ts`'s `plural`). */
+const count = plural;
 
 /** Break codes to a readable clause: "5 on break (lunch 3, training 2)". */
 function breakClause(byReason: Record<string, number>): string | null {
@@ -424,7 +416,7 @@ export function abandonmentReadout(
   const answered = counts?.answered;
   const sample =
     typeof abandoned === 'number' && typeof answered === 'number'
-      ? ` ${abandoned.toLocaleString()} of ${count(answered, 'answered call')}.`
+      ? ` ${formatCount(abandoned)} of ${count(answered, 'answered call')}.`
       : '';
 
   if (ratePct === undefined) {

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Upload } from 'lucide-react';
 import { useTenant } from '../../../contexts/TenantContext';
 import { useGovernance } from '../../../contexts/GovernanceContext';
-import { Breadcrumbs } from '../../../components/common/Breadcrumbs';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { ColumnMapper } from './ColumnMapper';
 import { IngestSummary } from './IngestSummary';
 import { CampaignBehaviourSection } from './CampaignBehaviourSection';

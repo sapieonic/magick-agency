@@ -27,7 +27,8 @@ const mocks = vi.hoisted(() => ({
   config: { agency: { rosterReplaceEnabled: false } },
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('../../../src/storage/s3.js', () => ({
   getFileStream: vi.fn(), getFileBuffer: vi.fn(), uploadFile: vi.fn(),
@@ -416,7 +417,7 @@ describe('the CSV exports', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
-    expect(res.headers['content-disposition']).toContain('attempts-Q3-Renewals.csv');
+    expect(res.headers['content-disposition']).toContain('filename="attempts-Q3 Renewals.csv"');
     expect(res.headers['x-export-rows']).toBe('2');
     expect(res.headers['x-export-truncated']).toBeUndefined();
 

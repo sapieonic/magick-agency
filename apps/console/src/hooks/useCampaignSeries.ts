@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMountedRef } from './useMountedRef';
 import { useTenant } from '../contexts/TenantContext';
 import { getAgencyCampaignSeries } from '../api/agencyCampaignSeries';
 import {
@@ -113,16 +114,7 @@ export function useCampaignSeries(
 
   /** Both guards, for the reasons `useAgentPerformance` sets out at its own. */
   const generation = useRef(0);
-  const mounted = useRef(true);
-  useEffect(() => {
-    // Set on the way IN as well as cleared on the way out: StrictMode runs every
-    // effect setup → cleanup → setup, and a cleanup-only flag leaves this false
-    // while the component is very much mounted, which spins forever in dev.
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMountedRef();
 
   const load = useCallback(() => {
     /*

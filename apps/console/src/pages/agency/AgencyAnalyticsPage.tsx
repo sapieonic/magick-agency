@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useMountedRef } from '../../hooks/useMountedRef';
 import { Link } from 'react-router-dom';
 import { ChartNoAxesCombined, Plus } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { listAgencyCampaigns, getAgencyCampaignStats } from '../../api/agencyCampaigns';
 import { hasPermission } from '../../utils/permissions';
-import { EmptyState } from '../../components/common/EmptyState';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { LoadingSpinner } from '../../components/common/LoadingSpinner';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { PageDescription } from '../../components/common/PageDescription';
-import { mapWithConcurrency } from '../../utils/concurrency';
+import { mapWithConcurrency } from '@magick-agency/web-ui/concurrency';
 import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip';
 import { CampaignPerformance } from '../../components/agency/CampaignPerformance';
 import { AgentAnalyticsSection } from '../../components/agency/AgentAnalyticsSection';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import type { AgencyCampaign, AgencyCampaignStats } from '../../types/agency-campaign';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgencyAnalyticsPage.module.css';
 
 /**
@@ -181,22 +183,7 @@ export function AgencyAnalyticsPage() {
    * for the life of the page and every campaign read is thrown away — a
    * permanent spinner in development, and only in development.
    */
-  const mounted = useRef(true);
-  useEffect(() => {
-    /*
-      Set on the way IN as well as cleared on the way out. `React.StrictMode`
-      (which `main.tsx` wraps the whole app in) runs every effect setup →
-      cleanup → setup in development, so a cleanup-only effect leaves this
-      `false` while the component is very much mounted — every response is then
-      discarded as stale and the surface spins forever. A defect that exists
-      only in development is still a defect: it is the build every reviewer and
-      every developer sees.
-    */
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const mounted = useMountedRef();
 
   /**
    * Read `/stats` for `ids` and merge the answers in, leaving every other
@@ -491,7 +478,7 @@ export function AgencyAnalyticsPage() {
               {hidden > 0 && (
                 <div className={styles.more}>
                   <p className={styles.moreText}>
-                    Showing {visible.length.toLocaleString()} of {campaigns.length.toLocaleString()} campaigns,
+                    Showing {formatCount(visible.length)} of {formatCount(campaigns.length)} campaigns,
                     newest first. Every running, paused or stopping campaign is always shown.
                   </p>
                   <button
@@ -502,7 +489,7 @@ export function AgencyAnalyticsPage() {
                   >
                     {loadingMore
                       ? 'Loading…'
-                      : `Show ${nextCount.toLocaleString()} more`}
+                      : `Show ${formatCount(nextCount)} more`}
                   </button>
                 </div>
               )}

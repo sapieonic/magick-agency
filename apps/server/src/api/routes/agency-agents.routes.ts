@@ -13,13 +13,15 @@ import {
   parseRosterQuery,
 } from '../../agency/agent-record.js';
 import { clampLimit } from '../../agency/spine-filters.js';
-import { decodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
+// `?cursor=`, shared with the campaign spine (`agency-campaigns.routes.ts`).
+import { readKeysetCursor } from './helpers/read-cursor.js';
 import type {
   AgencyAgentStats,
   AgencyAttemptsPage,
   AgencyGroupPage,
   AgencyRosterPage,
 } from '@magick-agency/contracts/agency';
+import { replyValidationFailed } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'agency-agent-routes' });
 
@@ -145,33 +147,6 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
   }
 
   /**
-   * Parse `?cursor=` into a keyset position.
-   *
-   * A malformed cursor is **400, not a silent reset to page one** — a list that
-   * quietly restarts from the top reads as duplicate rows to whoever is scrolling
-   * it, and there is no way to tell that from real duplicates. Same rule, same
-   * words, as the campaign spine's own `readCursor`; the decoder is imported so
-   * there is one definition of what a cursor is.
-   */
-  function readCursor(
-    request: FastifyRequest,
-    reply: FastifyReply,
-  ): AgencyKeysetPosition | null | undefined {
-    const raw = (request.query as { cursor?: unknown } | undefined)?.cursor;
-    if (raw === undefined || raw === null || String(raw).length === 0) return undefined;
-    const decoded = decodeKeysetCursor(String(raw));
-    if (!decoded) {
-      reply.code(400).send({
-        error: 'Validation failed',
-        code: 'malformed_cursor',
-        details: { cursor: 'not a cursor this API issued' },
-      });
-      return null;
-    }
-    return decoded;
-  }
-
-  /**
    * ── GET /api/v1/agency-agents/stats — THE ROSTER ──────────────────────────
    *
    * `?from=&to=&campaign_id=&sort=&order=&limit=`. `from` inclusive, `to`
@@ -251,7 +226,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
    * anywhere in this server — there is no precedent to follow and no place to put
    * a per-route budget without introducing the concept, which is a server-wide
    * change and outside this route's scope. Nothing else bounds it either:
-   * `callCore` runs in-process and ignores `timeoutMs`, and a cancelled request
+   * `callCore` runs in-process with no transport timeout, and a cancelled request
    * leaves the scan running. Anyone tightening this should add the timeout on both
    * statements.
    *
@@ -271,7 +246,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
 
     const parsed = parseRosterQuery((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
 
     const payload: AgencyRosterPage = await agencyAgentStatsRepository.roster(
@@ -460,7 +435,7 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
 
     const parsed = parseAgentStatsQuery((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
 
     const payload: AgencyAgentStats = await agencyAgentStatsRepository.stats(
@@ -501,9 +476,9 @@ export async function agencyAgentRoutes(app: FastifyInstance): Promise<void> {
 
     const parsed = parseAgentAttemptFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
-      return reply.code(400).send({ error: 'Validation failed', details: parsed.issues });
+      return replyValidationFailed(reply, parsed.issues);
     }
-    const cursor = readCursor(request, reply);
+    const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
     const page: AgencyAttemptsPage = await agencyAttemptRepository.listForAgent({

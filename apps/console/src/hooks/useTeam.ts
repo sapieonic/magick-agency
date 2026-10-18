@@ -1,25 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { useTenant } from '../contexts/TenantContext';
 import { listTenantMembers } from '../api/tenants';
 import type { TenantMember } from '../types/team';
 
+/**
+ * The tenant's members. A reload keeps the previous list in place while it runs,
+ * and a slower, older response can never overwrite a newer one
+ * (`useAsyncResource`).
+ *
+ * `loaded` is true once any load has answered — what lets a page show its
+ * spinner for the first load only, rather than blanking the table on every reload.
+ */
 export function useTeam() {
   const { tenantId } = useTenant();
-  const [members, setMembers] = useState<TenantMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const fetchMembers = useCallback(
+    (): Promise<TenantMember[] | null> => listTenantMembers(tenantId!),
+    [tenantId],
+  );
+  const { data, loading, error, reload } = useAsyncResource(fetchMembers, {
+    initialData: null,
+    errorMessage: 'Failed to load team',
+    enabled: tenantId !== null,
+  });
 
-  const load = useCallback(() => {
-    if (!tenantId) return;
-    setLoading(true);
-    setError(null);
-    listTenantMembers(tenantId)
-      .then(setMembers)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load team'))
-      .finally(() => setLoading(false));
-  }, [tenantId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  return { members, loading, error, reload: load };
+  return { members: data ?? [], loaded: data !== null, loading, error, reload };
 }

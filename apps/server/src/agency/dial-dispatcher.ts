@@ -62,7 +62,21 @@ export interface ClearedDialCommand extends DialCommand {
  * into the bridge's webhook URLs; it does not mean touching the dial path.
  */
 export interface DialDispatcher {
-  dispatch(cmd: ClearedDialCommand): Promise<void>;
+  dispatch(cmd: ClearedDialCommand, opts?: DialOptions): Promise<void>;
+}
+
+/**
+ * In-process context for one dial, kept OFF {@link DialCommand} because it is not
+ * a value: a command must survive a process boundary, and a callback cannot.
+ */
+export interface DialOptions {
+  /**
+   * Asked once the dial is prepared, before the agent's lease is extended and the
+   * attempt is stamped `dialing` (two short writes ahead of the carrier). False ⇒
+   * the pacing engine gave up the campaign's lease or is stopping, and the dial is
+   * abandoned instead of placed. Absent ⇒ always authorised.
+   */
+  stillAuthorised?: () => boolean;
 }
 
 /**
@@ -76,10 +90,10 @@ export interface DialDispatcher {
 export class LocalDialDispatcher implements DialDispatcher {
   constructor(
     private readonly replicaId: string,
-    private readonly execute: (cmd: DialCommand) => Promise<void>,
+    private readonly execute: (cmd: DialCommand, opts?: DialOptions) => Promise<void>,
   ) {}
 
-  async dispatch(cmd: ClearedDialCommand): Promise<void> {
+  async dispatch(cmd: ClearedDialCommand, opts?: DialOptions): Promise<void> {
     // Checked before ownership, because a call placed without a DNC check is worse
     // than one placed on the wrong replica: the second is an abandoned call, the
     // first is a regulatory event.
@@ -108,6 +122,6 @@ export class LocalDialDispatcher implements DialDispatcher {
       );
       throw new Error(`Dial for non-owned agent session ${cmd.sessionId}`);
     }
-    await this.execute(cmd);
+    await this.execute(cmd, opts);
   }
 }

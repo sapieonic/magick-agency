@@ -847,6 +847,36 @@ describe('seat time on the paths that never reach the settle site', () => {
       'seat time was invented for a dial that never went out',
     ).toBe(0);
   });
+
+  it('observes NOTHING when the pacing engine calls the dial off before the carrier', async () => {
+    // Every shutdown with a tick in flight lands here, so seat time observed on
+    // this path would be a steady trickle of `orphaned` dials that never happened.
+    const beforeOrphaned = await histogramCount('agency_attempt_hold_seconds',
+      { ...HIST_LABELS, outcome: 'orphaned' });
+
+    const bridge = fakeBridge();
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = new AgentStateMachine(null, '');
+    vi.spyOn(agents, 'transition').mockResolvedValue(true);
+    const dialer = new AgencyDialer(
+      bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any,
+    );
+    dialer.start();
+    await stations.attach({
+      sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
+      agentUserId: 'user-1', ws: fakeWs() as any,
+    });
+
+    await dialer.executeDial(makeCmd(), { stillAuthorised: () => false });
+
+    expect(bridge.createBridgedCall).not.toHaveBeenCalled();
+    expect(persistedOutcome()).toBe('orphaned');
+    expect(
+      await histogramCount('agency_attempt_hold_seconds', { ...HIST_LABELS, outcome: 'orphaned' })
+        - beforeOrphaned,
+      'seat time was observed for a dial the pacing engine called off',
+    ).toBe(0);
+  });
 });
 
 const HOLD = 'agency_attempt_hold_seconds';

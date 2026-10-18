@@ -33,10 +33,10 @@ vi.mock('../../api/calls', () => ({
 vi.mock('../../components/audio/AudioWaveform', () => ({
   AudioWaveform: ({ src }: { src: string }) => <div data-testid="waveform" data-src={src} />,
 }));
-vi.mock('../../components/common', () => ({
+vi.mock('@magick-agency/web-ui/components/LoadingSpinner', () => ({
   LoadingSpinner: () => <span data-testid="spinner">loading</span>,
 }));
-vi.mock('../../components/common/ErrorText', () => ({
+vi.mock('@magick-agency/web-ui/components/ErrorText', () => ({
   ErrorText: ({ message }: { message: string }) => <span role="alert">{message}</span>,
 }));
 

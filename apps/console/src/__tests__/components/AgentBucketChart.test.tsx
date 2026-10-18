@@ -146,7 +146,7 @@ describe('AgentBucketChart', () => {
     render(<AgentBucketChart series={bucketSeries([bucket(19, 20, 8), bucket(20, 22, 9)])} />);
     const group = screen.getByTestId('bucket-2026-08-19');
     expect(group.querySelector('title')?.textContent).toBe(
-      'Aug 19: 20 dials, 8 conversations',
+      '19 Aug: 20 dials, 8 conversations',
     );
   });
 
@@ -174,7 +174,7 @@ describe('AgentBucketChart', () => {
     fireEvent.click(screen.getByRole('button', { name: /show the numbers/i }));
 
     const table = screen.getByTestId('bucket-chart-table');
-    expect(within(table).getByText('Aug 19')).toBeTruthy();
+    expect(within(table).getByText('19 Aug')).toBeTruthy();
     expect(within(table).getByText('20')).toBeTruthy();
     expect(within(table).getByText('8')).toBeTruthy();
   });

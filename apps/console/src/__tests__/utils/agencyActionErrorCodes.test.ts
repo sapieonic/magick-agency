@@ -3,28 +3,21 @@ import { AGENCY_ACTION_ERROR_CODES as CONTRACT_ACTION_ERROR_CODES } from '@magic
 import { AGENCY_ACTION_ERROR_CODES, type AgencyActionErrorCode } from '../../types/agency';
 
 /**
- * `AgencyActionErrorCode` — the console's mirror of the server's closed union of
- * action error codes, `AGENCY_ACTION_ERROR_CODES` in `@magick-agency/contracts/errors`.
+ * `AgencyActionErrorCode` — the closed union of action error codes the server
+ * raises, `AGENCY_ACTION_ERROR_CODES` in `@magick-agency/contracts/errors`.
  *
- * ── Why the expected set is read, not typed ────────────────────────────────
- * A hand-TRANSCRIBED literal cannot detect drift from the thing it was
- * transcribed from — it drifts with it, silently, and reads as confirmation the
- * whole time. So the expected set is READ from the contracts package, the one
- * union the server raises from, and always runs.
- *
- * The compile-time half is local too: `AGENCY_ACTION_ERROR_CODES` plus
- * `MissingAgencyActionErrorCode` in `types/agency.ts` fail `tsc` if a code is
- * added to the union and forgotten in the list. That pair guards union↔list
- * INSIDE this app; this test guards console↔server.
+ * ── Why the console's list is checked for IDENTITY, not equality ────────────
+ * The console's `types/agency.ts` re-exports the contract's list rather than
+ * declaring a copy, and that is what keeps the two from drifting. Comparing the
+ * contents would pass on a hand-made copy that happens to agree today, so the
+ * test asserts it is the same array. The ordered 18-code snapshot lives in the
+ * contracts package (`test/errors.test.ts`); the two-sided union-to-list guard in
+ * its `src/errors.ts` fails `tsc` if a code is added to the union and not the list.
  */
-function coreCodes(): string[] {
-  return [...CONTRACT_ACTION_ERROR_CODES];
-}
-
 describe('AgencyActionErrorCode — pinned against the API', () => {
   describe('vs the contract\'s one union', () => {
-    it('carries exactly the codes the contract declares', () => {
-      expect([...AGENCY_ACTION_ERROR_CODES].sort()).toEqual([...coreCodes()].sort());
+    it('is the contract\'s list itself, not a copy', () => {
+      expect(AGENCY_ACTION_ERROR_CODES).toBe(CONTRACT_ACTION_ERROR_CODES);
     });
 
     it('includes the two that were missing until this sync', () => {

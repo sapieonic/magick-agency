@@ -1,5 +1,5 @@
 import { API_BASE, ORIGINATOR_HEADER, ORIGINATOR } from '../config';
-import { appendRequestId, extractRequestId, isMaskedErrorBody } from '../utils/errors';
+import { parseApiErrorBody } from '@magick-agency/web-ui/apiErrorBody';
 import type {
   SuperAdminLoginResponse,
   SuperAdminTenant,
@@ -83,41 +83,12 @@ export class SuperAdminApiError extends Error {
   }
 }
 
-/**
- * First usable message out of a Zod issue list.
- *
- * The server answers a validation failure with
- * `{ error: 'Validation Error', details: [...zod issues] }` and **no top-level
- * `message`** — so its carefully-worded messages ("Unknown status \"canceled\"
- * for offering \"ai_calls\". Valid values: …") all rendered as "API error 400".
- * Defensive throughout: `details` is whatever the server sent, and this runs
- * inside an error path that must never throw one of its own.
- */
-function firstIssueMessage(details: unknown): string | undefined {
-  if (!Array.isArray(details)) return undefined;
-  for (const issue of details) {
-    if (typeof issue === 'string' && issue.length > 0) return issue;
-    if (typeof issue === 'object' && issue !== null) {
-      const m = (issue as { message?: unknown }).message;
-      if (typeof m === 'string' && m.length > 0) return m;
-    }
-  }
-  return undefined;
-}
-
 function saError(res: Response, details: unknown): SuperAdminApiError {
-  const body = typeof details === 'object' && details !== null
-    ? (details as Record<string, unknown>)
-    : undefined;
-  // A top-level `message` still wins — masked bodies always carry one, so the
-  // masked-error contract below is untouched.
-  const topLevel = typeof body?.['message'] === 'string' && body['message'] ? body['message'] : undefined;
-  const msg = topLevel ?? firstIssueMessage(body?.['details']) ?? `API error ${res.status}`;
-  if (isMaskedErrorBody(res.status, details)) {
-    const requestId = res.headers.get('x-request-id') ?? extractRequestId(details);
-    return new SuperAdminApiError(res.status, details, appendRequestId(msg, requestId));
-  }
-  return new SuperAdminApiError(res.status, details, msg);
+  // Field-level `details` / `issues` beat a generic top-level `message`, and
+  // masked bodies carry the request id: the console's `ApiError` reads the
+  // same way, through the same helper.
+  const { message } = parseApiErrorBody(res.status, details, res.headers);
+  return new SuperAdminApiError(res.status, details, message);
 }
 
 export async function saFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -171,10 +142,7 @@ export async function superAdminLogin(email: string, password: string): Promise<
     } catch {
       details = { message: res.statusText };
     }
-    const msg = typeof details === 'object' && details !== null && 'message' in details
-      ? (details as { message: string }).message
-      : 'Login failed';
-    throw new Error(msg);
+    throw new Error(parseApiErrorBody(res.status, details, res.headers, 'Login failed').message);
   }
 
   return res.json();

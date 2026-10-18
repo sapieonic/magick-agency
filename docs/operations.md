@@ -15,7 +15,7 @@ Everything is in `docker/`, built from the repo root:
 |---|---|
 | `docker/Dockerfile` | The server image: Node 22 (`node:22-slim`), the esbuild bundle plus the server's production `node_modules` (`pnpm deploy --prod`), `mpg123` and `sndfile-programs` for clip decoding, the migrations in `/app/migrations`. Runs as `node`, `NODE_ENV=production`, port 3021 |
 | `docker/entrypoint.sh` | Runs the migrations (`node dist/migrate.js migrations`), then `exec node … dist/index.js`. A failed migration stops the container |
-| `docker/web.Dockerfile`, `docker/nginx.conf` | nginx with both UIs: the console on :8080 and the super-admin on :8081. It is also the server's reverse proxy |
+| `docker/web.Dockerfile`, `docker/nginx.conf` | nginx with both UIs: the console on :8080 and the super-admin on :8081. It is also the server's reverse proxy. The build copies the two apps and the source packages they import (`packages/contracts`, `packages/web-ui`) |
 | `docker/docker-compose.prod.yml` | `server`, `web` and `redis`, as compose project `magick-agency-prod`. No Postgres (see "Postgres TLS") |
 | `docker/.env.example` | The settings to fill in, copied to `docker/.env` (git-ignored) |
 
@@ -196,8 +196,8 @@ Redis settings.
 
 ## Shutdown and grace period
 
-On SIGTERM or SIGINT the server closes HTTP first, then stops analysis, agency (pacing first;
-in-flight campaign-completion mails get up to 30 s), voice (the bridge hangs up live calls and
+On SIGTERM or SIGINT the server closes HTTP first, then stops analysis, agency (pacing first,
+waiting up to 5 s for ticks in flight; in-flight campaign-completion mails get up to 30 s), voice (the bridge hangs up live calls and
 releases their slots) and platform (audit buffers flushed), then closes Redis and Postgres
 (`apps/server/src/index.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
 so the production compose file sets `stop_grace_period: 45s` on the server. On any other runtime,
@@ -214,9 +214,11 @@ Database pool closed
 ```
 
 Measured on the image with no calls in flight: `docker compose stop` took 0.7 s, the server exited
-0, and the sequence above took 7 ms. A drain that has mail to send can take up to 30 s. Open
-question: a pacing tick already parked past its `stopped` check can still finish after the drain;
-awaiting in-flight ticks in `stop()` would close it.
+0, and the sequence above took 7 ms. A drain that has mail to send can take up to 30 s. Pacing's
+`stop()` waits for ticks in flight (`TICK_DRAIN_TIMEOUT_MS`, 5 s) before that drain; a tick that
+outlives it is logged, and cannot dial, because every dial site re-checks the engine and the
+dialer asks once more immediately before the carrier (a default pending Manas, `decisions.md`
+rulings of 2026-10-16/17). 5 s plus 30 s stays inside the 45 s grace.
 
 Agents are not returned to the pool on shutdown; after a restart they come back in `break` and must
 choose to go available.
@@ -224,7 +226,8 @@ choose to go available.
 ## Migrations
 
 The baseline, `packages/db/migrations/0001_baseline.sql`, and the numbered migrations after it
-(`0002_telephony_credentials.sql`), run in order with node-pg-migrate from `packages/db`:
+(`0002_telephony_credentials.sql`, `0003_agency_attempt_indexes.sql`,
+`0004_agency_contacts_in_flight_index.sql`), run in order with node-pg-migrate from `packages/db`:
 
 ```bash
 DATABASE_URL=postgresql://... pnpm migrate:up
@@ -235,7 +238,10 @@ every start, before the server, through `dist/migrate.js` (`apps/server/src/migr
 node-pg-migrate's runner with the server's own config and Postgres TLS settings (the CLI cannot
 verify TLS, because Q1 keeps TLS parameters out of `DATABASE_URL`). An invalid environment or a
 failed migration stops the container before the server starts. Same table (`pgmigrations`) as
-`pnpm migrate:up`. Future
+`pnpm migrate:up`. `0003_agency_attempt_indexes.sql` and `0004_agency_contacts_in_flight_index.sql` build their indexes with plain `CREATE INDEX`
+(a migration file runs in one transaction, where `CONCURRENTLY` is not allowed), so writes to
+`agency_call_attempts` and `agency_contacts` wait while it builds; that is safe only because the
+migrations run before the server starts. Run it the same way outside the image. Future
 schema changes go in new numbered files; never edit or renumber an applied migration.
 
 ## Recordings

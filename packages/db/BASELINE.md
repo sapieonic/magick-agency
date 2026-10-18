@@ -311,6 +311,39 @@ Per-tenant carrier credentials (bring-your-own-carrier, decisions B18–B22).
   `findOpenableVersions`) and the baseline suites, which pin the table
   set, the trigger list and the seed rows after both migrations.
 
+### 0003 — `migrations/0003_agency_attempt_indexes.sql`
+
+Indexes for the dialer's periodic reads. Checked with `EXPLAIN ANALYZE` on a seeded copy of the
+schema (50 campaigns, 200k contacts, 265k attempts over 60 days, 40 live, 50 contacts in
+`connected`, about 6k answered in the last 24 h):
+
+| Change | Query | Before | After |
+|---|---|---|---|
+| `idx_agency_attempts_live (campaign_id)`: predicate `state IN (5 live states)` → `state <> 'ended'` | `countLive` (every pacing tick), `stats().attempts_live`, `liveByState` | BitmapAnd of `idx_agency_attempts_agent` and `idx_agency_attempts_reporting` (4,040 index rows read for 40 live) | Index Only Scan on `idx_agency_attempts_live` (40 rows) |
+| new `idx_agency_attempts_answered (answered_at) WHERE answered_at IS NOT NULL` | `window24h` (every 60 s) | Parallel Seq Scan of all attempts | Bitmap Index Scan on `idx_agency_attempts_answered` |
+| new `idx_agency_contacts_connected (id) WHERE state = 'connected'` | `findLapsedWrapups` (every reaper sweep) | Parallel Seq Scan of all contacts (200k), then `uq_agency_attempt_number` | Bitmap Index Scan on `idx_agency_contacts_connected` (50 rows), then `uq_agency_attempt_number` |
+| drop `idx_agency_attempts_reporting (campaign_id, created_at DESC)` | everything filtering `campaign_id` (+ `created_at`) | used by the spine and by created_at range counts | the same plans on `idx_agency_attempts_keyset (campaign_id, created_at DESC, id DESC)`, same index condition |
+
+The reaper's `state = ANY(<the five live states>)` still implies the new live predicate and keeps
+using `idx_agency_attempts_live`. Plain `CREATE INDEX` (node-pg-migrate runs each file in one
+transaction, where `CONCURRENTLY` is not allowed): each build holds a SHARE lock on its table,
+blocking writes for the build; migrations run at container start, before the server. **Down**
+restores the baseline's live predicate and `idx_agency_attempts_reporting` and drops the two new
+indexes. **Tests**: `test/integration/db/attempt-indexes-migration.test.ts` (each definition, and
+that the planner can use each index for its query) and the down → up inventory suite.
+
+### 0004 — `migrations/0004_agency_contacts_in_flight_index.sql`
+
+One index, for the reaper's stranded-contact sweep (`AgencyContactRepository.findStrandedInFlight`,
+every 60 s): `idx_agency_contacts_in_flight (id) WHERE state = 'in_flight'`, the same shape as
+0003's `idx_agency_contacts_connected`. The sweep drives from the few contacts in `in_flight` (one
+per live call) and reads their attempts through `uq_agency_attempt_number`; without the index it
+would scan every contact. Keyed on `id` rather than `updated_at`, so contact writes that only move
+`updated_at` stay HOT-eligible. Plain `CREATE INDEX`, as in 0003. **Down** drops it. **Tests**:
+`test/integration/db/contacts-in-flight-index-migration.test.ts` (the definition, and that the
+planner can use it and `uq_agency_attempt_number` for the sweep's query) and the down → up
+inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

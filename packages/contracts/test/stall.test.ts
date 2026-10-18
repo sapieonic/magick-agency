@@ -2,8 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as Root from '../src/index';
 import { AGENCY_STALL_PRIORITY, type AgencyStall, type AgencyStallCode } from '../src/agency';
 import type { AgencyApi } from '../src/index';
-
-type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+import type { Equals } from './type-equals';
 
 // `credits_low` is not a member of either stall union, nor a discriminant of
 // either evidence union (fails `pnpm lint` if it comes back).

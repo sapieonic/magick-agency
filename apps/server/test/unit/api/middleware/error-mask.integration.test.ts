@@ -25,7 +25,7 @@ function buildApp(): FastifyInstance {
   // Route-own business 4xx → shown.
   app.get('/own-4xx', async (_req, reply) =>
     reply.code(402).send({ error: 'Payment Required', message: 'Insufficient credits' }));
-  // Best-effort lookup did NOT record (recordCoreErrors:false), then own 404 → shown.
+  // A best-effort lookup that failed quietly, then the route's own 404 → shown.
   app.get('/suppressed-then-own-404', async (_req, reply) =>
     reply.code(404).send({ error: 'Not Found', message: 'Contact list not found' }));
   // Ops probe 503 → exempt from masking.

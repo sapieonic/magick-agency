@@ -1,4 +1,4 @@
-import { StatusBadge } from '../../components/common/StatusBadge';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
 import type { AgencyCampaignStatus } from '../../types/agency-campaign';
 
 /**

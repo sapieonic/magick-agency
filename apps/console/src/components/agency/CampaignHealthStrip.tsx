@@ -9,7 +9,7 @@ import {
   splitFact,
   stallCopy,
 } from '../../utils/agencyHealthStrip';
-import { formatDate } from '../../utils/format';
+import { formatDate } from '@magick-agency/web-ui/format';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { hasPermission } from '../../utils/permissions';
 import {

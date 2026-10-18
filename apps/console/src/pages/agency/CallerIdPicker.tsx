@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { usePhoneNumbers } from '../../hooks/usePhoneNumbers';
-import { telephonyProviderAlias } from '../../config/telephonyProviders';
+import { telephonyProviderAlias } from '@magick-agency/web-ui/telephonyProviders';
 import styles from './CallerIdPicker.module.css';
 
 /**

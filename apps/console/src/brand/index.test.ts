@@ -85,7 +85,7 @@ describe('brand module', () => {
     applyBrandColors(); // default = magick-agency
     const css = document.getElementById('brand-accent')?.textContent ?? '';
 
-    // Dark (:root) — accent variants match src/global.css :root; gradient/glow
+    // Dark (:root) — accent variants match packages/web-ui/src/global.css :root; gradient/glow
     // derived from the accent pair.
     expect(css).toContain(':root{--accent:#7c5cfc;--accent-hover:#9b82ff;'
       + '--accent-subtle:rgba(124, 92, 252, 0.12);'
@@ -97,7 +97,7 @@ describe('brand module', () => {
       // Default style block: 8px radius scale, no flat-button override.
       + '--radius:8px;--radius-lg:12px;--radius-xl:16px;--radius-2xl:20px;}');
 
-    // Light — accent variants match src/global.css [data-theme='light'].
+    // Light — accent variants match packages/web-ui/src/global.css [data-theme='light'].
     expect(css).toContain("[data-theme='light']{--accent:#6a4de4;--accent-hover:#5a40ce;"
       + '--accent-subtle:rgba(106, 77, 228, 0.1);'
       + '--accent-glow:rgba(106, 77, 228, 0.14);'

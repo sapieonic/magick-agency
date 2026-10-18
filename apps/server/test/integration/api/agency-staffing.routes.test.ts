@@ -71,7 +71,7 @@ initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../src/api/core-dispatch.js')>();
   mocks.realCallCore = actual.callCore as (...args: unknown[]) => Promise<unknown>;
-  return { ...actual, callCore: mocks.proxyToCore };
+  return (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(actual, mocks.proxyToCore);
 });
 
 vi.mock('@magick-agency/observability', async (importOriginal) => {
@@ -548,7 +548,7 @@ describe('agency staffing routes (integration)', () => {
 
     it('reports campaign_name: null when the internal handler answers a shape without a string name', async () => {
       await seedAssignment();
-      mocks.proxyToCore.mockResolvedValue({ status: 200, body: { id: CAMPAIGN, name: 42 } });
+      mocks.proxyToCore.mockResolvedValue({ status: 200, body: { campaigns: [{ id: CAMPAIGN, name: 42 }] } });
 
       const res = await app.inject({
         method: 'GET',
@@ -611,7 +611,7 @@ describe('agency staffing routes (integration)', () => {
       await seedAssignment({ campaignId: OTHER_CAMPAIGN });
       mocks.proxyToCore.mockResolvedValue({
         status: 200,
-        body: { id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' },
+        body: { campaigns: [{ id: CAMPAIGN, name: 'Q3 Renewals', status: 'running' }] },
       });
 
       const res = await app.inject({
@@ -628,11 +628,35 @@ describe('agency staffing routes (integration)', () => {
       ]);
     });
 
+    it('names an agent’s campaigns past the summaries read’s 100-id ceiling', async () => {
+      // The real internal handler refuses more than 100 ids in one read; one read
+      // for all of them nulled every label.
+      const ids: string[] = [];
+      for (let i = 0; i < 101; i++) {
+        const id = randomUUID();
+        ids.push(id);
+        await insertAgencyCampaign({ id, tenant_id: tenant.id, account_id: account.id, name: `Bulk ${i}` });
+        await seedAssignment({ campaignId: id });
+      }
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `${PREFIX}/my-assignments`,
+        headers: headers({ 'x-user-id': agent.id }),
+      });
+
+      expect(res.statusCode).toBe(200);
+      const { assignments } = res.json() as { assignments: Array<{ campaign_id: string; campaign_name: string | null }> };
+      expect(assignments).toHaveLength(101);
+      const named = new Map(assignments.map((a) => [a.campaign_id, a.campaign_name]));
+      expect(ids.map((id) => named.get(id))).toEqual(ids.map((_, i) => `Bulk ${i}`));
+    });
+
     it('carries the four keys, always present — a live contract with the console', async () => {
       await seedAssignment({ campaignId: CAMPAIGN });
       mocks.proxyToCore.mockResolvedValue({
         status: 200,
-        body: { id: CAMPAIGN, name: 'Q3 Renewals', status: 'paused' },
+        body: { campaigns: [{ id: CAMPAIGN, name: 'Q3 Renewals', status: 'paused' }] },
       });
 
       const res = await app.inject({

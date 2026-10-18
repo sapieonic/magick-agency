@@ -10,13 +10,14 @@
  *   - `./agency`  the dialer runtime's frozen agency contract (frames, payloads, unions);
  *   - `./errors`  every agency error vocabulary as union + `as const` list;
  *   - `./rbac`    roles, permissions, the permission matrix, `hasPermission`;
- *   - `./flags`   the three agency feature flags.
+ *   - `./flags`   the three agency feature flags;
+ *   - `./primitives` `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, `AllListed`.
  *
  * NAMESPACED: the HTTP API layers, because they reuse names the root already
  * exports with a DIFFERENT shape (the console's `AgencyCampaignStats` is the public API layer's
  * enriched payload, not the dialer runtime's):
  *   - `AgencyApi`    console agency surfaces (`./api/agency/*`);
- *   - `PlatformApi`  auth/session, settings, team, invites, notifications, audit,
+ *   - `PlatformApi`  auth/session, settings, team, invites, notifications,
  *                    flags map, super-admin (`./api/platform/*`).
  *
  *     import { AgencyApi, hasPermission } from '@magick-agency/contracts';
@@ -37,6 +38,7 @@ export * from './agency';
 export * from './errors';
 export * from './rbac';
 export * from './flags';
+export * from './primitives';
 
 export * as AgencyApi from './api/agency/index';
 export * as PlatformApi from './api/platform/index';

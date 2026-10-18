@@ -33,7 +33,8 @@ const mocks = vi.hoisted(() => ({
   config: { agency: { rosterReplaceEnabled: false } },
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('../../../src/storage/s3.js', () => ({
   getFileStream: mocks.getFileStream,
@@ -74,6 +75,7 @@ vi.mock('../../../src/agency/agency-roster.client.js', async () => {
 });
 
 import { proxyAgencyCampaignsRoutes } from '../../../src/api/routes/proxy-agency-campaigns.routes.js';
+import { routeFamilySource } from '../../helpers/route-source.js';
 import { RosterSupersedeError } from '../../../src/agency/agency-roster.client.js';
 import type { AgencyCampaignWire } from '../../../src/agency/agency-campaign-wire.js';
 
@@ -1679,7 +1681,7 @@ describe('agency ingest routes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toContain('text/csv');
       expect(res.headers['content-disposition']).toBe(
-        'attachment; filename="roster-rejected-rows.csv"',
+        'attachment; filename="roster-rejected-rows.csv"; filename*=UTF-8\'\'roster-rejected-rows.csv',
       );
       expect(res.body).toContain('_reason');
       await app.close();
@@ -1695,6 +1697,31 @@ describe('agency ingest routes', () => {
       const disposition = res.headers['content-disposition'] as string;
       expect(disposition).not.toContain('..');
       expect(disposition).not.toContain('"wd');
+      expect(disposition).not.toContain('/');
+      await app.close();
+    });
+
+    it('collapses a dot run in the MIDDLE of the name too, not just a leading one', async () => {
+      mocks.repo.findById.mockResolvedValue(job({ rejected_s3_key: 'k', file_name: 'report..final/../x.csv' }));
+      mocks.getFileBuffer.mockResolvedValue(Buffer.from('x'));
+      const app = await buildApp();
+      const res = await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001/rejected.csv` });
+      expect(res.headers['content-disposition']).toBe(
+        'attachment; filename="report.final_._x-rejected-rows.csv"; filename*=UTF-8\'\'report.final_._x-rejected-rows.csv',
+      );
+      await app.close();
+    });
+
+    it('keeps a non-ASCII upload name in filename*, with an ASCII-only fallback', async () => {
+      // The ad-hoc sanitiser this route used to have replaced every non-ASCII
+      // character with `_`, so a roster named in Hindi downloaded as `____`.
+      mocks.repo.findById.mockResolvedValue(job({ rejected_s3_key: 'k', file_name: 'सूची.csv' }));
+      mocks.getFileBuffer.mockResolvedValue(Buffer.from('x'));
+      const app = await buildApp();
+      const res = await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001/rejected.csv` });
+      expect(res.headers['content-disposition']).toBe(
+        `attachment; filename="-rejected-rows.csv"; filename*=UTF-8''${encodeURIComponent('सूची-rejected-rows.csv')}`,
+      );
       await app.close();
     });
 
@@ -2073,10 +2100,9 @@ describe('every campaign route carries its RBAC permission', () => {
    * stubbed, and it is a real one: it fails loudly the moment a guard is dropped or
    * a new campaign route is added without one.
    */
-  const source = readFileSync(
-    new URL('../../../src/api/routes/proxy-agency-campaigns.routes.ts', import.meta.url),
-    'utf8',
-  );
+  // The whole family — the plugin file and every registration file under
+  // `proxy-agency-campaigns/` — so a route moved into a new file stays in sight.
+  const source = routeFamilySource('proxy-agency-campaigns');
 
   // Route → the permission it must carry. Reads are `.read`; writes are `.write`;
   // the four lifecycle transitions are `agency.supervise` (floor `account_admin`)

@@ -1,25 +1,21 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { useTenant } from '../contexts/TenantContext';
 import { listAccounts } from '../api/accounts';
 import type { Account } from '../types/auth';
 
+/** The tenant's accounts, stale-response guarded (`useAsyncResource`). */
 export function useAccounts() {
   const { tenantId } = useTenant();
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const fetchAccounts = useCallback(
+    (): Promise<Account[]> => listAccounts(tenantId!),
+    [tenantId],
+  );
+  const { data: accounts, loading, error, reload } = useAsyncResource(fetchAccounts, {
+    initialData: [],
+    errorMessage: 'Failed to load accounts',
+    enabled: tenantId !== null,
+  });
 
-  const load = useCallback(() => {
-    if (!tenantId) return;
-    setLoading(true);
-    setError(null);
-    listAccounts(tenantId)
-      .then(setAccounts)
-      .catch(err => setError(err instanceof Error ? err.message : 'Failed to load accounts'))
-      .finally(() => setLoading(false));
-  }, [tenantId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  return { accounts, loading, error, reload: load };
+  return { accounts, loading, error, reload };
 }

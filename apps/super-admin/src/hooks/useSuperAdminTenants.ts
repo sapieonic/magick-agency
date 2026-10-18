@@ -1,26 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { listTenants } from '../api/super-admin';
 import type { SuperAdminTenant } from '@magick-agency/contracts/api/platform/super-admin';
 
+// Module-level, so its identity is stable and the resource loads once per mount.
+const fetchTenants = async (): Promise<SuperAdminTenant[]> => (await listTenants()).tenants;
+
 export function useSuperAdminTenants() {
-  const [tenants, setTenants] = useState<SuperAdminTenant[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await listTenants();
-      setTenants(res.tenants);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load tenants');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  return { tenants, loading, error, reload: load };
+  const { data: tenants, loading, error, reload } = useAsyncResource(fetchTenants, {
+    initialData: [] as SuperAdminTenant[],
+    errorMessage: 'Failed to load tenants',
+  });
+  return { tenants, loading, error, reload };
 }

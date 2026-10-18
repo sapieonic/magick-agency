@@ -1,6 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useSuperAdmin } from '../../contexts/SuperAdminContext';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import type { ReactNode } from 'react';
 
 export default function RequireSuperAdmin({ children }: { children: ReactNode }) {

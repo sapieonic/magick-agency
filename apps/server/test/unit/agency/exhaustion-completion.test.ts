@@ -48,7 +48,11 @@ const { repos, settings } = vi.hoisted(() => ({
       countOutstanding: vi.fn().mockResolvedValue(0),
       transitionStatus: vi.fn(),
     },
-    contact: { claimDialable: vi.fn().mockResolvedValue([]), unclaim: vi.fn().mockResolvedValue(undefined) },
+    contact: {
+      claimDialable: vi.fn().mockResolvedValue([]),
+      unclaim: vi.fn().mockResolvedValue(undefined),
+      unclaimMany: vi.fn().mockResolvedValue(undefined),
+    },
     attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     session: { findLiveForCampaign: vi.fn().mockResolvedValue([]) },
   },
@@ -96,7 +100,12 @@ function makeStations(owned: string[]) {
 // The engine's "something may want to know a campaign finished" seam carries the
 // completion notice, registered through the real `registerCompletionNotifier`.
 function engine(stations: any, notifier: any = undefined) {
-  const agents = { get: vi.fn(async () => null), reserve: vi.fn(), set: vi.fn() };
+  const agents = {
+    get: vi.fn(async () => null),
+    getMany: vi.fn(async (ids: readonly string[]) => ids.map(() => null)),
+    reserve: vi.fn(),
+    set: vi.fn(),
+  };
   const e = new PacingEngine(
     null, '', 'r1', stations as any, agents as any,
     { dispatch: vi.fn() } as any, { check: vi.fn().mockResolvedValue('clear') } as any,
@@ -174,8 +183,8 @@ describe('remaining and retries-pending are reported separately', () => {
     // pending row; `retries_pending` is only the future-dated ones — so
     // "dialable right now" is the difference, and a dashboard can show a
     // campaign that is neither working nor finished.
-    expect(sql).toContain("state = 'pending')::text AS contacts_pending");
-    expect(sql).toContain("state = 'pending' AND next_attempt_at > now())::text AS retries_pending");
+    expect(sql).toContain("FILTER (WHERE state = 'pending') AS contacts_pending");
+    expect(sql).toContain("FILTER (WHERE state = 'pending' AND next_attempt_at > now()) AS retries_pending");
   });
 
   it('stats reports exhaustion in its own bucket', async () => {
@@ -187,7 +196,7 @@ describe('remaining and retries-pending are reported separately', () => {
     // this suite found — makes `contacts_total` disagree with the sum of the
     // buckets, and the contacts that vanish are precisely the ones an operator
     // needs to see: worked to the cap and never reached.
-    expect(sqlOf()).toContain("state = 'exhausted')::text AS contacts_exhausted");
+    expect(sqlOf()).toContain("FILTER (WHERE state = 'exhausted') AS contacts_exhausted");
   });
 
   it('every contact state has a bucket, so the buckets sum to the total', async () => {

@@ -321,6 +321,25 @@ describe('late binding: the dial', () => {
     expect(rows.current.outcome).toBe('orphaned');
   });
 
+  it('refuses, unstamped, when the agent goes away while the dial is being prepared', async () => {
+    // The station closes during the priors read: after the first socket check,
+    // before anything is written. The refusal must not stamp `dialed_at` — the
+    // carrier was never contacted — or extend the agent's lease.
+    const h = await harness({ lateBinding: true });
+    repos.attempt.findPriorForContactLineage.mockImplementationOnce(async () => {
+      await h.stations.detach('s1');
+      return [];
+    });
+
+    await h.dialer.executeDial(makeCmd());
+
+    expect(h.bridge.createUnboundBridgedCall).not.toHaveBeenCalled();
+    expect(rows.current.state).toBe('ended');
+    expect(rows.current.outcome).toBe('orphaned');
+    expect(rows.current.dialed_at ?? null, 'stamped dialled for a dial never placed').toBeNull();
+    expect(h.agents.transition).not.toHaveBeenCalled();
+  });
+
   it('sends no `released` for a dial abandoned before it was placed', async () => {
     // `abandonBeforeDial(…, notifyAgent: false)`. The agent was never shown a
     // panel, so there is nothing for a release to explain — and the socket is

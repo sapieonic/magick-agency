@@ -8,6 +8,7 @@ import type {
   AgencyStationClientFrame,
   AgencyStationPingFrame,
 } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -68,7 +69,7 @@ export async function handleStationSocket(
     log.warn({ sessionId }, 'Station upgrade with missing/expired/used token — refusing');
     // 4401: re-mint and retry. Distinct from 4404 so the console can tell a
     // recoverable blip from a dead session instead of retrying forever.
-    try { socket.close(4401, 'station_token_invalid'); } catch { /* ignore */ }
+    try { socket.close(AGENCY_STATION_CLOSE.TOKEN_REJECTED, 'station_token_invalid'); } catch { /* ignore */ }
     return;
   }
 
@@ -205,7 +206,7 @@ export async function handleStationSocket(
         });
       if (current === null || current?.left_at) {
         log.info({ sessionId }, 'Station socket ping on a session that has left — closing');
-        try { socket.close(4404, 'session_not_found'); } catch { /* ignore */ }
+        try { socket.close(AGENCY_STATION_CLOSE.SESSION_GONE, 'session_not_found'); } catch { /* ignore */ }
         return;
       }
 
@@ -352,7 +353,7 @@ export async function handleStationSocket(
 
   const session = await agencyAgentSessionRepository.findById(sessionId);
   if (!session || session.left_at) {
-    try { socket.close(4404, 'session_not_found'); } catch { /* ignore */ }
+    try { socket.close(AGENCY_STATION_CLOSE.SESSION_GONE, 'session_not_found'); } catch { /* ignore */ }
     return;
   }
 

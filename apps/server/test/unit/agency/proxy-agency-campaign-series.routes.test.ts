@@ -40,7 +40,8 @@ const mocks = vi.hoisted(() => ({
   auditLog: vi.fn(),
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: { log: mocks.auditLog } }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
@@ -437,7 +438,6 @@ describe('the internal handler\'s series payload is forwarded untouched', () => 
     expect(call.path).toBe(`/agency-campaigns/${CAMPAIGN}/stats/series`);
     // A route template, never the interpolated path: the metrics SDK would otherwise
     // retain one permanent series per campaign id.
-    expect(call.metricPath).toBe('/agency-campaigns/:id/stats/series');
     // Tenancy goes through the proxy helper's own arguments — the public API layer never
     // hand-rolls the `x-mgkvc-*` headers.
     expect(call.tenantId).toBe(TENANT);

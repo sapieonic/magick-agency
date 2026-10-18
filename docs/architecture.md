@@ -20,10 +20,11 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | `apps/server` | The one Fastify process: identity, tenancy, super-admin auth, the HTTP API, the station WebSocket, carrier webhooks and the media WebSocket, the voice engine, concurrency guard, dialer runtime, analysis worker, sweeps and retention. Bundled by esbuild to `dist/index.js` (`scripts/build.mjs`, CommonJS, B5) |
 | `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, settings |
 | `apps/super-admin` | Vite + React SPA (the super-admin console): tenants, users, admins, phone numbers, feature flags, usage, audit |
-| `packages/contracts` | Wire contract shared by the server and both UIs: dialer types (`agency.ts`), console wire types (`api/`), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permissions (`rbac.ts`) |
+| `packages/contracts` | Wire contract shared by the server and both UIs: dialer types (`agency.ts`, a barrel over `agency/`, including the campaign config defaults and rate floors), console wire types (`api/`, re-exported or derived from the dialer types), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permissions (`rbac.ts`) |
 | `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, keyset cursor, rates, retry bounds and summary, success disposition, timers |
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
+| `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), the telephony-provider aliases, `mapWithConcurrency`, `useAsyncResource`, `useDialogFocus` (the one focus trap). React, the router and `lucide-react` are peer dependencies; its own no-parent-brand scan (B17). Decision B23 |
 | `tooling/` | `test-env.ts` (per-worktree test database), the Vitest decorator transform |
 | `docker/` | Dev Postgres and Redis (`docker-compose.dev.yml`); production: the server image (`Dockerfile`, `entrypoint.sh`), nginx with both UIs (`web.Dockerfile`, `nginx.conf`) and `docker-compose.prod.yml` (see [`operations.md`](operations.md)) |
 
@@ -107,8 +108,8 @@ unique.
 6. `app.listen`, only after the bootstraps, so no request lands before the startup reap.
 
 Shutdown closes HTTP first (`app.close()`), then runs the stops in reverse: analysis; agency
-(pacing stops first, then reaper, sweeps, dialer and wrap-up timers; completion notices drained up
-to 30 s); voice (the bridge ends live calls, then the guard host, then the PostHog flush); platform
+(pacing stops first, waiting up to 5 s for ticks in flight; then reaper, sweeps, dialer and wrap-up
+timers; completion notices drained up to 30 s); voice (the bridge ends live calls, then the guard host, then the PostHog flush); platform
 (both audit buffers flushed last). Then Redis and the pool close. Pinned by
 `apps/server/test/integration/agency/runtime-boot-order.test.ts`.
 
@@ -125,14 +126,22 @@ See [`seams.md`](seams.md).
   paths the console calls: `/proxy/agency/...`, `/dnc`, `/phone-numbers`,
   `/proxy/call-analysis-profiles`, `/super-admin/...`. They own authentication, tenancy, RBAC,
   validation and enrichment (names, omission counts). The `/proxy` prefix is cosmetic.
-- **Internal handler instance.** The dialer's handlers (`agency.routes.ts`,
-  `agency-campaigns.routes.ts`, `agency-agents.routes.ts`) are registered on a private Fastify
+- **Internal handler instance.** The dialer's handlers (`agency.routes.ts` with `agency/`,
+  `agency-campaigns.routes.ts` with `agency-campaigns/`, `agency-agents.routes.ts`) are registered on a private Fastify
   instance that never listens and is not in the app's route table (`api/core-handlers.ts`), under
   `/api/v1/agency`, `/api/v1/agency-campaigns` and `/api/v1/agency-agents`.
 - **`callCore()`** (`api/core-dispatch.ts`) runs an internal handler through `inject`: it encodes
   the query, sends a JSON body only for POST / PUT / PATCH, decodes JSON (or returns a raw Buffer),
   refuses path traversal, and sets the internal tenancy headers `x-mgkvc-tenant` /
   `x-mgkvc-account` from the public layer's tenant context only, never from forwarded headers.
+  Its typed `provenCampaignId` sets `x-mgkvc-proven-campaign` (`<tenant>:<account>:<campaign>`),
+  which the internal spine handler honours only on an exact match; the header is stripped from
+  forwarded headers. `forwardCore` / `forwardCoreVia` (the pass-through forwarders) live beside it.
+- **Route families.** A large route file is `<family>.routes.ts` (the plugin function, its hooks)
+  plus a `<family>/` folder of `register…(app)` functions on the same instance, e.g.
+  `proxy-agency-campaigns/`, `proxy-agency-performance/`, `proxy-agency-staffing/`,
+  `super-admin/`; helpers shared by route files are in `api/routes/helpers/` (`parseOr400` keeps
+  the three 400 shapes apart).
 
 A request goes: app-wide limiter → session (Firebase) → tenant context → RBAC → public handler →
 `callCore` → internal handler → repository.
@@ -183,14 +192,18 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   WebSocket at `/proxy/agency/station/:sessionId` with a single-use token (2 min TTL, consumed in
   Lua) minted over authenticated HTTP. Heartbeat grace 30 s, sweep every 10 s
   (`packages/domain/src/timers.ts`). Only the session's own agent can mint its token (Q8).
-- **Pacing** (`pacing-engine.ts`). One leader per campaign via a Redis lease (15 s, renewed every
+- **Pacing** (`pacing-engine.ts`, with `pacing/`: leader lease, caller-ID pool, campaign announcer,
+  in-flight tracking). One leader per campaign via a Redis lease (15 s, renewed every
   5 s; a supervise pass every 2 s takes leadership); the leader ticks each campaign it leads every
   250 ms. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
-  `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency.repository.ts`)
+  `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency/contact.repository.ts`)
   plus the `uq_agency_attempt_live` unique index, so two leaders cannot dial one contact.
   `pre-dial-gates.ts` checks phone validity, then calling hours, then DNC (fail closed).
-- **Dialer** (`agency-dialer.ts`, `dial-dispatcher.ts`). Reserves the agent before the dial,
-  re-asserts the lease right before `createBridgedCall`, registers the lifecycle listener before
+  `stop()` waits up to 5 s (`TICK_DRAIN_TIMEOUT_MS`) for ticks in flight, and every dial site
+  re-checks `mayDial`, so no tick dials after shutdown begins.
+- **Dialer** (`agency-dialer.ts`, `dial-dispatcher.ts`, with `dialer/`: live-attempt record, contact
+  settlement). Reserves the agent before the dial, re-asserts the lease and asks the pacing engine
+  (`stillAuthorised`) right before `createBridgedCall`, registers the lifecycle listener before
   dialing, writes the agent's panel and binds the audio with no `await` between, and stamps
   `answered_at` and `bridged_at` independently.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
@@ -209,9 +222,9 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 
 ## The voice engine
 
-- **Bridge** (`core/webrtc-bridge-manager.ts`, `core/webrtc-bridge-session.ts`). Bridges the agent's
-  browser leg (the station) to the carrier's PSTN leg. Its constructor takes the
-  `TelephonyGuardHost`.
+- **Bridge** (`core/webrtc-bridge-manager.ts`, `core/webrtc-bridge-session.ts`, with `core/bridge/`:
+  admission, the exported types, the per-call WS tokens). Bridges the agent's browser leg (the
+  station) to the carrier's PSTN leg. Its constructor takes the `TelephonyGuardHost`.
 - **Concurrency guard** (`core/telephony-guard-host.ts`, `core/concurrency-guard.ts`,
   `account-concurrency-guard.ts`, `provider-concurrency-guard.ts`). Global, account and provider
   scopes in Redis; startup and demand-driven self-heal reconcile; a stale-call sweep. Limits come
@@ -244,8 +257,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   error codes are `TELEPHONY_CREDENTIAL_ERROR_CODES` in the contracts: `credential_store_unavailable`
   (503) means no keyring is configured; `secret_unavailable` (409, not retryable) means this
   credential's secret is shredded, missing, or sealed under a key the keyring lacks.
-  Only ciphertext reaches SQL; pg spans carry query parameters, so sealed bytes do reach the
-  trace store, where they cannot be opened without the master key.
+  Only ciphertext reaches SQL, and pg spans carry query text, never parameter values
+  (`decisions.md`, rulings of 2026-10-16).
 - **Audio** (`audio/decode.ts`, `core/paced-audio-streamer.ts`, `tts/tts-file-cache.ts`). Uploaded
   abandon clips are decoded to PCM and cached on disk; there is no TTS (launch decision 4).
 - **Calls** are rows in `agency_calls` (`packages/db/src/repositories/agency-call.repository.ts`).
@@ -313,10 +326,14 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 
 - One Postgres. The schema is the baseline migration, `packages/db/migrations/0001_baseline.sql`
   (node-pg-migrate, one transaction; 33 tables plus default partitions for the two audit tables),
-  and the numbered migrations after it (0002: the two telephony-credential tables), all
-  inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
+  and the numbered migrations after it (0002: the two telephony-credential tables; 0003: the
+  dialer's attempt and contact indexes; 0004: the in-flight contacts index the reaper's
+  stranded-contact sweep reads), all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
-  `apps/server/src/db/repositories/`). Repository tests run on real Postgres.
+  `apps/server/src/db/repositories/`: `agency.repository.ts`, a barrel over `agency/`). Repository
+  tests run on real Postgres. Transactions go through `withTransaction`
+  (`packages/db/src/utils/transaction.ts`) where adopted: one BEGIN / COMMIT / ROLLBACK / release
+  shape, a client whose ROLLBACK failed is destroyed, and `client` joins a caller's transaction.
 - Redis holds agent leases, leader leases, station and call tokens, the membership cache and the
   guard counters. It must not evict (see [`operations.md`](operations.md)).
 
@@ -331,6 +348,9 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 - **Super-admin console** (`apps/super-admin`). Tenants, users, admins, phone numbers, feature flags,
   usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
   branding guard.
+- **Shared UI** (`packages/web-ui`). The components, toast context, stylesheet and helpers both SPAs
+  import by path; it has its own branding guard (`packages/web-ui/test/noParentBrand.test.ts`), as
+  the apps' guards scan only their own `src/`.
 - **Server branding guard**: `apps/server/test/unit/branding/no-parent-brand.test.ts` scans
   `apps/server/src` and `packages/*/src` with comments stripped.
 
@@ -367,7 +387,8 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
   through disposition, analysis and completion) and `runtime-boot-order.test.ts`.
 - **Contract and guard tests**: route tables enumerated from `onRoute`
   (`apps/server/test/unit/api/*route-table*.test.ts`, the agent-reach tests); config blocks disjoint;
-  the bridge seam contract; the VoiceLink carrier fixture; branding guards in all three apps; the
+  the bridge seam contract; the VoiceLink carrier fixture; branding guards in all three apps and
+  `packages/web-ui`; the
   console dev-proxy test; the error-code unions in `packages/contracts/test/` (including
   `TELEPHONY_CREDENTIAL_ERROR_CODES`, held equal to its union by an exhaustiveness guard).
 - **Console** tests run in two Vitest projects (`*.timezone.test.ts(x)` and the rest), with TZ and

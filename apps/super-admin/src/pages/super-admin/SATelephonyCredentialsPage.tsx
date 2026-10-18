@@ -17,16 +17,14 @@ import {
   enableTelephonyCredential,
   revokeTelephonyCredential,
 } from '../../api/super-admin';
-import {
-  ConfirmDialog,
-  EmptyState,
-  ErrorAlert,
-  LoadingSpinner,
-  Modal,
-  PageHeader,
-  StatCard,
-  StatusBadge,
-} from '../../components/common';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { Modal } from '@magick-agency/web-ui/components/Modal';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
+import { StatCard } from '../../components/common';
 import { TenantPicker } from '../../components/super-admin/TenantPicker';
 import { useSuperAdminTenants } from '../../hooks/useSuperAdminTenants';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';

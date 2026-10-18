@@ -77,7 +77,7 @@ look exactly.
 focus rings, active states, badges, subtle accent backgrounds/glows, the
 `--gradient-purple` wordmark/panel gradient, and the `--shadow-glow` tokens (all
 recolored from the accent pair at runtime in `src/brand/index.ts`). The
-neutral/background palette stays theme-specific in `src/global.css`.
+neutral/background palette stays theme-specific in `packages/web-ui/src/global.css`.
 
 ## Add a new whitelabel
 

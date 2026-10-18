@@ -19,6 +19,7 @@ import {
   mixedCohortNote,
   ratedBasisNote,
   rosterAttentionRows,
+  rosterPageFlags,
   rosterConnectAxis,
   rosterCountReadout,
   rosterFlag,
@@ -602,6 +603,19 @@ describe('the pooled cohort, and the comparison it cannot support', () => {
     const rows = [rosterRow({ success_rate_pct: 4 }), thinRow(), rosterRow({ agent_user_id: 'ok', success_rate_pct: 18 })];
     expect(rosterAttentionRows(rows, rosterBenchmark(), true).length).toBe(2);
     expect(rosterAttentionRows(rows, rosterBenchmark(), false).length).toBe(1);
+  });
+  it('derives every row’s flag once per page, agreeing with the per-row rule', () => {
+    // `rosterPageFlags` is what the section counts and the table draws from.
+    const rows = [rosterRow({ success_rate_pct: 4 }), thinRow(), rosterRow({ agent_user_id: 'ok', success_rate_pct: 18 })];
+    for (const campaignId of ['camp-1', null]) {
+      const page = rosterPage({ rows, campaign_id: campaignId });
+      const flags = rosterPageFlags(page);
+      expect(flags.comparable).toBe(cohortComparable(page) && benchmarkUsable(page.benchmark));
+      expect(flags.flagged).toBe(rosterAttentionRows(rows, page.benchmark, flags.comparable).length);
+      for (const row of rows) {
+        expect(flags.byAgent.get(row.agent_user_id)).toEqual(rosterFlag(row, page.benchmark, flags.comparable));
+      }
+    }
   });
 });
 

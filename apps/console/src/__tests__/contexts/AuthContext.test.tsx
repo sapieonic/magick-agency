@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { memo, useState } from 'react';
+import { render } from '@testing-library/react';
 import type { SessionResponse, MeResponse } from '../../types/auth';
 
 /*
@@ -1050,5 +1052,37 @@ describe('the settings map', () => {
 
     await act(async () => { await result.current.refreshSession(); });
     expect(result.current.settings).toEqual(SETTINGS);
+  });
+});
+
+// ─── context value identity ──────────────────────────────────────────────────
+
+describe('context value identity', () => {
+  // A re-render above the provider (a route change, a parent's own state) must
+  // not hand every `useAuth()` consumer a new object: with a memoised consumer,
+  // nothing that reads the context re-renders unless the auth state changed.
+  it('does not re-render a memoised consumer when the provider re-renders with unchanged state', async () => {
+    const seen = { renders: 0 };
+    const Consumer = memo(function Consumer() {
+      useAuth();
+      seen.renders += 1;
+      return null;
+    });
+    let bump = () => {};
+    function Host() {
+      const [, setN] = useState(0);
+      bump = () => setN((n) => n + 1);
+      return <AuthProvider><Consumer /></AuthProvider>;
+    }
+
+    render(<Host />);
+    await waitFor(() => expect(onAuthStateChanged).toHaveBeenCalled());
+    await act(async () => { testState.authCallback?.(null); });
+    const settled = seen.renders;
+
+    act(() => bump());
+    act(() => bump());
+
+    expect(seen.renders).toBe(settled);
   });
 });

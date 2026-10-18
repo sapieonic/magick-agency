@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Info, Clock, AlertTriangle, Mic, Download, MessageSquare } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import {
-  Breadcrumbs,
-  PageHeader,
-  StatusBadge,
-  LoadingSpinner,
-} from '../common';
-import { ErrorText } from '../common/ErrorText';
+import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
+import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 import { AudioWaveform } from '../audio/AudioWaveform';
 import {
   AnalysisSection,
@@ -15,7 +13,8 @@ import {
   AnalysisStatusCard,
   type TranscriptSectionEntry,
 } from './CallDetailSections';
-import { formatPhone, formatDuration, formatDate } from '../../utils/format';
+import { formatPhone, formatDate } from '@magick-agency/web-ui/format';
+import { callSeconds } from '../../utils/format/duration';
 import { needsAnalysisStatusCard, TRANSCRIPT_PURGED_MESSAGE } from '../../utils/vocabulary';
 import type {
   WebRtcCallRecord,
@@ -385,12 +384,12 @@ export function CallDetailView({
             </span>
           </InfoItem>
           <InfoItem label="Duration (total)">
-            <span className={styles.infoValueMono}>{formatDuration(call.duration_seconds)}</span>
+            <span className={styles.infoValueMono}>{callSeconds(call.duration_seconds)}</span>
           </InfoItem>
           <InfoItem label="Talk Time (billed)">
             <span className={styles.infoValueMono}>
               {answered ? (
-                formatDuration(call.talk_time_seconds)
+                callSeconds(call.talk_time_seconds)
               ) : (
                 <span className={styles.infoValueMuted}>Not answered</span>
               )}
@@ -399,7 +398,7 @@ export function CallDetailView({
           {call.recording_duration_seconds != null && (
             <InfoItem label="Recording Length">
               <span className={styles.infoValueMono}>
-                {formatDuration(call.recording_duration_seconds)}
+                {callSeconds(call.recording_duration_seconds)}
               </span>
             </InfoItem>
           )}

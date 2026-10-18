@@ -65,9 +65,8 @@ const mocks = vi.hoisted(() => ({
   config: { agency: { rosterReplaceEnabled: false } },
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({
-  callCore: mocks.proxyToCore,
-}));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 vi.mock('@magick-agency/db/repositories/platform/audit.repository', () => ({
   auditRepository: { find: mocks.auditFind },
 }));
@@ -552,7 +551,9 @@ describe('GET /proxy/agency/campaigns/:id/activity.csv', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toContain('text/csv');
-    expect(res.headers['content-disposition']).toContain('activity-Q3-collections.csv');
+    expect(res.headers['content-disposition']).toBe(
+      'attachment; filename="activity-Q3 collections.csv"; filename*=UTF-8\'\'activity-Q3%20collections.csv',
+    );
     const lines = res.body.trim().split('\n');
     expect(lines[0]).toBe('at,source,action,actor,actor_user_id,target_type,target_id,detail,actor_type,actor_api_key_id');
     expect(lines[1]).toContain('agency_disposition.created');

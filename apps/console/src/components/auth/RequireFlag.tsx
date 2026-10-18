@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from 'react';
 import { trackFeatureGateUnavailable } from '../../analytics/events';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useTenant } from '../../contexts/TenantContext';
-import { LoadingSpinner } from '../common/LoadingSpinner';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { AccountUnavailable } from '../common/AccountUnavailable';
 import { CapabilityUnavailable } from '../common/CapabilityUnavailable';
 

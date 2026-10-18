@@ -255,6 +255,31 @@ export class WebRtcBridgeSession {
     });
   }
 
+  /**
+   * The call is settling: either the once-only terminal claim (`endHandled`) or the
+   * VoiceLink `ending` limbo. Nothing may (re)open media, bind a leg or play a clip.
+   */
+  get isTearingDown(): boolean {
+    return this.endHandled || this.ending;
+  }
+
+  /**
+   * The status for a teardown WE initiate (hangup, max duration, shutdown, a lost
+   * browser leg): an answered call is `completed`, an unanswered one we gave up on
+   * is `canceled`.
+   */
+  localEndStatus(): WebRtcCallStatus {
+    return this.answeredAt ? 'completed' : 'canceled';
+  }
+
+  /**
+   * The status for a teardown the CARRIER side produced (the media stream closing
+   * or stopping): an answered call is `completed`, an unanswered one `no_answer`.
+   */
+  remoteEndStatus(): WebRtcCallStatus {
+    return this.answeredAt ? 'completed' : 'no_answer';
+  }
+
   /** True once both legs' WebSockets are open and audio can flow. */
   get bothLegsConnected(): boolean {
     return (

@@ -14,6 +14,7 @@ import { membershipRepository } from '@magick-agency/db/repositories/membership.
 import { tenantRepository } from '@magick-agency/db/repositories/tenant.repository';
 import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { redisCache } from '../../cache/redis-cache.js';
+import { membershipCacheKey } from '../middleware/membership-cache-key.js';
 import { hashInviteToken, isInviteExpired } from '../../notifications/invite-token.js';
 import { agencyProductName } from '../../notifications/templates/agent-invite.template.js';
 import { issueInvite } from '../../invites/invite-issuer.js';
@@ -27,6 +28,7 @@ import {
 import { createChildLogger } from '@magick-agency/observability';
 import type { MembershipInviteRecord } from '../../db/models/membership-invite.model.js';
 import type { MembershipRole } from '@magick-agency/db/models/membership.model';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'invite-routes' });
 
@@ -412,10 +414,10 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { token: string } }>('/:token/claim', {
     config: PUBLIC_INVITE_RATE_LIMIT,
   }, async (request: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
-    const parsed = claimInviteSchema.safeParse(request.body);
-    if (!parsed.success) {
+    const parsed = parseOr400(claimInviteSchema, request.body, reply, 'platform');
+    if (!parsed) {
       countClaim('bad_request');
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
+      return reply;
     }
 
     /**
@@ -741,7 +743,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      * underneath it.
      */
     await invalidateUserCache(user.id, beforeBind?.firebase_uid ?? null);
-    await redisCache.del(`cache:membership:${user.id}:${invite.tenant_id}`);
+    await redisCache.del(membershipCacheKey(user.id, invite.tenant_id));
 
     const emailMatched = normaliseEmail(decoded.email) === normaliseEmail(invite.email);
 
@@ -835,10 +837,8 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       requirePermission('user.invite'),
     ],
   }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = resendInviteSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(resendInviteSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const membership = await membershipRepository.findByIdInTenant(
       parsed.data.membership_id,

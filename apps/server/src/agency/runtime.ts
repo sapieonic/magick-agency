@@ -4,7 +4,7 @@ import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import { agencyAgentSessionRepository } from '../db/repositories/agency.repository.js';
-import type { AgencyAgentState } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, type AgencyAgentState } from '@magick-agency/contracts/agency';
 import { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
@@ -78,8 +78,8 @@ export class AgencyRuntime {
     this.wrapup = new WrapupManager(this.stations, this.agents, (sessionId) =>
       this.dialer.releaseAgent(sessionId));
     this.dialer = new AgencyDialer(bridge, this.stations, this.agents, this.wrapup, this.breaks);
-    // Both liveness questions the periodic sweep needs, as lazy closures rather
-    // than references: `this.dialer` is assigned above but the arrow keeps the
+    // Both liveness questions the periodic sweep needs, and the attempts the
+    // dialer could not write `ended`, as lazy closures rather than references: `this.dialer` is assigned above but the arrow keeps the
     // reaper independent of construction order, and re-reading on every sweep is
     // the point — a snapshot taken here would be empty forever.
     //
@@ -89,13 +89,17 @@ export class AgencyRuntime {
     this.reaper = new AgencyReaper({
       activeAttemptIds: () => this.dialer.activeAttemptIds(),
       ownerOf: (sessionId) => this.stations.ownerOf(sessionId),
+      unrecordedEnds: {
+        ids: () => this.dialer.unrecordedEndedAttemptIds(),
+        forget: (attemptIds) => this.dialer.forgetUnrecordedEnds(attemptIds),
+      },
     });
     this.tokens = new StationTokenStore(redis, keyPrefix);
 
     // Decision B8: the registry is one indexed read of `dnc_entries` and fails closed
     // on any read fault. The default argument is the shared `dncRepository`.
     this.dnc = new DncRegistry();
-    const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd) => this.dialer.executeDial(cmd));
+    const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, this.stations, this.agents, dispatcher, this.dnc,
     );
@@ -321,7 +325,7 @@ export class AgencyRuntime {
         silentForMs: now - entry.lastSeen,
       }, 'Station heartbeat lapsed past its grace — closing the socket');
       // 4408: re-mint and retry, exactly as 4401 is. The console must come back.
-      try { entry.ws.close(4408, 'station_heartbeat_timeout'); } catch { /* already gone */ }
+      try { entry.ws.close(AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, 'station_heartbeat_timeout'); } catch { /* already gone */ }
       acted++;
     }
     return acted;
@@ -397,8 +401,10 @@ export class AgencyRuntime {
   }
 
   async stop(): Promise<void> {
-    // Pacing stops FIRST, so no tick can dial or finalize while the rest of the
-    // runtime is coming down.
+    // Pacing stops FIRST. `stop()` waits (bounded, `TICK_DRAIN_TIMEOUT_MS`) for any
+    // tick already in flight, and every dial site re-checks the engine before it
+    // dials, so no tick dials while the rest of the runtime is coming down; a tick
+    // that outlives the bound is logged and can only finalize, never dial.
     await this.pacing.stop();
     this.reaper.stop();
     this.stopStationSweep();

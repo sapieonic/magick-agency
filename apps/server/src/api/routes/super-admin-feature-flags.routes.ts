@@ -14,6 +14,7 @@ import {
   bulkFlagOverrideSchema,
   validateFlagValue,
 } from '../validators/super-admin-feature-flags.validator.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'super-admin-feature-flags-routes' });
 
@@ -110,10 +111,8 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
   // GET /super-admin/feature-flags/resolve — effective values for a tenant/account.
   // (Registered before /:flagKey so the static segment wins over the param route.)
   app.get('/feature-flags/resolve', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = resolveFlagsQuerySchema.safeParse(request.query);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(resolveFlagsQuerySchema, request.query, reply, 'platform');
+    if (!parsed) return reply;
     const tenant = await tenantRepository.findById(parsed.data.tenant_id);
     if (!tenant) {
       return reply.code(404).send({ error: 'Not Found', message: 'Tenant not found' });
@@ -159,10 +158,8 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
     request: FastifyRequest<{ Params: { flagKey: string } }>,
     reply: FastifyReply,
   ) => {
-    const parsed = upsertFlagOverrideSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(upsertFlagOverrideSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
     const flag = getFlag(request.params.flagKey);
     if (!flag) {
       return reply.code(404).send({ error: 'Not Found', message: `Unknown flag '${request.params.flagKey}'` });
@@ -233,10 +230,8 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
     request: FastifyRequest<{ Params: { flagKey: string } }>,
     reply: FastifyReply,
   ) => {
-    const parsed = deleteFlagOverrideSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(deleteFlagOverrideSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
     const flag = getFlag(request.params.flagKey);
     if (!flag) {
       return reply.code(404).send({ error: 'Not Found', message: `Unknown flag '${request.params.flagKey}'` });
@@ -289,10 +284,8 @@ export async function superAdminFeatureFlagsRoutes(app: FastifyInstance): Promis
     request: FastifyRequest<{ Params: { flagKey: string } }>,
     reply: FastifyReply,
   ) => {
-    const parsed = bulkFlagOverrideSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(bulkFlagOverrideSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
     const flag = getFlag(request.params.flagKey);
     if (!flag) {
       return reply.code(404).send({ error: 'Not Found', message: `Unknown flag '${request.params.flagKey}'` });

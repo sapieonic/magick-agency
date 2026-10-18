@@ -200,10 +200,6 @@ describe('agencyBestHours — the zone the buckets were cut in', () => {
      * module may pass a zone INTO `Intl` (that is how coverage is derived at all, and
      * the zone is an input there); it may never ask `Intl` what zone to use.
      */
-    const source = readFileSync(
-      resolve(__dirname, '../../utils/agencyBestHours.ts'),
-      'utf8',
-    );
     /*
       Comments stripped first, and that is not a convenience: the module's own header
       NAMES `resolvedOptions` while explaining why it must never call it, so a raw
@@ -211,12 +207,20 @@ describe('agencyBestHours — the zone the buckets were cut in', () => {
       and the obvious fix (deleting the explanation) is the opposite of what this test
       is for.
     */
-    const code = source
+    const code = (path: string) => readFileSync(resolve(__dirname, path), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
-    expect(code).not.toContain('resolvedOptions');
+    const module = code('../../utils/agencyBestHours.ts');
+    // The zoned parts come from `format/zone.ts` (shared with the campaign builder),
+    // so the rule is checked on both files — and the module must not reach for the
+    // READER's zone helper, `readerZone` in `format/date.ts`, either.
+    const zone = code('../../utils/format/zone.ts');
+    expect(module).toContain("from './format/zone'");
+    expect(module).not.toContain('resolvedOptions');
+    expect(module).not.toContain('readerZone');
+    expect(zone).not.toContain('resolvedOptions');
     // And the zone really is an INPUT: the one `Intl` construction takes the argument.
-    expect(code).toContain('timeZone: zone');
+    expect(zone).toContain('timeZone: zone');
   });
 
   it('puts the zone on a cell’s own sentence only when it is known', () => {

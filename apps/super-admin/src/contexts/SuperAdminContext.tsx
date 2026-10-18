@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { superAdminLogin, getSuperAdminMe, setToken, clearToken, hasToken } from '../api/super-admin';
 import type { SuperAdmin, SuperAdminLoginResponse } from '@magick-agency/contracts/api/platform/super-admin';
 
@@ -61,8 +61,15 @@ export function SuperAdminProvider({ children }: { children: ReactNode }) {
     setState({ admin: null, loading: false, error: null });
   }, []);
 
+  // Stable between renders with unchanged state, so a re-render above the
+  // provider does not re-render every `useSuperAdmin()` consumer.
+  const value = useMemo<SuperAdminContextValue>(
+    () => ({ ...state, login, logout, isAuthenticated: !!state.admin }),
+    [state, login, logout],
+  );
+
   return (
-    <SuperAdminContext.Provider value={{ ...state, login, logout, isAuthenticated: !!state.admin }}>
+    <SuperAdminContext.Provider value={value}>
       {children}
     </SuperAdminContext.Provider>
   );

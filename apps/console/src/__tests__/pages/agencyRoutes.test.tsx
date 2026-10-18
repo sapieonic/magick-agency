@@ -67,8 +67,9 @@ describe('agency campaign routes', () => {
    * that does is a user sent to the wrong screen.
    */
   it('no in-product link sends a user to the roster expecting the upload form', () => {
+    // The detail page's header (and its "Add contacts" link) lives in its own file.
     const detail = readFileSync(
-      resolve(process.cwd(), 'src/pages/agency/AgencyCampaignDetailPage.tsx'), 'utf8',
+      resolve(process.cwd(), 'src/pages/agency/campaign-detail/CampaignDetailHeader.tsx'), 'utf8',
     );
     const roster = readFileSync(
       resolve(process.cwd(), 'src/pages/agency/AgencyCampaignRosterPage.tsx'), 'utf8',

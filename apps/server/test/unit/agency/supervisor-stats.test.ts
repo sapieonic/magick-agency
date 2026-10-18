@@ -163,7 +163,7 @@ describe('the connect split is gated on the bridge, not on the outcome', () => {
     // handled as handled.
     for (const alias of ['AS human_connects', 'AS machine_connects']) {
       const subquery = executable(
-        sql.slice(sql.lastIndexOf('(SELECT', sql.indexOf(alias)), sql.indexOf(alias)),
+        sql.slice(sql.lastIndexOf('FILTER (', sql.indexOf(alias)), sql.indexOf(alias)),
       );
       expect(subquery, alias).toContain('bridged_at IS NOT NULL');
       expect(subquery, alias).not.toContain("outcome = 'connected'");
@@ -214,11 +214,11 @@ describe('AHT measures the agent leg, not the persisted talk time', () => {
     const sql = aggregateSql();
 
     const excluding = executable(sql.slice(
-      sql.lastIndexOf('(SELECT', sql.indexOf('AS aht_seconds,')),
+      sql.lastIndexOf('FILTER (', sql.indexOf('AS aht_seconds,')),
       sql.indexOf('AS aht_seconds,'),
     ));
     const including = executable(sql.slice(
-      sql.lastIndexOf('(SELECT', sql.indexOf('AS aht_seconds_including_machine')),
+      sql.lastIndexOf('FILTER (', sql.indexOf('AS aht_seconds_including_machine')),
       sql.indexOf('AS aht_seconds_including_machine'),
     ));
 
@@ -534,7 +534,7 @@ describe('a call nobody wrote up is not a human connect', () => {
   it('excludes both the voicemail code and the reaper auto-stamp from human connects', async () => {
     await stats();
     const sql = executable(aggregateSql());
-    const human = sql.slice(sql.lastIndexOf('(SELECT', sql.indexOf('AS human_connects')), sql.indexOf('AS human_connects'));
+    const human = sql.slice(sql.lastIndexOf('FILTER (', sql.indexOf('AS human_connects')), sql.indexOf('AS human_connects'));
 
     // Bound as parameters, not inlined: `no_disposition` is the reaper's constant
     // and a local respelling would drift from the thing that writes it.
@@ -555,7 +555,7 @@ describe('a crash-orphaned attempt does not enter AHT', () => {
     // time-until-sweep — minutes or hours — to an average measured in seconds. One
     // orphan visibly moves the tile on a low-volume campaign.
     for (const alias of ['AS aht_seconds', 'AS aht_seconds_including_machine']) {
-      const subquery = sql.slice(sql.lastIndexOf('(SELECT', sql.indexOf(alias)), sql.indexOf(alias));
+      const subquery = sql.slice(sql.lastIndexOf('FILTER (', sql.indexOf(alias)), sql.indexOf(alias));
       expect(subquery, alias).toContain("outcome IS DISTINCT FROM 'orphaned'");
     }
   });

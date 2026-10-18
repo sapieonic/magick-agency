@@ -14,6 +14,7 @@ import {
 import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
 import type { SessionRefusal } from '@magick-agency/contracts/api/platform/auth';
+import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'auth-routes' });
 
@@ -56,10 +57,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
    * and does not fall through to path 4 — see `sessionLinkEmail`.
    */
   app.post('/session', async (request: FastifyRequest, reply: FastifyReply) => {
-    const parsed = sessionRequestSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'Bad Request', details: parsed.error.issues });
-    }
+    const parsed = parseOr400(sessionRequestSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
 
     const { id_token, phone_number } = parsed.data;
 

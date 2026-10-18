@@ -3,7 +3,6 @@ import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
-  AGENCY_STATION_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
   type AgencyRosterRefusalCode,
@@ -11,6 +10,7 @@ import {
 } from '../src/errors';
 import type * as Core from '../src/agency';
 import { AgencyApi } from '../src/index';
+import type { Equals } from './type-equals';
 
 /**
  * SNAPSHOT — written out by hand, deliberately not derived from the list under test.
@@ -41,21 +41,19 @@ const CORE_FIXTURE_ACTION_ERROR_CODES = [
 
 // ── Type-level: the lists are exactly their unions (the runtime twin of the
 //    two-sided guards in src/errors.ts; these fail `pnpm lint`, not `pnpm test`).
-type Equals<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 const _actionExact: Equals<(typeof AGENCY_ACTION_ERROR_CODES)[number], AgencyActionErrorCode> = true;
 const _rosterExact: Equals<(typeof AGENCY_ROSTER_REFUSAL_CODES)[number], AgencyRosterRefusalCode> = true;
 const _lifecycleExact: Equals<
   (typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES)[number],
   AgencyCampaignLifecycleErrorCode
 > = true;
-const _stationExact: Equals<(typeof AGENCY_STATION_ERROR_CODES)[number], AgencyStationErrorCode> = true;
 // The errors module re-exports the dialer runtime's unions rather than re-declaring them.
 const _actionIsCore: Equals<AgencyActionErrorCode, Core.AgencyActionErrorCode> = true;
 const _stationIsCore: Equals<AgencyStationErrorCode, Core.AgencyStationErrorCode> = true;
-// The console-facing copy still agrees with the dialer runtime's.
+// The console-facing layer re-exports the same unions.
 const _consoleActionAgrees: Equals<AgencyApi.AgencyActionErrorCode, AgencyActionErrorCode> = true;
 const _consoleStationAgrees: Equals<AgencyApi.AgencyStationErrorCode, AgencyStationErrorCode> = true;
-void [_actionExact, _rosterExact, _lifecycleExact, _stationExact, _actionIsCore, _stationIsCore,
+void [_actionExact, _rosterExact, _lifecycleExact, _actionIsCore, _stationIsCore,
   _consoleActionAgrees, _consoleStationAgrees];
 
 function expectUnique(list: readonly string[]): void {
@@ -72,8 +70,8 @@ describe('action error codes', () => {
     expectUnique(AGENCY_ACTION_ERROR_CODES);
   });
 
-  it('matches the console’s runtime list too', () => {
-    expect([...AgencyApi.AGENCY_ACTION_ERROR_CODES]).toEqual(CORE_FIXTURE_ACTION_ERROR_CODES);
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_ACTION_ERROR_CODES).toBe(AGENCY_ACTION_ERROR_CODES);
   });
 
   it('types a member as the union', () => {
@@ -110,25 +108,5 @@ describe('campaign-lifecycle codes', () => {
     const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
     for (const code of AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES) expect(action.has(code)).toBe(false);
     for (const code of AGENCY_ROSTER_REFUSAL_CODES) expect(action.has(code)).toBe(false);
-  });
-});
-
-describe('station frame error codes', () => {
-  it('are the five', () => {
-    expect([...AGENCY_STATION_ERROR_CODES]).toEqual([
-      'unauthorized',
-      'unknown_attempt',
-      'not_your_attempt',
-      'invalid_frame',
-      'campaign_not_running',
-    ]);
-  });
-
-  it('overlap the action codes exactly where the contract says they do', () => {
-    const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
-    expect(AGENCY_STATION_ERROR_CODES.filter((c) => action.has(c))).toEqual([
-      'not_your_attempt',
-      'campaign_not_running',
-    ]);
   });
 });

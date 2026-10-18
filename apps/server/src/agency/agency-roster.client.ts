@@ -1,3 +1,4 @@
+import { UUID_RE } from '../utils/uuid.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyCampaignRepository, agencyContactRepository } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../db/models/agency.model.js';
@@ -88,7 +89,7 @@ export interface RosterChunkResponse {
   rejected_duplicate_rows: number;
   /**
    * A capped sample of the colliding `source_row_number`s (20 per chunk — see
-   * `MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency.repository.ts`).
+   * `MAX_REPORTED_DUPLICATE_ROWS` in `src/db/repositories/agency/contact.repository.ts`).
    * A sample, not the full set, on a large campaign. `[]` when the field is
    * absent or nothing collided.
    */
@@ -472,8 +473,6 @@ export function ingestCallerOwnsCampaign(
 function nonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Validate and apply one roster chunk. Returns a `{ status, body }` pair so

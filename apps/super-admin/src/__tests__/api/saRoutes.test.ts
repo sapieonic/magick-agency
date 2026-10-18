@@ -132,7 +132,14 @@ const ROUTES_DIR = join(process.cwd(), '..', 'server', 'src', 'api', 'routes');
 
 function serverSuperAdminRoutes(): Set<string> {
   const found = new Set<string>();
-  const files = readdirSync(ROUTES_DIR).filter((f) => /^super-admin.*\.routes\.ts$/.test(f));
+  // A route family is `super-admin.routes.ts` plus the `super-admin/` folder it
+  // registers on the same instance, so the scan reads both.
+  const files = [
+    ...readdirSync(ROUTES_DIR).filter((f) => /^super-admin.*\.routes\.ts$/.test(f)),
+    ...readdirSync(join(ROUTES_DIR, 'super-admin'))
+      .filter((f) => f.endsWith('.ts'))
+      .map((f) => join('super-admin', f)),
+  ];
   for (const f of files) {
     const src = readFileSync(join(ROUTES_DIR, f), 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')

@@ -34,10 +34,10 @@ import { initDbPool, closePool } from '@magick-agency/db';
  * ever GROWS. Staffing closes rows rather than deleting them, every
  * reassignment adds one, `closeAllForUser` manufactures one per campaign on every
  * offboarding, and nothing removes any. The route is reachable by an `agent` —
- * the lowest-privileged role there is — on their own console, and it spends an internal
- * round trip per distinct campaign. So the bounds are the difference between a
- * page and an unbounded fan-out, and each is asserted against a history large
- * enough to trip it.
+ * the lowest-privileged role there is — on their own console, and it names every
+ * distinct campaign on the page in one internal read. So the bounds are the
+ * difference between a page and an unbounded one, and each is asserted against a
+ * history large enough to trip it.
  *
  * ── GUARANTEES ─────────────────────────────────────────────────────────────
  * It runs against a real Postgres and Redis. The constants are IMPORTED from the source
@@ -100,7 +100,8 @@ const mocks = vi.hoisted(() => ({
   proxyToCore: vi.fn(),
 }));
 
-vi.mock('../../../src/api/core-dispatch.js', () => ({ callCore: mocks.proxyToCore }));
+vi.mock('../../../src/api/core-dispatch.js', async (importOriginal) =>
+  (await import('../../helpers/core-dispatch-double.js')).coreDispatchDouble(await importOriginal(), mocks.proxyToCore));
 
 vi.mock('@magick-agency/observability', async (importOriginal) => {
   const child = () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() });
@@ -186,10 +187,14 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       user_id: colleague.id, tenant_id: tenant.id, account_id: account.id, role: 'agent',
     });
 
-    // A campaign the internal handler can always name, unless a case says otherwise.
-    mocks.proxyToCore.mockResolvedValue({
-      status: 200, body: { id: 'any', name: 'Q3 Renewals', status: 'running' },
-    });
+    // Every campaign the internal handler is asked about is named, unless a case says otherwise.
+    mocks.proxyToCore.mockImplementation(async ({ query }: { query?: { ids?: string } }) => ({
+      status: 200,
+      body: {
+        campaigns: (query?.ids ?? '').split(',').filter(Boolean)
+          .map((id) => ({ id, name: 'Q3 Renewals', status: 'running' })),
+      },
+    }));
 
     app = Fastify({ logger: false });
     await app.register(proxyAgencyStaffingRoutes, { prefix: PREFIX });
@@ -309,9 +314,34 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
     return res.json().assignments.map((a) => a.campaign_id);
   }
 
-  /** How many DISTINCT campaigns the route asked the internal handler to name. */
+  /** Every campaign id the route asked the internal handler to name, in the order sent. */
+  function idsLookedUp(): string[] {
+    return mocks.proxyToCore.mock.calls.flatMap(
+      ([req]) => ((req as { query?: { ids?: string } }).query?.ids ?? '').split(',').filter(Boolean),
+    );
+  }
+
+  /**
+   * How many DISTINCT campaigns the route asked the internal handler to name — and
+   * it asks in ONE summaries read, whatever the count, which this asserts too.
+   */
   function coreLookupCount() {
-    return mocks.proxyToCore.mock.calls.length;
+    if (mocks.proxyToCore.mock.calls.length > 0) {
+      expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
+      expect(mocks.proxyToCore.mock.calls[0]![0]).toMatchObject({ path: '/agency-campaigns/summaries' });
+    }
+    return idsLookedUp().length;
+  }
+
+  /** A summaries double naming each campaign after itself, so a row's name identifies its id. */
+  function nameEachAfterItself(status: string) {
+    return async ({ query }: { query?: { ids?: string } }) => ({
+      status: 200,
+      body: {
+        campaigns: (query?.ids ?? '').split(',').filter(Boolean)
+          .map((id) => ({ id, name: `name-${id}`, status })),
+      },
+    });
   }
 
   // ═══ The shape, first — closed rows INCLUDED ═══════════════════════════════
@@ -622,12 +652,9 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       // cannot be mistaken for the cap itself.
       const oldestFirst = await seedDistinctCampaigns(120);
       const newestFirst = [...oldestFirst].reverse();
-      mocks.proxyToCore.mockImplementation(async ({ path }: { path: string }) => ({
-        status: 200,
-        // Name each campaign after itself, so a row's name identifies which
-        // lookup produced it.
-        body: { id: path.split('/').pop(), name: `name-${path.split('/').pop()}`, status: 'running' },
-      }));
+      // Name each campaign after itself, so a row's name identifies which id
+      // produced it.
+      mocks.proxyToCore.mockImplementation(nameEachAfterItself('running'));
 
       const res = await get('/my-campaigns');
       const rows = res.json().assignments as Array<{ campaign_id: string; campaign_name: string | null }>;
@@ -639,14 +666,14 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       // Bounded well below the page — the property, without hard-coding the cap.
       expect(named.length).toBeLessThan(rows.length);
       expect(unnamed.length).toBeGreaterThan(0);
-      // One internal call per NAMED campaign and not one more.
+      // One id per NAMED campaign and not one more, in one internal call.
       expect(coreLookupCount()).toBe(named.length);
 
       // The named ones are a PREFIX of the newest-first order — not an arbitrary
       // subset. This is what makes the degradation predictable rather than random.
       expect(named.map((r) => r.campaign_id))
         .toEqual(newestFirst.slice(0, named.length));
-      // Every named row's caption came from ITS OWN lookup.
+      // Every named row's caption came from ITS OWN id.
       for (const row of named) {
         expect(row.campaign_name).toBe(`name-${row.campaign_id}`);
       }
@@ -656,10 +683,7 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       // The contrast case: without it, "bounded" would also be satisfied by a
       // route that named nothing.
       const ids = await seedDistinctCampaigns(5);
-      mocks.proxyToCore.mockImplementation(async ({ path }: { path: string }) => ({
-        status: 200,
-        body: { id: path.split('/').pop(), name: `name-${path.split('/').pop()}`, status: 'paused' },
-      }));
+      mocks.proxyToCore.mockImplementation(nameEachAfterItself('paused'));
 
       const rows = (await get('/my-campaigns')).json().assignments as
         Array<{ campaign_id: string; campaign_name: string; campaign_status: string }>;
@@ -820,15 +844,12 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
       await seedRow({ campaignId: repeated, assignedAt: new Date(Date.UTC(2026, 0, 1)) });
       await seedRow({ campaignId: other, assignedAt: new Date(Date.UTC(2026, 1, 1)) });
       await seedRow({ campaignId: repeated, assignedAt: new Date(Date.UTC(2026, 2, 1)) });
-      mocks.proxyToCore.mockImplementation(async ({ path }: { path: string }) => ({
-        status: 200,
-        body: { id: path.split('/').pop(), name: `name-${path.split('/').pop()}`, status: 'running' },
-      }));
+      mocks.proxyToCore.mockImplementation(nameEachAfterItself('running'));
 
       const rows = (await get('/my-campaigns')).json().assignments as
         Array<{ campaign_id: string; campaign_name: string }>;
 
-      // Two lookups for three rows.
+      // Two ids for three rows.
       expect(coreLookupCount()).toBe(2);
       for (const row of rows) {
         expect(row.campaign_name, `row for ${row.campaign_id}`).toBe(`name-${row.campaign_id}`);
@@ -846,13 +867,10 @@ describe('GET /my-campaigns — the staffing history and its bounds (integration
        */
       const oldestFirst = await seedDistinctCampaigns(120);
       const newestFirst = [...oldestFirst].reverse();
-      const lookedUp: string[] = [];
-      mocks.proxyToCore.mockImplementation(async ({ path }: { path: string }) => {
-        lookedUp.push(path.split('/').pop()!);
-        return { status: 200, body: { id: 'x', name: 'named', status: 'running' } };
-      });
+      mocks.proxyToCore.mockImplementation(nameEachAfterItself('running'));
 
       await get('/my-campaigns');
+      const lookedUp = idsLookedUp();
 
       // Whatever the cap is, the campaigns asked about are the newest ones, in
       // order. Compared as a prefix so the cap's value stays out of the assertion.

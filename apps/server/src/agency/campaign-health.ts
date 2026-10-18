@@ -104,15 +104,9 @@ export const ELEVATED_FAILURE_RATE_PCT = 30;
  */
 export const ELEVATED_FAILURE_MIN_ATTEMPTS = 10;
 
-/**
- * The window the failure-rate message names ("in the last 10 minutes").
- *
- * Exported and imported by the repository rather than restated in the SQL, so the
- * number the query measures over and the number the console prints cannot drift —
- * a strip that says "10 minutes" over a 30-minute window is a lie a supervisor
- * would act on.
- */
-export const RECENT_FAILURE_WINDOW_MINUTES = 10;
+// The window the failure-rate message names. Lives in the leaf the repository
+// also imports (B9 layering); re-exported so this module's importers are unchanged.
+export { RECENT_FAILURE_WINDOW_MINUTES } from './campaign-thresholds.js';
 
 /** Utilisation at which the concurrency diagnosis fires. */
 function saturated(inUse: number | null, limit: number): boolean {

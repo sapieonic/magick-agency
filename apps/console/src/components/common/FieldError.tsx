@@ -1,4 +1,4 @@
-import { ErrorText } from './ErrorText';
+import { ErrorText } from '@magick-agency/web-ui/components/ErrorText';
 
 interface FieldErrorProps {
   /** Stable id — pair with `fieldErrorId()` and the field's `aria-describedby`. */

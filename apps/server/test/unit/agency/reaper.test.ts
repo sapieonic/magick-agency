@@ -71,6 +71,8 @@ const { repos } = vi.hoisted(() => ({
       // `1` means "this is the first our-fault redial", so every existing case
       // below stays well inside the bound and keeps asserting the requeue.
       chargeOurFaultAttempt: vi.fn().mockResolvedValue(1),
+      // Stranded-contact sweep.
+      findStrandedInFlight: vi.fn().mockResolvedValue([]),
     },
     session: {
       markAllOffline: vi.fn().mockResolvedValue(0),
@@ -273,6 +275,35 @@ describe('AgencyReaper startup', () => {
     const result = await new AgencyReaper(noDeps()).reapOnStartup();
     expect(result).toEqual({ attempts: 0, agents: 0 });
     expect(repos.contact.markState).not.toHaveBeenCalled();
+  });
+});
+
+describe('AgencyReaper leak sweep — attempts the dialer could not end', () => {
+  function unrecorded(ids: string[]) {
+    return { ids: vi.fn(() => ids), forget: vi.fn() };
+  }
+
+  it('reaps them whatever their age and whoever holds the agent, then forgets them', async () => {
+    // The dialer saw these end, so the station-owner arm (which would read the
+    // released agent's connected station as "still live") is not asked.
+    repos.attempt.reapByIds.mockResolvedValueOnce([{ id: 'att-u', contact_id: 'c-u', tenant_id: 't1', campaign_id: 'camp-1' }]);
+    const ownerOf = vi.fn().mockResolvedValue('replica-A');
+    const ends = unrecorded(['att-u']);
+
+    expect(await new AgencyReaper(noDeps({ ownerOf, unrecordedEnds: ends })).sweepOnce()).toBe(1);
+
+    expect(repos.attempt.reapByIds).toHaveBeenCalledWith(['att-u']);
+    expect(ownerOf).not.toHaveBeenCalled();
+    expect(repos.contact.markState).toHaveBeenCalledWith('c-u', 'pending', expect.objectContaining({ last_outcome: 'orphaned' }));
+    expect(ends.forget).toHaveBeenCalledWith(['att-u']);
+  });
+
+  it('keeps them for the next sweep when the reap itself fails', async () => {
+    repos.attempt.reapByIds.mockRejectedValueOnce(new Error('pg down'));
+    const ends = unrecorded(['att-u']);
+
+    await expect(new AgencyReaper(noDeps({ unrecordedEnds: ends })).sweepOnce()).rejects.toThrow('pg down');
+    expect(ends.forget).not.toHaveBeenCalled();
   });
 });
 

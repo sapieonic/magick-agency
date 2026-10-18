@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import type { PoolClient } from 'pg';
 import { getPool } from '@magick-agency/db';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
+import { DNC_SOURCES, type DncSource } from '@magick-agency/contracts/api/agency/dnc';
 
 /**
  * `dnc_entries` access.
@@ -18,10 +20,8 @@ import { getPool } from '@magick-agency/db';
  * documents where the throw is expected to land.
  */
 
-/** How a number got onto the list. Mirrors `ck_dnc_entries_source`. */
-export type DncSource = 'agent' | 'import' | 'api' | 'regulator';
-
-export const DNC_SOURCES: readonly DncSource[] = ['agent', 'import', 'api', 'regulator'];
+/** How a number got onto the list. Mirrors `ck_dnc_entries_source`; declared in the contract. */
+export { DNC_SOURCES, type DncSource };
 
 export interface DncEntryRecord {
   id: string;
@@ -209,11 +209,7 @@ export class DncRepository {
     input: DncEntryInput,
     opts: { client?: PoolClient } = {},
   ): Promise<DncInsertManyResult> {
-    const own = opts.client === undefined;
-    const client: PoolClient = opts.client ?? (await getPool().connect());
-    try {
-      if (own) await client.query('BEGIN');
-
+    return withTransaction(async (client) => {
       const results: DncInsertResult[] = [];
 
       for (const phone of input.phones) {
@@ -261,14 +257,8 @@ export class DncRepository {
         results.push({ phone_e164: phone, entry, created: false });
       }
 
-      if (own) await client.query('COMMIT');
       return { results };
-    } catch (err) {
-      if (own) await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      if (own) client.release();
-    }
+    }, { pool: getPool(), client: opts.client });
   }
 
   /**

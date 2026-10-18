@@ -8,11 +8,11 @@ import { GlobalSearch } from '../common/GlobalSearch';
 import { usePostHogIdentify } from '../../hooks/usePostHogIdentify';
 import { useProductSurface } from '../../analytics/useProductSurface';
 import { useMediaQuery } from '../../hooks/useMediaQuery';
+import { FOCUSABLE_SELECTOR, trapTab } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import styles from './AppLayout.module.css';
 
 const SIDEBAR_COLLAPSED_KEY = 'mv:sidebar-collapsed';
 const MOBILE_SIDEBAR_ID = 'app-mobile-sidebar';
-const FOCUSABLE_SELECTOR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 export function AppLayout() {
   const { user, loading } = useAuth();
@@ -85,21 +85,8 @@ export function AppLayout() {
         handleSidebarClose();
         return;
       }
-      if (e.key === 'Tab' && drawer) {
-        const focusable = drawer.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-        if (focusable.length === 0) return;
-        const first = focusable[0]!;
-        const last = focusable[focusable.length - 1]!;
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
+      // The shared edge-wrap (`trapTab`), the one every dialog uses.
+      trapTab(e, drawer);
     };
     document.addEventListener('keydown', handleKeyDown);
 

@@ -1,5 +1,6 @@
 import posthog, { type CaptureResult } from 'posthog-js';
 import { redactAnalyticsProperties, stripJoinPageElements } from './redact';
+import type { EventName } from './events';
 
 /**
  * Thin, fail-safe wrapper over posthog-js for frontend product analytics.
@@ -274,16 +275,13 @@ export function resetAnalytics(): void {
 }
 
 /**
- * Capture a product/interaction event. Properties MUST be PII-free
- * (IDs/labels/counts/paths only — never bodies, emails, phones, or contact data).
+ * Capture a product/interaction event — one declared in `EventCatalog`
+ * (`events.ts`), which is the only way a name reaches here. Properties MUST be
+ * PII-free (IDs/labels/counts/paths only — never bodies, emails, phones, or
+ * contact data).
  */
-export function captureEvent(name: string, props: Record<string, unknown> = {}): void {
-  if (!enabled) return;
-  try {
-    posthog.capture(name, props);
-  } catch {
-    // best-effort
-  }
+export function captureEvent(name: EventName, props: object = {}): void {
+  capture(name, props);
 }
 
 /**
@@ -291,7 +289,17 @@ export function captureEvent(name: string, props: Record<string, unknown> = {}):
  * (IDs/status/path/message only — never bodies, emails, phones, or contact data).
  */
 export function captureError(name: string, props: Record<string, unknown>): void {
-  captureEvent(name, props);
+  capture(name, props);
+}
+
+/** The one call into posthog-js: a no-op when analytics is off, and never a throw. */
+function capture(name: string, props: object): void {
+  if (!enabled) return;
+  try {
+    posthog.capture(name, props as Record<string, unknown>);
+  } catch {
+    // best-effort
+  }
 }
 
 /**

@@ -31,6 +31,8 @@
  * the public routes, their suites or the console actually depend on.
  */
 
+import { STATS_BUCKET_UNITS } from '@magick-agency/contracts/primitives';
+
 /**
  * Who caused a campaign's CURRENT status.
  *
@@ -291,7 +293,7 @@ export interface AgencyCampaignStatsAdditions {
 // ─── The stats SERIES read ──────────────────────────────────────────────────
 
 /** The bucket units, and therefore the whole of `?bucket=`'s vocabulary. */
-export const CAMPAIGN_SERIES_BUCKETS = ['day', 'week', 'month'] as const;
+export const CAMPAIGN_SERIES_BUCKETS = STATS_BUCKET_UNITS;
 
 export type AgencyCampaignSeriesBucketUnit = (typeof CAMPAIGN_SERIES_BUCKETS)[number];
 

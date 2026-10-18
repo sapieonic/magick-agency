@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ShieldOff, X } from 'lucide-react';
 import { createRetry, retryPreview } from '../../api/agencyCampaigns';
 import { useTenant } from '../../contexts/TenantContext';
-import { getErrorMessage } from '../../utils/errors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { errorCode } from '../../utils/agencyErrors';
 import { useModalFocus } from '../../hooks/useModalFocus';
 import { CallerIdPicker } from '../../pages/agency/CallerIdPicker';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from './HoldToConfirmButton';
@@ -320,12 +321,9 @@ export function AgencyRetryDialog({
         // Re-arm: without this the button sits at "Creating…" forever, over a
         // campaign that was never created.
         setAttemptToken((n) => n + 1);
-        const code =
-          typeof err === 'object' && err !== null
-            ? ((err as { details?: { code?: unknown } }).details?.code ?? null)
-            : null;
+        const code = errorCode(err);
         const stated =
-          typeof code === 'string'
+          code !== null
             ? retryRefusalCopy(code, {
                 maxSeedRows: preview?.max_seed_rows,
                 matched: preview?.matched,

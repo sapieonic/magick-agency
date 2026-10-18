@@ -14,14 +14,14 @@ import {
 import { getTenantAccounts } from '../../api/super-admin';
 import type { TenantAccountWithConcurrency } from '@magick-agency/contracts/api/platform/super-admin';
 import type { UsageCounts, UsageCountsResponse } from '@magick-agency/contracts/api/platform/super-admin-usage';
-import { PageHeader } from '../../components/common/PageHeader';
+import { PageHeader } from '@magick-agency/web-ui/components/PageHeader';
 import { StatCard } from '../../components/common/StatCard';
-import { DataTable } from '../../components/common/DataTable';
-import type { Column } from '../../components/common/DataTable';
-import { ErrorAlert } from '../../components/common/ErrorAlert';
-import { EmptyState } from '../../components/common/EmptyState';
+import { DataTable } from '@magick-agency/web-ui/components/DataTable';
+import type { Column } from '@magick-agency/web-ui/components/DataTable';
+import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
+import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { TenantPicker } from '../../components/super-admin/TenantPicker';
-import { formatNumber } from '../../utils/format';
+import { formatNumber } from '@magick-agency/web-ui/format';
 import styles from './SAUsagePage.module.css';
 
 /**

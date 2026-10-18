@@ -127,6 +127,79 @@ describe('the routes are behind auth', () => {
   });
 });
 
+describe('the CSV export\'s ownership-proven fast path (x-mgkvc-proven-campaign)', () => {
+  // `callCore` sets the header only from its typed `provenCampaignId`, which the export
+  // passes after its own full ownership probe, as `<tenant>:<account>:<campaign>`;
+  // these cases pin what the handler does with it.
+  it('skips the flag read and the campaign read for exactly the campaign in the path', async () => {
+    const app = await makeApp();
+    for (const path of ['attempts', 'contacts']) {
+      const res = await app.inject({
+        method: 'GET', url: `/api/v1/agency-campaigns/c1/${path}`,
+        headers: { ...HEADERS, 'x-mgkvc-proven-campaign': 't1:a1:c1' },
+      });
+      expect(res.statusCode).toBe(200);
+    }
+    expect(flags.isEnabled).not.toHaveBeenCalled();
+    expect(campaigns.findById).not.toHaveBeenCalled();
+    expect(attempts.listForCampaign).toHaveBeenCalledWith(expect.objectContaining({ campaignId: 'c1' }));
+    expect(contacts.listForCampaign).toHaveBeenCalledWith(expect.objectContaining({ campaignId: 'c1' }));
+    await app.close();
+  });
+
+  it('a proof naming ANOTHER campaign proves nothing: the ordinary ownership check runs and refuses', async () => {
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN, tenant_id: 'someone-else' });
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/agency-campaigns/c1/attempts',
+      headers: { ...HEADERS, 'x-mgkvc-proven-campaign': 't1:a1:c2' },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(campaigns.findById).toHaveBeenCalledTimes(1);
+    expect(attempts.listForCampaign).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  // The proof is bound to the tenant and account it was made under, not only by the
+  // call site: a proof for this campaign made under another tenant or account, or one
+  // naming the campaign alone, falls back to the full gate.
+  for (const [what, proof] of [
+    ['another tenant', 't2:a1:c1'],
+    ['another account', 't1:a2:c1'],
+    ['no account', 't1::c1'],
+    ['the campaign alone', 'c1'],
+  ] as const) {
+    it(`a proof made under ${what} proves nothing: the ordinary ownership check runs and refuses`, async () => {
+      campaigns.findById.mockResolvedValue({ ...CAMPAIGN, tenant_id: 'someone-else' });
+      const app = await makeApp();
+      for (const path of ['attempts', 'contacts']) {
+        const res = await app.inject({
+          method: 'GET', url: `/api/v1/agency-campaigns/c1/${path}`,
+          headers: { ...HEADERS, 'x-mgkvc-proven-campaign': proof },
+        });
+        expect(res.statusCode).toBe(404);
+      }
+      expect(flags.isEnabled).toHaveBeenCalledTimes(2);
+      expect(campaigns.findById).toHaveBeenCalledTimes(2);
+      expect(attempts.listForCampaign).not.toHaveBeenCalled();
+      expect(contacts.listForCampaign).not.toHaveBeenCalled();
+      await app.close();
+    });
+  }
+
+  it('is honoured by the two page reads only — a campaign read still checks ownership', async () => {
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN, tenant_id: 'someone-else' });
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'GET', url: '/api/v1/agency-campaigns/c1/contacts/00000000-0000-4000-8000-000000000001',
+      headers: { ...HEADERS, 'x-mgkvc-proven-campaign': 't1:a1:c1' },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(contacts.findDetailScoped).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe('a terminal campaign is the primary case', () => {
   it('serves both views on a stopped campaign — nothing is gated on it being live', async () => {
     campaigns.findById.mockResolvedValue({ ...CAMPAIGN, status: 'stopped' });

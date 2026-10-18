@@ -1,3 +1,4 @@
+import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../../types/agency-stats';
 import { describe, expect, it } from 'vitest';
 import {
   BUCKET_TIMEZONE_NOTE,
@@ -8,8 +9,8 @@ import {
   bucketSeries,
   campaignLabel,
   campaignNameMap,
-  conversionRateReadout,
-  handleTimeReadout,
+  agentConversionReadout,
+  agentHandleTimeReadout,
   headlineTrio,
   isEmptyRange,
   occupancyBreakdown,
@@ -21,7 +22,7 @@ import {
   windowRange,
   rowConnectRate,
   staffingSummary,
-  wrapupReadout,
+  agentWrapupReadout,
 } from '../../utils/agencyAgentPerformance';
 import type {
   AgencyAgentStats,
@@ -315,9 +316,9 @@ describe('headlineTrio', () => {
   });
 });
 
-describe('conversionRateReadout', () => {
+describe('agentConversionReadout', () => {
   it('never renders a null rate as 0%', () => {
-    const readout = conversionRateReadout(totals({ success_rate_pct: null }));
+    const readout = agentConversionReadout(totals({ success_rate_pct: null }));
     expect(readout.value).toBe('Not measured yet');
     expect(readout.value).not.toContain('0');
     expect(readout.known).toBe(false);
@@ -327,27 +328,27 @@ describe('conversionRateReadout', () => {
     // A conversion rate over dials means something entirely different and is a
     // far smaller number. The label carries the denominator so the reader cannot
     // supply the wrong one.
-    const readout = conversionRateReadout(totals());
+    const readout = agentConversionReadout(totals());
     expect(readout.detail).toContain('spoke to someone');
     expect(readout.detail).toContain('not out of every dial');
   });
 
   it('keeps the success count on screen when the rate could not be read', () => {
-    const readout = conversionRateReadout(totals({ success_rate_pct: undefined, successes: 4 }));
+    const readout = agentConversionReadout(totals({ success_rate_pct: undefined, successes: 4 }));
     expect(readout.known).toBe(false);
     expect(readout.secondary).toBe('4 counted');
   });
 });
 
-describe('handleTimeReadout and wrapupReadout', () => {
+describe('agentHandleTimeReadout and agentWrapupReadout', () => {
   it('reads a null average as "no call has finished", never as a fast shift', () => {
-    const readout = handleTimeReadout(totals({ aht_seconds: null }));
+    const readout = agentHandleTimeReadout(totals({ aht_seconds: null }));
     expect(readout.value).toBe('Not measured yet');
     expect(readout.known).toBe(false);
   });
 
   it('renders a measured average as m:ss with the total beside it', () => {
-    const readout = handleTimeReadout(totals());
+    const readout = agentHandleTimeReadout(totals());
     expect(readout.value).toBe('1:45');
     expect(readout.secondary).toBe('30:00 on calls in total');
   });
@@ -355,13 +356,13 @@ describe('handleTimeReadout and wrapupReadout', () => {
   it('renders a real zero wrap-up as 0:00 rather than as absent', () => {
     // Nobody wrote anything up, which is a fact about the shift — and a
     // different one from "we could not read the wrap-up time".
-    const readout = wrapupReadout(totals({ wrapup_seconds: 0 }));
+    const readout = agentWrapupReadout(totals({ wrapup_seconds: 0 }));
     expect(readout.value).toBe('0:00');
     expect(readout.known).toBe(true);
   });
 
   it('reads an absent wrap-up as a failed load', () => {
-    const readout = wrapupReadout(totals({ wrapup_seconds: undefined as unknown as number }));
+    const readout = agentWrapupReadout(totals({ wrapup_seconds: undefined as unknown as number }));
     expect(readout.value).toBe('—');
     expect(readout.known).toBe(false);
   });
@@ -568,7 +569,7 @@ describe('bucketSeries', () => {
      */
     const series = bucketSeries([bucket('2026-08-19', 20, 8), bucket('2026-08-20', 22, 9)]);
     expect(series.points.map((p) => p.label)).toEqual(['19', '20']);
-    expect(series.points.map((p) => p.title)).toEqual(['Aug 19', 'Aug 20']);
+    expect(series.points.map((p) => p.title)).toEqual(['19 Aug', '20 Aug']);
     // The key is the server's own string, untouched — it is what the chart's
     // test ids and React keys are built from.
     expect(series.points.map((p) => p.start)).toEqual(['2026-08-19', '2026-08-20']);
@@ -611,7 +612,17 @@ describe('rowConnectRate', () => {
 
   it('divides connected by attempts, one decimal, trailing zero trimmed', () => {
     expect(rowConnectRate({ attempts: 40, connected: 10 })).toBe('25%');
-    expect(rowConnectRate({ attempts: 3, connected: 1 })).toBe('33.3%');
+    expect(rowConnectRate({ attempts: 60, connected: 20 })).toBe('33.3%');
+  });
+
+  it('withholds the rate under the roster’s floor, as the roster does — 1 of 1 is not 100%', () => {
+    // The roster withholds a connect rate below AGENCY_ROSTER_MIN_RATE_DENOMINATOR
+    // dials (`rates_reportable`); this table derived its own and printed 100% for
+    // one dial and one connect, beside the same agent's withheld roster cell.
+    expect(rowConnectRate({ attempts: 1, connected: 1 })).toBe('Not enough calls');
+    expect(rowConnectRate({ attempts: AGENCY_ROSTER_MIN_RATE_DENOMINATOR - 1, connected: 5 }))
+      .toBe('Not enough calls');
+    expect(rowConnectRate({ attempts: AGENCY_ROSTER_MIN_RATE_DENOMINATOR, connected: 5 })).toBe('25%');
   });
 });
 
@@ -893,5 +904,33 @@ describe('windowRangeReadout — which DAYS, and in whose zone', () => {
     // And an inverted or empty window has no days to name.
     expect(windowRangeReadout('2026-08-26T00:00:00.000Z', '2026-08-24T00:00:00.000Z')).toBeNull();
     expect(windowRangeReadout('2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')).toBeNull();
+  });
+});
+
+describe('one rounding rule for aggregate durations', () => {
+  it('rounds an aggregate the same way in a cell and in a sentence', () => {
+    // A served percentile is fractional. The cell floored 59.6s to `0:59` while
+    // the band beside it rounded the same quantity to `1m`.
+    expect(agentSeconds(59.6)).toBe('1:00');
+    expect(agentDurationLong(59.6)).toBe('1m');
+    expect(agentSeconds(59.4)).toBe('0:59');
+    expect(agentDurationLong(59.4)).toBe('59s');
+  });
+
+  it('skips a non-number occupancy state rather than NaN-ing every share', () => {
+    const breakdown = occupancyBreakdown({
+      by_state: {
+        on_call: Number.NaN,
+        wrapup: 0,
+        reserved: 0,
+        available: 600,
+        break: 0,
+        offline: 0,
+      },
+      shift_seconds: 600,
+    } as Parameters<typeof occupancyBreakdown>[0]);
+    expect(breakdown.measured).toBe(true);
+    expect(breakdown.recordedSeconds).toBe(600);
+    expect(breakdown.segments.map((s) => [s.state, s.sharePct])).toEqual([['available', 100]]);
   });
 });

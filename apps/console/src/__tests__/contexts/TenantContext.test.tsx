@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
+import { memo, useState } from 'react';
+import { render } from '@testing-library/react';
 import type { Tenant, Membership, Account } from '../../types/auth';
 
 const mocks = vi.hoisted(() => ({
@@ -559,5 +561,39 @@ describe('role resolution', () => {
     await waitFor(() => expect(result.current.tenantId).toBe('t-a'));
 
     expect(result.current.role).toBeUndefined();
+  });
+});
+
+// ─── context value identity ──────────────────────────────────────────────────
+
+describe('context value identity', () => {
+  // A re-render above the provider must not re-render every `useTenant()`
+  // consumer when nothing the context carries has changed.
+  it('does not re-render a memoised consumer when the provider re-renders with unchanged state', async () => {
+    setupAuth([TENANT_A], [TENANT_MEMBERSHIP]);
+    const seen: { renders: number; tenantId: string | null } = { renders: 0, tenantId: null };
+    const Consumer = memo(function Consumer() {
+      seen.tenantId = useTenant().tenantId;
+      seen.renders += 1;
+      return null;
+    });
+    let bump = () => {};
+    function Host() {
+      const [, setN] = useState(0);
+      bump = () => setN((n) => n + 1);
+      return <TenantProvider><Consumer /></TenantProvider>;
+    }
+
+    render(<Host />);
+    await waitFor(() => expect(seen.tenantId).toBe('t-a'));
+    await waitFor(() => expect(mocks.listAccounts).toHaveBeenCalled());
+    // Let the account list settle before counting.
+    await act(async () => {});
+    const settled = seen.renders;
+
+    act(() => bump());
+    act(() => bump());
+
+    expect(seen.renders).toBe(settled);
   });
 });

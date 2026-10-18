@@ -313,7 +313,9 @@ describe('lease renewer killed (chaos, slow)', () => {
     // there, and the next business duration will not be on
     // anyone's forbidden list.
     const dir = new URL('../../../../src/agency/', import.meta.url);
-    const files = readdirSync(dir).filter((f) => f.endsWith('.ts'));
+    // Recursive: the dialer and pacing engine keep modules in subfolders
+    // (`dialer/`, `pacing/`), and a TTL set there is the same offence.
+    const files = (readdirSync(dir, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts'));
     expect(files.length).toBeGreaterThan(5);
 
     const offenders: string[] = [];

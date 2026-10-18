@@ -58,7 +58,9 @@ describe('recordSuperAdminAudit', () => {
 
   it('no route swallows a super-admin audit failure silently any more', () => {
     const dir = resolve(__dirname, '../../../src/api/routes');
-    for (const file of readdirSync(dir).filter((f) => f.endsWith('.ts'))) {
+    // Recursive: a route family's registration files live in its own folder.
+    const files = (readdirSync(dir, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts'));
+    for (const file of files) {
       const source = readFileSync(resolve(dir, file), 'utf8');
       expect(source, file).not.toMatch(/superAdminAuditRepository\.log\([\s\S]*?\}\)\.catch\(\(\) => \{\}\)/);
     }

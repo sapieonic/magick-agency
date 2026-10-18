@@ -1,250 +1,152 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  formatDate,
-  formatDateShort,
-  formatTime,
-  formatRelativeTime,
-  formatDuration,
-  formatPhone,
-  formatNumber,
-  formatPercentage,
-  truncateId,
-} from '../../utils/format';
+import { describe, it, expect } from 'vitest';
+import { clampPercent, formatCount, pct, plural } from '../../utils/format/number';
+import { callSeconds, durationWords, formatDuration, statClock } from '../../utils/format/duration';
+import { dateFormatter, formatClockTime, formatDayMonth, formatDayMonthYear } from '../../utils/format/date';
+import { zoneFormatter, zonedParts } from '../../utils/format/zone';
+import { describeIsoDays, hhmm } from '../../utils/format/weekdays';
+import { ratePct, ratio, stateShares } from '../../utils/agency/metrics';
 
-// ─── formatDuration ───────────────────────────────────────────────────────────
+/**
+ * The shared format and metric helpers. Each replaced two to four drifted
+ * copies, so each case here is a rule one of those copies used to break.
+ */
 
-describe('formatDuration', () => {
-  // null / undefined / zero / negative guard
-  it('returns -- for null', () => expect(formatDuration(null)).toBe('--'));
-  it('returns -- for undefined', () => expect(formatDuration(undefined)).toBe('--'));
-  it('returns -- for 0', () => expect(formatDuration(0)).toBe('--'));
-  it('returns -- for negative values', () => expect(formatDuration(-1)).toBe('--'));
-  it('returns -- for -0', () => expect(formatDuration(-0)).toBe('--'));
-
-  // sub-minute
-  it('formats 1 second', () => expect(formatDuration(1)).toBe('0:01'));
-  it('formats 9 seconds with leading zero', () => expect(formatDuration(9)).toBe('0:09'));
-  it('formats 59 seconds', () => expect(formatDuration(59)).toBe('0:59'));
-
-  // minute boundaries
-  it('formats 60 seconds as 1:00', () => expect(formatDuration(60)).toBe('1:00'));
-  it('formats 61 seconds as 1:01', () => expect(formatDuration(61)).toBe('1:01'));
-  it('formats 65 seconds as 1:05', () => expect(formatDuration(65)).toBe('1:05'));
-  it('formats 120 seconds as 2:00', () => expect(formatDuration(120)).toBe('2:00'));
-
-  // over an hour (no hour component — just minutes overflow)
-  it('formats 3600 seconds as 60:00', () => expect(formatDuration(3600)).toBe('60:00'));
-  it('formats 3661 seconds as 61:01', () => expect(formatDuration(3661)).toBe('61:01'));
-});
-
-// There are no credit formatters (agency has no credits), so no cases cover
-// `formatCredits`, `formatLedgerMillicredits` or `formatCreditsExact`.
-
-describe('formatPhone', () => {
-  // falsy guards
-  it('returns -- for null', () => expect(formatPhone(null)).toBe('--'));
-  it('returns -- for undefined', () => expect(formatPhone(undefined)).toBe('--'));
-  it('returns -- for empty string', () => expect(formatPhone('')).toBe('--'));
-
-  // valid Indian number — exactly 13 chars starting with +91
-  it('formats a valid +91 number (13 chars)', () =>
-    expect(formatPhone('+919876543210')).toBe('+91 98765 43210'));
-  it('splits digits as +91 [5 digits] [5 digits]', () => {
-    const result = formatPhone('+919876543210');
-    const parts = result.split(' ');
-    expect(parts).toHaveLength(3);
-    expect(parts[0]).toBe('+91');
-    expect(parts[1]).toHaveLength(5);
-    expect(parts[2]).toHaveLength(5);
+describe('format/number', () => {
+  it('groups counts in the display locale (en-IN), whatever the reader’s browser says', () => {
+    // The suite pins an en-US process locale; the output is en-IN regardless.
+    expect(formatCount(12_345)).toBe('12,345');
+    expect(formatCount(1_234_567)).toBe('12,34,567');
+    expect(formatCount(0)).toBe('0');
   });
 
-  // off-by-one lengths — must not be formatted
-  it('returns +91 numbers with 12 chars as-is (too short)', () =>
-    expect(formatPhone('+91987654321')).toBe('+91987654321'));
-  it('returns +91 numbers with 14 chars as-is (too long)', () =>
-    expect(formatPhone('+9198765432101')).toBe('+9198765432101'));
+  it('prints one decimal with the trailing zero trimmed', () => {
+    expect(pct(18)).toBe('18%');
+    expect(pct(18.04)).toBe('18%');
+    expect(pct(18.45)).toBe('18.4%');
+    expect(pct(0)).toBe('0%');
+  });
 
-  // non-Indian numbers
-  it('returns non-+91 numbers as-is', () =>
-    expect(formatPhone('+12025551234')).toBe('+12025551234'));
-  it('returns plain numeric strings as-is', () =>
-    expect(formatPhone('9876543210')).toBe('9876543210'));
-});
+  it('agrees a count with its noun', () => {
+    expect(plural(1, 'dial')).toBe('1 dial');
+    expect(plural(2, 'dial')).toBe('2 dials');
+    expect(plural(1, 'retry', 'retries')).toBe('1 retry');
+    expect(plural(1_00_000, 'retry', 'retries')).toBe('1,00,000 retries');
+  });
 
-// ─── formatPercentage ────────────────────────────────────────────────────────
-
-describe('formatPercentage', () => {
-  it('formats 0 as "0.0%"', () => expect(formatPercentage(0)).toBe('0.0%'));
-  it('formats 0.5 as "50.0%"', () => expect(formatPercentage(0.5)).toBe('50.0%'));
-  it('formats 1 as "100.0%"', () => expect(formatPercentage(1)).toBe('100.0%'));
-  it('formats 0.123 as "12.3%"', () => expect(formatPercentage(0.123)).toBe('12.3%'));
-  it('rounds to 1 decimal place', () => expect(formatPercentage(0.1234)).toBe('12.3%'));
-  it('always ends with %', () => expect(formatPercentage(0.75)).toMatch(/%$/));
-});
-
-// ─── truncateId ──────────────────────────────────────────────────────────────
-
-describe('truncateId', () => {
-  it('truncates to the default length of 8', () =>
-    expect(truncateId('abcdefghij')).toBe('abcdefgh'));
-  it('truncates to a custom length', () =>
-    expect(truncateId('abcdefghij', 4)).toBe('abcd'));
-  it('returns the full string when it is shorter than the length', () =>
-    expect(truncateId('abc', 8)).toBe('abc'));
-  it('returns the full string when it exactly equals the length', () =>
-    expect(truncateId('abcdefgh', 8)).toBe('abcdefgh'));
-  it('returns empty string for empty input', () =>
-    expect(truncateId('')).toBe(''));
-  it('handles length 0', () =>
-    expect(truncateId('abcdef', 0)).toBe(''));
-  it('handles length 1', () =>
-    expect(truncateId('abcdef', 1)).toBe('a'));
-  it('preserves UUIDs correctly', () => {
-    const uuid = '550e8400-e29b-41d4-a716-446655440000';
-    expect(truncateId(uuid, 8)).toBe('550e8400');
+  it('keeps a meter inside its track', () => {
+    expect(clampPercent(-5)).toBe(0);
+    expect(clampPercent(140)).toBe(100);
+    expect(clampPercent(Number.NaN)).toBe(0);
+    expect(clampPercent(42.5)).toBe(42.5);
   });
 });
 
-// ─── formatNumber ────────────────────────────────────────────────────────────
-
-describe('formatNumber', () => {
-  it('formats 0', () => expect(formatNumber(0)).toBe('0'));
-  it('formats single-digit numbers', () => expect(formatNumber(7)).toBe('7'));
-  it('returns a string', () => expect(typeof formatNumber(1000)).toBe('string'));
-  it('preserves all digits regardless of locale separators', () =>
-    expect(formatNumber(12345).replace(/[,\s]/g, '')).toBe('12345'));
-  it('preserves all digits for large numbers', () =>
-    expect(formatNumber(9876543).replace(/[,\s]/g, '')).toBe('9876543'));
-});
-
-// ─── formatRelativeTime ───────────────────────────────────────────────────────
-
-describe('formatRelativeTime', () => {
-  const BASE = '2024-06-01T12:00:00Z';
-
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  // "just now" bucket: < 60 seconds
-  it('returns "just now" for 0 seconds elapsed', () => {
-    vi.setSystemTime(new Date(BASE));
-    expect(formatRelativeTime(BASE)).toBe('just now');
-  });
-  it('returns "just now" for 30 seconds elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-01T12:00:30Z'));
-    expect(formatRelativeTime(BASE)).toBe('just now');
-  });
-  it('returns "just now" for exactly 59 seconds elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-01T12:00:59Z'));
-    expect(formatRelativeTime(BASE)).toBe('just now');
+describe('format/duration — live timers floor, aggregates round', () => {
+  it('floors a live clock: a second that has not elapsed is never shown', () => {
+    expect(formatDuration(59_999)).toBe('0:59');
+    expect(formatDuration(60_000)).toBe('1:00');
+    expect(formatDuration(3_661_000)).toBe('1:01:01');
+    expect(formatDuration(-5)).toBe('0:00');
   });
 
-  // "Xm ago" bucket: 60 seconds – 59 minutes 59 seconds
-  it('returns "1m ago" at exactly 60 seconds elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-01T12:01:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('1m ago');
-  });
-  it('returns "5m ago" for 5 minutes elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-01T12:05:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('5m ago');
-  });
-  it('returns "59m ago" at exactly 59 minutes elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-01T12:59:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('59m ago');
+  it('rounds an aggregate clock to the nearest second', () => {
+    expect(statClock(59.6)).toBe('1:00');
+    expect(statClock(59.4)).toBe('0:59');
+    expect(statClock(0)).toBe('0:00');
+    expect(statClock(3_600)).toBe('1:00:00');
   });
 
-  // "Xh ago" bucket: 1 hour – 23 hours 59 minutes
-  it('returns "1h ago" at exactly 60 minutes elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-01T13:00:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('1h ago');
-  });
-  it('returns "2h ago" for 2 hours elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-01T14:00:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('2h ago');
-  });
-  it('returns "23h ago" at exactly 23 hours elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-02T11:00:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('23h ago');
+  it('says the units of an aggregate, rounded the same way', () => {
+    expect(durationWords(59.6)).toBe('1m');
+    expect(durationWords(45)).toBe('45s');
+    expect(durationWords(74)).toBe('1m 14s');
+    expect(durationWords(8_100)).toBe('2h 15m');
+    expect(durationWords(7_200)).toBe('2h');
   });
 
-  // "Xd ago" bucket: 1 day – 6 days
-  it('returns "1d ago" at exactly 24 hours elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-02T12:00:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('1d ago');
-  });
-  it('returns "2d ago" for 2 days elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-03T12:00:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('2d ago');
-  });
-  it('returns "6d ago" at exactly 6 days elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-07T12:00:00Z'));
-    expect(formatRelativeTime(BASE)).toBe('6d ago');
-  });
-
-  // formatDateShort fallback: >= 7 days
-  it('falls back to a short date string at exactly 7 days elapsed', () => {
-    vi.setSystemTime(new Date('2024-06-08T12:00:00Z'));
-    const result = formatRelativeTime(BASE);
-    expect(result).not.toMatch(/ago$/);
-    expect(result).not.toBe('just now');
-  });
-  it('falls back to a short date string for old timestamps', () => {
-    vi.setSystemTime(new Date('2024-06-15T12:00:00Z'));
-    const result = formatRelativeTime(BASE);
-    expect(result).toContain('Jun');
+  it('renders a call record’s seconds, with -- for nothing to show', () => {
+    expect(callSeconds(null)).toBe('--');
+    expect(callSeconds(undefined)).toBe('--');
+    expect(callSeconds(0)).toBe('--');
+    expect(callSeconds(65)).toBe('1:05');
+    // Rolls to hours like every other clock here, rather than `61:01`.
+    expect(callSeconds(3_661)).toBe('1:01:01');
   });
 });
 
-// ─── formatDate ───────────────────────────────────────────────────────────────
+describe('format/date — one locale, cached formatters', () => {
+  const at = new Date('2026-08-11T09:05:00.000Z');
 
-describe('formatDate', () => {
-  it('returns a non-empty string', () =>
-    expect(formatDate('2024-06-01T10:30:00Z').length).toBeGreaterThan(0));
+  it('prints day-month order in the display locale', () => {
+    expect(formatDayMonth(at)).toBe('11 Aug');
+    expect(formatDayMonthYear(at)).toBe('11 Aug 2026');
+    expect(formatClockTime(at)).toBe('09:05 am');
+  });
 
-  it('includes the year', () =>
-    expect(formatDate('2024-06-01T10:30:00Z')).toContain('2024'));
-
-  it('includes the month abbreviation', () =>
-    expect(formatDate('2024-06-01T10:30:00Z')).toContain('Jun'));
-
-  it('includes the day', () =>
-    expect(formatDate('2024-01-15T10:30:00Z')).toContain('15'));
-
-  it('contains a time separator (colon)', () =>
-    expect(formatDate('2024-06-01T10:30:00Z')).toContain(':'));
-
-  it('produces different output for different dates', () =>
-    expect(formatDate('2024-01-01T00:00:00Z')).not.toBe(formatDate('2024-12-31T23:59:59Z')));
+  it('reuses one formatter per option set', () => {
+    expect(dateFormatter({ day: 'numeric', month: 'short' })).toBe(dateFormatter({ day: 'numeric', month: 'short' }));
+  });
 });
 
-// ─── formatDateShort ─────────────────────────────────────────────────────────
+describe('format/zone — a named zone’s wall clock', () => {
+  it('reads the zoned date and its ISO weekday, not the instant’s UTC day', () => {
+    // 2026-08-16T20:00Z is Sunday in UTC and already Monday 01:30 in Kolkata.
+    const parts = zonedParts(zoneFormatter('Asia/Kolkata')!, new Date('2026-08-16T20:00:00.000Z'));
+    expect(parts).toEqual({ year: 2026, month: 8, day: 17, hour: 1, minute: 30, second: 0, isoDay: 1 });
+    const ny = zonedParts(zoneFormatter('America/New_York')!, new Date('2026-08-16T20:00:00.000Z'));
+    expect(ny?.isoDay).toBe(7);
+  });
 
-describe('formatDateShort', () => {
-  it('returns a non-empty string', () =>
-    expect(formatDateShort('2024-06-01T10:30:00Z').length).toBeGreaterThan(0));
-
-  it('does not include the year', () =>
-    expect(formatDateShort('2024-06-01T10:30:00Z')).not.toContain('2024'));
-
-  it('includes the month abbreviation', () =>
-    expect(formatDateShort('2024-06-01T10:30:00Z')).toContain('Jun'));
-
-  it('includes the day', () =>
-    expect(formatDateShort('2024-01-15T10:30:00Z')).toContain('15'));
-
-  it('produces different output for different months', () =>
-    expect(formatDateShort('2024-01-01T00:00:00Z')).not.toBe(formatDateShort('2024-06-01T00:00:00Z')));
+  it('caches per zone, and refuses a name that is not one without throwing', () => {
+    expect(zoneFormatter('Asia/Kolkata')).toBe(zoneFormatter('Asia/Kolkata'));
+    expect(zoneFormatter('Not/AZone')).toBeNull();
+  });
 });
 
-// ─── formatTime ──────────────────────────────────────────────────────────────
+describe('format/weekdays', () => {
+  it('describes ISO days the shortest honest way, dropping what is not a day', () => {
+    expect(describeIsoDays([1, 2, 3, 4, 5])).toBe('Mon–Fri');
+    expect(describeIsoDays([1, 3, 5])).toBe('Mon, Wed, Fri');
+    expect(describeIsoDays([6, 7])).toBe('Sat, Sun');
+    expect(describeIsoDays([1, 2, 3, 4, 5, 6, 7])).toBe('Every day');
+    expect(describeIsoDays([1, 2, 9])).toBe('Mon, Tue');
+    expect(describeIsoDays([0, 8, 1.5])).toBeNull();
+    expect(describeIsoDays(undefined)).toBeNull();
+  });
 
-describe('formatTime', () => {
-  it('returns a non-empty string', () =>
-    expect(formatTime('2024-06-01T10:30:00Z').length).toBeGreaterThan(0));
+  it('trims a TIME column to HH:MM and leaves anything else as sent', () => {
+    expect(hhmm('09:00:00')).toBe('09:00');
+    expect(hhmm('18:30')).toBe('18:30');
+    expect(hhmm('9am')).toBe('9am');
+  });
+});
 
-  it('contains a time separator (colon)', () =>
-    expect(formatTime('2024-06-01T10:30:00Z')).toContain(':'));
+describe('agency/metrics', () => {
+  it('divides only over a real, positive denominator', () => {
+    expect(ratio(1, 4)).toBe(0.25);
+    expect(ratePct(1, 4)).toBe(25);
+    expect(ratePct(0, 4)).toBe(0);
+    expect(ratePct(0, 0)).toBeNull();
+    expect(ratePct(Number.NaN, 4)).toBeNull();
+    expect(ratePct(undefined, 4)).toBeNull();
+    expect(ratePct(1, Number.POSITIVE_INFINITY)).toBeNull();
+  });
 
-  it('produces different output for different times', () =>
-    expect(formatTime('2024-06-01T08:00:00Z')).not.toBe(formatTime('2024-06-01T20:00:00Z')));
+  it('shares the on-shift states, skipping offline, zeroes and non-numbers', () => {
+    const { total, shares } = stateShares({
+      on_call: 3,
+      wrapup: 0,
+      reserved: Number.NaN,
+      available: 1,
+      break: '2' as unknown as number,
+      offline: 50,
+    });
+    expect(total).toBe(4);
+    expect(shares).toEqual([
+      { state: 'on_call', value: 3, share: 75 },
+      { state: 'available', value: 1, share: 25 },
+    ]);
+    expect(stateShares(undefined)).toEqual({ total: 0, shares: [] });
+    expect(stateShares({ offline: 9 })).toEqual({ total: 0, shares: [] });
+  });
 });

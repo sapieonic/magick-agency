@@ -86,7 +86,8 @@ const { mockAnalytics } = vi.hoisted(() => ({
 }));
 vi.mock('../../../src/analytics/posthog.js', () => mockAnalytics);
 
-import { WebRtcBridgeManager, WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
+import { WebRtcBridgeManager, WebRtcCallError, UNSTORED_WS_TOKEN_CAP } from '../../../src/core/webrtc-bridge-manager.js';
+import { UNSTORED_WS_TOKEN_SWEEP_MS } from '../../../src/core/bridge/ws-tokens.js';
 import { encodeAlaw, decodeAlaw } from '../../../src/utils/audio.js';
 // The platform's default for an unset allow_recording; the bridge must agree with it.
 import { DEFAULT_ALLOW_RECORDING } from '../../../src/settings/agency-account-settings.js';
@@ -979,7 +980,7 @@ describe('WebRtcBridgeManager oversized-frame gate (MAX_MEDIA_FRAME_BYTES)', () 
 });
 
 describe('WebRtcBridgeManager.verifyWsToken — fail-open under Redis degradation', () => {
-  const PURPOSES = ['browser', 'provider', 'webhook'] as const;
+  const PURPOSES = ['provider', 'webhook'] as const;
 
   it('returns true for every purpose when redis is null (degraded)', async () => {
     const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
@@ -1228,5 +1229,62 @@ describe('WebRtcBridgeManager.attachPstnLegVerified — provider-token gate (Voi
     expect(pstn.readyState).toBe(3); // closed
     expect(mgr.getSession('call-1')!.pstnWs).toBeNull(); // never attached
     await endByUser(mgr);
+  });
+});
+
+describe('WebRtcBridgeManager — the unstored-token memory is bounded', () => {
+  // Pruning only removed EXPIRED entries, so a sustained Redis outage with more
+  // calls than fit in one grace window grew the map without bound.
+  it('caps the remembered unstored tokens even when none has expired', () => {
+    const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+    const note = (i: number) => (mgr as any).tokens.noteUnstoredWsToken(`call-${i}`, 'webhook', 3_600_000);
+    for (let i = 0; i < UNSTORED_WS_TOKEN_CAP + 500; i++) note(i);
+    const held: Map<string, number> = (mgr as any).tokens.unstoredWsTokens;
+    expect(held.size).toBeLessThanOrEqual(UNSTORED_WS_TOKEN_CAP);
+    // The newest are kept: the oldest windows are the ones nearest to ending.
+    expect(held.has(`webhook:call-${UNSTORED_WS_TOKEN_CAP + 499}`)).toBe(true);
+    expect(held.has('webhook:call-0')).toBe(false);
+  });
+
+  // The expired-entry sweep ran on EVERY insert once 1000 entries were held, a full
+  // scan on the dial path exactly when an outage fills the map.
+  it('sweeps expired entries at most once per sweep interval, not on every insert', () => {
+    const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+    const note = (i: number) => (mgr as any).tokens.noteUnstoredWsToken(`call-${i}`, 'webhook', 3_600_000);
+    for (let i = 0; i < 1500; i++) note(i);
+    const held: Map<string, number> = (mgr as any).tokens.unstoredWsTokens;
+    const scans = vi.spyOn(held, Symbol.iterator);
+    for (let i = 1500; i < 1600; i++) note(i);
+    expect(scans.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+
+  it('drops expired entries on the next sweep even below 1000 entries', () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+      const note = (i: number, forMs: number) => (mgr as any).tokens.noteUnstoredWsToken(`call-${i}`, 'webhook', forMs);
+      for (let i = 0; i < 10; i++) note(i, 1_000);
+      vi.advanceTimersByTime(UNSTORED_WS_TOKEN_SWEEP_MS + 1);
+      note(99, 3_600_000);
+      const held: Map<string, number> = (mgr as any).tokens.unstoredWsTokens;
+      expect([...held.keys()]).toEqual(['webhook:call-99']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a call ending re-arms its webhook entry as the newest, so the cap evicts others first', async () => {
+    const mgr = new WebRtcBridgeManager(makeCallManager() as any, null);
+    const note = (i: number) => (mgr as any).tokens.noteUnstoredWsToken(`call-${i}`, 'webhook', 3_600_000);
+    for (let i = 0; i < UNSTORED_WS_TOKEN_CAP; i++) note(i);
+    const held: Map<string, number> = (mgr as any).tokens.unstoredWsTokens;
+    await (mgr as any).tokens.clearWsToken('call-5');
+    // Re-noting a held key evicts nobody, and moves it to the newest end.
+    expect(held.size).toBe(UNSTORED_WS_TOKEN_CAP);
+    expect(held.has('webhook:call-0')).toBe(true);
+    expect([...held.keys()].at(-1)).toBe('webhook:call-5');
+    note(UNSTORED_WS_TOKEN_CAP);
+    expect(held.has('webhook:call-0')).toBe(false);
+    expect(held.has('webhook:call-5')).toBe(true);
   });
 });

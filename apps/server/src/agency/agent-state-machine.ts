@@ -92,6 +92,17 @@ export interface AgentLiveState {
   since: number | null;
 }
 
+/** An `HGETALL` reply as an {@link AgentLiveState}; null for a lapsed (empty) key. */
+function parseLiveState(h: Record<string, string> | null | undefined): AgentLiveState | null {
+  if (!h || !h.state) return null;
+  const since = Number(h.since);
+  return {
+    state: h.state as AgencyAgentState,
+    attemptId: h.attempt || null,
+    since: Number.isFinite(since) ? since : null,
+  };
+}
+
 /**
  * The agent state machine, in Redis.
  *
@@ -194,17 +205,39 @@ export class AgentStateMachine {
   async get(sessionId: string): Promise<AgentLiveState | null> {
     if (!this.redis) return null;
     try {
-      const h = await this.redis.hgetall(this.key(sessionId));
-      if (!h || !h.state) return null;
-      const since = Number(h.since);
-      return {
-        state: h.state as AgencyAgentState,
-        attemptId: h.attempt || null,
-        since: Number.isFinite(since) ? since : null,
-      };
+      return parseLiveState(await this.redis.hgetall(this.key(sessionId)));
     } catch (err) {
       log.warn({ err, sessionId }, 'Agent state read failed');
       return null;
+    }
+  }
+
+  /**
+   * {@link get} for several agents in ONE Redis round trip (a pipeline), in the
+   * order asked. The pacing tick reads every local agent on a campaign four times a
+   * second, and sequential reads made that one round trip per agent per tick.
+   *
+   * Same failure answer as `get`, per agent: a read that errors is `null` (the
+   * agent is treated as gone, which fails closed for dialing), and so is every
+   * entry when the pipeline itself cannot run.
+   */
+  async getMany(sessionIds: readonly string[]): Promise<Array<AgentLiveState | null>> {
+    if (!this.redis || sessionIds.length === 0) return sessionIds.map(() => null);
+    try {
+      const pipeline = this.redis.pipeline();
+      for (const sessionId of sessionIds) pipeline.hgetall(this.key(sessionId));
+      const results = await pipeline.exec();
+      return sessionIds.map((sessionId, i) => {
+        const [err, h] = results?.[i] ?? [new Error('missing pipeline result'), null];
+        if (err) {
+          log.warn({ err, sessionId }, 'Agent state read failed');
+          return null;
+        }
+        return parseLiveState(h as Record<string, string> | null);
+      });
+    } catch (err) {
+      log.warn({ err, count: sessionIds.length }, 'Agent state batch read failed');
+      return sessionIds.map(() => null);
     }
   }
 
