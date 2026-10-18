@@ -57,11 +57,14 @@ describe('0003 — agency attempt and contact indexes', () => {
     expect(await indexDef('idx_agency_attempts_answered')).toMatch(
       /\(answered_at\) WHERE \(answered_at IS NOT NULL\)/,
     );
+    // The window's predicate without its `GROUP BY campaign_id`: with the grouping, a full
+    // scan of `idx_agency_attempts_keyset` (campaign_id first) saves the sort, and on the
+    // test's near-empty table that tie goes either way with whatever rows earlier files left.
+    // Usability of the partial index for the predicate is the property under test.
     expect(await planOf(
-      `SELECT a.campaign_id, COUNT(*) FROM agency_call_attempts a
+      `SELECT COUNT(*) FROM agency_call_attempts a
         WHERE a.state = 'ended' AND a.answered_at IS NOT NULL
-          AND a.answered_at > now() - ('24' || ' hours')::interval
-        GROUP BY a.campaign_id`,
+          AND a.answered_at > now() - ('24' || ' hours')::interval`,
     )).toContain('idx_agency_attempts_answered');
   });
 
