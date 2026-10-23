@@ -228,12 +228,22 @@ export async function handleStationSocket(
     // Taken before the parse, so a ping's `server_ts` is the arrival instant and
     // owes nothing to how long anything downstream takes.
     const receivedAt = Date.now();
-    let frame: AgencyStationClientFrame;
+    let parsed: unknown;
     try {
-      frame = JSON.parse(typeof data === 'string' ? data : data.toString());
+      parsed = JSON.parse(typeof data === 'string' ? data : data.toString());
     } catch {
       return; // media/binary or malformed — the bridge's own listener handles media
     }
+    // ── A PARSE THAT SUCCEEDS IS NOT YET A FRAME ─────────────────────────
+    //
+    // `JSON.parse('null')` succeeds, and reading `.event` off its result threw
+    // a TypeError out of this `ws` listener. There is no global
+    // `uncaughtException` handler, so one four-byte text frame from any
+    // authenticated console crashed the whole server — every station and every
+    // live call on it — and wedged that socket's receiver on the way. Anything
+    // that is not a JSON object is ignored, like any other non-frame.
+    if (parsed === null || typeof parsed !== 'object') return;
+    const frame = parsed as AgencyStationClientFrame;
     if (frame.event === 'ping') {
       // Held, not dropped, until the station is attached and `ready` is out. The
       // arrival instant is held with it — that is what the answer is stamped with.
