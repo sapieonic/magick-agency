@@ -652,6 +652,14 @@ export interface FloorWorldOptions {
   parallelTicks?: boolean;
   /** Rounds between modelled station heartbeats. Default 3. */
   heartbeatEvery?: number;
+  /**
+   * Run a SECOND pacing engine over the same campaigns, stations and agents, and
+   * tick both concurrently every round — the split brain the leader lease cannot
+   * rule out (the chaos harness's `forkLeader`, at floor scale). The pacing law no
+   * longer holds per engine; the correctness mechanisms (SKIP LOCKED claims, the
+   * reservation CAS, `uq_agency_attempt_live`, the attempt-number index) must.
+   */
+  splitBrain?: boolean;
 }
 
 export const NO_DELAY_RETRY_POLICY = {
@@ -742,8 +750,10 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
     const phoneFor = spec.phoneFor ?? ((i: number) => `+9197${String(index).padStart(2, '0')}${String(i).padStart(6, '0')}`);
     const n = spec.contacts;
     await db.query(
-      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state, source_row_number)
-       SELECT $1, $2, $3, p.phone, '{"name":"Floor Contact"}'::jsonb, 'pending', p.ord
+      // `row_fingerprint` as ingest stamps it (one per distinct row): retry seeding
+      // counts and de-duplicates on it, so a roster without one seeds nothing.
+      `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state, source_row_number, row_fingerprint)
+       SELECT $1, $2, $3, p.phone, '{"name":"Floor Contact"}'::jsonb, 'pending', p.ord, md5(p.phone || ':' || p.ord)
          FROM unnest($4::text[]) WITH ORDINALITY AS p(phone, ord)`,
       [campaignId, tenantId, accountId, Array.from({ length: n }, (_, i) => phoneFor(i))],
     );
@@ -768,6 +778,19 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
 
   const rt: Runtime = new AgencyRuntime(carrier as never, redis, '');
   rt.dialer.start();
+  let fork: import('../../../src/agency/pacing-engine.js').PacingEngine | null = null;
+  /** Dials the split-brain fork placed — proof the second leader genuinely competed. */
+  let forkDials = 0;
+  if (opts.splitBrain) {
+    const { PacingEngine } = await import('../../../src/agency/pacing-engine.js');
+    const { LocalDialDispatcher } = await import('../../../src/agency/dial-dispatcher.js');
+    // Same replica id, stations, agents and dialer: two loops inside one process.
+    const dispatcher = new LocalDialDispatcher(rt.replicaId, (cmd, o) => {
+      forkDials++;
+      return rt.dialer.executeDial(cmd, o);
+    });
+    fork = new PacingEngine(redis, '', rt.replicaId, rt.stations, rt.agents, dispatcher, rt.dnc);
+  }
   carrier.agentAttempt = async (ids) => (await rt.agents.getMany(ids)).map((s) =>
     s ? { state: s.state, attemptId: s.attemptId ?? null } : null);
 
@@ -806,6 +829,7 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
     rng,
     get runtime(): Runtime { return rt; },
     get roundsRun(): number { return roundNo; },
+    get forkDials(): number { return forkDials; },
     campaign(label: string): FloorCampaign {
       const c = campaigns.find((x) => x.spec.label === label);
       if (!c) throw new Error(`no campaign ${label}`);
@@ -990,7 +1014,10 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
       const inputs = measure ? await world.pacingInputs() : {};
       const before = measure ? await attemptCounts() : null;
       const order = rng.shuffle(campaigns);
-      if (parallelTicks) {
+      if (fork) {
+        const f = fork;
+        await Promise.all(order.flatMap((c) => [rt.pacing.tickOnce(c.id), f.tickOnce(c.id)]));
+      } else if (parallelTicks) {
         await Promise.all(order.map((c) => rt.pacing.tickOnce(c.id)));
       } else {
         for (const c of order) await rt.pacing.tickOnce(c.id);
@@ -1018,11 +1045,20 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
      */
     async runUntilDrained(o: { maxRounds: number; onRound?: (r: RoundReport) => Promise<void> | void }): Promise<number> {
       let quietRounds = 0;
+      let stalledRounds = 0;
       for (let i = 0; i < o.maxRounds; i++) {
         const r = await world.round();
         if (o.onRound) await o.onRound(r);
         const created = Object.values(r.campaigns).reduce((s, x) => s + x.attemptsCreated, 0);
         const outstanding = await outstandingWork();
+        // A floor with dialable work, no call in progress and nothing dialled is
+        // wedged — a claim that keeps bouncing, say. Reported as such, with the seed,
+        // rather than as a timeout thousands of rounds later.
+        stalledRounds = created === 0 && carrier.liveCount() === 0 && outstanding ? stalledRounds + 1 : 0;
+        if (stalledRounds >= 30) {
+          throw new Error(`Floor stalled (seed ${seed}, round ${r.round}): dialable work outstanding, `
+            + `no live call, nothing dialled for ${stalledRounds} rounds`);
+        }
         quietRounds = created === 0 && carrier.liveCount() === 0 && !outstanding ? quietRounds + 1 : 0;
         // Two quiet rounds: the second gives every leader the idle tick on which it
         // finalizes (`maybeFinalize` runs only when the tick dialled nothing).
@@ -1041,7 +1077,34 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
       return finalAudit();
     },
 
+    /**
+     * Put an existing campaign row (a retry child, say) on the floor with a fresh
+     * pool of agents, so later rounds tick it and every check covers it.
+     */
+    async adoptCampaign(campaignId: string, spec: Pick<FloorCampaignSpec, 'label' | 'agents'>): Promise<FloorCampaign> {
+      const { rows: [row] } = await db.query<{ tenant_id: string; account_id: string }>(
+        'SELECT tenant_id, account_id FROM agency_campaigns WHERE id = $1', [campaignId]);
+      const { rows: [lim] } = await db.query<{ max_concurrent_calls: number }>(
+        'SELECT max_concurrent_calls FROM account_settings WHERE tenant_id = $1 AND account_id = $2', [row!.tenant_id, row!.account_id]);
+      const c: FloorCampaign = {
+        spec: {
+          label: spec.label, tenant: '', account: '', agents: spec.agents, contacts: 0,
+          maxConcurrentCalls: lim?.max_concurrent_calls ?? 5,
+        },
+        id: campaignId, tenantId: row!.tenant_id, accountId: row!.account_id, index: campaigns.length,
+      };
+      campaigns.push(c);
+      campaignById.set(c.id, c);
+      for (let i = 0; i < spec.agents; i++) {
+        const agent = await insertFloorAgent(c, i);
+        agents.push(agent);
+        await bringOnline(agent);
+      }
+      return c;
+    },
+
     async teardown(): Promise<void> {
+      await fork?.stop().catch(() => { /* never started */ });
       await app?.close();
       rt.dialer.stop();
       rt.wrapup.stop();
