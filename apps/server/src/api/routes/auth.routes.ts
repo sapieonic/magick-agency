@@ -63,7 +63,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const { id_token, phone_number } = parsed.data;
 
     // Verify Firebase token
-    const decoded = await verifyIdToken(id_token);
+    // A token Firebase refuses (expired, revoked, malformed) is the caller's 401, exactly as
+    // `sessionMiddleware` answers it — not a masked 500 telling someone signing in with a
+    // stale token to contact support (`test/integration/load/hostile-input-fuzz.test.ts`).
+    let decoded: Awaited<ReturnType<typeof verifyIdToken>>;
+    try {
+      decoded = await verifyIdToken(id_token);
+    } catch (err) {
+      log.warn({ err }, 'Refused session: Firebase token verification failed');
+      return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired token' });
+    }
 
     // ── Path 1: User found by Firebase UID ──────────────────
     const existingUser = await userRepository.findByFirebaseUid(decoded.uid);

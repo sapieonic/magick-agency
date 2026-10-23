@@ -124,11 +124,29 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
   const sendsBody = Boolean(req.body) && (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH');
   if (sendsBody) headers['content-type'] = 'application/json';
 
+  // A forwarded client body nested deep enough (thousands of levels — the parser accepts
+  // it) overflows `JSON.stringify`'s recursion with a RangeError, which surfaced as a
+  // masked 500. It is the caller's malformed input: a fixed 400, the way the path check
+  // above answers (`test/integration/load/hostile-input-fuzz.test.ts`).
+  let payload: string | undefined;
+  if (sendsBody) {
+    try {
+      payload = JSON.stringify(req.body);
+    } catch (err) {
+      if (!(err instanceof RangeError)) throw err;
+      return {
+        status: 400,
+        body: { error: 'Bad Request', message: 'The request body is nested too deeply.' },
+        headers: new Headers({ 'content-type': 'application/json' }),
+      };
+    }
+  }
+
   const res = await app.inject({
     method: req.method,
     url: `/api/v1${req.path}${queryString}`,
     headers,
-    ...(sendsBody ? { payload: JSON.stringify(req.body) } : {}),
+    ...(payload !== undefined ? { payload } : {}),
   });
 
   const outHeaders = new Headers();

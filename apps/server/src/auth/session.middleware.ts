@@ -45,35 +45,42 @@ export async function sessionMiddleware(request: FastifyRequest, reply: FastifyR
   // Try Firebase Bearer token first
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
+    // ONLY the token check answers 401. The console treats a 401 as an expired session:
+    // it signs the agent out of Firebase and bounces them to the login page. So a failure
+    // of the user lookup below (a pool timeout, a database or Redis outage) must not be
+    // spelled as one — it propagates to the error handler as the masked 5xx, which the
+    // console retries. Caught together, one database stall signed out the whole floor
+    // (`test/integration/load/resource-exhaustion.test.ts`).
+    let decoded: DecodedFirebaseToken;
     try {
-      const decoded = await verifyIdToken(token);
-      request.firebaseToken = decoded;
-
-      // Load user — try Redis cache first, fall through to DB
-      const userCacheKey = `cache:user:fb:${decoded.uid}`;
-      let user = await redisCache.get<UserRecord>(userCacheKey);
-      if (!user) {
-        user = await userRepository.findByFirebaseUid(decoded.uid);
-        if (user) await redisCache.set(userCacheKey, user, USER_CACHE_TTL);
-      }
-      if (!user) {
-        authAttemptsTotal.inc({ method: 'firebase', status: 'user_not_found' });
-        return reply.code(401).send({ error: 'Unauthorized', message: 'User not found. Complete sign-up first.' });
-      }
-
-      if (user.status !== 'active') {
-        authAttemptsTotal.inc({ method: 'firebase', status: 'inactive' });
-        return reply.code(403).send({ error: 'Forbidden', message: 'User account is inactive' });
-      }
-
-      request.user = user;
-      authAttemptsTotal.inc({ method: 'firebase', status: 'success' });
-      return;
+      decoded = await verifyIdToken(token);
     } catch (err) {
       log.warn({ err }, 'Firebase token verification failed');
       authAttemptsTotal.inc({ method: 'firebase', status: 'invalid_token' });
       return reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired token' });
     }
+    request.firebaseToken = decoded;
+
+    // Load user — try Redis cache first, fall through to DB
+    const userCacheKey = `cache:user:fb:${decoded.uid}`;
+    let user = await redisCache.get<UserRecord>(userCacheKey);
+    if (!user) {
+      user = await userRepository.findByFirebaseUid(decoded.uid);
+      if (user) await redisCache.set(userCacheKey, user, USER_CACHE_TTL);
+    }
+    if (!user) {
+      authAttemptsTotal.inc({ method: 'firebase', status: 'user_not_found' });
+      return reply.code(401).send({ error: 'Unauthorized', message: 'User not found. Complete sign-up first.' });
+    }
+
+    if (user.status !== 'active') {
+      authAttemptsTotal.inc({ method: 'firebase', status: 'inactive' });
+      return reply.code(403).send({ error: 'Forbidden', message: 'User account is inactive' });
+    }
+
+    request.user = user;
+    authAttemptsTotal.inc({ method: 'firebase', status: 'success' });
+    return;
   }
 
   /*

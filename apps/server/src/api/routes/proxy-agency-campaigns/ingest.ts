@@ -147,7 +147,21 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
         return reply.code(400).send({ error: 'Validation Error', message: 'No file uploaded.' });
       }
 
-      const buffer = await file.toBuffer();
+      // A multipart body that ends mid-part raises busboy's `Unexpected end of form`, an
+      // error with no status, which reached the client as a masked 500. It is the caller's
+      // malformed upload: a 400. Errors the plugin does classify (the 413 for a file over
+      // `CSV_MAX_BYTES`) keep their status (`load/hostile-input-fuzz.test.ts`).
+      let buffer: Buffer;
+      try {
+        buffer = await file.toBuffer();
+      } catch (err) {
+        if (typeof (err as { statusCode?: unknown }).statusCode === 'number') throw err;
+        log.warn({ err, tenantId: request.tenantId }, 'Agency roster upload refused: malformed multipart body');
+        return reply.code(400).send({
+          error: 'Validation Error',
+          message: 'The upload could not be read: the file was cut off or the form is malformed. Please upload it again.',
+        });
+      }
       const uploadId = crypto.randomUUID();
       // The shape is load-bearing: `isTenantUploadKey` proves ownership of a
       // client-supplied key from exactly what `uploadKey` mints, and refuses the
