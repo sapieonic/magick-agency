@@ -155,7 +155,12 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
           guards[(a + k) % ACTORS]!.release(callId)));
       }
     }));
-    try { await actors; } finally { stop = true; }
+    try { await actors; } finally {
+      stop = true;
+      // Awaited even on a red: an in-flight reconcile landing after the next
+      // test's flush would write a stale counter into it.
+      await Promise.allSettled([reconciler, sampler]);
+    }
     const [passes, worstObserved] = await Promise.all([reconciler, sampler]);
 
     expect(worstObserved).toBeLessThanOrEqual(CAP);
