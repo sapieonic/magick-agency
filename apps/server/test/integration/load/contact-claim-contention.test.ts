@@ -399,6 +399,9 @@ describe('contact claim, settlement and recovery under contention (integration)'
     const delays = attempts.map(() => rng.int(0, 60));
     const [agentResults] = await Promise.all([
       Promise.all(attempts.map(async (a, i) => {
+        // A fifth of the agents never submit in time: the sweep is certain to
+        // close those, which the late-submission phase below relies on.
+        if (i % 5 === 0) return null;
         await new Promise((r) => setTimeout(r, delays[i]));
         return agencyAttemptRepository.recordDisposition({
           attemptId: a.id, dispositionCode: 'promise_to_pay', notes: null, callbackAt: null,
@@ -436,5 +439,22 @@ describe('contact claim, settlement and recovery under contention (integration)'
     // Nothing further to sweep, whoever won.
     expect(await reapers[0]!.sweepLapsedWrapups()).toBe(0);
     expect(agentWon).toBeGreaterThan(0);
+
+    // The agents the sweep beat submit anyway — a write-up arriving after the
+    // window was closed for them, all at once. The first-writer guard refuses
+    // every one: the auto record stands, attributed to nobody.
+    const lost = attempts.filter((_, i) => !agentResults[i]);
+    expect(lost.length, 'the sweep never won a row, so the late path was not exercised').toBeGreaterThan(0);
+    const late = await Promise.all(lost.map((a) => agencyAttemptRepository.recordDisposition({
+      attemptId: a.id, dispositionCode: 'promise_to_pay', notes: null, callbackAt: null,
+      actorUserId: agentUser, onBehalf: false,
+    })));
+    expect(late.filter((r) => r !== null)).toHaveLength(0);
+    const { rows: stillAuto } = await getTestPool().query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM agency_call_attempts
+        WHERE id = ANY($1::uuid[]) AND disposition_code = $2 AND dispositioned_by_user_id IS NULL`,
+      [lost.map((a) => a.id), AUTO_DISPOSITION_CODE],
+    );
+    expect(Number(stillAuto[0]!.n)).toBe(lost.length);
   });
 });
