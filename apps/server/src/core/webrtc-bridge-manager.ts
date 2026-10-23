@@ -1366,14 +1366,17 @@ export class WebRtcBridgeManager {
         this.anchorAnswer(session);
         if (session.status !== 'in_progress') {
           session.status = 'in_progress';
-          await webrtcCallRepository.update(callId, { status: 'in_progress', answered_at: session.answeredAt });
+          // Tracked: the terminal write in `endCall` must not overtake it.
+          await session.trackProgressWrite(
+            webrtcCallRepository.update(callId, { status: 'in_progress', answered_at: session.answeredAt }),
+          );
           this.notifyBrowser(session, { event: 'status', status: 'answered' });
         }
         return;
       case 'ringing':
         if (session.status === 'initiating') {
           session.status = 'ringing';
-          await webrtcCallRepository.update(callId, { status: 'ringing' });
+          await session.trackProgressWrite(webrtcCallRepository.update(callId, { status: 'ringing' }));
           this.notifyBrowser(session, { event: 'status', status: 'ringing' });
         }
         return;
@@ -1647,6 +1650,11 @@ export class WebRtcBridgeManager {
     if (opts.hangupProvider) await this.hangupProviderLeg(session);
 
     const recordingUrl = opts.recordingUrl ?? session.recordingUrl ?? undefined;
+    // A `ringing`/`in_progress` write still in flight would otherwise be free to land
+    // after this one (two pool connections, no order between them) and leave a live
+    // status on a terminal row. None can start from here on: every progress path
+    // refuses once `endHandled` is set above.
+    await session.progressWritesSettled();
     try {
       await webrtcCallRepository.update(callId, {
         status: opts.status,
