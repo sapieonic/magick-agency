@@ -2,7 +2,7 @@
 
 Running and deploying Magick Agency: which configuration matters and what it defaults to, the
 properties a deployment must guarantee, how shutdown, migrations, recordings, Postgres TLS and the
-proxy count work. Read it before standing up any environment beyond a laptop. For local dev setup
+proxy count work, and how each component is versioned and released. Read it before standing up any environment beyond a laptop. For local dev setup
 follow the root [`README.md`](../README.md) ("Dev setup"); it is not repeated here. Every default
 below was read from `apps/server/src/config/blocks/*.ts` and `apps/server/.env.example` on
 2026-10-09. Anything not verified is marked.
@@ -113,7 +113,7 @@ Next, add a `pg` service to a compose override: `postgres:16-alpine` with
 on it. Then set `DATABASE_URL=postgresql://…@pg:5432/…`, `DB_SSL_CA` to `ca.crt`'s text with `\n`
 escapes, and placeholder Firebase and VoiceLink values, all in `docker/.env`. Run `up` with both
 files. The first boot
-logs `MIGRATION 0001_baseline (UP)`, then `migrations complete`, then `magick-agency listening`.
+logs `MIGRATION 0001_baseline (UP)`, then `migrations complete`, then `magick-agency v<version> listening`.
 Later boots log `No migrations to run!`. The server's Postgres sessions show `ssl = t` in
 `pg_stat_ssl`. Without `DB_SSL_CA`, the migration step fails with
 `unable to verify the first certificate` and the container exits.
@@ -292,3 +292,134 @@ It reads only the base settings (`DATABASE_URL`, `NODE_ENV`, `DB_SSL_CA`,
 
 `GET /healthz` answers 200 while the process is up. `GET /readyz` answers 200 only when Postgres
 (`SELECT 1`) and Redis (`PING`) respond, else 503. Both are exempt from rate limiting.
+
+## Releases and versioning
+
+Every workspace package has its own semantic version, tag, GitHub Release and `CHANGELOG.md`,
+managed by [release-please](https://github.com/googleapis/release-please) from the Conventional
+Commits on `main` (decision B24). The deployables are `server` (`apps/server`, the server image),
+`console` and `super-admin` (`apps/console`, `apps/super-admin`, both in the web image). The shared
+packages (`contracts`, `db`, `domain`, `observability`, `web-ui`) are versioned too, because that
+is how a change in one of them moves the version of every app that bundles it.
+
+| File | What it is |
+|---|---|
+| `release-please-config.json` | One component per workspace package, named after its directory; the `node-workspace` plugin; changelog sections; `exclude-paths` (each package's test directory); `bootstrap-sha`, the commit history is read back to on a component's first release |
+| `.release-please-manifest.json` | The current released version of each component. release-please writes it; never edit it by hand |
+| `.github/workflows/release-please.yml` | On every push to `main`: opens or updates the release PR; when that PR is merged, tags each released component and publishes its GitHub Release |
+| `.github/workflows/pr-title.yml` | Fails a PR whose title is not a Conventional Commit |
+| `tooling/release-please.test.mjs` | `pnpm test:release`, in CI: every workspace package is a component named after its directory, every config key is one release-please reads (it ignores a misspelt key silently), the pre-1.0 bump rules, the manifest matches every `package.json` version, the plugin is on |
+
+### How a version is chosen
+
+PRs are squash-merged, so the PR title becomes the one commit on `main` that release-please reads:
+`<type>(<optional scope>)<optional !>: <summary>`.
+
+| Commit | Release |
+|---|---|
+| `fix:` | patch (0.1.0 → 0.1.1) |
+| `feat:` | minor (0.1.0 → 0.2.0) |
+| `perf:`, `revert:`, `deps:` | patch, listed under their own changelog heading |
+| `!` after the type, or a `BREAKING CHANGE:` footer | major from 1.0.0 on; **minor while the version is 0.x** (`bump-minor-pre-major`) |
+| `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:`, `style:` | none, and not in the changelog |
+
+A commit counts for a component only through the files it touches, not its scope: a `feat` that
+changes `apps/server/` and `apps/console/` appears in both changelogs, and one that touches only a
+package's test directory (`exclude-paths`: `test/` in the packages and the server, `src/__tests__/`
+in the two apps) releases nothing. `exclude-paths` takes directories only, so the console's few test
+files beside their source (`src/brand/*.test.ts`, `src/components/common/*.test.tsx`) still count:
+give a commit that changes only those a non-releasing type (`test:`). When a shared package is released, the
+`node-workspace` plugin gives every workspace package that depends on it a patch release (unless it
+already has a larger bump) with a "Dependencies" entry naming the new version; the change itself is
+described in that package's own `CHANGELOG.md`. So a `fix(contracts)` releases `contracts`, then
+`domain`, `db`, `server`, `console` and `super-admin`.
+
+Files outside every package (`docker/`, `grafana/`, `aws/`, `docs/`, root config) belong to no
+component, so a commit that touches only them releases nothing, and a `Release-As:` footer on it
+is never read either. A change there that alters a deployable (for example `docker/Dockerfile` for
+the server image) ships with that component's next release; to release it now, include a change
+inside the component in the same PR, or set `"release-as"` (below).
+
+To force a version (promote a component to 1.0.0 at launch, say), set `"release-as": "1.0.0"` on
+that package in `release-please-config.json`, merge the release PR it produces, then remove the
+key in the next PR: while it is set, every release PR proposes that version again. A
+`Release-As: 1.0.0` footer works too, on a commit that touches a file inside the component.
+
+### Baseline and the first merge
+
+Every component starts at **0.1.0**: the manifest and each `package.json` say so, and
+`bootstrap-sha` (`54f7637`, `main` before release-please was added) is how far back the first
+release reads. The PR that adds release-please edits every package's `package.json`, so its
+squash commit belongs to all eight components. Squash it with a non-releasing title (`ci: …`):
+then 0.1.0 is the baseline, everything merged with it (including the version display) is part of
+0.1.0, and the first release PR opens on the first releasable change after it. A `feat:` title
+would instead release all eight at 0.2.0, each with the same changelog line.
+
+### Cutting a release
+
+1. Merge PRs with Conventional Commit titles. release-please keeps one PR open, `chore: release
+   main`, with the next version and changelog of every component that has releasable changes.
+2. Review it like any PR: its body is the combined release notes. It is regenerated on every push
+   to `main`, so an edit on its branch does not last. To fix a wrong or missing entry, put a
+   commit override (below) in the body of the merged PR it came from; the next run (the next push to
+   `main`, or Actions → Release Please → Run workflow) picks it up.
+3. Merge it. The workflow tags each released component `<component>-v<version>` (for example
+   `server-v0.2.0`, `console-v0.1.1`) and publishes a GitHub Release with that component's notes.
+   The run's summary lists the tags.
+
+A PR that holds several changes, or whose title was wrong, can rewrite what release-please reads by
+putting this in its PR body, before or after merging (one Conventional Commit per line):
+
+```
+BEGIN_COMMIT_OVERRIDE
+feat(console): show the pacing ratio on the campaign card
+fix(server): release the bridge slot when a dial is refused
+END_COMMIT_OVERRIDE
+```
+
+### Where the running version shows
+
+- **Server logs, in Grafana (Loki).** Every record carries `version` (the logger's `base`, beside
+  `service`) and the OTel resource attribute `service.version`, which Loki keeps as the structured
+  metadata `service_version`. Each boot logs one line naming it, `magick-agency v<version>
+  listening`. The server's version is `apps/server/package.json`'s, baked into the bundle at build
+  time (`apps/server/scripts/build.mjs`; `packages/observability/src/version.ts`); a `tsx` dev run
+  reports `0.0.0`.
+
+  ```logql
+  {service_name=~"magick-agency(-.+)?"} |= "listening"            # one line per boot, with its version
+  {service_name=~"magick-agency(-.+)?"} | service_version="0.2.0"  # everything one release logged
+  ```
+
+- **Traces and metrics.** The same `service.version` resource attribute is on every span and on
+  `target_info`.
+- **The UIs.** The console and the super-admin console each show their own version (`v0.2.0`) at
+  the foot of the sidebar, in the platform shell (expanded or collapsed to its rail), the agency
+  shell and the super-admin shell (`AppVersion`, `packages/web-ui`). The agent surfaces have no
+  sidebar, so it ends `AgentNav` on `/dialer`, `/dialer/performance` and `/dialer/attempts`, and the
+  station header on `/station`, as a plain label (nothing focusable is added). It comes from the app's
+  `package.json` through Vite `define` (`__APP_VERSION__`), so it is fixed when the web image is
+  built.
+
+### Repository settings it needs
+
+Set once in the repository settings, not in code:
+
+- **Pull requests**: allow squash merging, with the default commit message set to **Pull request
+  title** only; turn merge commits off. A merge commit's message is `Merge pull request #…`, which
+  is not a Conventional Commit. Not "title and description": release-please reads every paragraph
+  of the commit message that starts with a Conventional Commit type (`fix: …` after a blank line)
+  as one more commit, so a PR description can add changelog entries nobody meant to write.
+- **Branch protection on `main`**: require the "Conventional Commit title" check (and CI). Without
+  it the title check is advice, and a PR with a non-conventional title still merges and releases
+  nothing.
+- **Actions → General → Workflow permissions**: allow GitHub Actions to create and approve pull
+  requests, or the workflow cannot open the release PR.
+- **Optional `RELEASE_PLEASE_TOKEN` secret** (a fine-grained token or GitHub App token with
+  contents and pull-requests write). PRs and tags created with the default `GITHUB_TOKEN` do not
+  trigger other workflows, so the release PR gets no CI or title check (a branch protection rule
+  requiring them would block it), and a future workflow on release tags would not fire.
+- **Optional baseline tags**, so the first changelog's compare links resolve: after the first
+  merge, tag that squash commit (where every `package.json` says 0.1.0) `<component>-v0.1.0` for
+  each of the eight components and push the tags. release-please then reads history back to the
+  tag instead of to `bootstrap-sha`.

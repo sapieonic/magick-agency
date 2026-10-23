@@ -328,7 +328,7 @@ docker compose -f docker/docker-compose.prod.yml logs -f server
 ```
 
 Expect, in this order: `MIGRATION 0001_baseline (UP)`, `migrations complete`, `S3 client
-initialized` and `magick-agency listening`. Later boots log `No migrations to run!` instead of the
+initialized` and `magick-agency v<version> listening`. Later boots log `No migrations to run!` instead of the
 migration line. If the container exits, the reason is the last thing in the log (section 13).
 
 Check from the VM that nginx reaches the server:

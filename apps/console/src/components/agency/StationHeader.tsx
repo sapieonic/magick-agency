@@ -1,3 +1,4 @@
+import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { CueSettings } from './CueSettings';
 import { StationIdentity, type StationIdentityUser } from './StationIdentity';
 import { StationMenu } from './StationMenu';
@@ -101,6 +102,9 @@ export function StationHeader({
           onExit={onExit}
         />
         <ConnectionHealthPill connection={connection} missedPings={missedPings} />
+        {/* The station has no sidebar; the release version sits at the end of its one bar of
+            chrome. A plain label: nothing to focus, so no control moves. */}
+        <AppVersion version={__APP_VERSION__} variant="inline" />
       </div>
     </header>
   );

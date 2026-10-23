@@ -16,6 +16,7 @@ import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { hasPermission } from '../../utils/permissions';
 import { agencyPersona, isAgencySupervisor } from '../../utils/agencyPersona';
+import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import type { Permission } from '../../utils/permissions';
@@ -329,11 +330,7 @@ export function Sidebar({ collapsed, onClose }: SidebarProps) {
         </NavLink>
       )}
 
-      {!collapsed && (
-        <div className={styles.versionFooter}>
-          <span className={styles.versionLabel}>v{__APP_VERSION__}</span>
-        </div>
-      )}
+      <AppVersion version={__APP_VERSION__} compact={collapsed} className={styles.versionFooter} />
     </aside>
   );
 }

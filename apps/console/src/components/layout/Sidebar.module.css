@@ -316,25 +316,10 @@
   transform: translateX(2px);
 }
 
-.versionFooter {
-  margin-top: auto;
-  flex-shrink: 0;
-  padding: 12px 20px max(12px, env(safe-area-inset-bottom));
-  border-top: 1px solid var(--border-light);
-}
-
-/* With the switch present, `auto` has already been spent above it. */
+/* The footer itself is `AppVersion` (packages/web-ui), which takes `margin-top: auto`.
+   With the switch present, `auto` has already been spent above it. */
 .workspaceSwitch + .versionFooter {
   margin-top: 0;
-}
-
-.versionLabel {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  user-select: none;
 }
 
 @media (max-width: 768px) {

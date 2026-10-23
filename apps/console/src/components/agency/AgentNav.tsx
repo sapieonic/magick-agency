@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { ChartNoAxesCombined, ListChecks, PhoneOutgoing } from 'lucide-react';
 import { AGENT_SURFACES, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
 import styles from './AgentNav.module.css';
@@ -70,6 +71,9 @@ export function AgentNav({ current }: { current: AgentSurfaceId }) {
           </Link>
         );
       })}
+      {/* These pages have no sidebar to carry it, and agents are the ones who report from the
+          field. Not a link, so it adds nothing to the tab order. */}
+      <AppVersion version={__APP_VERSION__} variant="inline" />
     </nav>
   );
 }

@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { Building2, Users, ShieldCheck, ScrollText, Phone, BarChart3, Flag, KeyRound, X } from 'lucide-react';
+import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import styles from './SuperAdminSidebar.module.css';
@@ -84,6 +85,8 @@ export function SuperAdminSidebar({ onClose }: Props) {
           </div>
         ))}
       </nav>
+
+      <AppVersion version={__APP_VERSION__} />
     </aside>
   );
 }

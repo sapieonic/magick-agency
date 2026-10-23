@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/console",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Agent, supervisor, team, invites and settings.",
   "type": "module",

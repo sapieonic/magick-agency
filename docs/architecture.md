@@ -24,8 +24,8 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, keyset cursor, rates, retry bounds and summary, success disposition, timers |
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
-| `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), the telephony-provider aliases, `mapWithConcurrency`, `useAsyncResource`, `useDialogFocus` (the one focus trap). React, the router and `lucide-react` are peer dependencies; its own no-parent-brand scan (B17). Decision B23 |
-| `tooling/` | `test-env.ts` (per-worktree test database), the Vitest decorator transform |
+| `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components and `AppVersion` (the sidebar version footer) with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), the telephony-provider aliases, `mapWithConcurrency`, `useAsyncResource`, `useDialogFocus` (the one focus trap). React, the router and `lucide-react` are peer dependencies; its own no-parent-brand scan (B17). Decision B23 |
+| `tooling/` | `test-env.ts` (per-worktree test database), the Vitest decorator transform, the release-please config guard (`release-please.test.mjs`, B24) |
 | `docker/` | Dev Postgres and Redis (`docker-compose.dev.yml`); production: the server image (`Dockerfile`, `entrypoint.sh`), nginx with both UIs (`web.Dockerfile`, `nginx.conf`) and `docker-compose.prod.yml` (see [`operations.md`](operations.md)) |
 
 Inside `apps/server/src`, the module areas are: `api/` (plugins, routes, middleware), `auth/`,
@@ -401,4 +401,10 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 `pnpm build`; the integration job runs as three parallel jobs, each against its own Postgres 16
 and Redis 7 service containers mapped to 5436 and 6383: `packages/db`, the server suite, and the
 server's wall-clock lane (the two files that wait on real Redis TTLs, listed in
-`apps/server/vitest.config.integration.ts` and selected by `INTEGRATION_LANE`).
+`apps/server/vitest.config.integration.ts` and selected by `INTEGRATION_LANE`). Job 1 also runs
+`pnpm test:grafana` and `pnpm test:release`.
+
+`.github/workflows/pr-title.yml` fails a PR whose title is not a Conventional Commit, and
+`.github/workflows/release-please.yml` runs release-please on every push to `main`: one release PR
+with each component's next version and changelog, and tags plus GitHub Releases once it is merged
+(B24; [`operations.md`](operations.md), "Releases and versioning").
