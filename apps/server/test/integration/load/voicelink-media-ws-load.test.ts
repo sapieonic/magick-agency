@@ -390,6 +390,8 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
       { name: 'close_1011', steps: [{ do: 'close', code: 1011, reason: 'internal error' }], outcome: 'pstn_stream_closed' },
       { name: 'close_3000', steps: [{ do: 'close', code: 3000 }], outcome: 'pstn_stream_closed' },
       { name: 'close_4000', steps: [{ do: 'close', code: 4000, reason: 'lead hangup' }], outcome: 'pstn_stream_closed' },
+      // `stop` and the TCP loss back to back: two teardown triggers for one call.
+      { name: 'stop_then_destroy', steps: [{ do: 'stop' }, { do: 'destroy' }], outcome: 'pstn_stream_stopped' },
       // A `stop` frame with the socket left open: the bridge must close it itself.
       { name: 'stop_then_linger', steps: [{ do: 'stop' }, { do: 'waitForServerClose' }], outcome: 'pstn_stream_stopped' },
       // The webhook alone ends it while the socket is still up.

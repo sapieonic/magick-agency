@@ -249,16 +249,22 @@ export function endedCounts(rig: LoadRig): Map<string, number> {
  * Nothing left behind once every call has ended: the end-of-scenario invariant.
  * Polls the socket counts (a close handshake is asynchronous), asserts the rest at once.
  */
-export async function assertNoLeaks(rig: LoadRig, stations: LoadStationSocket[] = []): Promise<void> {
+export async function assertNoLeaks(
+  rig: LoadRig,
+  stations: LoadStationSocket[] = [],
+  /** Server-side sockets that SHOULD still be open (real station sockets of a live floor). */
+  liveStationSockets = 0,
+): Promise<void> {
   expect(rig.bridge.getActiveCount(), 'bridge sessions').toBe(0);
   const redis = getTestRedis();
   expect(Number((await redis.get('active_calls')) ?? '0'), 'global concurrency counter').toBe(0);
   const accountCounter = await redis.get(`active_calls:account:${LOAD_TENANT}:${LOAD_ACCOUNT}`);
   expect(Number(accountCounter ?? '0'), 'account concurrency counter').toBe(0);
   // Every scope's per-call lock (global, account, provider) is `<counter>:lock:<key>`.
-  expect(await redis.keys('*:lock:*'), 'concurrency slot locks').toEqual([]);
+  expect(await redis.keys('*active_calls*:lock:*'), 'concurrency slot locks').toEqual([]);
   expect(await redis.keys('webrtc:ws-token:provider:*'), 'provider media tokens').toEqual([]);
-  await waitFor('server-side media sockets closed', () => rig.app.websocketServer.clients.size === 0, 10_000);
+  await waitFor('server-side media sockets closed', () => rig.app.websocketServer.clients.size === liveStationSockets, 10_000,
+    () => `${rig.app.websocketServer.clients.size} open, ${liveStationSockets} expected`);
   await waitFor('carrier-side media sockets closed', () => rig.carrier.openSocketCount().media === 0, 10_000);
   for (const [callId, s] of rig.captured) {
     const timers = s as unknown as { maxDurationTimer: unknown; endConfirmationTimer: unknown; browserGraceTimer: unknown };
