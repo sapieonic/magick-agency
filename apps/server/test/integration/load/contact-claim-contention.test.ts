@@ -390,11 +390,21 @@ describe('contact claim, settlement and recovery under contention (integration)'
 
     const agentUser = '00000000-0000-4000-8000-0000000000aa';
     const reapers = [new AgencyReaper(noLiveAttempts()), new AgencyReaper(noLiveAttempts())];
+    // Each sweep reads its rows once and then stamps them one at a time, so the
+    // window its guard protects is "the agent writes AFTER the sweep read the row
+    // and BEFORE the sweep reaches it". Spreading the agents' writes over the
+    // sweeps' pass (seeded delays) puts many writes inside that window; firing
+    // them all at t=0 lands nearly all of them before the sweep's read.
+    const rng = createRng();
+    const delays = attempts.map(() => rng.int(0, 60));
     const [agentResults] = await Promise.all([
-      Promise.all(attempts.map((a) => agencyAttemptRepository.recordDisposition({
-        attemptId: a.id, dispositionCode: 'promise_to_pay', notes: null, callbackAt: null,
-        actorUserId: agentUser, onBehalf: false,
-      }))),
+      Promise.all(attempts.map(async (a, i) => {
+        await new Promise((r) => setTimeout(r, delays[i]));
+        return agencyAttemptRepository.recordDisposition({
+          attemptId: a.id, dispositionCode: 'promise_to_pay', notes: null, callbackAt: null,
+          actorUserId: agentUser, onBehalf: false,
+        });
+      })),
       ...reapers.map((r) => r.sweepLapsedWrapups()),
       ...reapers.map((r) => r.sweepLapsedWrapups()),
     ]);
