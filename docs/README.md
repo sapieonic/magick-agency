@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-10-17.
+are as of 2026-10-23.
 
 ## What Magick Agency is
 
@@ -24,7 +24,9 @@ console 4367; super-admin 366; builds OK. Unit re-run 2026-10-10: server 6507, c
 2026-10-11 (brand logo): console 4389, super-admin 374. After the 2026-10-16/17 tidy-up (shared
 `packages/web-ui`, migrations 0003 and 0004, split modules, a batch-claim over-claim bug fixed): server 6703
 unit + 42 skipped / 1211 integration; db 426 / 469; console 4410; super-admin 421; web-ui 231
-(`status.md`).
+(`status.md`). The 2026-10-23 load and scenario suites (a full floor over real sockets, a mock
+VoiceLink carrier and agent fleet) fixed 11 defects and pinned 12 more as `it.fails` for decision:
+server 6755 unit + 4 expected fail / 1288 integration + 10 expected fail.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
