@@ -774,6 +774,7 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
 
   const campaignById = new Map(campaigns.map((c) => [c.id, c]));
   let roundNo = 0;
+  let app: import('fastify').FastifyInstance | null = null;
 
   // ── Agent verbs: each mirrors the route or socket handler that does it ──────
 
@@ -821,6 +822,29 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
       await rt.agents.set(agent.sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
       await agencyAgentSessionRepository.setState(agent.sessionId, 'break', code);
       return 'applied';
+    },
+
+    /**
+     * POST an agent control through the REAL agency routes (`agencyRoutes` on a
+     * Fastify instance over this world's runtime), for a scenario whose subject is
+     * what the route decides rather than what the runtime does with it. The verbs
+     * above mirror the route's decisions for speed; this is the route itself.
+     */
+    async postAgentAction(agent: FloorAgent, action: string, body: Record<string, unknown> = {}): Promise<{ statusCode: number; json: () => unknown }> {
+      if (!app) {
+        const { default: Fastify } = await import('fastify');
+        const { agencyRoutes } = await import('../../../src/api/routes/agency.routes.js');
+        const built = Fastify();
+        await built.register(async (scope) => agencyRoutes(scope, rt), { prefix: '/api/v1/agency' });
+        await built.ready();
+        app = built;
+      }
+      return app.inject({
+        method: 'POST',
+        url: `/api/v1/agency/sessions/${agent.sessionId}/${action}`,
+        headers: { 'x-mgkvc-tenant': agent.tenantId, 'x-mgkvc-account': agent.accountId, 'content-type': 'application/json' },
+        payload: JSON.stringify({ agent_user_id: agent.agentUserId, ...body }),
+      });
     },
 
     /** POST /sessions/:id/available — refused (false) where the route refuses. */
@@ -1011,6 +1035,7 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
     },
 
     async teardown(): Promise<void> {
+      await app?.close();
       rt.dialer.stop();
       rt.wrapup.stop();
       rt.reaper.stop();
