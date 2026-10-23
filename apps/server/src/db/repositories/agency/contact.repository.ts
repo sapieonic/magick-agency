@@ -227,22 +227,48 @@ export class AgencyContactRepository {
    * has just ended is left alone while its settlement is still running. Served by
    * `idx_agency_contacts_in_flight` (the few contacts mid-call), with the attempts
    * read through `uq_agency_attempt_number`'s `contact_id` prefix.
+   *
+   * ── It CLAIMS what it finds, so two sweeps cannot requeue one contact twice ──
+   *
+   * The caller charges the our-fault ledger for every row returned, and that
+   * charge is unconditional. This was a plain SELECT, so two sweeps whose reads
+   * overlapped (one outlasting the 60s interval — `start()` fires them `void`
+   * with no in-flight guard — or two replicas) both returned the same contact and
+   * both charged it: four overlapping sweeps retired contacts `exhausted` after a
+   * single stranding (`test/integration/load/contact-claim-contention.test.ts`).
+   * So the read is the leak sweep's shape instead (`reapByIds`: a guarded UPDATE
+   * whose RETURNING decides who requeues): the rows are locked `SKIP LOCKED`,
+   * stamped `updated_at = now()` — which takes them out of `updated_at < $1` for
+   * any later sweep — and only this statement's RETURNING gets them. A crash
+   * after the claim and before the requeue leaves the contact `in_flight` with a
+   * fresh stamp, found again one threshold later. The outer re-check is the same
+   * belt as `claimDialable`'s: the pick runs once (MATERIALIZED), and the UPDATE
+   * re-asserts what it picked on.
    */
   async findStrandedInFlight(
     olderThan: Date,
     limit = 500,
   ): Promise<Array<{ id: string; tenant_id: string; campaign_id: string }>> {
     const { rows } = await getPool().query<{ id: string; tenant_id: string; campaign_id: string }>(
-      `SELECT ct.id, ct.tenant_id, ct.campaign_id
-         FROM agency_contacts ct
-        WHERE ct.state = 'in_flight'
-          AND ct.updated_at < $1::timestamptz
-          AND NOT EXISTS (
-                SELECT 1 FROM agency_call_attempts a
-                 WHERE a.contact_id = ct.id
-                   AND (a.state <> 'ended' OR a.updated_at >= $1::timestamptz))
-        ORDER BY ct.updated_at
-        LIMIT $2`,
+      `WITH picked AS MATERIALIZED (
+         SELECT ct.id
+           FROM agency_contacts ct
+          WHERE ct.state = 'in_flight'
+            AND ct.updated_at < $1::timestamptz
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_call_attempts a
+                   WHERE a.contact_id = ct.id
+                     AND (a.state <> 'ended' OR a.updated_at >= $1::timestamptz))
+          ORDER BY ct.updated_at
+            FOR UPDATE OF ct SKIP LOCKED
+          LIMIT $2
+       )
+       UPDATE agency_contacts c SET updated_at = now()
+         FROM picked
+        WHERE c.id = picked.id
+          AND c.state = 'in_flight'
+          AND c.updated_at < $1::timestamptz
+       RETURNING c.id, c.tenant_id, c.campaign_id`,
       [olderThan, limit],
     );
     return rows;

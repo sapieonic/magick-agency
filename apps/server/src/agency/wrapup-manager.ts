@@ -245,6 +245,26 @@ export class WrapupManager {
       });
 
       /**
+       * ── Ended, or replaced, while those writes were in flight ─────────────────
+       *
+       * The entry is in the map from before the first await, so a disposition, a
+       * supervisor's `force`, the caller's `cancel` or a second `enter` for this
+       * session can all reach it during the three writes above — and each of them
+       * has already done the agent's return (or handed it to the replacing
+       * wrap-up). Carrying on from here would arm a timer and announce
+       * `agent_state: wrapup` on an entry nothing holds any more: the console shown
+       * a wrap-up for an agent already back in the pool, and the orphaned timer's
+       * `onExpiry` (keyed by session) ending the session's NEXT wrap-up as
+       * `auto_return` before its own window had run. The `handOff` branch had the
+       * same hole from the other side — its `resolve(sessionId)` would have ended
+       * the replacing wrap-up. Found by `test/unit/load/wrapup-manager-interleavings.test.ts`.
+       *
+       * `true`: this wrap-up WAS opened, and whoever ended it owns the agent now —
+       * the caller must not release them a second time.
+       */
+      if (this.entries.get(params.sessionId) !== entry) return true;
+
+      /**
        * **The disposition may already be in, and if it is this wrap-up is over
        * before it starts.**
        *
