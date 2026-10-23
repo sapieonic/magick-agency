@@ -110,6 +110,9 @@ describe('contact claim, settlement and recovery under contention (integration)'
     const owner = new Map<string, number>();
     const claims = new Map<string, number>();
     const charges = new Map<string, number>();
+    // Recorded, not thrown, inside the actors: a throw would end one claimer while
+    // the rest ran on into the next test's rows.
+    const violations: string[] = [];
     let doubleClaims = 0;
 
     const settle = async (contactId: string, actorRng: Rng): Promise<void> => {
@@ -122,7 +125,7 @@ describe('contact claim, settlement and recovery under contention (integration)'
         // A retryable outcome: charge, then requeue (the settlement's order).
         const used = await agencyContactRepository.chargeAttempt(contactId, 'no_answer');
         charges.set(contactId, (charges.get(contactId) ?? 0) + 1);
-        expect(used).toBe(charges.get(contactId));
+        if (used !== charges.get(contactId)) violations.push(`${contactId}: charged to ${used}, expected ${charges.get(contactId)}`);
         await agencyContactRepository.markState(contactId, 'pending', { next_attempt_at: new Date() });
       } else {
         // Terminal: connected and done.
@@ -143,9 +146,11 @@ describe('contact claim, settlement and recovery under contention (integration)'
         }
         idle = 0;
         for (const c of batch) {
-          if (owner.has(c.id)) doubleClaims++;
-          expect(owner.get(c.id), `contact ${c.id} claimed by ${a} while held by another claimer`).toBeUndefined();
-          expect(c.state).toBe('in_flight');
+          if (owner.has(c.id)) {
+            doubleClaims++;
+            violations.push(`contact ${c.id} claimed by ${a} while held by ${owner.get(c.id)}`);
+          }
+          if (c.state !== 'in_flight') violations.push(`claim returned ${c.id} as ${c.state}`);
           owner.set(c.id, a);
           claims.set(c.id, (claims.get(c.id) ?? 0) + 1);
         }
@@ -155,6 +160,7 @@ describe('contact claim, settlement and recovery under contention (integration)'
       }
     }));
 
+    expect(violations.slice(0, 10)).toEqual([]);
     expect(doubleClaims).toBe(0);
     const rows = await contactRows(campaign.id);
     // Every contact was worked to completion — nothing stranded in_flight, nothing
@@ -220,6 +226,7 @@ describe('contact claim, settlement and recovery under contention (integration)'
     const toMark = rng.shuffle(phones).slice(0, Math.floor(PHONES / 2));
     const committed = new Set<string>();
     const owner = new Map<string, number>();
+    let doubleClaims = 0;
     let lateClaims = 0;
 
     let marking = true;
@@ -247,7 +254,7 @@ describe('contact claim, settlement and recovery under contention (integration)'
         }
         for (const c of batch) {
           if (markedBefore.has(c.phone_e164)) lateClaims++;
-          expect(owner.has(c.id)).toBe(false);
+          if (owner.has(c.id)) doubleClaims++;
           owner.set(c.id, a);
         }
         await jitter(actorRng);
@@ -262,6 +269,7 @@ describe('contact claim, settlement and recovery under contention (integration)'
 
     await Promise.all([markers, claimers]);
     expect(lateClaims, 'a claim issued after a DNC mark committed returned that number').toBe(0);
+    expect(doubleClaims).toBe(0);
 
     const rows = await contactRows(campaign.id);
     for (const r of rows) {

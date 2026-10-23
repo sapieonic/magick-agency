@@ -50,6 +50,15 @@ async function jitter(rng: Rng, max = 3): Promise<void> {
   for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
 }
 
+/**
+ * Invariants checked INSIDE an actor are recorded, not thrown: a throw would end
+ * that actor while the other actors (and their Redis writes) ran on into the
+ * next test. Each test asserts the list is empty once every actor has stopped.
+ */
+function violated(list: string[], ok: boolean, message: string): void {
+  if (!ok && list.length < 50) list.push(message);
+}
+
 async function countKeys(pattern: string): Promise<number> {
   const redis = getTestRedis();
   let cursor = '0';
@@ -104,6 +113,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
     const ITERATIONS = scaled(120);
     const guards = clients.map((c) => new ConcurrencyGuard(c, PREFIX, CAP, TIMEOUT_S));
     const held = new Set<string>();
+    const violations: string[] = [];
     let admitted = 0;
     let refused = 0;
     let maxHeld = 0;
@@ -144,9 +154,9 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
         admitted++;
         held.add(callId);
         maxHeld = Math.max(maxHeld, held.size);
-        expect(held.size, `over-admission: ${held.size} held against a cap of ${CAP}`).toBeLessThanOrEqual(CAP);
+        violated(violations, held.size <= CAP, `over-admission: ${held.size} held against a cap of ${CAP}`);
         // A retried acquire of a held call is idempotent, not a second slot.
-        if (rng.chance(0.1)) expect(await guard.tryAcquire(callId)).toBe(true);
+        if (rng.chance(0.1)) violated(violations, await guard.tryAcquire(callId), `retry of held ${callId} refused`);
         await jitter(rng);
         held.delete(callId);
         // Duplicate teardowns (a late webhook, a reaper) from other connections at once.
@@ -157,12 +167,11 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
     }));
     try { await actors; } finally {
       stop = true;
-      // Awaited even on a red: an in-flight reconcile landing after the next
-      // test's flush would write a stale counter into it.
       await Promise.allSettled([reconciler, sampler]);
     }
     const [passes, worstObserved] = await Promise.all([reconciler, sampler]);
 
+    expect(violations).toEqual([]);
     expect(worstObserved).toBeLessThanOrEqual(CAP);
     expect(await readInt(GLOBAL)).toBe(0);
     expect(await countKeys(`${GLOBAL}:lock:*`)).toBe(0);
@@ -261,6 +270,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
     const guards = clients.map((c) => new AccountConcurrencyGuard(c, PREFIX, TIMEOUT_S));
     const held = new Map(ACCOUNTS.map((a) => [a.id, new Set<string>()]));
     const refusals = new Map(ACCOUNTS.map((a) => [a.id, 0]));
+    const violations: string[] = [];
     let stop = false;
     const sweeper = (async () => {
       const g = new AccountConcurrencyGuard(getTestRedis(), PREFIX, TIMEOUT_S);
@@ -282,7 +292,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
         }
         const set = held.get(account.id)!;
         set.add(callId);
-        expect(set.size, `account limit ${account.max} exceeded`).toBeLessThanOrEqual(account.max);
+        violated(violations, set.size <= account.max, `account limit ${account.max} exceeded: ${set.size}`);
         await jitter(rng);
         set.delete(callId);
         await Promise.all(Array.from({ length: rng.chance(0.25) ? 2 : 1 }, (_, k) =>
@@ -290,6 +300,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
       }
     }));
     try { await actors; } finally { stop = true; await sweeper; }
+    expect(violations).toEqual([]);
 
     for (const a of ACCOUNTS) {
       // Refused at least once: the account's counter really reached its limit.
@@ -357,6 +368,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
     const heldAccount = new Map(accounts.map((a) => [a.id, new Set<string>()]));
     const heldProvider = new Map([...caps.keys()].map((k) => [k, new Set<string>()]));
     const results = new Map<string, number>();
+    const violations: string[] = [];
     let stop = false;
 
     const sweeps = (async () => {
@@ -387,9 +399,9 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
         heldGlobal.add(key);
         heldAccount.get(account.id)!.add(key);
         heldProvider.get(pk)!.add(key);
-        expect(heldGlobal.size, 'global cap exceeded').toBeLessThanOrEqual(GLOBAL_CAP);
-        expect(heldAccount.get(account.id)!.size, 'account total exceeded').toBeLessThanOrEqual(totals.get(account.id)!);
-        expect(heldProvider.get(pk)!.size, `provider cap exceeded for ${provider}`).toBeLessThanOrEqual(caps.get(pk)!);
+        violated(violations, heldGlobal.size <= GLOBAL_CAP, `global cap exceeded: ${heldGlobal.size}`);
+        violated(violations, heldAccount.get(account.id)!.size <= totals.get(account.id)!, 'account total exceeded');
+        violated(violations, heldProvider.get(pk)!.size <= caps.get(pk)!, `provider cap exceeded for ${provider}`);
         await jitter(rng);
         heldGlobal.delete(key);
         heldAccount.get(account.id)!.delete(key);
@@ -404,11 +416,12 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
           }, { concurrencyKey: key, tenantId: TENANT, accountId: account.id, provider, source: 'webrtc' });
         }));
         // Exactly one teardown found the three leases; a duplicate found none.
-        expect(outcomes.filter((o) => o === 'composite')).toHaveLength(1);
-        expect(outcomes.filter((o) => o !== 'composite').every((o) => o === 'noop')).toBe(true);
+        violated(violations, outcomes.filter((o) => o === 'composite').length === 1
+          && outcomes.filter((o) => o !== 'composite').every((o) => o === 'noop'), `teardown outcomes ${outcomes.join(',')}`);
       }
     }));
     try { await storm; } finally { stop = true; await sweeps; }
+    expect(violations).toEqual([]);
 
     expect(results.get('acquired') ?? 0).toBeGreaterThan(ITERATIONS);
     // Every scope actually refused somebody, so every cap was really contended.
@@ -441,6 +454,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
       account: new AccountConcurrencyGuard(c, PREFIX, TIMEOUT_S),
     }));
     const held = new Set<string>();
+    const violations: string[] = [];
     let globalRefusals = 0;
 
     const ITERATIONS = scaled(60);
@@ -465,7 +479,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
         }
         if (!ok) continue;
         held.add(key);
-        expect(held.size, 'shared global counter overrun').toBeLessThanOrEqual(GLOBAL_CAP);
+        violated(violations, held.size <= GLOBAL_CAP, `shared global counter overrun: ${held.size}`);
         await jitter(rng, 6);
         held.delete(key);
         await releaseTelephonyLease(
@@ -475,6 +489,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
       }
     }));
 
+    expect(violations).toEqual([]);
     // The shared counter was genuinely contended: both scripts were refused at it.
     expect(globalRefusals).toBeGreaterThan(0);
     expect(await readInt(GLOBAL)).toBe(0);
