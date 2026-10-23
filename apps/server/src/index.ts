@@ -4,7 +4,7 @@
 import { shutdownOtelSdk } from './instrumentation.js';
 import Redis from 'ioredis';
 import { initDbPool, closePool } from '@magick-agency/db';
-import { logger } from '@magick-agency/observability';
+import { APP_VERSION, logger } from '@magick-agency/observability';
 import { config } from './config/index.js';
 import { buildApp } from './app.js';
 import type { AppContext } from './app-context.js';
@@ -87,7 +87,9 @@ async function main(): Promise<void> {
   // start complete first), so no request — an agent going available, say — lands
   // before the startup reap.
   await app.listen({ port: config.server.port, host: config.server.host });
-  logger.info({ port: config.server.port, otelExport: config.otel.exporting }, 'magick-agency listening');
+  // Every record already carries `version` (the logger's base) and the OTel resource carries
+  // `service.version`; the version in the message makes each deploy one readable line in Grafana.
+  logger.info({ port: config.server.port, otelExport: config.otel.exporting }, `magick-agency v${APP_VERSION} listening`);
 }
 
 main().catch(async (err) => {

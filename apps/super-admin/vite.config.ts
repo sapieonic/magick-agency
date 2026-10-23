@@ -1,4 +1,5 @@
 /// <reference types="vitest/config" />
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
@@ -6,8 +7,15 @@ import react from '@vitejs/plugin-react';
 // inside a worker changes process.env and nothing about new Date().
 if (process.env['VITEST']) process.env['TZ'] = 'UTC';
 
+// The super-admin's own release version (release-please, docs/operations.md), shown at the
+// foot of the sidebar.
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as { version: string };
+
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   test: {
     environment: 'happy-dom',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],

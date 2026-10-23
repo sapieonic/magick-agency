@@ -360,6 +360,28 @@ fix(server): release the bridge slot when a dial is refused
 END_COMMIT_OVERRIDE
 ```
 
+### Where the running version shows
+
+- **Server logs, in Grafana (Loki).** Every record carries `version` (the logger's `base`, beside
+  `service`) and the OTel resource attribute `service.version`, which Loki keeps as the structured
+  metadata `service_version`. Each boot logs one line naming it, `magick-agency v<version>
+  listening`. The server's version is `apps/server/package.json`'s, baked into the bundle at build
+  time (`apps/server/scripts/build.mjs`; `packages/observability/src/version.ts`); a `tsx` dev run
+  reports `0.0.0`.
+
+  ```logql
+  {service_name=~"magick-agency(-.+)?"} |= "listening"            # one line per boot, with its version
+  {service_name=~"magick-agency(-.+)?"} | service_version="0.2.0"  # everything one release logged
+  ```
+
+- **Traces and metrics.** The same `service.version` resource attribute is on every span and on
+  `target_info`.
+- **The UIs.** The console and the super-admin console each show their own version (`v0.2.0`) at
+  the foot of the sidebar, in the platform shell (expanded or collapsed to its rail), the agency
+  shell and the super-admin shell (`AppVersion`, `packages/web-ui`). It comes from the app's
+  `package.json` through Vite `define` (`__APP_VERSION__`), so it is fixed when the web image is
+  built.
+
 ### Repository settings it needs
 
 Set once in the repository settings, not in code:
