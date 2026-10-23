@@ -30,10 +30,18 @@ export function errorHandler(error: FastifyError, request: FastifyRequest, reply
     }, 'Client error');
   }
 
+  // A 429 is the rate limiter's authored body (`errorResponseBuilder` in
+  // `rate-limit.middleware.ts`), which `@fastify/rate-limit` THROWS as a plain object, so it
+  // arrives here with no `name`. Rebuilt from `name` alone it reached every client as
+  // `error: 'Error'` without `retryAfter`, the field the console's poll backoff reads
+  // first. Its label and `retryAfter` are kept; nothing else about the shape changes.
+  const limiter = statusCode === 429 ? (error as unknown as { error?: unknown; retryAfter?: unknown }) : null;
+
   reply.code(statusCode).send({
-    error: error.name || 'Error',
+    error: error.name || (typeof limiter?.error === 'string' ? limiter.error : 'Error'),
     message: error.message,
     statusCode,
     requestId,
+    ...(typeof limiter?.retryAfter === 'number' ? { retryAfter: limiter.retryAfter } : {}),
   });
 }
