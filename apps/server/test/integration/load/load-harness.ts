@@ -19,7 +19,7 @@
  *  - {@link foreignIdsIn}: no UUID owned by another tenant appears anywhere in a body.
  */
 import { randomUUID } from 'node:crypto';
-import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
+import type { FastifyInstance, LightMyRequestResponse, RouteOptions } from 'fastify';
 import { expect } from 'vitest';
 import type { Redis } from 'ioredis';
 import { closePool, getPool, initDbPool } from '@magick-agency/db';
@@ -55,6 +55,8 @@ export async function startLoadApp(opts: {
   poolMax?: number;
   configure?: (c: AppConfig) => AppConfig;
   redis?: Redis;
+  /** Collects every registered route: the router's own table, never a grep. */
+  onRoute?: (route: RouteOptions) => void;
 } = {}): Promise<LoadApp> {
   initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: opts.poolMax ?? config.db.poolMax });
   await flushTestRedis();
@@ -66,7 +68,7 @@ export async function startLoadApp(opts: {
     pool: getPool(),
     redis: opts.redis ?? getTestRedis(),
   };
-  const app = await buildApp({ ctx });
+  const app = await buildApp({ ctx, ...(opts.onRoute ? { onRoute: opts.onRoute } : {}) });
   await app.ready();
   return { app, ctx };
 }

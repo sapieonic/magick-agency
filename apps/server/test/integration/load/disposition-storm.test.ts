@@ -146,9 +146,16 @@ function expectedContact(code: string): { state: string; next?: 'retry' | 'callb
   }
 }
 
-interface StatsRead { at: number; body: Record<string, number> & { agents: unknown[]; agents_by_state: Record<string, number> } }
+/** The numeric fields of the stats payload these checks read. */
+const COUNTERS = [
+  'contacts_total', 'contacts_pending', 'contacts_in_flight', 'contacts_completed', 'contacts_suppressed', 'contacts_exhausted',
+  'retries_pending', 'attempts_total', 'attempts_connected', 'attempts_live', 'answered_24h', 'human_connects',
+  'machine_connects', 'unclassified_connects', 'attempts_success',
+] as const;
+type StatsBody = { [K in (typeof COUNTERS)[number]]: number } & { agents: unknown[]; agents_by_state: Record<string, number> };
+interface StatsRead { at: number; body: StatsBody }
 
-function checkStatsInvariants(s: StatsRead['body'], label: string) {
+function checkStatsInvariants(s: StatsBody, label: string) {
   const parts = s.contacts_pending + s.contacts_in_flight + s.contacts_completed + s.contacts_suppressed + s.contacts_exhausted;
   expect(parts, `${label}: contact states exceed contacts_total`).toBeLessThanOrEqual(s.contacts_total);
   expect(s.retries_pending, label).toBeLessThanOrEqual(s.contacts_pending);
@@ -277,7 +284,7 @@ describe('the disposition storm (integration, load)', () => {
     // ── 3. reads under write load ────────────────────────────────────────────
     let statsReads = 0;
     for (const { floor, stats } of reads) {
-      let prev: StatsRead['body'] | null = null;
+      let prev: StatsBody | null = null;
       for (const r of stats) {
         statsReads++;
         checkStatsInvariants(r.body, `stats ${floor.campaigns[0]}`);

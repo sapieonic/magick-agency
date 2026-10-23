@@ -21,5 +21,14 @@ export function agencyErrorHandler(error: FastifyError, request: FastifyRequest,
     errorHandler(invalid as FastifyError, request, reply);
     return;
   }
+  // `22021` (invalid byte sequence for UTF8): a NUL byte in client text — `%00` in a path
+  // param, `\u0000` in a body string — which Postgres refuses in any text value before a
+  // cast is even attempted, so the 22P02 net above never sees it. Only client input
+  // carries one; it is the caller's error (`test/integration/load/hostile-input-fuzz.test.ts`).
+  if ((error as { code?: unknown }).code === '22021' && !error.statusCode) {
+    const invalid = Object.assign(new Error('Invalid input'), { name: 'Bad Request', statusCode: 400 });
+    errorHandler(invalid as FastifyError, request, reply);
+    return;
+  }
   errorHandler(error, request, reply);
 }
