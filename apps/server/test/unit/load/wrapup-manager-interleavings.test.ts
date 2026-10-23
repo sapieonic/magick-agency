@@ -90,7 +90,7 @@ interface SessionBook {
   violations: string[];
 }
 
-function harness(rng: Rng, sessions: number) {
+function harness(rng: Rng, sessions: number, opts: { parkReturns: boolean } = { parkReturns: true }) {
   const books = new Map<string, SessionBook>();
   for (let s = 0; s < sessions; s++) {
     books.set(`s${s}`, {
@@ -126,6 +126,9 @@ function harness(rng: Rng, sessions: number) {
       }
     }
     book.current = null;
+    // The real return (`releaseAgent`) writes Redis and the DB, so it is parked
+    // too, half the time: a force or a disposition can land while it is in flight.
+    if (opts.parkReturns && rng.chance(0.5)) await repos.park(undefined);
   });
   manager = new WrapupManager(stations as never, agents as never, onReturn);
   return { manager, books, onReturn };
@@ -194,13 +197,14 @@ async function runSchedule(seed: number, sessions: number, steps: number) {
   }
 
   // Drain: release every write, run every timer, force whatever is held, repeat.
+  // Forces are not awaited: a return they start may itself be parked.
   for (let round = 0; round < 20 && (parked.length > 0 || manager.active() > 0); round++) {
     while (parked.length > 0) {
       parked.shift()!();
       await settle();
     }
     await vi.advanceTimersByTimeAsync(10_000);
-    for (const sessionId of books.keys()) await manager.force(sessionId);
+    for (const sessionId of books.keys()) void manager.force(sessionId);
     await settle();
   }
   await Promise.all(enters);
@@ -247,7 +251,7 @@ describe('WrapupManager under seeded interleavings', () => {
    * ending it as `auto_return` before its own window had run.
    */
   it('a wrap-up resolved while enter is mid-write is neither announced nor timed afterwards', async () => {
-    const { manager, books, onReturn } = harness(createRng(), 1);
+    const { manager, books, onReturn } = harness(createRng(), 1, { parkReturns: false });
     const first = manager.enter({
       sessionId: 's0', attemptId: 'att-a', campaignId: 'c', tenantId: 't',
       wrapupSeconds: 3, autoReturn: true, requiresDisposition: false,
