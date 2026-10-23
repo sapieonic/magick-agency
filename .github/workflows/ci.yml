@@ -25,6 +25,8 @@ jobs:
       - run: pnpm test
       # Alert rules and dashboard vs the metric declarations (grafana/README.md).
       - run: pnpm test:grafana
+      # release-please config vs the workspace packages and their versions (docs/operations.md).
+      - run: pnpm test:release
       - run: pnpm build
 
   # One job per section, in parallel. Each job has its own Postgres and Redis, so the

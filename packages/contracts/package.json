@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/contracts",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Wire contract shared by server and UIs. Owned by the lead: lanes never edit this package.",
   "main": "./src/index.ts",

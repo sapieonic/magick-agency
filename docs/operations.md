@@ -2,7 +2,7 @@
 
 Running and deploying Magick Agency: which configuration matters and what it defaults to, the
 properties a deployment must guarantee, how shutdown, migrations, recordings, Postgres TLS and the
-proxy count work. Read it before standing up any environment beyond a laptop. For local dev setup
+proxy count work, and how each component is versioned and released. Read it before standing up any environment beyond a laptop. For local dev setup
 follow the root [`README.md`](../README.md) ("Dev setup"); it is not repeated here. Every default
 below was read from `apps/server/src/config/blocks/*.ts` and `apps/server/.env.example` on
 2026-10-09. Anything not verified is marked.
@@ -292,3 +292,86 @@ It reads only the base settings (`DATABASE_URL`, `NODE_ENV`, `DB_SSL_CA`,
 
 `GET /healthz` answers 200 while the process is up. `GET /readyz` answers 200 only when Postgres
 (`SELECT 1`) and Redis (`PING`) respond, else 503. Both are exempt from rate limiting.
+
+## Releases and versioning
+
+Every workspace package has its own semantic version, tag, GitHub Release and `CHANGELOG.md`,
+managed by [release-please](https://github.com/googleapis/release-please) from the Conventional
+Commits on `main` (decision B24). The deployables are `server` (`apps/server`, the server image),
+`console` and `super-admin` (`apps/console`, `apps/super-admin`, both in the web image). The shared
+packages (`contracts`, `db`, `domain`, `observability`, `web-ui`) are versioned too, because that
+is how a change in one of them moves the version of every app that bundles it.
+
+| File | What it is |
+|---|---|
+| `release-please-config.json` | One component per workspace package, named after its directory; the `node-workspace` plugin; changelog sections; `exclude-paths` (each package's test directory); `bootstrap-sha`, the commit history is read back to on a component's first release |
+| `.release-please-manifest.json` | The current released version of each component. release-please writes it; never edit it by hand |
+| `.github/workflows/release-please.yml` | On every push to `main`: opens or updates the release PR; when that PR is merged, tags each released component and publishes its GitHub Release |
+| `.github/workflows/pr-title.yml` | Fails a PR whose title is not a Conventional Commit |
+| `tooling/release-please.test.mjs` | `pnpm test:release`, in CI: every workspace package is a component named after its directory, the manifest matches every `package.json` version, the plugin is on |
+
+### How a version is chosen
+
+PRs are squash-merged, so the PR title becomes the one commit on `main` that release-please reads:
+`<type>(<optional scope>)<optional !>: <summary>`.
+
+| Commit | Release |
+|---|---|
+| `fix:` | patch (0.1.0 → 0.1.1) |
+| `feat:` | minor (0.1.0 → 0.2.0) |
+| `perf:`, `revert:`, `deps:` | patch, listed under their own changelog heading |
+| `!` after the type, or a `BREAKING CHANGE:` footer | major from 1.0.0 on; **minor while the version is 0.x** (`bump-minor-pre-major`) |
+| `docs:`, `refactor:`, `test:`, `build:`, `ci:`, `chore:`, `style:` | none, and not in the changelog |
+
+A commit counts for a component only through the files it touches, not its scope: a `feat` that
+changes `apps/server/` and `apps/console/` appears in both changelogs, and one that touches only a
+package's test directory releases nothing. When a shared package is released, the
+`node-workspace` plugin gives every workspace package that depends on it a patch release (unless it
+already has a larger bump) with a "Dependencies" entry naming the new version; the change itself is
+described in that package's own `CHANGELOG.md`. So a `fix(contracts)` releases `contracts`, then
+`domain`, `db`, `server`, `console` and `super-admin`.
+
+Files outside every package (`docker/`, `grafana/`, `aws/`, `docs/`, root config) release nothing.
+A change there that alters a deployable (for example `docker/Dockerfile` for the server image)
+needs a `Release-As: x.y.z` footer, or ships with that component's next release.
+
+Every component starts at **0.1.0**, the state of `main` at `bootstrap-sha` (before release-please
+was added). Promote a component to 1.0.0 (at launch, say) with a commit carrying the footer
+`Release-As: 1.0.0` that touches that component.
+
+### Cutting a release
+
+1. Merge PRs with Conventional Commit titles. release-please keeps one PR open, `chore: release
+   main`, with the next version and changelog of every component that has releasable changes.
+2. Review it like any PR: its body is the combined release notes. It is regenerated on every push
+   to `main`, so an edit on its branch does not last. To fix a wrong or missing entry, put a
+   commit override (below) in the body of the merged PR it came from; the next run picks it up.
+3. Merge it. The workflow tags each released component `<component>-v<version>` (for example
+   `server-v0.2.0`, `console-v0.1.1`) and publishes a GitHub Release with that component's notes.
+   The run's summary lists the tags.
+
+A PR that holds several changes, or whose title was wrong, can rewrite what release-please reads by
+putting this in its PR body, before or after merging (one Conventional Commit per line):
+
+```
+BEGIN_COMMIT_OVERRIDE
+feat(console): show the pacing ratio on the campaign card
+fix(server): release the bridge slot when a dial is refused
+END_COMMIT_OVERRIDE
+```
+
+### Repository settings it needs
+
+Set once in the repository settings, not in code:
+
+- **Pull requests**: allow squash merging, with the default commit message set to the pull request
+  title (and description); turn merge commits off. A merge commit's message is
+  `Merge pull request #…`, which is not a Conventional Commit.
+- **Actions → General → Workflow permissions**: allow GitHub Actions to create and approve pull
+  requests, or the workflow cannot open the release PR.
+- **Optional `RELEASE_PLEASE_TOKEN` secret** (a fine-grained token or GitHub App token with
+  contents and pull-requests write). PRs and tags created with the default `GITHUB_TOKEN` do not
+  trigger other workflows, so the release PR gets no CI or title check (a branch protection rule
+  requiring them would block it), and a future workflow on release tags would not fire.
+- **Optional baseline tags**, so the first changelog's compare links resolve: tag the
+  `bootstrap-sha` commit `<component>-v0.1.0` for each component and push the tags.

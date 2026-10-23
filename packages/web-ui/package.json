@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/web-ui",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "UI pieces shared by the console and super-admin: common components, the toast context, error and format helpers. Consumed as TypeScript source (decision B2).",
   "type": "module",

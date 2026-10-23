@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/domain",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Pure agency rules (state machine constants, retry, classifier, calling hours, abandonment). No I/O.",
   "main": "./src/index.ts",

@@ -829,6 +829,18 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 | `grafana/scripts/validate-alerts.test.mjs` (`pnpm test:grafana`, node:test) | 16 |
 | `grafana/scripts/validate-dashboard.test.mjs` (`pnpm test:grafana`, node:test) | 15 |
 
+## `tooling` and release configuration
+
+### `tooling/`
+
+`test-env.ts` (the per-worktree test database and Redis db), the Vitest decorator transform, and the guard over the release-please setup (B24): `release-please-config.json` and `.release-please-manifest.json` at the root, `.github/workflows/release-please.yml` and `pr-title.yml`. See [`operations.md`](operations.md), "Releases and versioning".
+
+Files: `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
+
+| Test file | Cases |
+|---|---|
+| `tooling/release-please.test.mjs` (`pnpm test:release`, node:test) | 8 |
+
 ## `packages/contracts`
 
 ### `packages/contracts/src/`
