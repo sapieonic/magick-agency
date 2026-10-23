@@ -615,7 +615,11 @@ export class WebRtcBridgeManager {
         );
         await this.hangupProviderLeg(session);
       }
-      await webrtcCallRepository.update(record.id, { provider_call_id: session.providerCallId });
+      // The carrier's REAL id wins when it is already known: a carrier that dials (its
+      // `start` frame or a webhook) before its own add_lead response reaches us has
+      // already backfilled `provider_call_id` (`persistCarrierCallId`), and this
+      // dial-time placeholder — our own call id, for VoiceLink — would overwrite it.
+      await webrtcCallRepository.update(record.id, { provider_call_id: session.carrierCallId ?? session.providerCallId });
     } catch (err) {
       // (rejection of telephony init is reported as a completed `failed` call via
       // endCall below — not a pre-flight rejection.)
@@ -1375,6 +1379,19 @@ export class WebRtcBridgeManager {
         return;
       case 'hangup':
       case 'error': {
+        // A second terminal while the first one's teardown is still in flight
+        // (`endHandled` is claimed ~100 lines before `sessions.delete`, across the
+        // terminal write). VoiceLink posts `call.ended` and then `call.completed`, and
+        // only the second carries the recording URL; delivered concurrently (or
+        // retried), it lands in this window. Routed through `endCall` it would set
+        // `session.recordingUrl` after the terminal write was composed and then return
+        // at `endHandled` — the recording silently lost, and the analysis job left
+        // waiting for one that never comes. It is a late terminal in all but name, so
+        // it takes the late path, which fills the recording and carrier id idempotently.
+        if (session.endHandled) {
+          await this.persistLateVoicelinkTerminal(callId, event, norm);
+          return;
+        }
         // Terminal. If we're already awaiting carrier confirmation of a local
         // hangup, THIS is that confirmation — finalize with the pending intent.
         if (session.ending) {
