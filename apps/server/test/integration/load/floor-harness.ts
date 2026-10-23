@@ -629,6 +629,12 @@ export interface CampaignRoundStat {
   claimableBefore: number;
   status: string;
   attemptsCreated: number;
+  /**
+   * Contacts the pre-dial DNC gate suppressed this round. Each consumed a claim
+   * and an agent reservation but made no attempt, so the pacing law reads
+   * `attemptsCreated + dncSuppressed`.
+   */
+  dncSuppressed: number;
 }
 
 export interface RoundReport {
@@ -942,8 +948,8 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
     },
 
     /** Per-campaign pacing inputs, read the way `planTick` reads them. */
-    async pacingInputs(): Promise<Record<string, Omit<CampaignRoundStat, 'attemptsCreated'>>> {
-      const out: Record<string, Omit<CampaignRoundStat, 'attemptsCreated'>> = {};
+    async pacingInputs(): Promise<Record<string, Omit<CampaignRoundStat, 'attemptsCreated' | 'dncSuppressed'>>> {
+      const out: Record<string, Omit<CampaignRoundStat, 'attemptsCreated' | 'dncSuppressed'>> = {};
       const { rows: stats } = await db.query<{ id: string; status: string; live: number; claimable: number; lim: number }>(
         `SELECT cam.id, cam.status,
                 (SELECT count(*)::int FROM agency_call_attempts a WHERE a.campaign_id = cam.id AND a.state <> 'ended') AS live,
@@ -982,22 +988,23 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
       roundNo++;
       const measure = opts2.measure ?? true;
       const inputs = measure ? await world.pacingInputs() : {};
-      const before = measure ? await attemptCounts() : new Map<string, number>();
+      const before = measure ? await attemptCounts() : null;
       const order = rng.shuffle(campaigns);
       if (parallelTicks) {
         await Promise.all(order.map((c) => rt.pacing.tickOnce(c.id)));
       } else {
         for (const c of order) await rt.pacing.tickOnce(c.id);
       }
-      const after = measure ? await attemptCounts() : new Map<string, number>();
+      const after = measure ? await attemptCounts() : null;
       const { answered, ended } = await carrier.advance();
       if (roundNo % heartbeatEvery === 0) await world.heartbeat();
       const report: RoundReport = { round: roundNo, campaigns: {}, answered, ended };
-      if (measure) {
+      if (before && after) {
         for (const c of campaigns) {
           report.campaigns[c.spec.label] = {
             ...inputs[c.spec.label]!,
-            attemptsCreated: (after.get(c.id) ?? 0) - (before.get(c.id) ?? 0),
+            attemptsCreated: (after.attempts.get(c.id) ?? 0) - (before.attempts.get(c.id) ?? 0),
+            dncSuppressed: (after.dnc.get(c.id) ?? 0) - (before.dnc.get(c.id) ?? 0),
           };
         }
       }
@@ -1046,12 +1053,21 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
     },
   };
 
-  async function attemptCounts(): Promise<Map<string, number>> {
+  async function attemptCounts(): Promise<{ attempts: Map<string, number>; dnc: Map<string, number> }> {
+    const ids = campaigns.map((c) => c.id);
     const { rows } = await db.query<{ campaign_id: string; n: number }>(
       `SELECT campaign_id, count(*)::int AS n FROM agency_call_attempts WHERE campaign_id = ANY($1::uuid[]) GROUP BY campaign_id`,
-      [campaigns.map((c) => c.id)],
+      [ids],
     );
-    return new Map(rows.map((r) => [r.campaign_id, r.n]));
+    const { rows: dnc } = await db.query<{ campaign_id: string; n: number }>(
+      `SELECT campaign_id, count(*)::int AS n FROM agency_contacts
+        WHERE campaign_id = ANY($1::uuid[]) AND state = 'suppressed' AND suppressed_reason = 'dnc' GROUP BY campaign_id`,
+      [ids],
+    );
+    return {
+      attempts: new Map(rows.map((r) => [r.campaign_id, r.n])),
+      dnc: new Map(dnc.map((r) => [r.campaign_id, r.n])),
+    };
   }
 
   async function outstandingWork(): Promise<boolean> {
@@ -1268,4 +1284,22 @@ export async function contactStateCounts(campaignId: string): Promise<Record<str
 export function expectedDials(s: Pick<CampaignRoundStat, 'availableBefore' | 'liveBefore' | 'limit' | 'claimableBefore' | 'status'>): number {
   if (s.status !== 'running') return 0;
   return Math.max(0, Math.min(s.availableBefore, s.limit - s.liveBefore, s.claimableBefore));
+}
+
+/**
+ * The pacing law checked for every campaign of one round: each tick spent exactly
+ * its budget, on attempts or on DNC suppressions. Violations carry the seed.
+ */
+export function pacingViolations(r: RoundReport, seed: number): string[] {
+  const out: string[] = [];
+  for (const [label, s] of Object.entries(r.campaigns)) {
+    const want = expectedDials(s);
+    const spent = s.attemptsCreated + s.dncSuppressed;
+    if (spent !== want) {
+      out.push(`[seed ${seed}, round ${r.round}] ${label}: dialled ${s.attemptsCreated} (+${s.dncSuppressed} DNC-suppressed), `
+        + `pacing law says ${want} (available ${s.availableBefore}, live ${s.liveBefore}/${s.limit}, `
+        + `claimable ${s.claimableBefore}, ${s.status})`);
+    }
+  }
+  return out;
 }
