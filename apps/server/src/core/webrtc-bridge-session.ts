@@ -61,6 +61,32 @@ export class WebRtcBridgeSession {
   private endConfirmationTimer: NodeJS.Timeout | null = null;
 
   /**
+   * The progress row writes (`ringing`, `in_progress`) still in flight, which the
+   * terminal write must follow. Each is its own pool query, and pg gives no order
+   * between two connections: an `in_progress` UPDATE that has to open a new
+   * connection lands AFTER a terminal UPDATE that found an idle one, leaving the row
+   * `in_progress` with `ended_at` set. See {@link trackProgressWrite}.
+   */
+  private progressWrites: Promise<void> = Promise.resolve();
+
+  /**
+   * Register a progress write so {@link progressWritesSettled} waits for it. Issue it
+   * in the same synchronous turn as the `isTearingDown` check that allowed it, so no
+   * write can start after the terminal claim and escape the wait. Rejections are
+   * the caller's to handle; the wait itself never throws.
+   */
+  trackProgressWrite<T>(write: Promise<T>): Promise<T> {
+    const settled = write.then(() => undefined, () => undefined);
+    this.progressWrites = Promise.all([this.progressWrites, settled]).then(() => undefined);
+    return write;
+  }
+
+  /** Resolves once every progress write registered so far has settled. */
+  progressWritesSettled(): Promise<void> {
+    return this.progressWrites;
+  }
+
+  /**
    * Answer anchor (the connect moment) — set when the carrier reports the answer
    * (VoiceLink's stream `start` or the normalized `answer` event), with the PSTN
    * media-WS connect as a backstop if that report is dropped.
