@@ -130,7 +130,9 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
       return worst;
     })();
 
-    await Promise.all(guards.map(async (guard, a) => {
+    // The background loops stop whatever happens: a red actor must not leave them
+    // running into the next test's keyspace.
+    const actors = Promise.all(guards.map(async (guard, a) => {
       const rng = createRng(createRng().seed + a);
       for (let i = 0; i < ITERATIONS; i++) {
         const callId = `g-${a}-${i}`;
@@ -153,7 +155,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
           guards[(a + k) % ACTORS]!.release(callId)));
       }
     }));
-    stop = true;
+    try { await actors; } finally { stop = true; }
     const [passes, worstObserved] = await Promise.all([reconciler, sampler]);
 
     expect(worstObserved).toBeLessThanOrEqual(CAP);
@@ -264,7 +266,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
     })();
 
     const ITERATIONS = scaled(80);
-    await Promise.all(guards.map(async (guard, a) => {
+    const actors = Promise.all(guards.map(async (guard, a) => {
       const rng = createRng(createRng().seed + 100 + a);
       for (let i = 0; i < ITERATIONS; i++) {
         const account = rng.pick(ACCOUNTS);
@@ -282,8 +284,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
           guards[(a + k) % ACTORS]!.release(callId, TENANT, account.id)));
       }
     }));
-    stop = true;
-    await sweeper;
+    try { await actors; } finally { stop = true; await sweeper; }
 
     for (const a of ACCOUNTS) {
       // Refused at least once: the account's counter really reached its limit.
@@ -365,7 +366,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
     })();
 
     const ITERATIONS = scaled(70);
-    await Promise.all(actors.map(async (guards, a) => {
+    const storm = Promise.all(actors.map(async (guards, a) => {
       const rng = createRng(createRng().seed + 200 + a);
       for (let i = 0; i < ITERATIONS; i++) {
         const account = rng.pick(accounts);
@@ -402,8 +403,7 @@ describe('telephony concurrency guards under a storm (integration, real Redis + 
         expect(outcomes.filter((o) => o !== 'composite').every((o) => o === 'noop')).toBe(true);
       }
     }));
-    stop = true;
-    await sweeps;
+    try { await storm; } finally { stop = true; await sweeps; }
 
     expect(results.get('acquired') ?? 0).toBeGreaterThan(ITERATIONS);
     // Every scope actually refused somebody, so every cap was really contended.
