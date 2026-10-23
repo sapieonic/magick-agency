@@ -23,8 +23,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *  2. **No internals in any body**: no stack frame, source path, SQL or driver text.
  *  3. An oversize body is a `413`, a non-JSON content type on a JSON route a `415`.
  * The seed is printed; `LOAD_SEED` replays a red run, `LOAD_SCALE` sends more variants.
- * Mutation-checked: removing the `22P02 → 400` backstop (`agency-error-handler.ts`) and the
- * malformed-id guards it backs reds case 1 with masked 500s.
+ * Mutation-checked: disabling the `22P02 → 400` backstop (`agency-error-handler.ts`) reds
+ * case 1 with ~250 masked 500s.
+ *
+ * Defects this suite found, all fixed beside it (reverting any of the first three reds case
+ * 1, the fourth reds case 4): a NUL byte
+ * in a path param reached Postgres as `22021` and answered 500 on every unvalidated
+ * super-admin `:id` route (now the backstop's 400 too); `POST /auth/session` let a
+ * Firebase-refused token throw (500, now 401); `callCore`'s `JSON.stringify` of a deeply
+ * nested forwarded body overflowed the stack (500 on `POST /proxy/agency/campaigns`, now a
+ * fixed 400); a cut-off multipart upload answered 500 (now 400, case 4). Case 5 is the one
+ * left failing.
  */
 
 const mocks = vi.hoisted(() => {
