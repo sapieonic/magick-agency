@@ -175,13 +175,14 @@ describe('the morning rush, a full floor at once (integration, load)', () => {
   }, 60_000);
 
   it('3. no response of the whole rush carries another tenant\'s data', () => {
-    expect(seen.length).toBeGreaterThan(TENANTS * AGENTS * 8);
     const leaks: string[] = [];
     for (const { floor, label, res } of seen) {
       const foreign = foreignIdsIn(res.body, foreignIdsOf(floors, floor));
       if (foreign.length > 0) leaks.push(`${label}: ${foreign.join(', ')}`);
     }
     expect(leaks).toEqual([]);
+    // And the sweep covered the whole rush, not a prefix of it.
+    expect(seen.length).toBeGreaterThan(TENANTS * AGENTS * 8);
   });
 
   it('4. Postgres and Redis agree: one live available session per agent, logged and audited exactly once', async () => {
