@@ -17,8 +17,9 @@ permissions:
   pull-requests: write
   issues: write
 
-# One run at a time, never cancelled: a cancelled run can leave a release tagged
-# without its GitHub Release, or the release PR half updated.
+# One run at a time, and a running one is never cancelled: a cancelled run can leave a
+# release tagged without its GitHub Release, or the release PR half updated. (A run still
+# queued is replaced by a newer push, which is harmless: the newer run sees the same history.)
 concurrency:
   group: release-please
   cancel-in-progress: false

@@ -839,7 +839,7 @@ Files: `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
 
 | Test file | Cases |
 |---|---|
-| `tooling/release-please.test.mjs` (`pnpm test:release`, node:test) | 8 |
+| `tooling/release-please.test.mjs` (`pnpm test:release`, node:test) | 10 |
 
 ## `packages/contracts`
 
@@ -1083,13 +1083,13 @@ Files: `apiErrorBody.ts`, `concurrency.ts`, `errors.ts`, `format.ts`, `global.cs
 
 ### `packages/web-ui/src/components/`
 
-The 15 components both apps used as byte-identical copies, each with its CSS module, and `AppVersion`, the release version at the foot of every sidebar in both apps (B24).
+The 15 components both apps used as byte-identical copies, each with its CSS module, and `AppVersion`, the release version at the foot of every sidebar in both apps, and inline in the agent nav and the station header (B24).
 
 Files: `AppVersion.module.css`, `AppVersion.tsx`, `Breadcrumbs.module.css`, `Breadcrumbs.tsx`, `ConfirmDialog.module.css`, `ConfirmDialog.tsx`, `DataTable.module.css`, `DataTable.tsx`, `EmptyState.module.css`, `EmptyState.tsx`, `ErrorAlert.module.css`, `ErrorAlert.tsx`, `ErrorText.module.css`, `ErrorText.tsx`, `HelpTooltip.module.css`, `HelpTooltip.tsx`, `LiveDot.module.css`, `LiveDot.tsx`, `LoadingSpinner.module.css`, `LoadingSpinner.tsx`, `Modal.module.css`, `Modal.tsx`, `PageHeader.module.css`, `PageHeader.tsx`, `Pagination.module.css`, `Pagination.tsx`, `RequestId.module.css`, `RequestId.tsx`, `StatusBadge.module.css`, `StatusBadge.tsx`, `Toast.module.css`, `Toast.tsx`
 
 | Test file | Cases |
 |---|---|
-| `packages/web-ui/test/components/AppVersion.test.tsx` | 3 |
+| `packages/web-ui/test/components/AppVersion.test.tsx` | 4 |
 | `packages/web-ui/test/components/ConfirmDialog.test.tsx` | 12 |
 | `packages/web-ui/test/components/DataTable.test.tsx` | 27 |
 | `packages/web-ui/test/components/ErrorAlert.test.tsx` | 4 |
@@ -1237,15 +1237,16 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/RequireFlag.test.tsx` | 11 |
 | `apps/console/src/__tests__/components/RosterTable.test.tsx` | 49 |
 | `apps/console/src/__tests__/components/Sidebar.activeState.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/sidebarVersion.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/StateRail.test.tsx` | 26 |
 | `apps/console/src/__tests__/components/StationIdentity.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/SwitcherDropdown.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/TenantSwitcher.test.tsx` | 7 |
 | `apps/console/src/__tests__/components/TopBar.test.tsx` | 8 |
 | `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 25 |
+| `apps/console/src/__tests__/components/agentSurfacesVersion.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/campaignSeriesCharts.test.tsx` | 16 |
 | `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 2 |
+| `apps/console/src/__tests__/components/sidebarVersion.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/switcherDropdownScrollCss.test.ts` | 4 |
 | `apps/console/src/components/common/DateRangeFilter.test.tsx` | 25 |
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
@@ -1482,9 +1483,9 @@ Files: `auth/RequireSuperAdmin.tsx`, `common/AdvancedSection.module.css`, `commo
 | `apps/super-admin/src/__tests__/components/FlagDialog.test.tsx` | 10 |
 | `apps/super-admin/src/__tests__/components/Logo.test.tsx` | 3 |
 | `apps/super-admin/src/__tests__/components/OverrideReasonDialog.test.tsx` | 6 |
+| `apps/super-admin/src/__tests__/components/SuperAdminSidebar.version.test.tsx` | 2 |
 | `apps/super-admin/src/__tests__/components/TenantFeatureFlags.test.tsx` | 45 |
 | `apps/super-admin/src/__tests__/components/TenantPicker.test.tsx` | 16 |
-| `apps/super-admin/src/__tests__/components/SuperAdminSidebar.version.test.tsx` | 2 |
 | `apps/super-admin/src/__tests__/components/TriStateControl.test.tsx` | 12 |
 | `apps/super-admin/src/__tests__/components/flagUtils.test.ts` | 9 |
 

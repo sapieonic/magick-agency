@@ -22,9 +22,8 @@ system, repo or external design doc.
   it. Each worktree gets its own test database (see below).
 - **Contracts, schema and composition files change deliberately.** `packages/contracts`,
   `packages/db/migrations`, `apps/server/src/seams/**`, `apps/server/src/{app.ts,app-context.ts,index.ts}`,
-  `apps/server/src/config/{index,load,schema,env}.ts`, `config/blocks/base.ts`, root config, CI and the
-  release-please config are
-  shared by every module area: change them with their consumers and tests in the same commit.
+  `apps/server/src/config/{index,load,schema,env}.ts`, `config/blocks/base.ts`, root config, CI and
+  the release-please config are shared by every module area: change them with their consumers and tests in the same commit.
   Never edit or renumber an applied migration; add a new one.
 - **Module-area files:** each area (platform, agency, voice, analysis) adds config only in
   `apps/server/src/config/blocks/<area>.ts`, routes only in `apps/server/src/api/<area>.plugin.ts`,

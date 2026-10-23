@@ -28,3 +28,11 @@
   white-space: nowrap;
   user-select: none;
 }
+
+.inline {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 4px;
+  min-width: 0;
+}

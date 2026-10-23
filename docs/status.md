@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-10-17.
+"is it done". As of 2026-10-17; the release and version-display rows, 2026-10-23.
 
 ## Summary
 
@@ -106,9 +106,34 @@ re-running plan (`apps/server/test/integration/agency/agency-contact-claim-limit
 - A `released` that lands before React renders its `reserved` does not retain the panel (latent,
   unchanged).
 
+### Releases and the version display 2026-10-23 (B24)
+
+| Area | What changed |
+|---|---|
+| Releases | release-please (`release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release-please.yml`): every workspace package has its own version, tag, GitHub Release and `CHANGELOG.md`, all starting at 0.1.0; PR titles checked as Conventional Commits (`pr-title.yml`); `pnpm test:release` guards the config in CI. Not yet run on GitHub: it needs the repository settings in [`operations.md`](operations.md), "Repository settings it needs" |
+| Version display | `AppVersion` (`packages/web-ui`) at the foot of every sidebar in both apps, and inline in the agent nav and the station header; the server's boot line names its version (`magick-agency v<version> listening`) |
+
 ## Test counts
 
-Latest run, 2026-10-17, after the tidy-up, from inside each package:
+Latest run, 2026-10-23, after release-please and the version display (B24), unit suites from
+inside each package (integration not re-run: neither change touches SQL):
+
+| Package | Unit |
+|---|---|
+| `apps/server` | 6703 passed + 42 skipped |
+| `packages/db` | 426 |
+| `packages/domain` | 53 |
+| `packages/contracts` | 77 |
+| `packages/observability` | 14 |
+| `packages/web-ui` | 235 |
+| `apps/console` | 4416 |
+| `apps/super-admin` | 423 |
+| `grafana` (`pnpm test:grafana`) | 31 |
+| `tooling` (`pnpm test:release`) | 10 |
+
+`pnpm lint`: clean in 8 packages.
+
+Run of 2026-10-17, after the tidy-up, from inside each package:
 
 | Package | Unit | Integration |
 |---|---|---|
@@ -257,7 +282,7 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       `aws/terraform` default) that is all of the RAM; lower the heap or size up before load.
 - [ ] `NODE_ENV=production` (the image sets it); `DATABASE_URL` without TLS parameters; `DB_SSL_CA`
       if the database uses a private CA.
-- [ ] First boot logs `migrations complete` before `magick-agency listening` (the entrypoint runs
+- [ ] First boot logs `migrations complete` before `magick-agency v<version> listening` (the entrypoint runs
       them; a failure stops the container).
 - [ ] Firebase: agency's domain in the authorised domains, `FIREBASE_PROJECT_ID` set (no service
       account: tokens are verified against Google's public keys).

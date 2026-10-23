@@ -3,9 +3,10 @@ import { render, screen } from '@testing-library/react';
 import { AppVersion } from '../../src/components/AppVersion';
 
 /**
- * The version footer both SPAs put at the foot of every sidebar. Under happy-dom no
- * stylesheet applies, so the classes are the contract: `footer` is what pins it to the
- * bottom, `compact` is the icon-rail form.
+ * The version both SPAs show: the footer at the foot of every sidebar, and the inline form
+ * on the agent surfaces that have none. Under happy-dom no stylesheet applies, so the
+ * classes are the contract: `footer` pins it to the bottom, `compact` is the icon-rail
+ * form, `inline` takes the end of a row.
  */
 describe('AppVersion', () => {
   it('shows the version with a v prefix, and the full version as its title', () => {
@@ -27,5 +28,14 @@ describe('AppVersion', () => {
   it("keeps the host sidebar's own class", () => {
     const { container } = render(<AppVersion version="0.4.2" className="hostFooter" />);
     expect((container.firstElementChild as HTMLElement).className.split(' ')).toContain('hostFooter');
+  });
+
+  it('has an inline form, with no footer block, for rows of chrome without a sidebar', () => {
+    const { container } = render(<AppVersion version="0.4.2" variant="inline" />);
+    const host = container.firstElementChild as HTMLElement;
+    expect(host.tagName).toBe('SPAN');
+    expect(host.className).toMatch(/inline/);
+    expect(host.className).not.toMatch(/footer/);
+    expect(screen.getByTestId('app-version').textContent).toBe('v0.4.2');
   });
 });
