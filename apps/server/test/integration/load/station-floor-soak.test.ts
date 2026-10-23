@@ -38,7 +38,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 
 const { createFloorWorld, sessionRows } = await import('./station-floor-harness.js');
 const { STATION_INTERVALS } = await import('../../../src/api/routes/agency/helpers.js');
-const { scaled, createRng, LOAD_SEED } = await import('../../helpers/load-scale.js');
+const { scaled, createRng, LOAD_SEED, LOAD_SCALE } = await import('../../helpers/load-scale.js');
 
 type World = Awaited<ReturnType<typeof createFloorWorld>>;
 type Agent = World['fleet']['agents'][number];
@@ -55,7 +55,8 @@ const CATALOG = [
 ];
 /** Ticks a round may spend getting every ready agent a call before it is a stall. */
 const MAX_TICKS_PER_ROUND = 40;
-const DEADLOCK_BOUND_MS = 240_000;
+// Agents × rounds: the soak's cost grows with the square of the scale.
+const DEADLOCK_BOUND_MS = 240_000 * Math.max(1, LOAD_SCALE ** 2);
 
 let world: World | null = null;
 

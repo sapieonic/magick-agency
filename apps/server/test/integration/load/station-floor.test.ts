@@ -29,7 +29,7 @@ const { createFloorWorld, sessionRows } = await import('./station-floor-harness.
 const { STATION_INTERVALS } = await import('../../../src/api/routes/agency/helpers.js');
 const { STATION_HEARTBEAT_GRACE_MS } = await import('@magick-agency/domain/timers');
 const { AGENCY_STATION_CLOSE } = await import('@magick-agency/contracts/agency');
-const { scaled, createRng, LOAD_SEED } = await import('../../helpers/load-scale.js');
+const { scaled, createRng, LOAD_SEED, LOAD_SCALE } = await import('../../helpers/load-scale.js');
 
 type World = Awaited<ReturnType<typeof createFloorWorld>>;
 type Agent = World['fleet']['agents'][number];
@@ -38,7 +38,7 @@ const TENANTS = 3;
 const PER_TENANT = scaled(50);
 const FLOOR = TENANTS * PER_TENANT;
 /** Per-test deadlock bound. Generous on purpose: a healthy run is well under it. */
-const DEADLOCK_BOUND_MS = 120_000;
+const DEADLOCK_BOUND_MS = 120_000 * Math.max(1, LOAD_SCALE);
 
 let world: World | null = null;
 

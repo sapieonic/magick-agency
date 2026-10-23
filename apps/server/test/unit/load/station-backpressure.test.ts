@@ -76,10 +76,10 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
 
 const { createStationWorld, leakReport, NO_LEAKS, serverSocket } = await import('./station-load-harness.js');
 const { STATION_INTERVALS } = await import('../../../src/api/routes/agency/helpers.js');
-const { scaled, createRng, LOAD_SEED } = await import('../../helpers/load-scale.js');
+const { scaled, createRng, LOAD_SEED, LOAD_SCALE } = await import('../../helpers/load-scale.js');
 
 /** Per-test deadlock bound. Generous on purpose: a healthy run takes a few seconds. */
-const DEADLOCK_BOUND_MS = 60_000;
+const DEADLOCK_BOUND_MS = 60_000 * Math.max(1, LOAD_SCALE);
 
 type World = Awaited<ReturnType<typeof createStationWorld>>;
 type Agent = World['fleet']['agents'][number];

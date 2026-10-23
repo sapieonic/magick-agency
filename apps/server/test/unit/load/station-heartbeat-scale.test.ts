@@ -85,10 +85,10 @@ const {
   STATION_HEARTBEAT_GRACE_MS, STATION_HEARTBEAT_SWEEP_MS, STATION_SWEEP_IDLE_PASSES_BEFORE_DORMANT,
 } = await import('@magick-agency/domain/timers');
 const { AGENCY_STATION_CLOSE } = await import('@magick-agency/contracts/agency');
-const { scaled, createRng, LOAD_SEED } = await import('../../helpers/load-scale.js');
+const { scaled, createRng, LOAD_SEED, LOAD_SCALE } = await import('../../helpers/load-scale.js');
 
 /** Per-test deadlock bound. Generous on purpose: a healthy run takes a few seconds. */
-const DEADLOCK_BOUND_MS = 60_000;
+const DEADLOCK_BOUND_MS = 60_000 * Math.max(1, LOAD_SCALE);
 
 type World = Awaited<ReturnType<typeof createStationWorld>>;
 type Agent = World['fleet']['agents'][number];
@@ -144,7 +144,14 @@ describe('the heartbeat grace on a full floor (load)', () => {
     for (const a of pinging) a.leg!.startHeartbeat(STATION_INTERVALS.heartbeat_ms);
 
     // ── Inside the grace: nobody is touched ───────────────────────────────
+    // The sweep has now run at exactly +grace, where a silent console's silence
+    // EQUALS the grace — not past it. Asked of the server's own sockets, because
+    // the sweep's `close()` marks them CLOSING synchronously, while the client
+    // would only hear of it a round trip later.
     await advance(w, STATION_HEARTBEAT_GRACE_MS);
+    for (const e of w.runtime.stations.all()) {
+      expect(e.ws.readyState, `session ${e.sessionId} closed at exactly the grace`).toBe(1 /* OPEN */);
+    }
     for (const a of agents) expect(a.leg!.closed, `${a.label} closed inside the grace`).toBeNull();
     expect(w.runtime.stations.size()).toBe(FLOOR);
 

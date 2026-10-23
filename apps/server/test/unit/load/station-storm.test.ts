@@ -90,10 +90,10 @@ const { createStationWorld, leakReport, NO_LEAKS } = await import('./station-loa
 const { STATION_INTERVALS } = await import('../../../src/api/routes/agency/helpers.js');
 const { AGENT_LEASE_MS } = await import('../../../src/agency/agent-state-machine.js');
 const { AGENCY_STATION_CLOSE } = await import('@magick-agency/contracts/agency');
-const { scaled, createRng, LOAD_SEED } = await import('../../helpers/load-scale.js');
+const { scaled, createRng, LOAD_SEED, LOAD_SCALE } = await import('../../helpers/load-scale.js');
 
 /** Per-test deadlock bound. Generous on purpose: a healthy run takes a few seconds. */
-const DEADLOCK_BOUND_MS = 60_000;
+const DEADLOCK_BOUND_MS = 60_000 * Math.max(1, LOAD_SCALE);
 
 type World = Awaited<ReturnType<typeof createStationWorld>>;
 type Agent = World['fleet']['agents'][number];
