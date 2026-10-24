@@ -1,5 +1,5 @@
 {
-  "apps/server": "0.1.0",
+  "apps/server": "0.1.1",
   "apps/console": "0.1.0",
   "apps/super-admin": "0.1.0",
   "packages/contracts": "0.1.0",
