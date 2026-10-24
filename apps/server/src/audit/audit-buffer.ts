@@ -12,6 +12,12 @@ export class AuditBuffer {
   private buffer: AuditEvent[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
   private flushing = false;
+  /**
+   * Settles when the flush that set `flushing` finishes. `forceFlush` awaits it: a
+   * buffer-full flush is started without being awaited (the request path never waits on
+   * audit), so shutdown routinely lands while one is still writing.
+   */
+  private inFlight: Promise<void> | null = null;
   private retryCount = 0;
 
   start(): void {
@@ -51,6 +57,8 @@ export class AuditBuffer {
   async flush(): Promise<void> {
     if (this.flushing || this.buffer.length === 0) return;
     this.flushing = true;
+    let settle!: () => void;
+    this.inFlight = new Promise<void>((resolve) => { settle = resolve; });
 
     const eventsToFlush = [...this.buffer];
     this.buffer = [];
@@ -71,13 +79,29 @@ export class AuditBuffer {
       }
     } finally {
       this.flushing = false;
+      this.inFlight = null;
+      settle();
     }
   }
 
+  /**
+   * Drain everything, including a batch another caller is still writing.
+   *
+   * Waits on {@link inFlight} rather than re-calling `flush()`: while `flushing` is set,
+   * `flush()` returns at once, and a loop of awaits on an already-settled promise is a
+   * microtask-only loop that never yields to the event loop — the in-flight INSERT could
+   * then never complete and shutdown would spin forever. Returns only once nothing is
+   * buffered AND nothing is on the wire, so the pool can be closed right after it.
+   * Terminates: every flush either writes its batch or, after `MAX_RETRY_ATTEMPTS`, drops it.
+   */
   async forceFlush(): Promise<void> {
     this.stop();
-    // Keep flushing until buffer is empty
-    while (this.buffer.length > 0) {
+    for (;;) {
+      if (this.inFlight) {
+        await this.inFlight;
+        continue;
+      }
+      if (this.buffer.length === 0) return;
       await this.flush();
     }
   }

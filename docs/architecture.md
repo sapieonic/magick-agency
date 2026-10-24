@@ -383,6 +383,11 @@ bucket keyed on a client-supplied header. Buckets key on `request.ip`, which tru
 - **Chaos suites** (`apps/server/test/integration/agency/chaos/`): abandonment counter vs table,
   predicate agreement, attempt-number collision, DNC self-heal loop, lease renewer killed, network
   drop during ring, Redis expired wholesale, restart mid-bridge, roster exactly-once.
+- **Load, soak and scenario suites** (`apps/server/test/{unit,integration}/load/`): a full floor
+  over real sockets, Postgres and Redis, sized by `LOAD_SCALE` and seeded by `LOAD_SEED`
+  (`apps/server/test/helpers/load-scale.ts`). Mocks in `apps/server/test/mocks/`: a scriptable
+  VoiceLink carrier (REST with faults, plus a media-WS *client* that dials the server) and a
+  simulated agent-console fleet, both Node-native on `ws`. Open defects are pinned as `it.fails`.
 - **End to end**: `runtime-e2e.test.ts` (real app, station socket, real bridge, fake carrier,
   through disposition, analysis and completion) and `runtime-boot-order.test.ts`.
 - **Contract and guard tests**: route tables enumerated from `onRoute`

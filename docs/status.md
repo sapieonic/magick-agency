@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-10-17; the release and version-display rows, 2026-10-23.
+"is it done". As of 2026-10-23.
 
 ## Summary
 
@@ -106,6 +106,59 @@ re-running plan (`apps/server/test/integration/agency/agency-contact-claim-limit
 - A `released` that lands before React renders its `reserved` does not retain the panel (latent,
   unchanged).
 
+### Load and scenario suites 2026-10-23
+
+Manas asked on 2026-10-23 for exhaustive load, soak and scenario tests of the server with a full
+floor of agents, and for mock servers to exercise the WebSocket behaviour. Added
+`apps/server/test/{unit,integration}/load/` and `apps/server/test/mocks/` (a scriptable VoiceLink
+carrier and a simulated agent fleet, Node-native on `ws`; inventory and the reason it is not
+WireMock in [`modules.md`](modules.md), "Load, soak and scenario suites"). Sizes are modest by
+default; `LOAD_SCALE` multiplies them (runs at 2–4× passed: 200 agents on the floor run, 360 on
+the morning rush).
+
+**Defects found and fixed**, each in the commit with the test that catches it:
+
+| Where | Defect |
+|---|---|
+| `src/agency/station-socket.ts` | A station text frame of `null` threw out of the `ws` listener; with no `uncaughtException` handler, one 4-byte frame from any signed-in console crashed the server |
+| `src/core/webrtc-bridge-manager.ts` | A second terminal webhook (`call.completed`, carrying the recording) arriving during the first one's teardown lost the recording URL, and the analysis job waited forever |
+| `src/core/webrtc-bridge-manager.ts` | The dial-time `provider_call_id` write overwrote the carrier's real id when the carrier connected before its own `add_lead` response |
+| `src/core/webrtc-bridge-session.ts`, bridge manager | An answer and its terminal processed together could leave the row `in_progress` with `ended_at` set (two pool connections, no order); the terminal write now waits for progress writes |
+| `src/db/repositories/agency/contact.repository.ts` | Overlapping stranded-contact sweeps each charged the our-fault ledger for the same contact (4 sweeps retired contacts `exhausted` after one stranding); the sweep now claims its rows `SKIP LOCKED` |
+| `src/agency/wrapup-manager.ts` | A wrap-up ended while `enter` awaited its writes still armed its timer and announced `wrapup`; the orphaned timer ended the session's next wrap-up early |
+| `src/auth/session.middleware.ts` | A failed user lookup (pool timeout, database or Redis error) answered 401, which signs the console out: one database stall signed out the floor. Only the token check answers 401 now |
+| `src/audit/audit-buffer.ts`, `src/audit/platform/audit-buffer.ts` | `forceFlush` spun in a microtask loop and could return before an in-flight batch was written, when shutdown landed mid-flush |
+| `src/api/middleware/error-handler.middleware.ts` | Every 429 reached clients as `error: 'Error'` without `retryAfter` |
+| `src/api/middleware/agency-error-handler.ts`, `core-dispatch.ts`, `auth.routes.ts`, `proxy-agency-campaigns/ingest.ts` | 500s on client input: a NUL byte (`22021`), deeply nested JSON, a Firebase-refused token at sign-in, a truncated multipart upload — now 400 / 401 |
+| `src/db/repositories/agency/agent-session.repository.ts` | Racing first joins each logged a `NULL → break` "session started" event |
+
+**Defects found and left open**, each pinned by an `it.fails` (flip it to `it` with the fix). All
+need Manas or a deliberate change to a shared file:
+
+| Defect | Pinned in | What deciding it needs |
+|---|---|---|
+| No frame-size limit on WebSockets: `@fastify/websocket` is registered with `ws`'s 100 MiB default, parsed on the event loop | `unit/load/station-inbound-fuzz.test.ts` | A `maxPayload` in `src/app.ts` (shared composition file) |
+| Unbounded send buffer to a console that stops reading (6.5 MB held in the test), not reaped mid-call | `unit/load/station-backpressure.test.ts` | Cap or drop policy; likely a new close code in contracts |
+| No request timeout on VoiceLink REST (`add_lead`, login): a hung carrier holds an agent and three concurrency slots for undici's 300 s default, and a hung login stalls every dial behind it | `unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | The timeout value, and what a timed-out `add_lead` means (the lead may be queued) |
+| A terminal webhook that overtakes its own `call.answered` never records the answer: the attempt is classified `no_answer` and the contact redialled | `integration/load/voicelink-webhook-storm.test.ts` | Emitting `answered` before `ended`, which the dialer's bind / abandon flow acts on |
+| A lowered account or provider concurrency limit can be cached stale for the cache lifetime (8 admitted against a limit lowered to 2) | `integration/load/concurrency-guard-storms.test.ts` | A generation counter on the cache write; changes the guards' Redis calls their unit suite pins |
+| Pressing Available during a live, announced call overwrites the `on_call` lease; the next tick reserves the agent for a second customer | `integration/load/agent-churn.test.ts` | Refuse on `hasLiveAttempt` (the route's own comment names this gap) |
+| The pacing tick caps dials by the account limit only; with a provider share below it, the bridge refuses the surplus every tick (wasted claims, attempt rows, console popups) | `integration/load/concurrency-cap.test.ts` | Bound by the provider limit in provider mode |
+| A dial refused for capacity is stamped `dialed_at` before admission, so stats count it as placed | `integration/load/concurrency-cap.test.ts` | Stamp after admission, or exclude refusals in the stats |
+| A same-code replay of an older attempt's disposition reopens a `completed` contact to `pending` | `integration/load/disposition-storm.test.ts` | Whether a superseded attempt may move the contact at all |
+| The lifecycle audit's `from` is the status the pre-check read, not the one the update moved from | `integration/load/campaign-mutation-races.test.ts` | `transitionStatus`'s SQL, pinned by text in several tests |
+| Two concurrent PATCHes can combine into an empty calling window (10:00–10:00) | `integration/load/campaign-mutation-races.test.ts` | Validate against the row the update writes |
+| A multipart part with no headers makes `request.file()` never settle; the request hangs | `integration/load/hostile-input-fuzz.test.ts` | A parse deadline that also tears down the socket |
+
+**Observed, not pinned:** the per-IP rate-limit bucket (200/min default) is shared by a whole floor
+behind one office NAT, so `RATE_LIMIT_MAX` needs sizing for such a deployment; with the
+production ioredis defaults a Redis outage takes about 10 s to surface on `/readyz` and some
+requests wait about 30 s (no command timeout); the PSTN socket refuses a bad token with a bare
+close (1005), not a 44xx code; a 200 `add_lead` with a non-JSON body fails the dial though the lead
+may be queued; `StationTokenStore.mint`'s local fallback during a Redis error is never consulted by
+`verifyAndConsume`, so it fails closed and is dead code; `nextWindowOpen` returns up to an hour late
+on a spring-forward day for a window opening in the skipped hour (never early).
+
 ### Releases and the version display 2026-10-23 (B24)
 
 | Area | What changed |
@@ -115,7 +168,11 @@ re-running plan (`apps/server/test/integration/agency/agency-contact-claim-limit
 
 ## Test counts
 
-Latest run, 2026-10-23, after release-please and the version display (B24), unit suites from
+Latest run, 2026-10-23, after the load and scenario suites, `apps/server` only, from inside the
+package: lint clean in 8 packages; unit 6755 passed + 4 expected fail + 42 skipped (332 files);
+integration 1288 passed + 10 expected fail (141 files, about 9.5 min on 4 CPUs; the load files add about 5). Other packages are unchanged since the run below.
+
+Run of 2026-10-23, after release-please and the version display (B24), unit suites from
 inside each package (integration not re-run: neither change touches SQL):
 
 | Package | Unit |
@@ -237,6 +294,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
+| Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 
 ## Deployment invariants

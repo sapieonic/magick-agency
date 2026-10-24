@@ -267,6 +267,16 @@ export class AgencyAgentSessionRepository {
       // inserted-vs-updated trick would answer the narrower question and still
       // leave the previous state unknown.
       //
+      // ── …except for a row a CONCURRENT join inserted ─────────────────────────
+      // `prev`'s snapshot is taken before the upsert waits on the arbiter index, so
+      // when two first joins race (a double-click, two tabs) the loser's `prev` is
+      // empty although its upsert took the DO UPDATE arm. Logged as is, that is a
+      // second `NULL → break` "session started" event for a session that started
+      // once. So `xmax = 0` is asked as well, for exactly that narrower question: a
+      // row this statement did NOT insert, with no `prev`, was inserted as `break`
+      // by the racing join an instant ago and left in its state by this update —
+      // no transition, which `recordTransitions` drops. (`load/session-join-races`.)
+      //
       // `prev` is keyed on the same predicate as the arbiter index — the agent's
       // one live session in the tenant (`uq_agency_agent_live_tenant`) — not on the proposed row, because
       // the conflicting row may be on a different campaign.
@@ -274,6 +284,7 @@ export class AgencyAgentSessionRepository {
         from_state: AgencyAgentState | null;
         from_break_reason: string | null;
         at: Date;
+        inserted: boolean;
       }>(
         `WITH prev AS (
            SELECT id, state, break_reason FROM agency_agent_sessions
@@ -289,9 +300,15 @@ export class AgencyAgentSessionRepository {
                                       THEN 'break' ELSE agency_agent_sessions.state END,
                          updated_at = now()
              WHERE agency_agent_sessions.campaign_id = EXCLUDED.campaign_id
-           RETURNING *
+           RETURNING *, (xmax = 0) AS inserted
          )
-         SELECT upserted.*, prev.state AS from_state, prev.break_reason AS from_break_reason,
+         SELECT upserted.*,
+                CASE WHEN prev.id IS NOT NULL THEN prev.state
+                     WHEN upserted.inserted THEN NULL
+                     ELSE upserted.state END AS from_state,
+                CASE WHEN prev.id IS NOT NULL THEN prev.break_reason
+                     WHEN upserted.inserted THEN NULL
+                     ELSE upserted.break_reason END AS from_break_reason,
                 clock_timestamp() AS at
            FROM upserted LEFT JOIN prev ON prev.id = upserted.id`,
         [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId],
@@ -305,7 +322,8 @@ export class AgencyAgentSessionRepository {
         // `at` is destructured out for the same reason the two `from_*` columns
         // are: `AgencyAgentSessionRecord` is spread into the bootstrap payload,
         // and a log-only column riding along becomes a contract nobody agreed to.
-        const { from_state, from_break_reason, at, ...session } = row;
+        // `inserted` likewise: it only steers `from_state` above.
+        const { from_state, from_break_reason, at, inserted: _inserted, ...session } = row;
         await this.recordTransitions([{
           session_id: session.id,
           tenant_id: session.tenant_id,

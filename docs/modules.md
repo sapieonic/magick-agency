@@ -816,6 +816,70 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/server/test/unit/scenarios/voicelink-webrtc-lifecycle-scenarios.test.ts` | 3 |
 | `apps/server/test/unit/test-redis-guard.test.ts` | 7 |
 
+### Load, soak and scenario suites (`apps/server`, 2026-10-23)
+
+A full floor of agents under load, over real sockets, real Postgres and real Redis.
+`apps/server/test/helpers/load-scale.ts` holds the shared knobs: default sizes keep each file
+under about a minute, `LOAD_SCALE=<n>` multiplies them for a deliberate soak, and `LOAD_SEED`
+pins the seeded PRNG (every file prints its seed). An `it.fails` case pins an open defect
+([`status.md`](status.md), "Load and scenario suites") and goes red the moment it is fixed.
+
+**Mocks** (`apps/server/test/mocks/`), Node-native on `ws` rather than WireMock: in this system
+the server is the WebSocket *server* on both sockets that matter (consoles connect to the station
+socket; VoiceLink dials out to the `websocket_url` sent in `add_lead`), so a mock carrier has to be
+a WebSocket *client*, which a stub server cannot be.
+
+| Mock | What it is |
+|---|---|
+| `mocks/voicelink/` | Scriptable VoiceLink carrier: login, `add_lead` and CDR REST with injectable faults (latency, status, hang, malformed JSON, TCP reset, held responses); per-call scripts that open the media WS to the server, send `start` (A-law 8 kHz), stream seeded audio, post webhooks (duplicated, shuffled, out of order) and end by any close code or a TCP destroy |
+| `mocks/station-fleet.ts` | N agent consoles over real `ws` with real station tokens: heartbeat, ready / break / disposition, reconnect, network drop, silence, slow reader, rapid connect-disconnect, seeded hostile frames; frames recorded with timestamps |
+
+| Test file | Cases | Guards |
+|---|---|---|
+| `apps/server/test/unit/load/load-scale.test.ts` | 3 | The shared PRNG is deterministic and in bounds |
+| `apps/server/test/unit/load/mock-voicelink-carrier.test.ts` | 6 | The mock carrier itself: URL rewrite, auth and 422, fault ordering, a `start` the product parses, audio surviving the real codec |
+| `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 18 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; 2 `it.fails` (no REST timeout) |
+| `apps/server/test/unit/load/bridge-row-write-order.test.ts` | 1 | No live status lands over a terminal one, 200 calls with shuffled ringing / answered / terminal |
+| `apps/server/test/unit/load/station-storm.test.ts` | 4 | 150 consoles across 3 tenants: registered once, no cross-talk, tab races leave one live station (4409 for the rest) |
+| `apps/server/test/unit/load/station-heartbeat-scale.test.ts` | 1 | Exactly the silent consoles are reaped 4408 after grace; the sweep stops when the floor empties |
+| `apps/server/test/unit/load/station-backpressure.test.ts` | 2 | Stalled consoles do not hold up broadcasts; 1 `it.fails` (unbounded send buffer) |
+| `apps/server/test/unit/load/station-inbound-fuzz.test.ts` | 4 | About 2,800 seeded hostile frames never throw or disturb bystanders (the `null` frame crash); 1 `it.fails` (no frame-size limit) |
+| `apps/server/test/unit/load/wrapup-manager-interleavings.test.ts` | 2 | Seeded interleavings of enter / disposition / force / cancel / timer: each wrap-up closes once, no early `auto_return` |
+| `apps/server/test/unit/load/in-flight-contention.test.ts` | 2 | `InFlight.settle` waits only on work tracked at drain start |
+| `apps/server/test/unit/load/audit-buffer-drain-under-load.test.ts` | 4 | Both audit buffers drain fully when shutdown lands mid-flush |
+| `apps/server/test/unit/load/pacing-tick-properties.test.ts` | 1 | The real tick over 3,000 seeded floors: every term of the dial formula, longest-idle order, surplus release |
+| `apps/server/test/unit/load/dialer-math-properties.test.ts` | 8 | Property families over retry, our-fault, abandonment, guardrail, calling hours, caller-id rotation |
+| `apps/server/test/integration/load/voicelink-media-ws-load.test.ts` | ~7 | 50 simultaneous carrier streams in order both ways; token gate; `start` failures; slow carrier; every close shape settles once; mid-call reconnect |
+| `apps/server/test/integration/load/voicelink-webhook-storm.test.ts` | ~3 | 40 calls of duplicated, shuffled, concurrent webhooks settle once with recordings and carrier ids kept; 1 `it.fails` (terminal overtaking `answered`) |
+| `apps/server/test/integration/load/voicelink-full-stack.test.ts` | ~1 | Real app, real stations, pacing engine dialling through the real adapter into the mock carrier; no leaks |
+| `apps/server/test/integration/load/station-floor.test.ts` | ~2 | 150-agent join / connect / available storm and a reconnect storm through the real routes |
+| `apps/server/test/integration/load/station-floor-soak.test.ts` | ~1 | 100 agents, about 520 calls through wrap-up and disposition; console = Redis = session row |
+| `apps/server/test/integration/load/floor-run.test.ts` | ~1 | 100 agents, 5 campaigns, 3 tenants, 2,200 contacts to exhaustion; invariants and the pacing law every round |
+| `apps/server/test/integration/load/agent-churn.test.ts` | ~2 | Breaks, drops, re-attaches, leaves and late joins: no orphaned reservation; 1 `it.fails` (Available during an announced call) |
+| `apps/server/test/integration/load/concurrency-cap.test.ts` | ~4 | Guards on real Redis gate dials without losing contacts; 2 `it.fails` (provider share ignored by the tick; refused dial stamped `dialed_at`) |
+| `apps/server/test/integration/load/tenant-isolation.test.ts` | ~1 | A saturated tenant beside a small one: no starvation, caps and DNC scoped per tenant |
+| `apps/server/test/integration/load/burst-answers.test.ts` | ~1 | 60 answers in one burst with a third of the stations lost: exactly those abandoned, the rest bridged once |
+| `apps/server/test/integration/load/retry-storm.test.ts` | ~1 | Two leaders over a mostly-retryable roster: attempt numbers unique and gapless; retry campaign lineage |
+| `apps/server/test/integration/load/campaign-controls.test.ts` | ~1 | Pause / resume / stop with 60 calls in flight: no dial after pause or stop, `stopping` → `stopped` once drained |
+| `apps/server/test/integration/load/agent-state-linearizability.test.ts` | ~4 | Concurrent agent-state ops checked for linearizability against a model of the Lua scripts |
+| `apps/server/test/integration/load/leader-lease-contention.test.ts` | ~4 | Exactly one pacing leader among racers; renew never extends a new holder |
+| `apps/server/test/integration/load/concurrency-guard-storms.test.ts` | ~10 | Acquire / release / extend / reconcile storms never over cap, nothing leaked; 2 `it.fails` (lowered limit cached stale) |
+| `apps/server/test/integration/load/token-redemption-races.test.ts` | ~5 | Station and carrier WS tokens: one redemption wins, purposes never cross |
+| `apps/server/test/integration/load/contact-claim-contention.test.ts` | ~7 | Concurrent claimers and settlers, `SKIP LOCKED`, DNC racing claims, overlapping stranded-contact sweeps |
+| `apps/server/test/integration/load/floor-morning-rush.test.ts` | ~5 | 90 agents sign in, join, connect and poll across 3 tenants; every body swept for foreign ids |
+| `apps/server/test/integration/load/session-join-races.test.ts` | ~3 | Racing joins: one session, the documented 409, one "session started" event |
+| `apps/server/test/integration/load/disposition-storm.test.ts` | ~2 | Concurrent and duplicate dispositions with supervisor reads: exactly-once effects, no deadlocks; 1 `it.fails` (stale replay reopens a contact) |
+| `apps/server/test/integration/load/campaign-mutation-races.test.ts` | ~6 | Racing lifecycle and PATCH requests end legal and audited; 2 `it.fails` (audit `from`, combined calling window) |
+| `apps/server/test/integration/load/roster-ingest-concurrency.test.ts` | ~3 | Concurrent ingests: totals exact, chunk idempotency keys honoured |
+| `apps/server/test/integration/load/rate-limit-bursts.test.ts` | ~5 | Exact ceilings, 429 body and headers, per-client buckets, probes and webhooks unaffected |
+| `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~3 | A tiny and a starved pg pool, Redis cut and restored: probes correct, no 401 sign-outs, recovery |
+| `apps/server/test/integration/load/hostile-input-fuzz.test.ts` | ~5 | Seeded fuzz over every route from `onRoute`: 4xx per contract, never a 500 or a stack; 1 `it.fails` (headerless multipart part hangs) |
+
+Harnesses beside them: `integration/load/floor-harness.ts` and `floor-pool.ts` (multi-tenant world
+on one real `AgencyRuntime`), `station-floor-harness.ts`, `voicelink-load-harness.ts` (real
+`buildApp` pointed at the mock carrier, `assertNoLeaks`), `load-harness.ts` (bulk-seeded floor for
+the API suites), `unit/load/station-load-harness.ts`.
+
 ## `grafana`
 
 ### `grafana/`

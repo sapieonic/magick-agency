@@ -615,7 +615,11 @@ export class WebRtcBridgeManager {
         );
         await this.hangupProviderLeg(session);
       }
-      await webrtcCallRepository.update(record.id, { provider_call_id: session.providerCallId });
+      // The carrier's REAL id wins when it is already known: a carrier that dials (its
+      // `start` frame or a webhook) before its own add_lead response reaches us has
+      // already backfilled `provider_call_id` (`persistCarrierCallId`), and this
+      // dial-time placeholder — our own call id, for VoiceLink — would overwrite it.
+      await webrtcCallRepository.update(record.id, { provider_call_id: session.carrierCallId ?? session.providerCallId });
     } catch (err) {
       // (rejection of telephony init is reported as a completed `failed` call via
       // endCall below — not a pre-flight rejection.)
@@ -1362,19 +1366,35 @@ export class WebRtcBridgeManager {
         this.anchorAnswer(session);
         if (session.status !== 'in_progress') {
           session.status = 'in_progress';
-          await webrtcCallRepository.update(callId, { status: 'in_progress', answered_at: session.answeredAt });
+          // Tracked: the terminal write in `endCall` must not overtake it.
+          await session.trackProgressWrite(
+            webrtcCallRepository.update(callId, { status: 'in_progress', answered_at: session.answeredAt }),
+          );
           this.notifyBrowser(session, { event: 'status', status: 'answered' });
         }
         return;
       case 'ringing':
         if (session.status === 'initiating') {
           session.status = 'ringing';
-          await webrtcCallRepository.update(callId, { status: 'ringing' });
+          await session.trackProgressWrite(webrtcCallRepository.update(callId, { status: 'ringing' }));
           this.notifyBrowser(session, { event: 'status', status: 'ringing' });
         }
         return;
       case 'hangup':
       case 'error': {
+        // A second terminal while the first one's teardown is still in flight
+        // (`endHandled` is claimed ~100 lines before `sessions.delete`, across the
+        // terminal write). VoiceLink posts `call.ended` and then `call.completed`, and
+        // only the second carries the recording URL; delivered concurrently (or
+        // retried), it lands in this window. Routed through `endCall` it would set
+        // `session.recordingUrl` after the terminal write was composed and then return
+        // at `endHandled` — the recording silently lost, and the analysis job left
+        // waiting for one that never comes. It is a late terminal in all but name, so
+        // it takes the late path, which fills the recording and carrier id idempotently.
+        if (session.endHandled) {
+          await this.persistLateVoicelinkTerminal(callId, event, norm);
+          return;
+        }
         // Terminal. If we're already awaiting carrier confirmation of a local
         // hangup, THIS is that confirmation — finalize with the pending intent.
         if (session.ending) {
@@ -1630,6 +1650,11 @@ export class WebRtcBridgeManager {
     if (opts.hangupProvider) await this.hangupProviderLeg(session);
 
     const recordingUrl = opts.recordingUrl ?? session.recordingUrl ?? undefined;
+    // A `ringing`/`in_progress` write still in flight would otherwise be free to land
+    // after this one (two pool connections, no order between them) and leave a live
+    // status on a terminal row. None can start from here on: every progress path
+    // refuses once `endHandled` is set above.
+    await session.progressWritesSettled();
     try {
       await webrtcCallRepository.update(callId, {
         status: opts.status,
