@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { Bell, ChartNoAxesCombined, ListChecks, PhoneOff, Plus, X, type LucideIcon } from 'lucide-react';
+import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import { hasPermission, type Permission } from '../../utils/permissions';
@@ -150,6 +151,8 @@ export function AgencySidebar({ onClose }: Props) {
         exists. If this ever needs to be a global entry point it needs a
         campaign picker first, not a link.
       */}
+
+      <AppVersion version={__APP_VERSION__} />
     </aside>
   );
 }

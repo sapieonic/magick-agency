@@ -1,0 +1,53 @@
+name: Release Please
+
+# Per-component semantic versioning (docs/operations.md "Releases and versioning", B24).
+# On every push to main, release-please reads the Conventional Commits since each
+# component's last release and keeps one release PR open with the version bumps and
+# CHANGELOG.md entries. Merging that PR tags each released component (`server-v0.2.0`,
+# `console-v0.1.1`, ...) and publishes a GitHub Release with its changelog section.
+# Config: release-please-config.json; current versions: .release-please-manifest.json.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+# One run at a time, and a running one is never cancelled: a cancelled run can leave a
+# release tagged without its GitHub Release, or the release PR half updated. (A run still
+# queued is replaced by a newer push, which is harmless: the newer run sees the same history.)
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release PR and releases
+    runs-on: ubuntu-latest
+    steps:
+      # RELEASE_PLEASE_TOKEN (a fine-grained PAT or GitHub App token with contents and
+      # pull-requests write) is optional. With the default GITHUB_TOKEN the release PR
+      # is opened, but GitHub does not run CI or the PR title check on it, and tags it
+      # pushes do not trigger other workflows.
+      - uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Summarise
+        if: ${{ steps.release.outputs.releases_created == 'true' }}
+        env:
+          PATHS_RELEASED: ${{ steps.release.outputs.paths_released }}
+          OUTPUTS: ${{ toJSON(steps.release.outputs) }}
+        run: |
+          {
+            echo '### Released'
+            echo
+            echo "$OUTPUTS" | jq -r --argjson paths "$PATHS_RELEASED" \
+              '. as $o | $paths[] | "- `\(.)`: \($o["\(.)--tag_name"])"'
+          } >> "$GITHUB_STEP_SUMMARY"

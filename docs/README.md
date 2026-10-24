@@ -51,9 +51,9 @@ Details and next steps: [`status.md`](status.md).
 | [`intent-and-plan.md`](intent-and-plan.md) | What it is for, the settled product decisions, why it is built this way, the delivery phases, invariants, out of scope |
 | [`architecture.md`](architecture.md) | How it is built: packages, server composition and start/stop order, the public API layer and internal handler instance, identity, dialer runtime, voice engine, analysis, DNC, audit, UIs, observability, tests, CI |
 | [`modules.md`](modules.md) | Every module and file group, what it does, and which test files cover it |
-| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B23, rulings Q1–Q9 and later rulings, still open with owner |
+| [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B24, rulings Q1–Q9 and later rulings, still open with owner |
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
-| [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count |
+| [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |
 | [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo |

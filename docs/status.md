@@ -159,11 +159,36 @@ may be queued; `StationTokenStore.mint`'s local fallback during a Redis error is
 `verifyAndConsume`, so it fails closed and is dead code; `nextWindowOpen` returns up to an hour late
 on a spring-forward day for a window opening in the skipped hour (never early).
 
+### Releases and the version display 2026-10-23 (B24)
+
+| Area | What changed |
+|---|---|
+| Releases | release-please (`release-please-config.json`, `.release-please-manifest.json`, `.github/workflows/release-please.yml`): every workspace package has its own version, tag, GitHub Release and `CHANGELOG.md`, all starting at 0.1.0; PR titles checked as Conventional Commits (`pr-title.yml`); `pnpm test:release` guards the config in CI. Not yet run on GitHub: it needs the repository settings in [`operations.md`](operations.md), "Repository settings it needs" |
+| Version display | `AppVersion` (`packages/web-ui`) at the foot of every sidebar in both apps, and inline in the agent nav and the station header; the server's boot line names its version (`magick-agency v<version> listening`) |
+
 ## Test counts
 
 Latest run, 2026-10-23, after the load and scenario suites, `apps/server` only, from inside the
 package: lint clean in 8 packages; unit 6755 passed + 4 expected fail + 42 skipped (332 files);
 integration 1288 passed + 10 expected fail (141 files, about 9.5 min on 4 CPUs; the load files add about 5). Other packages are unchanged since the run below.
+
+Run of 2026-10-23, after release-please and the version display (B24), unit suites from
+inside each package (integration not re-run: neither change touches SQL):
+
+| Package | Unit |
+|---|---|
+| `apps/server` | 6703 passed + 42 skipped |
+| `packages/db` | 426 |
+| `packages/domain` | 53 |
+| `packages/contracts` | 77 |
+| `packages/observability` | 14 |
+| `packages/web-ui` | 235 |
+| `apps/console` | 4416 |
+| `apps/super-admin` | 423 |
+| `grafana` (`pnpm test:grafana`) | 31 |
+| `tooling` (`pnpm test:release`) | 10 |
+
+`pnpm lint`: clean in 8 packages.
 
 Run of 2026-10-17, after the tidy-up, from inside each package:
 
@@ -315,7 +340,7 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       `aws/terraform` default) that is all of the RAM; lower the heap or size up before load.
 - [ ] `NODE_ENV=production` (the image sets it); `DATABASE_URL` without TLS parameters; `DB_SSL_CA`
       if the database uses a private CA.
-- [ ] First boot logs `migrations complete` before `magick-agency listening` (the entrypoint runs
+- [ ] First boot logs `migrations complete` before `magick-agency v<version> listening` (the entrypoint runs
       them; a failure stops the container).
 - [ ] Firebase: agency's domain in the authorised domains, `FIREBASE_PROJECT_ID` set (no service
       account: tokens are verified against Google's public keys).

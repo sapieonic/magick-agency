@@ -22,8 +22,8 @@ system, repo or external design doc.
   it. Each worktree gets its own test database (see below).
 - **Contracts, schema and composition files change deliberately.** `packages/contracts`,
   `packages/db/migrations`, `apps/server/src/seams/**`, `apps/server/src/{app.ts,app-context.ts,index.ts}`,
-  `apps/server/src/config/{index,load,schema,env}.ts`, `config/blocks/base.ts`, root config and CI are
-  shared by every module area: change them with their consumers and tests in the same commit.
+  `apps/server/src/config/{index,load,schema,env}.ts`, `config/blocks/base.ts`, root config, CI and
+  the release-please config are shared by every module area: change them with their consumers and tests in the same commit.
   Never edit or renumber an applied migration; add a new one.
 - **Module-area files:** each area (platform, agency, voice, analysis) adds config only in
   `apps/server/src/config/blocks/<area>.ts`, routes only in `apps/server/src/api/<area>.plugin.ts`,
@@ -35,6 +35,11 @@ system, repo or external design doc.
 - **Guard tests to keep green:** route tables enumerated from `onRoute`, agent-reach tests,
   config-blocks-disjoint, the bridge seam contract, the VoiceLink carrier fixture, the branding
   guards in all three apps, the console dev-proxy prefixes test, the error-code unions.
+- **Releases are release-please's** (`docs/operations.md` "Releases and versioning", B24). PR titles
+  are Conventional Commits (`feat(console): …`, `fix(server)!: …`); they become the squash commit that
+  picks each component's next version. Never hand-edit a `package.json` `version`, a `CHANGELOG.md`
+  or `.release-please-manifest.json`. A new workspace package gets a component in
+  `release-please-config.json` and a manifest entry in the same commit (`pnpm test:release`).
 - **Scoped git:** `git add <paths>` only; no `git add -A`, no `git stash`. Nothing is pushed
   without Manas.
 - Zod `.refine` runs on a dirty result: guard `BigInt` / `JSON.parse` inside it.
@@ -61,6 +66,7 @@ pnpm test                # unit, all packages
 pnpm test:integration    # real Postgres/Redis (needs infra:up); runs packages serially
 pnpm build
 pnpm test:grafana        # alert rules + dashboard vs metric declarations (grafana/scripts)
+pnpm test:release        # release-please config vs workspace packages and versions
 
 docker build -f docker/Dockerfile -t magick-agency-server .     # production server image
 docker build -f docker/web.Dockerfile -t magick-agency-web .     # nginx + both UIs
