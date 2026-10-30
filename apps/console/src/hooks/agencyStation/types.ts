@@ -2,9 +2,11 @@ import type {
   AgencyAgentState,
   AgencyMissedRelease,
   AgencyReservedAttempt,
+  AgencySessionBootstrap,
   AgencyStationErrorFrame,
   AgencyStationReleasedFrame,
 } from '../../types/agency';
+import type { AgencyManualCall } from '../../types/softphone';
 import type { WrapupAnchor } from '../../utils/agencyWrapup';
 import type { DiagnosticEntry } from '../../utils/agencyDiagnostics';
 
@@ -15,6 +17,19 @@ import type { DiagnosticEntry } from '../../utils/agencyDiagnostics';
  * the liveness rules) can name them without importing the hook, and re-exported
  * from `hooks/useAgencyStation` so every existing import keeps working.
  */
+
+/**
+ * What the station socket needs from a session: its id, the first upgrade URL
+ * (token appended) and the liveness intervals — and nothing about a campaign.
+ *
+ * A campaign session's `AgencySessionBootstrap` is one; so is a soft-phone
+ * session (`docs/softphone.md` §2), which has no campaign, no catalog and no
+ * break reasons, and connects the same socket to receive `manual_call` frames.
+ * `campaign_id` is read for analytics only.
+ */
+export type StationSocketBootstrap = Pick<AgencySessionBootstrap, 'session_id' | 'station_ws_url' | 'intervals'> & {
+  campaign_id?: string | null;
+};
 
 export type StationConnection =
   | 'idle'
@@ -190,6 +205,15 @@ export interface UseAgencyStationResult {
   diagnostics: readonly DiagnosticEntry[];
   // `hangup` removed — see the note where its implementation was.
   // Hanging up is `hangupAttempt()` in `src/api/agency.ts`, not a socket frame.
+  /**
+   * The session's soft-phone call as the last `manual_call` frame stated it
+   * (`docs/softphone.md` §4.1 step 5): the WHOLE row, replaced on every frame,
+   * never patched. `null` until a frame arrives. A `ready` does not clear it —
+   * the server re-sends `manual_call` after a reconnect reattaches a live call
+   * (§4.1 step 9), and a call that settled while the socket was away is the
+   * soft phone's to reconcile against `GET /softphone/bootstrap`.
+   */
+  manualCall: AgencyManualCall | null;
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
   reconnect: () => void;
   /**

@@ -50,11 +50,14 @@ import type { AgencyAgentState } from '../types/agency';
  */
 export function useStationUnloadGuard({
   agentStateRef,
+  busyRef,
   onPageHide,
   onRestore,
 }: {
   /** The agent state as of the last frame — see `useAgencyStation`. */
   agentStateRef: MutableRefObject<AgencyAgentState>;
+  /** A customer on the line that the agent state does not show (a soft-phone call, during `break`). */
+  busyRef?: MutableRefObject<boolean>;
   /** Close the station socket: the page is going away. */
   onPageHide: () => void;
   /** Reattach after a back/forward-cache restore. */
@@ -63,7 +66,8 @@ export function useStationUnloadGuard({
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent): void => {
       const state = agentStateRef.current;
-      if (state !== 'reserved' && state !== 'on_call' && state !== 'wrapup') return;
+      const busy = busyRef?.current === true;
+      if (!busy && state !== 'reserved' && state !== 'on_call' && state !== 'wrapup') return;
       event.preventDefault();
       event.returnValue = '';
     };
@@ -81,5 +85,5 @@ export function useStationUnloadGuard({
       window.removeEventListener('pagehide', onPageHide);
       window.removeEventListener('pageshow', onPageShow);
     };
-  }, [agentStateRef, onPageHide, onRestore]);
+  }, [agentStateRef, busyRef, onPageHide, onRestore]);
 }
