@@ -174,13 +174,19 @@ describe('Switch to soft phone', () => {
       fireEvent.click(screen.getByTestId('switch-to-softphone'));
     });
     expect(screen.getByTestId('queued-break-chip').textContent).toMatch(/Switching to the soft phone after this call/);
-    // The button steps aside while its request is queued.
-    expect(screen.queryByTestId('switch-to-softphone')).toBeNull();
+    // The button stays in place, disabled, while its request is queued (disable, don't remove).
+    const queued = screen.getByTestId('switch-to-softphone');
+    expect(queued.getAttribute('aria-disabled')).toBe('true');
+    expect(queued.textContent).toBe('Switching after this call');
+    fireEvent.click(queued);
+    expect(mocks.switchToSoftphone).toHaveBeenCalledTimes(1);
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Cancel the switch to the soft phone' }));
     });
     expect(mocks.cancelQueuedBreak).toHaveBeenCalledWith('sess-1', 't-1', 'a-1');
     expect(screen.queryByTestId('queued-break-chip')).toBeNull();
+    expect(screen.getByTestId('switch-to-softphone').getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByTestId('switch-to-softphone').textContent).toBe('Switch to soft phone');
   });
 
   it('queued, then applied at the end of wrap-up by the frame', async () => {

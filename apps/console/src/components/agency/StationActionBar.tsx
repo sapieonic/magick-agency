@@ -111,23 +111,23 @@ export function StationActionBar({
 
       {/*
         Switch to soft phone (SP7). A presence action like Break, so it sits beside
-        Break and never between Save and Hang up. While a switch is queued the pill
-        below says so and carries the ✕; the button steps aside rather than
-        offering the same request twice. `aria-disabled` while a request is in
-        flight, never `disabled`, for the focus reason `BreakMenu` gives.
+        Break and never between Save and Hang up. While a switch is queued it stays
+        where it is — the station disables, it never removes, so nothing after it
+        moves — reading "Switching after this call", and the pill below carries the
+        ✕. `aria-disabled`, never `disabled`, for the focus reason `BreakMenu` gives.
       */}
-      {softphoneAvailable && !cons.pendingSoftphone ? (
+      {softphoneAvailable ? (
         <button
           type="button"
           className={styles.mute}
-          aria-disabled={cons.breakBusy || undefined}
+          aria-disabled={cons.breakBusy || cons.pendingSoftphone || undefined}
           onClick={() => {
-            if (!cons.breakBusy) cons.requestSoftphone();
+            if (!cons.breakBusy && !cons.pendingSoftphone) cons.requestSoftphone();
           }}
           data-testid="switch-to-softphone"
         >
           <Phone size={15} aria-hidden="true" style={{ marginRight: 6 }} />
-          Switch to soft phone
+          {cons.pendingSoftphone ? 'Switching after this call' : 'Switch to soft phone'}
         </button>
       ) : null}
 
