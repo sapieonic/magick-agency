@@ -638,7 +638,12 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
           kind: 'dnc',
           refusal,
           overrides,
-          description: describeDncRefusal(refusal, { number, campaignName }),
+          // As dialled: a number typed without a country code is read in the
+          // account's (the "+91" chip beside the field), so say it with it.
+          description: describeDncRefusal(refusal, {
+            number: number.startsWith('+') ? number : `${countryCode}${number}`,
+            campaignName,
+          }),
         });
         return;
       case 'outside_calling_hours':
