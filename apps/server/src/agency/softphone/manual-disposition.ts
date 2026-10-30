@@ -16,7 +16,7 @@ import type { AgencyCampaignRecord, AgencyContactRecord } from '../../db/models/
 import { resolveDisposition, validateDispositionFields } from '../disposition.js';
 import { resolveDispositionDecision, type DispositionDecision } from '../disposition-policy.js';
 import { resolveCallingWindow, scheduleCallbackInWindow } from '../calling-hours.js';
-import { validateCallFieldValues } from './call-fields.js';
+import { storedValuesInForce, submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import type { SoftphoneRefusal } from './types.js';
 
 function nonEmpty(catalog: unknown): catalog is AgencyDisposition[] {
@@ -64,7 +64,9 @@ export interface PreparedManualDisposition {
  * Validate a submitted outcome: the code against `catalog` (`resolveDisposition`),
  * its note / callback against the entry (`validateDispositionFields`), and the call
  * fields against the field set in force WITH `required` enforced — on the submitted
- * values when the request carries them, else on the stored ones.
+ * values when the request carries them, else on the stored ones (those of fields
+ * still in force: `storedValuesInForce`). Omitted `fields`, and `{}` while no call
+ * fields are in force, leave the stored values unchanged (`submittedCallFields`).
  */
 export function prepareManualDisposition(input: {
   catalog: AgencyDisposition[];
@@ -85,9 +87,10 @@ export function prepareManualDisposition(input: {
     const reason = fields.code === 'note_required' || fields.code === 'datetime_required' ? fields.code : 'invalid_callback_at';
     return { ok: false, refusal: { code: 'disposition_invalid', reason } };
   }
+  const submitted = submittedCallFields(input.callFields, input.submittedFields);
   const values = validateCallFieldValues(
     input.callFields,
-    input.submittedFields === undefined ? input.storedFields : input.submittedFields,
+    submitted === undefined ? storedValuesInForce(input.callFields, input.storedFields) : submitted,
     { requireFilled: true },
   );
   if (!values.ok) return { ok: false, refusal: { code: 'fields_invalid', details: values.details } };
@@ -97,7 +100,7 @@ export function prepareManualDisposition(input: {
       entry: resolved.entry,
       notes: fields.notes,
       callbackAt: fields.callbackAt,
-      fields: input.submittedFields === undefined ? undefined : values.values,
+      fields: submitted === undefined ? undefined : values.values,
     },
   };
 }

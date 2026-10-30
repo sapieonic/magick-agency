@@ -50,7 +50,7 @@ import type { AgencyDialer } from '../agency-dialer.js';
 import type { DncRegistry } from '../dnc-registry.js';
 import { markDnc } from '../dnc-mark.js';
 import type { StationRegistry } from '../station-registry.js';
-import { validateCallFieldValues } from './call-fields.js';
+import { submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import { runManualPredial } from './manual-predial.js';
 import { manualDispositionDecision, prepareManualDisposition, resolveManualCatalog } from './manual-disposition.js';
 import type { ManualDialer } from './manual-dialer.js';
@@ -382,8 +382,9 @@ export class SoftphoneService {
   /**
    * Replace the call's field values and/or notes while it is live or awaiting its
    * outcome (last write wins; `notes: ''` clears). Fields are validated against the
-   * set in force, `required` not enforced (`fields_invalid`). A settled call is
-   * `call_settled`.
+   * set in force, `required` not enforced (`fields_invalid`), and replace the stored
+   * values wholesale; omitted `fields`, or `{}` while no call fields are in force, leave
+   * them unchanged (`submittedCallFields`). A settled call is `call_settled`.
    */
   async updateDetails(
     actor: SoftphoneActor,
@@ -396,9 +397,13 @@ export class SoftphoneService {
     let fields: AgencyCallFieldValues | undefined;
     if (patch.fields !== undefined) {
       const settings = await agencySoftphoneSettingsRepository.get(actor.tenantId, actor.accountId);
-      const valid = validateCallFieldValues(settings.call_fields, patch.fields, { requireFilled: false });
-      if (!valid.ok) return refuse({ code: 'fields_invalid', details: valid.details });
-      fields = valid.values;
+      // `{}` with no call fields in force is no change (see `submittedCallFields`).
+      const submitted = submittedCallFields(settings.call_fields, patch.fields);
+      if (submitted !== undefined) {
+        const valid = validateCallFieldValues(settings.call_fields, submitted, { requireFilled: false });
+        if (!valid.ok) return refuse({ code: 'fields_invalid', details: valid.details });
+        fields = valid.values;
+      }
     }
     const updated = await agencyManualCallRepository.updateDetails(found.call.id, {
       ...(fields !== undefined ? { fields } : {}),

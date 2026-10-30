@@ -101,3 +101,36 @@ export function validateCallFieldValues(
   }
   return details.length > 0 ? { ok: false, details } : { ok: true, values: out };
 }
+
+/**
+ * What a request's `fields` means for the stored values (`PATCH /calls/:id` and the
+ * outcome; docs/softphone.md §6). `undefined` = leave them unchanged; anything else
+ * replaces them wholesale once validated.
+ *
+ * - Omitted (`undefined`): unchanged.
+ * - `{}` while the account has NO call fields in force: unchanged too. Such a client
+ *   has no field it could have entered, so its empty object carries no intent, and
+ *   reading it as "clear" would silently wipe values saved under an earlier field
+ *   set. While call fields ARE in force, `{}` is a real clear (the agent emptied
+ *   every field), validated like any other value set.
+ */
+export function submittedCallFields(fields: readonly AgencyCallField[], submitted: unknown): unknown {
+  if (submitted === undefined) return undefined;
+  const empty = submitted !== null && typeof submitted === 'object' && !Array.isArray(submitted)
+    && Object.keys(submitted).length === 0;
+  return empty && fields.length === 0 ? undefined : submitted;
+}
+
+/**
+ * The stored values of the fields still in force. A value saved under an earlier field
+ * set, for a key the admin has since removed, stays stored but is not re-validated
+ * when the outcome reuses the stored values: it was valid when saved, and refusing
+ * `fields_invalid` on it would leave the agent nothing to fix.
+ */
+export function storedValuesInForce(
+  fields: readonly AgencyCallField[],
+  stored: AgencyCallFieldValues,
+): AgencyCallFieldValues {
+  const keys = new Set(fields.map((f) => f.key));
+  return Object.fromEntries(Object.entries(stored).filter(([k]) => keys.has(k)));
+}

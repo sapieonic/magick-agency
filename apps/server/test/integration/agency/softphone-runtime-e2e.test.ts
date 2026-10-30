@@ -410,6 +410,61 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     expect(await runtime.agents.manualCallOf(session.id)).toBeNull();
   });
 
+  it('call fields: omitted keeps them, {} keeps them once the account has no call fields, {} clears while it has', async () => {
+    const agent = randomUUID();
+    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const setFields = (fields: unknown[]) => getTestPool().query(
+      `INSERT INTO agency_softphone_settings (tenant_id, account_id, call_fields) VALUES ($1, $2, $3::jsonb)
+       ON CONFLICT (tenant_id, account_id) DO UPDATE SET call_fields = EXCLUDED.call_fields`,
+      [TENANT, ACCOUNT, JSON.stringify(fields)]);
+    await setFields([{ key: 'policy_no', label: 'Policy number', type: 'text' }]);
+    const session = await softphoneSession(agent);
+    const station = await openStation(session.id);
+    try {
+      const placed = await runtime.softphone.placeCall(actor(agent), {
+        sessionId: session.id, to: '+919811100098', campaignId: campaign.id, fields: { policy_no: 'P-1' },
+      });
+      if (!placed.ok) throw new Error(placed.refusal.code);
+      const callId = placed.call.id;
+      const leg = await webrtcCallIdOf(callId);
+      answer(leg);
+      await waitFor('bridged', () => lastCall(station)?.state === 'bridged');
+
+      // Notes only: the fields are untouched.
+      const notesOnly = await runtime.softphone.updateDetails(actor(agent), callId, { notes: 'Asked about renewal' });
+      expect(notesOnly.ok && notesOnly.call.fields).toEqual({ policy_no: 'P-1' });
+
+      // The admin removes every call field mid-call. A client with no field set sends {}:
+      // not a clear — nothing it could have entered — so the stored value stays.
+      await setFields([]);
+      const emptyPatch = await runtime.softphone.updateDetails(actor(agent), callId, { fields: {} });
+      expect(emptyPatch.ok && emptyPatch.call.fields).toEqual({ policy_no: 'P-1' });
+
+      await runtime.softphone.hangup(actor(agent), callId);
+      await carrierEnded(leg);
+      await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+      // The outcome with fields omitted: the stored value (of a field no longer in force)
+      // neither refuses it nor is wiped.
+      const outcome = await runtime.softphone.submitDisposition(actor(agent), callId, { code: 'interested' });
+      if (!outcome.ok) throw new Error(outcome.refusal.code);
+      expect((await manualRow(callId)).fields).toEqual({ policy_no: 'P-1' });
+
+      // With call fields in force, {} is the agent clearing them.
+      await setFields([{ key: 'policy_no', label: 'Policy number', type: 'text' }]);
+      const second = await runtime.softphone.placeCall(actor(agent), {
+        sessionId: session.id, to: '+919811100099', campaignId: campaign.id, fields: { policy_no: 'P-2' },
+      });
+      if (!second.ok) throw new Error(second.refusal.code);
+      const cleared = await runtime.softphone.updateDetails(actor(agent), second.call.id, { fields: {} });
+      expect(cleared.ok && cleared.call.fields).toEqual({});
+      expect((await manualRow(second.call.id)).fields).toEqual({});
+      await runtime.softphone.hangup(actor(agent), second.call.id);
+      await waitFor('second call settled', async () => (await manualRow(second.call.id)).settled_at);
+    } finally {
+      await getTestPool().query('DELETE FROM agency_softphone_settings WHERE tenant_id = $1 AND account_id = $2', [TENANT, ACCOUNT]);
+    }
+  });
+
   it('DNC: refused with the entry, overridable with a note (stored); a bad note and a failed lookup are not', async () => {
     const agent = randomUUID();
     const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });

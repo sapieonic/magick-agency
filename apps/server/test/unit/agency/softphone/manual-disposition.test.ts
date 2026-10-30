@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { AGENCY_DEFAULT_DISPOSITION_CATALOG, type AgencyCallField, type AgencyDisposition } from '@magick-agency/contracts/agency';
-import { validateCallFieldValues, CALL_FIELD_TEXT_MAX } from '../../../../src/agency/softphone/call-fields.js';
+import {
+  validateCallFieldValues, CALL_FIELD_TEXT_MAX, storedValuesInForce, submittedCallFields,
+} from '../../../../src/agency/softphone/call-fields.js';
 import {
   manualDispositionDecision,
   prepareManualDisposition,
@@ -112,6 +114,21 @@ describe('the submitted outcome', () => {
     const submitted = prepareManualDisposition({ ...base, storedFields: {}, code: 'sale', submittedFields: { policy_no: 'P-2' } });
     expect(submitted.ok && submitted.prepared.fields).toEqual({ policy_no: 'P-2' });
   });
+
+  it('omitted fields, and {} with no call fields in force, leave the stored values alone', () => {
+    const omitted = prepareManualDisposition({ ...base, code: 'sale' });
+    expect(omitted.ok && omitted.prepared.fields).toBeUndefined();
+    // The account has no call fields now; the call has values saved under the old set.
+    const noFields = { ...base, callFields: [], storedFields: { policy_no: 'P-9', gone: 'x' } };
+    const empty = prepareManualDisposition({ ...noFields, code: 'sale', submittedFields: {} });
+    expect(empty.ok).toBe(true);
+    expect(empty.ok && empty.prepared.fields).toBeUndefined();
+    // Stored values for keys no longer in force are not re-validated (nothing to fix).
+    expect(prepareManualDisposition({ ...noFields, code: 'sale' }).ok).toBe(true);
+    // With call fields in force, {} is a real clear — here refused: policy_no is required.
+    const cleared = prepareManualDisposition({ ...base, code: 'sale', submittedFields: {} });
+    expect(cleared.ok ? null : cleared.refusal.code).toBe('fields_invalid');
+  });
 });
 
 describe('the roster decision', () => {
@@ -151,5 +168,23 @@ describe('the roster decision', () => {
       callbackAt: new Date('2026-10-31T10:00:00Z'), placed: true, contact: null, tag: null,
     });
     expect(u.nextAttemptAt?.toISOString()).toBe('2026-10-31T10:00:00.000Z');
+  });
+});
+
+describe('what a request\'s fields mean', () => {
+  it('submittedCallFields: omitted is unchanged; {} is unchanged only with no call fields in force', () => {
+    expect(submittedCallFields(FIELDS, undefined)).toBeUndefined();
+    expect(submittedCallFields([], undefined)).toBeUndefined();
+    expect(submittedCallFields([], {})).toBeUndefined();
+    expect(submittedCallFields(FIELDS, {})).toEqual({});
+    // Not an empty object: passed on for validation to refuse or accept.
+    expect(submittedCallFields([], { policy_no: 'P' })).toEqual({ policy_no: 'P' });
+    expect(submittedCallFields([], null)).toBeNull();
+    expect(submittedCallFields([], [])).toEqual([]);
+  });
+
+  it('storedValuesInForce keeps only the keys of fields in force', () => {
+    expect(storedValuesInForce(FIELDS, { policy_no: 'P', gone: 'x' })).toEqual({ policy_no: 'P' });
+    expect(storedValuesInForce([], { policy_no: 'P' })).toEqual({});
   });
 });

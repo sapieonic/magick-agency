@@ -71,7 +71,13 @@ Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-1
 
 `call_fields` entries: `{ key, label, type: 'text'|'number'|'choice'|'boolean'|'date', options?,
 required? }`, at most 20, snake_case keys up to 50 chars, unique. Values on a call are validated
-against the set in force when they are saved; unknown keys are refused.
+against the set in force when they are saved; unknown keys are refused. A request's `fields`
+(`PATCH /calls/:id`, the outcome) replaces the stored values wholesale; omitted, it leaves them
+unchanged, and so does `{}` while the account has NO call fields in force (that client could not
+have entered anything, so its empty object is not a clear of values saved under an earlier set).
+While call fields are in force, `{}` is a real clear. An outcome that omits `fields` checks the
+stored values of the fields still in force only; a value kept for a field since removed is not
+re-validated (it was valid when saved, and the agent would have nothing to fix).
 
 ## 4. Runtime (`apps/server/src/agency/softphone/`)
 
@@ -222,7 +228,7 @@ from `audit` (a success without the envelope is a 502).
 | `GET /softphone/bootstrap` | `softphone.dial` | taggable campaigns (agent: active staffing; supervise: every campaign of the account), each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) |
 | `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state` |
 | `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
-| `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row |
+| `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
 | `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf |
 | `POST /softphone/calls/:id/dnc` | `softphone.dial` | `{ reason? }`: campaign scope when tagged, else tenant |
