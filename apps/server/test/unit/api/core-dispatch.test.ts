@@ -104,6 +104,8 @@ function extractCallSites(): { sites: CallSite[]; dynamic: string[]; callers: st
 const DYNAMIC_CALL_SITES: ReadonlyMap<string, string> = new Map([
   ['api/routes/proxy-agency-campaigns/spine.ts params.path',
     "the spine CSV export's page loop; its two callers pass literal `/agency-campaigns/${id}/attempts` and `/contacts` objects"],
+  ['api/routes/proxy-agency-softphone/calls.ts call.path',
+    "`forwardCall`, the five call actions' shared body; each route passes its own literal `/agency/softphone/calls…` object"],
   ['api/routes/proxy-agency-campaigns/lifecycle.ts <no path>',
     "`runTransition`, the four lifecycle controls' shared body (`{ ...call }`); each route passes its own literal `/agency-campaigns/${id}/<verb>` object"],
 ]);
@@ -164,6 +166,11 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-campaigns/stats.ts',
       'api/routes/proxy-agency-performance/floor.ts',
       'api/routes/proxy-agency-performance/per-agent.ts',
+      'api/routes/proxy-agency-softphone/calls.ts',
+      'api/routes/proxy-agency-softphone/reads.ts',
+      'api/routes/proxy-agency-softphone/sessions.ts',
+      'api/routes/proxy-agency-softphone/settings.ts',
+      'api/routes/proxy-agency-softphone/shared.ts', // the `CoreCallResult` type only; calls nothing
       'api/routes/proxy-agency-staffing/my.ts', // the batched campaign-label read
     ]);
     expect(sites.length).toBeGreaterThanOrEqual(30);

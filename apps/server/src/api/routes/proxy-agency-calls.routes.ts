@@ -244,7 +244,7 @@ const NON_ANALYTICS_CALL_FIELDS = [
  * reaches the client as written. Either way it carries nothing the caller could
  * act on; it exists to fix the content type, not to be read.
  */
-function decodeRawErrorBody(body: unknown): unknown {
+export function decodeRawErrorBody(body: unknown): unknown {
   if (!Buffer.isBuffer(body)) return body;
   try {
     const parsed: unknown = JSON.parse(body.toString('utf8'));
@@ -333,7 +333,21 @@ function shapeDetailResponse(
   if (!isDetailEnvelope(body)) return { ok: false };
 
   if (body.call === null) return { ok: true, body };
+  return { ok: true, body: { ...body, call: shapeMediaCall(body.call, grants, recordingPath) } };
+}
 
+/**
+ * The call half of {@link shapeDetailResponse}: one media leg's record (the formatter's
+ * object), reshaped for the console — the analytics allow-list when `agency.analytics` is
+ * off, `recording_url` repointed at `recordingPath` (or nulled when `agency.recording` is
+ * off). Shared with the soft phone's call detail (`proxy-agency-softphone/reads.ts`),
+ * whose media leg is the same record in the same envelope position.
+ */
+export function shapeMediaCall(
+  call: Record<string, unknown>,
+  grants: { analytics: boolean; recording: boolean },
+  recordingPath: string,
+): Record<string, unknown> {
   /*
    * ── The withheld response is BUILT, not filtered ──────────────────────────
    *
@@ -351,8 +365,8 @@ function shapeDetailResponse(
    * the cost this accepts.
    */
   const nextCall: Record<string, unknown> = grants.analytics
-    ? { ...body.call }
-    : projectFields(body.call, NON_ANALYTICS_CALL_FIELDS);
+    ? { ...call }
+    : projectFields(call, NON_ANALYTICS_CALL_FIELDS);
 
   /*
    * Repoint the recording at THIS plugin.
@@ -389,7 +403,7 @@ function shapeDetailResponse(
     // the real enforcement; this stops the console rendering a button that 403s.
     nextCall['recording_url'] = null;
   }
-  return { ok: true, body: { ...body, call: nextCall } };
+  return nextCall;
 }
 
 export async function proxyAgencyCallsRoutes(app: FastifyInstance): Promise<void> {

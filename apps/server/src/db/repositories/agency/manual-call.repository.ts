@@ -111,6 +111,13 @@ export interface AgencyManualCallListFilters {
   to?: Date;
 }
 
+/**
+ * A row of the two list reads: the wire row plus its media leg's `analysis_status`
+ * (NULL when there is no leg, it was purged, or analysis never ran). The console's
+ * `AgencyManualCallListRow` (`packages/contracts/src/api/agency/softphone.ts`).
+ */
+export type AgencyManualCallListRow = AgencyManualCall & { analysis_status: string | null };
+
 /** Why {@link AgencyManualCallRepository.recordDisposition} refused. */
 export type AgencyManualCallDispositionRefusal =
   /** No such call. */
@@ -587,7 +594,7 @@ export class AgencyManualCallRepository {
     filters: Omit<AgencyManualCallListFilters, 'agentUserId'>;
     after?: AgencyKeysetPosition;
     limit: number;
-  }): Promise<AgencyKeysetPage<AgencyManualCall>> {
+  }): Promise<AgencyKeysetPage<AgencyManualCallListRow>> {
     return this.listPage({ ...input, filters: { ...input.filters, agentUserId: input.agentUserId } });
   }
 
@@ -602,7 +609,7 @@ export class AgencyManualCallRepository {
     filters: AgencyManualCallListFilters;
     after?: AgencyKeysetPosition;
     limit: number;
-  }): Promise<AgencyKeysetPage<AgencyManualCall>> {
+  }): Promise<AgencyKeysetPage<AgencyManualCallListRow>> {
     return this.listPage(input);
   }
 
@@ -612,7 +619,7 @@ export class AgencyManualCallRepository {
     filters: AgencyManualCallListFilters;
     after?: AgencyKeysetPosition | undefined;
     limit: number;
-  }): Promise<AgencyKeysetPage<AgencyManualCall>> {
+  }): Promise<AgencyKeysetPage<AgencyManualCallListRow>> {
     const bind = params();
     const f = input.filters;
     const conditions = [
@@ -639,15 +646,26 @@ export class AgencyManualCallRepository {
     if (f.to) conditions.push(`m.created_at < ${bind.add(f.to)}::timestamptz`);
     if (input.after) conditions.push(keysetCondition(input.after, 'm', bind));
 
-    const { rows } = await getPool().query<AgencyManualCallJoinedRow & { cursor_at: string }>(
-      `SELECT ${WIRE_SELECT_SQL}, ${keysetAtSql('m.created_at')} AS cursor_at
+    // The media leg's summary status rides on each row (the list's Summary column): a
+    // LEFT JOIN on the row's own `webrtc_call_id`, bound to the same tenant and account,
+    // so a purged leg (no FK, independent retention) reads as NULL and never drops the row.
+    const { rows } = await getPool().query<
+      AgencyManualCallJoinedRow & { cursor_at: string; analysis_status: string | null }
+    >(
+      `SELECT ${WIRE_SELECT_SQL}, ac.analysis_status AS analysis_status,
+              ${keysetAtSql('m.created_at')} AS cursor_at
          FROM ${WIRE_FROM_SQL}
+         LEFT JOIN agency_calls ac
+           ON ac.id = m.webrtc_call_id AND ac.tenant_id = m.tenant_id AND ac.account_id = m.account_id
         WHERE ${conditions.join(' AND ')}
         ORDER BY m.created_at DESC, m.id DESC
         LIMIT ${bind.add(input.limit + 1)}`,
       bind.values,
     );
-    return toKeysetPage(rows, input.limit, (row) => projectManualCallRow(row));
+    return toKeysetPage(rows, input.limit, (row) => ({
+      ...projectManualCallRow(row),
+      analysis_status: row.analysis_status ?? null,
+    }));
   }
 }
 

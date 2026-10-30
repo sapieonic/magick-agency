@@ -371,6 +371,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // this route's floor).
     const session = await requireOwnedSession(request, reply, { supervisorMayAct: true });
     if (!session) return reply;
+    // A soft-phone session has no campaign pool to return the agent to, and can never
+    // be `available` (docs/softphone.md §2, §6).
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign to make the agent available on.',
+      };
+      return reply.code(409).send(err);
+    }
     const forced = await runtime.wrapup.force(session.id);
     if (!forced) {
       // Not in wrap-up — fall through to a plain return rather than 409ing. A
@@ -484,6 +493,18 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/break/cancel', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // A soft-phone session's only break is the reserved `soft_phone` one it was opened
+    // in, and nothing is ever queued on it (docs/softphone.md §6). A CAMPAIGN session's
+    // queued switch to the soft phone is an ordinary queued break (`breaks.queue` with
+    // `soft_phone`, `SoftphoneService.switchToSoftphone`), and cancelling it here is the
+    // console's ✕ on the queued-switch pill: it falls through to the cancel below.
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign break to cancel. Close the soft phone instead.',
+      };
+      return reply.code(409).send(err);
+    }
 
     const cancelled = runtime.breaks.cancel(session.id);
     const live = await runtime.agents.get(session.id);

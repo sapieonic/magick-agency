@@ -15,6 +15,7 @@ import { proxyAgencyCampaignsRoutes } from './routes/proxy-agency-campaigns.rout
 import { proxyAgencyStaffingRoutes } from './routes/proxy-agency-staffing.routes.js';
 import { proxyAgencyPerformanceRoutes } from './routes/proxy-agency-performance.routes.js';
 import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
+import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
 import type { AgencyCampaignRouteDeps } from './routes/agency-campaigns.routes.js';
 import { callAnalysisProfilesRoutes } from './routes/call-analysis-profiles.routes.js';
 import { platformProfileRouteAuth } from './profile-route-auth.js';
@@ -27,6 +28,8 @@ import { agencyCampaignRepository } from '../db/repositories/agency.repository.j
 export const AGENCY_ROUTE_PREFIXES = {
   /** The agency plugins on one prefix. */
   proxyAgency: '/proxy/agency',
+  /** The soft phone (`proxy-agency-softphone.routes.ts`, docs/softphone.md §6). */
+  proxyAgencySoftphone: '/proxy/agency/softphone',
   /** The station socket (`proxy-agency-station.routes.ts`). */
   proxyAgencyStation: '/proxy/agency/station',
   /** The DNC list. */
@@ -127,6 +130,22 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   // ── The agency call read (`requireUuidPathParams`, 400) ─────────────────────────────
   await app.register(async (scope) => {
     await scope.register(proxyAgencyCallsRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── The soft phone (`proxy-agency-softphone.routes.ts`) ─────────────────────────────
+  await app.register(async (scope) => {
+    // A malformed id is the not-found answer an unknown one gets (never a `22P02`): the
+    // call routes' `call_not_found`, the two switch routes' `Session not found`.
+    scope.addHook('preHandler', rejectMalformedIdParams(
+      { id: { status: 404, body: { error: 'Not Found', code: 'call_not_found', message: 'Call not found.' } } },
+      { onlyUnder: `${P.proxyAgencySoftphone}/calls/` },
+    ));
+    scope.addHook('preHandler', rejectMalformedIdParams(
+      // The session routes' own not-found (`requireOwnedSession`), as on the agent plugin.
+      { id: { status: 404, body: { error: 'Not Found', message: 'Session not found' } } },
+      { onlyUnder: `${P.proxyAgency}/sessions/` },
+    ));
+    await scope.register(proxyAgencySoftphoneRoutes, { prefix: P.proxyAgency });
   });
 
   // ── Call-analysis profiles ─────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ export type {
   AgencyManualCallCreateInput,
   AgencyManualCallDispositionRefusal,
   AgencyManualCallListFilters,
+  AgencyManualCallListRow,
 } from './agency/manual-call.repository.js';
 export {
   AgencySoftphoneSettingsRepository,

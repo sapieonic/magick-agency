@@ -121,6 +121,23 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/sessions/:id/break/cancel',
   'POST /proxy/agency/sessions/:id/leave',
   'POST /proxy/agency/sessions/:id/station-token',
+  // The soft phone (docs/softphone.md §6, SP4): `agency.softphone.dial` floors at `agent`.
+  // Every route but `PUT /softphone/settings` (`agency.softphone.manage`, account_admin).
+  // Another agent's calls and the account list are the internal handler's refusal
+  // (`call_not_found`, 403), applied from the role-derived `supervise`, not RBAC's.
+  'GET /proxy/agency/softphone/bootstrap',
+  'GET /proxy/agency/softphone/calls',
+  'GET /proxy/agency/softphone/calls/:id',
+  'GET /proxy/agency/softphone/calls/:id/recording',
+  'GET /proxy/agency/softphone/settings',
+  'PATCH /proxy/agency/softphone/calls/:id',
+  'POST /proxy/agency/sessions/:id/softphone',
+  'POST /proxy/agency/sessions/:id/softphone/return',
+  'POST /proxy/agency/softphone/calls',
+  'POST /proxy/agency/softphone/calls/:id/disposition',
+  'POST /proxy/agency/softphone/calls/:id/dnc',
+  'POST /proxy/agency/softphone/calls/:id/hangup',
+  'POST /proxy/agency/softphone/sessions',
 ].sort();
 
 /**

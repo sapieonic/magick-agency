@@ -5,7 +5,7 @@ import {
   insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession,
   insertManualCall, insertSoftphoneSession,
 } from './agency-factories.js';
-import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT } from '../setup/factories.js';
+import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertWebrtcCall } from '../setup/factories.js';
 
 /**
  * ─── `AgencyManualCallRepository` AGAINST REAL POSTGRES ─────────────────────
@@ -561,6 +561,22 @@ describe('AgencyManualCallRepository (integration)', () => {
       expect(page.rows[0]!.tag).toEqual({ campaign_id: campaign.id, campaign_name: 'Tagged' });
       // Another account sees none of it.
       expect((await repo.listForAccount({ tenantId: TENANT, accountId: OTHER_ACCOUNT, filters: {}, limit: 5 })).rows).toEqual([]);
+    });
+
+    it('rows carry the media leg\'s analysis_status; no leg, a purged leg and another account\'s leg read NULL', async () => {
+      const session = await insertSoftphoneSession();
+      const leg = await insertWebrtcCall({ campaign_id: null, analysis_status: 'completed' });
+      const foreignLeg = await insertWebrtcCall({ campaign_id: null, account_id: OTHER_ACCOUNT, analysis_status: 'pending' });
+      const withLeg = await insertManualCall(session, { webrtc_call_id: leg.id, created_at: new Date('2026-10-04T10:00:00Z') });
+      const noLeg = await insertManualCall(session, { created_at: new Date('2026-10-04T09:00:00Z'), state: 'ended', ended_at: new Date(), settled_at: new Date() });
+      const purged = await insertManualCall(session, { webrtc_call_id: randomUUID(), created_at: new Date('2026-10-04T08:00:00Z'), state: 'ended', ended_at: new Date(), settled_at: new Date() });
+      const foreign = await insertManualCall(session, { webrtc_call_id: foreignLeg.id, created_at: new Date('2026-10-04T07:00:00Z'), state: 'ended', ended_at: new Date(), settled_at: new Date() });
+      const page = await repo.listForAgent({ ...SCOPE, agentUserId: session.agent_user_id, filters: {}, limit: 10 });
+      expect(page.rows.map((r) => [r.id, r.analysis_status])).toEqual([
+        [withLeg.id, 'completed'], [noLeg.id, null], [purged.id, null], [foreign.id, null],
+      ]);
+      const account = await repo.listForAccount({ ...SCOPE, filters: { agentUserId: session.agent_user_id }, limit: 1 });
+      expect(account.rows[0]).toMatchObject({ id: withLeg.id, analysis_status: 'completed' });
     });
   });
 

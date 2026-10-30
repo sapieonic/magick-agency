@@ -6,7 +6,7 @@ caller IDs, recording setting and summary profile, and its outcome updates the r
 the number is on that campaign's roster. This page is the design the code implements: the data
 model, the runtime, the API, the console and the rules. Read it before changing anything under
 `apps/server/src/agency/softphone/`, the `softphone` routes, or the console's soft-phone screens.
-Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-10-30; §4.1 updated to the runtime the same day.
+Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-10-30; §4.1 updated to the runtime and §6 to the routes as built the same day.
 
 ## 1. Rulings it rests on (Manas, 2026-10-30)
 
@@ -190,30 +190,58 @@ an unanswered call that settles with no outcome (§4.1 step 6) is the "none" row
 
 ## 6. API
 
-Public routes under `/proxy/agency/softphone` (agency plugin), each calling an internal handler
-under `/api/v1/agency/softphone` through `callCore` (B16). Permission `agency.softphone.dial`
-(agent floor) unless noted; every route also requires `agency_softphone_enabled`.
+Public routes in `api/routes/proxy-agency-softphone.routes.ts` (with `proxy-agency-softphone/`),
+registered by the agency plugin under `/proxy/agency`; each runs an internal handler
+(`api/routes/agency/softphone.ts`, under `/api/v1/agency`) through `callCore` (B16). Every route
+authenticates, applies its RBAC floor, then requires `agency_softphone_enabled` (403
+`softphone_disabled`; after RBAC, so a caller without the permission is told that), validates its
+body or query (ids are UUIDs at the edge; a malformed `:id` is the family's not-found), and answers a
+runtime refusal as `{ error, code, message, ...fields }` with the status `errors.ts` names beside the
+code (`SOFTPHONE_REFUSAL_STATUS`, pinned against those comments). `503 dnc_unavailable` is passed
+through the error mask as a reviewed body.
 
-| Route | What |
-|---|---|
-| `GET /bootstrap` | taggable campaigns (agent: active staffing; `agency.supervise`: all in account) with their catalogs, caller IDs and window; untagged caller IDs and catalog; call fields; recording / profile summary; the caller's live session, live or unsettled manual call |
-| `POST /sessions` | open a soft-phone session (409 `session_on_campaign` with the campaign when live on one) |
-| `POST /calls` | `{ session_id, to, caller_id?, campaign_id?, fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
-| `PATCH /calls/:id` | `{ fields?, notes? }` while live or awaiting an outcome |
-| `POST /calls/:id/hangup` | |
-| `POST /calls/:id/disposition` | `{ code, notes?, callback_at?, fields? }`; `agency.supervise` may act on behalf |
-| `POST /calls/:id/dnc` | mark DNC (campaign scope when tagged, else tenant) |
-| `GET /calls`, `GET /calls/:id` | own calls; all in the account with `agency.supervise`; detail includes the media leg and analysis |
-| `GET /settings`, `PUT /settings` | `agency.softphone.manage` (account admin) for PUT; GET at agent floor |
-| `POST /proxy/agency/sessions/:id/softphone` and `/softphone/return` | switch from and back to a campaign (§4.2) |
+`supervise` (act on another agent's call, read the account's calls, tag any campaign) is derived by
+the public layer from the caller's ROLE holding `agency.supervise`, sent as `on_behalf` (body) or
+`supervise=true` (GET query), and never read from the request. The audited routes' internal
+answer is an envelope `{ answer, audit }`; the public layer sends `answer` and writes the audit row
+from `audit` (a success without the envelope is a 502).
 
-The campaign session routes (`available`, `break`, `break/cancel`, `force-available`) answer 409
-`wrong_session_kind` on a soft-phone session; `available` also answers 409 `manual_call_live`.
-New station frame: `manual_call { call: AgencyManualCall }`.
+| Method and path (`/proxy/agency`) | Permission | What |
+|---|---|---|
+| `GET /softphone/bootstrap` | `softphone.dial` | taggable campaigns (agent: active staffing; supervise: every campaign of the account), each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) |
+| `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state` |
+| `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
+| `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row |
+| `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
+| `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf |
+| `POST /softphone/calls/:id/dnc` | `softphone.dial` | `{ reason? }`: campaign scope when tagged, else tenant |
+| `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `from`, `to` (exclusive). Rows carry `agent_name` and the media leg's `analysis_status` |
+| `GET /softphone/calls/:id` | `softphone.dial` | `AgencyManualCallDetail`: the call (contact context, prior attempts, `agent_name`), `dispositioned_by_name`, the override notes, the media leg with the attempt detail's entitlement strip (`allow_recording`, `analyze_calls` of the account), `call_availability` |
+| `GET /softphone/calls/:id/recording` | `softphone.dial` | the bytes through the authenticated proxy (no signed URL), range forwarded; 403 `capability_disabled` without `allow_recording`; 404 `call_never_placed` / `call_purged` / no recording; own calls, any with supervise |
+| `GET /softphone/settings` | `softphone.dial` | `{ settings }` |
+| `PUT /softphone/settings` | `softphone.manage` | the whole row; 400 `settings_invalid` with `details[].path` (`disposition_catalog[i].code`, `call_fields[i].key`, `default_caller_id` not one of the account's numbers, `analysis_profile_id` not an active profile of the account, …) |
+| `POST /sessions/:id/softphone` | `softphone.dial` | switch a campaign session to the soft phone (§4.2), queued while reserved, on a call or in wrap-up; `wrong_session_kind` on a soft-phone session |
+| `POST /sessions/:id/softphone/return` | `softphone.dial` | back to `available`, or withdraw a queued switch; 409 `manual_call_live` (with the call) while a call is live or awaiting its outcome |
 
-Audit (`platform_audit_log`): `agency_manual_call.placed`, `.dnc_overridden`,
-`.hours_overridden`, `.dispositioned`, `.hung_up`, `.dnc_marked`; `agency_softphone_settings.updated`;
-the two session actions in §4.2. Resource types `agency_manual_call`, `agency_softphone_settings`.
+The two switch routes take the session routes' guard (`requireOwnedSession`: the caller's own
+session, else 404; a left session 409 `session_ended`). The campaign session routes answer 409
+`wrong_session_kind` on a soft-phone session: `available`, `break`, `break/cancel` and
+`force-available` (`available` also 409 `manual_call_live`). `break/cancel` on a CAMPAIGN session
+cancels a queued switch to the soft phone like any queued break. `leave` and `station-token` work
+on a soft-phone session; `leave` is refused while a call is live. The campaign join answers 409
+`session_on_softphone`. New station frame: `manual_call { call: AgencyManualCall }`.
+
+Audit (`platform_audit_log`, resource types `agency_manual_call`, `agency_softphone_settings`, and
+`agency_session`), each with the real actor and `campaign_id` set to the tag:
+`agency_manual_call.placed` (session, `dnc_overridden` / `hours_overridden` flags),
+`.dnc_overridden` (the note and the `dnc_entries` id), `.hours_overridden` (the note), `.hung_up`,
+`.dispositioned` (code, `replay`), `.dnc_marked` (scope, `dnc_recorded`; never the number), each
+with `on_behalf` when the call was another agent's; `agency_softphone_settings.updated` (`changed`
+keys); `agency_session.softphone_started` (from-state, `queued`) and `.softphone_ended` (from-state,
+`withdrawn`); `agency_session.joined` (`kind: softphone`) for the soft-phone session. Notes and
+call-field values never go in `details`. The campaign activity trail offers the session and
+manual-call actions (not the account-wide settings one) and the reaper's `audit_logs` events
+`agency_manual_call.orphaned` / `.lapsed`, which carry the tag in `event_data.campaign_id`.
 
 ## 7. Console
 
