@@ -118,6 +118,8 @@
   box-shadow: none;
 }
 
+/* `padding: 0`: the global button rule pads 18px a side, more than this 36px
+   box has, which squeezed the icon to nothing. */
 .backspace {
   flex: none;
   display: inline-flex;
@@ -125,6 +127,7 @@
   justify-content: center;
   width: 36px;
   height: 36px;
+  padding: 0;
   border: none;
   border-radius: 8px;
   background: transparent;
