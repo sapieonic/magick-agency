@@ -154,6 +154,15 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.created', label: 'Number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.deleted', label: 'Do-not-call entry removed', group: 'Calls', product: 'agency' },
+  // The soft phone (docs/softphone.md §6). "Soft-phone call" in every label: on this
+  // tenant-wide screen a bare "Call placed" would read as a campaign dial.
+  { value: 'agency_manual_call.placed', label: 'Soft-phone call placed', group: 'Calls', product: 'agency' },
+  { value: 'agency_manual_call.dnc_overridden', label: 'Soft-phone call placed despite do-not-call', group: 'Calls', product: 'agency' },
+  { value: 'agency_manual_call.hours_overridden', label: 'Soft-phone call placed outside calling hours', group: 'Calls', product: 'agency' },
+  { value: 'agency_manual_call.hung_up', label: 'Soft-phone call ended', group: 'Calls', product: 'agency' },
+  { value: 'agency_manual_call.dispositioned', label: 'Soft-phone call outcome saved', group: 'Calls', product: 'agency' },
+  { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls', product: 'agency' },
+  { value: 'agency_softphone_settings.updated', label: 'Soft-phone settings changed', group: 'Calls', product: 'agency' },
 
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned from campaign', group: 'Staffing', product: 'agency' },
@@ -162,6 +171,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_session.break_started', label: 'Agent break started', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.break_cancelled', label: 'Agent break cancelled', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.force_available', label: 'Agent made available by supervisor', group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.softphone_started', label: 'Agent switched to the soft phone', group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.softphone_ended', label: 'Agent returned from the soft phone', group: 'Staffing', product: 'agency' },
 
   // Team, and the PLATFORM product — see {@link AuditProduct}. The labels say
   // "invitation" rather than "invite" because the noun is what the reader is
@@ -187,6 +198,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_attempt', label: 'Call attempt' },
   { value: 'agency_disposition', label: 'Call disposition' },
   { value: 'agency_campaign_agent', label: 'Campaign agent assignment' },
+  { value: 'agency_manual_call', label: 'Soft-phone call' },
+  { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
   { value: 'dnc_entry', label: 'Do-not-call entry' },
   // "Invitation", not "Membership": the rows filed under it are about the token
   // and its life (sent, accepted), and on every refusal path there is no

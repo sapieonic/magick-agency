@@ -68,9 +68,10 @@ export type ActivityActionOption =
  * campaign is `agency_*` or `dnc_*`, which is why the boundary can be drawn on the
  * prefix.
  */
-type CampaignScopedAuditAction = Extract<
-  PlatformAuditAction,
-  `agency_${string}` | `dnc_${string}`
+type CampaignScopedAuditAction = Exclude<
+  Extract<PlatformAuditAction, `agency_${string}` | `dnc_${string}`>,
+  // The account's soft-phone settings are account-wide: no row of it carries a campaign.
+  'agency_softphone_settings.updated'
 >;
 
 /**
@@ -106,6 +107,12 @@ export const CORE_AGENCY_EVENT_TYPES = [
   'agency_campaign.stopping',
   'agency_campaign.stopped',
   'agency_campaign.completed',
+  // The reaper's two soft-phone sweeps (`reaper.ts` `closeManualRows`, docs/softphone.md
+  // §4.1 steps 8 and 10), actor `system:agency-reaper`. They carry the call's tag in
+  // `event_data.campaign_id`, so a call logged to this campaign that the reaper closed
+  // (orphaned by a restart, or its outcome lapsed) is on this trail; an untagged one is not.
+  'agency_manual_call.orphaned',
+  'agency_manual_call.lapsed',
 ] as const;
 
 type CoreAgencyEventType = (typeof CORE_AGENCY_EVENT_TYPES)[number];
@@ -146,6 +153,16 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_contacts.exported', label: 'Contact roster exported', group: 'Calls' },
   { value: 'dnc_entry.created', label: 'Marked do-not-call', group: 'Calls' },
   { value: 'dnc_entry.deleted', label: 'Do-not-call removed', group: 'Calls' },
+  // Soft-phone calls logged to this campaign (docs/softphone.md §6): the API layer's
+  // rows carry the tag as `campaign_id`, the reaper's carry it in `event_data`.
+  { value: 'agency_manual_call.placed', label: 'Soft-phone call placed', group: 'Calls' },
+  { value: 'agency_manual_call.dnc_overridden', label: 'Soft-phone call placed despite do-not-call', group: 'Calls' },
+  { value: 'agency_manual_call.hours_overridden', label: 'Soft-phone call placed outside calling hours', group: 'Calls' },
+  { value: 'agency_manual_call.hung_up', label: 'Soft-phone call ended', group: 'Calls' },
+  { value: 'agency_manual_call.dispositioned', label: 'Soft-phone outcome saved', group: 'Calls' },
+  { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls' },
+  { value: 'agency_manual_call.orphaned', label: 'Soft-phone call closed after a restart', group: 'Calls' },
+  { value: 'agency_manual_call.lapsed', label: 'Soft-phone outcome lapsed', group: 'Calls' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned', group: 'Staffing' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },
   { value: 'agency_session.joined', label: 'Agent joined', group: 'Staffing' },
@@ -153,6 +170,8 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_session.break_started', label: 'Break started', group: 'Staffing' },
   { value: 'agency_session.break_cancelled', label: 'Break cancelled', group: 'Staffing' },
   { value: 'agency_session.force_available', label: 'Made available by supervisor', group: 'Staffing' },
+  { value: 'agency_session.softphone_started', label: 'Switched to soft phone', group: 'Staffing' },
+  { value: 'agency_session.softphone_ended', label: 'Returned from soft phone', group: 'Staffing' },
 ] as const satisfies readonly ActivityActionOption[];
 
 type ServedAction = (typeof CAMPAIGN_ACTIVITY_ACTIONS)[number]['value'];

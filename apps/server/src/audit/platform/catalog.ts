@@ -32,6 +32,13 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_session.break_started',
   'agency_session.break_cancelled',
   'agency_session.force_available',
+  // The soft phone's switch from a campaign session and back (docs/softphone.md §4.2,
+  // SP7). Their own actions rather than `break_started` / `left`: the switch is entered
+  // only through the soft-phone routes, and a supervisor reading the campaign's trail is
+  // asking "when was this agent off the campaign, dialling by hand" — `details` carries
+  // the from-state and whether the start was queued behind a call or wrap-up.
+  'agency_session.softphone_started',
+  'agency_session.softphone_ended',
   'agency_attempt.hung_up',
   'agency_disposition.created',
   // The bulk export of a campaign's attempts or roster is not gated behind a
@@ -42,6 +49,22 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_contacts.exported',
   'agency_campaign_agent.assigned',
   'agency_campaign_agent.unassigned',
+  // ── The soft phone (docs/softphone.md §6) ─────────────────────────────────
+  // One row per soft-phone dial and per act on it. The two overrides are rows of
+  // their own beside `placed` (SP1, SP2): a dial placed THROUGH a DNC hit or a closed
+  // calling window is the compliance question, and its `details` carry the agent's
+  // note (and, for DNC, the `dnc_entries` id it overrode), so the answer does not
+  // depend on the call row outliving its retention.
+  'agency_manual_call.placed',
+  'agency_manual_call.dnc_overridden',
+  'agency_manual_call.hours_overridden',
+  'agency_manual_call.hung_up',
+  'agency_manual_call.dispositioned',
+  'agency_manual_call.dnc_marked',
+  // The account's soft-phone settings (`PUT /softphone/settings`): the untagged
+  // outcome catalog, the call fields, recording, the summary profile, the default
+  // caller ID. Account-wide, never campaign-scoped.
+  'agency_softphone_settings.updated',
   'dnc_entry.created',
   'dnc_entry.deleted',
   // ── Membership invitations ─────────────────────────────────────────────────
@@ -71,6 +94,10 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   'agency_attempt',
   'agency_disposition',
   'agency_campaign_agent',
+  // One soft-phone dial (`agency_manual_calls.id`), and the account's soft-phone
+  // settings row (`resource_id` is absent: one row per account, named by it).
+  'agency_manual_call',
+  'agency_softphone_settings',
   'dnc_entry',
   // The INVITATION, not the membership and not the user.
   //
