@@ -34,8 +34,10 @@ describe('WebRtcCallRepository — analysis columns', () => {
   describe('create()', () => {
     it('binds the pinned carrier credential, and NULL when the call is on the service’s own account', async () => {
       await repo.create({ tenant_id: 't1', account_id: 'a1', caller_id: '+91000', destination_phone: '+91999', provider: 'plivo', telephony_credential_id: 'cred-1' });
-      expect(firstQueryText()).toMatch(/telephony_credential_id\)\s*VALUES/);
+      // 15th column, then the soft-phone pair (0005) closes the list.
+      expect(firstQueryText()).toMatch(/telephony_credential_id,\s*origin, manual_call_id\)\s*VALUES/);
       expect(firstQueryValues()[14]).toBe('cred-1');
+      expect(firstQueryValues().slice(15)).toEqual(['campaign', null]);
       vi.clearAllMocks();
       mocks.poolQuery.mockResolvedValue({ rows: [{ id: 'wc-2' }], rowCount: 1 });
       await repo.create({ tenant_id: 't1', account_id: 'a1', caller_id: '+91000', destination_phone: '+91999' });
