@@ -201,11 +201,14 @@ export class SoftphoneService {
    * replica); `campaign_not_taggable`; `fields_invalid`; then the pre-dial's
    * `override_note_invalid`, `invalid_number`, `caller_id_not_allowed`,
    * `contact_in_flight`, `outside_calling_hours`, `dnc_listed`, `dnc_unavailable`
-   * (`manual-predial.ts`); and from the dial, `concurrency_limit` or
-   * `station_unavailable`.
+   * (`manual-predial.ts`); `dial_failed` when Redis cannot answer the session claim;
+   * and from the dial, `concurrency_limit`, `station_unavailable` or `dial_failed` (a
+   * bridge refusal this code does not name).
    *
    * On success the call is in the bridge's hands and the answer is the row as it is
-   * now (usually `dialing` or `ringing`); the `manual_call` frames carry the rest.
+   * now (usually `dialing` or `ringing`); the `manual_call` frames carry the rest. A
+   * dial the carrier refused outright is a success too, answered as the row it
+   * ended and settled as (`failed`).
    * A dial the carrier itself refused comes back `ok` with an ended, settled row.
    */
   async placeCall(actor: SoftphoneActor, req: PlaceCallRequest): Promise<SoftphoneResult<PlaceCallSuccess>> {
@@ -325,7 +328,9 @@ export class SoftphoneService {
     }
     if (!claim.ok) {
       await this.deps.manual.abandonUndialled(call.id);
-      return refuse({ code: 'not_on_softphone' });
+      // Redis did not answer: nothing says the agent is off the soft phone, so say what
+      // happened (retry) rather than send them to a switch they already made.
+      return refuse({ code: claim.reason === 'unavailable' ? 'dial_failed' : 'not_on_softphone' });
     }
 
     // ── Step 4: dial, agent first ─────────────────────────────────────────────

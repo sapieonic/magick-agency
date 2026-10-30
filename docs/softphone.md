@@ -118,8 +118,9 @@ Owned by `AgencyRuntime`. One call at a time per session.
    bridge honours the grace on a manual leg only once answered; after the answer the
    deferred-hangup window applies, so a wifi blip mid-conversation survives). `ringing` is
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
-   (`concurrency_limit`, a dead socket) or the carrier refuses outright is ended `failed`, its
-   contact claim released and no attempt charged. So is a dial that throws before the bridge is asked (a
+   (`concurrency_limit`, a dead socket, or `dial_failed` for a refusal the soft phone does not
+   name) or the carrier refuses outright is ended `failed`, its contact claim released and no
+   attempt charged; the carrier's refusal answers 201 with the row as it ended and settled. So is a dial that throws before the bridge is asked (a
    database fault on the `dialing` write): it is abandoned unplaced and the error reaches the
    caller, so nothing is left `queued` holding the session.
    Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
@@ -206,8 +207,9 @@ authenticates, applies its RBAC floor, then requires `agency_softphone_enabled` 
 `softphone_disabled`; after RBAC, so a caller without the permission is told that), validates its
 body or query (ids are UUIDs at the edge; a malformed `:id` is the family's not-found), and answers a
 runtime refusal as `{ error, code, message, ...fields }` with the status `errors.ts` names beside the
-code (`SOFTPHONE_REFUSAL_STATUS`, pinned against those comments). `503 dnc_unavailable` is passed
-through the error mask as a reviewed body.
+code (`SOFTPHONE_REFUSAL_STATUS`, pinned against those comments). `503 dnc_unavailable` and `503 dial_failed`
+(Redis could not answer the session claim, or the bridge refused in a way the soft phone does
+not name; nothing was dialled) are passed through the error mask as reviewed bodies.
 
 `supervise` (act on another agent's call, read the account's calls, tag any campaign) is derived by
 the public layer from the caller's ROLE holding `agency.supervise`, sent as `on_behalf` (body) or

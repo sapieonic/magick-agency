@@ -137,6 +137,7 @@ describe('soft-phone codes', () => {
       'outcome_pending',
       'concurrency_limit',
       'station_unavailable',
+      'dial_failed',
       'call_not_found',
       'call_settled',
       'disposition_invalid',

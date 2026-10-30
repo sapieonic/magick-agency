@@ -55,6 +55,7 @@ import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import type { SoftphoneActor } from '../../../src/agency/softphone/types.js';
 import { setAvailableGuarded } from '../../../src/agency/softphone/session-guard.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
+import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 
 const TENANT = uuidFor('softphone-e2e-tenant');
 const ACCOUNT = uuidFor('softphone-e2e-account');
@@ -366,6 +367,47 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     if (!next.ok) throw new Error(next.refusal.code);
     await runtime.softphone.hangup(actor(agent), next.call.id);
     await waitFor('second call settled', async () => (await manualRow(next.call.id)).settled_at);
+  });
+
+  it('refusals before a line is up answer what happened: the carrier refusal ended, Redis down and an unknown bridge refusal dial_failed', async () => {
+    const agent = randomUUID();
+    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const contact = await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100095' });
+    const session = await softphoneSession(agent);
+    await openStation(session.id);
+
+    // The carrier refuses the dial outright: placed (201), and the body is the row as it
+    // ended — never `dialing` for a call that is already over.
+    fakeAdapter.initiateCall.mockRejectedValueOnce(new Error('carrier said no'));
+    const refusedByCarrier = await runtime.softphone.placeCall(actor(agent), {
+      sessionId: session.id, to: '+919811100095', campaignId: campaign.id,
+    });
+    if (!refusedByCarrier.ok) throw new Error(refusedByCarrier.refusal.code);
+    expect(refusedByCarrier.call).toMatchObject({ state: 'ended', outcome: 'failed', requires_disposition: false });
+    expect(refusedByCarrier.call.settled_at).not.toBeNull();
+    expect(await runtime.agents.manualCallOf(session.id)).toBeNull();
+    // Not a placed dial: no attempt charged.
+    expect(await contactRow(contact.id)).toMatchObject({ state: 'pending', attempt_count: 0 });
+
+    // Redis cannot answer the session claim: dial_failed (retry), not "not on the soft phone".
+    const claim = vi.spyOn(runtime.agents, 'claimManual').mockResolvedValueOnce({ ok: false, reason: 'unavailable' });
+    const redisDown = await runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '+919811100096', campaignId: campaign.id });
+    claim.mockRestore();
+    expect(redisDown.ok ? null : redisDown.refusal.code).toBe('dial_failed');
+
+    // A bridge refusal this code does not know is dial_failed too, not station_unavailable.
+    const bridge = getVoiceEngine()!.bridge;
+    const unknown = vi.spyOn(bridge, 'createBridgedCall').mockRejectedValueOnce(
+      new WebRtcCallError('something new', 'some_new_reason' as never, 500));
+    const unknownRefusal = await runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '+919811100097', campaignId: campaign.id });
+    unknown.mockRestore();
+    expect(unknownRefusal.ok ? null : unknownRefusal.refusal.code).toBe('dial_failed');
+
+    // Each closed its row: nothing holds the session.
+    const { rows } = await getTestPool().query(
+      'SELECT count(*)::int AS n FROM agency_manual_calls WHERE session_id = $1 AND settled_at IS NULL', [session.id]);
+    expect(rows[0].n).toBe(0);
+    expect(await runtime.agents.manualCallOf(session.id)).toBeNull();
   });
 
   it('DNC: refused with the entry, overridable with a note (stored); a bad note and a failed lookup are not', async () => {

@@ -326,6 +326,8 @@ export type AgencySoftphoneErrorCode =
   | 'concurrency_limit'
   /** 409. The session has no attached station socket to dial the agent leg on. */
   | 'station_unavailable'
+  /** 503. The dial could not be placed for a reason that is not the caller's: the agent state store did not answer, or the bridge refused in a way this version does not name. Nothing was dialled; retry. */
+  | 'dial_failed'
   /** 404. No such call, or one the caller may not see (an agent sees only their own). */
   | 'call_not_found'
   /** 409. The call's outcome is already saved (with a different code) or lapsed. */
@@ -357,6 +359,7 @@ export const AGENCY_SOFTPHONE_ERROR_CODES = [
   'outcome_pending',
   'concurrency_limit',
   'station_unavailable',
+  'dial_failed',
   'call_not_found',
   'call_settled',
   'disposition_invalid',

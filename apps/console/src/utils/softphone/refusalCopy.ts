@@ -31,6 +31,7 @@ export const SOFTPHONE_REFUSAL_COPY: Record<AgencySoftphoneErrorCode, string> = 
   outcome_pending: 'Save the outcome of your last call before you dial again.',
   concurrency_limit: 'All lines are busy right now. Try again in a moment.',
   station_unavailable: 'Your phone isn’t connected yet. Wait until it says Connected, then try again.',
+  dial_failed: 'The call couldn’t be placed just now, and nothing was dialled. Try again in a moment.',
   call_not_found: 'We can’t find that call.',
   call_settled: 'This call’s outcome is already saved.',
   disposition_invalid: 'That outcome can’t be saved. Check the outcome, its note and its callback time.',

@@ -97,7 +97,7 @@ interface LiveManualCall {
   endRequestedBy: EndRequester | null;
 }
 
-export type ManualDialFailure = 'concurrency_limit' | 'station_unavailable';
+export type ManualDialFailure = 'concurrency_limit' | 'station_unavailable' | 'dial_failed';
 
 export class ManualDialer {
   /** manualCallId → the call, from the dial until its `ended` is handled. */
@@ -281,15 +281,19 @@ export class ManualDialer {
       webrtcCallId = record.id;
     } catch (err) {
       if (err instanceof WebRtcCallError && err.code === 'telephony_init_failed') {
-        // The carrier refused the dial. The bridge already ended the leg, and the
-        // `ended` event settles the row on this call's chain.
+        // The carrier refused the dial. The bridge already ended the leg (awaited before
+        // it threw), so its `ended` event is queued on this call's chain: wait for it, so
+        // the caller's answer is the row as it ended and settled, not a `dialing` one.
         log.warn({ err, manualCallId: call.id }, 'Soft-phone dial refused by the carrier');
+        await this.settled(call.id);
         return { ok: true };
       }
+      // A refusal this code does not name is the platform's, not the agent's: not a
+      // missing station (which would tell them to check a connection that is fine).
       const failure: ManualDialFailure =
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable' ? 'station_unavailable'
           : err instanceof WebRtcCallError && CONCURRENCY_REFUSALS.has(err.code) ? 'concurrency_limit'
-            : 'station_unavailable';
+            : 'dial_failed';
       if (!(err instanceof WebRtcCallError)) {
         log.error({ err, manualCallId: call.id }, 'Soft-phone dial failed before the carrier');
         await this.serial(call.id, () => this.abandonUnplaced(call.id));

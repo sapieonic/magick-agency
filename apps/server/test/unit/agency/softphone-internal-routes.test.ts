@@ -159,7 +159,7 @@ describe('POST /softphone/calls', () => {
     { code: 'outside_calling_hours', window: { start: '09:00', end: '18:00', days: [1], timezone: 'Asia/Kolkata' }, timezone_source: 'contact', next_open_at: null },
     { code: 'dnc_listed', entry: { id: 'e', scope: 'tenant', reason: null, created_at: 'x' } }, { code: 'dnc_unavailable' },
     { code: 'manual_call_live', call: call as never }, { code: 'outcome_pending', call: call as never },
-    { code: 'concurrency_limit' }, { code: 'station_unavailable' },
+    { code: 'concurrency_limit' }, { code: 'station_unavailable' }, { code: 'dial_failed' },
   ];
   it.each(refusals.map((r) => [r.code, r] as const))('maps %s to its status with its fields', async (code, refusal) => {
     runtime.softphone.placeCall.mockResolvedValue({ ok: false, refusal });

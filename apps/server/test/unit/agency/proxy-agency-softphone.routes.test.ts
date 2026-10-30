@@ -12,7 +12,7 @@ import type { MembershipRole } from '@magick-agency/contracts/rbac';
  *  - the actor the internal handler receives: the authenticated user, `on_behalf` (and the
  *    GET's `supervise`) set from the ROLE only — a client's copy is stripped;
  *  - body / query validation at the edge (uuid ids before any `::uuid` cast);
- *  - refusals passed through with their status, the reviewed `503 dnc_unavailable` past
+ *  - refusals passed through with their status, the reviewed `503 dnc_unavailable` / `dial_failed` past
  *    the mask, and a success that is not the internal envelope refused (502);
  *  - enrichment (`agent_name`, `dispositioned_by_name`; a failed name read degrades);
  *  - every `platform_audit_log` row: action, actor, on-behalf, campaign, the override notes.
@@ -290,12 +290,16 @@ describe('refusals and the envelope', () => {
     expect(mocks.auditLog).not.toHaveBeenCalled();
   });
 
-  it('lets the reviewed 503 dnc_unavailable through the error mask, and masks any other 5xx', async () => {
+  it('lets the reviewed 503s (dnc_unavailable, dial_failed) through the error mask, and masks any other 5xx', async () => {
     const app = await appAs('agent');
     mocks.callCore.mockResolvedValue(plain({ error: 'Service Unavailable', code: 'dnc_unavailable', message: 'm' }, 503));
     const unavailable = await app.inject({ method: 'POST', url: `${P}/softphone/calls`, payload: { session_id: SESSION, to: '1' } });
     expect(unavailable.statusCode).toBe(503);
     expect(unavailable.json().code).toBe('dnc_unavailable');
+    mocks.callCore.mockResolvedValue(plain({ error: 'Service Unavailable', code: 'dial_failed', message: 'm' }, 503));
+    const failed = await app.inject({ method: 'POST', url: `${P}/softphone/calls`, payload: { session_id: SESSION, to: '1' } });
+    expect(failed.statusCode).toBe(503);
+    expect(failed.json().code).toBe('dial_failed');
     mocks.callCore.mockResolvedValue(plain({ error: 'x', code: 'boom', message: 'db said no' }, 503));
     const masked = await app.inject({ method: 'POST', url: `${P}/softphone/calls`, payload: { session_id: SESSION, to: '1' } });
     expect(masked.statusCode).toBe(503);
