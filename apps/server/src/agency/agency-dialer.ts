@@ -406,8 +406,9 @@ export class AgencyDialer {
       record: cmd.campaign.record_calls,
       analysisProfileId: cmd.campaign.analysis_profile_id,
       initiatedBy: cmd.sessionId,
-      campaignId: cmd.campaignId,
-      agencyAttemptId: attemptId,
+      // The attempt is the correlation: lifecycle events, the bind, the re-attach
+      // and every forced end are keyed on `attemptId` (docs/seams.md §3.1).
+      correlation: { kind: 'attempt' as const, campaignId: cmd.campaignId, agencyAttemptId: attemptId },
       // The deferred-hangup grace. Supplied by us, never chosen by the bridge — the
       // dialer depends on the bridge and never the reverse, so the bridge must stay
       // ignorant of what an agency reconnect is worth, and the browser dialer keeps

@@ -167,7 +167,7 @@ describe('roster-level exactly-once over a full run (chaos)', () => {
     w.bridge.createBridgedCall = async (params) => {
       const i = dialIndex++;
       w.bridge.scriptFor(
-        params.agencyAttemptId,
+        params.correlation.agencyAttemptId,
         i % 5 === 0 ? { answer: false, bridge: false, status: 'no_answer' }
           // A carrier failure BEFORE answer. Deliberately not `answer: true,
           // bridge: false` — that is an answered call with no agent on it, i.e.

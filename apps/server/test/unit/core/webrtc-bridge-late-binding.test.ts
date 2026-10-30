@@ -155,8 +155,7 @@ const UNBOUND = {
   accountId: 'a1',
   callerId: '+14155550100',
   destinationPhone: '+14155550199',
-  campaignId: 'camp-1',
-  agencyAttemptId: 'att-1',
+  correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-1' },
 };
 const VL_UNBOUND = { ...UNBOUND, provider: 'voicelink' as const };
 
@@ -524,7 +523,7 @@ describe('WebRtcBridgeManager.bindBorrowedBrowserLeg', () => {
     // …and the `ending` half of the same guard: an answered VoiceLink teardown
     // awaiting carrier confirmation still has a live session in the map.
     const pstn = fakeStationWs();
-    await mgr.createUnboundBridgedCall({ ...VL_UNBOUND, agencyAttemptId: 'att-2' });
+    await mgr.createUnboundBridgedCall({ ...VL_UNBOUND, correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-2' } });
     mgr.attachPstnLeg('call-2', pstn as any);
     negotiateVoicelink(pstn);
     await mgr.forceEndWithOutcome('att-2', 'agent_hangup');

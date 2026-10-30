@@ -124,13 +124,13 @@ function fakeBridge(ringMs: number) {
       listeners.push(l);
       return () => { /* no-op */ };
     },
-    async createBridgedCall(params: { agencyAttemptId: string }) {
+    async createBridgedCall(params: { correlation: { agencyAttemptId: string } }) {
       const callId = randomUUID();
       const t = setTimeout(() => {
         for (const l of listeners) {
           l({
             callId,
-            correlationId: params.agencyAttemptId,
+            correlationId: params.correlation.agencyAttemptId,
             phase: 'bridged',
             status: 'in_progress',
             answered: true,

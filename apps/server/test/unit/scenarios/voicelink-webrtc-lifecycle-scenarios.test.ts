@@ -196,7 +196,7 @@ const VL_PARAMS = {
   provider: 'voicelink' as const,
 };
 /** The agency back-references every bridge call carries. */
-const AGENCY = { campaignId: 'camp-1', agencyAttemptId: 'att-1' };
+const AGENCY = { correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-1' } };
 
 beforeEach(() => {
   vi.clearAllMocks();

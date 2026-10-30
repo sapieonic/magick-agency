@@ -216,6 +216,14 @@ export class WebRtcBridgeSession {
    */
   campaignId: string | null = null;
   agencyAttemptId: string | null = null;
+  /** A soft-phone leg's `agency_manual_calls.id` (`origin = 'manual'`); null for a campaign leg. */
+  manualCallId: string | null = null;
+  /**
+   * The browser-close grace window applies only once the carrier has answered
+   * (a `manual` correlation: docs/softphone.md §4.1 step 4). Before the answer a
+   * close hangs up at once. Set in `placeOutboundLeg`.
+   */
+  browserLegGraceAfterAnswerOnly: boolean = false;
   /**
    * The tenant carrier credential the call was placed on, mirrored from the row's
    * `telephony_credential_id` (pinned at insert, never updated: decision B20). Null =

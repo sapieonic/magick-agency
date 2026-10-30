@@ -170,8 +170,7 @@ export async function dialBridged(rig: LoadRig, station: LoadStationSocket, dest
     callerId: '+919800000001',
     destinationPhone: destination,
     browserSocket: station as never,
-    campaignId: LOAD_CAMPAIGN,
-    agencyAttemptId: attemptId,
+    correlation: { kind: 'attempt' as const, campaignId: LOAD_CAMPAIGN, agencyAttemptId: attemptId },
   });
   const session = rig.bridge.getSession(record.id);
   if (session) rig.captured.set(record.id, session);

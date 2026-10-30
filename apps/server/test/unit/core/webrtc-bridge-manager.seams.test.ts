@@ -134,8 +134,7 @@ async function dial(
   const record = await mgr.createBridgedCall({
     ...(params as typeof PARAMS),
     browserSocket: browser as any,
-    campaignId: 'camp-1',
-    agencyAttemptId: ATTEMPT,
+    correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: ATTEMPT },
   });
   return { record, browser };
 }

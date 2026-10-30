@@ -172,14 +172,14 @@ function scriptedBridge(mode: AnswerMode, delayMs = 0) {
       listeners.push(l);
       return () => { /* no-op */ };
     },
-    async createBridgedCall(params: { agencyAttemptId: string }) {
+    async createBridgedCall(params: { correlation: { agencyAttemptId: string } }) {
       trace.push('bridge:dial-start');
       const callId = randomUUID();
       if (mode === 'synchronous') {
         // The carrier answers while the dial is still in flight.
-        emitBridged(callId, params.agencyAttemptId);
+        emitBridged(callId, params.correlation.agencyAttemptId);
       } else if (mode === 'delayed') {
-        timers.push(setTimeout(() => emitBridged(callId, params.agencyAttemptId), delayMs));
+        timers.push(setTimeout(() => emitBridged(callId, params.correlation.agencyAttemptId), delayMs));
       }
       trace.push('bridge:dial-resolve');
       return { id: callId };

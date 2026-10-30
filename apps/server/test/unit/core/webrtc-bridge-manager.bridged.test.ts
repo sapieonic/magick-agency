@@ -138,8 +138,7 @@ const PARAMS = {
 
 const BRIDGED = {
   ...PARAMS,
-  campaignId: 'camp-1',
-  agencyAttemptId: 'att-1',
+  correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-1' },
 };
 
 /** ends the call by attempt id via `localHangup` with the `ended_by_user` outcome. */
@@ -287,7 +286,7 @@ describe('WebRtcBridgeManager.createBridgedCall', () => {
     for (let i = 1; i <= 3; i++) {
       await mgr.createBridgedCall({
         ...BRIDGED,
-        agencyAttemptId: `att-${i}`,
+        correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: `att-${i}` },
         browserSocket: ws as any,
       });
       // Never more than one attempt's worth of listeners at a time.

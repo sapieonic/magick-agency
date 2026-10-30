@@ -762,7 +762,7 @@ describe('the owned browser dialer is untouched', () => {
     const { record } = await (world.bridge as any).placeOutboundLeg({
       tenantId: 't1', accountId: 'a1', callerId: '+14155550100',
       destinationPhone: '+14155550199', browserHangupOutcome: 'browser_hangup',
-      agencyAttemptId: 'att-owned',
+      correlation: { kind: 'attempt', campaignId: 'camp-1', agencyAttemptId: 'att-owned' },
     });
     expect(world.bridge.getSession(record.id)!.browserWsOwned).toBe(true);
     expect(world.bridge.reattachBorrowedBrowserLeg('att-owned', new StationSocket() as any)).toBe(false);
@@ -807,7 +807,7 @@ describe('the supersession guard is not the window ', () => {
     const ws = new StationSocket();
     await world.bridge.createBridgedCall({
       tenantId: 't1', accountId: 'a1', callerId: '+14155550100',
-      destinationPhone: '+14155550199', campaignId: 'camp-1', agencyAttemptId: 'att-nograce',
+      destinationPhone: '+14155550199', correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-nograce' },
       browserSocket: ws as any,
     });
     const session = world.bridge.getSession('call-1')!;

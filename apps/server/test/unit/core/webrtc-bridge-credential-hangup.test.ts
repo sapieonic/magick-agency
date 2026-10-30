@@ -141,8 +141,7 @@ const BRIDGED = {
   accountId: 'a1',
   callerId: '+14155550100',
   destinationPhone: '+14155550199',
-  campaignId: 'camp-1',
-  agencyAttemptId: 'att-1',
+  correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-1' },
 };
 
 /** The credential the next inserted row carries (the bridge reads it back off the row). */
