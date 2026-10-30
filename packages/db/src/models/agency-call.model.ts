@@ -151,9 +151,8 @@ export interface WebRtcCallRecord {
   /**
    * `manual` for a soft-phone leg, whose `campaign_id` and `agency_attempt_id` stay
    * NULL (CHECKed), so no campaign aggregation counts it. Immutable after insert.
-   *
-   * ⚠️ `scopeClause('agency')` still reads `campaign_id IS NOT NULL`, which a manual
-   * leg fails: it must also take `origin = 'manual'` before soft-phone calls are placed.
+   * `scopeClause('agency')` takes it as well as `campaign_id IS NOT NULL`, so a
+   * manual leg is in the agency call scope (SP5).
    */
   origin: WebRtcCallOrigin;
   /** The `agency_manual_calls.id` this leg belongs to (set exactly when `origin` is `manual`). Correlation only, no FK. */
@@ -181,9 +180,16 @@ export interface CreateWebRtcCallInput {
   // ── Agency dialer back-references, set at intake and immutable after ──
   campaign_id?: string | null;
   agency_attempt_id?: string | null;
-  // `origin` / `manual_call_id` are deliberately not here yet: `create` names its
-  // INSERT columns, so an optional field added alone would typecheck and be dropped.
-  // They arrive with that column list in the bridge-seam change (docs/softphone.md §4.3).
+  /**
+   * `manual` for a soft-phone leg (docs/softphone.md §4.3): then `manual_call_id` is
+   * required and `campaign_id` / `agency_attempt_id` must be NULL
+   * (`ck_agency_calls_manual_correlation` refuses anything else). Omitted: `campaign`.
+   * Both are in `create`'s INSERT column list — an optional field that is not would
+   * typecheck and be dropped silently.
+   */
+  origin?: WebRtcCallOrigin;
+  /** The `agency_manual_calls.id` a manual leg is placed for. Correlation only, no FK. */
+  manual_call_id?: string | null;
 }
 
 export interface UpdateWebRtcCallInput {

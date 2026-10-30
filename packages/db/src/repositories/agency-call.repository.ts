@@ -19,7 +19,8 @@ import type {
  *    column default is `'voicelink'` too);
  *  - `WebRtcCallScope` is `'agency'` only, and `analysisFlagFor` returns
  *    `agency_call_analysis`. `scopeClause` keeps a fallback branch, so untyped code
- *    that omits the scope fails closed to `campaign_id IS NULL` (see the scope unit test);
+ *    that omits the scope fails closed to its complement, campaign-less non-manual rows
+ *    (see the scope unit test);
  *  - the flag definition comes from `@magick-agency/contracts/flags`, which the
  *    server's registry (`apps/server/src/feature-flags/registry.ts`) also reuses,
  *    because this package cannot import the server;
@@ -87,7 +88,7 @@ const WEBRTC_LIST_COLUMNS = `
   provider, provider_call_id, status, outcome, error_code, error_message,
   initiated_by, metadata,
   recording_requested, recording_url, recording_duration_seconds,
-  campaign_id,
+  campaign_id, origin, manual_call_id,
   answered_at, ended_at, duration_seconds, talk_time_seconds,
   analysis_profile_id, analysis_language, analysis_status,
   analysis_consent, analysis_consent_at,
@@ -104,17 +105,24 @@ const WEBRTC_LIST_COLUMNS = `
  * This is the scope boundary a read states.
  *
  * **The enum's meaning is ownership, not the shape of the predicate.**
- * `'agency'` happens to resolve to `campaign_id IS NOT NULL` today, but callers must
- * not encode that: when agency grows an off-campaign dial mode (preview dialing,
- * agent callbacks, a manual dial from the station) those calls will be
- * agency-owned with no campaign, and the fix is one change to `scopeClause`
- * rather than a hunt through every call site.
+ * `'agency'` resolves to "a campaign leg, or a soft-phone leg": a manual dial
+ * (docs/softphone.md, SP5) is agency-owned with `campaign_id` NULL and
+ * `origin = 'manual'`. Callers must not encode the predicate; it changes here, in
+ * one place, as it did for the soft phone.
  */
 export type WebRtcCallScope = 'agency';
 
-/** SQL for a scope. The one place the enum's storage mapping is written down. */
+/**
+ * SQL for a scope. The one place the enum's storage mapping is written down.
+ *
+ * Parenthesised because every caller ANDs it onto tenant/account predicates. The
+ * fallback (reachable only from untyped code) is the exact complement of the agency
+ * predicate, so a row is in exactly one of the two populations; `origin` is NOT NULL.
+ */
 function scopeClause(scope: WebRtcCallScope): string {
-  return scope === 'agency' ? 'campaign_id IS NOT NULL' : 'campaign_id IS NULL';
+  return scope === 'agency'
+    ? "(campaign_id IS NOT NULL OR origin = 'manual')"
+    : "(campaign_id IS NULL AND origin <> 'manual')";
 }
 
 /**
@@ -153,8 +161,9 @@ export class WebRtcCallRepository {
         (tenant_id, account_id, caller_id, destination_phone, provider,
          initiated_by, metadata, recording_requested,
          analysis_profile_id, analysis_language, analysis_consent, analysis_consent_at,
-         campaign_id, agency_attempt_id, telephony_credential_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         campaign_id, agency_attempt_id, telephony_credential_id,
+         origin, manual_call_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
        RETURNING *`,
       [
         input.tenant_id,
@@ -172,6 +181,12 @@ export class WebRtcCallRepository {
         input.campaign_id ?? null,
         input.agency_attempt_id ?? null,
         input.telephony_credential_id ?? null,
+        // Both named in the column list above: an optional input field missing from it
+        // would typecheck and be dropped. A manual leg with a campaign or attempt id,
+        // or a manual_call_id without `origin: 'manual'`, is refused by
+        // ck_agency_calls_manual_correlation rather than coerced here.
+        input.origin ?? 'campaign',
+        input.manual_call_id ?? null,
       ],
     );
     return result.rows[0]!;

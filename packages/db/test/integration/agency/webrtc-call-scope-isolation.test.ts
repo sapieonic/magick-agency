@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_TENANT, insertWebrtcCall } from '../setup/factories.js';
@@ -226,6 +227,48 @@ describe('webrtc_calls dialer/agency scope isolation (integration)', () => {
         return pool.query('SELECT id FROM agency_calls WHERE tenant_id = $1', [TENANT]);
       })();
       expect(dialerIds.size + agencyIds.size).toBe(allRows.length);
+    });
+  });
+
+  // ── soft-phone legs (docs/softphone.md, SP5) ──────────────────────────────
+  describe('soft-phone legs (origin = manual) are agency calls', () => {
+    const manual = () => ({
+      tenant_id: TENANT, account_id: ACCOUNT, campaign_id: null, origin: 'manual', manual_call_id: randomUUID(),
+    });
+
+    it('findByIdScoped returns a manual leg although its campaign_id is NULL', async () => {
+      const leg = await insertWebrtcCall(manual());
+      const found = await webrtcCallRepository.findByIdScoped(leg.id, TENANT, ACCOUNT, 'agency');
+      expect(found).toMatchObject({ id: leg.id, origin: 'manual', campaign_id: null });
+      // ...still behind the tenant boundary.
+      expect(await webrtcCallRepository.findByIdScoped(leg.id, OTHER_TENANT, ACCOUNT, 'agency')).toBeNull();
+    });
+
+    it('listByTenant lists and counts campaign legs and manual legs, never campaign-less non-manual rows', async () => {
+      const campaignLeg = await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, campaign_id: CAMPAIGN });
+      const manualLeg = await insertWebrtcCall(manual());
+      await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, ...NO_CAMPAIGN });
+
+      const { rows, total } = await webrtcCallRepository.listByTenant(TENANT, ACCOUNT, 'agency');
+      expect(rows.map((r) => r.id).sort()).toEqual([campaignLeg.id, manualLeg.id].sort());
+      expect(total).toBe(2);
+      // The list projects the discriminator, so a manual row is recognisable.
+      expect(rows.find((r) => r.id === manualLeg.id)).toMatchObject({ origin: 'manual', manual_call_id: manualLeg.manual_call_id });
+    });
+
+    it('the scope still partitions the tenant exactly once manual legs exist', async () => {
+      await insertWebrtcCall(manual());
+      await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, campaign_id: CAMPAIGN });
+      await insertWebrtcCall({ tenant_id: TENANT, account_id: ACCOUNT, ...NO_CAMPAIGN });
+      const { rows: inScope } = await getTestPool().query(
+        `SELECT id FROM agency_calls WHERE tenant_id = $1 AND (campaign_id IS NOT NULL OR origin = 'manual')`, [TENANT],
+      );
+      const { rows: complement } = await getTestPool().query(
+        `SELECT id FROM agency_calls WHERE tenant_id = $1 AND (campaign_id IS NULL AND origin <> 'manual')`, [TENANT],
+      );
+      const page = await webrtcCallRepository.listByTenant(TENANT, ACCOUNT, 'agency', 50, 0);
+      expect(page.total).toBe(inScope.length);
+      expect(inScope.length + complement.length).toBe(3);
     });
   });
 
