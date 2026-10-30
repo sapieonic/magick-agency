@@ -850,7 +850,7 @@ describe('POST /invites/:token/claim', () => {
 
 describe('the claim flow is the same for EVERY role', () => {
   /**
-   * Every role is issued a token now (`roleGetsTokenInvite`), so an operator's,
+   * Every role is issued a token now (`issueInvite`), so an operator's,
    * an admin's and an owner's invitation reach these two routes exactly as an
    * agent's does — through the console's `/join/:token` page instead of
    * `/agency/join/:token`. Nothing in either route may branch on the role except

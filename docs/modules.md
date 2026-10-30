@@ -302,7 +302,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-staffing.routes.test.ts` | ~51 |
 | `apps/server/test/integration/api/agency-tenant-isolation.test.ts` | ~12 |
 | `apps/server/test/integration/api/auth.routes.test.ts` | ~19 |
-| `apps/server/test/integration/api/invite-every-role.test.ts` | ~9 |
+| `apps/server/test/integration/api/invite-every-role.test.ts` | ~10 |
 | `apps/server/test/integration/api/invite-security-audit.test.ts` | ~28 |
 | `apps/server/test/integration/api/notification.routes.test.ts` | ~6 |
 | `apps/server/test/integration/api/phone-number.routes.test.ts` | ~4 |
@@ -373,7 +373,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` | 22 |
-| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 58 |
+| `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 62 |
 | `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 10 |
 | `apps/server/test/unit/api/routes/super-admin-telephony-credentials.test.ts` | 38 |
 | `apps/server/test/unit/api/routes/super-admin-usage-counts.test.ts` | 22 |
@@ -621,8 +621,8 @@ Files: `invite-issuer.ts`, `membership-invite-state.ts`, `membership-provisionin
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/invites/invite-issuer.test.ts` | 32 |
-| `apps/server/test/unit/invites/membership-provisioning.test.ts` | 6 |
+| `apps/server/test/unit/invites/invite-issuer.test.ts` | 26 |
+| `apps/server/test/unit/invites/membership-provisioning.test.ts` | 5 |
 | `apps/server/test/unit/invites/membership-invite-state.test.ts` | 6 |
 
 ### `apps/server/src/maintenance/`
@@ -655,7 +655,7 @@ Files: `agency-campaign-completion.ts`, `engine/audience.ts`, `engine/catalog.ts
 | `apps/server/test/unit/notifications/invite-mailer.test.ts` | 77 |
 | `apps/server/test/unit/notifications/invite-token.test.ts` | 14 |
 | `apps/server/test/unit/notifications/mailjet.client.test.ts` | 8 |
-| `apps/server/test/unit/notifications/workspace-invite.template.test.ts` | 18 |
+| `apps/server/test/unit/notifications/workspace-invite.template.test.ts` | 19 |
 
 ### `apps/server/src/proxy/`
 
@@ -1312,7 +1312,7 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 25 |
 | `apps/console/src/__tests__/components/agentSurfacesVersion.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/campaignSeriesCharts.test.tsx` | 16 |
-| `apps/console/src/__tests__/components/joinDoor.test.ts` | 11 |
+| `apps/console/src/__tests__/components/joinDoor.test.ts` | 12 |
 | `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/sidebarVersion.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/switcherDropdownScrollCss.test.ts` | 4 |
@@ -1393,7 +1393,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 19 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` | 20 |
-| `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 32 |
+| `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 33 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/TeamPage.a11y.test.tsx` | 1 |
@@ -1463,7 +1463,7 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyFieldFilter.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 46 |
 | `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 27 |
-| `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 23 |
+| `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyLiveSession.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyMedia.test.ts` | 18 |
@@ -1596,17 +1596,20 @@ Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `s
 | `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 8 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 16 |
+| `apps/super-admin/src/__tests__/pages/SATenantsPage.test.tsx` | 4 |
 | `apps/super-admin/src/__tests__/pages/SAUsagePage.test.tsx` | 22 |
 | `apps/super-admin/src/__tests__/pages/SAUsersPage.test.tsx` | 9 |
+| `apps/super-admin/src/__tests__/pages/TenantMembersTab.test.tsx` | 4 |
 
 ### `apps/super-admin/src/utils/`
 
-Helpers (error and format helpers are in `packages/web-ui`).
+Helpers (error and format helpers are in `packages/web-ui`). `inviteEmailNotice.ts` turns the `invite_email` that tenant create and add-user answer into the note or warning the pages show.
 
-Files: `localDayBounds.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
+Files: `inviteEmailNotice.ts`, `localDayBounds.ts`, `saStatus.ts`, `strictInteger.ts`, `tenant-search.ts`
 
 | Test file | Cases |
 |---|---|
+| `apps/super-admin/src/__tests__/utils/inviteEmailNotice.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/utils/tenant-search.test.ts` | 13 |
 
 ### Cross-cutting tests (`apps/super-admin`)

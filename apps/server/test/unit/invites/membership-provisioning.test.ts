@@ -36,11 +36,6 @@ describe('issueInviteReportingFailure', () => {
     });
   });
 
-  it('a role with no token reports no invite id', async () => {
-    mocks.issueInvite.mockResolvedValue({ invite: null, signInUrl: null, inviteEmail: { sent: true } });
-    expect((await issueInviteReportingFailure(INPUT, 'u1')).inviteId).toBeNull();
-  });
-
   it('never throws: a throw is logged at ERROR and reported as an unsent invite', async () => {
     mocks.issueInvite.mockRejectedValue(new Error('mail provider down'));
     await expect(issueInviteReportingFailure(INPUT, 'u1')).resolves.toEqual({

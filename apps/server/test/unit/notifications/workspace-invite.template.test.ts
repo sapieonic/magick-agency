@@ -98,6 +98,20 @@ describe('what happens next', () => {
     }
   });
 
+  it('promises nothing about who can change the role, which is false for an owner', () => {
+    /**
+     * The step said "an admin on your team can change it later". A
+     * `tenant_owner` is mailed this same invitation (a super admin's tenant
+     * create, or add-user), and nobody in their workspace outranks them, so the
+     * copy has to be true for every role it is sent to rather than for most.
+     */
+    const { htmlBody, textBody } = renderWorkspaceInviteEmail({ ...BASE, roleLabel: 'Workspace owner' });
+    for (const part of [textBody, htmlBody]) {
+      expect(part).not.toMatch(/admin on your team|can change it later/i);
+      expect(part).toContain('The role named above sets what you can see and change in the workspace.');
+    }
+  });
+
   it('differs from the agent mail ONLY in the subject and the steps', () => {
     /**
      * The shared layout's contract, checked from the outside: render the same
@@ -117,7 +131,7 @@ describe('what happens next', () => {
     const workspaceSteps = [
       'Choose how you sign in — this link is what connects it to your place in the workspace.',
       'Your workspace opens', 'You arrive already a member. There is nothing else to sign up for or create.',
-      'What you see depends on your role', 'Whoever invited you chose it, and an admin on your team can change it later.',
+      'What you see depends on your role', 'The role named above sets what you can see and change in the workspace.',
     ];
     for (const part of ['textBody', 'htmlBody'] as const) {
       expect(strip(workspace[part], workspace.subject, workspaceSteps))

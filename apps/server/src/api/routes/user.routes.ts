@@ -334,7 +334,7 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * What the reuse costs is that the row this route aims a membership at may
      * be an unclaimed `pending_` stub another workspace is waiting on: a
      * super-admin-provisioned owner, or somebody else's pending invitee. Since
-     * invites mint a token (every role's, now — `roleGetsTokenInvite`) and hand
+     * invites mint a token (for every role, now) and hand
      * the raw join link back to the INVITER, that let anybody with a tenant of
      * their own — which is everybody, `auth.routes.ts` path 4 — obtain a live
      * credential for a row they do not own, and claiming it returned every
@@ -490,9 +490,10 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       ...requestAuditActor(request),
       action: 'user.invite_sent',
       resource_type: 'membership_invite',
-      // Absent for a role that mints no token (none today — see
-      // `roleGetsTokenInvite`): a `resource_id` naming the membership would read
-      // as a membership change on the audit screen.
+      // Absent only when issuance threw before the row could be named
+      // (`issueInviteReportingFailure` reports `inviteId: null` then): a
+      // `resource_id` naming the membership instead would read as a membership
+      // change on the audit screen.
       ...(inviteId ? { resource_id: inviteId } : {}),
       details: {
         membership_id: membership.id,

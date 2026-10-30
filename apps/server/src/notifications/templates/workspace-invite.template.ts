@@ -40,12 +40,14 @@ export function workspaceProductName(brandName: string): string {
  * description of what a viewer and a tenant admin each see next is "whatever
  * their role opens", and a per-role list would be five promises about pages the
  * console owns and this server cannot see change. The third step says exactly
- * that, and names who can change it.
+ * that, and nothing about who can change the role: for a `tenant_owner` nobody
+ * in the workspace outranks them, and a super admin is nobody the reader knows
+ * as "an admin on your team". The role is named in the supporting line above it.
  */
 const WHAT_HAPPENS_NEXT: ReadonlyArray<readonly [string, string]> = [
   ['Set up your sign-in', 'Choose how you sign in — this link is what connects it to your place in the workspace.'],
   ['Your workspace opens', 'You arrive already a member. There is nothing else to sign up for or create.'],
-  ['What you see depends on your role', 'Whoever invited you chose it, and an admin on your team can change it later.'],
+  ['What you see depends on your role', 'The role named above sets what you can see and change in the workspace.'],
 ];
 
 /** Render the workspace invitation. Escaping and layout: see `renderInviteEmail`. */

@@ -10,10 +10,15 @@ import styles from './AgencyJoin.module.css';
  * out — see `UNAVAILABLE_COPY` for why there are five screens and not one
  * "invalid link". The words and the sign-in page are the door's: an agent is sent
  * to the agency door and told their station will open, anybody else to `/login`
- * and told their workspace will.
+ * (returning to `destination`, the page's landing) and told their workspace will.
  */
-export function Unavailable({ status, door }: { status: InviteUnavailableStatus; door: JoinDoor }) {
-  const { unavailable, signInPath } = JOIN_DOORS[door];
+export function Unavailable({ status, door, destination }: {
+  status: InviteUnavailableStatus;
+  door: JoinDoor;
+  destination: string;
+}) {
+  const { unavailable } = JOIN_DOORS[door];
+  const signInPath = JOIN_DOORS[door].signInPath(destination);
   const copy = unavailable[status];
   const heading = useRef<HTMLHeadingElement>(null);
 

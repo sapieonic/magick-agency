@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { matchRoutes } from 'react-router-dom';
 import { ROLES } from '@magick-agency/contracts/rbac';
 import { JOIN_DOORS, joinDoorFor, joinPathFor } from '../../components/agency/join/joinDoor';
+import { RETURN_PATH_PARAM, safeReturnPath } from '../../utils/returnPath';
 
 /**
  * Which invite page a role belongs on, and what each page says.
@@ -42,8 +43,22 @@ describe('JOIN_DOORS', () => {
     // An agent belongs at the agency door; anybody else at `/login`, which is the
     // shell they are joining. Swapped, an operator is sold a dialer and an agent a
     // shell with nothing in it.
-    expect(JOIN_DOORS.agency.signInPath).toBe('/agency/login');
-    expect(JOIN_DOORS.workspace.signInPath).toBe('/login');
+    expect(JOIN_DOORS.agency.signInPath('/dialer')).toBe('/agency/login');
+    expect(new URL(JOIN_DOORS.workspace.signInPath('/app'), 'https://x.invalid').pathname).toBe('/login');
+  });
+
+  it('brings a workspace sign-in back to the page\'s own landing, not to the dialer', () => {
+    /*
+      `/login` renders `AgencyLoginPage`, which lands on
+      `safeReturnPath(next) ?? '/agency'`. A bare `/login` therefore sent an
+      operator who pressed "Sign in instead" or "Go to sign in" into `/agency` —
+      the capability-unavailable page at a tenant without the dialer. Read back
+      through the login page's own validator, so a `next` it would refuse fails
+      here too rather than silently falling back to `/agency`. (Which landing
+      `JoinPage` hands in — `/app` — is pinned by `JoinPage.test.tsx`.)
+    */
+    const url = new URL(JOIN_DOORS.workspace.signInPath('/app'), 'https://x.invalid');
+    expect(safeReturnPath(url.searchParams.get(RETURN_PATH_PARAM))).toBe('/app');
   });
 
   it('never calls a workspace invitation the dialer', () => {

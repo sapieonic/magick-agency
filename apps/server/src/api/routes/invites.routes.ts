@@ -66,7 +66,7 @@ const log = createChildLogger({ component: 'invite-routes' });
  * link that 404s in a browser and an endpoint nothing reaches.
  *
  * ── Role-agnostic, and that is now load-bearing ────────────────────────────
- * Every role is issued a token (`roleGetsTokenInvite`), so these routes serve an
+ * Every role is issued a token (`issueInvite`), so these routes serve an
  * operator's or a workspace owner's claim exactly as they serve an agent's.
  * Nothing below branches on the role: the membership, its role and its tenant
  * all come off the stored rows, the bind's guards (`AdoptIdentityOptions`) are
@@ -893,7 +893,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      * role above `tenant_owner` to authorise it. Re-issuing a binding credential
      * is the opposite shape, so it takes the same strict test as creating the
      * membership did. It is a live gate, not a formality: every role is issued
-     * a token now (`roleGetsTokenInvite`), so without it an `account_admin`
+     * a token now (`issueInvite`), so without it an `account_admin`
      * could resend — and receive in the response body — a binding link for a
      * `tenant_admin` or `tenant_owner` membership. With it, a caller can re-issue
      * exactly the roles `POST /users/invite` would have let them create, and the
@@ -972,11 +972,9 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       ...requestAuditActor(request),
       action: 'user.invite_sent',
       resource_type: 'membership_invite',
-      // Absent for a role that mints no token (none today — see
-      // `roleGetsTokenInvite`): the act still happened and is still worth a row,
-      // and a resource_id that names nothing is more honest than one that names
-      // the membership and reads as a membership change.
-      ...(issued.invite ? { resource_id: issued.invite.id } : {}),
+      // The row this resend just wrote. Unconditional: `issueInvite` either
+      // returns one or throws, and a throw has already left this handler above.
+      resource_id: issued.invite.id,
       details: {
         membership_id: membership.id,
         role: membership.role,

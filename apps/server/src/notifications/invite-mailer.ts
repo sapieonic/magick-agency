@@ -82,8 +82,8 @@ async function appConfig(): Promise<AppConfig> {
  * workspace too (`/join/:token`), so every role is mailed a token-bound link
  * ({@link inviteSignInUrl}) and an invitation worded for what they are joining
  * (`templates/invite-email.ts`): the dialer for an `agent`, the workspace for
- * everyone else. There is no role gate in this module any more; whether a role
- * gets a token at all is `roleGetsTokenInvite`'s single answer, one layer up.
+ * everyone else. There is no role gate in this module or above it any more:
+ * `issueInvite` mints a token for every role, one layer up.
  *
  * ── Never throws, never delays ─────────────────────────────────────────────
  * The membership IS the outcome of an invite; the email is an accelerant. So this
@@ -113,20 +113,6 @@ export type InviteEmailResult =
    * that is working perfectly.
    */
   | { sent: false; reason: 'not_configured' }
-  /**
-   * The role has no invitation at all. **No role produces this today, and this
-   * module never does.**
-   *
-   * It is reported only by `issueInvite`, for a role `roleGetsTokenInvite`
-   * refuses — and that predicate answers `true` for every role now that each one
-   * has a claim page. The arm stays on the union because the predicate stays a
-   * switch: narrowing it again must not leave the refused role a choice between
-   * a mail into a sign-in page with a Sign Up tab (the stray-tenant door the
-   * token exists to close) and a reason that blames the operator's config. The
-   * wire contract keeps tolerating it for a rolling deploy either way
-   * (`packages/contracts/src/api/platform/team.ts`).
-   */
-  | { sent: false; reason: 'not_implemented' }
   /** The transport was attempted and refused or threw. Logged; never thrown. */
   | { sent: false; reason: 'failed' };
 

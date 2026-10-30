@@ -311,8 +311,9 @@ the same transaction as the attempt bookkeeping. Operators manage the list at `/
   `AUDIT_RETENTION_DAYS` (default 85), once at boot and daily. Super-admin actions go to
   `super_admin_audit_log`.
 - **Notifications** (`notifications/`): Mailjet client, an engine (audience, catalog, delivery), the
-  agent invite template and campaign completion; `user_notification_preferences` and
-  `notification_deliveries` (claim-before-send dedupe).
+  invite templates (one shared layout; the agent invitation linking `/agency/join/:token`, the
+  workspace invitation for every other role linking `/join/:token`) and campaign completion;
+  `user_notification_preferences` and `notification_deliveries` (claim-before-send dedupe).
 
 ## Rate limiting and client IP
 

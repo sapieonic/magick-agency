@@ -1,6 +1,6 @@
 import type { Role } from '../types/auth';
 import type { InviteUnavailableStatus } from '../types/invite';
-import type { AccountRole } from '../analytics/events';
+import type { InvitedRole } from '../analytics/events';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 
 /**
@@ -33,16 +33,17 @@ export function roleLabel(role: Role): string {
 }
 
 /**
- * The role as the analytics catalog spells it.
+ * The role as the invite funnels spell it.
  *
- * `Role` carries `tenant_owner` and `AccountRole` deliberately does not — an
- * invite cannot grant ownership of a workspace — so the narrowing happens here
- * rather than by widening the analytics enum to a role no event can carry. `null`
- * for that impossible case, which reads in the funnel as "an invite we could not
- * classify" and is the honest answer if the server ever sends one.
+ * Every `Role` is one of them, `tenant_owner` included: a super admin's tenant
+ * create (and add-user) invites an owner, who claims on `/join/:token`. This used
+ * to answer `null` for `tenant_owner` on the belief that no invite could grant
+ * it, which reported every new tenant's owner as "an invite we could not
+ * classify". Kept as a function rather than inlined so the one place the wire's
+ * `Role` meets the analytics vocabulary is still a place the compiler checks.
  */
-export function analyticsRole(role: Role): AccountRole | null {
-  return role === 'tenant_owner' ? null : role;
+export function analyticsRole(role: Role): InvitedRole {
+  return role;
 }
 
 /** Addresses are compared case-insensitively and trimmed. Gmail's dot and `+tag`

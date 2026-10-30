@@ -12,6 +12,7 @@ import {
   sameAddress,
 } from '../../utils/agencyInviteJoinCopy';
 import type { Role } from '../../types/auth';
+import { ROLES } from '@magick-agency/contracts/rbac';
 import type { InviteUnavailableStatus } from '../../types/invite';
 
 /**
@@ -32,10 +33,10 @@ describe('roleLabel / analyticsRole', () => {
     expect(roleLabel('supervisor_next_year' as Role)).toBe('supervisor_next_year');
   });
 
-  it('maps every role to the analytics enum except the one an invite cannot grant', () => {
-    expect(analyticsRole('agent')).toBe('agent');
-    expect(analyticsRole('account_admin')).toBe('account_admin');
-    expect(analyticsRole('tenant_owner')).toBeNull();
+  it.each(ROLES)('reports %s to the invite funnels as itself', (role) => {
+    // `tenant_owner` included: a super admin's tenant create invites the owner,
+    // and this answered `null` for them on the belief that no invite could.
+    expect(analyticsRole(role)).toBe(role);
   });
 });
 

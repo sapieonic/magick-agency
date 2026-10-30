@@ -127,12 +127,17 @@ type FileSizeBucket =
 // has to cover every role a `team_invite_*` event can actually carry, or the one
 // role the Agency Dialer exists for is the one invite nobody ever measures.
 //
-// Exported because `AgencyJoinPage` reads an invite's role off the wire as the
-// app's own `Role` union — which carries `tenant_owner`, a role no invite can
-// grant — and has to narrow it before reporting it. Narrowing at the call site
-// rather than widening this enum keeps the analytics vocabulary equal to the set
-// of roles an invite can actually carry.
+// It stops short of `tenant_owner` because the TEAM page cannot invite one: the
+// `team_invite_*` events are the console's own invite form, and no role it offers
+// is an owner.
 export type AccountRole = 'tenant_admin' | 'account_admin' | 'operator' | 'viewer' | 'agent';
+// The role an invite LINK can carry, which is one wider than {@link AccountRole}:
+// a super admin's tenant create invites the new workspace's owner, and their
+// add-user can grant `tenant_owner` too, so an owner lands on `/join/:token` like
+// any other non-agent. The two invite funnels report it as itself rather than as
+// an unclassified `null` — an owner's first sign-in is the one a new tenant's
+// whole onboarding hangs on.
+export type InvitedRole = AccountRole | 'tenant_owner';
 type SetupFailureReason =
   | 'validation_error'
   | 'parse_error'
@@ -690,7 +695,7 @@ interface InviteViewedProps {
    */
   status: InviteUnavailableStatus | 'pending' | 'unreachable';
   /** Null on every status but `pending`, where the invite body is the thing read. */
-  role: AccountRole | null;
+  role: InvitedRole | null;
   /** Whether the server could name who sent it. An unnamed invite is colder to receive. */
   has_inviter: boolean;
 }

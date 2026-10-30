@@ -193,6 +193,10 @@ Redis settings.
 4. **TLS on only in production.** See "Postgres TLS" below.
 5. **Migrations before start.** The image does this on every start; see below.
 6. **Stop grace at least 45 s.** See "Shutdown and grace period".
+7. **The web image ships with or before the server.** Invite emails link to console pages:
+   `/agency/join/:token` for an agent, `/join/:token` for every other role. A console build without
+   `/join` sends that link through its `*` route to `/app` and then `/login`, and the single-use
+   token is lost. So a server that mails `/join` links needs a web image that has the page.
 
 ## Shutdown and grace period
 

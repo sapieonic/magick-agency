@@ -67,7 +67,7 @@ export function InviteJoinScreen({
     handleMismatchDecline,
     handleCredentialSubmit,
   } = useInviteClaim({ token, door, destination, events });
-  const { signInPath } = JOIN_DOORS[door];
+  const signInPath = JOIN_DOORS[door].signInPath(destination);
 
   if (lookup.phase === 'loading') {
     return (
@@ -104,7 +104,7 @@ export function InviteJoinScreen({
     return (
       <div className={styles.page}>
         <div className={styles.glow} />
-        <Unavailable status={lookup.status} door={door} />
+        <Unavailable status={lookup.status} door={door} destination={destination} />
       </div>
     );
   }

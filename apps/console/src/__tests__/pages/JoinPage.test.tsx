@@ -16,7 +16,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
  *
  *  1. **Workspace copy.** The role, the product and the workspace come from the
  *     invitation; nothing on the page mentions a station, a dialer or a
- *     supervisor, and its sign-in links go to `/login`, not the agency door.
+ *     supervisor, and its sign-in links go to `/login?next=/app`, not the agency
+ *     door — and not bare `/login`, whose fallback is the dialer's `/agency`.
  *  2. **The claim lands on `/app`, with `replace`.** The token is spent the
  *     instant it succeeds.
  *  3. **The claim lands in the INVITED workspace.** Somebody who already belongs
@@ -85,6 +86,13 @@ import JoinPage from '../../pages/auth/JoinPage';
 import type { AgencyInvite } from '../../types/invite';
 
 const TOKEN = 'tok_ws_123';
+
+/**
+ * Every sign-in link on this page: the workspace door, coming back to `/app`.
+ * Written out rather than read from `JOIN_DOORS`, so a door pointed somewhere
+ * else fails here instead of being echoed back.
+ */
+const WORKSPACE_SIGN_IN = '/login?next=%2Fapp';
 
 const INVITE: AgencyInvite = {
   email: 'omar@acme.com',
@@ -157,6 +165,22 @@ describe('reading a workspace invitation', () => {
     expect(screen.getByText(/you have been set up as account admin at/i)).toBeTruthy();
   });
 
+  it('labels a new workspace owner as one, and reports the role as itself', async () => {
+    /*
+      A super admin's tenant create invites the owner, with no inviter (a super
+      admin is not a user). The funnel used to report `role: null` here, on the
+      belief that no invite could grant ownership.
+    */
+    await renderInvitation({ ...INVITE, role: 'tenant_owner', inviter_name: null });
+
+    expect(screen.getByText(/you have been set up as workspace owner at/i)).toBeTruthy();
+    expect(mocks.trackWorkspaceInviteViewed).toHaveBeenCalledWith({
+      status: 'pending',
+      role: 'tenant_owner',
+      has_inviter: false,
+    });
+  });
+
   it('promises a workspace, never a station', async () => {
     /*
       The whole reason this is a second page rather than the agency one with a
@@ -174,7 +198,7 @@ describe('reading a workspace invitation', () => {
   it('points "Sign in instead" at the workspace door, not the agency one', async () => {
     await renderInvitation();
 
-    expect(screen.getByRole('link', { name: /sign in instead/i }).getAttribute('href')).toBe('/login');
+    expect(screen.getByRole('link', { name: /sign in instead/i }).getAttribute('href')).toBe(WORKSPACE_SIGN_IN);
   });
 
   it('shows the workspace eyebrow on the skeleton too, before anything is known', async () => {
@@ -316,7 +340,7 @@ describe('the Google address mismatch', () => {
     });
   });
 
-  it('keeps the way out — and points the sign-in remedy at /login — on identity_in_use', async () => {
+  it('keeps the way out — and points the sign-in remedy at /login?next=/app — on identity_in_use', async () => {
     /*
       The confirmed Google account already belongs to a different user row here.
       The invitation is untouched, so the mismatch screen (with its sign-out) must
@@ -335,7 +359,7 @@ describe('the Google address mismatch', () => {
       expect(screen.getByRole('alert').textContent).toMatch(/already belongs to a different account/i),
     );
     expect(screen.getByRole('button', { name: 'Use a different account' })).toBeTruthy();
-    expect(screen.getByRole('link', { name: /go to sign in/i }).getAttribute('href')).toBe('/login');
+    expect(screen.getByRole('link', { name: /go to sign in/i }).getAttribute('href')).toBe(WORKSPACE_SIGN_IN);
     expect(mocks.trackWorkspaceInviteClaimFailed).toHaveBeenCalledWith({
       method: 'google',
       reason: 'identity_in_use',
@@ -375,7 +399,7 @@ describe('each terminal status gets its own workspace screen', () => {
     expect(screen.queryByRole('button', { name: /continue with google/i })).toBeNull();
 
     const link = screen.queryByRole('link', { name: /go to sign in/i });
-    if (signIn) expect(link?.getAttribute('href')).toBe('/login');
+    if (signIn) expect(link?.getAttribute('href')).toBe(WORKSPACE_SIGN_IN);
     else expect(link).toBeNull();
 
     expect(mocks.trackWorkspaceInviteViewed).toHaveBeenCalledWith({

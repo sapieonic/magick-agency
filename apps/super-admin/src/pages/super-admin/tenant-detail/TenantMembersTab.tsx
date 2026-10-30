@@ -11,6 +11,7 @@ import type { Column } from '@magick-agency/web-ui/components/DataTable';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { saStatusColor, saStatusLabel, roleLabel } from '../../../utils/saStatus';
+import { inviteEmailNotice } from '../../../utils/inviteEmailNotice';
 import styles from '../SATenantDetailPage.module.css';
 
 /**
@@ -46,6 +47,12 @@ export function TenantMembersTab({ tenantId, tenantName, members, accounts, refr
   const [revokeTarget, setRevokeTarget] = useState<SuperAdminTenantMember | null>(null);
   const [revoking, setRevoking] = useState(false);
   const [memberNote, setMemberNote] = useState<string | null>(null);
+  /*
+    Its own slot rather than a tone on `memberNote`: "added, but not emailed" is
+    neither a success nor a failure of the add, and it has to stay visible after
+    the modal closes, because nothing else tells the super admin.
+  */
+  const [memberWarning, setMemberWarning] = useState<string | null>(null);
   const [memberError, setMemberError] = useState<string | null>(null);
 
   const resetAddUser = () => setUserForm({ email: '', role: 'operator', name: '', account_id: '' });
@@ -55,12 +62,21 @@ export function TenantMembersTab({ tenantId, tenantName, members, accounts, refr
     setAddingUser(true);
     setAddUserError(null);
     try {
-      await addUserToTenant(tenantId, {
+      const res = await addUserToTenant(tenantId, {
         email: userForm.email,
         role: userForm.role as Role,
         name: userForm.name || undefined,
         ...(userForm.account_id ? { account_id: userForm.account_id } : {}),
       });
+      // Whether the invitee was emailed; see `inviteEmailNotice` for the three answers.
+      const notice = inviteEmailNotice(
+        `Added ${userForm.email} as ${roleLabel(userForm.role)}`,
+        userForm.email,
+        res.invite_email,
+      );
+      setMemberError(null);
+      setMemberNote(notice.tone === 'success' ? notice.message : null);
+      setMemberWarning(notice.tone === 'warning' ? notice.message : null);
       setShowAddUser(false);
       resetAddUser();
       reload();
@@ -90,6 +106,7 @@ export function TenantMembersTab({ tenantId, tenantName, members, accounts, refr
       });
       setRoleTarget(null);
       setMemberError(null);
+      setMemberWarning(null);
       setMemberNote(`${target.email} is now ${roleLabel(roleForm.role)}.`);
       await reload({ silent: true });
     } catch (err) {
@@ -107,6 +124,7 @@ export function TenantMembersTab({ tenantId, tenantName, members, accounts, refr
     try {
       const res = await revokeMembership(tenantId, target.id);
       setRevokeTarget(null);
+      setMemberWarning(null);
       setMemberNote(
         `Revoked ${target.email}. ${res.staffing_closed} campaign assignment${res.staffing_closed === 1 ? '' : 's'} closed.`,
       );
@@ -114,6 +132,7 @@ export function TenantMembersTab({ tenantId, tenantName, members, accounts, refr
     } catch (err) {
       setRevokeTarget(null);
       setMemberNote(null);
+      setMemberWarning(null);
       setMemberError(err instanceof Error ? err.message : 'Failed to revoke membership');
     } finally {
       setRevoking(false);
@@ -177,6 +196,7 @@ export function TenantMembersTab({ tenantId, tenantName, members, accounts, refr
           </button>
         </div>
         {memberNote && <div className={styles.success} role="status">{memberNote}</div>}
+        {memberWarning && <div className={styles.warningBox} role="alert">{memberWarning}</div>}
         {memberError && <div className={styles.error} role="alert"><ErrorText message={memberError} /></div>}
         {refreshError && (
           <div className={styles.hint} role="status">

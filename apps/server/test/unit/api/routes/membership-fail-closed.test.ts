@@ -75,7 +75,6 @@ vi.mock('../../../../src/cache/redis-cache.js', () => ({
 }));
 vi.mock('../../../../src/invites/invite-issuer.js', () => ({
   issueInvite: mocks.issueInvite,
-  roleGetsTokenInvite: (role: string) => role === 'agent',
 }));
 vi.mock('../../../../src/audit/platform/audit-logger.js', () => ({
   platformAuditLogger: { log: mocks.auditLog },

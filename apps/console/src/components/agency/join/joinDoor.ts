@@ -4,7 +4,7 @@ import {
   AGENCY_JOIN_PATH,
   AGENCY_LOGIN_PATH,
   JOIN_PATH,
-  LOGIN_PATH,
+  loginPathReturningTo,
 } from '../../../utils/returnPath';
 import { UNAVAILABLE_COPY, WORKSPACE_UNAVAILABLE_COPY } from '../../../utils/agencyInviteJoinCopy';
 
@@ -60,11 +60,23 @@ export interface JoinDoorCopy {
   /** The line under the wordmark on every card the page renders. */
   eyebrow: string;
   /**
-   * Where "Go to sign in" and "Sign in instead" go. The agency door for an
-   * agent — `/login` sells them a shell they will never open — and `/login` for
-   * everyone else, which is the shell they are joining.
+   * Where "Go to sign in" and "Sign in instead" go, given where a claim on this
+   * page lands (`destination`, the page's own) — so including where that sign-in
+   * lands afterwards.
+   *
+   * The agency door for an agent, bare: its fallback is `/agency`, whose
+   * `AgencyHomeRedirect` sends an agent on to `/dialer`. Everyone else goes to
+   * `/login` CARRYING `?next=<destination>`, and the `next` is the point. `/login`
+   * renders `AgencyLoginPage` too, so its own fallback is `/agency` as well —
+   * which, for an operator at a tenant without the dialer, is the
+   * capability-unavailable page rather than the workspace they were invited to.
+   *
+   * A function of the destination rather than a path written here because the
+   * workspace's landing is `JoinPage`'s to name, outside the agency roots: this
+   * folder is agency code by location (`agencyShellBoundary.test.ts`), and the one
+   * value a sign-in here must agree with is the one a claim here navigates to.
    */
-  signInPath: string;
+  signInPath: (destination: string) => string;
   /** The five "cannot be used" screens, in this door's words. */
   unavailable: Record<InviteUnavailableStatus, { title: string; body: string; action: 'sign_in' | 'none' }>;
 }
@@ -72,7 +84,7 @@ export interface JoinDoorCopy {
 export const JOIN_DOORS: Record<JoinDoor, JoinDoorCopy> = {
   agency: {
     eyebrow: 'Agency Dialer',
-    signInPath: AGENCY_LOGIN_PATH,
+    signInPath: () => AGENCY_LOGIN_PATH,
     unavailable: UNAVAILABLE_COPY,
   },
   workspace: {
@@ -83,7 +95,7 @@ export const JOIN_DOORS: Record<JoinDoor, JoinDoorCopy> = {
       title once it is known.
     */
     eyebrow: 'Workspace invitation',
-    signInPath: LOGIN_PATH,
+    signInPath: (destination) => loginPathReturningTo(destination),
     unavailable: WORKSPACE_UNAVAILABLE_COPY,
   },
 };

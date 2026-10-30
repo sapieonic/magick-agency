@@ -64,6 +64,10 @@ import type { InviteJoinEvents } from '../../components/agency/join/useInviteCla
  * Notifications for everyone else — which is the right first screen for a role
  * this page cannot see the capabilities of.
  *
+ * It is also where this page's sign-in links come back to: they go to
+ * `/login?next=/app` (`JOIN_DOORS.workspace.signInPath`), because `/login`'s own
+ * fallback is the dialer's `/agency`.
+ *
  * The WORKSPACE it opens in is set by the claim, not by this path: see
  * `invitedTenantId`, which is what stops somebody who already belongs to another
  * workspace from accepting this invitation and landing back in the old one.

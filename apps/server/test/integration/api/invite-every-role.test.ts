@@ -432,19 +432,20 @@ describe('a refusing transport, for a non-agent', () => {
   });
 });
 
-describe('super-admin add-user for a non-agent', () => {
-  async function superAdminToken(): Promise<string> {
-    await getTestPool().query(
-      `INSERT INTO super_admins (id, email, password_hash, name, status) VALUES ($1, $2, $3, $4, 'active')`,
-      [randomUUID(), 'root@platform.test', await bcrypt.hash('RootPassword123!', 10), 'Root'],
-    );
-    const res = await app.inject({
-      method: 'POST', url: '/super-admin/login', payload: { email: 'root@platform.test', password: 'RootPassword123!' },
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    return res.json().token as string;
-  }
+/** A super admin, through the real login route. Rows are truncated per case, so one per case. */
+async function superAdminToken(): Promise<string> {
+  await getTestPool().query(
+    `INSERT INTO super_admins (id, email, password_hash, name, status) VALUES ($1, $2, $3, $4, 'active')`,
+    [randomUUID(), 'root@platform.test', await bcrypt.hash('RootPassword123!', 10), 'Root'],
+  );
+  const res = await app.inject({
+    method: 'POST', url: '/super-admin/login', payload: { email: 'root@platform.test', password: 'RootPassword123!' },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+  return res.json().token as string;
+}
 
+describe('super-admin add-user for a non-agent', () => {
   it('mails a workspace admin a /join link; the claim makes them an admin who can invite', async () => {
     const tenant = await insertTenant({ name: 'Provisioned Ltd' });
     const token = await superAdminToken();
@@ -456,6 +457,10 @@ describe('super-admin add-user for a non-agent', () => {
     });
 
     expect(res.statusCode, res.body).toBe(201);
+    // The super admin is told the mail went — and is never handed the link.
+    expect(res.json().invite_email).toEqual({ sent: true });
+    expect(res.json()).not.toHaveProperty('sign_in_url');
+    expect(res.body).not.toContain('/join/');
     const membershipId = res.json().membership.id as string;
     const rows = await inviteRows(membershipId);
     expect(rows).toEqual([expect.objectContaining({ role: 'tenant_admin', email: 'first.admin@provisioned.test' })]);
@@ -499,5 +504,92 @@ describe('super-admin add-user for a non-agent', () => {
     expect(next.json().invite_email).toEqual({ sent: true });
     expect(sent.map((m) => m.To[0]!.Email)).toEqual(['their.operator@provisioned.test']);
     expect(sent[0]!.TextPart).toContain('First Admin has set you up as an Operator at Provisioned Ltd.');
+  });
+});
+
+describe('super-admin tenant create', () => {
+  it('mails the new owner a /join link; the claim activates the tenant_owner membership', async () => {
+    /**
+     * The modal says "Creates the organization and invites its owner", and the
+     * route created the `tenant_owner` membership on a `pending_` stub and issued
+     * nothing: no token, no row, no mail. Nobody in the new tenant can invite the
+     * owner either — there is nobody in it — so this mail is the only thing that
+     * tells them to come in.
+     */
+    const token = await superAdminToken();
+
+    const res = await app.inject({
+      method: 'POST', url: '/super-admin/tenants',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { name: 'Fresh Start Ltd', owner_email: 'founder@fresh.test', owner_name: 'Fran Founder' },
+    });
+
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json().invite_email).toEqual({ sent: true });
+    expect(res.json()).not.toHaveProperty('sign_in_url');
+    expect(res.body).not.toContain('/join/');
+    const tenantId = res.json().tenant.id as string;
+
+    // ── the membership and its row ─────────────────────────────────────────
+    const { rows: owners } = await getTestPool().query(
+      `SELECT m.id, m.user_id, u.firebase_uid FROM memberships m JOIN users u ON u.id = m.user_id
+        WHERE m.tenant_id = $1 AND m.role = 'tenant_owner'`,
+      [tenantId],
+    );
+    expect(owners).toHaveLength(1);
+    const owner = owners[0] as { id: string; user_id: string; firebase_uid: string };
+    expect(owner.firebase_uid.startsWith(PENDING_UID_PREFIX)).toBe(true);
+    const rows = await inviteRows(owner.id);
+    expect(rows).toEqual([expect.objectContaining({ role: 'tenant_owner', email: 'founder@fresh.test', claimed_at: null })]);
+
+    // ── the mail, as Mailjet received it ───────────────────────────────────
+    expect(sent).toHaveLength(1);
+    const mail = sent[0]!;
+    expect(mail.To).toEqual([{ Email: 'founder@fresh.test' }]);
+    expect(mail.Subject).toBe(`You've been added to ${config.brand.name}`);
+    // No inviter: a super admin is not a `users` row.
+    expect(mail.TextPart).toContain('You have been set up as a Workspace owner at Fresh Start Ltd.');
+    expect(mail.TextPart).not.toMatch(/admin on your team/i);
+    const link = linkIn(mail.TextPart);
+    expect(link).toMatch(new RegExp(`^${ENV.origin}/join/[A-Za-z0-9_-]{43}$`));
+    expect(rows[0]!.token_hash).toBe(hashInviteToken(tokenOf(link)));
+
+    // ── the claim page's read ──────────────────────────────────────────────
+    const read = await app.inject({ method: 'GET', url: `/invites/${encodeURIComponent(tokenOf(link))}` });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toMatchObject({
+      status: 'pending',
+      invite: {
+        email: 'founder@fresh.test',
+        role: 'tenant_owner',
+        tenant_name: 'Fresh Start Ltd',
+        inviter_name: null,
+        product_name: config.brand.name,
+      },
+    });
+
+    // ── the claim ──────────────────────────────────────────────────────────
+    identity('tok-founder', { uid: 'fb-founder', email: 'founder@fresh.test', email_verified: true });
+    const claimed = await claim(tokenOf(link), 'tok-founder');
+    expect(claimed.statusCode, claimed.body).toBe(200);
+    expect(claimed.json().user.id).toBe(owner.user_id);
+    expect(claimed.json().memberships).toEqual([
+      expect.objectContaining({ id: owner.id, tenant_id: tenantId, role: 'tenant_owner', status: 'active' }),
+    ]);
+    expect((await userRow(owner.user_id)).firebase_uid).toBe('fb-founder');
+    const [after] = await inviteRows(owner.id);
+    expect(after!.claimed_at).not.toBeNull();
+    expect(after!.claimed_by_user_id).toBe(owner.user_id);
+    expect(await membershipRow(owner.id)).toMatchObject({ role: 'tenant_owner', status: 'active', tenant_id: tenantId });
+
+    // The super-admin audit row records the outcome, as add-user's does.
+    await auditWrites.drain();
+    const { rows: audit } = await getTestPool().query(
+      `SELECT details FROM super_admin_audit_log WHERE action = 'create_tenant' AND resource_id = $1`,
+      [tenantId],
+    );
+    expect(audit).toEqual([{
+      details: expect.objectContaining({ membership_id: owner.id, invite_id: rows[0]!.id, email_sent: true }),
+    }]);
   });
 });

@@ -13,6 +13,7 @@ import { StatusBadge } from '@magick-agency/web-ui/components/StatusBadge';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
+import { inviteEmailNotice, type InviteEmailNotice } from '../../utils/inviteEmailNotice';
 import styles from './SATenantsPage.module.css';
 
 export default function SATenantsPage() {
@@ -23,17 +24,28 @@ export default function SATenantsPage() {
   const [createForm, setCreateForm] = useState({ name: '', owner_email: '', owner_name: '' });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  /*
+    What the last create did about the owner's invitation. Shown on the page, not
+    in the modal, because the modal closes on success — and "created, but the
+    owner was not emailed" is the one outcome the super admin must not miss.
+  */
+  const [createNotice, setCreateNotice] = useState<InviteEmailNotice | null>(null);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreating(true);
     setCreateError(null);
     try {
-      await createTenant({
+      const res = await createTenant({
         name: createForm.name,
         owner_email: createForm.owner_email,
         owner_name: createForm.owner_name || undefined,
       });
+      setCreateNotice(inviteEmailNotice(
+        `Created ${createForm.name} with ${createForm.owner_email} as its owner`,
+        createForm.owner_email,
+        res.invite_email,
+      ));
       setShowCreate(false);
       setCreateForm({ name: '', owner_email: '', owner_name: '' });
       reload();
@@ -102,6 +114,12 @@ export default function SATenantsPage() {
           </button>
         }
       />
+
+      {createNotice && (
+        createNotice.tone === 'success'
+          ? <div className={styles.success} role="status">{createNotice.message}</div>
+          : <div className={styles.warningBox} role="alert">{createNotice.message}</div>
+      )}
 
       {!showEmpty && (
         <div className={styles.searchBar}>

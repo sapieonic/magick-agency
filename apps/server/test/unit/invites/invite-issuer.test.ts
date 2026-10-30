@@ -67,7 +67,7 @@ vi.mock('@magick-agency/observability/metrics/platform', () => ({
 }));
 vi.mock('@magick-agency/observability', () => ({ createChildLogger: () => mocks.log }));
 
-import { issueInvite, roleGetsTokenInvite } from '../../../src/invites/invite-issuer.js';
+import { issueInvite } from '../../../src/invites/invite-issuer.js';
 import { ROLES } from '@magick-agency/contracts/rbac';
 
 const MINTED = {
@@ -92,19 +92,6 @@ beforeEach(() => {
   mocks.userFindById.mockResolvedValue({ id: INVITER, display_name: 'Priya Sharma' });
   mocks.inviteSignInUrl.mockResolvedValue('https://app.example.com/agency/join/tok-1');
   mocks.sendInviteEmail.mockResolvedValue({ sent: true, messageId: null });
-});
-
-describe('roleGetsTokenInvite', () => {
-  it.each(ROLES)('issues %s a token-bound invitation', (role) => {
-    /**
-     * The fix, at its single switch. This answered `role === 'agent'`, and every
-     * other role — operators, admins, owners — was invited with no token, no row
-     * and no mail. Each role now has a claim page (`/agency/join/:token` or
-     * `/join/:token`), so the predicate answers `true` throughout and the row, the
-     * join URL and the mail all follow.
-     */
-    expect(roleGetsTokenInvite(role)).toBe(true);
-  });
 });
 
 describe('issueInvite for an agent', () => {
@@ -210,7 +197,11 @@ describe('issueInvite for an agent', () => {
 describe('issueInvite for every role', () => {
   it.each(ROLES)('mints a token, writes the row and mails %s', async (role) => {
     /**
-     * The same artefact for every role — that is the whole fix. The ROLE travels
+     * The same artefact for every role — that is the whole fix. This module used
+     * to issue a token only where a `roleGetsTokenInvite` switch answered
+     * `role === 'agent'`; every other role got no token, no row and no mail. The
+     * switch is gone, so this sweep is what pins every role to the row, the URL
+     * and the mail. The ROLE travels
      * into the row (so `GET /invites/:token` can name it and the claim activates
      * exactly that membership), into the URL resolution (which picks the claim
      * page) and into the mail (which picks the invitation's wording). Nothing
