@@ -77,6 +77,29 @@
   font-family: var(--font-mono);
 }
 
+/*
+ * Where a card's values came from — "Agent" (typed or picked on the call) or
+ * "AI" (extracted from the recording). A badge, not the muted mono meta beside
+ * it: telling the two apart is the point of the label, and as 11px muted text it
+ * was the faintest thing on the card.
+ */
+.sourceBadge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--info-subtle);
+  color: var(--info);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.sourceBadge[data-source='ai'] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
 .infoGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;

@@ -52,7 +52,7 @@ export function AnalysisSection({ analysis, source }: { analysis: CallAnalysisRe
         <BarChart3 size={16} className={styles.cardTitleIcon} />
         Call Analysis
         {source ? (
-          <span className={styles.analysisMeta} data-testid="analysis-source">
+          <span className={styles.sourceBadge} data-source={source.toLowerCase()} data-testid="analysis-source">
             {source}
           </span>
         ) : null}

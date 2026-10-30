@@ -278,7 +278,7 @@ export function FactCard({ card, icon }: { card: CallFactCard; icon: React.React
         <span className={styles.cardTitleIcon}>{icon}</span>
         {card.title}
         {card.source ? (
-          <span className={styles.analysisMeta} data-testid="fact-card-source">
+          <span className={styles.sourceBadge} data-source={card.source.toLowerCase()} data-testid="fact-card-source">
             {card.source}
           </span>
         ) : null}
