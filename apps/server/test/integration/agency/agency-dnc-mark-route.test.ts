@@ -72,6 +72,8 @@ function runtimeStub() {
       send: vi.fn(() => true), detach: vi.fn(), attach: vi.fn(),
       isLocallyOwned: vi.fn(() => true),
     },
+    // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
+    softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: {
       hasLiveAttempt: vi.fn(() => false), reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),

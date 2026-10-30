@@ -170,6 +170,8 @@ async function harness(): Promise<Harness> {
         return true;
       }),
     },
+    // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
+    softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: {
       reattachStation: vi.fn(() => null),
       takeMissedRelease: vi.fn(() => null),
@@ -784,5 +786,18 @@ describe('/available and the soft phone', () => {
     expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
     expect(repos.session.setState).not.toHaveBeenCalled();
     expect(h.sent.some((f: { event?: string; state?: string }) => f.event === 'agent_state' && f.state === 'available')).toBe(false);
+  });
+});
+
+describe('/leave and the soft phone', () => {
+  it('refuses while a soft-phone call is live — the station socket is its media leg', async () => {
+    h.runtime.softphone.hasLiveCall.mockReturnValue(true);
+
+    const res = await post('/leave');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('agent_on_live_call');
+    expect(h.runtime.agents.clear).not.toHaveBeenCalled();
+    expect(h.runtime.stations.detach).not.toHaveBeenCalled();
   });
 });

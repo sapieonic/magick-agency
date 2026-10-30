@@ -371,3 +371,19 @@ function snapForwardToOpen(window: CallingWindow, candidate: Date): Date | null 
   }
   return null;
 }
+
+/**
+ * The instant a callback asked for at `requestedAt` will actually be dialled: the
+ * request itself when the window is open then, else the window's next opening after
+ * it. Evaluated AT the requested instant, not now — the question is whether the
+ * window is open when the agent promised, which for a callback is days away.
+ *
+ * Falls back to the request unchanged when the window has no next opening at all
+ * (an empty `calling_days`, a `start == end` window, an unusable timezone) rather
+ * than inventing a time: the pre-dial gate parks such a contact and is the
+ * authority. Shared by the station's disposition route and the soft phone's.
+ */
+export function scheduleCallbackInWindow(window: CallingWindow, requestedAt: Date): Date {
+  if (callingWindowState(window, requestedAt) === 'open') return requestedAt;
+  return nextWindowOpen(window, requestedAt) ?? requestedAt;
+}

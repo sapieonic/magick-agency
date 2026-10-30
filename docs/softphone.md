@@ -6,7 +6,7 @@ caller IDs, recording setting and summary profile, and its outcome updates the r
 the number is on that campaign's roster. This page is the design the code implements: the data
 model, the runtime, the API, the console and the rules. Read it before changing anything under
 `apps/server/src/agency/softphone/`, the `softphone` routes, or the console's soft-phone screens.
-Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-10-30.
+Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-10-30; §4.1 updated to the runtime the same day.
 
 ## 1. Rulings it rests on (Manas, 2026-10-30)
 
@@ -80,13 +80,25 @@ against the set in force when they are saved; unknown keys are refused.
 Owned by `AgencyRuntime`. One call at a time per session.
 
 1. **Claim the session in Redis.** A Lua CAS on `agency:agent:{sessionId}:state` requires
-   `state = break` and an empty `manual` field, and sets `manual = <manualCallId>`. The
-   `available` transition (route, end-break) requires `manual` to be empty, so ending the break
-   and dialing cannot interleave. Released when the call settles (outcome saved or lapsed).
-   The DB session row must carry `break_reason = 'soft_phone'`.
-2. **Pre-dial** (`manual-predial.ts`), in order: E.164 (`normalizeE164`, default region from the
-   account's country, `+91` by default); caller ID in the allowed set (tagged: the campaign's
-   `caller_ids`; untagged: the account's assigned numbers, `findAvailableForAccount`); roster
+   `state = break` and an empty `manual` field, and sets `manual = <manualCallId>`. Every write
+   to `available` (the route, end-break, `releaseAgent`, the CAS) refuses inside its own script
+   while `manual` is set, or while the hash carries `softphone = 1` (a soft-phone session, written
+   at rehydrate), so ending the break and dialing cannot interleave and a soft-phone session can
+   never be `available`. Released when the call settles (outcome saved, lapsed, or an unanswered
+   call closed), by that call's id only. The DB session row must carry
+   `break_reason = 'soft_phone'`. The claim is taken right AFTER step 3 commits, so it always names
+   a row that exists; an end-break that wins the race leaves the session `available` and the row
+   is closed undialled (`not_on_softphone`). Two dials from one session serialise on a row lock of
+   the session inside step 3's transaction, so the second meets the first's call
+   (`manual_call_live`). A rehydrate (reconnect, lapsed lease) of a soft-phone session or of a
+   campaign session on the `soft_phone` break lands in `break/soft_phone` and re-claims the
+   session's unsettled call.
+2. **Pre-dial** (`manual-predial.ts`), in order: override notes when given (bounds); E.164
+   (`normalizePhoneToE164` then `normalizeE164`; the schema has no account country, so the default
+   region is the platform's, `DEFAULT_PHONE_COUNTRY_CODE`, `+91` by default); caller ID in the
+   allowed set (tagged: the campaign's `caller_ids`, default the pool's round-robin pick as pacing
+   dials; untagged: the account's assigned numbers, `findAvailableForAccount`, default the
+   settings' `default_caller_id` while still assigned, else the account's default number); roster
    match on the tag (`campaign_id` + phone digits, the existing index) — a contact `in_flight`
    with a live campaign attempt refuses `contact_in_flight` with no override; calling window
    (tagged) → `outside_calling_hours` unless overridden; DNC (tenant, account, tag) →
@@ -95,7 +107,12 @@ Owned by `AgencyRuntime`. One call at a time per session.
    contact (`pending → in_flight`, `FOR UPDATE SKIP LOCKED`, recording its prior state). A
    contact in any other state is linked, not claimed.
 4. **Dial agent first**: `createBridgedCall` with the session's station socket and the
-   correlation `{ kind: 'manual', manualCallId }`, `browserCloseGraceMs: 0` before answer.
+   correlation `{ kind: 'manual', manualCallId }`, `browserCloseGraceMs: 0` before answer (the
+   bridge honours the grace on a manual leg only once answered; after the answer the
+   deferred-hangup window applies, so a wifi blip mid-conversation survives). `ringing` is
+   written when the carrier accepts the dial. A dial the bridge refuses before the carrier
+   (`concurrency_limit`, a dead socket) or the carrier refuses outright is ended `failed`, its
+   contact claim released and no attempt charged.
    Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
    `allow_recording` in the bridge as today). Profile: tag's `analysis_profile_id`, else
    settings', else the account default (the analysis hook's fallback).
@@ -106,20 +123,31 @@ Owned by `AgencyRuntime`. One call at a time per session.
    outcome.
 7. **Outcome** (`manual-disposition.ts`): the existing pure functions (`resolveDisposition`,
    `validateDispositionFields`, `resolveDispositionDecision`) against the tag's catalog or the
-   settings / built-in catalog; suppress codes write DNC in the same transaction (B8); then the
-   contact settles (§5); then the Redis `manual` field is released.
+   settings / built-in catalog (a tag whose catalog is empty falls back to the built-in, still
+   source `campaign`: a bridged call always owes an outcome); call fields with `required`
+   enforced; suppress codes write DNC in the same transaction (B8; campaign scope when tagged,
+   else tenant); then the contact settles (§5); then the Redis `manual` field is released.
+   **Mark DNC** on a tagged call also suppresses every roster row of the tag carrying the number,
+   as the station's mark does.
 8. **Lapse.** An ended call with no outcome after `SOFTPHONE_OUTCOME_LAPSE_MS` (30 min), or
    whose session left, is closed `no_disposition` (`settled_at` set) by the reaper sweep, and its contact claim is
    released to its prior state. Only a call that bridged (so owed an outcome) gets the `no_disposition` code; one
    that never bridged is just settled. The sweep (`lapseUnsettled`) returns the rows and releases nothing; the
    caller releases each claim (`releaseManualClaim`) and the Redis `manual` field.
 9. **Reconnect.** A station reconnect reattaches a live manual call's browser leg
-   (`reattachBorrowedBrowserLeg(manualCallId, ws)`) and resends `manual_call`.
+   (`reattachBorrowedBrowserLeg(manualCallId, ws)`) and resends `manual_call` right after `ready`
+   (the ready frame has no field for it) with the session's unsettled call — live or awaiting
+   its outcome — so a reloaded console restores the call. A socket close mid-call does not write
+   the agent `offline` (the call's media leg owns the outcome), and `leave` is refused while a
+   call is live.
 10. **Restart.** The startup reaper ends non-terminal manual rows `orphaned` and releases their
     contact claims; the periodic sweep does the same for rows not owned by this process. A reaped row that
     never bridged is settled in the same statement and its claim released; one that bridged is ended and left
     awaiting its outcome (the agent talked to the customer and can still write it up after reconnecting), so
-    its claim is kept until the outcome or the lapse (`reapOrphaned`).
+    its claim is kept until the outcome or the lapse (`reapOrphaned`). The periodic sweep spares
+    this process's live calls and any row younger than 5 minutes. Both sweeps write an
+    `audit_logs` system event per closed call (`agency_manual_call.orphaned` / `.lapsed`, actor
+    `system:agency-reaper`).
 
 Pacing headroom subtracts live calls on the **whole account** (attempts of every campaign plus
 live manual calls): `countLiveForAccount`.

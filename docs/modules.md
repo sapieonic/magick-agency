@@ -102,7 +102,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/chaos/restart-mid-bridge.test.ts` | ~2 |
 | `apps/server/test/integration/agency/chaos/roster-exactly-once.test.ts` | ~8 |
 | `apps/server/test/integration/agency/chaos/settle-write-failure.test.ts` | ~3 |
-| `apps/server/test/integration/agency/dnc-registry.test.ts` | ~12 |
+| `apps/server/test/integration/agency/dnc-registry.test.ts` | ~14 |
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
@@ -240,6 +240,21 @@ Files: `grouped.ts`, `roster.ts`, `stats.ts`
 The dialer's internals, split out of `agency-dialer.ts`: `live-attempt.ts` (the `LiveAttempt` record, `isUnannounced`, the panel builder) and `contact-settlement.ts` (`settleContact`: the our-fault / retry-policy routing of an ended attempt's contact). Tested through the `AgencyDialer` suites above (`agency-dialer`, `late-binding`, `canceled-outcome-ledger`, `our-fault-redial`, the chaos suites).
 
 Files: `contact-settlement.ts`, `live-attempt.ts`
+
+### `apps/server/src/agency/softphone/`
+
+The soft phone's runtime (docs/softphone.md §4, §5): `softphone-service.ts` (`SoftphoneService`, `AgencyRuntime.softphone`: place, hang up, details, outcome, DNC, switch and return, reads; typed refusals, no HTTP), `manual-dialer.ts` (`ManualDialer`: dials a committed row agent-first through the bridge with a `manual` correlation, applies lifecycle events in order, settles unanswered calls, re-attaches on reconnect, takes the sweeps' closed rows), `manual-predial.ts` (number, caller ID, roster match, calling window, DNC, overrides), `manual-disposition.ts` (catalog, outcome and roster decision), `call-fields.ts` (call-field values against the set in force), `session-guard.ts` (`setAvailableGuarded`: the `available` write and its `manual_call_live` refusal), `types.ts` (the refusal union and actor).
+
+Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-predial.ts`, `session-guard.ts`, `softphone-service.ts`, `types.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/integration/agency/chaos/softphone-restart-mid-call.test.ts` | 3 |
+| `apps/server/test/integration/agency/softphone-agent-claim.test.ts` | 8 |
+| `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 10 |
+| `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
+| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 11 |
+| `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | 21 |
 
 ### `apps/server/src/agency/pacing/`
 
@@ -560,6 +575,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 62 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
+| `apps/server/test/unit/core/webrtc-bridge-manual-correlation.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-session.test.ts` | 31 |
 | `apps/server/test/unit/core/webrtc-scenarios.test.ts` | 13 |

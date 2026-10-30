@@ -108,6 +108,8 @@ function makeRuntime() {
     agents: { get: agentsGet, set: vi.fn(), clear: vi.fn() },
     wrapup: { stateFor: vi.fn(() => null) },
     stations: { send: vi.fn(() => true), attach: vi.fn(), detach: vi.fn(), isLocallyOwned: vi.fn(() => true) },
+    // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
+    softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: { hasLiveAttempt: vi.fn(() => false), noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null) },
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: { mint, verifyAndConsume: vi.fn() },

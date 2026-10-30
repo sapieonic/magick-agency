@@ -85,11 +85,63 @@ export function normalizeE164(raw: string | null | undefined): string | null {
   return `+${digits}`;
 }
 
+/**
+ * {@link DncRegistry.checkEntry}'s answer: {@link DncCheck}, with the matching entry
+ * on a `suppressed` — what the soft phone's `dnc_listed` refusal shows and its
+ * override records (docs/softphone.md SP1).
+ */
+export type DncEntryCheck =
+  | { result: 'clear' }
+  | {
+    result: 'suppressed';
+    entry: { id: string; scope: 'tenant' | 'account' | 'campaign'; reason: string | null; created_at: Date };
+  }
+  | { result: 'unverifiable' }
+  | { result: 'unavailable' };
+
 export class DncRegistry {
   /**
    * @param repo Injected for tests; defaults to the shared `dnc_entries` repository.
+   *   `findMatchingEntry` is only {@link checkEntry}'s; a registry built without it
+   *   answers `unavailable` there (fail closed).
    */
-  constructor(private readonly repo: Pick<typeof dncRepository, 'findSuppressed'> = dncRepository) {}
+  constructor(
+    private readonly repo: Pick<typeof dncRepository, 'findSuppressed'>
+      & Partial<Pick<typeof dncRepository, 'findMatchingEntry'>> = dncRepository,
+  ) {}
+
+  /**
+   * {@link check}, answering WHICH entry suppresses the number — one indexed read of
+   * the same predicate. Fails closed exactly as `check` does: a read that throws
+   * (or a registry with no entry lookup) is `unavailable`, never `clear`.
+   *
+   * The scope label is the entry's own: campaign-scoped when it names a campaign
+   * (an account-and-campaign row included), else account, else tenant.
+   */
+  async checkEntry(tenantId: string, phoneE164: string, scope: DncCheckScope): Promise<DncEntryCheck> {
+    const phone = normalizeE164(phoneE164);
+    if (!phone) return { result: 'unverifiable' };
+    try {
+      if (!this.repo.findMatchingEntry) throw new Error('no DNC entry lookup on this registry');
+      const entry = await this.repo.findMatchingEntry(
+        { tenantId, accountId: scope.accountId, campaignId: scope.campaignId },
+        phone,
+      );
+      if (!entry) return { result: 'clear' };
+      return {
+        result: 'suppressed',
+        entry: {
+          id: entry.id,
+          scope: entry.campaign_id !== null ? 'campaign' : entry.account_id !== null ? 'account' : 'tenant',
+          reason: entry.reason,
+          created_at: entry.created_at,
+        },
+      };
+    } catch (err) {
+      log.error({ err, tenantId }, 'DNC entry check failed — refusing to dial');
+      return { result: 'unavailable' };
+    }
+  }
 
   /**
    * The pre-dial check, made immediately before the dial.

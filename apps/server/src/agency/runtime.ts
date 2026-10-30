@@ -31,6 +31,8 @@ import { DncRegistry } from './dnc-registry.js';
 import { notifyAgencyCampaignFinished } from './campaign-completion-notice.js';
 import { WrapupManager } from './wrapup-manager.js';
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
+import { ManualDialer } from './softphone/manual-dialer.js';
+import { SoftphoneService } from './softphone/softphone-service.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
@@ -70,6 +72,14 @@ export class AgencyRuntime {
    * never does.
    */
   readonly dnc: DncRegistry;
+  /** The soft phone's dialer: places manual calls and owns them until they end (docs/softphone.md §4.1). */
+  readonly manualDialer: ManualDialer;
+  /**
+   * The soft phone's runtime surface for the public API layer (docs/softphone.md
+   * §4, §6): typed methods answering refusals that map 1:1 onto
+   * `AgencySoftphoneErrorCode`. See `softphone/softphone-service.ts`.
+   */
+  readonly softphone: SoftphoneService;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -94,8 +104,15 @@ export class AgencyRuntime {
     // Same shape as the telephony guard host's `registerWebrtcActiveIdsProvider`: the sweeper
     // asks what is live rather than being told, so nothing has to remember to
     // update it.
+    this.manualDialer = new ManualDialer(bridge, this.stations, this.agents);
     this.reaper = new AgencyReaper({
       activeAttemptIds: () => this.dialer.activeAttemptIds(),
+      // The soft phone's orphan sweep spares this process's live manual calls; a
+      // call the sweeps close has its Redis claim cleared and its session told.
+      manual: {
+        activeIds: () => this.manualDialer.activeManualCallIds(),
+        onClosed: (rows) => this.manualDialer.onCallsClosedBySweep(rows),
+      },
       ownerOf: (sessionId) => this.stations.ownerOf(sessionId),
       unrecordedEnds: {
         ids: () => this.dialer.unrecordedEndedAttemptIds(),
@@ -107,6 +124,14 @@ export class AgencyRuntime {
     // Decision B8: the registry is one indexed read of `dnc_entries` and fails closed
     // on any read fault. The default argument is the shared `dncRepository`.
     this.dnc = new DncRegistry();
+    this.softphone = new SoftphoneService({
+      agents: this.agents,
+      stations: this.stations,
+      breaks: this.breaks,
+      dialer: this.dialer,
+      dnc: this.dnc,
+      manual: this.manualDialer,
+    });
     const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, this.stations, this.agents, dispatcher, this.dnc,
@@ -215,6 +240,10 @@ export class AgencyRuntime {
     // already gets from the bridge; it is a no-op for every announced attempt.
     this.dialer.noteStationClosed(sessionId);
     if (this.dialer.hasLiveAttempt(sessionId)) return false;
+    // The same rule for a live soft-phone call: the station socket is its media leg,
+    // and the bridge's grace (after the answer) or its immediate hangup (before)
+    // owns the outcome.
+    if (this.manualDialer.hasLiveCall(sessionId)) return false;
     // ── BELT AND BRACES: THE SUPERSEDE GATE, RE-ASKED AT THE WRITE ──────────
     //
     // The close handler's own `socketFor` check might look as though it races this
@@ -348,6 +377,9 @@ export class AgencyRuntime {
         this.dialer.noteStationClosed(entry.sessionId);
         continue;
       }
+      // A live soft-phone call: this socket IS its media leg (bound before the
+      // dial), so rule 1 holds as written.
+      if (this.manualDialer.hasLiveCall(entry.sessionId)) continue;
 
       if (entry.ws.readyState === 3 /* CLOSED */) {
         log.warn({
@@ -425,6 +457,7 @@ export class AgencyRuntime {
 
   async start(): Promise<void> {
     this.dialer.start();
+    this.manualDialer.start();
     await this.reaper.reapOnStartup();
     this.reaper.start();
     this.pacing.start();
@@ -466,6 +499,7 @@ export class AgencyRuntime {
     this.liveConcurrencyMetrics?.stop();
     this.liveConcurrencyMetrics = null;
     this.dialer.stop();
+    this.manualDialer.stop();
     // Timers only — agents are NOT returned to the pool here. Their sockets die
     // with the process and a restart lands them in `break` on reconnect, so returning
     // them to `available` on the way out would be a lie the next boot inherits.

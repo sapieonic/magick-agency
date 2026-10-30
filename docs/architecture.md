@@ -217,6 +217,13 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Reaper** (`reaper.ts`). On startup and every 60 s, closes attempts nobody owns: liveness is
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
   dispatching it.
+- **Soft phone** (`softphone/`, [`softphone.md`](softphone.md)). Manual calls outside pacing:
+  `ManualDialer` dials agent-first through the bridge with a `manual` correlation and owns the
+  call until it ends; `SoftphoneService` (`runtime.softphone`) is the API layer's surface. The
+  soft phone is a `break/soft_phone`, a Lua-guarded `manual` claim on the agent hash keeps the
+  session out of `available` while a call is live or awaiting its outcome, pacing headroom counts
+  the whole account's live calls (`countLiveForAccount`), and the reaper's orphan and lapse
+  sweeps close what nobody owns.
 - **Completion notice** (`campaign-completion-notice.ts`). When a campaign finishes, mails holders
   of `agency.supervise`.
 

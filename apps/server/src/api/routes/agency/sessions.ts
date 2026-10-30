@@ -574,6 +574,16 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // before the dial is placed and cleared only when the attempt settles, so it
     // covers `dialing` through `bridged` AND the deferred-hangup window — during
     // which the socket is already gone and every other signal reads idle.
+    // A live soft-phone call is the same refusal: the station socket is its media
+    // leg (docs/softphone.md §4.1). One awaiting its outcome does not hold the
+    // leave; the lapse sweep closes a call whose session left.
+    if (runtime.softphone.hasLiveCall(session.id) && !runtime.dialer.hasLiveAttempt(session.id)) {
+      const err: AgencyActionErrorResponse = {
+        error: 'Conflict', code: 'agent_on_live_call',
+        message: 'Hang up your soft-phone call before leaving the station.',
+      };
+      return reply.code(409).send(err);
+    }
     if (runtime.dialer.hasLiveAttempt(session.id)) {
       // ── Under late binding the agent can see NO call, so the message had to
       //    change — and only the message (`FF_AGENCY_LATE_BINDING`) ───────────

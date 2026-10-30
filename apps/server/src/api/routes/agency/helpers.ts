@@ -17,7 +17,7 @@ import { dispositionErrorMessage } from '../../../agency/disposition.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { DEFERRED_HANGUP_MS, STATION_HEARTBEAT_GRACE_MS } from '@magick-agency/domain/timers';
-import { callingWindowState, nextWindowOpen, resolveCallingWindow } from '../../../agency/calling-hours.js';
+import { resolveCallingWindow, scheduleCallbackInWindow } from '../../../agency/calling-hours.js';
 import type {
   AgencyActionErrorCode,
   AgencyActionErrorResponse,
@@ -286,8 +286,5 @@ export async function resolveCallbackDialTime(
 ): Promise<Date> {
   const contact = await agencyContactRepository.findById(contactId).catch(() => null);
   const window = resolveCallingWindow(campaign, { timezone: contact?.timezone ?? null });
-  // Evaluated AT the requested instant, not now: the question is whether the
-  // window is open when the agent promised, which for a callback is days away.
-  if (callingWindowState(window, requestedAt) === 'open') return requestedAt;
-  return nextWindowOpen(window, requestedAt) ?? requestedAt;
+  return scheduleCallbackInWindow(window, requestedAt);
 }

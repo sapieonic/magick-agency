@@ -210,6 +210,8 @@ function makeRuntime() {
     agents: { get: vi.fn().mockResolvedValue({ state: 'on_call', attemptId: 'att-1', since: 1 }), set: vi.fn(), clear: vi.fn() },
     wrapup: { noteDisposition: vi.fn().mockResolvedValue(true), stateFor: vi.fn(() => null) },
     stations: { send: vi.fn(() => true), detach: vi.fn(), attach: vi.fn(), isLocallyOwned: vi.fn(() => true) },
+    // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
+    softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: { hasLiveAttempt: vi.fn(() => false), noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null), takeMissedRelease: vi.fn(() => null) },
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: { mint: vi.fn(), verifyAndConsume: vi.fn() },

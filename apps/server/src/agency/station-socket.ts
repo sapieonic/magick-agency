@@ -481,4 +481,19 @@ export async function handleStationSocket(
   stationLive = true;
   const held = takeDeferredPing();
   if (held) handlePing(held.frame, held.receivedAt);
+
+  // ── The soft phone (docs/softphone.md §4.1 step 9) ───────────────────────
+  // Re-adopt a live manual call's browser leg onto this socket (the bridge
+  // disarms its deferred hangup and media resumes), and restore the session's
+  // unsettled call — live, or awaiting its outcome — with a `manual_call` frame
+  // right after `ready` (the ready frame has no field for it), so a reloaded
+  // console comes back to the call. Scoped to this socket, like `ready`.
+  if (!stillOurs()) return;
+  const manualCall = await runtime.softphone.reattachStation(sessionId, socket).catch((err) => {
+    log.warn({ err, sessionId }, 'Could not restore the soft-phone call on reconnect');
+    return null;
+  });
+  if (manualCall && stillOurs()) {
+    runtime.stations.send(sessionId, { event: 'manual_call', call: manualCall }, socket);
+  }
 }

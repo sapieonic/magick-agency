@@ -288,6 +288,32 @@ export class DncRepository {
     return new Set(result.rows.map((r) => r.phone_e164));
   }
 
+  /**
+   * The ENTRY that suppresses `phone` for this scope — {@link findSuppressed}'s
+   * predicate exactly, for the one caller that must show the agent what it hit:
+   * the soft phone's `dnc_listed` refusal and its override (docs/softphone.md SP1),
+   * which stores the entry id it overrode.
+   *
+   * The widest entry first (tenant-wide, then account, then campaign), oldest
+   * first within a scope, so the refusal names the broadest reason the number is
+   * off the list. Same index as `findSuppressed`. `phone` must already be the
+   * normalised E.164 form; null when nothing matches.
+   */
+  async findMatchingEntry(scope: DncLookupScope, phone: string): Promise<DncEntryRecord | null> {
+    const pool = getPool();
+    const result = await pool.query<DncEntryRecord>(
+      `SELECT * FROM dnc_entries
+        WHERE tenant_id = $1
+          AND phone_e164 = $2
+          AND (account_id  IS NULL OR account_id  = $3::uuid)
+          AND (campaign_id IS NULL OR campaign_id = $4::uuid)
+        ORDER BY (campaign_id IS NOT NULL), (account_id IS NOT NULL), created_at, id
+        LIMIT 1`,
+      [scope.tenantId, phone, scope.accountId ?? null, scope.campaignId ?? null],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async findById(id: string, tenantId: string): Promise<DncEntryRecord | null> {
     // Tenant-scoped by construction — an entry id is not a capability.
     const pool = getPool();

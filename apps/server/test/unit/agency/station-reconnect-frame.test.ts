@@ -144,6 +144,8 @@ async function harness(): Promise<Harness> {
         return true;
       }),
     },
+    // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
+    softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: {
       reattachStation: vi.fn(() => activeAttempt.value),
       takeMissedRelease: vi.fn(() => null),

@@ -738,6 +738,20 @@ describe('failure mode 6 — the process restarted', () => {
     expect(repos.session.setState, 'a live agent was mirrored as break').not.toHaveBeenCalled();
   });
 
+  it('a station that closes during a live SOFT-PHONE call does not write the agent offline', async () => {
+    // docs/softphone.md §4.1 step 9: the socket is the manual call's media leg, so
+    // the bridge (its grace once answered, its hangup before) owns the outcome —
+    // writing `offline` here would leave nothing for the reconnect to resume onto.
+    const { runtime } = makeRuntime();
+    await runtime.agents.set('s1', 'break', { leaseMs: AGENT_LEASE_MS.break });
+    const live = vi.spyOn(runtime.manualDialer, 'hasLiveCall').mockReturnValue(true);
+    expect(await runtime.releaseStationOnClose('s1')).toBe(false);
+    expect((await runtime.agents.get('s1'))?.state).toBe('break');
+    live.mockReturnValue(false);
+    expect(await runtime.releaseStationOnClose('s1')).toBe(true);
+    expect((await runtime.agents.get('s1'))?.state).toBe('offline');
+  });
+
   it('reads nothing from the durable row at all', async () => {
     // Acceptance (d), asserted as an absence rather than an outcome. Any future
     // "fall back to the row when Redis is empty" would satisfy the two tests

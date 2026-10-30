@@ -132,4 +132,27 @@ describe('DncRegistry + markDnc over real dnc_entries', () => {
   it('FAILS CLOSED on a real database error: a malformed tenant id is `unavailable`, never `clear`', async () => {
     expect(await registry.check('not-a-uuid', PHONE, { accountId: null, campaignId: null })).toBe('unavailable');
   });
+
+  // ── checkEntry: the soft phone's `dnc_listed` names the entry (SP1) ──────────
+  it('checkEntry answers the WIDEST matching entry, with the same scope predicate as check', async () => {
+    expect(await registry.checkEntry(tenant, PHONE, { accountId: account, campaignId: campaign })).toEqual({ result: 'clear' });
+    await insert({ campaign_id: campaign });
+    const camp = await registry.checkEntry(tenant, PHONE, { accountId: account, campaignId: campaign });
+    expect(camp.result === 'suppressed' && camp.entry.scope).toBe('campaign');
+    // Another campaign of the account is not matched by it — exactly as `check`.
+    expect(await registry.checkEntry(tenant, PHONE, { accountId: account, campaignId: otherCampaign })).toEqual({ result: 'clear' });
+    await insert({ account_id: account });
+    const acct = await registry.checkEntry(tenant, PHONE, { accountId: account, campaignId: campaign });
+    expect(acct.result === 'suppressed' && acct.entry.scope).toBe('account');
+    await insert({});
+    const wide = await registry.checkEntry(tenant, PHONE, { accountId: account, campaignId: campaign });
+    expect(wide.result === 'suppressed' && wide.entry.scope).toBe('tenant');
+    const { rows } = await getTestPool().query(
+      'SELECT id FROM dnc_entries WHERE tenant_id = $1 AND account_id IS NULL AND campaign_id IS NULL', [tenant]);
+    expect(wide.result === 'suppressed' && wide.entry.id).toBe(rows[0].id);
+  });
+
+  it('checkEntry FAILS CLOSED on a real database error', async () => {
+    expect(await registry.checkEntry('not-a-uuid', PHONE, { accountId: null, campaignId: null })).toEqual({ result: 'unavailable' });
+  });
 });
