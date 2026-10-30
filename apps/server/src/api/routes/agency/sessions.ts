@@ -9,11 +9,13 @@ import { createChildLogger } from '@magick-agency/observability';
 import { agencyAgentSessionRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
-import { setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
+import { owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
 import type {
   AgencyActionErrorResponse,
+  AgencyAgentState,
   AgencyCreateSessionRequest,
+  AgencyManualCall,
   AgencySessionBootstrap,
   AgencySessionCampaignConflict,
   AgencySessionStateResponse,
@@ -380,14 +382,42 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       };
       return reply.code(409).send(err);
     }
+    // A campaign session on the soft phone owing an outcome stays out of the pool:
+    // the supervisor is told so with the call (docs/softphone.md §4.1 step 1, §6),
+    // read from the database first as `available` does, and again when the release's
+    // own Lua guard refused (a dial that committed in between).
+    const manualCallLive = (call: AgencyManualCall) => {
+      const err: AgencySoftphoneCallPendingRefusal = {
+        error: 'Conflict', code: 'manual_call_live', call,
+        message: 'The agent has a soft-phone call open: its outcome must be saved before they can go available.',
+      };
+      return reply.code(409).send(err);
+    };
     const forced = await runtime.wrapup.force(session.id);
-    if (!forced) {
+    let state: AgencyAgentState;
+    if (forced) {
+      // The forced wrap-up already released the agent (a queued break applies there).
+      state = (await runtime.agents.get(session.id))?.state ?? 'offline';
+    } else {
+      const owed = await owedSoftphoneCall(runtime.agents, session.id);
+      if (owed) return manualCallLive(owed);
       // Not in wrap-up — fall through to a plain return rather than 409ing. A
       // supervisor pressing this on an agent who just finished should not get an
       // error for winning a race by half a second.
-      await runtime.dialer.releaseAgent(session.id);
+      const released = await runtime.dialer.releaseAgent(session.id);
+      if (released.result === 'manual_call_live' || released.result === 'softphone_session') {
+        const call = await owedSoftphoneCall(runtime.agents, session.id);
+        if (call) return manualCallLive(call);
+        const err: AgencySoftphoneErrorResponse = {
+          error: 'Conflict', code: 'wrong_session_kind',
+          message: 'This session is on the soft phone; it cannot be made available.',
+        };
+        return reply.code(409).send(err);
+      }
+      // What was written: `break` for a queued break, `offline` when the station is gone.
+      state = released.state;
     }
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'available', since: new Date().toISOString() });
+    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString() });
   });
 
   // ── POST /sessions/:id/break ───────────────────────────────────────────

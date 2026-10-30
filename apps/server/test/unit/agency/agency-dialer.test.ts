@@ -669,8 +669,8 @@ describe('AgencyDialer queued break ', () => {
     );
     const ws = fakeWs();
     await attachStation(stations, 's1', ws);
-    await dialer.releaseAgent('s1');
-    return { ws, setSpy };
+    const released = await dialer.releaseAgent('s1');
+    return { ws, setSpy, released };
   }
 
   it('(a) sends the agent to `break`, not `available`, when one was queued', async () => {
@@ -678,9 +678,11 @@ describe('AgencyDialer queued break ', () => {
     // is the moment it lands — at the end of wrap-up, through the one release path
     // every route into the pool passes through.
     const lunch = { code: 'lunch', label: 'Lunch' };
-    const { ws, setSpy } = await releaseWith(fakeBreaks(lunch));
+    const { ws, setSpy, released } = await releaseWith(fakeBreaks(lunch));
 
     expect(setSpy).toHaveBeenCalledWith('s1', 'break', expect.anything());
+    // What force-available answers: the break, not `available`.
+    expect(released).toEqual({ state: 'break', result: 'ok' });
     const frame = ws.sent.find((f: any) => f.event === 'agent_state');
     expect(frame.state).toBe('break');
     // (c) the reason is on the frame as well as the session row, or a supervisor
@@ -689,8 +691,9 @@ describe('AgencyDialer queued break ', () => {
   });
 
   it('returns to `available` when nothing is queued', async () => {
-    const { ws, setSpy } = await releaseWith(fakeBreaks(null));
+    const { ws, setSpy, released } = await releaseWith(fakeBreaks(null));
     expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything());
+    expect(released).toEqual({ state: 'available', result: 'ok' });
     expect(ws.sent.find((f: any) => f.event === 'agent_state').state).toBe('available');
   });
 
@@ -705,7 +708,8 @@ describe('AgencyDialer queued break ', () => {
       const dialer = new AgencyDialer(fakeBridge() as any, stations, agents, fakeWrapup() as any, fakeBreaks(null) as any);
       const ws = fakeWs();
       await attachStation(stations, 's1', ws);
-      await dialer.releaseAgent('s1');
+      // Reported, so force-available answers 409 instead of claiming the agent is back.
+      expect(await dialer.releaseAgent('s1')).toEqual({ state: 'available', result: refusal });
       expect(ws.sent.some((f: any) => f.event === 'agent_state')).toBe(false);
       expect(repos.session.setState).not.toHaveBeenCalled();
     }
@@ -803,7 +807,7 @@ describe('AgencyDialer queued break ', () => {
       fakeBridge() as any, stations, agents, fakeWrapup() as any, breaks as any,
     );
 
-    await dialer.releaseAgent('gone-session');
+    expect(await dialer.releaseAgent('gone-session')).toEqual({ state: 'offline', result: 'ok' });
 
     expect(breaks.cancel).toHaveBeenCalledWith('gone-session');
     expect(setSpy).toHaveBeenCalledWith('gone-session', 'offline', expect.anything());

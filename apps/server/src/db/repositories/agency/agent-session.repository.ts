@@ -534,14 +534,27 @@ export class AgencyAgentSessionRepository {
    * single-statement property is unchanged.
    *
    * `state_since` still restamps exactly as before; the log is additive.
+   *
+   * ── `offline` keeps the break reason unless one is given ───────────────────
+   *
+   * An `offline` write with no `breakReason` leaves `break_reason` as it was, as
+   * `leave` and `markAllOffline` always have. A station drop is not a decision
+   * about what the agent was doing: a campaign session on the `soft_phone` break
+   * (docs/softphone.md §2) that drops must come back on the soft phone, and
+   * nulling the reason here was what let its rehydrate treat it as an ordinary
+   * break. The transition log is unaffected: a reason is only ever copied onto a
+   * `break` event.
    */
   async setState(id: string, state: AgencyAgentState, breakReason?: string | null): Promise<void> {
+    const keepReason = state === 'offline' && breakReason === undefined;
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
       sessionTransitionSql({
         prevWhere: 'id = $1',
-        set: 'state = $2, break_reason = $3, state_since = now(), updated_at = now()',
+        set: keepReason
+          ? 'state = $2, state_since = now(), updated_at = now()'
+          : 'state = $2, break_reason = $3, state_since = now(), updated_at = now()',
       }),
-      [id, state, breakReason ?? null],
+      keepReason ? [id, state] : [id, state, breakReason ?? null],
     );
     await this.recordTransitions(rows);
   }

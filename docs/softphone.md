@@ -90,9 +90,16 @@ Owned by `AgencyRuntime`. One call at a time per session.
    a row that exists; an end-break that wins the race leaves the session `available` and the row
    is closed undialled (`not_on_softphone`). Two dials from one session serialise on a row lock of
    the session inside step 3's transaction, so the second meets the first's call
-   (`manual_call_live`). A rehydrate (reconnect, lapsed lease) of a soft-phone session or of a
-   campaign session on the `soft_phone` break lands in `break/soft_phone` and re-claims the
-   session's unsettled call.
+   (`manual_call_live`). A rehydrate (reconnect, lapsed lease) of a soft-phone session, of a
+   campaign session on the `soft_phone` break, or of ANY session holding an unsettled call
+   (whatever its row's break reason says) lands in `break/soft_phone` and re-claims the
+   session's unsettled call. An `offline` write (station drop, `releaseAgent` for a departed
+   agent) keeps the row's `break_reason`, so a dropped campaign session on the soft phone comes
+   back on it. Every route to `available` (`available`, `/softphone/return`, `force-available`)
+   reads the session's unsettled call from the database BEFORE the Lua write
+   (`setAvailableGuarded`, `owedSoftphoneCall`): one that exists refuses `manual_call_live` and
+   re-claims the `manual` field, so a lease that lapsed and was rewritten without it cannot let
+   an agent owing an outcome into the pacing pool.
 2. **Pre-dial** (`manual-predial.ts`), in order: override notes when given (bounds); E.164
    (`normalizePhoneToE164` then `normalizeE164`; the schema has no account country, so the default
    region is the platform's, `DEFAULT_PHONE_COUNTRY_CODE`, `+91` by default); caller ID in the
@@ -226,7 +233,9 @@ from `audit` (a success without the envelope is a 502).
 The two switch routes take the session routes' guard (`requireOwnedSession`: the caller's own
 session, else 404; a left session 409 `session_ended`). The campaign session routes answer 409
 `wrong_session_kind` on a soft-phone session: `available`, `break`, `break/cancel` and
-`force-available` (`available` also 409 `manual_call_live`). `break/cancel` on a CAMPAIGN session
+`force-available` (`available` and `force-available` also 409 `manual_call_live` with the call
+while one is live or awaiting its outcome; `force-available` answers the state it actually wrote:
+`available`, `break` for a queued break, `offline` when the station is gone). `break/cancel` on a CAMPAIGN session
 cancels a queued switch to the soft phone like any queued break. `leave` and `station-token` work
 on a soft-phone session; `leave` is refused while a call is live. The campaign join answers 409
 `session_on_softphone`. New station frame: `manual_call { call: AgencyManualCall }`.

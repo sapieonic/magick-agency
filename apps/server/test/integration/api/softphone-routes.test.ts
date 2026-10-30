@@ -106,6 +106,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   let stopAgency: (() => Promise<void>) | null = null;
   let stopVoice: (() => Promise<void>) | null = null;
   let runtime: AgencyRuntime;
+  let ctx: AppContext;
   const sockets: WebSocket[] = [];
 
   let tenant: string;
@@ -202,6 +203,48 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     return rows[0];
   }
 
+  /** The station socket's own close, awaited. */
+  async function drop(station: Station): Promise<void> {
+    if (station.ws.readyState === WebSocket.CLOSED) return;
+    const closed = new Promise<void>((resolve) => station.ws.once('close', () => resolve()));
+    station.ws.close();
+    await closed;
+  }
+
+  /** The agent's Redis lease, as `AgentStateMachine` keys it. */
+  const leaseKey = (sessionId: string) => `${config.redis.keyPrefix}agency:agent:${sessionId}:state`;
+
+  async function sessionRow(id: string) {
+    const { rows } = await getTestPool().query('SELECT state, break_reason FROM agency_agent_sessions WHERE id = $1', [id]);
+    return rows[0];
+  }
+
+  /**
+   * A campaign session switched to the soft phone, holding a bridged-then-hung-up call that
+   * owes its outcome (docs/softphone.md §4.1 steps 6–7): the state finding 1 is about.
+   */
+  async function campaignSessionOwingAnOutcome(agent: Who, campaignId: string, to: string) {
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaignId });
+    expect(joined.statusCode, joined.body).toBe(201);
+    const sessionId = joined.json().session_id as string;
+    const station = await connect(joined.json().station_ws_url);
+    const switched = await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent);
+    expect(switched.statusCode, switched.body).toBe(200);
+    expect(switched.json()).toMatchObject({ state: 'break', break_reason: 'soft_phone' });
+
+    const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to });
+    expect(placed.statusCode, placed.body).toBe(201);
+    const callId = placed.json().id as string;
+    const leg = await legOf(callId);
+    answer(leg);
+    await waitFor('bridged frame', () => lastCall(station)?.state === 'bridged');
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/hangup`, agent)).statusCode).toBe(200);
+    await carrierEnded(leg);
+    await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+    expect(await runtime.agents.manualCallOf(sessionId)).toBe(callId);
+    return { sessionId, station, callId };
+  }
+
   /** The buffered audit logger writes on flush. */
   async function auditRows(action: string, resourceId?: string) {
     await platformAuditLogger.shutdown();
@@ -251,7 +294,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     siblingSupervisor = await user(tenant, sibling, 'account_admin');
     foreignSupervisor = await user(otherTenant, otherAccount, 'account_admin');
 
-    const ctx: AppContext = { config, pool: getPool(), redis: getTestRedis() };
+    ctx = { config, pool: getPool(), redis: getTestRedis() };
     app = await buildApp({ ctx });
     await app.listen({ port: 0, host: '127.0.0.1' });
     port = (app.server.address() as { port: number }).port;
@@ -544,6 +587,79 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 
+  // ── Finding 1: an agent owing a soft-phone outcome never becomes available ──────────
+  //
+  // A campaign session on the soft phone, a call that bridged and ended, its outcome owed.
+  // Each step below is a way the guard on `available` (the Redis `manual` field) could be
+  // lost — the station dropping (presence written `offline`), the lease lapsing (the hash
+  // and its `manual` field gone), the reconnect rehydrating it — and the route must still
+  // answer 409 `manual_call_live` until the outcome is saved.
+  it('a station drop, a lapsed lease and a reconnect keep an agent owing a soft-phone outcome out of the pool', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
+    const { sessionId, station, callId } = await campaignSessionOwingAnOutcome(agent, campaign.id, '+919811200060');
+
+    // The lid closes: presence goes `offline`, and the row keeps the soft-phone break reason.
+    await drop(station);
+    await waitFor('offline', async () => (await runtime.agents.get(sessionId))?.state === 'offline');
+    expect(await sessionRow(sessionId)).toEqual({ state: 'offline', break_reason: 'soft_phone' });
+    // …and the 45 s lease lapses, taking the `manual` field with it.
+    await getTestRedis().del(leaseKey(sessionId));
+
+    // The agent reloads: the campaign join rehydrates the session onto the soft phone.
+    const rejoined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    expect(rejoined.statusCode, rejoined.body).toBe(201); // the campaign join is always 201
+    expect(rejoined.json()).toMatchObject({ session_id: sessionId, state: 'break' });
+    expect(await runtime.agents.manualCallOf(sessionId)).toBe(callId);
+    expect(await sessionRow(sessionId)).toEqual({ state: 'break', break_reason: 'soft_phone' });
+    const back = await connect(rejoined.json().station_ws_url);
+    const owed = await waitFor('the owed call after ready', () => lastCall(back));
+    expect(owed).toMatchObject({ id: callId, requires_disposition: true });
+
+    const available = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    expect(available.statusCode, available.body).toBe(409);
+    expect(available.json()).toMatchObject({ code: 'manual_call_live', call: { id: callId } });
+    expect((await runtime.agents.get(sessionId))?.state).toBe('break');
+    const boot = await get('/proxy/agency/softphone/bootstrap', agent);
+    expect(boot.json().session).toMatchObject({ session_id: sessionId, on_softphone: true });
+    expect(boot.json().call).toMatchObject({ id: callId });
+    // The soft phone still dials from it (it is still on the soft phone): refused only
+    // because the outcome is owed.
+    const again = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811200061' });
+    expect(again.json().code).toBe('outcome_pending');
+
+    // (a) A row whose break reason was nulled (an older build's offline write) still
+    // rehydrates onto the soft phone: the unsettled call alone makes it soft-phone flavoured.
+    await drop(back);
+    await waitFor('offline again', async () => (await runtime.agents.get(sessionId))?.state === 'offline');
+    await getTestPool().query('UPDATE agency_agent_sessions SET break_reason = NULL WHERE id = $1', [sessionId]);
+    await getTestRedis().del(leaseKey(sessionId));
+    const minted = await post(`/proxy/agency/sessions/${sessionId}/station-token`, agent);
+    expect(minted.statusCode, minted.body).toBe(200);
+    const third = await connect(minted.json().station_ws_url);
+    expect(third.frames.find((f) => f['event'] === 'ready')!['state']).toBe('break');
+    expect(await runtime.agents.manualCallOf(sessionId)).toBe(callId);
+    expect(await sessionRow(sessionId)).toEqual({ state: 'break', break_reason: 'soft_phone' });
+
+    // (c) Redis holding `break` with no `manual` field at all (any write that lost it):
+    // the route reads the database first, refuses, and re-claims the field.
+    await getTestRedis().hdel(leaseKey(sessionId), 'manual');
+    const stillOwed = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    expect(stillOwed.statusCode, stillOwed.body).toBe(409);
+    expect(stillOwed.json()).toMatchObject({ code: 'manual_call_live', call: { id: callId } });
+    expect(await runtime.agents.manualCallOf(sessionId)).toBe(callId);
+    expect((await runtime.agents.get(sessionId))?.state).toBe('break');
+
+    // The outcome lifts the guard.
+    const outcome = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'voicemail' });
+    expect(outcome.statusCode, outcome.body).toBe(200);
+    const nowAvailable = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    expect(nowAvailable.statusCode, nowAvailable.body).toBe(200);
+    await runtime.agents.set(sessionId, 'break');
+    await waitFor('third station sees it', () => third.frames.some((f) => f['event'] === 'agent_state' && f['state'] === 'available'));
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
   it('break/cancel withdraws a queued switch; a soft-phone session refuses break/cancel and force-available', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
@@ -671,4 +787,50 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     await waitFor('settled frame', () => lastCall(station)?.settled_at);
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 30_000);
+
+  // ── Finding 1, the restart variant: last in the file, because it restarts the runtime ──
+  //
+  // The same owed outcome across a server restart: the old process's station closes, the
+  // runtime stops, the lease lapses while it is down, and the new runtime's startup reaper
+  // writes every session `offline` (`markAllOffline`). The voice engine is kept: an ended
+  // call holds nothing in the bridge. The reconnect must land on the soft phone with the
+  // claim re-taken, and `available` must refuse.
+  it('a server restart with the lease lapsed keeps an agent owing a soft-phone outcome out of the pool', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
+    const { sessionId, station, callId } = await campaignSessionOwingAnOutcome(agent, campaign.id, '+919811200070');
+
+    await drop(station);
+    await waitFor('offline', async () => (await runtime.agents.get(sessionId))?.state === 'offline');
+    if (stopAgency) await stopAgency();
+    stopAgency = null;
+    await resetAgencyRuntimeForTests();
+    await getTestRedis().del(leaseKey(sessionId));
+    stopAgency = await startAgency(ctx);
+    runtime = getAgencyRuntime()!;
+    expect((await sessionRow(sessionId)).state).toBe('offline');
+    expect(await runtime.agents.get(sessionId)).toBeNull();
+
+    const rejoined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    expect(rejoined.statusCode, rejoined.body).toBe(201); // the campaign join is always 201
+    expect(rejoined.json()).toMatchObject({ session_id: sessionId, state: 'break' });
+    const back = await connect(rejoined.json().station_ws_url);
+    expect(await waitFor('the owed call after ready', () => lastCall(back))).toMatchObject({ id: callId, requires_disposition: true });
+    expect(await runtime.agents.manualCallOf(sessionId)).toBe(callId);
+
+    const available = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    expect(available.statusCode, available.body).toBe(409);
+    expect(available.json()).toMatchObject({ code: 'manual_call_live', call: { id: callId } });
+    const forced = await post(`/proxy/agency/sessions/${sessionId}/force-available`, supervisor);
+    expect(forced.statusCode, forced.body).toBe(409);
+    expect(forced.json()).toMatchObject({ code: 'manual_call_live', call: { id: callId } });
+    expect((await runtime.agents.get(sessionId))?.state).toBe('break');
+    expect((await get('/proxy/agency/softphone/bootstrap', agent)).json().session).toMatchObject({ on_softphone: true });
+
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'voicemail' })).statusCode).toBe(200);
+    const nowAvailable = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    expect(nowAvailable.statusCode, nowAvailable.body).toBe(200);
+    await runtime.agents.set(sessionId, 'break');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
 });

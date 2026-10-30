@@ -8,7 +8,7 @@ import {
   agencyContactRepository,
 } from '../db/repositories/agency.repository.js';
 import type { StationRegistry } from './station-registry.js';
-import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
+import { AgentStateMachine, AGENT_LEASE_MS, type AgentSetResult } from './agent-state-machine.js';
 import type { DialCommand, DialOptions } from './dial-dispatcher.js';
 import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
 import { settleContact } from './dialer/contact-settlement.js';
@@ -41,6 +41,16 @@ import {
   agencyBindTotal,
   agencyAbandonedReasonTotal,
 } from '@magick-agency/observability/metrics/agency';
+
+/**
+ * What {@link AgencyDialer.releaseAgent} did: the state it wrote (`offline` for a
+ * departed agent, else `break` for a queued break or `available`) and the write's
+ * result. A refused `available` (`manual_call_live`, `softphone_session`) moved nothing.
+ */
+export interface AgentReleaseResult {
+  state: 'available' | 'break' | 'offline';
+  result: AgentSetResult;
+}
 
 const log = createChildLogger({ component: 'agency-dialer' });
 
@@ -1395,8 +1405,13 @@ export class AgencyDialer {
    * interrupted. Doing it here and nowhere else is what makes "queued" mean one
    * thing — every route into the pool, whether the agent had a wrap-up, skipped
    * one, or had one forced, passes through this method.
+   *
+   * Returns what it did: the state written and the write's {@link AgentSetResult}.
+   * `manual_call_live` / `softphone_session` mean the soft phone's guard refused
+   * `available` and NOTHING moved; the supervisor's force-available answers that
+   * as a 409 rather than claiming the agent is back. The settle paths ignore it.
    */
-  async releaseAgent(sessionId: string): Promise<void> {
+  async releaseAgent(sessionId: string): Promise<AgentReleaseResult> {
     // ── NOT purely replica-local, contrary to an earlier version of this note ──
     //
     // On the settle path this does run on the bridging replica, and there the
@@ -1421,9 +1436,9 @@ export class AgencyDialer {
     // out of the pool, and they rehydrate into `break` anyway.
     if (!stillHere) {
       this.breaks.cancel(sessionId);
-      await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
+      const set = await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
       await mirrored(agencyAgentSessionRepository.setState(sessionId, 'offline'), sessionId, 'Could not mirror released agent state');
-      return;
+      return { state: 'offline', result: set };
     }
 
     // Consumed, not peeked: a queued break applies exactly once, so an agent who
@@ -1442,7 +1457,7 @@ export class AgencyDialer {
     // a move that did not happen (a supervisor's force-available reaches here).
     if (set === 'manual_call_live' || set === 'softphone_session') {
       log.info({ sessionId, refused: set }, 'Release to available refused — the session is on the soft phone');
-      return;
+      return { state, result: set };
     }
     await mirrored(
       agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null),
@@ -1458,6 +1473,7 @@ export class AgencyDialer {
     if (queuedBreak) {
       log.info({ sessionId, reason: queuedBreak.code }, 'Queued break applied after wrap-up');
     }
+    return { state, result: set };
   }
 
   /**

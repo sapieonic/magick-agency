@@ -64,7 +64,7 @@ function dialerWith(bridge: unknown, stations: never, agents: InstanceType<typeo
   // `tsc` types BOTH as `any` (TS7022) and stops seeing arity at all.
   const wrapup = new WrapupManager(
     stations, agents,
-    (sessionId: string): Promise<void> => dialer.releaseAgent(sessionId),
+    (sessionId: string): Promise<unknown> => dialer.releaseAgent(sessionId),
   );
   const dialer = new AgencyDialer(bridge as never, stations, agents, wrapup, new BreakRegistry());
   return dialer;

@@ -173,29 +173,43 @@ export class AgencyRuntime {
    * outcome — re-claims the `manual` field, so the guard on `available` holds
    * again after a lease lapsed.
    *
+   * **The unsettled call alone makes a session soft-phone flavoured**, whatever
+   * its row's `kind` and `break_reason` say. The `manual` field is the guard on
+   * `available`, and it lives in the lease: a lease that lapsed while an outcome
+   * was owed took it, and a row whose break reason was lost (an `offline` write
+   * from an older build, a restart) must not be the gap through which the plain
+   * path below rehydrates the session as an ordinary break and the agent goes
+   * `available` with a soft-phone outcome owed. So the session's unsettled call is
+   * read on every rehydrate, not only for a row already known to be on the soft
+   * phone.
+   *
    * @param session The row the caller already read (the join and the station
    *   socket both have). Its `kind` and `break_reason` say whether the soft-phone
-   *   path applies; its `state` is still never consulted. Omitted, the session is
-   *   rehydrated as a campaign session.
+   *   path applies (as does an unsettled call); its `state` is still never
+   *   consulted. Omitted, only the unsettled call can make it soft-phone flavoured.
    */
   async rehydrateAgent(
     sessionId: string,
     session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'> | null,
   ): Promise<AgencyAgentState> {
     const row = session ?? null;
-    const softphoneFlavoured = !!row && (row.kind === 'softphone' || row.break_reason === SOFTPHONE_BREAK_REASON);
-    if (row && softphoneFlavoured) {
-      const unsettled = await Promise.resolve()
-        .then(() => agencyManualCallRepository.findUnsettledForSession(sessionId)).catch((err) => {
+    const unsettled = await Promise.resolve()
+      .then(() => agencyManualCallRepository.findUnsettledForSession(sessionId)).catch((err) => {
         log.warn({ err, sessionId }, 'Could not read the session\'s soft-phone call to rehydrate');
         return null;
       });
+    const softphoneFlavoured = unsettled !== null
+      || (!!row && (row.kind === 'softphone' || row.break_reason === SOFTPHONE_BREAK_REASON));
+    if (softphoneFlavoured) {
       const rehydrated = await this.agents.rehydrateSoftphone(sessionId, {
-        softphoneSession: row.kind === 'softphone',
+        softphoneSession: row?.kind === 'softphone',
         unsettledManualCallId: unsettled?.id ?? null,
       });
       if (rehydrated) {
-        if (rehydrated.changed) {
+        // Mirrored when the lease was rewritten, and also when the row had lost its
+        // soft-phone reason (an unsettled call found it): the bootstrap's
+        // `on_softphone` and the return route read the row.
+        if (rehydrated.changed || (rehydrated.state === 'break' && row?.break_reason !== SOFTPHONE_BREAK_REASON)) {
           await agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
             .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
         }
