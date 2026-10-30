@@ -169,6 +169,8 @@ function makeCall(over: Partial<WebRtcCallRecord> = {}): WebRtcCallRecord {
     analysis_consent_at: null,
     campaign_id: 'camp-1',
     agency_attempt_id: 'att-1',
+    origin: 'campaign',
+    manual_call_id: null,
     created_at: new Date(),
     updated_at: new Date(),
     ...over,

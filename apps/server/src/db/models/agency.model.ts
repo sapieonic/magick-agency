@@ -10,11 +10,18 @@ import type {
   AgencyAgentState,
   AgencyAttemptOutcome,
   AgencyAttemptState,
+  AgencyCallField,
+  AgencyCallFieldValues,
   AgencyCampaignStatus,
   AgencyContactState,
   AgencyBreakReason,
   AgencyContextDisplay,
   AgencyDisposition,
+  AgencyManualCallDispositionSource,
+  AgencyManualCallEndReason,
+  AgencyManualCallOutcome,
+  AgencyManualCallState,
+  AgencySessionKind,
 } from '@magick-agency/contracts/agency';
 
 /**
@@ -325,7 +332,17 @@ export interface AgencyAgentSessionRecord {
   id: string;
   tenant_id: string;
   account_id: string;
-  campaign_id: string;
+  /**
+   * `campaign` or `softphone` (0005, docs/softphone.md). CHECKed against
+   * `campaign_id`: a soft-phone session has none, and stays in `break/soft_phone`.
+   */
+  kind: AgencySessionKind;
+  /**
+   * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
+   * the station join and its break routes) only ever reads campaign sessions;
+   * narrow with `isCampaignSession` rather than asserting non-null.
+   */
+  campaign_id: string | null;
   agent_user_id: string;
   state: AgencyAgentState;
   break_reason: string | null;
@@ -336,6 +353,24 @@ export interface AgencyAgentSessionRecord {
   left_at: Date | null;
   created_at: Date;
   updated_at: Date;
+}
+
+/** A session on a campaign: the kind every campaign-scoped path works with. */
+export type AgencyCampaignSessionRecord = AgencyAgentSessionRecord & { kind: 'campaign'; campaign_id: string };
+
+/**
+ * Narrows a session to a campaign session. The guard campaign-scoped code uses
+ * where a soft-phone session cannot legitimately reach it, so the case where one
+ * does is a refusal (`wrong_session_kind`) or a skip, never a NULL campaign id
+ * flowing into a campaign query.
+ *
+ * Keyed on `campaign_id`, not `kind`: `ck_agency_agent_session_kind_campaign` makes
+ * the two equivalent on every row, and `campaign_id` is the column the campaign path
+ * actually needs, so a projection or a fixture that leaves `kind` out cannot turn a
+ * campaign session into a refused one.
+ */
+export function isCampaignSession(session: AgencyAgentSessionRecord): session is AgencyCampaignSessionRecord {
+  return session.campaign_id !== null;
 }
 
 export interface AgencyCallAttemptRecord {
@@ -409,6 +444,78 @@ export interface AgencyLapsedWrapupRow extends AgencyCallAttemptRecord {
    * attempts table, so `attempt_count` is purely the budget.
    */
   contact_attempt_count: number;
+}
+
+/**
+ * `agency_manual_calls`: one soft-phone dial (0005, docs/softphone.md §3). The wire
+ * row is `AgencyManualCall`, which the repository builds from this and the joined
+ * tag name, contact and agent name.
+ */
+export interface AgencyManualCallRecord {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  session_id: string;
+  agent_user_id: string;
+  /** The tag. No FK; NULL = untagged. */
+  campaign_id: string | null;
+  /** The roster match on the tag. No FK. */
+  contact_id: string | null;
+  /** This call moved the contact `pending → in_flight`, so its outcome settles it (SP6). */
+  contact_claimed: boolean;
+  /** What lapse and restart release a claim back to. */
+  contact_prior_state: AgencyContactState | null;
+  /** The media leg (`agency_calls.id`). No FK. */
+  webrtc_call_id: string | null;
+  destination_e164: string;
+  caller_id: string;
+  state: AgencyManualCallState;
+  outcome: AgencyManualCallOutcome | null;
+  end_reason: AgencyManualCallEndReason | null;
+  disposition_code: string | null;
+  disposition_source: AgencyManualCallDispositionSource | null;
+  notes: string | null;
+  callback_at: Date | null;
+  fields: AgencyCallFieldValues;
+  recording_requested: boolean;
+  analysis_profile_id: string | null;
+  /** SP1: set together with `dnc_override_entry_id` (CHECKed). */
+  dnc_override_note: string | null;
+  dnc_override_entry_id: string | null;
+  /** SP2. */
+  hours_override_note: string | null;
+  dialed_at: Date | null;
+  answered_at: Date | null;
+  bridged_at: Date | null;
+  /** Set exactly when `state` is `ended` (CHECKed). */
+  ended_at: Date | null;
+  talk_seconds: number | null;
+  dispositioned_by_user_id: string | null;
+  dispositioned_at: Date | null;
+  dispositioned_on_behalf: boolean;
+  /** NULL while live or awaiting the outcome; `uq_agency_manual_call_unsettled` allows one such row per session. */
+  settled_at: Date | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+/**
+ * `agency_softphone_settings`, one optional row per (tenant, account) (0005). No
+ * row reads as the column defaults.
+ */
+export interface AgencySoftphoneSettingsRecord {
+  id: string;
+  tenant_id: string;
+  account_id: string;
+  /** `[]` = the built-in `AGENCY_DEFAULT_DISPOSITION_CATALOG`. JSONB array, elements unconstrained. */
+  disposition_catalog: AgencyDisposition[];
+  /** `[]` = none; at most `SOFTPHONE_CALL_FIELDS_MAX` (CHECKed). JSONB array, elements unconstrained. */
+  call_fields: AgencyCallField[];
+  analysis_profile_id: string | null;
+  record_calls: boolean;
+  default_caller_id: string | null;
+  created_at: Date;
+  updated_at: Date;
 }
 
 /** One accepted row of a roster-ingest chunk. */

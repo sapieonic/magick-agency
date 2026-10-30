@@ -231,7 +231,8 @@ choose to go available.
 
 The baseline, `packages/db/migrations/0001_baseline.sql`, and the numbered migrations after it
 (`0002_telephony_credentials.sql`, `0003_agency_attempt_indexes.sql`,
-`0004_agency_contacts_in_flight_index.sql`), run in order with node-pg-migrate from `packages/db`:
+`0004_agency_contacts_in_flight_index.sql`, `0005_softphone.sql`), run in order with node-pg-migrate
+from `packages/db`:
 
 ```bash
 DATABASE_URL=postgresql://... pnpm migrate:up
@@ -245,7 +246,9 @@ failed migration stops the container before the server starts. Same table (`pgmi
 `pnpm migrate:up`. `0003_agency_attempt_indexes.sql` and `0004_agency_contacts_in_flight_index.sql` build their indexes with plain `CREATE INDEX`
 (a migration file runs in one transaction, where `CONCURRENTLY` is not allowed), so writes to
 `agency_call_attempts` and `agency_contacts` wait while it builds; that is safe only because the
-migrations run before the server starts. Run it the same way outside the image. Future
+migrations run before the server starts. `0005_softphone.sql`'s Down section refuses (raises) while
+any soft-phone session exists, rather than deleting soft-phone calls' audit trail to restore
+`campaign_id NOT NULL`. Run it the same way outside the image. Future
 schema changes go in new numbered files; never edit or renumber an applied migration.
 
 ## Recordings

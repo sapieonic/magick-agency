@@ -143,6 +143,33 @@ beforeEach(async () => {
   app = await buildApp();
 });
 
+describe('POST /sessions — agent live on the soft phone', () => {
+  it('409s session_on_softphone with the session, naming no campaign', async () => {
+    // A soft-phone session (docs/softphone.md) holds the agent's one live session in
+    // the tenant and has no campaign, so `session_on_other_campaign` has nothing to
+    // name. The remedy is leaving the soft phone.
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_campaign',
+      session: liveSession({ kind: 'softphone', campaign_id: null, break_reason: 'soft_phone' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict',
+      code: 'session_on_softphone',
+      message: expect.stringMatching(/soft phone/i),
+      session_id: 'sess-old',
+    });
+    // No campaign lookup for a NULL id, no token, no state touched.
+    expect(repos.campaign.findById).toHaveBeenCalledTimes(1);
+    expect(repos.campaign.findById).toHaveBeenCalledWith('camp-new');
+    expect(mint).not.toHaveBeenCalled();
+    expect(repos.session.setState).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /sessions — agent already live on another campaign', () => {
   it('409s with the code, id and NAME of the campaign they must leave', async () => {
     repos.session.joinOrRehydrate.mockResolvedValue({

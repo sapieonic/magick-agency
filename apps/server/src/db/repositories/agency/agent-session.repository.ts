@@ -54,7 +54,8 @@ interface AgencySessionTransitionRow {
   session_id: string;
   tenant_id: string;
   account_id: string;
-  campaign_id: string;
+  /** NULL for a soft-phone session, copied as the session row has it (0005). */
+  campaign_id: string | null;
   agent_user_id: string;
   /** NULL when the session row was just created — there is no prior state. */
   from_state: AgencyAgentState | null;

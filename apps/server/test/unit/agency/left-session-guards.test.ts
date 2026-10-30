@@ -656,6 +656,29 @@ describe('a break queued behind an UNANNOUNCED dial', () => {
   });
 });
 
+// ─── a soft-phone session on the campaign break route ───────────────────────
+//
+// A soft-phone session (docs/softphone.md) has no campaign, so no break catalog to
+// validate against; it is always on the reserved `soft_phone` break. The route refuses
+// it before the campaign lookup, which would otherwise be handed a NULL campaign id.
+
+describe('POST /sessions/:id/break on a soft-phone session', () => {
+  it('409s wrong_session_kind and touches nothing', async () => {
+    repos.session.findById.mockResolvedValue({
+      ...LIVE, kind: 'softphone', campaign_id: null, state: 'break', break_reason: 'soft_phone',
+    });
+
+    const res = await post('/break', { reason: 'lunch' });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'wrong_session_kind' });
+    expect(repos.campaign.findById).not.toHaveBeenCalled();
+    expect(h.runtime.agents.set).not.toHaveBeenCalled();
+    expect(h.runtime.breaks.queue).not.toHaveBeenCalled();
+    expect(h.sent).toHaveLength(0);
+  });
+});
+
 // ─── decision Q8: the session must be the caller's ──────────────────
 //
 // `requireOwnedSession` checks the actor as well as tenant + account + `left_at`;

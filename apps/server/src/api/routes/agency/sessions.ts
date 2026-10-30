@@ -16,8 +16,11 @@ import type {
   AgencySessionBootstrap,
   AgencySessionCampaignConflict,
   AgencySessionStateResponse,
+  AgencySoftphoneErrorResponse,
+  AgencySoftphoneSessionOnSoftphoneRefusal,
   AgencyStationTokenResponse,
 } from '@magick-agency/contracts/agency';
+import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
@@ -64,13 +67,26 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // reasoning). Refused with the old campaign NAMED: an agent who is told
     // only "conflict" has no way to find the station they left open.
     if (!join.ok) {
+      // The agent's live session is a soft-phone session (docs/softphone.md): there
+      // is no campaign to name in `session_on_other_campaign`, so it gets its own
+      // 409, whose remedy is leaving the soft phone.
+      const liveSession = join.session;
+      if (!isCampaignSession(liveSession)) {
+        const refusal: AgencySoftphoneSessionOnSoftphoneRefusal = {
+          error: 'Conflict',
+          code: 'session_on_softphone',
+          message: 'You are on the soft phone. Leave the soft phone before joining a campaign — an agent can hold only one live station at a time.',
+          session_id: liveSession.id,
+        };
+        return reply.code(409).send(refusal);
+      }
       // `.catch` because this lookup exists ONLY to make the refusal readable.
       // Letting it reject would convert a 409 the agent can act on into a 500
       // they cannot — and `campaign_id` below already carries everything the
       // console needs to route them.
-      const other = await agencyCampaignRepository.findById(join.session.campaign_id)
+      const other = await agencyCampaignRepository.findById(liveSession.campaign_id)
         .catch((err) => {
-          log.warn({ err, campaignId: join.session.campaign_id }, 'Could not resolve conflicting campaign name');
+          log.warn({ err, campaignId: liveSession.campaign_id }, 'Could not resolve conflicting campaign name');
           return null;
         });
       // Redis, not the row — the row is a durable mirror and this field is what
@@ -79,7 +95,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // key: no key means no lease, so nothing is in flight and the mirror is
       // then the closest truthful reading. A 500 here would hide a conflict the
       // agent can actually resolve behind one they cannot.
-      const live = await runtime.agents.get(join.session.id);
+      const live = await runtime.agents.get(liveSession.id);
       // ── Scoped to the TENANT, and deliberately not to the account ─────────
       // `findById` is unscoped, so the name has to be checked against something
       // here. The right scope is the constraint's scope: this session is the
@@ -96,7 +112,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // `ON DELETE CASCADE`, so a live session outlives its campaign never — and
       // is here because a TypeError on the error path would turn an actionable
       // 409 into an opaque 500.
-      const otherName = other && other.tenant_id === join.session.tenant_id
+      const otherName = other && other.tenant_id === liveSession.tenant_id
         ? other.name
         : 'another campaign';
       const conflict: AgencySessionCampaignConflict = {
@@ -111,13 +127,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         message:
           `You are still joined to "${otherName}". ` +
           `Leave that station before joining another campaign — an agent can hold only one live station at a time.`,
-        campaign_id: join.session.campaign_id,
+        campaign_id: liveSession.campaign_id,
         campaign_name: otherName,
-        state: live?.state ?? join.session.state,
+        state: live?.state ?? liveSession.state,
       };
       log.warn({
         agentUserId: body.agent_user_id, requestedCampaignId: campaign.id,
-        liveCampaignId: join.session.campaign_id, state: conflict.state,
+        liveCampaignId: liveSession.campaign_id, state: conflict.state,
       }, 'Agency join refused — agent already live on another campaign');
       return reply.code(409).send(conflict);
     }
@@ -312,7 +328,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     await runtime.agents.set(session.id, 'available', { leaseMs: AGENT_LEASE_MS.available });
     await agencyAgentSessionRepository.setState(session.id, 'available');
     runtime.stations.send(session.id, { event: 'agent_state', state: 'available', since: new Date().toISOString() });
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, state: 'available', since: new Date().toISOString() });
+    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'available', since: new Date().toISOString() });
   });
 
   // ── POST /sessions/:id/force-available — supervisor override ────────────
@@ -333,7 +349,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // error for winning a race by half a second.
       await runtime.dialer.releaseAgent(session.id);
     }
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, state: 'available', since: new Date().toISOString() });
+    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'available', since: new Date().toISOString() });
   });
 
   // ── POST /sessions/:id/break ───────────────────────────────────────────
@@ -342,6 +358,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/break', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // A soft-phone session has no campaign and so no break catalog; it is always on
+    // the reserved `soft_phone` break (docs/softphone.md §6).
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign breaks.',
+      };
+      return reply.code(409).send(err);
+    }
     const campaign = await agencyCampaignRepository.findById(session.campaign_id);
     if (!campaign) {
       return reply.code(404).send({ error: 'Not Found', message: 'Campaign not found' });
@@ -405,7 +430,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         });
       }
       const queued: AgencySessionStateResponse = {
-        session_id: session.id, campaign_id: session.campaign_id, state: live!.state, since,
+        session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live!.state, since,
         pending_state: 'break', break_reason: check.reason.code,
       };
       return reply.send(queued);
@@ -417,7 +442,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       event: 'agent_state', state: 'break', since, break_reason: check.reason.code,
     });
     const applied: AgencySessionStateResponse = {
-      session_id: session.id, campaign_id: session.campaign_id, state: 'break', since, break_reason: check.reason.code,
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'break', since, break_reason: check.reason.code,
     };
     return reply.send(applied);
   });
@@ -483,7 +508,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     }
     // Nothing queued and not on break ⇒ idempotent success (double-click safety).
     const body: AgencySessionStateResponse = {
-      session_id: session.id, campaign_id: session.campaign_id, state: live?.state ?? session.state, since,
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live?.state ?? session.state, since,
     };
     return reply.send(body);
   });
@@ -574,6 +599,6 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     await runtime.agents.clear(session.id);
     await agencyAgentSessionRepository.leave(session.id);
     await runtime.stations.detach(session.id);
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, state: 'offline', since: new Date().toISOString() });
+    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'offline', since: new Date().toISOString() });
   });
 }

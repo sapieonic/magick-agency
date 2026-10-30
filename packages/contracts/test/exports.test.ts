@@ -33,6 +33,7 @@ import {
   type AgencyAttemptState,
   type AgencyManualCallOutcome,
   type AgencyManualCallState,
+  type AgencySessionStateResponse,
   type AgencyStationManualCallFrame,
   type AgencyStationServerFrame,
 } from '../src/agency';
@@ -49,7 +50,7 @@ void _credentialCodesExact;
 
 // The soft phone (docs/softphone.md). Its state and outcome vocabularies are the attempt's,
 // so the station and the soft phone cannot disagree about a word; the frame is in both
-// server-frame unions.
+// server-frame unions; a session-state answer may name no campaign (a soft-phone session).
 const _manualStateIsAttempt: Equals<AgencyManualCallState, AgencyAttemptState> = true;
 const _manualOutcomeIsAttempt: Equals<AgencyManualCallOutcome, AgencyAttemptOutcome> = true;
 const _frameInUnion: Equals<Extract<AgencyStationServerFrame, { event: 'manual_call' }>, AgencyStationManualCallFrame> = true;
@@ -57,7 +58,8 @@ const _consoleFrameInUnion: Equals<
   Extract<AgencyApi.AgencyStationServerFrame, { event: 'manual_call' }>,
   AgencyStationManualCallFrame
 > = true;
-void [_manualStateIsAttempt, _manualOutcomeIsAttempt, _frameInUnion, _consoleFrameInUnion];
+const _sessionCampaignNullable: Equals<AgencySessionStateResponse['campaign_id'], string | null> = true;
+void [_manualStateIsAttempt, _manualOutcomeIsAttempt, _frameInUnion, _consoleFrameInUnion, _sessionCampaignNullable];
 
 describe('package surface', () => {
   it('exposes the two API layers as namespaces', () => {

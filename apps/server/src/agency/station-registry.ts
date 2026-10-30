@@ -10,7 +10,12 @@ const OWNERSHIP_TTL_MS = 30_000;
 
 interface StationEntry {
   sessionId: string;
-  campaignId: string;
+  /**
+   * NULL for a soft-phone session (docs/softphone.md), which dials on its station
+   * socket like a campaign session but belongs to no campaign. Never equal to a
+   * campaign id, so `broadcast` / `sessionIdsForCampaign` cannot reach it.
+   */
+  campaignId: string | null;
   tenantId: string;
   accountId: string;
   agentUserId: string;

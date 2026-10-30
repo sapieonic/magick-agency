@@ -9,6 +9,7 @@
 
 import type { AgencyActionErrorCode } from '../errors';
 import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, AgencyContactState } from './enums';
+import type { AgencySessionKind } from './softphone';
 
 // ─── Agent-native action routes ─────────────────────────────────────────────
 //
@@ -301,8 +302,20 @@ export interface AgencySessionBreakRequest {
  */
 export type AgencySessionBreakCancelRequest = Record<string, never>;
 
-export interface AgencySessionStateResponse extends AgencyCampaignScoped {
+/**
+ * Answer to every session-state transition.
+ *
+ * **SP: not `AgencyCampaignScoped`.** `leave`, and the soft-phone switch and
+ * return (`docs/softphone.md` §4.2), answer this for a soft-phone session too,
+ * which has no campaign, so `campaign_id` is NULL exactly when `kind` is
+ * `softphone`. It still feeds `platform_audit_log.campaign_id`, which is nullable.
+ */
+export interface AgencySessionStateResponse {
+  /** NULL for a soft-phone session. */
+  campaign_id: string | null;
   session_id: string;
+  /** SP. Which kind of session this is. */
+  kind: AgencySessionKind;
   state: AgencyAgentState;
   /** ISO-8601. */
   since: string;

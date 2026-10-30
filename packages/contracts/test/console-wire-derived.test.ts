@@ -44,6 +44,8 @@ interface OldAgencySessionBootstrap {
 
 interface OldAgencySessionStateResponse {
   session_id: string;
+  // Added with the soft phone (docs/softphone.md): derived from the dialer type, deliberately.
+  kind: Api.AgencySessionKind;
   state: Api.AgencyAgentState;
   since: string;
   pending_state?: Api.AgencyAgentState | null;

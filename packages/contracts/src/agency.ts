@@ -51,10 +51,14 @@
  * lists, and re-exported here.
  *
  * **Soft-phone amendment (2026-10-30, `docs/softphone.md`).** `./agency/softphone.ts`
- * is new; one shape frozen earlier changes, marked `SP:` where it appears:
+ * is new; two shapes frozen earlier change, each marked `SP:` where it appears:
  *   1. `AgencyStationServerFrame` gains `AgencyStationManualCallFrame`. The union
  *      was already declared non-exhaustive, so a client that ignores an unknown
  *      `event` is unaffected.
+ *   2. `AgencySessionStateResponse` gains `kind`, and its `campaign_id` is
+ *      `string | null`: `leave` answers it for a soft-phone session, which has no
+ *      campaign. It no longer extends `AgencyCampaignScoped`; every other
+ *      campaign-scoped response still does.
  */
 
 export * from './agency/enums';

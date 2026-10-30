@@ -7,7 +7,8 @@
 // WebRtc* type names are kept so the bridge and the runtime import them
 // (docs/seams.md). `sip_connection_id` (SIP) is dropped from the record and the
 // create input, as the baseline dropped the column. `telephony_credential_id`
-// (BYOC) and `provider_request_id` came back in 0002_telephony_credentials.sql.
+// (BYOC) and `provider_request_id` came back in 0002_telephony_credentials.sql;
+// `origin` and `manual_call_id` (the soft phone) are 0005_softphone.sql's.
 
 import type { CallAnalysisResult } from './call.model.js';
 
@@ -20,6 +21,13 @@ export type WebRtcCallStatus =
   | 'no_answer'
   | 'busy'
   | 'canceled';
+
+/**
+ * Which spine a media leg belongs to (`agency_calls.origin`, 0005): `campaign`, placed
+ * by pacing for an `agency_call_attempts` row; `manual`, a soft-phone dial for an
+ * `agency_manual_calls` row (docs/softphone.md). Both are agency calls (SP5).
+ */
+export type WebRtcCallOrigin = 'campaign' | 'manual';
 
 /** Statuses a call may still be live in (used by the stale-call sweep). */
 export const WEBRTC_NON_TERMINAL_STATUSES: readonly WebRtcCallStatus[] = [
@@ -140,6 +148,16 @@ export interface WebRtcCallRecord {
   campaign_id: string | null;
   /** The `agency_call_attempts.id` this leg belongs to. Correlation only, no FK. */
   agency_attempt_id: string | null;
+  /**
+   * `manual` for a soft-phone leg, whose `campaign_id` and `agency_attempt_id` stay
+   * NULL (CHECKed), so no campaign aggregation counts it. Immutable after insert.
+   *
+   * ⚠️ `scopeClause('agency')` still reads `campaign_id IS NOT NULL`, which a manual
+   * leg fails: it must also take `origin = 'manual'` before soft-phone calls are placed.
+   */
+  origin: WebRtcCallOrigin;
+  /** The `agency_manual_calls.id` this leg belongs to (set exactly when `origin` is `manual`). Correlation only, no FK. */
+  manual_call_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -163,6 +181,9 @@ export interface CreateWebRtcCallInput {
   // ── Agency dialer back-references, set at intake and immutable after ──
   campaign_id?: string | null;
   agency_attempt_id?: string | null;
+  // `origin` / `manual_call_id` are deliberately not here yet: `create` names its
+  // INSERT columns, so an optional field added alone would typecheck and be dropped.
+  // They arrive with that column list in the bridge-seam change (docs/softphone.md §4.3).
 }
 
 export interface UpdateWebRtcCallInput {

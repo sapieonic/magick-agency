@@ -178,7 +178,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/forward-query-strictness.test.ts` | 16 |
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/late-binding.test.ts` | 31 |
-| `apps/server/test/unit/agency/left-session-guards.test.ts` | 37 |
+| `apps/server/test/unit/agency/left-session-guards.test.ts` | 38 |
 | `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 18 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
 | `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 4 |
@@ -213,7 +213,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
 | `apps/server/test/unit/agency/runtime-collapses.test.ts` | 6 |
-| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 13 |
+| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 14 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
@@ -612,7 +612,7 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
 | `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
-| `apps/server/test/unit/feature-flags/registry.test.ts` | 13 |
+| `apps/server/test/unit/feature-flags/registry.test.ts` | 14 |
 
 ### `apps/server/src/invites/`
 
@@ -913,7 +913,7 @@ Files: `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
 
 ### `packages/contracts/src/`
 
-Dialer types (`agency.ts`, a barrel over `agency/`), error-code unions and lists including the action error union (`errors.ts`), feature flags (`flags.ts`), roles, permission matrix and the admin-invite address rule `inviteRequiresMatchingAddress` (`rbac.ts`, decision B25), shared primitives (`primitives.ts`: `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, the `AllListed` exhaustiveness check), barrel.
+Dialer types (`agency.ts`, a barrel over `agency/`), error-code unions and lists including the action and soft-phone error unions (`errors.ts`), feature flags (`flags.ts`), roles, permission matrix and the admin-invite address rule `inviteRequiresMatchingAddress` (`rbac.ts`, decision B25), shared primitives (`primitives.ts`: `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, the `AllListed` exhaustiveness check), barrel.
 
 Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.ts`
 
@@ -921,27 +921,27 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 |---|---|
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
-| `packages/contracts/test/errors.test.ts` | 7 |
-| `packages/contracts/test/exports.test.ts` | 9 |
-| `packages/contracts/test/flags.test.ts` | 6 |
-| `packages/contracts/test/rbac.test.ts` | 56 |
+| `packages/contracts/test/errors.test.ts` | 10 |
+| `packages/contracts/test/exports.test.ts` | 10 |
+| `packages/contracts/test/flags.test.ts` | 7 |
+| `packages/contracts/test/rbac.test.ts` | 60 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
 `packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
 
 ### `packages/contracts/src/agency/`
 
-The dialer contract, one file per surface, re-exported by `../agency.ts`: shared enumerations (`enums.ts`), campaign-derived config and the session bootstrap (`session.ts`), the station socket and its close codes (`station.ts`), action and session-state routes with the Phase 2 pool (`actions.ts`), campaign stats and the campaign rate floor (`campaign-stats.ts`), the campaign config defaults the server applies and the console previews — built-in disposition catalog, our-fault redial bound (`campaign-defaults.ts`), lifecycle and retry campaigns (`campaign-lifecycle.ts`), series, agent record, roster and grouped reads (`performance.ts`), the attempt spine (`spine.ts`).
+The dialer contract, one file per surface, re-exported by `../agency.ts`: shared enumerations (`enums.ts`), campaign-derived config and the session bootstrap (`session.ts`), the station socket and its close codes (`station.ts`), action and session-state routes with the Phase 2 pool (`actions.ts`), campaign stats and the campaign rate floor (`campaign-stats.ts`), the campaign config defaults the server applies and the console previews — built-in disposition catalog, our-fault redial bound (`campaign-defaults.ts`), lifecycle and retry campaigns (`campaign-lifecycle.ts`), series, agent record, roster and grouped reads (`performance.ts`), the attempt spine (`spine.ts`), the soft phone: session kind, manual call, call fields, settings, the `manual_call` frame and every soft-phone route's bodies (`softphone.ts`, `docs/softphone.md`).
 
-Files: `actions.ts`, `campaign-defaults.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `performance.ts`, `session.ts`, `spine.ts`, `station.ts`
+Files: `actions.ts`, `campaign-defaults.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `performance.ts`, `session.ts`, `softphone.ts`, `spine.ts`, `station.ts`
 
 _No dedicated test files._
 
 ### `packages/contracts/src/api/agency/`
 
-Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call. Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
+Console wire types for the agency API: campaigns, series, stats, spine, activity, analysis profiles, DNC, calls, attempt call, soft phone. Declarations identical to the dialer contract are re-exported from it, and the ones that differ are derived from it; `CONTRACT-DIFF.md` lists each.
 
-Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `dnc.ts`, `index.ts`, `shared.ts`, `webrtc-call.ts`
+Files: `agency-activity.ts`, `agency-campaign-series.ts`, `agency-campaign.ts`, `agency-spine.ts`, `agency-stats.ts`, `agency.ts`, `attempt-call.ts`, `call-analysis-profile.ts`, `dnc.ts`, `index.ts`, `shared.ts`, `softphone.ts`, `webrtc-call.ts`
 
 _No dedicated test files._
 
@@ -1057,9 +1057,10 @@ Scenario, flow, guard and setup tests that span several modules.
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~11 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
-| `packages/db/test/integration/baseline-down-up.test.ts` | ~2 |
+| `packages/db/test/integration/baseline-down-up.test.ts` | ~3 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
+| `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
