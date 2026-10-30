@@ -37,8 +37,9 @@ function fakeRingback() {
     stop: vi.fn(),
     setMuted: vi.fn(),
     setVolume: vi.fn(),
+    close: vi.fn(),
     playing: false,
-  } as unknown as RingbackTone & Record<'unlock' | 'start' | 'stop' | 'setMuted', ReturnType<typeof vi.fn>>;
+  } as unknown as RingbackTone & Record<'unlock' | 'start' | 'stop' | 'setMuted' | 'close', ReturnType<typeof vi.fn>>;
 }
 
 const audio = { muted: false, sending: false, toggleMute: vi.fn(), resume: vi.fn() };
@@ -437,6 +438,61 @@ describe('the call, driven by manual_call frames', () => {
     fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: 'Wants it in writing' } });
     await waitFor(() => expect(api.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
     expect(api.updateManualCall.mock.calls[0]![1]).toEqual({ fields: {}, notes: 'Wants it in writing' });
+  });
+});
+
+describe('the outcome window', () => {
+  it('says when an unsaved outcome closes', async () => {
+    const view = await mount();
+    const due = new Date(Date.now() + 90_500).toISOString();
+    await view.frame(
+      step(manualCall(), 60, {
+        state: 'ended',
+        outcome: 'connected',
+        end_reason: 'remote_hangup',
+        requires_disposition: true,
+        ended_at: '2026-10-30T10:01:00Z',
+        bridged_at: '2026-10-30T10:00:08Z',
+        talk_seconds: 52,
+        outcome_due_at: due,
+      }),
+    );
+    expect(rail()).toBe('Outcome needed');
+    expect(screen.getByTestId('outcome-closes').textContent).toMatch(
+      /^Dialing is blocked until this call has an outcome\. Closes in 1:(29|30) — then it closes with no outcome\.$/,
+    );
+  });
+});
+
+describe('keys on a focused select', () => {
+  it('a digit typed into the caller ID’s select is the select’s, not the number’s', async () => {
+    await mount();
+    const caller = screen.getByTestId('caller-id');
+    caller.focus();
+    fireEvent.keyDown(caller, { key: '9' });
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('');
+    fireEvent.keyDown(window, { key: '9' });
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('9');
+  });
+
+  it('a digit typed into a choice field does not pick an outcome', async () => {
+    const view = await mount();
+    await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
+    const reason = screen.getByTestId('call-field-reason');
+    reason.focus();
+    fireEvent.keyDown(reason, { key: '1' });
+    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Pick an outcome to save this call.');
+    fireEvent.keyDown(window, { key: '1' });
+    expect(screen.getByTestId('softphone-save-reason').textContent).toBe('Save unlocks when the call ends.');
+  });
+});
+
+describe('the ringback', () => {
+  it('is closed, not just stopped, when the soft phone goes away', async () => {
+    const view = await mount();
+    expect(ringback.close).not.toHaveBeenCalled();
+    view.unmount();
+    expect(ringback.close).toHaveBeenCalled();
   });
 });
 

@@ -43,7 +43,6 @@ import {
   isCallLive,
   isCallUnsettled,
   newerCall,
-  phaseAnnouncement,
   softphonePhase,
   type SoftphonePhase,
 } from '../utils/softphone/callState';
@@ -247,9 +246,11 @@ export interface SoftphoneState {
   /** Moves when the Call button should take focus (a redial filled the pad). */
   focusCallToken: number;
 
-  /** Polite: the call's state. */
-  phaseAnnouncement: string;
-  /** Assertive: the direct result of something the agent just pressed. */
+  /**
+   * Assertive: the direct result of something the agent just pressed, or the one
+   * thing they must know before speaking. The call's state is the rail's polite
+   * region (`SoftphoneRail`), so there is no second polite copy of it here.
+   */
   announcement: string;
 }
 
@@ -533,18 +534,9 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (phase === 'ringing') ringback.start();
     else ringback.stop();
   }, [ringback, phase]);
-  useEffect(() => () => ringback.stop(), [ringback]);
+  useEffect(() => () => ringback.close(), [ringback]);
 
   // ── Announcements ─────────────────────────────────────────────────────────
-  const [politeAnnouncement, setPoliteAnnouncement] = useState('');
-  const announcedPhaseRef = useRef<SoftphonePhase>('ready');
-  useEffect(() => {
-    if (announcedPhaseRef.current === phase) return;
-    announcedPhaseRef.current = phase;
-    setPoliteAnnouncement(phaseAnnouncement(phase, phase === 'ready' ? (lastCall ?? newest) : call));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
-
   /** Answered with the microphone muted: the one thing the agent must know before they speak. */
   const answeredPhaseRef = useRef<SoftphonePhase>(phase);
   useEffect(() => {
@@ -1070,7 +1062,6 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     recentError,
     redial,
     focusCallToken,
-    phaseAnnouncement: politeAnnouncement,
     announcement,
   };
 }

@@ -242,24 +242,3 @@ export function describeSoftphoneRail(input: {
 function capitalise(text: string): string {
   return text ? text[0]!.toUpperCase() + text.slice(1) : text;
 }
-
-/**
- * The one sentence the agent hears from the polite live region when the call
- * moves. Keyed on the phase, so a frame that restates the same state says
- * nothing new.
- */
-export function phaseAnnouncement(phase: SoftphonePhase, call: AgencyManualCall | null): string {
-  const number = call ? formatDialNumber(call.destination_e164) : '';
-  switch (phase) {
-    case 'dialing':
-      return `Dialing ${number}.`;
-    case 'ringing':
-      return `Ringing ${number}.`;
-    case 'on_call':
-      return 'Call connected.';
-    case 'outcome':
-      return 'Call ended. Save an outcome to finish.';
-    case 'ready':
-      return call && call.state === 'ended' ? `Call ended. ${callEndSummary(call)}` : '';
-  }
-}

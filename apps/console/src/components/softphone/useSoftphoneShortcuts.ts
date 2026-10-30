@@ -19,8 +19,8 @@ import type { ServerClock } from '../../hooks/useServerClock';
  * `Enter` saves from anywhere; `E` twice hangs up (the hold button's own key).
  *
  * Nothing fires while focus is in a text field (the number field types for
- * itself) or while a dialog is open, and Enter on a focused button is the
- * button's.
+ * itself) or a `<select>` (its own type-ahead), or while a dialog is open, and
+ * Enter on a focused button is the button's.
  */
 export function useSoftphoneShortcuts(
   sp: SoftphoneState,
@@ -47,6 +47,9 @@ export function useSoftphoneShortcuts(
       if (!enabled || dialogOpen()) return;
       const inText = isTextEntryTarget(event.target);
       const target = event.target as HTMLElement | null;
+      // A focused <select> takes digits and letters as its own type-ahead (a
+      // choice field, the caller ID, "Log to"): a key there is never ours too.
+      const onSelect = target?.tagName === 'SELECT';
       const onControl = Boolean(target?.closest?.('button, a, select, [role="button"], [role="menuitem"]'));
 
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -56,7 +59,7 @@ export function useSoftphoneShortcuts(
         }
         return;
       }
-      if (inText || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (inText || onSelect || event.ctrlKey || event.metaKey || event.altKey) return;
 
       if (sp.phase === 'ready') {
         if (!sp.setupEditable) return;

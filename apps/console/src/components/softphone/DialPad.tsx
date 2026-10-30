@@ -83,7 +83,10 @@ export function DialPad({
           </p>
         ) : null}
         {phase === 'outcome' ? (
-          <p className={styles.hint}>Dialling is blocked until this call has an outcome.</p>
+          <p className={styles.hint} data-testid="outcome-closes">
+            Dialing is blocked until this call has an outcome.
+            {call.outcome_due_at ? <OutcomeCloses dueAt={call.outcome_due_at} clock={clock} /> : null}
+          </p>
         ) : null}
       </div>
     );
@@ -210,6 +213,30 @@ export function DialPad({
 }
 
 /** Live from `bridged_at` while the call is up; the stored total once it has ended. */
+/**
+ * When an unsaved outcome lapses: the reaper closes the call with no outcome at
+ * `outcome_due_at` (`docs/softphone.md` §4.1 step 8). Outside the rail, which is
+ * the polite live region, so the ticking digits are read when the agent goes to
+ * them and are never announced every second.
+ */
+function OutcomeCloses({ dueAt, clock }: { dueAt: string; clock: ServerClock }) {
+  useRepaintTick();
+  const ms = clock.until(dueAt);
+  if (ms === null) return null;
+  return (
+    <>
+      {' '}
+      {ms > 0 ? (
+        <>
+          Closes in <span className={styles.mono}>{formatDuration(ms)}</span> — then it closes with no outcome.
+        </>
+      ) : (
+        'Closing with no outcome…'
+      )}
+    </>
+  );
+}
+
 function TalkTime({
   bridgedAt,
   endedSeconds,

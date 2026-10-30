@@ -10,6 +10,7 @@ function fakeContext() {
     currentTime: 10,
     destination: {} as AudioNode,
     resume: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
     createOscillator: () => {
       const rec = { hz: 0, started: false, stopped: false };
       oscillators.push(rec);
@@ -79,6 +80,23 @@ describe('RingbackTone', () => {
     expect(tone.playing).toBe(false);
     expect(oscillators.every((o) => o.stopped)).toBe(true);
     expect(t.impl.clearInterval).toHaveBeenCalled();
+  });
+
+  it('close stops the ring and releases its context; a later ring makes a new one', () => {
+    const first = fakeContext();
+    const second = fakeContext();
+    const contexts = [first.ctx, second.ctx];
+    const t = timers();
+    const tone = new RingbackTone(() => contexts.shift() ?? null, t.impl);
+    tone.unlock();
+    tone.start();
+    tone.close();
+    expect(tone.playing).toBe(false);
+    expect(first.oscillators.every((o) => o.stopped)).toBe(true);
+    expect(first.ctx.close).toHaveBeenCalledTimes(1);
+    tone.start();
+    expect(tone.playing).toBe(true);
+    expect(second.oscillators).toHaveLength(2);
   });
 
   it('scales with the agent’s cue volume and does nothing without Web Audio', () => {

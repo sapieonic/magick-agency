@@ -25,6 +25,8 @@ export interface RingbackAudioContext {
   createOscillator: () => OscillatorNode;
   createGain: () => GainNode;
   resume: () => Promise<void>;
+  /** Optional so a stand-in without one still fits; every browser context has it. */
+  close?: () => Promise<void>;
 }
 
 export const RINGBACK_FREQUENCIES_HZ = [400, 450] as const;
@@ -135,6 +137,19 @@ export class RingbackTone {
     this.master?.disconnect();
     this.envelope = null;
     this.master = null;
+  }
+
+  /**
+   * Stop and release the context: the soft phone unmounting (leaving the page, the
+   * station returning to its campaign). Browsers cap live `AudioContext`s, so one
+   * left open per visit is a leak. A later `unlock` or `start` makes a new one —
+   * which is what a StrictMode remount needs.
+   */
+  close(): void {
+    this.stop();
+    const ctx = this.ctx;
+    this.ctx = null;
+    if (ctx?.close) void ctx.close().catch(() => {});
   }
 
   /** One ring-ring, scheduled on the audio clock so a busy main thread cannot stretch it. */
