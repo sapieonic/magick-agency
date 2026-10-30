@@ -258,7 +258,16 @@ export class SoftphoneService {
       dnc: this.deps.dnc,
       findRosterMatches: (campaignId, phone) => agencyContactRepository.findForManualMatch(campaignId, phone),
     });
-    if (!predial.ok) return predial;
+    if (!predial.ok) {
+      // The session's unsettled call comes first in the order of refusals, but it was
+      // read above, before the pre-dial's awaits and outside the session lock. A second
+      // dial from this session that committed meanwhile has claimed the roster contact,
+      // so the pre-dial sees it `in_flight` and would answer `contact_in_flight` for the
+      // agent's OWN call. Asked again here, the session's call wins, as it does inside
+      // step 3's lock.
+      const own = await this.pendingRefusal(session.id);
+      return own ? refuse(own) : predial;
+    }
     const plan = predial.plan;
 
     // ── Step 3: the row and the contact claim, in ONE transaction ────────────

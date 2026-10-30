@@ -96,7 +96,9 @@ Owned by `AgencyRuntime`. One call at a time per session.
    a row that exists; an end-break that wins the race leaves the session `available` and the row
    is closed undialled (`not_on_softphone`). Two dials from one session serialise on a row lock of
    the session inside step 3's transaction, so the second meets the first's call
-   (`manual_call_live`). A rehydrate (reconnect, lapsed lease) of a soft-phone session, of a
+   (`manual_call_live`), also when its pre-dial ran after the first committed and saw the contact
+   the first had claimed (a pre-dial refusal is answered as the session's unsettled call when there
+   is one). A rehydrate (reconnect, lapsed lease) of a soft-phone session, of a
    campaign session on the `soft_phone` break, or of ANY session holding an unsettled call
    (whatever its row's break reason says) lands in `break/soft_phone` and re-claims the
    session's unsettled call. An `offline` write (station drop, `releaseAgent` for a departed

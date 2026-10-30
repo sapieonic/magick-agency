@@ -50,7 +50,7 @@ import { buildApp } from '../../../src/app.js';
 import type { AppContext } from '../../../src/app-context.js';
 import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../../../src/bootstrap/agency.js';
 import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
-import { agencyAgentSessionRepository, agencyManualCallRepository } from '../../../src/db/repositories/agency.repository.js';
+import { agencyAgentSessionRepository, agencyContactRepository, agencyManualCallRepository } from '../../../src/db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import type { SoftphoneActor } from '../../../src/agency/softphone/types.js';
 import { setAvailableGuarded } from '../../../src/agency/softphone/session-guard.js';
@@ -588,6 +588,50 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     if (winner.ok) {
       await runtime.softphone.hangup(actor(agent), winner.call.id);
       await waitFor('settled', async () => (await manualRow(winner.call.id)).settled_at);
+    }
+  });
+
+  it('a dial whose roster match runs after its own session\'s other dial committed sees that call, not contact_in_flight', async () => {
+    // The interleaving the concurrent case above hits only by chance, forced: B passes
+    // the session's unsettled-call check before A commits, and reads the roster after
+    // A claimed the contact. The contact is `in_flight` because of B's OWN session.
+    const agent = randomUUID();
+    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100055' });
+    const session = await softphoneSession(agent);
+    await openStation(session.id);
+
+    const real = agencyContactRepository.findForManualMatch.bind(agencyContactRepository);
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>((r) => { releaseA = r; });
+    const gateB = new Promise<void>((r) => { releaseB = r; });
+    let calls = 0;
+    const match = vi.spyOn(agencyContactRepository, 'findForManualMatch').mockImplementation(async (...args) => {
+      const nth = ++calls;
+      // A holds at its roster read until B is past the session check; B holds at its
+      // own until A has committed its row and claimed the contact.
+      await (nth === 1 ? gateA : gateB);
+      return real(...args);
+    });
+    try {
+      const a = runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '+919811100055', campaignId: campaign.id });
+      await waitFor('A at the roster read', () => calls >= 1);
+      const b = runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '+919811100055', campaignId: campaign.id });
+      await waitFor('B at the roster read', () => calls >= 2);
+      releaseA();
+      const won = await a;
+      if (!won.ok) throw new Error(won.refusal.code);
+      releaseB();
+      const lost = await b;
+      expect(lost.ok ? null : lost.refusal.code).toBe('manual_call_live');
+      expect((lost.ok ? null : (lost.refusal as { call: { id: string } }).call.id)).toBe(won.call.id);
+      await runtime.softphone.hangup(actor(agent), won.call.id);
+      await waitFor('settled', async () => (await manualRow(won.call.id)).settled_at);
+    } finally {
+      releaseA();
+      releaseB();
+      match.mockRestore();
     }
   });
 
