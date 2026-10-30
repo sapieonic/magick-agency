@@ -132,6 +132,10 @@ async function harness(): Promise<Harness> {
     agents: {
       get: vi.fn().mockResolvedValue({ state: 'available', attemptId: null, since: 1 }),
       set: vi.fn().mockResolvedValue('ok'), clear: vi.fn(), renew: vi.fn(),
+      // The soft phone's claim (docs/softphone.md §4.1): re-taken when a route finds an owed call.
+      claimManual: vi.fn().mockResolvedValue({ ok: true }),
+      manualCallOf: vi.fn().mockResolvedValue(null),
+      releaseManual: vi.fn().mockResolvedValue(true),
     },
     wrapup: { stateFor: vi.fn(() => null), noteDisposition: vi.fn(), cancel: vi.fn(), force: vi.fn() },
     /**
@@ -184,7 +188,7 @@ async function harness(): Promise<Harness> {
       // "finish or hang up your current call" wording it was written for.
       hasUnannouncedAttempt: vi.fn(() => false),
       hangupAttempt: vi.fn(),
-      releaseAgent: vi.fn(),
+      releaseAgent: vi.fn().mockResolvedValue({ state: 'available', result: 'ok' }),
     },
     breaks: { queue: vi.fn(), peek: vi.fn(() => null), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: {
@@ -225,6 +229,9 @@ beforeEach(async () => {
   flags.isEnabled.mockResolvedValue(true);
   repos.session.findById.mockResolvedValue(LIVE);
   repos.campaign.findById.mockResolvedValue({ id: 'camp-1', break_reasons: null });
+  // `clearAllMocks` keeps implementations: a case that stages an owed soft-phone call must
+  // not leak it into the next one.
+  repos.manualCall.findUnsettledForSession.mockReset().mockResolvedValue(null);
   h = await harness();
 });
 
@@ -774,10 +781,28 @@ describe('/available and the soft phone', () => {
     expect(repos.session.setState).not.toHaveBeenCalled();
   });
 
-  it('answers 409 manual_call_live with the call when the Lua write refuses, and mirrors nothing', async () => {
+  it('answers 409 manual_call_live from the database BEFORE any write, re-claiming the session', async () => {
+    // A lease that lapsed took the `manual` field: Redis alone would let this through.
+    const call = { id: 'mc-1', session_id: 'sess-1', state: 'ended', requires_disposition: true };
+    repos.manualCall.findUnsettledForSession.mockResolvedValue({ id: 'mc-1', tenant_id: 't1', account_id: 'a1' });
+    repos.manualCall.findWireById.mockResolvedValue(call);
+
+    const res = await post('/available');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
+    expect(h.runtime.agents.claimManual).toHaveBeenCalledWith('sess-1', 'mc-1');
+    expect(h.runtime.agents.set).not.toHaveBeenCalledWith('sess-1', 'available', expect.anything());
+    expect(repos.session.setState).not.toHaveBeenCalled();
+    expect(h.sent.some((f: { event?: string; state?: string }) => f.event === 'agent_state' && f.state === 'available')).toBe(false);
+  });
+
+  it('answers 409 manual_call_live when the Lua write refuses (a dial committed after the read), and mirrors nothing', async () => {
     const call = { id: 'mc-1', session_id: 'sess-1', state: 'ended', requires_disposition: true };
     h.runtime.agents.set.mockResolvedValue('manual_call_live');
-    repos.manualCall.findUnsettledForSession.mockResolvedValue({ id: 'mc-1', tenant_id: 't1', account_id: 'a1' });
+    repos.manualCall.findUnsettledForSession
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'mc-1', tenant_id: 't1', account_id: 'a1' });
     repos.manualCall.findWireById.mockResolvedValue(call);
 
     const res = await post('/available');
@@ -786,6 +811,41 @@ describe('/available and the soft phone', () => {
     expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
     expect(repos.session.setState).not.toHaveBeenCalled();
     expect(h.sent.some((f: { event?: string; state?: string }) => f.event === 'agent_state' && f.state === 'available')).toBe(false);
+  });
+});
+
+describe('/force-available answers what it did', () => {
+  const asSupervisor = () => post('/force-available', { agent_user_id: 'u-supervisor', on_behalf: true });
+
+  it('409 manual_call_live with the call while the agent owes a soft-phone outcome; nothing released', async () => {
+    const call = { id: 'mc-1', session_id: 'sess-1', state: 'ended', requires_disposition: true };
+    repos.manualCall.findUnsettledForSession.mockResolvedValue({ id: 'mc-1', tenant_id: 't1', account_id: 'a1' });
+    repos.manualCall.findWireById.mockResolvedValue(call);
+    const res = await asSupervisor();
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
+    expect(h.runtime.dialer.releaseAgent).not.toHaveBeenCalled();
+  });
+
+  it('409 when the release\'s own guard refused, never a claimed `available`', async () => {
+    const call = { id: 'mc-1', session_id: 'sess-1', state: 'bridged' };
+    h.runtime.dialer.releaseAgent.mockResolvedValue({ state: 'available', result: 'manual_call_live' });
+    repos.manualCall.findUnsettledForSession
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ id: 'mc-1', tenant_id: 't1', account_id: 'a1' });
+    repos.manualCall.findWireById.mockResolvedValue(call);
+    const res = await asSupervisor();
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
+  });
+
+  it('the state actually written: a queued break, or offline for a station that is gone', async () => {
+    h.runtime.dialer.releaseAgent.mockResolvedValueOnce({ state: 'break', result: 'ok' });
+    expect((await asSupervisor()).json().state).toBe('break');
+    h.runtime.dialer.releaseAgent.mockResolvedValueOnce({ state: 'offline', result: 'ok' });
+    expect((await asSupervisor()).json().state).toBe('offline');
+    h.runtime.dialer.releaseAgent.mockResolvedValueOnce({ state: 'available', result: 'ok' });
+    expect((await asSupervisor()).json().state).toBe('available');
   });
 });
 
