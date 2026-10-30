@@ -223,15 +223,18 @@ export class ManualDialer {
     call: AgencyManualCallRecord,
     opts: { socket: WebSocket; provider?: string },
   ): Promise<{ ok: true } | { ok: false; failure: ManualDialFailure }> {
+    // Registered before the first await: a hang-up (or the reconnect, or the orphan
+    // sweep's live set) arriving while the priors load must find the call.
     const entry: LiveManualCall = {
       id: call.id,
       sessionId: call.session_id,
       tenantId: call.tenant_id,
       accountId: call.account_id,
-      priors: await this.priorsFor(call.contact_id, call.id),
+      priors: [],
       endRequestedBy: null,
     };
     this.live.set(call.id, entry);
+    entry.priors = await this.priorsFor(call.contact_id, call.id);
     await this.sendFrame(call);
 
     // Hung up before the carrier was ever contacted: nothing to ring.
