@@ -1,0 +1,295 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
+import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
+import { useTenant } from '../../contexts/TenantContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { leaveAgencySession } from '../../api/agency';
+import { switchToSoftphone, type SoftphoneSessionOnCampaignRefusal } from '../../api/softphone';
+import { trackAgencySoftphoneSwitch } from '../../analytics/events';
+import { useAgencyAudio } from '../../hooks/useAgencyAudio';
+import { useAgencyStation } from '../../hooks/useAgencyStation';
+import { useServerClock } from '../../hooks/useServerClock';
+import { useSoftphone } from '../../hooks/useSoftphone';
+import { hasPermission } from '../../utils/permissions';
+import { audioTarget } from '../../utils/softphone/audioTarget';
+import { refusalCopy } from '../../utils/softphone/refusalCopy';
+import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
+import { readCuePrefs } from '../../utils/agencyCuePrefs';
+import { agentLandingPath } from '../../utils/agencyStationExit';
+import { AGENCY_FLOOR_STATE_LABELS } from '../../utils/agencyAgentFloor';
+import { StationEscape } from '../../components/agency/StationFatal';
+import { SoftphoneView } from '../../components/softphone/SoftphoneView';
+import { SoftphoneHeader, SOFTPHONE_LEAVE_BLOCKED_COPY } from '../../components/softphone/SoftphoneHeader';
+import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
+import { useSoftphoneSession } from './softphone/useSoftphoneSession';
+import type { StationSocketBootstrap } from '../../hooks/agencyStation/types';
+import type { AgencySoftphoneSessionResponse } from '../../types/softphone';
+import station from '../../components/agency/AgentStation.module.css';
+
+/**
+ * `/dialer/phone` — the soft phone for an agent who is not on a campaign
+ * (`docs/softphone.md` §2, §7).
+ *
+ * Full-viewport and outside both shells, gated like `/station` plus
+ * `agency_softphone_enabled`. It opens a soft-phone session (`break/soft_phone`
+ * from birth, never `available`, so pacing can never reserve it), connects the
+ * station socket for it, and renders `SoftphoneView` on top of that socket, the
+ * station's microphone and its playback.
+ *
+ * An agent already live on a campaign is refused (`session_on_campaign`): one
+ * session per agent per tenant, one pair of ears. The answer is not a second
+ * session but the switch on that one (§4.2), which this page offers — the
+ * station then shows the soft phone in place, on its own socket, and "Return to
+ * campaign" takes them back.
+ */
+export default function SoftphonePage() {
+  const { tenantId, accountId, role } = useTenant();
+  const { user } = useAuth();
+  const mayDial = hasPermission(role, 'agency.softphone.dial');
+  const { state, retry } = useSoftphoneSession({ tenantId, accountId, enabled: mayDial });
+
+  if (role !== undefined && !mayDial) return <CapabilityUnavailable />;
+
+  if (state.status === 'on_campaign') {
+    return <CampaignSessionScreen refusal={state.refusal} tenantId={tenantId} accountId={accountId} />;
+  }
+
+  if (state.status === 'error') {
+    return (
+      <div className={station.shell}>
+        <div className={station.fatal} role="alert">
+          <h1>Can’t open the soft phone</h1>
+          <p>{state.message}</p>
+          <button type="button" className={station.fatalAction} onClick={retry}>
+            Try again
+          </button>
+          <StationEscape toCampaign={false} campaignId="" />
+        </div>
+      </div>
+    );
+  }
+
+  if (state.status === 'loading') {
+    return (
+      <div className={station.shell}>
+        <div className={station.fatal} aria-busy="true">
+          <LoadingSpinner />
+          <p>Opening your soft phone…</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <SoftphoneConsole
+      session={state.session}
+      socket={state.socket}
+      tenantId={tenantId}
+      accountId={accountId}
+      user={user}
+    />
+  );
+}
+
+function SoftphoneConsole({
+  session,
+  socket,
+  tenantId,
+  accountId,
+  user,
+}: {
+  session: AgencySoftphoneSessionResponse;
+  socket: StationSocketBootstrap;
+  tenantId: string | null;
+  accountId: string | null;
+  user: ReturnType<typeof useAuth>['user'];
+}) {
+  const navigate = useNavigate();
+  const audio = useAgencyAudio();
+  const stationState = useAgencyStation(socket, {
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    audio: audio.sink,
+  });
+  const clock = useServerClock(stationState.clockOffsetMs);
+  const { connection } = stationState;
+  const stationIsGone = connection === 'disconnected' || connection === 'session_gone' || connection === 'superseded';
+
+  // One owner for the microphone: arm on the dial, open the uplink on `bridged_at`.
+  const target = audioTarget({ stationIsGone, live: stationState.live, manualCall: stationState.manualCall });
+  useEffect(() => {
+    audio.sync({ attemptId: target.id, bridged: target.bridged, send: stationState.sendMedia });
+  }, [audio.sync, target.id, target.bridged, stationState.sendMedia]);
+
+  const cueVolume = useMemo(() => {
+    try {
+      return readCuePrefs(window.localStorage).volume;
+    } catch {
+      return readCuePrefs(undefined).volume;
+    }
+  }, []);
+
+  const sp = useSoftphone({
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    userId: user?.id ?? null,
+    sessionId: session.session_id,
+    connection,
+    frameCall: stationState.manualCall,
+    clock,
+    audio,
+    surface: 'softphone_page',
+    cueVolume,
+  });
+
+  const [closeOpen, setCloseOpen] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [closeFailure, setCloseFailure] = useState<string | null>(null);
+  const confirmClose = async () => {
+    setClosing(true);
+    setCloseFailure(null);
+    try {
+      await leaveAgencySession(session.session_id, tenantId ?? undefined, accountId ?? undefined);
+      navigate(agentLandingPath('station'));
+    } catch (err) {
+      setCloseFailure(err instanceof Error ? err.message : 'Try again in a moment.');
+      setClosing(false);
+    }
+  };
+
+  const micNotice = agencyAudioNotice(audio.error);
+
+  return (
+    <div className={station.shell}>
+      <SoftphoneHeader
+        user={user}
+        sp={sp}
+        connection={connection}
+        missedPings={stationState.missedPings}
+        actions={
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => setCloseOpen(true)}
+            disabled={sp.call !== null}
+            title={sp.call ? SOFTPHONE_LEAVE_BLOCKED_COPY : 'End your soft-phone session'}
+            data-testid="softphone-close"
+          >
+            Close soft phone
+          </button>
+        }
+      />
+
+      {micNotice ? (
+        <p className={station.micFailure} role="alert" data-testid="mic-failure">
+          <strong>{micNotice.headline}</strong> {micNotice.remedy}
+          {micNotice.action ? (
+            <button type="button" className={station.micFailureAction} onClick={audio.resume}>
+              {micNotice.action}
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+
+      <SoftphoneView
+        sp={sp}
+        connection={connection}
+        clock={clock}
+        fromCampaign={false}
+        onReconnect={stationState.reconnect}
+        shortcutsEnabled={!closeOpen}
+      />
+
+      <ConfirmDialog
+        open={closeOpen}
+        title="Close the soft phone?"
+        message={
+          closeFailure
+            ? `Your soft phone is still open — ${closeFailure}`
+            : 'Your soft-phone session ends. Open it again from your screens whenever you need it.'
+        }
+        confirmLabel={closing ? 'Closing…' : 'Close soft phone'}
+        disabled={closing}
+        onConfirm={() => void confirmClose()}
+        onCancel={() => {
+          if (!closing) setCloseOpen(false);
+        }}
+      />
+    </div>
+  );
+}
+
+/**
+ * The 409 `session_on_campaign` answer: the agent is still at a campaign station.
+ * The remedy is switching THAT session to the soft phone (§4.2) — queued behind a
+ * call or wrap-up exactly like a break — and the station then shows the soft
+ * phone in place.
+ */
+function CampaignSessionScreen({
+  refusal,
+  tenantId,
+  accountId,
+}: {
+  refusal: SoftphoneSessionOnCampaignRefusal;
+  tenantId: string | null;
+  accountId: string | null;
+}) {
+  const navigate = useNavigate();
+  const [switching, setSwitching] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const stationPath = `/station?campaign=${encodeURIComponent(refusal.campaign_id)}`;
+  const midCall = refusal.state === 'reserved' || refusal.state === 'on_call' || refusal.state === 'wrapup';
+  const stateLabel = AGENCY_FLOOR_STATE_LABELS[refusal.state]?.toLowerCase() ?? refusal.state;
+
+  const onSwitch = async () => {
+    setSwitching(true);
+    setFailure(null);
+    const result = await switchToSoftphone(refusal.session_id, tenantId ?? undefined, accountId ?? undefined);
+    trackAgencySoftphoneSwitch({
+      action: 'start',
+      queued: result.ok ? Boolean(result.value.pending_state) : false,
+      outcome: result.ok ? 'accepted' : 'refused',
+      code: result.ok ? null : result.refusal.code,
+    });
+    if (result.ok) {
+      navigate(stationPath);
+      return;
+    }
+    setSwitching(false);
+    setFailure(refusalCopy(result.refusal));
+  };
+
+  return (
+    <div className={station.shell}>
+      <div className={station.fatal} role="alert" data-testid="softphone-on-campaign">
+        <h1>You’re still at the {refusal.campaign_name} station</h1>
+        <p>
+          You’re joined to {refusal.campaign_name} — {stateLabel}. You can only have one session at a time.
+        </p>
+        <p>
+          {midCall
+            ? 'Switch that station to the soft phone and it switches after this call and its wrap-up. You stay on the campaign and can go back to it from the station.'
+            : 'Switch that station to the soft phone. You stay on the campaign and can go back to it from the station.'}
+        </p>
+        <button
+          type="button"
+          className={station.fatalAction}
+          onClick={() => void onSwitch()}
+          disabled={switching}
+          data-testid="softphone-switch-from-campaign"
+        >
+          {switching ? 'Switching…' : 'Switch to soft phone'}
+        </button>
+        {failure ? (
+          <p className="error-text" data-testid="softphone-switch-failure">
+            {failure}
+          </p>
+        ) : null}
+        <Link className={station.fatalEscape} to={stationPath} data-testid="softphone-go-to-station">
+          Go to station
+        </Link>
+      </div>
+    </div>
+  );
+}

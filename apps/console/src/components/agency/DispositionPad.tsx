@@ -98,6 +98,14 @@ export interface DispositionPadProps {
   onNeedsNote?: () => void;
   /** Lets the console's `C` shortcut select the callback code AND focus its row. */
   handleRef?: RefObject<DispositionPadHandle | null>;
+  /** One line under the title saying whose outcome list this is (the soft phone's two catalogs). */
+  hint?: string | null;
+  /**
+   * Replaces {@link CALLBACK_GROUND_TRUTH_COPY} when that sentence is not true for
+   * this call — a soft-phone call that is not on a campaign's roster never goes
+   * back into a campaign queue, so promising it does would be the wrong promise.
+   */
+  callbackNote?: string;
 }
 
 export interface DispositionPadHandle {
@@ -126,6 +134,8 @@ export function DispositionPad({
   now,
   onNeedsNote,
   handleRef,
+  hint = null,
+  callbackNote = CALLBACK_GROUND_TRUTH_COPY,
 }: DispositionPadProps) {
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const callbackRowRef = useRef<HTMLButtonElement | null>(null);
@@ -188,6 +198,7 @@ export function DispositionPad({
   return (
     <div className={styles.pad} onKeyDown={onKeyDown}>
       <h2 className={styles.title}>Outcome</h2>
+      {hint ? <p className={styles.disabledReason}>{hint}</p> : null}
 
       {/* A disabled region always carries a visible stated reason (house rule). */}
       {!enabled && disabledReason ? (
@@ -275,6 +286,7 @@ export function DispositionPad({
           enabled={enabled}
           onPick={(value) => onChange({ ...form, callbackAt: value })}
           firstChipRef={callbackRowRef}
+          groundTruth={callbackNote}
         />
       ) : null}
     </div>
@@ -319,7 +331,9 @@ function CallbackRow({
   enabled,
   onPick,
   firstChipRef,
+  groundTruth,
 }: {
+  groundTruth: string;
   value: string | null;
   now: () => number;
   enabled: boolean;
@@ -398,7 +412,7 @@ function CallbackRow({
       </p>
 
       <p className={styles.groundTruth} data-testid="callback-ground-truth">
-        {CALLBACK_GROUND_TRUTH_COPY}
+        {groundTruth}
       </p>
     </div>
   );
