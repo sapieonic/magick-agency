@@ -64,7 +64,7 @@ export function SoftphoneDisclosures({ sp, showMuted = true }: { sp: SoftphoneSt
           Recording
         </span>
       ) : null}
-      {showMuted && sp.muted ? (
+      {showMuted && sp.micMuted ? (
         <span className={station.muted} data-testid="muted-pill">
           <span className={station.mutedDot} aria-hidden="true" />
           Muted

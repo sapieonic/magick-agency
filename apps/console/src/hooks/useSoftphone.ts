@@ -145,6 +145,8 @@ export const SAVE_BLOCK_COPY: Record<SaveBlock, string> = {
   fields_required: 'Fill in the required call details first.',
 };
 
+export const SOFTPHONE_MUTED_AT_ANSWER_COPY = 'You are muted. The customer can’t hear you — press M to unmute.';
+
 export const SOFTPHONE_NOTES_DISABLED_COPY = 'Notes open when a call starts.';
 export const SOFTPHONE_PAD_DISABLED_COPY = 'Outcomes open when the customer answers.';
 
@@ -213,7 +215,12 @@ export interface SoftphoneState {
   // ── Call controls ──
   hangup: () => void;
   hangupFailure: string | null;
+  /** What Mute acts on now: the ringback while the customer's phone rings, else the microphone. */
+  muteTarget: 'ring' | 'mic';
+  /** Whether that target is muted. */
   muted: boolean;
+  /** The microphone's mute, whatever Mute acts on now (the header's Muted pill). */
+  micMuted: boolean;
   muteEnabled: boolean;
   toggleMute: () => void;
   dncConfirmOpen: boolean;
@@ -425,6 +432,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (call && hydratedForRef.current !== call.id) {
       hydratedForRef.current = call.id;
       fieldsTouchedRef.current = false;
+      setRingMuted(false);
       // A call we did not place from this screen (a reload, a reconnect, a second
       // window): take what the server holds. One we placed already matches the draft.
       // (Before the field set is known this compares against nothing; the
@@ -443,6 +451,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       // Settled (outcome saved, lapsed, or an unanswered call closed): back to Ready.
       hydratedForRef.current = null;
       fieldsTouchedRef.current = false;
+      setRingMuted(false);
       setLastCall(newest && newest.id === prev.id ? newest : prev);
       setNumberState('');
       setFieldValues({});
@@ -506,12 +515,20 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   }, [loadRecent]);
 
   // ── Ringback ──────────────────────────────────────────────────────────────
+  /**
+   * The ring has its own mute. While the customer's phone rings, Mute silences
+   * the ringback and nothing else: before, it went to the microphone, whose mute
+   * is applied the moment the stream opens — so an agent who quietened the ring
+   * greeted the customer muted. The microphone's mute is the host's, and is
+   * offered once audio is flowing.
+   */
+  const [ringMuted, setRingMuted] = useState(false);
   useEffect(() => {
     ringback.setVolume(cueVolume);
   }, [ringback, cueVolume]);
   useEffect(() => {
-    ringback.setMuted(audio.muted);
-  }, [ringback, audio.muted]);
+    ringback.setMuted(ringMuted);
+  }, [ringback, ringMuted]);
   useEffect(() => {
     if (phase === 'ringing') ringback.start();
     else ringback.stop();
@@ -525,6 +542,16 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (announcedPhaseRef.current === phase) return;
     announcedPhaseRef.current = phase;
     setPoliteAnnouncement(phaseAnnouncement(phase, phase === 'ready' ? (lastCall ?? newest) : call));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  /** Answered with the microphone muted: the one thing the agent must know before they speak. */
+  const answeredPhaseRef = useRef<SoftphonePhase>(phase);
+  useEffect(() => {
+    const prev = answeredPhaseRef.current;
+    answeredPhaseRef.current = phase;
+    if (phase === 'on_call' && prev !== 'on_call' && audio.muted) setAnnouncement(SOFTPHONE_MUTED_AT_ANSWER_COPY);
+    // Keyed on the phase: the mute state is read at the moment the call is answered.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
@@ -917,6 +944,14 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     setHangupFailure(`We couldn’t end the call — you may still be connected. ${refusalCopy(result.refusal)}`);
   }, [call, tenantId, accountId, adoptCall, loadBootstrap]);
 
+  // ── Mute ──────────────────────────────────────────────────────────────────
+  const phaseRef = useLatestRef(phase);
+  const { toggleMute: toggleMicMute } = audio;
+  const toggleMute = useCallback(() => {
+    if (phaseRef.current === 'ringing') setRingMuted((current) => !current);
+    else toggleMicMute();
+  }, [phaseRef, toggleMicMute]);
+
   // ── Mark DNC ──────────────────────────────────────────────────────────────
   const dncEnabled = call !== null && (phase === 'on_call' || phase === 'outcome' || phase === 'ringing');
   const openDnc = useCallback(() => {
@@ -1012,9 +1047,11 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     notesStatus: notesStatusLine,
     hangup: () => void hangup(),
     hangupFailure,
-    muted: audio.muted,
+    muteTarget: phase === 'ringing' ? 'ring' : 'mic',
+    muted: phase === 'ringing' ? ringMuted : audio.muted,
+    micMuted: audio.muted,
     muteEnabled: audio.sending || phase === 'ringing',
-    toggleMute: audio.toggleMute,
+    toggleMute,
     dncConfirmOpen,
     openDnc,
     cancelDnc,

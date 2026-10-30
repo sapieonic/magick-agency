@@ -13,7 +13,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('../../api/softphone', () => api);
 
-import { useSoftphone } from '../../hooks/useSoftphone';
+import { useSoftphone, SOFTPHONE_MUTED_AT_ANSWER_COPY, type SoftphoneAudio } from '../../hooks/useSoftphone';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { RINGING_HANGUP_WARNING } from '../../components/softphone/DialPad';
 import { serverClock } from '../../hooks/useServerClock';
@@ -49,11 +49,13 @@ function Harness({
   connection = 'open',
   ringback,
   presetCampaignId = null,
+  audioState = audio,
 }: {
   frameCall: AgencyManualCall | null;
   connection?: StationConnection;
   ringback: RingbackTone;
   presetCampaignId?: string | null;
+  audioState?: SoftphoneAudio;
 }) {
   const sp = useSoftphone({
     tenantId: 't-1',
@@ -63,7 +65,7 @@ function Harness({
     connection,
     frameCall,
     clock,
-    audio,
+    audio: audioState,
     surface: 'softphone_page',
     ringback,
     presetCampaignId,
@@ -94,6 +96,8 @@ const press = (key: string) => fireEvent.keyDown(window, { key });
 
 beforeEach(() => {
   Object.values(api).forEach((m) => m.mockReset());
+  audio.toggleMute.mockReset();
+  audio.resume.mockReset();
   api.getSoftphoneBootstrap.mockResolvedValue(BOOTSTRAP);
   api.listManualCalls.mockResolvedValue({
     rows: [manualCall({ id: 'old-1', state: 'ended', outcome: 'no_answer', settled_at: '2026-10-30T09:00:00Z' })],
@@ -433,6 +437,51 @@ describe('the call, driven by manual_call frames', () => {
     fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: 'Wants it in writing' } });
     await waitFor(() => expect(api.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
     expect(api.updateManualCall.mock.calls[0]![1]).toEqual({ fields: {}, notes: 'Wants it in writing' });
+  });
+});
+
+describe('mute', () => {
+  const ringing = step(manualCall(), 2, { state: 'ringing' });
+  const bridged = step(manualCall(), 8, { state: 'bridged', answered_at: '2026-10-30T10:00:07Z', bridged_at: '2026-10-30T10:00:08Z' });
+  const muteButton = () => screen.getByTestId('softphone-mute') as HTMLButtonElement;
+
+  it('while ringing, Mute silences the ringback only — the microphone is left alone', async () => {
+    const view = await mount();
+    await view.frame(ringing);
+    expect(muteButton().textContent).toMatch(/^Mute ring/);
+    expect(muteButton().getAttribute('aria-pressed')).toBe('false');
+
+    fireEvent.click(muteButton());
+    expect(ringback.setMuted).toHaveBeenLastCalledWith(true);
+    expect(muteButton().textContent).toMatch(/^Unmute ring/);
+    expect(muteButton().getAttribute('aria-pressed')).toBe('true');
+
+    press('m');
+    expect(ringback.setMuted).toHaveBeenLastCalledWith(false);
+    expect(audio.toggleMute).not.toHaveBeenCalled();
+  });
+
+  it('once audio flows Mute is the microphone’s again, and a muted ring does not carry into the call', async () => {
+    const view = await mount();
+    await view.frame(ringing);
+    fireEvent.click(muteButton());
+    view.rerender(<Harness frameCall={bridged} ringback={ringback} audioState={{ ...audio, sending: true }} />);
+    await act(async () => {});
+    expect(muteButton().textContent).toMatch(/^Mute/);
+    expect(muteButton().textContent).not.toMatch(/ring/);
+    expect(muteButton().getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(muteButton());
+    expect(audio.toggleMute).toHaveBeenCalledTimes(1);
+  });
+
+  it('says so, assertively, when the call is answered with the microphone muted', async () => {
+    const mutedMic = { ...audio, muted: true, sending: true };
+    const view = render(<Harness frameCall={ringing} ringback={ringback} audioState={mutedMic} />);
+    await act(async () => {});
+    expect(screen.getByRole('alert').textContent).toBe('');
+    view.rerender(<Harness frameCall={bridged} ringback={ringback} audioState={mutedMic} />);
+    await act(async () => {});
+    expect(screen.getByRole('alert').textContent).toBe(SOFTPHONE_MUTED_AT_ANSWER_COPY);
   });
 });
 

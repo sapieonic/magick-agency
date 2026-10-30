@@ -585,6 +585,12 @@
   min-width: 200px;
 }
 
+/* Wide enough for its longest label ("Unmute ring"), so nothing after it moves when the label changes. */
+.muteButton {
+  min-width: 10.5rem;
+  justify-content: center;
+}
+
 /* ── Override dialog ────────────────────────────────────────────────────── */
 
 .overrideFacts {

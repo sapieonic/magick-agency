@@ -36,14 +36,16 @@ export function SoftphoneActionBar({ sp, clock }: { sp: SoftphoneState; clock: S
     <div className={styles.actionBar} data-testid="softphone-action-bar">
       <button
         type="button"
-        className={station.mute}
+        className={`${station.mute} ${styles.muteButton}`}
         onClick={sp.toggleMute}
         disabled={!sp.muteEnabled}
         aria-pressed={sp.muted}
         aria-keyshortcuts="m"
+        title={sp.muteTarget === 'ring' ? 'Silence the ringing tone. Your microphone is not muted.' : undefined}
         data-testid="softphone-mute"
+        data-target={sp.muteTarget}
       >
-        {sp.muted ? 'Unmute' : 'Mute'}
+        {sp.muteTarget === 'ring' ? (sp.muted ? 'Unmute ring' : 'Mute ring') : sp.muted ? 'Unmute' : 'Mute'}
         <span className={styles.kbd} aria-hidden="true" style={{ marginLeft: 8 }}>
           M
         </span>
