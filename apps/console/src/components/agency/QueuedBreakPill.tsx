@@ -92,6 +92,7 @@ export function QueuedBreakPill({
    * that (a) is the same problem already handled. It is not: nothing here
    * prevents a node being replaced, because nothing here replaces one.
    */
+  const sentence = softphone ? 'Switching to the soft phone after this call' : `Break after this call — ${reasonLabel}`;
   return (
     <div className={styles.wrap}>
       {/*
@@ -100,8 +101,8 @@ export function QueuedBreakPill({
         trying to read mid-call.
       */}
       <span className={styles.chip} data-testid="queued-break-chip">
-        <span className={styles.chipText}>
-          {softphone ? 'Switching to the soft phone after this call' : `Break after this call — ${reasonLabel}`}
+        <span className={styles.chipText} title={sentence}>
+          {sentence}
         </span>
         <button
           type="button"

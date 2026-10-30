@@ -7,6 +7,7 @@
   /* 64px, full width, directly under the header. Geometry is frozen — the rail's
      height never changes between states, because everything below it would move. */
   height: 64px;
+  flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-3, 12px);

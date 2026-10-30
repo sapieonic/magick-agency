@@ -374,6 +374,21 @@ describe('never disabled, and always described', () => {
     expect(screen.getByText('No call in progress')).toBeTruthy();
   });
 
+  it('keeps the reason line in the action bars, so it is as tall with a call as without', () => {
+    const lines = (container: HTMLElement) => container.firstElementChild!.children.length;
+    const { container, rerender } = setup({ enabled: false, disabledReason: 'No call in progress', reserveReasonLine: true });
+    const idle = lines(container);
+    rerender(
+      <HoldToConfirmButton attemptId="attempt-a" enabled disabledReason={null} reserveReasonLine onConfirm={vi.fn()} />,
+    );
+    expect(lines(container)).toBe(idle);
+    expect(screen.queryByText('No call in progress')).toBeNull();
+    // Off by default: the retry dialog adds no blank line under its hint.
+    cleanup();
+    const plain = setup({ enabled: true });
+    expect(lines(plain.container)).toBe(idle - 1);
+  });
+
   it('ignores a gesture while there is no call', () => {
     const { onConfirm } = setup({ enabled: false });
     fireEvent.pointerDown(button());

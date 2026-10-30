@@ -204,6 +204,7 @@ export function StationActionBar({
         attemptId={cons.station.live?.attempt.attempt_id ?? null}
         enabled={Boolean(cons.station.live)}
         disabledReason={cons.station.live ? null : 'No call in progress'}
+        reserveReasonLine
         onConfirm={onHangup}
       />
 

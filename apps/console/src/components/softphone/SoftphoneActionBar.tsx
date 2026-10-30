@@ -70,6 +70,7 @@ export function SoftphoneActionBar({ sp, clock }: { sp: SoftphoneState; clock: S
           attemptId={live ? call!.id : null}
           enabled={live}
           disabledReason={live ? null : 'No call in progress'}
+          reserveReasonLine
           onConfirm={sp.hangup}
           copy={SOFTPHONE_HANGUP_COPY}
         />

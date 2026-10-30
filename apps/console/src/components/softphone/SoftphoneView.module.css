@@ -547,6 +547,7 @@
 /* ── Action bar ─────────────────────────────────────────────────────────── */
 
 .actionBar {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
