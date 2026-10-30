@@ -418,7 +418,7 @@ export async function handleStationSocket(
 
   // Redis, or `break` — never the DB row. The rule and
   // the reason live on the runtime; this is transport.
-  const resumedState = await runtime.rehydrateAgent(sessionId);
+  const resumedState = await runtime.rehydrateAgent(sessionId, session);
 
   // Re-adopt a call the previous socket dropped out of, if the window has not
   // lapsed. This is what makes a wifi blip survivable: the bridge disarms its

@@ -211,7 +211,7 @@ describe('AgentStateMachine transitions', () => {
     const sm = new AgentStateMachine(fakeRedis() as any, '');
     await sm.set('s1', 'reserved', { attemptId: 'att-9' });
     expect(await sm.get('s1')).toEqual({
-      state: 'reserved', attemptId: 'att-9', since: expect.any(Number),
+      state: 'reserved', attemptId: 'att-9', since: expect.any(Number), manualCallId: null, softphone: false,
     });
 
     await sm.set('s1', 'available');
@@ -223,7 +223,7 @@ describe('AgentStateMachine transitions', () => {
 
   it('degrades quietly without Redis rather than throwing into the dial path', async () => {
     const sm = new AgentStateMachine(null, '');
-    await expect(sm.set('s1', 'available')).resolves.toBeUndefined();
+    await expect(sm.set('s1', 'available')).resolves.toBe('unavailable');
     expect(await sm.get('s1')).toBeNull();
     expect(await sm.renew('s1', 'available', 1000)).toBe(false);
     await expect(sm.clear('s1')).resolves.toBeUndefined();
@@ -259,9 +259,9 @@ describe('AgentStateMachine.getMany — one round trip for many agents', () => {
     });
     const sm = new AgentStateMachine(redis as any, '');
     expect(await sm.getMany(['a', 'b', 'c'])).toEqual([
-      { state: 'available', attemptId: null, since: 1700 },
+      { state: 'available', attemptId: null, since: 1700, manualCallId: null, softphone: false },
       null, // lapsed lease
-      { state: 'on_call', attemptId: 'att-1', since: null },
+      { state: 'on_call', attemptId: 'att-1', since: null, manualCallId: null, softphone: false },
     ]);
     expect(redis.exec).toHaveBeenCalledTimes(1);
     expect(redis.hgetall).toHaveBeenCalledTimes(3);

@@ -9,6 +9,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { agencyAgentSessionRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
+import { setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
 import type {
   AgencyActionErrorResponse,
@@ -16,6 +17,7 @@ import type {
   AgencySessionBootstrap,
   AgencySessionCampaignConflict,
   AgencySessionStateResponse,
+  AgencySoftphoneCallPendingRefusal,
   AgencySoftphoneErrorResponse,
   AgencySoftphoneSessionOnSoftphoneRefusal,
   AgencyStationTokenResponse,
@@ -165,7 +167,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // after a page reload, mid-call, would have `available` written over their
     // live `on_call` lease and the next tick would reserve them for a second
     // call. Nothing may derive availability from the durable mirror.
-    const state = await runtime.rehydrateAgent(session.id);
+    const state = await runtime.rehydrateAgent(session.id, session);
 
     const minted = await runtime.tokens.mint(session.id);
 
@@ -225,6 +227,14 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/available', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // A soft-phone session can never be `available` (docs/softphone.md §2, §6).
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign to go available on.',
+      };
+      return reply.code(409).send(err);
+    }
     // Only an agent whose socket is actually attached may go available — the
     // whole point of the break-on-return rule (an agent with no live lease comes
     // back on `break`, never `available`; see `rehydrateAgent`).
@@ -325,7 +335,26 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // fastest wrap-ups would otherwise be missing from entirely.
     runtime.wrapup.cancel(session.id, 'agent_returned');
 
-    await runtime.agents.set(session.id, 'available', { leaseMs: AGENT_LEASE_MS.available });
+    // Refused, atomically in the same Lua write, while the session holds a soft-phone
+    // call — live or awaiting its outcome (docs/softphone.md §4.1 step 1, §6).
+    // `unavailable` (Redis did not answer) keeps this route's behaviour from before
+    // the guard: the write was logged and the mirror written; the lease is the
+    // authority and pacing reads Redis, which then holds no `available`.
+    const set = await setAvailableGuarded(runtime.agents, session.id);
+    if (!set.ok && set.refusal.code !== 'unavailable') {
+      if (set.refusal.code === 'manual_call_live') {
+        const err: AgencySoftphoneCallPendingRefusal = {
+          error: 'Conflict', code: 'manual_call_live', call: set.refusal.call,
+          message: 'Save the outcome of your soft-phone call before going available.',
+        };
+        return reply.code(409).send(err);
+      }
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign to go available on.',
+      };
+      return reply.code(409).send(err);
+    }
     await agencyAgentSessionRepository.setState(session.id, 'available');
     runtime.stations.send(session.id, { event: 'agent_state', state: 'available', since: new Date().toISOString() });
     return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'available', since: new Date().toISOString() });

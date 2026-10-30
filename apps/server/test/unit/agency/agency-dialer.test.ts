@@ -663,7 +663,7 @@ describe('AgencyDialer queued break ', () => {
   async function releaseWith(breaks: any) {
     const stations = new StationRegistry(null, '', 'r1');
     const agents = reservedAgents();
-    const setSpy = vi.spyOn(agents, 'set').mockResolvedValue(undefined);
+    const setSpy = vi.spyOn(agents, 'set').mockResolvedValue('ok');
     const dialer = new AgencyDialer(
       fakeBridge() as any, stations, agents, fakeWrapup() as any, breaks as any,
     );
@@ -694,6 +694,23 @@ describe('AgencyDialer queued break ', () => {
     expect(ws.sent.find((f: any) => f.event === 'agent_state').state).toBe('available');
   });
 
+  it('announces and mirrors NOTHING when the soft phone refuses `available` (docs/softphone.md §4.1)', async () => {
+    // A supervisor's force-available on an agent with a soft-phone call reaches
+    // `releaseAgent`; the Lua guard refuses and the agent stays on their break.
+    for (const refusal of ['manual_call_live', 'softphone_session'] as const) {
+      vi.clearAllMocks();
+      const stations = new StationRegistry(null, '', 'r1');
+      const agents = reservedAgents();
+      vi.spyOn(agents, 'set').mockResolvedValue(refusal);
+      const dialer = new AgencyDialer(fakeBridge() as any, stations, agents, fakeWrapup() as any, fakeBreaks(null) as any);
+      const ws = fakeWs();
+      await attachStation(stations, 's1', ws);
+      await dialer.releaseAgent('s1');
+      expect(ws.sent.some((f: any) => f.event === 'agent_state')).toBe(false);
+      expect(repos.session.setState).not.toHaveBeenCalled();
+    }
+  });
+
   it('CONSUMES the queued break so it applies exactly once', async () => {
     // `take`, not `peek`: an agent who breaks, comes back available, and takes
     // another call must not be pulled out of the pool again on that call's release.
@@ -719,7 +736,7 @@ describe('AgencyDialer queued break ', () => {
     const stations = new StationRegistry(null, '', 'r1');
     const bridge = fakeBridge();
     const agents = reservedAgents();
-    const setSpy = vi.spyOn(agents, 'set').mockResolvedValue(undefined);
+    const setSpy = vi.spyOn(agents, 'set').mockResolvedValue('ok');
     const breaks = new BreakRegistry();
     let dialer!: AgencyDialer;
     const wrapup = new WrapupManager(stations, agents as any, (sessionId) =>
@@ -780,7 +797,7 @@ describe('AgencyDialer queued break ', () => {
     // future shift.
     const stations = new StationRegistry(null, '', 'r1');
     const agents = reservedAgents();
-    const setSpy = vi.spyOn(agents, 'set').mockResolvedValue(undefined);
+    const setSpy = vi.spyOn(agents, 'set').mockResolvedValue('ok');
     const breaks = fakeBreaks({ code: 'lunch', label: 'Lunch' });
     const dialer = new AgencyDialer(
       fakeBridge() as any, stations, agents, fakeWrapup() as any, breaks as any,

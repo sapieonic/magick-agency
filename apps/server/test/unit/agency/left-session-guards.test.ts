@@ -90,6 +90,7 @@ const { repos } = vi.hoisted(() => ({
       leave: vi.fn().mockResolvedValue(undefined),
       joinOrRehydrate: vi.fn(),
     },
+    manualCall: { findUnsettledForSession: vi.fn().mockResolvedValue(null), findWireById: vi.fn() },
   },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -97,6 +98,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: repos.campaign,
   agencyContactRepository: repos.contact,
   agencyAgentSessionRepository: repos.session,
+  agencyManualCallRepository: repos.manualCall,
 }));
 
 import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';
@@ -129,7 +131,7 @@ async function harness(): Promise<Harness> {
     replicaId: 'r1',
     agents: {
       get: vi.fn().mockResolvedValue({ state: 'available', attemptId: null, since: 1 }),
-      set: vi.fn(), clear: vi.fn(), renew: vi.fn(),
+      set: vi.fn().mockResolvedValue('ok'), clear: vi.fn(), renew: vi.fn(),
     },
     wrapup: { stateFor: vi.fn(() => null), noteDisposition: vi.fn(), cancel: vi.fn(), force: vi.fn() },
     /**
@@ -753,5 +755,34 @@ describe('Q8: a session route acts only for the session\'s own agent', () => {
     const withIt = await as('/force-available', { agent_user_id: 'u-supervisor', on_behalf: true });
     expect(withIt.statusCode).toBe(200);
     expect(h.runtime.wrapup.force).toHaveBeenCalledWith('sess-1');
+  });
+});
+
+// ─── The soft phone's guard on /available (docs/softphone.md §4.1, §6) ────────
+
+describe('/available and the soft phone', () => {
+  it('refuses a soft-phone session with 409 wrong_session_kind, writing nothing', async () => {
+    repos.session.findById.mockResolvedValue({ ...LIVE, kind: 'softphone', campaign_id: null, state: 'break' });
+
+    const res = await post('/available');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('wrong_session_kind');
+    expect(h.runtime.agents.set).not.toHaveBeenCalled();
+    expect(repos.session.setState).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 manual_call_live with the call when the Lua write refuses, and mirrors nothing', async () => {
+    const call = { id: 'mc-1', session_id: 'sess-1', state: 'ended', requires_disposition: true };
+    h.runtime.agents.set.mockResolvedValue('manual_call_live');
+    repos.manualCall.findUnsettledForSession.mockResolvedValue({ id: 'mc-1', tenant_id: 't1', account_id: 'a1' });
+    repos.manualCall.findWireById.mockResolvedValue(call);
+
+    const res = await post('/available');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'manual_call_live', call });
+    expect(repos.session.setState).not.toHaveBeenCalled();
+    expect(h.sent.some((f: { event?: string; state?: string }) => f.event === 'agent_state' && f.state === 'available')).toBe(false);
   });
 });

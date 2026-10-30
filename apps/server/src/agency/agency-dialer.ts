@@ -1433,9 +1433,17 @@ export class AgencyDialer {
     const state = queuedBreak ? 'break' : 'available';
     const since = new Date();
 
-    await this.agents.set(sessionId, state, {
+    const set = await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
     });
+    // The soft phone's guard (docs/softphone.md §4.1): `available` is refused while
+    // the session holds a soft-phone call or is a soft-phone session. The agent
+    // stays on their `soft_phone` break, so nothing is mirrored and no frame claims
+    // a move that did not happen (a supervisor's force-available reaches here).
+    if (set === 'manual_call_live' || set === 'softphone_session') {
+      log.info({ sessionId, refused: set }, 'Release to available refused — the session is on the soft phone');
+      return;
+    }
     await mirrored(
       agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null),
       sessionId, 'Could not mirror released agent state',

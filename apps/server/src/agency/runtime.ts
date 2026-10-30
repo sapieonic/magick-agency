@@ -3,8 +3,16 @@ import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
-import { agencyAgentSessionRepository } from '../db/repositories/agency.repository.js';
-import { AGENCY_STATION_CLOSE, type AgencyAgentState } from '@magick-agency/contracts/agency';
+import {
+  agencyAgentSessionRepository,
+  agencyManualCallRepository,
+} from '../db/repositories/agency.repository.js';
+import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
+import {
+  AGENCY_STATION_CLOSE,
+  SOFTPHONE_BREAK_REASON,
+  type AgencyAgentState,
+} from '@magick-agency/contracts/agency';
 import { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
@@ -130,15 +138,56 @@ export class AgencyRuntime {
    * `offline`, and before one the row may say `available`, so no row-derived rule
    * is safe. `break` is the one answer that is correct in every case — the agent
    * chooses to go available, and nothing dials into them until they do.
+   *
+   * ── The soft phone (docs/softphone.md §2, §4.1) ─────────────────────────────
+   * A soft-phone session, or a campaign session whose row is on the `soft_phone`
+   * break, rehydrates through `AgentStateMachine.rehydrateSoftphone`: a lapsed or
+   * `offline` lease becomes `break` and the row keeps `break_reason = soft_phone`
+   * (the plain path below would null it), the session is marked soft-phone in
+   * Redis (never `available`), and a call it still holds — live, or awaiting its
+   * outcome — re-claims the `manual` field, so the guard on `available` holds
+   * again after a lease lapsed.
+   *
+   * @param session The row the caller already read (the join and the station
+   *   socket both have). Its `kind` and `break_reason` say whether the soft-phone
+   *   path applies; its `state` is still never consulted. Omitted, the session is
+   *   rehydrated as a campaign session.
    */
-  async rehydrateAgent(sessionId: string): Promise<AgencyAgentState> {
+  async rehydrateAgent(
+    sessionId: string,
+    session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'> | null,
+  ): Promise<AgencyAgentState> {
+    const row = session ?? null;
+    const softphoneFlavoured = !!row && (row.kind === 'softphone' || row.break_reason === SOFTPHONE_BREAK_REASON);
+    if (row && softphoneFlavoured) {
+      const unsettled = await Promise.resolve()
+        .then(() => agencyManualCallRepository.findUnsettledForSession(sessionId)).catch((err) => {
+        log.warn({ err, sessionId }, 'Could not read the session\'s soft-phone call to rehydrate');
+        return null;
+      });
+      const rehydrated = await this.agents.rehydrateSoftphone(sessionId, {
+        softphoneSession: row.kind === 'softphone',
+        unsettledManualCallId: unsettled?.id ?? null,
+      });
+      if (rehydrated) {
+        if (rehydrated.changed) {
+          await agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
+            .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
+        }
+        return rehydrated.state;
+      }
+      // Redis could not answer: fall through to the plain rule, which also fails
+      // toward `break`.
+    }
     const live = await this.agents.get(sessionId);
     if (live) return live.state;
 
     await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
     // Best-effort mirror. Redis is the authority; a failed write here costs a
     // durable record, never correctness.
-    await agencyAgentSessionRepository.setState(sessionId, 'break')
+    await (softphoneFlavoured
+      ? agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
+      : agencyAgentSessionRepository.setState(sessionId, 'break'))
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
     return 'break';
   }
