@@ -110,11 +110,16 @@ Owned by `AgencyRuntime`. One call at a time per session.
    contact settles (§5); then the Redis `manual` field is released.
 8. **Lapse.** An ended call with no outcome after `SOFTPHONE_OUTCOME_LAPSE_MS` (30 min), or
    whose session left, is closed `no_disposition` (`settled_at` set) by the reaper sweep, and its contact claim is
-   released to its prior state.
+   released to its prior state. Only a call that bridged (so owed an outcome) gets the `no_disposition` code; one
+   that never bridged is just settled. The sweep (`lapseUnsettled`) returns the rows and releases nothing; the
+   caller releases each claim (`releaseManualClaim`) and the Redis `manual` field.
 9. **Reconnect.** A station reconnect reattaches a live manual call's browser leg
    (`reattachBorrowedBrowserLeg(manualCallId, ws)`) and resends `manual_call`.
 10. **Restart.** The startup reaper ends non-terminal manual rows `orphaned` and releases their
-    contact claims; the periodic sweep does the same for rows not owned by this process.
+    contact claims; the periodic sweep does the same for rows not owned by this process. A reaped row that
+    never bridged is settled in the same statement and its claim released; one that bridged is ended and left
+    awaiting its outcome (the agent talked to the customer and can still write it up after reconnecting), so
+    its claim is kept until the outcome or the lapse (`reapOrphaned`).
 
 Pacing headroom subtracts live calls on the **whole account** (attempts of every campaign plus
 live manual calls): `countLiveForAccount`.
@@ -150,7 +155,10 @@ Only when the call is tagged and the number matched a contact of that campaign.
 | `completed`, `exhausted`, `suppressed` | linked only | only suppress applies; a terminal contact is never reopened |
 
 The stranded-contact sweep ignores a contact with a live or unsettled manual call. Lapse and
-restart release a claim to the recorded prior state.
+restart release a claim to the recorded prior state, changing nothing else (no attempt is charged);
+an unanswered call that settles with no outcome (§4.1 step 6) is the "none" row above.
+`AgencyContactRepository.settleFromManual` applies this table; `claimForManual`,
+`releaseManualClaim` and `findForManualMatch` are the claim and the match.
 
 ## 6. API
 
