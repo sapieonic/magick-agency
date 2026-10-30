@@ -42,7 +42,10 @@ export type InviteClaimResult =
   | 'unauthorized'
   | 'identity_in_use'
   | 'identity_already_bound'
-  | 'cross_tenant_identity';
+  | 'cross_tenant_identity'
+  // An `account_admin`-or-above invitation presented by a sign-in whose email is
+  // not the invited address (decision B25). Refused before anything binds.
+  | 'address_required';
 
 export const inviteClaimsTotal = counter<'result'>(meter, 'invite_claims_total', {
   description: 'Invitation claim attempts, by outcome',

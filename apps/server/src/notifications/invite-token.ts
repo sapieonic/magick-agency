@@ -30,7 +30,8 @@ const TOKEN_BYTES = 32;
 /**
  * `base64url`, not `hex` and not plain `base64`.
  *
- * The token travels in a URL PATH (`/agency/join/:token`) and in an email body
+ * The token travels in a URL PATH (`/agency/join/:token` for an agent,
+ * `/join/:token` for every other role) and in an email body
  * that mail clients will linkify. `base64url` has no `+`, `/` or `=`, so nothing
  * needs percent-encoding, nothing is mangled by a client that stops the link at
  * a `+`, and the value survives a copy-paste out of a plain-text part. `hex`

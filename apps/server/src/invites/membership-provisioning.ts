@@ -85,6 +85,11 @@ export function isDemotionFromAgent(from: MembershipRole, to: MembershipRole): b
 export interface InviteOutcome {
   signInUrl: string | null;
   inviteEmail: InviteEmailResult;
+  /**
+   * The `membership_invites` row's id, or `null` only when issuance THREW: every
+   * role is issued a row, so a missing id means the guard below caught a failure
+   * before one could be named, never that the role went without.
+   */
   inviteId: string | null;
 }
 
@@ -111,7 +116,7 @@ export async function issueInviteReportingFailure(
 ): Promise<InviteOutcome> {
   try {
     const issued = await issueInvite(input);
-    return { signInUrl: issued.signInUrl, inviteEmail: issued.inviteEmail, inviteId: issued.invite?.id ?? null };
+    return { signInUrl: issued.signInUrl, inviteEmail: issued.inviteEmail, inviteId: issued.invite.id };
   } catch (err) {
     log.error(
       {
@@ -291,9 +296,17 @@ async function provenOrStubUser(
   return userResult.rows[0]!.id;
 }
 
-/** What {@link provisionTenantWithOwner} did. */
+/**
+ * What {@link provisionTenantWithOwner} did. `created` names the owner's membership and
+ * user row so the caller can issue the owner's invitation once the transaction commits.
+ */
 export type ProvisionTenantResult =
-  | { status: 'created'; tenant: Record<string, unknown> & { id: string } }
+  | {
+    status: 'created';
+    tenant: Record<string, unknown> & { id: string };
+    ownerMembershipId: string;
+    ownerUserId: string;
+  }
   | { status: 'unproven_conflict' };
 
 /**
@@ -301,6 +314,10 @@ export type ProvisionTenantResult =
  * (proven or a `pending_` stub) and the `tenant_owner` membership, in ONE transaction.
  * An `unproven_conflict` rolls everything back — a stub made `tenant_owner` there would be
  * a membership nobody can ever claim.
+ *
+ * It issues no invitation, any more than {@link addTenantMember} does: the token row
+ * references the membership, and a mail sent from inside the transaction would carry a link
+ * to a row a rollback can still take away. The caller issues it after COMMIT.
  */
 export async function provisionTenantWithOwner(input: {
   name: string;
@@ -329,11 +346,16 @@ export async function provisionTenantWithOwner(input: {
     }
 
     // Create tenant_owner membership
-    await client.query(
-      `INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, 'tenant_owner')`,
+    const membershipResult = await client.query<{ id: string }>(
+      `INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, 'tenant_owner') RETURNING id`,
       [userId, tenant.id],
     );
-    return { status: 'created', tenant };
+    return {
+      status: 'created',
+      tenant,
+      ownerMembershipId: membershipResult.rows[0]!.id,
+      ownerUserId: userId,
+    };
   }, { pool: getPool() });
 }
 

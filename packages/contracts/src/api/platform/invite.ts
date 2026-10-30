@@ -56,7 +56,44 @@ export interface AgencyInvite {
   product_name: string;
   /** ISO 8601. Shown so a stale link is diagnosable before it is used. */
   expires_at: string;
+  /**
+   * Whether only a sign-in AT {@link email} can claim this invitation —
+   * `inviteRequiresMatchingAddress` (`../../rbac`) of the membership's CURRENT
+   * role, so `account_admin` and above (decision B25).
+   *
+   * Sent so the page can say so BEFORE anything is claimed: with it set, a Google
+   * account on another address gets "this invitation must be accepted with
+   * <email>" and a way to sign out, never the "use this account anyway" offer the
+   * other roles get. It is advice to the page, not the control — the claim route
+   * refuses a mismatched identity with {@link InviteClaimRefusalStatus}
+   * `address_required` whatever the page did, and the console reads a missing
+   * field (a server older than the rule) as `false` and lets that refusal speak.
+   *
+   * Computed from the membership rather than from {@link role}, which is the role
+   * the invitation was ISSUED for: somebody promoted between the invite and the
+   * claim is held to the rule of the seat they are about to take.
+   */
+  requires_matching_address: boolean;
 }
+
+/**
+ * The claim refusals that are about the ACCOUNT presenting the token, not about
+ * the invitation — the server leaves the invitation outstanding for both, and
+ * another sign-in still claims it.
+ *
+ *  - `identity_in_use`: the Firebase account already belongs to a different user
+ *    row here.
+ *  - `address_required`: the invitation is for `account_admin` or above
+ *    ({@link AgencyInvite.requires_matching_address}) and the sign-in's email is
+ *    not the invited address — or it has none. The 409's body also carries the
+ *    invited address as `email`, which `GET /invites/:token` already discloses
+ *    to the same token holder.
+ *
+ * Deliberately NOT members of {@link InviteUnavailableStatus}: that union tears
+ * the page down to a terminal screen, and these need the page — and its sign-out
+ * — to stay.
+ */
+export type InviteClaimRefusalStatus = 'identity_in_use' | 'address_required';
 
 /**
  * Why an invite cannot be used, as the endpoints report it.
@@ -86,7 +123,9 @@ export interface AgencyInvite {
  * is not an unavailable invitation — the invitation is untouched and can still be
  * claimed with another account — so it is a claim failure with its own error type
  * (`InviteIdentityInUseError`), not a member of this union. Adding it here would
- * tear down the page and hide the one control that resolves it.
+ * tear down the page and hide the one control that resolves it. `address_required`
+ * is absent for the same reason (`InviteAddressRequiredError`); both are
+ * {@link InviteClaimRefusalStatus}.
  */
 export type InviteUnavailableStatus =
   | 'claimed'

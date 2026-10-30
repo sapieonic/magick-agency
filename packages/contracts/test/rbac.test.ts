@@ -5,6 +5,7 @@ import {
   ROLES,
   ROLE_HIERARCHY,
   canManageRole,
+  inviteRequiresMatchingAddress,
   hasPermission,
   type Permission,
   type Role,
@@ -114,5 +115,44 @@ describe('canManageRole', () => {
     expect(canManageRole('account_admin', 'agent')).toBe(true);
     expect(canManageRole('account_admin', 'account_admin')).toBe(false);
     expect(canManageRole('agent', 'viewer')).toBe(false);
+  });
+});
+
+/**
+ * Which invitations must be claimed with the invited address (decision B25).
+ *
+ * Written out role by role rather than derived from the hierarchy, so moving the
+ * floor — `>=` to `>`, or `account_admin` to `tenant_admin` — fails here instead
+ * of being echoed back by a test that computes what the function computes.
+ */
+const MATCHING_ADDRESS: Record<Role, boolean> = {
+  agent: false,
+  viewer: false,
+  operator: false,
+  account_admin: true,
+  tenant_admin: true,
+  tenant_owner: true,
+};
+
+describe('inviteRequiresMatchingAddress', () => {
+  it.each(ROLES)('%s', (role) => {
+    expect(inviteRequiresMatchingAddress(role)).toBe(MATCHING_ADDRESS[role]);
+  });
+
+  it('covers exactly account_admin and above, and the table covers every role', () => {
+    expect(Object.keys(MATCHING_ADDRESS).sort()).toEqual([...ROLES].sort());
+    expect(ROLES.filter(inviteRequiresMatchingAddress)).toEqual([
+      'account_admin',
+      'tenant_admin',
+      'tenant_owner',
+    ]);
+  });
+
+  it('starts at the floor that can invite people', () => {
+    // The seats whose holders can mint further invitations are exactly the ones
+    // a leaked mail must not hand over by itself.
+    for (const role of ROLES) {
+      expect(inviteRequiresMatchingAddress(role)).toBe(hasPermission(role, 'user.invite'));
+    }
   });
 });

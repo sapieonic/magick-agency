@@ -49,7 +49,9 @@ export const ENDPOINTS = {
     mine: `${API_BASE}/accounts/mine`,
   },
   /**
-   * The single-use agency invite, looked up and claimed from `/agency/join/:token`.
+   * The single-use invite, looked up and claimed from `/agency/join/:token` (an
+   * agent's) or `/join/:token` (every other role's) — one pair of endpoints for
+   * both pages, role-agnostic on the server.
    *
    * Both are PUBLIC and unauthenticated, which is the whole point: on the claim
    * the TOKEN is the authority rather than the address the caller signs in with,

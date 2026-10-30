@@ -1,11 +1,12 @@
-import { AGENCY_JOIN_PATH } from '../utils/returnPath';
+import { AGENCY_JOIN_PATH, JOIN_PATH } from '../utils/returnPath';
 
 /**
  * Take the single-use invite token out of anything on its way to PostHog.
  *
  * ── The defect this closes ─────────────────────────────────────────────────
- * `/agency/join/:token` is the only route in this app whose URL PARAMETER is a
- * secret: possession of it claims a membership, and the server's claim endpoint reads
+ * `/agency/join/:token` — and, since every role started getting a token,
+ * `/join/:token` beside it — are the only routes in this app whose URL PARAMETER
+ * is a secret: possession of it claims a membership, and the server's claim endpoint reads
  * the token rather than the address, so whoever holds it *is* the invitee for the
  * seven days it lives. posthog-js attaches `$current_url`, `$pathname` and `$host`
  * to **every** capture, so the token travelled in the envelope of the `$pageview`,
@@ -32,9 +33,11 @@ import { AGENCY_JOIN_PATH } from '../utils/returnPath';
  * A guess is the right tool for an arbitrary URL and the wrong one for the single
  * URL in the product that must never be wrong.
  *
- * ── Both spellings of it ───────────────────────────────────────────────────
- * The token appears in two path shapes: the page the visitor is standing on
- * ({@link AGENCY_JOIN_PATH}`/<token>`) and the endpoints the page calls
+ * ── Every spelling of it ───────────────────────────────────────────────────
+ * The token appears in three path shapes: the page the visitor is standing on —
+ * {@link AGENCY_JOIN_PATH}`/<token>` for an agent, {@link JOIN_PATH}`/<token>`
+ * for every other role, which became a second secret-bearing route the day every
+ * role started getting a token — and the endpoints both pages call
  * (`/invites/<token>` and `/invites/<token>/claim`, which reach analytics through
  * `captureApiError`). `/invites/resend` is a sibling route with a literal segment
  * rather than a token, so it is excluded by name — redacting it would turn a
@@ -59,7 +62,13 @@ export const REDACTED_TOKEN = ':token';
  */
 const TOKEN_SEGMENT = `[^/?#\\s"'<>]+`;
 
-const JOIN_LINK_RE = new RegExp(`(${AGENCY_JOIN_PATH}/)${TOKEN_SEGMENT}`, 'gi');
+/**
+ * Both join pages. Matched anywhere, like everything here, which means `/join/`
+ * inside some unrelated URL in a property is redacted too — accepted rather than
+ * engineered around, because over-redacting a stranger's path costs a funnel
+ * nothing and under-redacting this one publishes a live membership.
+ */
+const JOIN_LINK_RE = new RegExp(`((?:${AGENCY_JOIN_PATH}|${JOIN_PATH})/)${TOKEN_SEGMENT}`, 'gi');
 
 /** `/invites/<token>` and `/invites/<token>/claim`, but never `/invites/resend`. */
 const INVITE_ENDPOINT_RE = new RegExp(
@@ -140,25 +149,32 @@ export function redactAnalyticsProperties<T extends Record<string, unknown>>(pro
 const ELEMENT_PROPERTIES = ['$elements', '$elements_chain'] as const;
 
 /**
- * Whether a capture happened on the invite landing page.
+ * Whether a capture happened on either invite landing page.
  *
  * Reads the URL properties posthog-js attaches to every event. Tolerant of the
  * token already being redacted by {@link redactAnalyticsProperties} — the two run
  * in that order, and `/agency/join/:token` is still the join page — and of the
  * path arriving as a full URL rather than a pathname.
+ *
+ * `/join/` is a substring of `/agency/join/`, so the second prefix alone would
+ * answer for both; they are listed separately anyway so the rule reads as the two
+ * routes it is about rather than as a coincidence of their spelling.
  */
+const JOIN_PAGE_PREFIXES = [`${AGENCY_JOIN_PATH}/`, `${JOIN_PATH}/`];
+
 function isJoinPageCapture(props: Record<string, unknown>): boolean {
-  const prefix = `${AGENCY_JOIN_PATH}/`;
   for (const key of ['$pathname', '$current_url'] as const) {
     const value = props[key];
-    if (typeof value === 'string' && value.toLowerCase().includes(prefix.toLowerCase())) return true;
+    if (typeof value !== 'string') continue;
+    const lower = value.toLowerCase();
+    if (JOIN_PAGE_PREFIXES.some((prefix) => lower.includes(prefix))) return true;
   }
   return false;
 }
 
 /**
  * Take the DOM-derived element payload off any capture made on
- * `/agency/join/:token`.
+ * `/agency/join/:token` or `/join/:token`.
  *
  * ── Why this exists when the page already opts out of autocapture ──────────
  * The page marks its invitation card `ph-no-capture`, which is the primary fix:

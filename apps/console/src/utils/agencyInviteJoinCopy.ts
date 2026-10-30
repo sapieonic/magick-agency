@@ -1,18 +1,22 @@
 import type { Role } from '../types/auth';
 import type { InviteUnavailableStatus } from '../types/invite';
-import type { AccountRole } from '../analytics/events';
+import type { InvitedRole } from '../analytics/events';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 
 /**
- * The agency invite page's pure half: the words it says and the small rules
- * behind them — role labels, the address comparison, Firebase failures as
- * sentences, the password assessment, and the five "cannot be used" screens.
+ * The invite pages' pure half: the words they say and the small rules behind
+ * them — role labels, the address comparison, Firebase failures as sentences, the
+ * password assessment, and the five "cannot be used" screens.
  *
  * Moved out of `AgencyJoinPage` so each rule is unit-tested on its own; the page
- * and the `components/agency/join/` cards render what these return.
+ * and the `components/agency/join/` cards render what these return. The file
+ * name predates the second page: `/join/:token` (`pages/auth/JoinPage`) reads
+ * every rule here too, and only the five screens differ between the two — see
+ * {@link WORKSPACE_UNAVAILABLE_COPY}.
  */
 
-/** Human labels for the roles an invite can carry. Rendered, never branched on. */
+/** Human labels for the roles an invite can carry. Rendered, never branched on —
+ *  which page an invite belongs on is `joinDoorFor`'s question, not a label's. */
 export const ROLE_LABELS: Record<Role, string> = {
   agent: 'Agent',
   viewer: 'Viewer',
@@ -29,16 +33,17 @@ export function roleLabel(role: Role): string {
 }
 
 /**
- * The role as the analytics catalog spells it.
+ * The role as the invite funnels spell it.
  *
- * `Role` carries `tenant_owner` and `AccountRole` deliberately does not — an
- * invite cannot grant ownership of a workspace — so the narrowing happens here
- * rather than by widening the analytics enum to a role no event can carry. `null`
- * for that impossible case, which reads in the funnel as "an invite we could not
- * classify" and is the honest answer if the server ever sends one.
+ * Every `Role` is one of them, `tenant_owner` included: a super admin's tenant
+ * create (and add-user) invites an owner, who claims on `/join/:token`. This used
+ * to answer `null` for `tenant_owner` on the belief that no invite could grant
+ * it, which reported every new tenant's owner as "an invite we could not
+ * classify". Kept as a function rather than inlined so the one place the wire's
+ * `Role` meets the analytics vocabulary is still a place the compiler checks.
  */
-export function analyticsRole(role: Role): AccountRole | null {
-  return role === 'tenant_owner' ? null : role;
+export function analyticsRole(role: Role): InvitedRole {
+  return role;
 }
 
 /** Addresses are compared case-insensitively and trimmed. Gmail's dot and `+tag`
@@ -208,6 +213,52 @@ export const UNAVAILABLE_COPY: Record<
   identity_already_bound: {
     title: 'You are already set up',
     body: 'This address already has an account, so there is nothing left to accept. Sign in and your station will open. If signing in does not work, ask your supervisor to send a new invitation.',
+    action: 'sign_in',
+  },
+};
+
+/**
+ * The same five outcomes for `/join/:token` — an invitation to a WORKSPACE
+ * rather than to a calling floor.
+ *
+ * ── Why a second table and not a parameter on the first ────────────────────
+ * The facts and the remedies are identical, and so is the `action` column: the
+ * same two statuses are cured by signing in, for the same reasons. What differs
+ * is who and what the sentences name. {@link UNAVAILABLE_COPY} promises "your
+ * station will open" and sends people to "your supervisor"; an operator or an
+ * account admin has no station and may not have a supervisor — they were
+ * invited by whoever administers the workspace. A table per page keeps each set
+ * of sentences readable as sentences, and the `Record` over
+ * {@link InviteUnavailableStatus} makes a sixth status a compile error in both
+ * rather than a blank screen in one.
+ */
+export const WORKSPACE_UNAVAILABLE_COPY: Record<
+  InviteUnavailableStatus,
+  { title: string; body: string; action: 'sign_in' | 'none' }
+> = {
+  expired: {
+    title: 'This invitation has expired',
+    body: 'Invitations are only good for a few days. Ask whoever invited you to send a new one — it will arrive at the same address and work the same way.',
+    action: 'none',
+  },
+  claimed: {
+    title: 'This invitation has already been used',
+    body: 'The workspace is set up and waiting for you. Sign in with the account you created and it will open.',
+    action: 'sign_in',
+  },
+  revoked: {
+    title: 'This invitation is no longer valid',
+    body: 'It was withdrawn before it was used. Whoever invited you will know why, and can send a new one if it was withdrawn by mistake.',
+    action: 'none',
+  },
+  not_found: {
+    title: 'We cannot find that invitation',
+    body: 'Links like this are long, and email programs often break them across two lines. Go back to the message and copy the whole link, or ask whoever invited you to send it again.',
+    action: 'none',
+  },
+  identity_already_bound: {
+    title: 'You are already set up',
+    body: 'This address already has an account, so there is nothing left to accept. Sign in and the workspace will open. If signing in does not work, ask whoever invited you to send a new invitation.',
     action: 'sign_in',
   },
 };

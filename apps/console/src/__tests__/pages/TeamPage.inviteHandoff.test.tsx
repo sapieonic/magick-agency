@@ -261,9 +261,88 @@ describe('the panel reads what the API said about the email', () => {
       trusted about elsewhere.
     */
     expect(screen.queryByText('Sign-in link')).toBeNull();
-    // The address stays: sign-in is matched on it, and a typo is the one failure
-    // the supervisor can still fix.
+    // The address stays: it is where the mail went, and a typo is the one
+    // failure the supervisor can still fix.
     expect(screen.getAllByText('newbie@example.com').length).toBeGreaterThan(0);
+  });
+
+  it('does not tell a supervisor the invitee must use the exact address once a token link was mailed', async () => {
+    /*
+      Every role's mailed invitation is a token link now, and the join page
+      confirms a different address rather than refusing it. "They have to sign in
+      with this exact address" was true of the old match-by-address flow and is
+      false here — false in the direction that sends somebody with only a personal
+      Google account away believing they cannot join.
+    */
+    mocks.inviteUser.mockResolvedValue({
+      invite_email: { sent: true },
+      sign_in_url: 'https://app.example.com/join/tok_ws',
+    });
+
+    await invite('operator', 'op@example.com');
+
+    expect(screen.getByTestId('invite-emailed').textContent).not.toMatch(/exact address/i);
+  });
+
+  it('DOES tell them about the exact address for an account admin (decision B25)', async () => {
+    /*
+      From `account_admin` up the claim refuses any account but the invited
+      address — the rule `inviteRequiresMatchingAddress` the server enforces — so
+      here the sentence is true again, and the supervisor is the one person who
+      can say it before the invitee tries with the wrong account.
+    */
+    mocks.inviteUser.mockResolvedValue({
+      invite_email: { sent: true },
+      sign_in_url: 'https://app.example.com/join/tok_admin',
+    });
+
+    await invite('account_admin', 'admin@example.com');
+
+    expect(screen.getByTestId('invite-emailed').textContent).toMatch(/accept it signed in as this exact address/i);
+  });
+
+  it('says it on the hand-off too, when the mail did not go', async () => {
+    mocks.inviteUser.mockResolvedValue({
+      invite_email: { sent: false, reason: 'failed' },
+      sign_in_url: 'https://app.example.com/join/tok_admin',
+    });
+
+    await invite('account_admin', 'admin@example.com');
+
+    const lead = screen.getByTestId('invite-handoff').textContent ?? '';
+    expect(lead).toMatch(/works once/i);
+    expect(lead).toMatch(/accept it signed in as this exact address/i);
+  });
+
+  it('hands over a token link as the invitation, without the address rule', async () => {
+    mocks.inviteUser.mockResolvedValue({
+      invite_email: { sent: false, reason: 'failed' },
+      sign_in_url: 'https://app.example.com/join/tok_ws',
+    });
+
+    await invite('operator', 'op@example.com');
+
+    expect(screen.getByText('Invitation link')).toBeTruthy();
+    expect(screen.queryByText('Sign-in link')).toBeNull();
+    expect(screen.getByText('https://app.example.com/join/tok_ws')).toBeTruthy();
+    const lead = screen.getByTestId('invite-handoff').textContent ?? '';
+    expect(lead).toMatch(/works once/i);
+    expect(lead).not.toMatch(/exact address/i);
+  });
+
+  it('keeps the address rule where the link is only a sign-in door', async () => {
+    // The local fallback (no `CONSOLE_BASE_URL`) cannot carry a token, and a door
+    // still finds the membership BY address — so there the sentence is the
+    // instruction that makes it work.
+    mocks.inviteUser.mockResolvedValue({
+      invite_email: { sent: false, reason: 'not_configured' },
+      sign_in_url: null,
+    });
+
+    await invite('operator', 'op@example.com');
+
+    expect(screen.getByText('Sign-in link')).toBeTruthy();
+    expect(screen.getByTestId('invite-handoff').textContent).toMatch(/exact address/i);
   });
 
   it('keeps the hand-off when the API reports it could not send', async () => {

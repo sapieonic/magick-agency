@@ -24,6 +24,7 @@ import {
   provisionTenantWithOwner,
   unverifiedAddressHolderBody,
 } from '../../../invites/membership-provisioning.js';
+import type { InviteEmailResult } from '../../../notifications/invite-mailer.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { createTenantSchema, addUserToTenantSchema, changeMembershipRoleSchema } from '../../validators/super-admin.validator.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
@@ -68,6 +69,27 @@ async function closeStaffingTenantWide(
 }
 
 /**
+ * Whether the invitee was emailed, as tenant create and add-user answer it — the
+ * wire `InviteEmailResult` (`packages/contracts/src/api/platform/team.ts`), so the
+ * super admin can be told when somebody was added but not mailed.
+ *
+ * ── `sign_in_url` is deliberately NOT answered here ────────────────────────
+ * `POST /users/invite` hands the raw join link back so a supervisor can pass it on
+ * when mail fails. The super-admin UI gets no such hand-off: the link is a
+ * single-use credential for a membership in somebody else's workspace — often its
+ * `tenant_owner` — and the person holding it is whoever claims it. Keeping it to
+ * the invitee's inbox keeps a super admin from being a second route to anybody's
+ * ownership, and nothing in that UI needs it. A `sent: false` names the reason
+ * instead, so the super admin at least knows the invitee has not been told.
+ *
+ * `messageId` is dropped, as `POST /users/invite` drops it: the wire shape has
+ * no such field.
+ */
+function inviteEmailBody(result: InviteEmailResult): { sent: true } | { sent: false; reason: string } {
+  return result.sent ? { sent: true } : { sent: false, reason: result.reason };
+}
+
+/**
  * Registered by `superAdminRoutes` inside its authenticated scope (`authApp`, the one
  * carrying `superAdminMiddleware`), so every route here runs behind it.
  */
@@ -97,7 +119,8 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
 
   /**
    * POST /super-admin/tenants
-   * Create tenant + owner by email (stub user if email not in system).
+   * Create tenant + owner by email (stub user if email not in system), and invite
+   * the owner.
    *
    * No credit balance, no per-tenant API key and no auto-assigned pooled number:
    * none of the three exists here, so `CreateTenantResponse` carries none of them.
@@ -131,16 +154,50 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     if (provisioned.status === 'unproven_conflict') {
       return reply.code(409).send(unverifiedAddressHolderBody('create the workspace again'));
     }
-    const { tenant } = provisioned;
+    const { tenant, ownerMembershipId, ownerUserId } = provisioned;
+
+    /**
+     * The owner's invitation — the same artefact add-user below issues, and for
+     * its reasons: a token, a `membership_invites` row and the workspace mail with
+     * a `/join/:token` link. Without it the owner of a new tenant is told nothing,
+     * and a `pending_` owner with no account yet is left with session path 2 alone
+     * — a verified sign-in on exactly that address — and nothing telling them to try
+     * it (`/login` has no signup, and nobody in the new tenant can invite them).
+     *
+     * An owner address that already resolves to a PROVEN user is mailed a token
+     * too, rather than skipped: the claim admits a row already carrying the
+     * claimant's own uid (see `invite-issuer.ts`), so the rightful owner spends it
+     * and lands in the new workspace, and a different identity is still refused.
+     *
+     * No membership-cache `del`, unlike add-user: the tenant id was minted by the
+     * transaction that just committed, so no snapshot can be cached under it yet.
+     * Guarded (`issueInviteReportingFailure`) because the tenant has committed: a
+     * mail failure must not become a 500 telling the super admin the create failed,
+     * whose retry would then make a second tenant. `invitedBy: null`, as below.
+     */
+    const { inviteEmail, inviteId } = await issueInviteReportingFailure({
+      membershipId: ownerMembershipId,
+      tenantId: tenant.id,
+      email: owner_email,
+      role: 'tenant_owner',
+      invitedBy: null,
+    }, ownerUserId);
 
     log.info({ tenantId: tenant.id, ownerEmail: owner_email }, 'Super admin created tenant');
     void recordSuperAdminAudit({
       admin_id: request.superAdmin!.id, admin_email: request.superAdmin!.email,
       action: 'create_tenant', resource_type: 'tenant', resource_id: tenant.id,
-      details: { tenant_name: name, owner_email },
+      details: {
+        tenant_name: name, owner_email,
+        // The owner's membership and the invitation's outcome, as add-user records.
+        membership_id: ownerMembershipId,
+        invite_id: inviteId,
+        email_sent: inviteEmail.sent,
+        ...(inviteEmail.sent ? {} : { email_reason: inviteEmail.reason }),
+      },
     });
 
-    return reply.code(201).send({ tenant, owner_email });
+    return reply.code(201).send({ tenant, owner_email, invite_email: inviteEmailBody(inviteEmail) });
   });
 
   /**
@@ -247,10 +304,11 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     /**
      * Super-admin add creates a `pending_` stub plus membership and sends an
      * invite, through the shared `issueInvite`, so a super-admin invitation is the
-     * same artefact `POST /users/invite` produces. `roleGetsTokenInvite` is
-     * agent-only: an `agent` gets a token and the mail; every other role gets no
-     * token and is matched by session path 2 (a verified email on the `pending_`
-     * stub).
+     * same artefact `POST /users/invite` produces: a token, a `membership_invites`
+     * row and the mail for EVERY role — the agency claim page for an `agent`, the
+     * workspace one for everyone else. Session path 2 (a
+     * verified email on the `pending_` stub) still activates an invitee who
+     * ignores the link and simply signs in.
      *
      * Guarded exactly as `POST /users/invite` guards it
      * (`issueInviteReportingFailure`), for its reason: the membership has committed,
@@ -282,7 +340,7 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
       },
     });
 
-    return reply.code(201).send({ membership });
+    return reply.code(201).send({ membership, invite_email: inviteEmailBody(inviteEmail) });
   });
 
   /**

@@ -45,8 +45,9 @@ export const PENDING_UID_PREFIX = 'pending_';
  *  2. That route REUSES an existing `users` row when the address is already
  *     known (`user.routes.ts`, `findByProvenEmail` before the stub create) — so
  *     inviting `victim@corp.test` as an `agent` writes a membership in the
- *     ATTACKER's tenant pointing at the VICTIM's user id, and `agent` is exactly
- *     the role that mints a token.
+ *     ATTACKER's tenant pointing at the VICTIM's user id, and every invite mints
+ *     a token (`agent` was the only role that did when this was found; every
+ *     role does now, which widens nothing here — the guard is on the row).
  *  3. The 201 hands the inviter the raw join link, so the attacker holds the
  *     token without ever seeing the victim's inbox.
  *
@@ -224,8 +225,8 @@ export interface AdoptIdentityOptions {
    *     supervisor there invites them. Either way a `pending_` stub is written
    *     carrying a `tenant_owner` membership in A, and nobody has signed in yet.
    *  2. Anyone who signs up is `tenant_owner` of their own tenant B, so the
-   *     attacker invites that same address into B as an `agent` — the role that
-   *     mints a token. The reuse rule aims that membership at the VICTIM's row.
+   *     attacker invites that same address into B as an `agent` (any role
+   *     mints a token now). The reuse rule aims that membership at the VICTIM's row.
    *  3. The 201 hands the inviter the raw join link, so the attacker holds a
    *     valid token for a row they do not own, without ever seeing the inbox.
    *  4. Claiming binds the attacker's Firebase uid onto that row. The stub test

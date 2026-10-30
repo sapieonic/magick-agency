@@ -18,10 +18,11 @@ const log = createChildLogger({ component: 'invite-issuer' });
  * Issue an invitation: mint the token, write the row, send the mail.
  *
  * ── Why this is one function and not inline in each route ──────────────────
- * Two routes issue invitations — `POST /users/invite` (the first one) and
- * `POST /invites/resend` (every one after) — and they must produce IDENTICAL
- * artefacts: the same token shape, the same TTL, the same join URL, the same
- * template, the same counter increment. A resend that differed in any of those
+ * Four routes issue invitations — `POST /users/invite` (the first one),
+ * `POST /invites/resend` (every one after), and the super admin's tenant create
+ * (its owner) and add-user — and they must produce IDENTICAL artefacts: the same
+ * token shape, the same TTL, the same join URL, the same template, the same
+ * counter increment. A resend that differed in any of those
  * would be a second, subtly different onboarding path that only shows up when a
  * customer uses it, which is precisely the case where somebody is already having
  * trouble.
@@ -44,7 +45,7 @@ const log = createChildLogger({ component: 'invite-issuer' });
  * (`AdoptIdentityOptions`), so the rightful owner spends the invite and is
  * signed in, while a different identity is still refused. Issuance therefore
  * needs no "is this row already bound" branch, and adding one would refuse the
- * ordinary "add an agent who already has a login" invite at the point where the
+ * ordinary "add somebody who already has a login" invite at the point where the
  * supervisor is told it worked.
  *
  * It also does not swallow database errors. Minting and persisting are the parts
@@ -66,14 +67,13 @@ export interface IssueInviteInput {
 
 export interface IssuedInvite {
   /**
-   * The row, or `null` for a role that gets no token.
-   *
-   * `null` is not a failure: only an `agent` invite mints one today (see
-   * `invite-mailer.ts`'s scope note), and a `viewer` invite has never had a
-   * claim flow to bind. Writing an unusable row for them would put a table full
-   * of tokens nothing can redeem in front of the next reader.
+   * The row. Always present: every role is issued a token, a row and a mail, and
+   * differs only in which claim page and which invitation it is sent
+   * (`inviteSignInUrl`, `templates/invite-email.ts`). Until every role had a claim
+   * page a `roleGetsTokenInvite` switch refused all but `agent`, and this was
+   * `null` for them; both went once nothing could take that branch.
    */
-  invite: MembershipInviteRecord | null;
+  invite: MembershipInviteRecord;
   /**
    * The link, as it goes on the response's `sign_in_url` AND into the email.
    *
@@ -85,31 +85,8 @@ export interface IssuedInvite {
   inviteEmail: InviteEmailResult;
 }
 
-/**
- * Whether this role gets a token-bound invitation at all.
- *
- * A predicate rather than an inline `=== 'agent'` at three call sites, because
- * the whole feature is scoped by it and a future workspace-onboarding page is
- * expected to widen it. Everything downstream — the row, the join URL, the mail
- * — hangs off this one answer, so widening it is a one-line change here rather
- * than a hunt for the places that assumed `agent`.
- */
-export function roleGetsTokenInvite(role: MembershipRole): boolean {
-  return role === 'agent';
-}
-
 export async function issueInvite(input: IssueInviteInput): Promise<IssuedInvite> {
   const { role, tenantId } = input;
-
-  if (!roleGetsTokenInvite(role)) {
-    // No token, no row, and `inviteSignInUrl` answers `/login` for every
-    // non-agent role. The mailer still runs because it is what reports
-    // `not_implemented`, and that reason is what the console reads to decide
-    // whether to keep showing the hand-off panel.
-    const signInUrl = await inviteSignInUrl(role);
-    const inviteEmail = await sendOrReportFailure({ email: input.email, role, tenantId, signInUrl });
-    return { invite: null, signInUrl, inviteEmail };
-  }
 
   const minted = await mintInviteToken();
 
@@ -223,7 +200,7 @@ function countInviteEmail(role: MembershipRole, result: InviteEmailResult): void
  *
  * Failures are SWALLOWED and reported as `null`, which the template renders as a
  * generic fallback. That is the right trade and worth stating: this is one word
- * of context in one sentence, and an invited agent's only route into the product
+ * of context in one sentence, and an invitee's only route into the product
  * must not be blocked by a `tenants` lookup. The same reasoning
  * `resolveSettingsSafe` (`auth/session-payload.ts`) uses for login.
  */

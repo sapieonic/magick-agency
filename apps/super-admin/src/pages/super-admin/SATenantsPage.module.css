@@ -69,3 +69,21 @@
   border-radius: var(--radius);
   border: 1px solid var(--danger-subtle);
 }
+
+/* The outcome of a create: the owner's invitation email, sent or not.
+   Same tokens as the tenant detail page's `.success` / `.warningBox`. */
+.success {
+  color: var(--success);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.warningBox {
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 13px;
+}

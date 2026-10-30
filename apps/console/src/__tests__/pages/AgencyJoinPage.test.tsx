@@ -33,6 +33,14 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
  *  5. **`auth/email-already-in-use` is not a failure.** It is an agent invited to
  *     a second workspace, and the form has to become a sign-in rather than a dead
  *     end under a create button.
+ *
+ * The page is now the agent's configuration of a claim it shares with
+ * `/join/:token` (`useInviteClaim`, `InviteJoinScreen`), so these cases pin the
+ * shared code from the agent's side; `JoinPage.test.tsx` pins it from the
+ * workspace's. Two more properties came with the split: a non-agent invitation
+ * opened here is FORWARDED to the workspace page, and a claim lands the agent in
+ * the workspace that invited them rather than whichever one this browser last had
+ * open.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -46,6 +54,7 @@ const mocks = vi.hoisted(() => ({
   trackAgencyInviteClaimSucceeded: vi.fn(),
   trackAgencyInviteClaimFailed: vi.fn(),
   trackAgencyInviteAddressMismatch: vi.fn(),
+  setActiveTenantId: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -59,6 +68,11 @@ vi.mock('../../contexts/AuthContext', () => ({
     claimInvite: mocks.claimInvite,
     logout: mocks.logout,
   }),
+}));
+
+/** The claim selects the invited workspace through this; see the last describe. */
+vi.mock('../../contexts/TenantContext', () => ({
+  useTenant: () => ({ setActiveTenantId: mocks.setActiveTenantId }),
 }));
 
 /**
@@ -92,6 +106,7 @@ const INVITE: AgencyInvite = {
   inviter_name: 'Priya Sharma',
   product_name: 'Magick Agency Dialer',
   expires_at: '2026-09-12T09:00:00.000Z',
+  requires_matching_address: false,
 };
 
 /** A session answer. Only its identity matters here — `AuthContext` owns its shape. */
@@ -508,6 +523,30 @@ describe('the Google address mismatch', () => {
       method: 'google',
       reason: 'mismatch_declined',
     });
+  });
+});
+
+describe('the invited-address rule (decision B25) on the agent door', () => {
+  /*
+    An agent seat never needs the invited address — `requires_matching_address`
+    is false for every agent invitation, and the mismatch above is unchanged. But
+    the rule is the INVITATION's, not the page's: the shared claim reads the
+    field, never the door, so if the server ever marks an invitation here the agent
+    page renders the same screen as the workspace page.
+  */
+  it('follows the field rather than the door', async () => {
+    mocks.establishInviteCredential.mockResolvedValue({ email: 'p.sharma@gmail.com' });
+    await renderInvitation({ ...INVITE, requires_matching_address: true });
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+
+    await screen.findByTestId('address-required');
+    expect(screen.queryByRole('button', { name: 'Use this account' })).toBeNull();
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+    expect(mocks.trackAgencyInviteClaimFailed).toHaveBeenCalledWith({
+      method: 'google',
+      reason: 'address_required',
+    });
+    expect(mocks.trackAgencyInviteAddressMismatch).not.toHaveBeenCalled();
   });
 });
 
@@ -963,5 +1002,120 @@ describe('analytics', () => {
     await waitFor(() =>
       expect(mocks.trackAgencyInviteClaimAttempted).toHaveBeenCalledWith({ method: 'google' }),
     );
+  });
+});
+
+describe('an invitation that belongs on the other door', () => {
+  /**
+   * Every role now gets a token, and only an agent's link is `/agency/join`;
+   * everyone else's is `/join/:token`. A non-agent invitation opened HERE — a
+   * hand-edited link, one from before the doors split — is a working invitation
+   * behind the wrong words: this page would tell an operator about a station and
+   * land them on `/dialer`. So it is forwarded, before anything renders.
+   */
+  it.each(['operator', 'viewer', 'account_admin', 'tenant_admin'] as const)(
+    'forwards a %s invitation to /join/:token, replacing this entry',
+    async (role) => {
+      mocks.getInvite.mockResolvedValue({ status: 'pending', invite: { ...INVITE, role } });
+      renderAt();
+
+      await waitFor(() => expect(mocks.navigate).toHaveBeenCalledTimes(1));
+      expect(mocks.navigate).toHaveBeenCalledWith(
+        `/join/${TOKEN}`,
+        expect.objectContaining({ replace: true }),
+      );
+      // Never rendered here, and not counted in THIS funnel: the receiving page
+      // reports the view, so one visit is one view in the funnel it belongs to.
+      expect(screen.queryByRole('button', { name: /continue with google/i })).toBeNull();
+      expect(screen.queryByText(/your station opens/i)).toBeNull();
+      expect(mocks.trackAgencyInviteViewed).not.toHaveBeenCalled();
+    },
+  );
+
+  it('hands the invitation it already read to the page it forwards to', async () => {
+    // So the workspace page does not read the same token a second time — one
+    // more call to a public, per-IP rate-limited endpoint and a second skeleton.
+    const invite = { ...INVITE, role: 'operator' as const };
+    mocks.getInvite.mockResolvedValue({ status: 'pending', invite });
+    renderAt();
+
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalled());
+    expect(mocks.navigate.mock.calls[0]?.[1]).toEqual({
+      replace: true,
+      state: { inviteHandoff: { token: TOKEN, invite } },
+    });
+  });
+
+  it('renders an agent invitation forwarded from /join without reading it again', async () => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          { pathname: `/agency/join/${TOKEN}`, state: { inviteHandoff: { token: TOKEN, invite: INVITE } } },
+        ]}
+      >
+        <Routes>
+          <Route path="/agency/join/:token" element={<AgencyJoinPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByRole('button', { name: /continue with google/i })).toBeTruthy();
+    expect(mocks.getInvite).not.toHaveBeenCalled();
+    // The view is reported once, by the page that shows it.
+    expect(mocks.trackAgencyInviteViewed).toHaveBeenCalledTimes(1);
+    expect(mocks.trackAgencyInviteViewed).toHaveBeenCalledWith({
+      status: 'pending',
+      role: 'agent',
+      has_inviter: true,
+    });
+  });
+
+  it('ignores a forwarded invitation for a different token, and reads its own', async () => {
+    mocks.getInvite.mockResolvedValue({ status: 'pending', invite: INVITE });
+    render(
+      <MemoryRouter
+        initialEntries={[
+          {
+            pathname: `/agency/join/${TOKEN}`,
+            state: { inviteHandoff: { token: 'tok_other', invite: { ...INVITE, email: 'x@y.z' } } },
+          },
+        ]}
+      >
+        <Routes>
+          <Route path="/agency/join/:token" element={<AgencyJoinPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('priya@acme.com')).toBeTruthy();
+    expect(mocks.getInvite).toHaveBeenCalledWith(TOKEN);
+    expect(screen.queryByText('x@y.z')).toBeNull();
+  });
+});
+
+describe('which workspace the claim lands in', () => {
+  it('selects the inviting tenant for an agent who already works for another agency', async () => {
+    /*
+      The session the claim adopts lists every tenant the person belongs to, and
+      `TenantContext` restores whichever one this browser last had open. An agent
+      staffed by a second agency would otherwise finish joining it and be put back
+      on the first one's floor.
+    */
+    mocks.claimInvite.mockResolvedValue({
+      ...SESSION,
+      tenants: [
+        { id: 'tenant-old', name: 'Old Agency' },
+        { id: 'tenant-acme', name: 'Acme Collections' },
+      ],
+      memberships: [
+        { tenant_id: 'tenant-old', role: 'agent', status: 'active' },
+        { tenant_id: 'tenant-acme', role: 'agent', status: 'active' },
+      ],
+    });
+    await renderInvitation();
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+
+    await waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith('/dialer', { replace: true }));
+    expect(mocks.setActiveTenantId).toHaveBeenCalledWith('tenant-acme');
   });
 });

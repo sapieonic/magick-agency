@@ -115,6 +115,7 @@ const MEMBERSHIP = '66666666-6666-4666-8666-666666666666';
 const LEFTOVER = '77777777-7777-4777-8777-777777777777';
 const OTHER_MEMBERSHIP = '88888888-8888-4888-8888-888888888888';
 const NEW_TENANT = '99999999-9999-4999-8999-999999999999';
+const OWNER_MEMBERSHIP = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function token(secret = SECRET): string {
   return jwt.sign({ sub: ADMIN.id, email: ADMIN.email, type: 'super_admin' }, secret, { expiresIn: '1h' });
@@ -150,6 +151,9 @@ function installClient(): void {
     }
     if (sql.startsWith('INSERT INTO users')) return { rows: [{ id: NEW_USER }] };
     if (sql.startsWith('SELECT * FROM memberships')) return { rows: db.existingMemberships };
+    if (sql.startsWith(`INSERT INTO memberships (user_id, tenant_id, role) VALUES ($1, $2, 'tenant_owner')`)) {
+      return { rows: [{ id: OWNER_MEMBERSHIP }] };
+    }
     if (sql.startsWith('INSERT INTO memberships (user_id, tenant_id, account_id, role)')) {
       return { rows: [{ id: MEMBERSHIP, user_id: params?.[0], tenant_id: params?.[1], account_id: params?.[2], role: params?.[3], status: 'active' }] };
     }
@@ -431,12 +435,37 @@ describe('POST /super-admin/tenants/:id/users', () => {
     });
   });
 
+  it('answers whether the invitee was emailed, and never the join link itself', async () => {
+    /**
+     * `invite_email` is how the super admin learns somebody was added but not
+     * told. `sign_in_url` is what `POST /users/invite` answers beside it, and is
+     * withheld here on purpose: the issuer resolved a live single-use link (the
+     * mock returns one), and it must not travel to the super-admin UI.
+     */
+    const sent = await post({ email: 'new@acme.test', role: 'operator' });
+    expect(sent.statusCode).toBe(201);
+    expect(sent.json().invite_email).toEqual({ sent: true });
+    expect(sent.json()).not.toHaveProperty('sign_in_url');
+    expect(sent.body).not.toContain('https://app.example.com/join');
+
+    mocks.issueInvite.mockResolvedValue({
+      invite: { id: 'invite-2' },
+      signInUrl: 'https://app.example.com/join/tok-2',
+      inviteEmail: { sent: false, reason: 'not_configured' },
+    });
+    const unsent = await post({ email: 'other@acme.test', role: 'operator' });
+    expect(unsent.json().invite_email).toEqual({ sent: false, reason: 'not_configured' });
+    expect(unsent.json()).not.toHaveProperty('sign_in_url');
+    expect(unsent.body).not.toContain('tok-2');
+  });
+
   it('an issueInvite failure does not fail the 201; the audit row reports the mail unsent', async () => {
     mocks.issueInvite.mockRejectedValue(new Error('smtp down'));
     const res = await post({ email: 'new@acme.test', role: 'agent' });
 
     expect(res.statusCode).toBe(201);
     expect(res.json().membership).toMatchObject({ id: MEMBERSHIP });
+    expect(res.json().invite_email).toEqual({ sent: false, reason: 'failed' });
     expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: 'add_user_to_tenant',
       details: expect.objectContaining({ invite_id: null, email_sent: false, email_reason: 'failed' }),
@@ -465,16 +494,25 @@ describe('POST /super-admin/tenants/:id/users', () => {
     });
   });
 
-  it('a role with no token invite records the mailer\'s reason and a null invite_id', async () => {
+  it('a non-agent add issues a token invite for THAT role and records it', async () => {
+    /**
+     * This used to pin `invite_id: null` and `email_reason: 'not_implemented'`
+     * for a `viewer` — the shape of the defect, in which a super admin's added
+     * operators and admins got no token and no mail. The route hands the role to
+     * the shared issuer unchanged, and the audit row carries the row it wrote.
+     */
     mocks.issueInvite.mockResolvedValue({
-      invite: null, signInUrl: 'https://app.example.com/login', inviteEmail: { sent: false, reason: 'not_implemented' },
+      invite: { id: 'invite-viewer' },
+      signInUrl: 'https://app.example.com/join/tok',
+      inviteEmail: { sent: true, messageId: null },
     });
     await post({ email: 'new@acme.test', role: 'viewer' });
 
+    expect(mocks.issueInvite).toHaveBeenCalledWith(expect.objectContaining({ role: 'viewer', invitedBy: null }));
     expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
       details: {
         email: 'new@acme.test', role: 'viewer', name: null, account_id: null,
-        membership_id: MEMBERSHIP, invite_id: null, email_sent: false, email_reason: 'not_implemented',
+        membership_id: MEMBERSHIP, invite_id: 'invite-viewer', email_sent: true,
       },
     }));
   });
@@ -806,6 +844,7 @@ describe('POST /super-admin/tenants', () => {
     expect(res.json()).toEqual({
       tenant: expect.objectContaining({ id: NEW_TENANT, name: 'Acme Corp' }),
       owner_email: 'owner@acme.test',
+      invite_email: { sent: true },
     });
     expect(mocks.auditLog).toHaveBeenCalledWith({
       admin_id: ADMIN.id,
@@ -813,8 +852,77 @@ describe('POST /super-admin/tenants', () => {
       action: 'create_tenant',
       resource_type: 'tenant',
       resource_id: NEW_TENANT,
-      details: { tenant_name: 'Acme Corp', owner_email: 'owner@acme.test' },
+      details: {
+        tenant_name: 'Acme Corp',
+        owner_email: 'owner@acme.test',
+        membership_id: OWNER_MEMBERSHIP,
+        invite_id: 'invite-1',
+        email_sent: true,
+      },
     });
+  });
+
+  it('invites the owner — as tenant_owner, invitedBy null — only AFTER the transaction commits', async () => {
+    /**
+     * The defect: the modal said "Creates the organization and invites its
+     * owner", and nothing was issued, so the owner of a new tenant was never told
+     * they had one. The token row references the
+     * membership, so it is issued once that membership is durable — a mail sent
+     * from inside the transaction would carry a link a rollback can take away.
+     */
+    let committedBeforeIssue = false;
+    mocks.issueInvite.mockImplementation(async () => {
+      committedBeforeIssue = indexOfSql('COMMIT') > -1;
+      return { invite: { id: 'invite-owner' }, signInUrl: 'https://app.example.com/join/tok', inviteEmail: { sent: true } };
+    });
+
+    const res = await post({ name: 'Acme', owner_email: 'owner@acme.test' });
+
+    expect(res.statusCode).toBe(201);
+    expect(mocks.issueInvite).toHaveBeenCalledTimes(1);
+    expect(mocks.issueInvite).toHaveBeenCalledWith({
+      membershipId: OWNER_MEMBERSHIP,
+      tenantId: NEW_TENANT,
+      email: 'owner@acme.test',
+      role: 'tenant_owner',
+      invitedBy: null,
+    });
+    expect(committedBeforeIssue).toBe(true);
+  });
+
+  it('answers whether the owner was emailed, and never the join link itself', async () => {
+    // For add-user's reason: a live single-use link to a tenant's OWNERSHIP must
+    // not travel to the super-admin UI, so only the outcome does.
+    mocks.issueInvite.mockResolvedValue({
+      invite: { id: 'invite-owner' },
+      signInUrl: 'https://app.example.com/join/tok-owner',
+      inviteEmail: { sent: false, reason: 'failed' },
+    });
+    const res = await post({ name: 'Acme', owner_email: 'owner@acme.test' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().invite_email).toEqual({ sent: false, reason: 'failed' });
+    expect(res.json()).not.toHaveProperty('sign_in_url');
+    expect(res.body).not.toContain('tok-owner');
+    expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'create_tenant',
+      details: expect.objectContaining({ invite_id: 'invite-owner', email_sent: false, email_reason: 'failed' }),
+    }));
+  });
+
+  it('an issueInvite throw does not fail the 201: the tenant stands and the mail is reported unsent', async () => {
+    // A 500 here would tell the super admin the create failed; the retry would
+    // then make a second tenant beside the one that committed.
+    mocks.issueInvite.mockRejectedValue(new Error('mail provider down'));
+    const res = await post({ name: 'Acme', owner_email: 'owner@acme.test' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().tenant).toMatchObject({ id: NEW_TENANT });
+    expect(res.json().invite_email).toEqual({ sent: false, reason: 'failed' });
+    expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'create_tenant',
+      details: expect.objectContaining({ invite_id: null, email_sent: false, email_reason: 'failed' }),
+    }));
   });
 
   it('assigns NO pooled number and writes no credit balance or API key', async () => {
@@ -836,6 +944,11 @@ describe('POST /super-admin/tenants', () => {
     expect(res.statusCode).toBe(201);
     expect(indexOfSql('INSERT INTO users')).toBe(-1);
     expect(sqlCalls().find((c) => c.sql.startsWith('INSERT INTO memberships'))!.params).toEqual([USER, NEW_TENANT]);
+    // Still invited: the claim admits the row's own identity, so the rightful
+    // owner spends the token and lands in the new workspace.
+    expect(mocks.issueInvite).toHaveBeenCalledWith(expect.objectContaining({
+      membershipId: OWNER_MEMBERSHIP, role: 'tenant_owner',
+    }));
   });
 
   it('409 UNVERIFIED_ADDRESS_HOLDER on an unproven owner address; rolls back the tenant', async () => {
@@ -851,6 +964,7 @@ describe('POST /super-admin/tenants', () => {
     expect(indexOfSql('INSERT INTO memberships')).toBe(-1);
     expect(mocks.client.release).toHaveBeenCalledTimes(1);
     expect(mocks.auditLog).not.toHaveBeenCalled();
+    expect(mocks.issueInvite).not.toHaveBeenCalled();
   });
 
   it('ROLLBACK (no COMMIT) and release when a statement fails', async () => {
@@ -862,11 +976,13 @@ describe('POST /super-admin/tenants', () => {
     expect(indexOfSql('COMMIT')).toBe(-1);
     expect(mocks.client.release).toHaveBeenCalledTimes(1);
     expect(mocks.auditLog).not.toHaveBeenCalled();
+    expect(mocks.issueInvite).not.toHaveBeenCalled();
   });
 
   it('400s an invalid body without opening a transaction', async () => {
     const res = await post({ name: '', owner_email: 'not-an-email' });
     expect(res.statusCode).toBe(400);
     expect(mocks.connect).not.toHaveBeenCalled();
+    expect(mocks.issueInvite).not.toHaveBeenCalled();
   });
 });

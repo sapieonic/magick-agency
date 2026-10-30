@@ -11,8 +11,8 @@ import type { FastifyInstance } from 'fastify';
  * The walk:
  *  1. the first super-admin is created by `scripts/create-super-admin.ts`
  *     (`createSuperAdmin`, the CLI's body); `POST /super-admin/login` → JWT;
- *  2. `POST /super-admin/tenants` → tenant + default account + `pending_` owner stub,
- *     no pooled number;
+ *  2. `POST /super-admin/tenants` → tenant + default account + `pending_` owner stub
+ *     + the owner's minted invite (mail unconfigured), no pooled number;
  *  3. the owner signs in with a VERIFIED token for that address → session path 2
  *     adopts the stub; the session carries the tenant, the `tenant_owner` membership
  *     and the settings map for the default account;
@@ -112,7 +112,8 @@ describe('platform onboarding end to end (integration, real routes)', () => {
     expect(login.statusCode).toBe(200);
     const saAuth = { authorization: `Bearer ${login.json().token as string}` };
 
-    // 2 — tenant create: pending_ owner stub, default account, no pooled number.
+    // 2 — tenant create: pending_ owner stub, default account, no pooled number, and
+    // the owner's invitation (minted; mail unconfigured here, and the answer says so).
     const created = await app.inject({
       method: 'POST',
       url: '/super-admin/tenants',
@@ -121,7 +122,12 @@ describe('platform onboarding end to end (integration, real routes)', () => {
     });
     expect(created.statusCode).toBe(201);
     const tenantId = created.json().tenant.id as string;
-    expect(created.json()).toEqual({ tenant: expect.objectContaining({ id: tenantId }), owner_email: OWNER_EMAIL });
+    expect(created.json()).toEqual({
+      tenant: expect.objectContaining({ id: tenantId }),
+      owner_email: OWNER_EMAIL,
+      invite_email: { sent: false, reason: 'not_configured' },
+    });
+    expect(h.minted).toHaveLength(1);
     const stub = await getPool().query<{ firebase_uid: string }>(`SELECT firebase_uid FROM users WHERE email = $1`, [OWNER_EMAIL]);
     expect(stub.rows[0]!.firebase_uid.startsWith('pending_')).toBe(true);
     expect(await count(`SELECT count(*)::int AS n FROM tenant_phone_assignments WHERE tenant_id = $1`, [tenantId])).toBe(0);
@@ -151,11 +157,13 @@ describe('platform onboarding end to end (integration, real routes)', () => {
     });
     expect(added.statusCode).toBe(201);
     expect(added.json().membership).toEqual(expect.objectContaining({ tenant_id: tenantId, account_id: accountId, role: 'agent', status: 'active' }));
-    expect(h.minted).toHaveLength(1);
+    // The owner's token from step 2, then the agent's.
+    expect(h.minted).toHaveLength(2);
+    const agentToken = h.minted[1]!;
 
     // 5 — the agent claims with an UNVERIFIED email/password token (the join page).
     h.verifyIdToken.mockResolvedValue({ uid: 'fb-agent', email: AGENT_EMAIL, email_verified: false });
-    const claim = await app.inject({ method: 'POST', url: `/invites/${h.minted[0]}/claim`, payload: { id_token: 'agent-token' } });
+    const claim = await app.inject({ method: 'POST', url: `/invites/${agentToken}/claim`, payload: { id_token: 'agent-token' } });
     expect(claim.statusCode).toBe(200);
     expect(claim.json().memberships).toEqual([expect.objectContaining({ tenant_id: tenantId, account_id: accountId, role: 'agent' })]);
     const agentRow = await getPool().query<{ firebase_uid: string; email_unverified: boolean }>(
@@ -163,7 +171,7 @@ describe('platform onboarding end to end (integration, real routes)', () => {
     expect(agentRow.rows[0]).toEqual({ firebase_uid: 'fb-agent', email_unverified: true });
 
     // The link is single use.
-    const again = await app.inject({ method: 'POST', url: `/invites/${h.minted[0]}/claim`, payload: { id_token: 'agent-token' } });
+    const again = await app.inject({ method: 'POST', url: `/invites/${agentToken}/claim`, payload: { id_token: 'agent-token' } });
     expect(again.statusCode).toBe(409);
     expect(again.json().status).toBe('claimed');
 

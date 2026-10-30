@@ -187,6 +187,12 @@ implementation chose where the plan left a choice, built and awaiting ratificati
 | Analytics emitters | The `trackX` names stay as one-line aliases over a typed `track<K>()` and `EventCatalog`; `captureEvent` accepts only catalogued names | **default, pending Manas** |
 | Super-admin role enum | The membership role enum follows `ROLES` order (only the order in zod's error message changes) | **default, pending Manas** |
 
+Rulings of 2026-10-30 (Manas):
+
+| Topic | Ruling | Status |
+|---|---|---|
+| Invite claims for admin seats (B25) | Every role gets a single-use invite token by email, and the token binds whatever Firebase identity presents it, with a different address confirmed on the join page and audited (`email_matched: false`). From `account_admin` up (`account_admin`, `tenant_admin`, `tenant_owner`; `inviteRequiresMatchingAddress` in `packages/contracts/src/rbac.ts`) that is refused: `POST /invites/:token/claim` answers 409 `address_required` (with the invited address, which `GET /invites/:token` already shows the token holder) unless the signed-in email equals the invited address, trimmed and case-folded. A missing email is a mismatch. `email_verified` is not required: a password account made on the join page at the locked invited address is unverified by construction, and holding the mailed token is the inbox proof. The rule reads the membership's current role, not the role the invitation was issued for. The refusal binds and spends nothing (the same link still works for the invited address), logs a warn with tenant, invitation and role (no addresses), and counts `invite_claims_total{result="address_required"}`, alerted in `agy-invite-claim-identity-conflicts` at 3 per hour; it writes no audit row, like every other claim refusal. `GET /invites/:token` reports `requires_matching_address`, and the console's join pages show "this invitation must be accepted with <address>" and sign the other account out instead of offering to continue with it. Agents, viewers and operators keep the flexible claim | Before, a forwarded or leaked invite mail was a bearer credential for an admin or owner seat: anyone signed into any Google account could claim it after one confirmation. For agents the flexibility is the point (a personal Google account must still get in); for a seat that can invite people, change roles and supervise calls it is not worth the risk | **Decided — changed** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |

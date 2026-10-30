@@ -17,9 +17,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * membership is the durable fact and the email is an accelerant. So
  * `api_requests_total{status}` cannot carry the outcome — every one of these
  * requests is a 201 — and `inviteEmailsTotal` is the only signal that a revoked
- * Mailjet key has stopped every invite. For an agent that mail is their ONLY
- * route in, so the failure mode is a whole dialing floor invited and never
- * arriving, with every dashboard green.
+ * Mailjet key has stopped every invite. For anybody without an account that
+ * mail is their ONLY route in, so the failure mode is a whole dialing floor — or
+ * a new workspace's admins — invited and never arriving, with every dashboard
+ * green.
+ *
+ * ── Every role, enumerated from `ROLES` ────────────────────────────────────
+ * The production defect was a predicate that answered `agent` only: every other
+ * role got no token, no row and no mail. The cases that pin the fix iterate the
+ * contract's `ROLES` rather than a hand-written list, so a role added there is
+ * covered here without anybody remembering to add it.
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -60,7 +67,8 @@ vi.mock('@magick-agency/observability/metrics/platform', () => ({
 }));
 vi.mock('@magick-agency/observability', () => ({ createChildLogger: () => mocks.log }));
 
-import { issueInvite, roleGetsTokenInvite } from '../../../src/invites/invite-issuer.js';
+import { issueInvite } from '../../../src/invites/invite-issuer.js';
+import { ROLES } from '@magick-agency/contracts/rbac';
 
 const MINTED = {
   token: 'tok-1',
@@ -84,22 +92,6 @@ beforeEach(() => {
   mocks.userFindById.mockResolvedValue({ id: INVITER, display_name: 'Priya Sharma' });
   mocks.inviteSignInUrl.mockResolvedValue('https://app.example.com/agency/join/tok-1');
   mocks.sendInviteEmail.mockResolvedValue({ sent: true, messageId: null });
-});
-
-describe('roleGetsTokenInvite', () => {
-  it('is the one place the scope is decided', () => {
-    /**
-     * A predicate rather than an inline `=== 'agent'` at three call sites,
-     * because the whole feature hangs off this answer — the row, the join URL and
-     * the mail all follow it. Widening it for a future workspace-onboarding page
-     * is then one line here rather than a hunt for the places that assumed
-     * `agent`.
-     */
-    expect(roleGetsTokenInvite('agent')).toBe(true);
-    for (const role of ['viewer', 'operator', 'account_admin', 'tenant_admin', 'tenant_owner'] as const) {
-      expect(roleGetsTokenInvite(role), role).toBe(false);
-    }
-  });
 });
 
 describe('issueInvite for an agent', () => {
@@ -202,27 +194,67 @@ describe('issueInvite for an agent', () => {
   });
 });
 
-describe('issueInvite for every other role', () => {
-  it('mints nothing, writes nothing, and reports not_implemented', async () => {
+describe('issueInvite for every role', () => {
+  it.each(ROLES)('mints a token, writes the row and mails %s', async (role) => {
     /**
-     * Today's exact behaviour, preserved. There is no claim page for a `viewer`
-     * to land on, so a token for one would be a credential nothing can redeem
-     * sitting in a table — and `/login` is what their `sign_in_url` has always
-     * been.
+     * The same artefact for every role — that is the whole fix. This module used
+     * to issue a token only where a `roleGetsTokenInvite` switch answered
+     * `role === 'agent'`; every other role got no token, no row and no mail. The
+     * switch is gone, so this sweep is what pins every role to the row, the URL
+     * and the mail. The ROLE travels
+     * into the row (so `GET /invites/:token` can name it and the claim activates
+     * exactly that membership), into the URL resolution (which picks the claim
+     * page) and into the mail (which picks the invitation's wording). Nothing
+     * else about the issue differs.
      */
-    mocks.inviteSignInUrl.mockResolvedValue('https://app.example.com/login');
-    mocks.sendInviteEmail.mockResolvedValue({ sent: false, reason: 'not_implemented' });
+    const url = role === 'agent'
+      ? 'https://app.example.com/agency/join/tok-1'
+      : 'https://app.example.com/join/tok-1';
+    mocks.inviteSignInUrl.mockResolvedValue(url);
 
-    const result = await issueInvite({ ...BASE, role: 'viewer' });
+    const result = await issueInvite({ ...BASE, email: `${role}@acme.test`, role });
 
-    expect(mocks.mintInviteToken).not.toHaveBeenCalled();
-    expect(mocks.createSupersedingOutstanding).not.toHaveBeenCalled();
-    expect(mocks.inviteSignInUrl).toHaveBeenCalledWith('viewer');
-    expect(result).toEqual({
-      invite: null,
-      signInUrl: 'https://app.example.com/login',
-      inviteEmail: { sent: false, reason: 'not_implemented' },
+    expect(mocks.mintInviteToken).toHaveBeenCalledTimes(1);
+    expect(mocks.createSupersedingOutstanding).toHaveBeenCalledWith({
+      membership_id: MEMBERSHIP,
+      tenant_id: TENANT,
+      email: `${role}@acme.test`,
+      role,
+      token_hash: 'hash-1',
+      expires_at: MINTED.expiresAt,
+      invited_by: INVITER,
     });
+    // The TOKEN is what reaches the URL rule — never `undefined`, which is the
+    // `/login` fallback this defect consisted of.
+    expect(mocks.inviteSignInUrl).toHaveBeenCalledWith(role, 'tok-1');
+    expect(mocks.sendInviteEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendInviteEmail.mock.calls[0]![0]).toMatchObject({
+      email: `${role}@acme.test`,
+      role,
+      tenantId: TENANT,
+      signInUrl: url,
+      tenantName: 'Acme Collections',
+      inviterName: 'Priya Sharma',
+      expiresAt: MINTED.expiresAt,
+    });
+    expect(result).toEqual({
+      invite: expect.objectContaining({ id: 'invite-1', role }),
+      signInUrl: url,
+      inviteEmail: { sent: true, messageId: null },
+    });
+    expect(mocks.promInc).toHaveBeenCalledWith({ role, result: 'sent' });
+  });
+
+  it.each(ROLES)('writes the row BEFORE mailing %s', async (role) => {
+    // The ordering argument in the agent block holds for every role: a mailed
+    // but unstored token is unredeemable; a stored but unmailed one is resendable.
+    const order: string[] = [];
+    mocks.createSupersedingOutstanding.mockImplementation(async (input: any) => { order.push('row'); return { id: 'i', ...input }; });
+    mocks.sendInviteEmail.mockImplementation(async () => { order.push('mail'); return { sent: true, messageId: null }; });
+
+    await issueInvite({ ...BASE, role });
+
+    expect(order).toEqual(['row', 'mail']);
   });
 });
 
@@ -244,17 +276,19 @@ describe('the outcome counters', () => {
     expect(mocks.promInc).toHaveBeenCalledWith({ role: 'agent', result: label });
   });
 
-  it('labels by ROLE, so the designed silence is distinguishable from the broken one', async () => {
+  it('labels by ROLE, so a failure confined to one invitation is visible', async () => {
     /**
-     * Every non-`agent` invite reports `not_implemented` by design. Without the
-     * label a dashboard shows a permanent baseline of undelivered invites and
-     * nobody can see the agent line move — which is the line that matters.
+     * The agent and workspace invitations are different templates, so one can
+     * break while the other sends. Without the label the two lines are summed
+     * and a broken workspace mail hides under a healthy dialing floor — which is
+     * what the `not_implemented` baseline used to do to the agent line, the other
+     * way round.
      */
-    mocks.sendInviteEmail.mockResolvedValue({ sent: false, reason: 'not_implemented' });
+    mocks.sendInviteEmail.mockResolvedValue({ sent: false, reason: 'failed' });
 
     await issueInvite({ ...BASE, role: 'operator' });
 
-    expect(mocks.promInc).toHaveBeenCalledWith({ role: 'operator', result: 'not_implemented' });
+    expect(mocks.promInc).toHaveBeenCalledWith({ role: 'operator', result: 'failed' });
   });
 
   it('counts a mailer that REJECTS, and reports it as failed without throwing', async () => {

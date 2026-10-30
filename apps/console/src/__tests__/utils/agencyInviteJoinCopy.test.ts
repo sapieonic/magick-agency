@@ -3,6 +3,7 @@ import {
   ROLE_LABELS,
   STRENGTH_LABELS,
   UNAVAILABLE_COPY,
+  WORKSPACE_UNAVAILABLE_COPY,
   analyticsRole,
   assessPassword,
   credentialMessage,
@@ -11,6 +12,7 @@ import {
   sameAddress,
 } from '../../utils/agencyInviteJoinCopy';
 import type { Role } from '../../types/auth';
+import { ROLES } from '@magick-agency/contracts/rbac';
 import type { InviteUnavailableStatus } from '../../types/invite';
 
 /**
@@ -31,10 +33,10 @@ describe('roleLabel / analyticsRole', () => {
     expect(roleLabel('supervisor_next_year' as Role)).toBe('supervisor_next_year');
   });
 
-  it('maps every role to the analytics enum except the one an invite cannot grant', () => {
-    expect(analyticsRole('agent')).toBe('agent');
-    expect(analyticsRole('account_admin')).toBe('account_admin');
-    expect(analyticsRole('tenant_owner')).toBeNull();
+  it.each(ROLES)('reports %s to the invite funnels as itself', (role) => {
+    // `tenant_owner` included: a super admin's tenant create invites the owner,
+    // and this answered `null` for them on the belief that no invite could.
+    expect(analyticsRole(role)).toBe(role);
   });
 });
 
@@ -129,5 +131,29 @@ describe('UNAVAILABLE_COPY', () => {
       'claimed',
       'identity_already_bound',
     ]);
+  });
+});
+
+describe('WORKSPACE_UNAVAILABLE_COPY', () => {
+  const statuses: InviteUnavailableStatus[] = ['expired', 'claimed', 'revoked', 'not_found', 'identity_already_bound'];
+
+  it('cures the same statuses by signing in as the agency page does', () => {
+    // The facts and remedies are the page-independent half; only the sentences
+    // differ. A status that sends an agent to sign in and leaves an operator with
+    // nothing to press would be the two pages disagreeing about the server.
+    for (const status of statuses) {
+      expect(WORKSPACE_UNAVAILABLE_COPY[status].action).toBe(UNAVAILABLE_COPY[status].action);
+    }
+    const titles = new Set(statuses.map((s) => WORKSPACE_UNAVAILABLE_COPY[s].title));
+    expect(titles.size).toBe(statuses.length);
+  });
+
+  it('promises no station and names no supervisor', () => {
+    // An operator or an account admin has neither. The agency table's "your
+    // station will open" and "ask your supervisor" are wrong on this page.
+    for (const status of statuses) {
+      const { title, body } = WORKSPACE_UNAVAILABLE_COPY[status];
+      expect(`${title} ${body}`).not.toMatch(/station|supervisor|dialer|agent/i);
+    }
   });
 });

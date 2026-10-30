@@ -4,7 +4,12 @@ import { captureApiError } from './error-analytics';
 import { redactInviteToken } from '../analytics/redact';
 import { apiFetch } from './client';
 import type { SessionResponse } from '../types/auth';
-import type { AgencyInvite, InviteLookup, InviteUnavailableStatus } from '../types/invite';
+import type {
+  AgencyInvite,
+  InviteClaimRefusalStatus,
+  InviteLookup,
+  InviteUnavailableStatus,
+} from '../types/invite';
 import type { ResendInviteResult } from '../types/team';
 
 /**
@@ -91,6 +96,33 @@ export class InviteIdentityInUseError extends Error {
   }
 }
 
+/**
+ * The server refused the claim because this invitation is for `account_admin` or
+ * above and the account signed in with is not the invited address — or carries
+ * no address at all (decision B25).
+ *
+ * Its own class, for {@link InviteIdentityInUseError}'s reason: the invitation is
+ * FINE and still outstanding, and the person it was sent to can claim it with the
+ * same link. What the page must do is the opposite of a terminal screen — say
+ * which address it needs and sign the other account out — so it is told apart
+ * here rather than read as a generic conflict.
+ *
+ * The page normally never sends this claim: `GET /invites/:token` says
+ * `requires_matching_address` and the mismatch screen stops first. This is for
+ * when it did not know — a page loaded before the role changed, or a server
+ * that answers the claim but not the field.
+ *
+ * `email` is the invited address the server names in the body (the one the GET
+ * already disclosed to whoever holds the token), or null when the body did not
+ * carry one; the page falls back to the invitation it already has.
+ */
+export class InviteAddressRequiredError extends Error {
+  constructor(message: string, public readonly email: string | null) {
+    super(message);
+    this.name = 'InviteAddressRequiredError';
+  }
+}
+
 /** The `status` of a parsed body, when it is one of the terminal states. */
 function unavailableStatus(body: unknown): InviteUnavailableStatus | null {
   if (typeof body !== 'object' || body === null) return null;
@@ -104,11 +136,33 @@ function unavailableStatus(body: unknown): InviteUnavailableStatus | null {
     : null;
 }
 
-/** Whether the server answered the claim with its `identity_in_use` conflict. */
-function isIdentityInUse(body: unknown): boolean {
+/** Whether the server answered the claim with this account-shaped refusal. */
+function isRefusal(body: unknown, status: InviteClaimRefusalStatus): boolean {
   return typeof body === 'object'
     && body !== null
-    && (body as { status?: unknown }).status === 'identity_in_use';
+    && (body as { status?: unknown }).status === status;
+}
+
+/** A body's `email`, when it carries one. */
+function bodyEmail(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const email = (body as { email?: unknown }).email;
+  return typeof email === 'string' && email.length > 0 ? email : null;
+}
+
+/**
+ * The invite body as this client models it, from whatever the server sent.
+ *
+ * One field is defaulted rather than trusted to be there:
+ * `requires_matching_address`, which a server older than decision B25 does not
+ * send. Absent (or anything but `true`) reads as `false` — the flexible page this
+ * client always rendered — and that is safe rather than merely convenient,
+ * because the page is not the control: a server that enforces the rule refuses
+ * the claim with `address_required`, which {@link claimInvite} raises as its own
+ * error and the page answers with the same screen it would have shown up front.
+ */
+function inviteFrom(raw: AgencyInvite): AgencyInvite {
+  return { ...raw, requires_matching_address: raw.requires_matching_address === true };
 }
 
 /** A body's `message`, when it has a usable one. */
@@ -196,7 +250,7 @@ export async function getInvite(token: string): Promise<InviteLookup> {
     typeof (body as { invite?: unknown }).invite === 'object' &&
     (body as { invite?: unknown }).invite !== null
   ) {
-    return { status: 'pending', invite: (body as { invite: AgencyInvite }).invite };
+    return { status: 'pending', invite: inviteFrom((body as { invite: AgencyInvite }).invite) };
   }
 
   /*
@@ -256,10 +310,23 @@ export async function claimInvite(token: string, idToken: string): Promise<Sessi
       of returning them to the two options still signed in as the colliding
       account, which is a loop.
     */
-    if (isIdentityInUse(body)) {
+    if (isRefusal(body, 'identity_in_use')) {
       throw new InviteIdentityInUseError(
         bodyMessage(body)
           ?? 'That sign-in already belongs to a different account here. Sign in with it directly.',
+      );
+    }
+
+    /*
+      `address_required` is the other one: an `account_admin`-or-above invitation
+      claimed by an account that is not the invited address. The invitation is
+      untouched, so this is not an unavailable invite either — the page keeps the
+      card, signs the other account out and names the address it needs.
+    */
+    if (isRefusal(body, 'address_required')) {
+      throw new InviteAddressRequiredError(
+        bodyMessage(body) ?? 'This invitation must be accepted with the address it was sent to.',
+        bodyEmail(body),
       );
     }
 

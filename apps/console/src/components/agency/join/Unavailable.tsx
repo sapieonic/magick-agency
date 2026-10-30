@@ -1,18 +1,25 @@
 import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { AGENCY_LOGIN_PATH } from '../../../utils/returnPath';
-import { UNAVAILABLE_COPY } from '../../../utils/agencyInviteJoinCopy';
 import type { InviteUnavailableStatus } from '../../../types/invite';
 import { JoinCardHeader } from './JoinCardHeader';
+import { JOIN_DOORS, type JoinDoor } from './joinDoor';
 import styles from './AgencyJoin.module.css';
 
 /**
  * The invite cannot be used, and each reason gets its own words and its own way
  * out — see `UNAVAILABLE_COPY` for why there are five screens and not one
- * "invalid link".
+ * "invalid link". The words and the sign-in page are the door's: an agent is sent
+ * to the agency door and told their station will open, anybody else to `/login`
+ * (returning to `destination`, the page's landing) and told their workspace will.
  */
-export function Unavailable({ status }: { status: InviteUnavailableStatus }) {
-  const copy = UNAVAILABLE_COPY[status];
+export function Unavailable({ status, door, destination }: {
+  status: InviteUnavailableStatus;
+  door: JoinDoor;
+  destination: string;
+}) {
+  const { unavailable } = JOIN_DOORS[door];
+  const signInPath = JOIN_DOORS[door].signInPath(destination);
+  const copy = unavailable[status];
   const heading = useRef<HTMLHeadingElement>(null);
 
   /*
@@ -28,11 +35,11 @@ export function Unavailable({ status }: { status: InviteUnavailableStatus }) {
 
   return (
     <div className={styles.card}>
-      <JoinCardHeader />
+      <JoinCardHeader door={door} />
       <h1 className={styles.outcomeTitle} tabIndex={-1} ref={heading}>{copy.title}</h1>
       <p className={styles.outcomeBody}>{copy.body}</p>
       {copy.action === 'sign_in' && (
-        <Link to={AGENCY_LOGIN_PATH} className="btn-primary" style={{ width: '100%' }}>
+        <Link to={signInPath} className="btn-primary" style={{ width: '100%' }}>
           Go to sign in
         </Link>
       )}

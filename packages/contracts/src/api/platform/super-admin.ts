@@ -12,6 +12,7 @@
  */
 
 import type { Membership, Tenant } from './auth';
+import type { InviteEmailResult } from './team';
 import type { Role } from '../../rbac';
 
 // ─── Super-admins and login ─────────────────────────────────────────────────
@@ -104,14 +105,17 @@ export interface CreateTenantBody {
 /**
  * The 201 body.
  *
- * The body is `{ tenant, owner_email }`. There is no per-tenant internal-handler
- * API key and no pooled number, so creation writes a `pending_` owner stub and
- * nothing else. `tenant` is the raw tenant row — typed `Tenant`, not
+ * The body is `{ tenant, owner_email, invite_email }`. There is no per-tenant
+ * internal-handler API key and no pooled number: creation writes the tenant, its
+ * owner's `tenant_owner` membership (on a `pending_` stub for an unknown address)
+ * and the owner's invitation. `tenant` is the raw tenant row — typed `Tenant`, not
  * `SuperAdminTenant`, which it is not (no `member_count`).
  */
 export interface CreateTenantResponse {
   tenant: Tenant;
   owner_email: string;
+  /** Whether the owner's invitation was emailed. See {@link AddUserToTenantResponse}. */
+  invite_email?: InviteEmailResult;
 }
 
 // ─── Users and memberships ──────────────────────────────────────────────────
@@ -158,6 +162,18 @@ export interface AddUserToTenantBody {
 /** The 201 body. */
 export interface AddUserToTenantResponse {
   membership: Membership;
+  /**
+   * Whether the invitee was emailed — the shape `POST /users/invite` answers, so
+   * a `sent: false` carries the reason (`not_configured`, `failed`).
+   *
+   * Optional because a server that predates it answers without it, and the UI has
+   * to say something true then: that the person was added, and nothing about mail.
+   *
+   * There is no `sign_in_url` beside it, unlike `POST /users/invite`, on purpose:
+   * the link is a single-use credential for a membership in somebody else's
+   * workspace, and the super-admin UI has no hand-off that needs it.
+   */
+  invite_email?: InviteEmailResult;
 }
 
 /**

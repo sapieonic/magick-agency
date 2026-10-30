@@ -242,3 +242,30 @@ export function hasPermission(
 export function canManageRole(managerRole: MembershipRole, targetRole: MembershipRole): boolean {
   return ROLE_HIERARCHY[managerRole] > ROLE_HIERARCHY[targetRole];
 }
+
+/**
+ * Whether an invitation for `role` may be claimed ONLY by a sign-in whose email
+ * is the invited address — `account_admin` and above (decision B25).
+ *
+ * ── Why the flexible claim stops at `account_admin` ───────────────────────
+ * An invite token binds whatever Firebase identity presents it, and for most
+ * roles that is the point: an agent whose only Google account is personal must
+ * still get in, and the claim audits the mismatch instead of refusing it. But it
+ * also makes a forwarded or leaked invitation mail a bearer credential for the
+ * seat it names, and from `account_admin` up that seat can invite people, change
+ * roles and supervise calls. So for those roles the token alone is not enough:
+ * the identity claiming it must carry the address the mail was sent to.
+ *
+ * ── One rule, read by both sides ──────────────────────────────────────────
+ * The server enforces it on `POST /invites/:token/claim` (against the
+ * membership's CURRENT role, not the one the invitation was issued for) and
+ * reports it on `GET /invites/:token` as `requires_matching_address`; the
+ * console's join page reads that field to show the "use the invited address"
+ * screen instead of offering to continue with another account. Declared here, by
+ * floor rather than by list, so a role added above `account_admin` is covered
+ * without anybody remembering this function. `test/rbac.test.ts` pins exactly
+ * which roles it answers true for.
+ */
+export function inviteRequiresMatchingAddress(role: MembershipRole): boolean {
+  return ROLE_HIERARCHY[role] >= ROLE_HIERARCHY.account_admin;
+}

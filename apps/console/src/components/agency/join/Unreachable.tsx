@@ -1,4 +1,5 @@
 import { JoinCardHeader } from './JoinCardHeader';
+import type { JoinDoor } from './joinDoor';
 import styles from './AgencyJoin.module.css';
 
 /**
@@ -9,10 +10,18 @@ import styles from './AgencyJoin.module.css';
  * "contact your supervisor" the wrong one. Telling somebody to chase a colleague
  * over a five-second outage is how a working invite becomes a support ticket.
  */
-export function Unreachable({ message, onRetry }: { message: string; onRetry: () => void }) {
+export function Unreachable({
+  message,
+  onRetry,
+  door,
+}: {
+  message: string;
+  onRetry: () => void;
+  door: JoinDoor;
+}) {
   return (
     <div className={styles.card}>
-      <JoinCardHeader />
+      <JoinCardHeader door={door} />
       <h1 className={styles.outcomeTitle}>We could not open your invitation</h1>
       <p className={styles.outcomeBody}>
         The link looks fine — we just could not reach us to read it. This is usually

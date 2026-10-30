@@ -71,10 +71,15 @@ export interface UpdateRoleInput {
  * Whether the public API layer actually told the invitee, and why not when it did not.
  *
  * A discriminated union rather than a boolean plus an optional string, because
- * the three reasons go to three different people: `not_configured` is an
- * operator's (no `platformEmail` block), `not_implemented` is ours (configured,
- * transport still a TODO), and `failed` is the mail provider's. Collapsing them
- * would send all three to the same place.
+ * the reasons go to different people: `not_configured` is an operator's (no
+ * `mailjet` block, or no `CONSOLE_BASE_URL` to build the link from) and `failed`
+ * is the mail provider's. Collapsing them would send both to the same place.
+ *
+ * `not_implemented` ("this role has no invitation") was a third, sent for every
+ * role but `agent` while only agents had a claim page. **The current server no
+ * longer emits it** — every role is mailed a token-bound link — but a client must
+ * still tolerate it from an older server during a rolling deploy, which the
+ * widened `string` below already does.
  *
  * `reason` is declared as a widened `string` on the failure arm on purpose:
  * the public API layer may add one, and a client that has to be redeployed to keep parsing a

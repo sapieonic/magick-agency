@@ -51,6 +51,13 @@ const mocks = vi.hoisted(() => ({
     findByProvenEmail: vi.fn(),
     resolveByProvenEmail: vi.fn(),
     create: vi.fn(),
+    findById: vi.fn(),
+  },
+  membershipInviteRepository: {
+    createSupersedingOutstanding: vi.fn(),
+  },
+  tenantRepository: {
+    findById: vi.fn(),
   },
   accountRepository: {
     findByIdInTenant: vi.fn(),
@@ -79,6 +86,19 @@ vi.mock('@magick-agency/db/repositories/user.repository', () => ({
 }));
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({
   accountRepository: mocks.accountRepository,
+}));
+/**
+ * The invite ROW is doubled too. A `viewer` invite used to mint no token and so
+ * never reached this repository; every role mints one now, and an undoubled
+ * repository would fail on the missing pool — which `issueInviteReportingFailure`
+ * then reports as `failed`, so the failure cases below would pass for a reason
+ * that has nothing to do with the one in their titles.
+ */
+vi.mock('../../../../src/db/repositories/membership-invite.repository.js', () => ({
+  membershipInviteRepository: mocks.membershipInviteRepository,
+}));
+vi.mock('@magick-agency/db/repositories/tenant.repository', () => ({
+  tenantRepository: mocks.tenantRepository,
 }));
 vi.mock('../../../../src/cache/redis-cache.js', () => ({
   // Q5: revocation deletes go through `delForRevocation` (retried, reports
@@ -135,8 +155,13 @@ describe('POST /invite — the mail work can never fail the invite', () => {
     mocks.membershipRepository.create.mockResolvedValue(MEMBERSHIP);
     mocks.userRepository.resolveByProvenEmail.mockResolvedValue({ status: 'none' });
     mocks.userRepository.create.mockResolvedValue({ id: 'u-1', email: 'new@test.com' });
-    mocks.inviteSignInUrl.mockResolvedValue('https://app.test/login');
-    mocks.sendInviteEmail.mockResolvedValue({ sent: false, reason: 'not_implemented' });
+    mocks.membershipInviteRepository.createSupersedingOutstanding.mockImplementation(
+      async (input: Record<string, unknown>) => ({ id: 'invite-1', ...input }),
+    );
+    mocks.tenantRepository.findById.mockResolvedValue({ id: TENANT, name: 'Acme' });
+    mocks.userRepository.findById.mockResolvedValue({ id: 'inviter-1', display_name: 'Priya' });
+    mocks.inviteSignInUrl.mockResolvedValue('https://app.test/join/tok');
+    mocks.sendInviteEmail.mockResolvedValue({ sent: true, messageId: null });
   });
 
   it('still answers 201 when resolving the sign-in url REJECTS', async () => {
@@ -192,17 +217,31 @@ describe('POST /invite — the mail work can never fail the invite', () => {
     expect(res.json().invite_email).toEqual({ sent: false, reason: 'failed' });
     // The url resolved before the mailer threw, so it is reported — a failure
     // sending is not a reason to withhold the link the supervisor needs.
-    expect(res.json().sign_in_url).toBe('https://app.test/login');
+    expect(res.json().sign_in_url).toBe('https://app.test/join/tok');
   });
 
-  it('reports the url and the mailer\'s own reason on the ordinary path', async () => {
-    // The shipped behaviour today: no transport, so `not_implemented`. Asserted
-    // so the failure cases above are not the only thing pinning this shape.
+  it('reports the url and the mailer\'s own answer on the ordinary path', async () => {
+    /**
+     * A `viewer` invite, mailed. This answered `{ sent: false, reason:
+     * 'not_implemented' }` with a token-less `/login` link for every role but
+     * `agent` — the production defect. Now the issuer mints a token for the
+     * viewer, writes the row, resolves the URL WITH that token and hands it to
+     * the mailer.
+     */
     const res = await invite(await buildApp());
 
     expect(res.statusCode).toBe(201);
-    expect(res.json().invite_email).toEqual({ sent: false, reason: 'not_implemented' });
-    expect(res.json().sign_in_url).toBe('https://app.test/login');
+    expect(res.json().invite_email).toEqual({ sent: true });
+    expect(res.json().sign_in_url).toBe('https://app.test/join/tok');
+    expect(mocks.membershipInviteRepository.createSupersedingOutstanding).toHaveBeenCalledWith(
+      expect.objectContaining({ membership_id: 'm-new', role: 'viewer', email: 'new@test.com' }),
+    );
+    const [role, token] = mocks.inviteSignInUrl.mock.calls[0]!;
+    expect(role).toBe('viewer');
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(mocks.sendInviteEmail).toHaveBeenCalledWith(expect.objectContaining({
+      role: 'viewer', email: 'new@test.com', signInUrl: 'https://app.test/join/tok',
+    }));
   });
 
   it('reports sign_in_url as null when there is no CONSOLE_BASE_URL, without failing', async () => {

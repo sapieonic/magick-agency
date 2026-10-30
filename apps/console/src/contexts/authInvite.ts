@@ -14,9 +14,11 @@ import { markJoinInProgress, clearJoinInProgress } from '../utils/inviteJoin';
 import type { SessionResponse } from '../types/auth';
 
 /*
- * The invite-credential flow of `AuthProvider`: how an invited agent on
- * `/agency/join/:token` gets a Firebase credential WITHOUT a platform session
- * being created from it, and how the invite claim then turns it into one.
+ * The invite-credential flow of `AuthProvider`: how an invitee on either invite
+ * page — `/agency/join/:token` for an agent, `/join/:token` for every other role,
+ * both running `components/agency/join/useInviteClaim` — gets a Firebase
+ * credential WITHOUT a platform session being created from it, and how the invite
+ * claim then turns it into one.
  *
  * Two hooks rather than one because `AuthProvider` sits between them:
  * `useInviteJoin` owns the suppression state and `endJoin`, which the

@@ -751,7 +751,30 @@ describe('(h) the public routes disclose nothing beyond status, except for a pen
         inviter_name: ws.owner.display_name,
         product_name: expect.any(String),
         expires_at: new Date(invite.expires_at).toISOString(),
+        requires_matching_address: false,
       },
     });
+  });
+
+  it('a claim refused for the invited address (decision B25) answers exactly its body, naming only the invited address', async () => {
+    // The one refusal that carries an address. It is the INVITED one, which the
+    // GET above already hands this token holder; the address presented is never
+    // echoed, and nothing about the membership, user or tenant is added.
+    const ws = await workspace('h-b25');
+    const { token, email, membership, invite } = await stubInvite(ws, { role: 'tenant_admin' });
+    identity('tok-h-b25', { uid: 'fb-h-b25', email: 'not.them@gmail.test', email_verified: true });
+
+    const res = await claim(token, 'tok-h-b25');
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toStrictEqual({
+      error: 'Conflict',
+      message: `This invitation must be accepted with ${email}. Sign out of the account you used and sign in with that address.`,
+      status: 'address_required',
+      email,
+    });
+    expect(res.body).not.toContain('not.them@gmail.test');
+    // Nothing spent, nothing bound.
+    expect((await inviteRows(membership.id))[0]).toMatchObject({ id: invite.id, claimed_at: null, revoked_at: null });
   });
 });

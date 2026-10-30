@@ -40,6 +40,7 @@ import {
   getInvite,
   claimInvite,
   resendInvite,
+  InviteAddressRequiredError,
   InviteIdentityInUseError,
   InviteUnavailableError,
 } from '../../api/invites';
@@ -54,6 +55,7 @@ const INVITE = {
   inviter_name: 'Priya Sharma',
   product_name: 'Magick Agency Dialer',
   expires_at: '2026-09-12T09:00:00.000Z',
+  requires_matching_address: false,
 };
 
 /**
@@ -78,6 +80,31 @@ describe('getInvite', () => {
 
     await expect(getInvite(TOKEN)).resolves.toEqual({ status: 'pending', invite: INVITE });
     expect(mocks.trackApiErrorEvent).not.toHaveBeenCalled();
+  });
+
+  it('keeps requires_matching_address when the server sends it', async () => {
+    const admin = { ...INVITE, role: 'tenant_admin', requires_matching_address: true };
+    respondWith(200, { status: 'pending', invite: admin });
+
+    await expect(getInvite(TOKEN)).resolves.toEqual({ status: 'pending', invite: admin });
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['null', null],
+    ['a string', 'true'],
+  ] as const)('reads requires_matching_address %s as false', async (_shape, value) => {
+    /*
+      A server older than decision B25 sends no field. False is the page this
+      client always rendered, and it is safe: the server that enforces the rule
+      refuses the claim with `address_required`, which lands on the same screen.
+    */
+    const { requires_matching_address: _drop, ...older } = INVITE;
+    const invite = value === undefined ? older : { ...older, requires_matching_address: value };
+    respondWith(200, { status: 'pending', invite });
+
+    const result = await getInvite(TOKEN);
+    expect(result).toEqual({ status: 'pending', invite: { ...older, requires_matching_address: false } });
   });
 
   it('answers a 404 as a VALUE, and reports nothing', async () => {
@@ -168,6 +195,36 @@ describe('claimInvite', () => {
     expect(err).not.toBeInstanceOf(InviteUnavailableError);
     expect((err as Error).message).toBe(message);
     expect(mocks.trackApiErrorEvent).not.toHaveBeenCalled();
+  });
+
+  it('raises address_required as its own thing, carrying the advice and the invited address', async () => {
+    /*
+      Decision B25: an `account_admin`-or-above invitation claimed by an account on
+      another address. The invitation is untouched and the invited address still
+      claims it, so — like `identity_in_use` — it must not tear the page down.
+    */
+    const message =
+      'This invitation must be accepted with priya@acme.com. Sign out of the account you used '
+      + 'and sign in with that address.';
+    respondWith(409, { error: 'Conflict', status: 'address_required', message, email: 'priya@acme.com' });
+
+    const err = await claimInvite(TOKEN, 'id-token').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InviteAddressRequiredError);
+    expect(err).not.toBeInstanceOf(InviteUnavailableError);
+    expect(err).not.toBeInstanceOf(InviteIdentityInUseError);
+    expect((err as InviteAddressRequiredError).message).toBe(message);
+    expect((err as InviteAddressRequiredError).email).toBe('priya@acme.com');
+    // A modelled outcome, not an outage.
+    expect(mocks.trackApiErrorEvent).not.toHaveBeenCalled();
+  });
+
+  it('raises a bare address_required with its own fallback copy and no address', async () => {
+    respondWith(409, { status: 'address_required' });
+
+    const err = await claimInvite(TOKEN, 'id-token').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InviteAddressRequiredError);
+    expect((err as InviteAddressRequiredError).email).toBeNull();
+    expect((err as Error).message).toMatch(/address it was sent to/i);
   });
 
   it('raises a bodyless 404 as an unusable invitation, not as an outage', async () => {

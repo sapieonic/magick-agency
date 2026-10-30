@@ -806,7 +806,7 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
     await app.close();
   });
 
-  it('carries the agency door for an agent and the plain link for everyone else', async () => {
+  it('carries the agency door for an agent and the workspace door for everyone else', async () => {
     /**
      * `inviteSignInUrl` is the REAL implementation in this suite, so this asserts
      * the shipped rule rather than a stub. It mirrors the console's `inviteSignInUrl`
@@ -820,6 +820,12 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
      * subject was not tested at all and deleting the `role === 'agent'` branch
      * from the mailer left it green. A base URL is now configured for the suite
      * and the DIFFERENCE is what is asserted.
+     *
+     * ── And then the viewer's half was the defect ──────────────────────────
+     * It went on to assert `viewerUrl === /login` and that only ONE invite row
+     * was written — i.e. that a viewer got no token. That was the production bug
+     * (invited operators and admins were never mailed a way in), pinned as a
+     * feature. Both roles now carry a token, each to its own claim page.
      */
     const app = await buildApp();
 
@@ -841,19 +847,21 @@ describe('POST /users/invite — the mail seam is additive and cannot fail the i
     expect(mocks.sendInviteEmail.mock.calls[0]![0].role).toBe('agent');
     expect(mocks.sendInviteEmail.mock.calls[1]![0].role).toBe('viewer');
     // The whole point of threading the role: an `agent` inherits no navigation, so
-    // the app shell is a page with nothing on it — and the sign-in page in front of
-    // it carries a Sign Up tab that would put an invited agent in a private empty
-    // tenant while this very membership goes unclaimed. Every other role's landing
-    // IS the shell.
+    // the app shell is a page with nothing on it, and their claim page is the
+    // agency one. Every other role's claim page finishes in the shell.
     expect(agentUrl).toMatch(
       new RegExp(`^${CONSOLE_BASE_URL}/agency/join/[A-Za-z0-9_-]{43}$`),
     );
-    expect(viewerUrl).toBe(`${CONSOLE_BASE_URL}/login`);
+    expect(viewerUrl).toMatch(
+      new RegExp(`^${CONSOLE_BASE_URL}/join/[A-Za-z0-9_-]{43}$`),
+    );
     expect(agentUrl).not.toBe(viewerUrl);
-    // A non-agent invite writes NO invitation row. There is no claim page for a
-    // `viewer` to land on, so a token for one would be a credential nothing can
-    // redeem sitting in a table — see `roleGetsTokenInvite`.
-    expect(mocks.membershipInviteRepository.createSupersedingOutstanding).toHaveBeenCalledTimes(1);
+    // BOTH invites write an invitation row, each for its own role — the token in
+    // the viewer's link is only redeemable because this row exists.
+    const rows = mocks.membershipInviteRepository.createSupersedingOutstanding.mock.calls.map(
+      (call: unknown[]) => (call[0] as { role: string }).role,
+    );
+    expect(rows).toEqual(['agent', 'viewer']);
     await app.close();
   });
 

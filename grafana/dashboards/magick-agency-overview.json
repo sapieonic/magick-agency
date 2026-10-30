@@ -1395,7 +1395,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Invite emails by role and result, and invite claims by result. `failed` emails mean an invited floor never arrives (`agy-invite-email-failures`); `identity_already_bound` and `cross_tenant_identity` claims in bursts read as account-takeover attempts (`agy-invite-claim-identity-conflicts`).",
+      "description": "Invite emails by role and result, and invite claims by result. `failed` emails mean invitees of that role never receive their only way in (`agy-invite-email-failures`); `identity_already_bound`, `cross_tenant_identity` and `address_required` (an admin-or-above invite presented by a sign-in that is not the invited address) claims in bursts read as account-takeover attempts (`agy-invite-claim-identity-conflicts`).",
       "fieldConfig": {
         "defaults": {
           "color": {
