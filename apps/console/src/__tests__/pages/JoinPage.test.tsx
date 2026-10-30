@@ -25,6 +25,11 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
  *  4. **An agent's invitation is forwarded to `/agency/join/:token`.** Neither
  *     door ever renders an invitation that belongs on the other.
  *  5. **Its own funnel.** `workspace_invite_*`, never `agency_invite_*`.
+ *  6. **Admin seats need the invited address (decision B25).** For an invitation
+ *     the server marks `requires_matching_address`, a Google account on another
+ *     address gets "must be accepted with <address>" and is signed out — never
+ *     "use this account anyway" — and the server's own `address_required` 409
+ *     lands on the same screen.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -81,7 +86,7 @@ vi.mock('../../analytics/events', () => ({
   trackWorkspaceInviteAddressMismatch: mocks.trackWorkspaceInviteAddressMismatch,
 }));
 
-import { InviteIdentityInUseError, InviteUnavailableError } from '../../api/invites';
+import { InviteAddressRequiredError, InviteIdentityInUseError, InviteUnavailableError } from '../../api/invites';
 import JoinPage from '../../pages/auth/JoinPage';
 import type { AgencyInvite } from '../../types/invite';
 
@@ -102,6 +107,7 @@ const INVITE: AgencyInvite = {
   // The brand's name, which is what the server sends for a non-agent invite.
   product_name: 'Acme Workspace',
   expires_at: '2026-11-06T09:00:00.000Z',
+  requires_matching_address: false,
 };
 
 /** A session answer for a first-time invitee: one tenant, the invited one. */
@@ -372,6 +378,173 @@ describe('the Google address mismatch', () => {
     unmount();
 
     await waitFor(() => expect(mocks.logout).toHaveBeenCalled());
+  });
+});
+
+describe('an invitation that must be accepted with the invited address (decision B25)', () => {
+  /*
+    From `account_admin` up the server refuses a claim from any account but the
+    invited address, because a forwarded mail would otherwise hand over a seat that
+    can invite people and supervise calls. The page must not offer "use this
+    account anyway" for those — it says which address is needed, signs the other
+    account out, and offers the way back to the options. Below that line the
+    ordinary mismatch (the describe above) is unchanged.
+  */
+  const ADMIN: AgencyInvite = { ...INVITE, role: 'account_admin', requires_matching_address: true };
+
+  const withRequiredMismatch = async (invite: AgencyInvite = ADMIN) => {
+    mocks.establishInviteCredential.mockResolvedValue({ email: 'omar.personal@gmail.com' });
+    const view = await renderInvitation(invite);
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+    await screen.findByTestId('address-required');
+    return view;
+  };
+
+  it.each(['account_admin', 'tenant_admin', 'tenant_owner'] as const)(
+    'a %s invitation names the address it needs and offers no way to continue with the other',
+    async (role) => {
+      await withRequiredMismatch({ ...ADMIN, role });
+
+      const screenText = screen.getByTestId('address-required').textContent ?? '';
+      expect(screen.getByRole('heading', { name: /use the address this invitation was sent to/i })).toBeTruthy();
+      expect(screenText).toMatch(/this invitation must be accepted with omar@acme\.com/i);
+      expect(screenText).toMatch(/you signed in as omar\.personal@gmail\.com, so we have signed you out of it/i);
+      expect(screenText).toMatch(/password form is already set to it/i);
+      // THE point: nothing on the page can claim with the other account.
+      expect(screen.queryByRole('button', { name: 'Use this account' })).toBeNull();
+      expect(screen.queryByText(/that is a different address/i)).toBeNull();
+      expect(screen.queryByRole('button', { name: /continue with google/i })).toBeNull();
+      expect(mocks.claimInvite).not.toHaveBeenCalled();
+      expect(mocks.navigate).not.toHaveBeenCalled();
+    },
+  );
+
+  it('signs the refused account out straight away, once', async () => {
+    const { unmount } = await withRequiredMismatch();
+
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+    // Nothing is left for the leave-the-page cleanup to drop.
+    unmount();
+    await act(async () => {});
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the refusal as a failed claim, and not as a mismatch the visitor could answer', async () => {
+    await withRequiredMismatch();
+
+    expect(mocks.trackWorkspaceInviteClaimFailed).toHaveBeenCalledWith({
+      method: 'google',
+      reason: 'address_required',
+    });
+    expect(mocks.trackWorkspaceInviteAddressMismatch).not.toHaveBeenCalled();
+    // No address in any event.
+    for (const call of [
+      ...mocks.trackWorkspaceInviteClaimFailed.mock.calls,
+      ...mocks.trackWorkspaceInviteClaimAttempted.mock.calls,
+    ]) {
+      expect(JSON.stringify(call)).not.toContain('@');
+    }
+  });
+
+  it('"Try again" waits for the sign-out, then returns to the two options', async () => {
+    let finishSignOut: () => void = () => {};
+    mocks.logout.mockReturnValue(new Promise<void>((resolve) => { finishSignOut = resolve; }));
+    await withRequiredMismatch();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again with that address' }));
+    expect(await screen.findByRole('button', { name: 'Signing out…' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /continue with google/i })).toBeNull();
+
+    await act(async () => { finishSignOut(); });
+
+    expect(await screen.findByRole('button', { name: /continue with google/i })).toBeTruthy();
+    expect(screen.queryByTestId('address-required')).toBeNull();
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('then claims normally with the invited address', async () => {
+    await withRequiredMismatch();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again with that address' }));
+    await screen.findByRole('button', { name: /continue with google/i });
+
+    mocks.establishInviteCredential.mockResolvedValue({ email: 'Omar@Acme.com' });
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+
+    await waitFor(() => expect(mocks.claimInvite).toHaveBeenCalledWith(TOKEN));
+    expect(mocks.navigate).toHaveBeenCalledWith('/app', { replace: true });
+    expect(mocks.trackWorkspaceInviteClaimSucceeded).toHaveBeenCalledWith({
+      method: 'google',
+      address_matched: true,
+    });
+  });
+
+  it('takes the rule from the invitation, not from the role it names', async () => {
+    // The server decides on the membership's CURRENT role, which can differ from
+    // the role the invitation was issued for. So the field is what counts: an
+    // invitation still labelled `operator` whose seat is now an admin's gets the
+    // required screen…
+    await withRequiredMismatch({ ...INVITE, role: 'operator', requires_matching_address: true });
+    expect(screen.queryByRole('button', { name: 'Use this account' })).toBeNull();
+    cleanup();
+
+    // …and an admin-labelled one the server says is flexible gets the ordinary
+    // confirmation.
+    mocks.establishInviteCredential.mockResolvedValue({ email: 'omar.personal@gmail.com' });
+    await renderInvitation({ ...ADMIN, requires_matching_address: false });
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+    expect(await screen.findByRole('button', { name: 'Use this account' })).toBeTruthy();
+  });
+
+  describe('when the server refuses anyway (409 address_required)', () => {
+    /*
+      The page did not know: a server that does not send the field (read as
+      `false`), or a role changed after the page loaded. The server is the control,
+      and its refusal must land on the same screen — not as a generic error under
+      a confirmation whose button can only fail again.
+    */
+    const refusal = () => new InviteAddressRequiredError(
+      'This invitation must be accepted with omar@acme.com. Sign out of the account you used and sign in with that address.',
+      'omar@acme.com',
+    );
+
+    it('after "Use this account": shows the required screen and signs the account out', async () => {
+      mocks.claimInvite.mockRejectedValue(refusal());
+      mocks.establishInviteCredential.mockResolvedValue({ email: 'omar.personal@gmail.com' });
+      await renderInvitation({ ...ADMIN, requires_matching_address: false });
+      fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Use this account' }));
+
+      await screen.findByTestId('address-required');
+      expect(screen.getByTestId('address-required').textContent)
+        .toMatch(/must be accepted with omar@acme\.com.*you signed in as omar\.personal@gmail\.com/i);
+      expect(screen.queryByRole('button', { name: 'Use this account' })).toBeNull();
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(mocks.logout).toHaveBeenCalledTimes(1);
+      expect(mocks.navigate).not.toHaveBeenCalled();
+      expect(mocks.trackWorkspaceInviteClaimFailed).toHaveBeenCalledWith({
+        method: 'google',
+        reason: 'address_required',
+      });
+    });
+
+    it('from the password path: the same screen, without an address it never learned', async () => {
+      mocks.claimInvite.mockRejectedValue(new InviteAddressRequiredError('Refused.', null));
+      mocks.establishInviteCredential.mockResolvedValue({ email: null });
+      await renderInvitation(ADMIN);
+      await fillPassword('correct horse battery');
+      fireEvent.click(screen.getByRole('button', { name: 'Create my sign-in' }));
+
+      await screen.findByTestId('address-required');
+      const text = screen.getByTestId('address-required').textContent ?? '';
+      // Falls back to the invitation's own address when the 409 named none.
+      expect(text).toMatch(/must be accepted with omar@acme\.com/i);
+      expect(text).toMatch(/we have signed you out of the account you used/i);
+      expect(mocks.logout).toHaveBeenCalledTimes(1);
+      expect(mocks.trackWorkspaceInviteClaimFailed).toHaveBeenCalledWith({
+        method: 'create',
+        reason: 'address_required',
+      });
+    });
   });
 });
 

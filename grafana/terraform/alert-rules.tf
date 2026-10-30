@@ -193,18 +193,23 @@ locals {
       },
       {
         uid = "agy-invite-claim-identity-conflicts"
-        # cross_tenant_identity >= 2/h
-        # and identity_already_bound >= 5/h, each arm a comparison filter, so
-        # the threshold is 0.
-        name          = "Burst of invite claims bound to the wrong identity"
-        expr          = "(sum by (service_name, result) (((invite_claims_total{result=\"cross_tenant_identity\",${local.agency}} unless invite_claims_total{result=\"cross_tenant_identity\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(invite_claims_total{result=\"cross_tenant_identity\",${local.agency}}[1h])) >= 2) or (sum by (service_name, result) (((invite_claims_total{result=\"identity_already_bound\",${local.agency}} unless invite_claims_total{result=\"identity_already_bound\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(invite_claims_total{result=\"identity_already_bound\",${local.agency}}[1h])) >= 5)"
+        # cross_tenant_identity >= 2/h,
+        # identity_already_bound >= 5/h and address_required >= 3/h, each arm a
+        # comparison filter, so the threshold is 0. address_required (decision
+        # B25): an account_admin-or-above invite claimed by a sign-in that is not
+        # the invited address. The join page stops that before it claims, so the
+        # server only sees it from a stale page, a role change mid-flight, or a
+        # client that is not the console — a burst is somebody holding admin
+        # invite links that are not theirs.
+        name          = "Burst of invite claims from the wrong identity"
+        expr          = "(sum by (service_name, result) (((invite_claims_total{result=\"cross_tenant_identity\",${local.agency}} unless invite_claims_total{result=\"cross_tenant_identity\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(invite_claims_total{result=\"cross_tenant_identity\",${local.agency}}[1h])) >= 2) or (sum by (service_name, result) (((invite_claims_total{result=\"identity_already_bound\",${local.agency}} unless invite_claims_total{result=\"identity_already_bound\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(invite_claims_total{result=\"identity_already_bound\",${local.agency}}[1h])) >= 5) or (sum by (service_name, result) (((invite_claims_total{result=\"address_required\",${local.agency}} unless invite_claims_total{result=\"address_required\",${local.agency}} offset 1h) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 1h)) or increase(invite_claims_total{result=\"address_required\",${local.agency}}[1h])) >= 3)"
         op            = "gt"
         threshold     = 0
         for           = "0s"
         severity      = "warning"
         no_data_state = "OK"
         summary       = "Invite claims are being presented by a different identity"
-        description   = "invite_claims_total{result=\"{{ $labels.result }}\"} passed its bar in the last hour on {{ $labels.service_name }} (cross_tenant_identity: 2+, identity_already_bound: 5+). identity_already_bound: the invited membership is already bound to a DIFFERENT Firebase account. cross_tenant_identity: the invited user is pending in another tenant, and binding it would sign the claimant into a workspace the token does not name. Either can be honest once; a burst is worth reading as an account-takeover attempt. The public response is the same for both by design, so only this signal separates them. Read the 'Invite claim refused' warn logs (tenant, membership, claimant) — many memberships in one tenant, one claimant, one IP? Revoke the affected invites and treat the inviting tenant as suspect."
+        description   = "invite_claims_total{result=\"{{ $labels.result }}\"} passed its bar in the last hour on {{ $labels.service_name }} (cross_tenant_identity: 2+, identity_already_bound: 5+, address_required: 3+). identity_already_bound: the invited membership is already bound to a DIFFERENT Firebase account. cross_tenant_identity: the invited user is pending in another tenant, and binding it would sign the claimant into a workspace the token does not name. address_required: an account_admin, tenant_admin or tenant_owner invitation was presented by a sign-in whose email is not the invited address (refused, nothing bound, the invite stays live); the console stops this before claiming, so these come from a stale page or a client that is not the console. Any of the three can be honest once; a burst is worth reading as an account-takeover attempt, address_required as somebody holding admin invite links (a forwarded or leaked mail) that are not theirs. The public response for the first two is the same by design, so only this signal separates them. Read the 'Invite claim refused' warn logs (tenant, invitation, membership or role; never an address) — many memberships in one tenant, one claimant, one IP? Revoke the affected invites and treat the inviting tenant as suspect."
       },
     ]
 

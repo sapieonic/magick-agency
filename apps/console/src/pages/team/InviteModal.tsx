@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { UserPlus } from 'lucide-react';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
+import { inviteRequiresMatchingAddress } from '@magick-agency/contracts/rbac';
 import { useTenant } from '../../contexts/TenantContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
@@ -205,6 +206,14 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
      * `isInvitationLink`.
      */
     const tokenLink = isInvitationLink(signInUrl);
+    /**
+     * Whether THIS role's invitation can only be accepted at the invited address
+     * — `account_admin` and above, by the rule the claim enforces (decision B25,
+     * `inviteRequiresMatchingAddress`, shared with the server). For those the
+     * "any address will do" reading below is false, and the supervisor is the
+     * one person who can tell the invitee before they try with the wrong account.
+     */
+    const exactAddress = inviteRequiresMatchingAddress(created.role);
 
     return (
       /* Overlay click, Escape and the close button all finish the hand-off. */
@@ -219,16 +228,18 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
 
             The address is still shown, because it is where the mail went and a
             typo is the one failure the supervisor can still fix. What is NOT said
-            any more is "they have to sign in with this exact address": a mailed
-            invitation is a token link for every role, and the join page lets them
-            confirm a different address rather than refusing it — so that sentence
-            would send somebody with only a personal account away believing they
-            could not join.
+            any more for most roles is "they have to sign in with this exact
+            address": a mailed invitation is a token link for every role, and below
+            `account_admin` the join page lets them confirm a different address
+            rather than refusing it — so that sentence would send somebody with only
+            a personal account away believing they could not join. From
+            `account_admin` up it is TRUE again (`exactAddress`), and it is said.
           */
           <>
             <p className={styles.handoffLead} data-testid="invite-emailed">
               We’ve emailed <strong>{created.email}</strong> a link to join. It works
               once, and they set up their own sign-in from it.
+              {exactAddress && ' They have to accept it signed in as this exact address.'}
             </p>
             <CopyableField label="Their email" value={created.email} mono />
           </>
@@ -241,7 +252,8 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
               <strong>{created.email}</strong> can now join, but we didn’t email them —
               send them the link yourself.{' '}
               {tokenLink
-                ? 'It works once, so send it only to them.'
+                ? `It works once, so send it only to them.${
+                  exactAddress ? ' They have to accept it signed in as this exact address.' : ''}`
                 : 'They have to sign in with this exact address for the invite to find them.'}
             </p>
             <CopyableField label="Their email" value={created.email} mono />

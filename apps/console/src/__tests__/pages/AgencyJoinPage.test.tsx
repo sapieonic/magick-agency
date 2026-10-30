@@ -106,6 +106,7 @@ const INVITE: AgencyInvite = {
   inviter_name: 'Priya Sharma',
   product_name: 'Magick Agency Dialer',
   expires_at: '2026-09-12T09:00:00.000Z',
+  requires_matching_address: false,
 };
 
 /** A session answer. Only its identity matters here — `AuthContext` owns its shape. */
@@ -522,6 +523,30 @@ describe('the Google address mismatch', () => {
       method: 'google',
       reason: 'mismatch_declined',
     });
+  });
+});
+
+describe('the invited-address rule (decision B25) on the agent door', () => {
+  /*
+    An agent seat never needs the invited address — `requires_matching_address`
+    is false for every agent invitation, and the mismatch above is unchanged. But
+    the rule is the INVITATION's, not the page's: the shared claim reads the
+    field, never the door, so if the server ever marks an invitation here the agent
+    page renders the same screen as the workspace page.
+  */
+  it('follows the field rather than the door', async () => {
+    mocks.establishInviteCredential.mockResolvedValue({ email: 'p.sharma@gmail.com' });
+    await renderInvitation({ ...INVITE, requires_matching_address: true });
+    fireEvent.click(screen.getByRole('button', { name: /continue with google/i }));
+
+    await screen.findByTestId('address-required');
+    expect(screen.queryByRole('button', { name: 'Use this account' })).toBeNull();
+    expect(mocks.logout).toHaveBeenCalledTimes(1);
+    expect(mocks.trackAgencyInviteClaimFailed).toHaveBeenCalledWith({
+      method: 'google',
+      reason: 'address_required',
+    });
+    expect(mocks.trackAgencyInviteAddressMismatch).not.toHaveBeenCalled();
   });
 });
 

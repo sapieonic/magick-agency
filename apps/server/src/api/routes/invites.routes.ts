@@ -4,7 +4,8 @@ import { verifyIdToken } from '../../auth/firebase.js';
 import { sessionMiddleware, invalidateUserCache } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
-import { canManageRole } from '@magick-agency/contracts/rbac';
+import { canManageRole, inviteRequiresMatchingAddress } from '@magick-agency/contracts/rbac';
+import type { InviteClaimRefusalStatus } from '@magick-agency/contracts/api/platform/invite';
 import { buildSessionPayload } from '../../auth/session-payload.js';
 import {
   LiveInviteConflictError,
@@ -65,14 +66,17 @@ const log = createChildLogger({ component: 'invite-routes' });
  * not these endpoints; both pages then call them. Confusing the two produces a
  * link that 404s in a browser and an endpoint nothing reaches.
  *
- * ── Role-agnostic, and that is now load-bearing ────────────────────────────
+ * ── Role-agnostic, with ONE deliberate exception ───────────────────────────
  * Every role is issued a token (`issueInvite`), so these routes serve an
- * operator's or a workspace owner's claim exactly as they serve an agent's.
- * Nothing below branches on the role: the membership, its role and its tenant
- * all come off the stored rows, the bind's guards (`AdoptIdentityOptions`) are
- * about the USER row rather than the role on it, and the session the claim
- * answers with lists whatever memberships the user holds. The one role-shaped
- * value is `product_name`, which names what the reader is joining.
+ * operator's or a workspace owner's claim exactly as they serve an agent's. The
+ * membership, its role and its tenant all come off the stored rows, the bind's
+ * guards (`AdoptIdentityOptions`) are about the USER row rather than the role on
+ * it, and the session the claim answers with lists whatever memberships the user
+ * holds. Two values are role-shaped: `product_name`, which names what the reader
+ * is joining, and `requires_matching_address` — the one rule that changes what
+ * the claim accepts. From `account_admin` up, the identity claiming must carry
+ * the invited address (`inviteRequiresMatchingAddress`, decision B25); see the
+ * claim route for why the line is there and why it is read off the membership.
  *
  * ── Why a claim can never provision anything ───────────────────────────────
  * `POST /auth/session` path 4 refuses an identity it does not recognise rather
@@ -357,6 +361,15 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
         inviter_name: inviter?.display_name ?? null,
         product_name: productNameFor(invite.role),
         expires_at: invite.expires_at,
+        /**
+         * Off the MEMBERSHIP's role, which this handler has just read, rather
+         * than `invite.role` — the same value the claim decides on, so the page
+         * cannot promise a flexible claim that the button then refuses (or the
+         * reverse) for somebody whose role changed after the mail went out. No
+         * new disclosure: it is a function of a role the caller can already see
+         * one field up, give or take that change.
+         */
+        requires_matching_address: inviteRequiresMatchingAddress(membership.role),
       },
     });
   });
@@ -405,11 +418,11 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * `userRepository.findByProvenEmail`.
    *
    * ── A DIFFERENT address still binds, and the mismatch is AUDITED ───────────
-   * When the addresses differ, the claim proceeds: the token is the authority,
-   * and the person who received the mail is entitled to use whatever identity
-   * they have. Refusing here would recreate the original defect one layer up —
-   * an agent whose only Google account is personal would be locked out exactly
-   * as they were before.
+   * Below `account_admin`, when the addresses differ, the claim proceeds: the
+   * token is the authority, and the person who received the mail is entitled to
+   * use whatever identity they have. Refusing here would recreate the original
+   * defect one layer up — an agent whose only Google account is personal would
+   * be locked out exactly as they were before.
    *
    * What that costs is that `memberships` and `users` afterwards contain no
    * trace of the discrepancy: the row simply names an identity. So the mismatch
@@ -418,6 +431,16 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
    * through this door" can be answered later. That row is not optional
    * bookkeeping — it is the compensating control that makes accepting the
    * mismatch safe.
+   *
+   * ── From `account_admin` up, the address MUST match (decision B25) ─────────
+   * That flexibility makes the mail itself a bearer credential: forwarded to the
+   * wrong person, or read off a shared inbox, it binds whoever opens it. For an
+   * agent that is a seat at a station; from `account_admin` up it is a seat that
+   * invites people, changes roles and supervises calls, and an audit row written
+   * after the fact does not undo that. So for those roles the claim is refused
+   * (409 `address_required`) unless the signed-in email is the invited address —
+   * see the check itself for what it reads, what it deliberately does not, and
+   * what it leaves behind.
    *
    * ── It never provisions ───────────────────────────────────────────────────
    * Nothing on this path creates a tenant, an account or a membership. See the
@@ -499,6 +522,72 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
         error: 'Conflict',
         message: INVITE_CONFLICT_MESSAGES.revoked,
         status: 'revoked' satisfies InviteStatus,
+      });
+    }
+
+    /**
+     * The address rule for `account_admin` and above (decision B25), and it has
+     * to sit exactly here: after the membership read, because that is where the
+     * role comes from, and BEFORE `claimWithIdentity`, because the bind is the
+     * thing being refused — nothing may be spent or bound by a claim that is
+     * about to be turned away.
+     *
+     * ── The MEMBERSHIP's role, not the invitation's ───────────────────────────
+     * `invite.role` is the role the mail was ISSUED for and never changes;
+     * `membership.role` is the seat this claim is about to activate, and
+     * `PUT /users/:id/role` can move it in between. Deciding on the invitation
+     * would let somebody invited as an `operator` and promoted to `tenant_admin`
+     * before claiming take the admin seat with any account at all — the exact
+     * hole this closes, reopened by a role change. The reverse (invited as an
+     * admin, demoted to `operator`) is the flexible claim that role now gets.
+     *
+     * ── `email_verified` is deliberately NOT required ─────────────────────────
+     * The common honest claimant here is somebody creating a password on the
+     * join page, where the address field is locked to the invited one: that
+     * Firebase account is unverified by construction, seconds old. What proves
+     * they control the inbox is that they are holding a 256-bit token that was
+     * delivered to it. The rule is about the address the identity CARRIES, so a
+     * forwarded mail no longer binds a stranger's own account; requiring
+     * verification on top would lock out the password path and add nothing
+     * against the leak this exists for — a stranger cannot sign in with Google
+     * as the invited address, and an unverified password account for it still
+     * adopts no address (`AdoptIdentityOptions.adoptEmail`).
+     *
+     * ── A missing email is a mismatch ────────────────────────────────────────
+     * A phone-auth identity carries no address at all; {@link addressMatches}
+     * answers false for it rather than letting two empty strings agree.
+     *
+     * ── What the refusal leaves, and what it says ────────────────────────────
+     * The invitation stays OUTSTANDING — nothing above has written anything — so
+     * the right person can still use the same link, which is the remedy the
+     * message names. The invited address goes back in the body: whoever is
+     * holding this token can already read it from `GET /invites/:token`, and it
+     * is the one fact they need in order to try again. The log line carries the
+     * tenant, the invitation and the role and NO address (neither the invited
+     * one nor the one presented): a burst of these against one tenant is the
+     * signal (`agy-invite-claim-identity-conflicts`), and the addresses add
+     * nothing to finding it but a reason for the log to be sensitive.
+     *
+     * No audit row, matching every other refusal on this route
+     * (`user.invite_claimed` records an identity being bound, and the catalog
+     * has no refusal action): the warn and `invite_claims_total` are the record.
+     */
+    if (
+      inviteRequiresMatchingAddress(membership.role)
+      && !addressMatches(decoded.email, invite.email)
+    ) {
+      log.warn(
+        { tenantId: invite.tenant_id, inviteId: invite.id, role: membership.role },
+        'Invite claim refused: this role must be claimed with the invited email address',
+      );
+      countClaim('address_required');
+      return reply.code(409).send({
+        error: 'Conflict',
+        message:
+          `This invitation must be accepted with ${invite.email}. Sign out of the account you `
+          + 'used and sign in with that address.',
+        status: 'address_required' satisfies InviteClaimRefusalStatus,
+        email: invite.email,
       });
     }
 
@@ -718,8 +807,8 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
        * neither of which is helped by burning the link.
        *
        * One of the `status` values beyond the four `InviteStatus` carries
-       * (`identity_already_bound`, `identity_in_use`, `cross_tenant_identity`),
-       * and they are a deliberate addition: the alternative was a masked 500
+       * (`identity_already_bound`, `identity_in_use`, `cross_tenant_identity`,
+       * `address_required`), and they are a deliberate addition: the alternative was a masked 500
        * ("contact support and quote this request id") for a state the person
        * can resolve in one action. A client that only knows the four renders
        * its generic conflict message, which is a strictly better outcome than
@@ -735,7 +824,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
         message:
           'That sign-in already belongs to a different account here. Sign in with it directly, '
           + 'or ask for an invitation to be sent to that address.',
-        status: 'identity_in_use',
+        status: 'identity_in_use' satisfies InviteClaimRefusalStatus,
       });
     }
 
@@ -757,7 +846,9 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
     await invalidateUserCache(user.id, beforeBind?.firebase_uid ?? null);
     await redisCache.del(membershipCacheKey(user.id, invite.tenant_id));
 
-    const emailMatched = normaliseEmail(decoded.email) === normaliseEmail(invite.email);
+    // The same comparison the address rule above made, so the gate and the
+    // audit flag cannot disagree about one claim.
+    const emailMatched = addressMatches(decoded.email, invite.email);
 
     platformAuditLogger.log({
       tenant_id: invite.tenant_id,
@@ -1012,15 +1103,34 @@ const INVITE_CONFLICT_MESSAGES: Record<Exclude<InviteStatus, 'pending'>, string>
 
 
 /**
- * Compare two addresses for the audit flag only — never for resolution.
+ * Normalise an address for comparison — never for resolution.
  *
  * Case-folded and trimmed because "Alice@Example.com" and "alice@example.com"
- * are the same inbox everywhere that matters, and recording a mismatch for a
- * capitalisation difference would make the flag noise that a reader learns to
- * ignore. This is emphatically NOT an identity check: nothing in this file
- * resolves a user from an address, and the value of this comparison is entirely
- * that it goes in an audit row.
+ * are the same inbox everywhere that matters: recording a mismatch for a
+ * capitalisation difference would make the audit flag noise that a reader learns
+ * to ignore, and refusing an admin's claim over one would be worse. Nothing in
+ * this file resolves a user from an address — the user always comes through the
+ * membership.
  */
 function normaliseEmail(email: string | null | undefined): string {
   return (email ?? '').trim().toLowerCase();
+}
+
+/**
+ * Whether the identity presenting a claim carries the invited address.
+ *
+ * Two readers, one answer: the audit row's `email_matched`, and the address rule
+ * that refuses an `account_admin`-or-above claim (decision B25). It compares
+ * what the identity CARRIES with what the invitation was sent to; it does not
+ * look anybody up, and it does not ask whether Firebase verified the address
+ * (see the rule for why not).
+ *
+ * An identity with NO address never matches. `normaliseEmail` turns a missing
+ * value into `''`, and without the explicit check an invitation row with an
+ * empty address — which nothing should write, and which this must not trust to
+ * stay true — would be claimable by any phone-auth identity.
+ */
+function addressMatches(claimed: string | null | undefined, invited: string): boolean {
+  const presented = normaliseEmail(claimed);
+  return presented !== '' && presented === normaliseEmail(invited);
 }

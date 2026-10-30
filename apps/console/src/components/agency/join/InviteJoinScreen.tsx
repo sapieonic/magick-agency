@@ -62,9 +62,11 @@ export function InviteJoinScreen({
     error,
     errorAction,
     mismatch,
+    addressRequired,
     handleGoogle,
     handleMismatchConfirm,
     handleMismatchDecline,
+    handleAddressRequiredRetry,
     handleCredentialSubmit,
   } = useInviteClaim({ token, door, destination, events });
   const signInPath = JOIN_DOORS[door].signInPath(destination);
@@ -209,7 +211,22 @@ export function InviteJoinScreen({
             <span>{pendingInvite.email}</span>
           </p>
 
-          {mismatch ? (
+          {/*
+            Checked before the ordinary mismatch, and never alongside it: an
+            invitation that needs the invited address (decision B25) has no
+            "use this account anyway", so the confirmation must not be what
+            renders. The hook clears `mismatch` on the way in; the order here
+            is what keeps that true if it ever does not.
+          */}
+          {addressRequired ? (
+            <AddressMismatch
+              required
+              signedInAs={addressRequired.signedInAs}
+              invitedAs={addressRequired.invitedAs ?? pendingInvite.email}
+              onDecline={handleAddressRequiredRetry}
+              pending={pending}
+            />
+          ) : mismatch ? (
             <AddressMismatch
               signedInAs={mismatch.email ?? 'that Google account'}
               invitedAs={pendingInvite.email}

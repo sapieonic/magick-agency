@@ -34,10 +34,11 @@ export const LOGIN_PATH = '/login';
  * store would have to duplicate the memberships and would break the inheritance
  * that lets a supervisor cover a shift on a station — see `agencyPersona`.
  *
- * What the second door is actually for is the two things `/login` gets wrong for
- * somebody whose whole job is the dialer:
+ * What the second door was built for is the two things a generic sign-in page got
+ * wrong for somebody whose whole job is the dialer. Neither door has a signup
+ * today (`/login` renders this same page), so read these as why that is so:
  *
- *  1. **The Sign Up tab, which is a live hazard rather than a wrong tone.**
+ *  1. **A Sign Up tab, which is a live hazard rather than a wrong tone.**
  *     `POST /auth/session` provisions a brand-new tenant for an email it does not
  *     recognise (session path 4). An invited
  *     agent's membership is activated by matching the address they sign in with
@@ -371,10 +372,14 @@ export function currentPath(location: {
  * ── The door is chosen from where the session lapsed ───────────────────────
  * This is the commoner entrance for agency staff, and the one where landing on
  * the wrong page is worst: an agent whose six-hour session expires mid-shift is
- * re-authenticating under time pressure with a customer waiting, and the primary
- * app's page would meet them with a free-credits banner and a Sign Up tab. So the
- * door is picked from `window.location` — the surface they were actually on —
- * through the same {@link loginPathFor} rule `RequireAuth` uses.
+ * re-authenticating under time pressure with a customer waiting. In this repo
+ * `/login` and `/agency/login` render the same sign-in page (`App.tsx`), and
+ * neither has a signup, so the choice is not about keeping them off a riskier
+ * page; it keeps them on the URL their surface names — the one agency staff are
+ * handed and bookmark — and keeps this redirect and `RequireAuth`'s from ever
+ * disagreeing. So the door is picked from `window.location` — the surface they
+ * were actually on — through the same {@link loginPathFor} rule `RequireAuth`
+ * uses.
  *
  * ── Why the return path belongs on this path too ───────────────────────────
  * `RequireAuth` carries `?next=` for a visitor who was never signed in. This is

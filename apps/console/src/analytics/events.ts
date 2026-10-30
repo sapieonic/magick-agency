@@ -591,6 +591,15 @@ type InviteClaimFailureReason =
    * being answered by people who cannot actually complete it.
    */
   | 'identity_in_use'
+  /**
+   * The invitation is for `account_admin` or above and the account signed in with
+   * is not the invited address (decision B25), so it cannot be claimed with it.
+   * Recorded whether the page stopped it before the claim
+   * (`requires_matching_address`) or the server refused it (`address_required`)
+   * — the same outcome for the visitor either way. Neither address is sent: the
+   * reason is the whole of what the funnel needs.
+   */
+  | 'address_required'
   /** The claim endpoint failed for any other reason. */
   | 'claim_error';
 

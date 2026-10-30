@@ -6,7 +6,8 @@ before you change it. Generated from the tree on 2026-10-09.
 
 **Counts.** Unit counts are the per-file numbers Vitest printed on 2026-10-09. Integration counts
 (marked `~`) are static counts of `it(` / `test(` calls in the file, where an `it.each` table or a
-loop counts as one, so they undercount; the authoritative integration totals are in [`status.md`](status.md). Tests are listed
+loop counts as one, so they undercount; an unmarked integration count is the number Vitest printed
+for that file. The authoritative integration totals are in [`status.md`](status.md). Tests are listed
 under the source directory they mirror; tests that span several modules are listed at the end of
 each package.
 
@@ -302,8 +303,8 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-staffing.routes.test.ts` | ~51 |
 | `apps/server/test/integration/api/agency-tenant-isolation.test.ts` | ~12 |
 | `apps/server/test/integration/api/auth.routes.test.ts` | ~19 |
-| `apps/server/test/integration/api/invite-every-role.test.ts` | ~10 |
-| `apps/server/test/integration/api/invite-security-audit.test.ts` | ~28 |
+| `apps/server/test/integration/api/invite-every-role.test.ts` | 12 |
+| `apps/server/test/integration/api/invite-security-audit.test.ts` | 47 |
 | `apps/server/test/integration/api/notification.routes.test.ts` | ~6 |
 | `apps/server/test/integration/api/phone-number.routes.test.ts` | ~4 |
 | `apps/server/test/integration/api/platform-onboarding.e2e.test.ts` | ~2 |
@@ -365,7 +366,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
 | `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
-| `apps/server/test/unit/api/routes/invites.routes.test.ts` | 103 |
+| `apps/server/test/unit/api/routes/invites.routes.test.ts` | 140 |
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/phone-numbers-byoc-merge.test.ts` | 6 |
@@ -912,7 +913,7 @@ Files: `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
 
 ### `packages/contracts/src/`
 
-Dialer types (`agency.ts`, a barrel over `agency/`), error-code unions and lists including the action error union (`errors.ts`), feature flags (`flags.ts`), roles and permission matrix (`rbac.ts`), shared primitives (`primitives.ts`: `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, the `AllListed` exhaustiveness check), barrel.
+Dialer types (`agency.ts`, a barrel over `agency/`), error-code unions and lists including the action error union (`errors.ts`), feature flags (`flags.ts`), roles, permission matrix and the admin-invite address rule `inviteRequiresMatchingAddress` (`rbac.ts`, decision B25), shared primitives (`primitives.ts`: `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, the `AllListed` exhaustiveness check), barrel.
 
 Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.ts`
 
@@ -923,7 +924,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/errors.test.ts` | 7 |
 | `packages/contracts/test/exports.test.ts` | 9 |
 | `packages/contracts/test/flags.test.ts` | 6 |
-| `packages/contracts/test/rbac.test.ts` | 48 |
+| `packages/contracts/test/rbac.test.ts` | 56 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
 `packages/contracts/test/type-equals.ts` is the shared type-level `Equals` / `Same` helper.
@@ -1238,7 +1239,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyCampaignSeries.ts
 | `apps/console/src/__tests__/api/call-analysis-profiles.api.test.ts` | 5 |
 | `apps/console/src/__tests__/api/error-analytics.test.ts` | 5 |
 | `apps/console/src/__tests__/api/exportCsv.test.ts` | 3 |
-| `apps/console/src/__tests__/api/invites.test.ts` | 15 |
+| `apps/console/src/__tests__/api/invites.test.ts` | 21 |
 | `apps/console/src/__tests__/api/originator-header.test.ts` | 4 |
 | `apps/console/src/__tests__/api/tenants.test.ts` | 6 |
 
@@ -1375,7 +1376,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 25 |
 | `apps/console/src/__tests__/pages/AgencyHomeRedirect.test.tsx` | 7 |
-| `apps/console/src/__tests__/pages/AgencyJoinPage.test.tsx` | 56 |
+| `apps/console/src/__tests__/pages/AgencyJoinPage.test.tsx` | 57 |
 | `apps/console/src/__tests__/pages/AgencyLoginPage.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 47 |
@@ -1393,14 +1394,14 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 19 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` | 20 |
-| `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 33 |
+| `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/TeamPage.a11y.test.tsx` | 1 |
 | `apps/console/src/__tests__/pages/TeamPage.actionErrors.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/TeamPage.actionsMenu.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/TeamPage.analytics.test.tsx` | 2 |
-| `apps/console/src/__tests__/pages/TeamPage.inviteHandoff.test.tsx` | 31 |
+| `apps/console/src/__tests__/pages/TeamPage.inviteHandoff.test.tsx` | 33 |
 | `apps/console/src/__tests__/pages/TeamPage.resendInvite.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/TranscriptSection.test.tsx` | 7 |
 | `apps/console/src/__tests__/pages/VerifyEmailPage.returnPath.test.tsx` | 6 |

@@ -284,6 +284,36 @@ describe('the panel reads what the API said about the email', () => {
     expect(screen.getByTestId('invite-emailed').textContent).not.toMatch(/exact address/i);
   });
 
+  it('DOES tell them about the exact address for an account admin (decision B25)', async () => {
+    /*
+      From `account_admin` up the claim refuses any account but the invited
+      address — the rule `inviteRequiresMatchingAddress` the server enforces — so
+      here the sentence is true again, and the supervisor is the one person who
+      can say it before the invitee tries with the wrong account.
+    */
+    mocks.inviteUser.mockResolvedValue({
+      invite_email: { sent: true },
+      sign_in_url: 'https://app.example.com/join/tok_admin',
+    });
+
+    await invite('account_admin', 'admin@example.com');
+
+    expect(screen.getByTestId('invite-emailed').textContent).toMatch(/accept it signed in as this exact address/i);
+  });
+
+  it('says it on the hand-off too, when the mail did not go', async () => {
+    mocks.inviteUser.mockResolvedValue({
+      invite_email: { sent: false, reason: 'failed' },
+      sign_in_url: 'https://app.example.com/join/tok_admin',
+    });
+
+    await invite('account_admin', 'admin@example.com');
+
+    const lead = screen.getByTestId('invite-handoff').textContent ?? '';
+    expect(lead).toMatch(/works once/i);
+    expect(lead).toMatch(/accept it signed in as this exact address/i);
+  });
+
   it('hands over a token link as the invitation, without the address rule', async () => {
     mocks.inviteUser.mockResolvedValue({
       invite_email: { sent: false, reason: 'failed' },

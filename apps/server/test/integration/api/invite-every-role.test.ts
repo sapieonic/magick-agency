@@ -198,6 +198,30 @@ async function membershipRow(id: string) {
   return rows[0] as { id: string; role: string; status: string; tenant_id: string };
 }
 
+/**
+ * A claim refused by decision B25, and everything it must have left alone: the
+ * invitation still pending and unspent, the user row still the `pending_` stub,
+ * the membership not bound to the presented identity — so the same link still
+ * works for the person it was sent to.
+ */
+async function expectAddressRequired(token: string, idToken: string, membershipId: string, invitedEmail: string) {
+  const res = await claim(token, idToken);
+  expect(res.statusCode, res.body).toBe(409);
+  expect(res.json()).toMatchObject({ status: 'address_required', email: invitedEmail });
+  expect(res.json().message).toContain(invitedEmail);
+
+  const live = (await inviteRows(membershipId)).filter((r) => r.revoked_at === null);
+  expect(live).toHaveLength(1);
+  expect(live[0]).toMatchObject({ claimed_at: null, claimed_by_user_id: null });
+  const { rows } = await getTestPool().query(
+    `SELECT u.firebase_uid FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.id = $1`,
+    [membershipId],
+  );
+  expect((rows[0] as { firebase_uid: string }).firebase_uid.startsWith(PENDING_UID_PREFIX)).toBe(true);
+  expect((await app.inject({ method: 'GET', url: `/invites/${encodeURIComponent(token)}` })).json().status)
+    .toBe('pending');
+}
+
 const auditWrites = trackSuperAdminAuditWrites();
 
 beforeAll(async () => {
@@ -283,10 +307,14 @@ describe('an operator invited by an account admin: issue, mail, read, claim', ()
         // The same noun the subject named.
         product_name: config.brand.name,
         expires_at: expect.any(String),
+        // Below `account_admin`: the flexible claim (decision B25).
+        requires_matching_address: false,
       },
     });
 
     // ── the claim, with a different Google address (the token is the authority) ──
+    // Unchanged by decision B25: an operator's invitation still binds whatever
+    // identity presents it, and the mismatch is audited.
     identity('tok-new-operator', { uid: 'fb-new-operator', email: 'personal@gmail.test', email_verified: true });
     const claimed = await claim(token, 'tok-new-operator');
     expect(claimed.statusCode, claimed.body).toBe(200);
@@ -345,6 +373,62 @@ describe('every role POST /users/invite can grant gets a token, a row and a mail
 
     const read = await app.inject({ method: 'GET', url: `/invites/${encodeURIComponent(tokenOf(link))}` });
     expect(read.json()).toMatchObject({ status: 'pending', invite: { role, email } });
+  });
+});
+
+describe('decision B25: account_admin and above must claim with the invited address', () => {
+  it('refuses an account admin claimed with a different Google address, then binds the invited one', async () => {
+    const ws = await workspace('b25-admin');
+    const res = await app.inject({
+      method: 'POST', url: '/users/invite', headers: as(ws, ws.ownerAuth),
+      payload: { email: 'new.admin@corp.test', role: 'account_admin', account_id: ws.account.id },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const token = tokenOf(res.json().sign_in_url);
+    const membershipId = res.json().membership.id as string;
+
+    const read = await app.inject({ method: 'GET', url: `/invites/${encodeURIComponent(token)}` });
+    expect(read.json()).toMatchObject({
+      status: 'pending', invite: { role: 'account_admin', requires_matching_address: true },
+    });
+
+    // A forwarded mail, opened by somebody signed into their own Google account.
+    identity('tok-b25-other', { uid: 'fb-b25-other', email: 'personal@gmail.test', email_verified: true });
+    await expectAddressRequired(token, 'tok-b25-other', membershipId, 'new.admin@corp.test');
+    // Nor does an identity with no address at all get through.
+    identity('tok-b25-phone', { uid: 'fb-b25-phone', email_verified: false });
+    await expectAddressRequired(token, 'tok-b25-phone', membershipId, 'new.admin@corp.test');
+
+    // The right person, same link — and an UNVERIFIED password account at the
+    // invited address is enough (the join page creates exactly that).
+    identity('tok-b25-right', { uid: 'fb-b25-right', email: ' New.Admin@Corp.test', email_verified: false });
+    const claimed = await claim(token, 'tok-b25-right');
+    expect(claimed.statusCode, claimed.body).toBe(200);
+    expect(claimed.json().memberships).toEqual([
+      expect.objectContaining({ id: membershipId, role: 'account_admin', status: 'active' }),
+    ]);
+    expect((await userRow(res.json().user.id)).firebase_uid).toBe('fb-b25-right');
+    const [after] = await inviteRows(membershipId);
+    expect(after!.claimed_at).not.toBeNull();
+  });
+
+  it('holds a membership promoted between invite and claim to the seat it now is', async () => {
+    const ws = await workspace('b25-promoted');
+    const res = await app.inject({
+      method: 'POST', url: '/users/invite', headers: as(ws, ws.ownerAuth),
+      payload: { email: 'rising.star@corp.test', role: 'operator', account_id: ws.account.id },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const token = tokenOf(res.json().sign_in_url);
+    const membershipId = res.json().membership.id as string;
+    await getTestPool().query(`UPDATE memberships SET role = 'tenant_admin' WHERE id = $1`, [membershipId]);
+
+    // The invitation row still says operator; the page and the claim both
+    // answer for the seat.
+    const read = await app.inject({ method: 'GET', url: `/invites/${encodeURIComponent(token)}` });
+    expect(read.json()).toMatchObject({ invite: { role: 'operator', requires_matching_address: true } });
+    identity('tok-b25-promoted', { uid: 'fb-b25-promoted', email: 'personal@gmail.test', email_verified: true });
+    await expectAddressRequired(token, 'tok-b25-promoted', membershipId, 'rising.star@corp.test');
   });
 });
 
@@ -478,8 +562,15 @@ describe('super-admin add-user for a non-agent', () => {
     const read = await app.inject({ method: 'GET', url: `/invites/${encodeURIComponent(tokenOf(link))}` });
     expect(read.json()).toMatchObject({
       status: 'pending',
-      invite: { role: 'tenant_admin', tenant_name: 'Provisioned Ltd', inviter_name: null, product_name: config.brand.name },
+      invite: {
+        role: 'tenant_admin', tenant_name: 'Provisioned Ltd', inviter_name: null, product_name: config.brand.name,
+        requires_matching_address: true,
+      },
     });
+
+    // ── decision B25: a workspace admin's seat is not a bearer credential ──
+    identity('tok-forwarded', { uid: 'fb-forwarded', email: 'someone.else@gmail.test', email_verified: true });
+    await expectAddressRequired(tokenOf(link), 'tok-forwarded', membershipId, 'first.admin@provisioned.test');
 
     const auth = identity('tok-first-admin', { uid: 'fb-first-admin', email: 'first.admin@provisioned.test', email_verified: true });
     const claimed = await claim(tokenOf(link), 'tok-first-admin');
@@ -567,6 +658,13 @@ describe('super-admin tenant create', () => {
         product_name: config.brand.name,
       },
     });
+
+    // ── decision B25: the owner's seat, claimed from another address ───────
+    // The commonest shape of the leak: the founder forwards the mail to a
+    // colleague "to set things up", who opens it signed into their own Google.
+    expect(read.json().invite.requires_matching_address).toBe(true);
+    identity('tok-colleague', { uid: 'fb-colleague', email: 'colleague@fresh.test', email_verified: true });
+    await expectAddressRequired(tokenOf(link), 'tok-colleague', owner.id, 'founder@fresh.test');
 
     // ── the claim ──────────────────────────────────────────────────────────
     identity('tok-founder', { uid: 'fb-founder', email: 'founder@fresh.test', email_verified: true });

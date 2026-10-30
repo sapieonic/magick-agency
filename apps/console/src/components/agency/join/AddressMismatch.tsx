@@ -21,20 +21,42 @@ import styles from './AgencyJoin.module.css';
  * Without it the wrong Google account stays the browser's current user, and the
  * next popup re-selects it without asking — so the escape hatch would return them
  * to the same screen and read as a page that does not work.
+ *
+ * ── `required`: the same screen with nothing to confirm (decision B25) ─────
+ * An invitation for `account_admin` or above can be claimed only by an account
+ * at the invited address — the server refuses any other, because there a
+ * forwarded mail would hand over a seat that can invite people and supervise
+ * calls. So that mode drops "Use this account" altogether rather than offering a
+ * button that can only fail, says which address the invitation needs and how to
+ * get to it, and keeps one action: back to the options. The other account has
+ * already been signed out by the time this renders (`useInviteClaim`'s
+ * `requireInvitedAddress`); the button waits for that sign-out to finish. One
+ * component with two modes rather than two components, because the two screens
+ * must stay the same in every way but that one — the side-by-side addresses, the
+ * focus on the heading, the place on the card.
  */
-export function AddressMismatch({
-  signedInAs,
-  invitedAs,
-  onConfirm,
-  onDecline,
-  pending,
-}: {
-  signedInAs: string;
+type AddressMismatchProps = {
   invitedAs: string;
-  onConfirm: () => void;
   onDecline: () => void;
   pending: JoinPending;
-}) {
+} & (
+  | {
+      /** The visitor may still choose this account: the ordinary mismatch. */
+      required?: false;
+      signedInAs: string;
+      onConfirm: () => void;
+    }
+  | {
+      /** Only the invited address can claim this invitation. */
+      required: true;
+      /** Null when the page never learned it (the server refused the claim). */
+      signedInAs: string | null;
+      onConfirm?: never;
+    }
+);
+
+export function AddressMismatch(props: AddressMismatchProps) {
+  const { invitedAs, onDecline, pending } = props;
   const heading = useRef<HTMLHeadingElement>(null);
 
   /*
@@ -44,6 +66,44 @@ export function AddressMismatch({
     decision on the page that must not be made by reflex.
   */
   useEffect(() => { heading.current?.focus(); }, []);
+
+  if (props.required) {
+    return (
+      <div className={styles.mismatch} data-testid="address-required">
+        <h2 className={styles.mismatchTitle} tabIndex={-1} ref={heading}>
+          Use the address this invitation was sent to
+        </h2>
+        <p className={styles.mismatchBody}>
+          This invitation must be accepted with{' '}
+          <strong className={styles.strong}>{invitedAs}</strong>.
+          {props.signedInAs ? (
+            <>
+              {' '}You signed in as <strong className={styles.strong}>{props.signedInAs}</strong>,
+              so we have signed you out of it.
+            </>
+          ) : (
+            <> We have signed you out of the account you used.</>
+          )}
+        </p>
+        <p className={styles.mismatchBody}>
+          Continue with Google using that address, or create a password — the password
+          form is already set to it.
+        </p>
+        <div className={styles.mismatchActions}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={onDecline}
+            disabled={pending !== null}
+          >
+            {pending === 'decline' ? 'Signing out…' : 'Try again with that address'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const { signedInAs, onConfirm } = props;
 
   return (
     <div className={styles.mismatch}>

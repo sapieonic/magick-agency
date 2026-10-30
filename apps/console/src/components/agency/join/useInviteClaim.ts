@@ -2,7 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth, type InviteCredential } from '../../../contexts/AuthContext';
 import { useTenant } from '../../../contexts/TenantContext';
-import { getInvite, InviteIdentityInUseError, InviteUnavailableError } from '../../../api/invites';
+import {
+  getInvite,
+  InviteAddressRequiredError,
+  InviteIdentityInUseError,
+  InviteUnavailableError,
+} from '../../../api/invites';
 import type { AgencyInvite, InviteUnavailableStatus } from '../../../types/invite';
 import type { EventCatalog } from '../../../analytics/events';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
@@ -60,6 +65,21 @@ export interface InviteJoinEvents {
   claimSucceeded: (props: EventCatalog['agency_invite_claim_succeeded']) => void;
   claimFailed: (props: EventCatalog['agency_invite_claim_failed']) => void;
   addressMismatch: (props: EventCatalog['agency_invite_address_mismatch']) => void;
+}
+
+/**
+ * The page is showing "this invitation must be accepted with <invited address>"
+ * (decision B25): an `account_admin`-or-above invitation met an account on
+ * another address.
+ *
+ * `signedInAs` is the address that account carried, when the page knows it —
+ * shown so the visitor can see WHICH account was refused. `invitedAs` is the
+ * address the server named in its 409, when the refusal came from there; the
+ * screen falls back to the invitation's own `email`, which is the same row.
+ */
+export interface AddressRequired {
+  signedInAs: string | null;
+  invitedAs: string | null;
 }
 
 export interface InviteClaimOptions {
@@ -136,6 +156,7 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
    */
   const [errorAction, setErrorAction] = useState<'sign_in' | null>(null);
   const [mismatch, setMismatch] = useState<InviteCredential | null>(null);
+  const [addressRequired, setAddressRequired] = useState<AddressRequired | null>(null);
 
   /** Clear both halves of the alert. Every action that can fail starts here. */
   const clearError = useCallback(() => {
@@ -166,6 +187,18 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
   const mounted = useRef(true);
   const liveCredential = useRef(false);
   const claimSent = useRef(false);
+  /**
+   * The address the live credential carries, for the "must be accepted with"
+   * screen when the SERVER is what refused it — the page knows the address on
+   * the Google path's own check, but a 409 arrives with only the invited one.
+   */
+  const credentialEmail = useRef<string | null>(null);
+  /**
+   * The sign-out the address-required screen started on its way in, so its one
+   * button can wait for it before offering Google again: a popup opened while
+   * the refused account is still the browser's current user re-selects it.
+   */
+  const signingOut = useRef<Promise<void> | null>(null);
 
   /**
    * Drop a credential that arrived after the visitor had already gone.
@@ -187,6 +220,37 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
     liveCredential.current = false;
     void logout().catch(() => { /* the marker outlives it — see `AuthContext` */ });
   }, [logout]);
+
+  /**
+   * Switch to "this invitation must be accepted with <invited address>", and
+   * sign the refused account out on the way (decision B25).
+   *
+   * ── Why the sign-out is not left to a button ─────────────────────────────
+   * On the ordinary mismatch the visitor may still choose the account, so the
+   * credential stays until they answer. Here there is no answer that uses it: an
+   * `account_admin`-or-above invitation cannot be claimed by it, by the server's
+   * rule rather than the page's. Keeping it signed in would only leave the
+   * refused account as the browser's current user — the next Google popup
+   * re-selects it without asking, and walking away from the page strands it.
+   * So it goes now, through the same `logout()` the decline uses, and
+   * `liveCredential` comes down with it so the unmount cleanup has nothing left
+   * to do.
+   *
+   * Reached two ways, and they render the same screen: the page's own check on
+   * the Google path, when the invitation says `requires_matching_address`, and
+   * the server's `address_required` 409 when the page did not know (a page loaded
+   * before a role change, or a server that enforces the rule but does not send
+   * the field).
+   */
+  const requireInvitedAddress = useCallback(
+    (invitedAs: string | null) => {
+      liveCredential.current = false;
+      signingOut.current = logout().catch(() => { /* the marker outlives it — see `AuthContext` */ });
+      setMismatch(null);
+      setAddressRequired({ signedInAs: credentialEmail.current, invitedAs });
+    },
+    [logout],
+  );
 
   /**
    * Leaving the page with an unclaimed credential SIGNS OUT.
@@ -399,6 +463,17 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
         return;
       }
       /*
+        The server's `address_required` (decision B25): this invitation needs the
+        invited address and the account was another. Not a message under the
+        options — the options are what led here — but the same screen the page
+        shows when it catches the mismatch itself, with the account signed out.
+      */
+      if (err instanceof InviteAddressRequiredError) {
+        events.claimFailed({ method, reason: 'address_required' });
+        requireInvitedAddress(err.email);
+        return;
+      }
+      /*
         The server's `identity_in_use`: the account they signed in with already
         belongs to a different user row here. The INVITATION is untouched and
         another account still claims it, so this is a message under the options
@@ -421,7 +496,7 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
       setError(credentialMessage(err));
       setErrorAction(null);
     },
-    [events],
+    [events, requireInvitedAddress],
   );
 
   const invite = lookup.phase === 'invite' ? lookup.invite : null;
@@ -435,6 +510,7 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
     try {
       const credential = await establishInviteCredential({ method: 'google' });
       liveCredential.current = true;
+      credentialEmail.current = credential.email;
       /*
         The popup is a place people walk away from — a phone switching apps, a
         back-navigation, the "Sign in instead" link taken while it was open — and
@@ -447,6 +523,22 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
         return;
       }
       if (!sameAddress(credential.email, invite.email)) {
+        /*
+          `account_admin` and above (decision B25): there is no answer to ask
+          for, because the server will not let this account claim the seat. Say
+          which address it needs and sign this one out, rather than offering a
+          "use this account" that can only fail. Read off the INVITATION — what
+          the server said about this membership — never off which page this is,
+          so the rule follows the seat on either door.
+
+          Not an `address_mismatch` event: that funnel measures a choice the
+          visitor was offered, and here they were offered none.
+        */
+        if (invite.requires_matching_address) {
+          events.claimFailed({ method: 'google', reason: 'address_required' });
+          requireInvitedAddress(null);
+          return;
+        }
         /*
           Stop here. Everything up to this point is identical to the flow that
           silently produced a stray tenant; the difference is that this branch
@@ -519,6 +611,22 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
     setPending(null);
   };
 
+  /**
+   * The address-required screen's one way on: back to the two options, once the
+   * refused account is signed out. The sign-out itself was started when the
+   * screen opened ({@link requireInvitedAddress}); this waits for it, so the
+   * Google button it returns to cannot hand back the same account.
+   */
+  const handleAddressRequiredRetry = async () => {
+    clearError();
+    setPending('decline');
+    await signingOut.current;
+    signingOut.current = null;
+    if (!mounted.current) return;
+    setAddressRequired(null);
+    setPending(null);
+  };
+
   const handleCredentialSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!invite) return;
@@ -540,12 +648,13 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
 
     setPending(method);
     try {
-      await establishInviteCredential({
+      const credential = await establishInviteCredential({
         method,
         email: invite.email,
         password,
       });
       liveCredential.current = true;
+      credentialEmail.current = credential.email;
       // Same as the Google path: a credential that lands after the visitor has
       // gone has no claim coming, so it is dropped rather than stranded.
       if (!mounted.current) {
@@ -595,9 +704,11 @@ export function useInviteClaim({ token, door, destination, events }: InviteClaim
     error,
     errorAction,
     mismatch,
+    addressRequired,
     handleGoogle,
     handleMismatchConfirm,
     handleMismatchDecline,
+    handleAddressRequiredRetry,
     handleCredentialSubmit,
   };
 }
