@@ -103,8 +103,7 @@ function RecentCalls({ sp }: { sp: SoftphoneState }) {
                   aria-label={`Redial ${number}`}
                   title="Puts the number in the dial pad. Press Call to dial."
                 >
-                  <RotateCcw size={13} aria-hidden="true" />
-                  Redial
+                  <RotateCcw size={15} aria-hidden="true" />
                 </button>
               </li>
             );

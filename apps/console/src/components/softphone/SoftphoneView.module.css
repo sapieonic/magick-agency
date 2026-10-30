@@ -365,8 +365,11 @@
   white-space: nowrap;
 }
 
+/* As wide as its longest campaign name, up to the card: a fixed 220px cut
+   "Home Loan Renewals – Oct" to "…Renewals – Oc". */
 .campaignSelect:where(select) {
-  max-width: 220px;
+  align-self: flex-start;
+  max-width: 100%;
   flex: none;
 }
 
@@ -514,20 +517,30 @@
   color: var(--text-primary);
 }
 
+/* Two lines, not one with an ellipsis: on one line the outcome alone filled it
+   and the campaign and the time — what tells two calls to a number apart — were
+   always cut. */
 .recentMeta {
-  font-size: 12px;
-  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 
+/* Icon only (its name is on `aria-label`, its effect in the title), so the
+   call's outcome, campaign and time have the row. */
 .redial {
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-tertiary);
