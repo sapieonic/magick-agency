@@ -266,8 +266,10 @@ export function DncPage() {
       <h1 className={styles.title}>Do Not Call</h1>
 
       {/*
-        This list governs agency campaigns, and the copy has to say so. It stops
-        agency campaigns from dialing a number and nothing else. Presenting it as
+        This list governs agency campaigns and the soft phone, and the copy has to
+        say so. It stops agency campaigns from dialing a number, and stops a
+        soft-phone dial unless the agent overrides it with a written reason, which
+        is audited (SP1, `docs/softphone.md`). Presenting it as
         compliance for every kind of call would leave an operator believing a customer
         who asked not to be called is protected everywhere — the one
         misunderstanding on this page that costs a customer something.
@@ -276,9 +278,11 @@ export function DncPage() {
         pageKey="agency-dnc"
         description={
           'Agency campaigns don’t dial the numbers on this list — every campaign for a '
-          + 'workspace-wide entry, or only the campaign or account the Scope column names. It does '
-          + 'not apply to AI calls, broadcasts or the Softphone. Agents add numbers from the '
-          + 'station when a customer asks; you can also add them in bulk here.'
+          + 'workspace-wide entry, or only the campaign or account the Scope column names. The soft '
+          + 'phone checks it too: an agent who calls a listed number is stopped, and can call only by '
+          + 'writing down why — that reason is logged with their name. It does not apply to AI calls '
+          + 'or broadcasts. Agents add numbers from the station and the soft phone when a customer '
+          + 'asks; you can also add them in bulk here.'
         }
         tips={[
           'A workspace-wide entry blocks the number in every agency campaign and account.',

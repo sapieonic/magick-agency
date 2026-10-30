@@ -199,9 +199,19 @@ describe('DNC — agency-only, and the copy has to say so', () => {
     expect(document.body.textContent).toMatch(/Agency campaigns don’t dial the numbers on this list/);
     // The sentence a customer needs and the page never had: what this list does
     // NOT cover.
-    expect(document.body.textContent).toMatch(
-      /does not apply to AI calls, broadcasts or the Softphone/,
-    );
+    expect(document.body.textContent).toMatch(/does not apply to AI calls or broadcasts/);
+  });
+
+  it('says the soft phone is covered too, with an audited override (SP1)', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+
+    // The old copy said DNC did NOT apply to the soft phone; it does now. A soft-phone
+    // dial to a listed number is refused, and placing it anyway needs a written
+    // reason that is logged with the agent's name.
+    expect(document.body.textContent).not.toMatch(/not apply to[^.]*soft ?phone/i);
+    expect(document.body.textContent).toMatch(/The soft phone checks it too/);
+    expect(document.body.textContent).toMatch(/writing down why — that reason is logged with their name/);
   });
 
   it('never presents itself as platform-wide regulatory compliance', async () => {
