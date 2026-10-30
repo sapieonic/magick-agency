@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
@@ -130,6 +130,52 @@ function SoftphoneConsole({
     }
   }, []);
 
+  /**
+   * Warm the playback context and probe the microphone on the agent's FIRST
+   * gesture on the page — typing the number, a click, a key — so the permission
+   * prompt and the autoplay unlock happen before anything is dialled, not while
+   * the customer's phone rings. The station does this on "Go available"; this
+   * page has no such button, and a context first made from a socket frame is
+   * suspended and plays silence (`useAgencyAudio.preflight`). Once per page: the
+   * probe releases the microphone straight away, and skips itself while a call
+   * holds it (a reload mid-call still needs the playback warmed).
+   *
+   * The Call press runs it too, for a click that came with no pointer or key
+   * before it (assistive tech activating the button directly).
+   */
+  const preflightedRef = useRef(false);
+  const preflightOnce = useCallback(() => {
+    if (preflightedRef.current) return;
+    preflightedRef.current = true;
+    audio.preflight();
+  }, [audio.preflight]);
+  useEffect(() => {
+    const onGesture = () => {
+      preflightOnce();
+      window.removeEventListener('pointerdown', onGesture, true);
+      window.removeEventListener('keydown', onGesture, true);
+    };
+    window.addEventListener('pointerdown', onGesture, true);
+    window.addEventListener('keydown', onGesture, true);
+    return () => {
+      window.removeEventListener('pointerdown', onGesture, true);
+      window.removeEventListener('keydown', onGesture, true);
+    };
+  }, [preflightOnce]);
+  const { resume: resumeAudio } = audio;
+  const softphoneAudio = useMemo(
+    () => ({
+      muted: audio.muted,
+      sending: audio.sending,
+      toggleMute: audio.toggleMute,
+      resume: () => {
+        preflightOnce();
+        resumeAudio();
+      },
+    }),
+    [audio.muted, audio.sending, audio.toggleMute, resumeAudio, preflightOnce],
+  );
+
   const sp = useSoftphone({
     tenantId: tenantId ?? undefined,
     accountId: accountId ?? undefined,
@@ -138,7 +184,7 @@ function SoftphoneConsole({
     connection,
     frameCall: stationState.manualCall,
     clock,
-    audio,
+    audio: softphoneAudio,
     surface: 'softphone_page',
     cueVolume,
   });
