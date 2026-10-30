@@ -194,6 +194,10 @@ describe('joinOrRehydrate — the statement it issues', () => {
 
     const sql = String(query.mock.calls[0]![0]).replace(/\s+/g, ' ');
     expect(sql).toContain('ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL');
-    expect(sql).toContain('WHERE agency_agent_sessions.campaign_id = EXCLUDED.campaign_id');
+    // NULL-safe and kind-aware: a soft-phone session's campaign_id is NULL (0005), and
+    // `=` would make its rehydrate arm match nothing (the old 500).
+    expect(sql).toContain('WHERE agency_agent_sessions.kind = EXCLUDED.kind');
+    expect(sql).toContain('AND agency_agent_sessions.campaign_id IS NOT DISTINCT FROM EXCLUDED.campaign_id');
+    expect(sql).not.toContain('agency_agent_sessions.campaign_id = EXCLUDED.campaign_id');
   });
 });

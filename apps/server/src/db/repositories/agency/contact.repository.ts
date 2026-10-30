@@ -6,6 +6,7 @@ import { getPool } from '@magick-agency/db';
 import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyContactInput, AgencyContactRecord } from '../../models/agency.model.js';
+import type { AgencyContactState } from '@magick-agency/contracts/agency';
 // The supervisor read surface's cursor. `KEYSET_AT_SQL` is projected
 // alongside every paged row so the cursor carries `created_at` at its true
 // MICROSECOND precision — see that module for why a millisecond round-trip
@@ -212,6 +213,269 @@ export class AgencyContactRepository {
     );
   }
 
+  // ─── The soft phone's roster match and claim (docs/softphone.md §4.1, §5) ────
+
+  /**
+   * The contacts of `campaignId` whose number is `phoneE164` — the soft phone's
+   * pre-dial roster match on the tagged campaign (§4.1 step 2).
+   *
+   * Matched exactly as {@link suppressByPhone} matches: the SQL is the LOOSER
+   * digits prefilter, byte-identical to `idx_agency_contacts_campaign_phone_digits`
+   * (`CONTACT_PHONE_DIGITS_SQL`, so the read is one index probe), and the decision
+   * is {@link normalizeE164} on both sides in TypeScript. Re-expressing the
+   * normaliser in SQL is the fail-open that header describes.
+   *
+   * A LIST, oldest first, because one campaign may hold the same number twice (a
+   * household landline: the schema refuses `UNIQUE (campaign_id, phone_e164)` on
+   * purpose). The caller picks; the rule §5 implies: any match `in_flight` refuses
+   * `contact_in_flight`, else the oldest `pending` match is the one to claim, else the
+   * oldest match is linked. An unusable `phoneE164` matches nothing.
+   */
+  async findForManualMatch(campaignId: string, phoneE164: string): Promise<AgencyContactRecord[]> {
+    const target = normalizeE164(phoneE164);
+    if (!target) return [];
+    const { rows } = await getPool().query<AgencyContactRecord>(
+      // No ORDER BY: sorting here would let the planner prefer the
+      // `(campaign_id, created_at, id)` reporting index (sort-free) over the digits
+      // probe on a small table. The matches are a handful of rows; sorted below.
+      `SELECT * FROM agency_contacts
+        WHERE campaign_id = $1 AND ${CONTACT_PHONE_DIGITS_SQL} = $2`,
+      [campaignId, target.slice(1)],
+    );
+    return rows
+      .filter((row) => normalizeE164(row.phone_e164) === target)
+      .sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  /**
+   * Claim a roster contact for a soft-phone call (§4.1 step 3, §5): `pending →
+   * in_flight`, the same transition `claimDialable` makes for pacing, so pacing
+   * cannot take the contact while the call is live or awaiting its outcome.
+   *
+   * **Run it on the caller's transaction client**, the one that then inserts the
+   * manual call row (`AgencyManualCallRepository.create`) with the answer: the row
+   * lock taken here is held until that transaction commits, and a refused insert
+   * (`session_has_unsettled_call`) rolls the claim back with it.
+   *
+   * `FOR UPDATE SKIP LOCKED`, as `claimDialable`: a contact a pacing tick is
+   * claiming right now is skipped rather than waited on, and answered `busy`, which
+   * the caller treats as `contact_in_flight` (the tick is about to dial it).
+   *
+   * - `claimed` — it was `pending` and is now `in_flight`; `priorState` is what
+   *   lapse and restart release it back to (`pending`). Store both on the call.
+   * - `linked` — any other state: the call links it and does not claim it (§5). An
+   *   `in_flight` contact (a live campaign attempt, or another manual call's claim)
+   *   comes back as `linked` with `state: 'in_flight'`, which the caller REFUSES
+   *   (`contact_in_flight`, no override); it is never claimed twice. A `pending`
+   *   row carrying `suppressed_reason = 'dnc'` (a pre-fix leftover `claimDialable`
+   *   also refuses) is linked, never claimed.
+   * - `busy` — row-locked by a concurrent claim.
+   * - `not_found` — no such contact on this campaign.
+   */
+  async claimForManual(
+    campaignId: string,
+    contactId: string,
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<
+    | { outcome: 'claimed'; priorState: AgencyContactState; contact: AgencyContactRecord }
+    | { outcome: 'linked'; state: AgencyContactState; contact: AgencyContactRecord }
+    | { outcome: 'busy' }
+    | { outcome: 'not_found' }
+  > {
+    const db = deps.client ?? getPool();
+    const { rows: locked } = await db.query<AgencyContactRecord>(
+      `SELECT * FROM agency_contacts
+        WHERE id = $1 AND campaign_id = $2
+          FOR UPDATE SKIP LOCKED`,
+      [contactId, campaignId],
+    );
+    const row = locked[0];
+    if (!row) {
+      const { rows } = await db.query<{ id: string }>(
+        'SELECT id FROM agency_contacts WHERE id = $1 AND campaign_id = $2',
+        [contactId, campaignId],
+      );
+      return rows[0] ? { outcome: 'busy' } : { outcome: 'not_found' };
+    }
+    if (row.state !== 'pending' || row.suppressed_reason === 'dnc') {
+      return { outcome: 'linked', state: row.state, contact: row };
+    }
+    // Re-asserted in the WHERE although the row is locked: the claim is a guarded
+    // write whether or not a future caller forgets the transaction.
+    const { rows } = await db.query<AgencyContactRecord>(
+      `UPDATE agency_contacts SET state = 'in_flight', updated_at = now()
+        WHERE id = $1 AND state = 'pending'
+      RETURNING *`,
+      [contactId],
+    );
+    const claimed = rows[0];
+    return claimed
+      ? { outcome: 'claimed', priorState: row.state, contact: claimed }
+      : { outcome: 'linked', state: row.state, contact: row };
+  }
+
+  /**
+   * Give a manual call's claim back: the contact returns to the state recorded at
+   * the claim (`contact_prior_state`), for lapse (§4.1 step 8), restart (step 10)
+   * and a dial that failed before it was placed.
+   *
+   * Only if this call still holds it: the manual-call row says it claimed THIS
+   * contact (`contact_claimed`), and the contact is still `in_flight`. A contact
+   * something else moved since (a DNC mark suppressed it) is left alone. Nothing else
+   * changes: `attempt_count`, `next_attempt_at` and `last_*` are exactly as the
+   * claim found them, so a release is an undo, not a settlement — use
+   * {@link settleFromManual} when the call's outcome should count.
+   *
+   * The DNC freeze {@link markState} applies holds here too: a row carrying
+   * `suppressed_reason = 'dnc'` goes to `suppressed`, never back to `pending`.
+   *
+   * @returns the contact's state after the release, or null when nothing was
+   *   released (no claim, already released, or moved by something else).
+   */
+  async releaseManualClaim(
+    manualCallId: string,
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<{ contactId: string; state: AgencyContactState } | null> {
+    const { rows } = await (deps.client ?? getPool()).query<{ id: string; state: AgencyContactState }>(
+      `UPDATE agency_contacts c
+          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE m.contact_prior_state END,
+              updated_at = now()
+         FROM agency_manual_calls m
+        WHERE m.id = $1
+          AND m.contact_claimed
+          AND m.contact_prior_state IS NOT NULL
+          AND c.id = m.contact_id
+          AND c.campaign_id = m.campaign_id
+          AND c.state = 'in_flight'
+      RETURNING c.id, c.state`,
+      [manualCallId],
+    );
+    const row = rows[0];
+    return row ? { contactId: row.id, state: row.state } : null;
+  }
+
+  /**
+   * Settle a roster contact from a soft-phone call's outcome — the §5 table, given
+   * the disposition decision the caller resolved with the existing pure functions
+   * (`resolveDispositionDecision`; a `RetryDecision` is the same shape), or `null`
+   * when the call settles with no outcome (unanswered, step 6).
+   *
+   * **The call CLAIMED the contact, and still holds it** (`contact_claimed`, the
+   * contact still `in_flight`): the decision applies as on the station — suppress →
+   * `suppressed` (+ `suppressed_reason`), terminal / success → `completed`, callback
+   * or retry → `pending` at `nextAttemptAt`, attempts spent → `exhausted` — through
+   * the same DNC freeze {@link markState} has. `null` → back to `pending` unchanged
+   * (`next_attempt_at` kept). Either way `attempt_count + 1` when the call was
+   * placed (`placed`: the manual call has a `dialed_at`), and `last_outcome` /
+   * `last_disposition` land.
+   *
+   * ⚠️ `attemptsUsed` for `resolveDispositionDecision` is therefore the contact's
+   * stored `attempt_count` PLUS this call when placed — this method does the bump,
+   * the decision is computed before it (the claim keeps anything else off the row).
+   *
+   * **Linked only** (not claimed, or the claim is gone): only `suppressed` applies,
+   * from any state but an already DNC-suppressed one, which keeps its reason; every
+   * other decision writes nothing. A terminal contact (`completed`, `exhausted`,
+   * `suppressed`) is never reopened, and a `connected` contact's own campaign
+   * disposition is left to settle it.
+   *
+   * Forward-only by construction: the claimed arm requires `state = 'in_flight'`, so
+   * it can never write over a contact that left `in_flight` some other way.
+   *
+   * Run it on the transaction that records the outcome (with the DNC write for a
+   * suppress code, B8) so the three commit together.
+   *
+   * @returns where the contact landed and which arm ran, or null when the call has
+   *   no contact (untagged, or no roster match) or the contact row is gone.
+   */
+  async settleFromManual(
+    input: {
+      manualCallId: string;
+      decision: {
+        contactState: AgencyContactState;
+        nextAttemptAt: Date | null;
+        suppressedReason: string | null;
+      } | null;
+      /** The dial reached the carrier (`dialed_at` set): counts against the retry budget. */
+      placed: boolean;
+      lastOutcome: string | null;
+      lastDisposition: string | null;
+    },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<{
+    contactId: string;
+    state: AgencyContactState;
+    nextAttemptAt: Date | null;
+    /** `settled`: the claimed arm ran. `suppressed`: a linked contact was suppressed. `unchanged`: nothing applied. */
+    applied: 'settled' | 'suppressed' | 'unchanged';
+  } | null> {
+    const db = deps.client ?? getPool();
+    const d = input.decision;
+    // One statement, three arms, decided in SQL off the locked row so the arm and
+    // the write cannot disagree:
+    //   claimed — the call claimed the contact and it is still in_flight;
+    //   suppress — a linked contact and a suppress decision;
+    //   otherwise the row is returned unchanged (the `cur` arm below).
+    const { rows } = await db.query<{
+      id: string; state: AgencyContactState; next_attempt_at: Date | null; applied: 'settled' | 'suppressed' | 'unchanged';
+    }>(
+      `WITH cur AS (
+         SELECT c.id, c.state, c.next_attempt_at, c.suppressed_reason,
+                (m.contact_claimed AND c.state = 'in_flight') AS held
+           FROM agency_manual_calls m
+           JOIN agency_contacts c ON c.id = m.contact_id AND c.campaign_id = m.campaign_id
+          WHERE m.id = $1
+            FOR UPDATE OF c
+       ), upd AS (
+         UPDATE agency_contacts c
+            SET state = CASE
+                          WHEN c.suppressed_reason = 'dnc' THEN 'suppressed'
+                          WHEN cur.held THEN COALESCE($2::varchar, 'pending')
+                          ELSE 'suppressed'
+                        END,
+                attempt_count = c.attempt_count + CASE WHEN cur.held AND $3::boolean THEN 1 ELSE 0 END,
+                last_outcome = CASE WHEN cur.held THEN COALESCE($4::varchar, c.last_outcome) ELSE c.last_outcome END,
+                last_disposition = COALESCE($5::varchar, c.last_disposition),
+                next_attempt_at = CASE
+                                    WHEN c.suppressed_reason = 'dnc' OR NOT cur.held THEN c.next_attempt_at
+                                    ELSE COALESCE($6::timestamptz, c.next_attempt_at)
+                                  END,
+                suppressed_reason = CASE
+                                      WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason
+                                      ELSE COALESCE($7::varchar, c.suppressed_reason)
+                                    END,
+                updated_at = now()
+           FROM cur
+          WHERE c.id = cur.id
+            AND (cur.held OR ($2::varchar = 'suppressed' AND cur.suppressed_reason IS DISTINCT FROM 'dnc'))
+         RETURNING c.id, c.state, c.next_attempt_at,
+                   CASE WHEN cur.held THEN 'settled' ELSE 'suppressed' END AS applied
+       )
+       SELECT id, state, next_attempt_at, applied FROM upd
+       UNION ALL
+       SELECT cur.id, cur.state, cur.next_attempt_at, 'unchanged' FROM cur
+        WHERE NOT EXISTS (SELECT 1 FROM upd)`,
+      [
+        input.manualCallId,
+        d?.contactState ?? null,
+        input.placed,
+        input.lastOutcome,
+        input.lastDisposition,
+        d?.nextAttemptAt ?? null,
+        d?.suppressedReason ?? null,
+      ],
+    );
+    const row = rows[0];
+    if (!row) return null;
+    if (row.applied === 'settled' && d && row.state !== d.contactState) {
+      log.warn(
+        { contactId: row.id, requestedState: d.contactState, state: row.state },
+        'Refused a soft-phone settlement on a DNC-suppressed contact — the row stays suppressed',
+      );
+    }
+    return { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at, applied: row.applied };
+  }
+
   /**
    * Contacts stranded `in_flight`: claimed, with no live attempt, and nothing
    * written to the contact or to any of its attempts since `olderThan`.
@@ -259,6 +523,13 @@ export class AgencyContactRepository {
                   SELECT 1 FROM agency_call_attempts a
                    WHERE a.contact_id = ct.id
                      AND (a.state <> 'ended' OR a.updated_at >= $1::timestamptz))
+            -- A soft-phone call's claim (docs/softphone.md §5): a contact held by a
+            -- live manual call, or by one that ended and awaits its outcome, is not
+            -- stranded — its settlement is coming from the outcome or the lapse
+            -- sweep. Served by idx_agency_manual_calls_contact (partial on unsettled).
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_manual_calls m
+                   WHERE m.contact_id = ct.id AND m.settled_at IS NULL)
           ORDER BY ct.updated_at
             FOR UPDATE OF ct SKIP LOCKED
           LIMIT $2

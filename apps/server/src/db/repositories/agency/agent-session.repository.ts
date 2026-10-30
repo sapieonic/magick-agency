@@ -1,8 +1,8 @@
 /** `AgencyAgentSessionRepository`: agent sessions and their transition event log. */
 import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
-import type { AgencyAgentSessionRecord } from '../../models/agency.model.js';
-import type { AgencyAgentState } from '@magick-agency/contracts/agency';
+import type { AgencyAgentSessionRecord, AgencyCampaignSessionRecord } from '../../models/agency.model.js';
+import { SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencySessionKind } from '@magick-agency/contracts/agency';
 
 const log = createChildLogger({ component: 'agency-repository' });
 
@@ -24,8 +24,33 @@ const log = createChildLogger({ component: 'agency-repository' });
  * the very window this result closes.
  */
 type AgencyAgentJoinResult =
-  | { ok: true; session: AgencyAgentSessionRecord }
-  | { ok: false; reason: 'other_campaign'; session: AgencyAgentSessionRecord };
+  /** `created`: a fresh row (201 on the wire); false for a rehydrate. */
+  | { ok: true; session: AgencyAgentSessionRecord; created: boolean }
+  /** Live on a DIFFERENT campaign: the refusal names it (`session_on_other_campaign`). */
+  | { ok: false; reason: 'other_campaign'; session: AgencyCampaignSessionRecord }
+  /**
+   * Live on a soft-phone session (docs/softphone.md), which has no campaign to name;
+   * the route answers `session_on_softphone`. Before 0005 every blocker was a
+   * campaign session, so the route still also narrows on `isCampaignSession`.
+   */
+  | { ok: false; reason: 'on_softphone'; session: AgencyAgentSessionRecord };
+
+/**
+ * What `joinSoftphone` learned. The mirror image of {@link AgencyAgentJoinResult}:
+ * the soft-phone session is the agent's one live session in the tenant
+ * (`uq_agency_agent_live_tenant`), so an agent live on a campaign is refused, with
+ * that session, and the remedy is the switch on it (`POST /sessions/:id/softphone`,
+ * §4.2), never a second session.
+ */
+export type AgencySoftphoneJoinResult =
+  /** `created`: a fresh row (201); false when the live soft-phone session was rehydrated (200). */
+  | { ok: true; session: AgencyAgentSessionRecord & { kind: 'softphone'; campaign_id: null }; created: boolean }
+  | { ok: false; reason: 'on_campaign'; session: AgencyCampaignSessionRecord };
+
+/** The upsert's own answer, before either public method names the conflict. */
+type LiveSessionUpsertResult =
+  | { ok: true; session: AgencyAgentSessionRecord; created: boolean }
+  | { ok: false; blocker: AgencyAgentSessionRecord };
 
 /**
  * How many times `joinOrRehydrate` re-attempts its upsert when the row blocking
@@ -234,15 +259,26 @@ export class AgencyAgentSessionRepository {
    * "nothing live" and both insert. The arbiter index does the checking, inside
    * the same statement as the write.
    *
-   * ── Why `DO UPDATE … WHERE campaign_id = EXCLUDED.campaign_id` ─────────────
+   * ── Why `DO UPDATE … WHERE kind = … AND campaign_id IS NOT DISTINCT FROM …` ─
    * The conflict has two meanings and they must not be collapsed:
-   *   * same campaign  ⇒ this is a REHYDRATE. Update and return the row.
-   *   * other campaign ⇒ this is the refusal. The `WHERE` makes the DO UPDATE
+   *   * same session (same kind, same campaign) ⇒ this is a REHYDRATE. Update and
+   *     return the row.
+   *   * anything else ⇒ this is the refusal. The `WHERE` makes the DO UPDATE
    *     match nothing, so `RETURNING` yields zero rows — **and, critically, the
-   *     other campaign's row is left exactly as it was.** An unconditional DO
+   *     other session's row is left exactly as it was.** An unconditional DO
    *     UPDATE would stamp this replica's `owner_replica` onto a session live on
    *     another campaign, i.e. quietly hijack the ownership of an agent who may
    *     be mid-conversation, and only then report a conflict.
+   *
+   * `IS NOT DISTINCT FROM`, never `=`: a soft-phone session's `campaign_id` is NULL
+   * (0005), `NULL = NULL` is NULL, and the rehydrate arm then never matched — the
+   * follow-up read found the agent's own soft-phone session, judged it "the
+   * requested one", retried, and threw after three passes (a 500 on every
+   * soft-phone reconnect). The JS comparison in the retry loop is `!==` on two
+   * `string | null` values, which is already NULL-safe.
+   *
+   * A campaign join while the agent is on a soft-phone session is refused
+   * `on_softphone` (the route answers `session_on_softphone`).
    */
   async joinOrRehydrate(input: {
     tenantId: string;
@@ -251,6 +287,62 @@ export class AgencyAgentSessionRepository {
     agentUserId: string;
     replicaId: string;
   }): Promise<AgencyAgentJoinResult> {
+    const result = await this.upsertLiveSession({ ...input, kind: 'campaign' });
+    if (result.ok) return result;
+    const blocker = result.blocker;
+    return blocker.campaign_id === null
+      ? { ok: false, reason: 'on_softphone', session: blocker }
+      : { ok: false, reason: 'other_campaign', session: blocker as AgencyCampaignSessionRecord };
+  }
+
+  /**
+   * Open, or REHYDRATE, the agent's soft-phone session (docs/softphone.md §2):
+   * `kind = 'softphone'`, `campaign_id` NULL, created in `break` with the reserved
+   * reason `soft_phone`, and never anything else while live
+   * (`ck_agency_agent_session_softphone_state` allows only `break`/`offline`).
+   *
+   * The same single statement as {@link joinOrRehydrate}, on the same arbiter
+   * (`uq_agency_agent_live_tenant`): never check-then-insert, for the reason that
+   * method's header gives. A rehydrate of an `offline` soft-phone session (the startup
+   * reaper's `markAllOffline`) lands back in `break/soft_phone`, re-stamping the
+   * reason, since `soft_phone` is the only break a soft-phone session can be on.
+   *
+   * Refused `on_campaign`, with the live campaign session, when the agent is live on
+   * a campaign: the soft phone for that agent is the switch on that session (§4.2).
+   */
+  async joinSoftphone(input: {
+    tenantId: string;
+    accountId: string;
+    agentUserId: string;
+    replicaId: string;
+  }): Promise<AgencySoftphoneJoinResult> {
+    const result = await this.upsertLiveSession({ ...input, kind: 'softphone', campaignId: null });
+    if (result.ok) {
+      return {
+        ok: true,
+        session: result.session as AgencyAgentSessionRecord & { kind: 'softphone'; campaign_id: null },
+        created: result.created,
+      };
+    }
+    // The upsert's blocker is never a soft-phone session: that would have been the
+    // rehydrate arm. `campaign_id` non-null is what the refusal carries.
+    return { ok: false, reason: 'on_campaign', session: result.blocker as AgencyCampaignSessionRecord };
+  }
+
+  /**
+   * The upsert both joins run. `kind` and `campaignId` together name the session
+   * proposed: `('campaign', <id>)` or `('softphone', null)`; the CHECK
+   * `ck_agency_agent_session_kind_campaign` refuses any other pairing.
+   */
+  private async upsertLiveSession(input: {
+    tenantId: string;
+    accountId: string;
+    kind: AgencySessionKind;
+    campaignId: string | null;
+    agentUserId: string;
+    replicaId: string;
+  }): Promise<LiveSessionUpsertResult> {
+    const breakReason = input.kind === 'softphone' ? SOFTPHONE_BREAK_REASON : null;
     for (let attempt = 0; attempt < JOIN_UPSERT_ATTEMPTS; attempt++) {
       // ── The `prev` CTE is how a join gets logged ───────────
       //
@@ -292,15 +384,22 @@ export class AgencyAgentSessionRepository {
             WHERE tenant_id = $1 AND agent_user_id = $4 AND left_at IS NULL
          ), upserted AS (
            INSERT INTO agency_agent_sessions
-             (tenant_id, account_id, campaign_id, agent_user_id, state, owner_replica, last_heartbeat)
-           VALUES ($1, $2, $3, $4, 'break', $5, now())
+             (tenant_id, account_id, campaign_id, agent_user_id, state, owner_replica, last_heartbeat,
+              kind, break_reason)
+           VALUES ($1, $2, $3, $4, 'break', $5, now(), $6, $7)
            ON CONFLICT (tenant_id, agent_user_id) WHERE left_at IS NULL
            DO UPDATE SET owner_replica = EXCLUDED.owner_replica,
                          last_heartbeat = now(),
                          state = CASE WHEN agency_agent_sessions.state = 'offline'
                                       THEN 'break' ELSE agency_agent_sessions.state END,
+                         -- A soft-phone session's only break is soft_phone; a campaign
+                         -- rehydrate keeps whatever reason the row carries, as before.
+                         break_reason = CASE WHEN agency_agent_sessions.kind = 'softphone'
+                                             THEN EXCLUDED.break_reason
+                                             ELSE agency_agent_sessions.break_reason END,
                          updated_at = now()
-             WHERE agency_agent_sessions.campaign_id = EXCLUDED.campaign_id
+             WHERE agency_agent_sessions.kind = EXCLUDED.kind
+               AND agency_agent_sessions.campaign_id IS NOT DISTINCT FROM EXCLUDED.campaign_id
            RETURNING *, (xmax = 0) AS inserted
          )
          SELECT upserted.*,
@@ -312,7 +411,8 @@ export class AgencyAgentSessionRepository {
                      ELSE upserted.break_reason END AS from_break_reason,
                 clock_timestamp() AS at
            FROM upserted LEFT JOIN prev ON prev.id = upserted.id`,
-        [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId],
+        [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId,
+          input.kind, breakReason],
       );
       const row = rows[0];
       if (row) {
@@ -323,8 +423,8 @@ export class AgencyAgentSessionRepository {
         // `at` is destructured out for the same reason the two `from_*` columns
         // are: `AgencyAgentSessionRecord` is spread into the bootstrap payload,
         // and a log-only column riding along becomes a contract nobody agreed to.
-        // `inserted` likewise: it only steers `from_state` above.
-        const { from_state, from_break_reason, at, inserted: _inserted, ...session } = row;
+        // `inserted` likewise: it steers `from_state` above and becomes `created`.
+        const { from_state, from_break_reason, at, inserted, ...session } = row;
         await this.recordTransitions([{
           session_id: session.id,
           tenant_id: session.tenant_id,
@@ -337,7 +437,7 @@ export class AgencyAgentSessionRepository {
           break_reason: session.break_reason,
           at,
         }]);
-        return { ok: true, session };
+        return { ok: true, session, created: inserted };
       }
 
       // Zero rows means the DO UPDATE's WHERE refused: something live exists for
@@ -348,8 +448,11 @@ export class AgencyAgentSessionRepository {
       // exist because of that gap rather than in spite of it.
       const blocker = await this.findLiveForAgent(input.tenantId, input.agentUserId);
 
+      // `campaign_id` alone decides "the same session": the CHECK ties `kind` to
+      // it, and `!==` on `string | null` is NULL-safe (a soft-phone blocker of a
+      // soft-phone join is the rehydrate race below, not a conflict).
       if (blocker && blocker.campaign_id !== input.campaignId) {
-        return { ok: false, reason: 'other_campaign', session: blocker };
+        return { ok: false, blocker };
       }
 
       // Two ways to arrive here, and both mean "the obstacle is gone, try again":
@@ -377,7 +480,7 @@ export class AgencyAgentSessionRepository {
     // whoever made the request; the identifiers belong in the log line the caller
     // writes, not on the wire.
     throw new Error(
-      `joinOrRehydrate could not settle after ${JOIN_UPSERT_ATTEMPTS} attempts: ` +
+      `Live-session join could not settle after ${JOIN_UPSERT_ATTEMPTS} attempts: ` +
       `the agent's live session kept changing between the upsert and the read`,
     );
   }

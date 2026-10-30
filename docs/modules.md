@@ -106,6 +106,11 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
+| `apps/server/test/integration/agency/softphone-contact-settlement.test.ts` | ~35 |
+| `apps/server/test/integration/agency/softphone-manual-call-repository.test.ts` | ~31 |
+| `apps/server/test/integration/agency/softphone-session-join.test.ts` | ~9 |
+| `apps/server/test/integration/agency/softphone-session-route.test.ts` | 1 |
+| `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~6 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
 | `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 27 |
@@ -569,9 +574,9 @@ Files: `admission.ts`, `bridge-types.ts`, `ws-tokens.ts`
 
 The agency repository (`agency.repository.ts`, decision B12), membership invites, notification deliveries and preferences, the telephony provider repository (uncached, so a status change is seen on the next read), and their models.
 
-The agency repository is a folder, `repositories/agency/`, behind the `agency.repository.ts` barrel: every caller outside the folder imports the barrel and the unit suites `vi.mock` it, so a mock of the barrel replaces what callers use. One file per class: `campaign.repository.ts` (`AgencyCampaignRepository`; its retry and dashboard methods delegate to free functions in `campaign-retry.ts` and `campaign-stats.ts`), `contact.repository.ts`, `attempt.repository.ts`, `agent-session.repository.ts`, `fleet-metrics.repository.ts` (`AgencyAbandonmentRepository`, `AgencyLiveConcurrencyRepository`) and `agent-stats.repository.ts` (`AgencyAgentStatsRepository`; `roster` and `groupedStats` delegate to `agent-roster-stats.ts` and `agent-grouped-stats.ts`). Three leaves hold what more than one file emits: `sql-fragments.ts` (the shared SQL spellings: phone digits, resolved zone, occupancy intervals, the five attempt metrics, the campaign INSERT columns), `query-builders.ts` (parameter accumulator, filter and keyset builders) and `projections.ts` (row to wire shape). Files in the folder import only the leaves, the delegate files and external modules, never the barrel or another class.
+The agency repository is a folder, `repositories/agency/`, behind the `agency.repository.ts` barrel: every caller outside the folder imports the barrel and the unit suites `vi.mock` it, so a mock of the barrel replaces what callers use. One file per class: `campaign.repository.ts` (`AgencyCampaignRepository`; its retry and dashboard methods delegate to free functions in `campaign-retry.ts` and `campaign-stats.ts`), `contact.repository.ts`, `attempt.repository.ts`, `agent-session.repository.ts`, `fleet-metrics.repository.ts` (`AgencyAbandonmentRepository`, `AgencyLiveConcurrencyRepository`), `manual-call.repository.ts` (`AgencyManualCallRepository`: the soft phone's `agency_manual_calls` spine, docs/softphone.md), `softphone-settings.repository.ts` (`AgencySoftphoneSettingsRepository` and the settings validator) and `agent-stats.repository.ts` (`AgencyAgentStatsRepository`; `roster` and `groupedStats` delegate to `agent-roster-stats.ts` and `agent-grouped-stats.ts`). Three leaves hold what more than one file emits: `sql-fragments.ts` (the shared SQL spellings: phone digits, resolved zone, occupancy intervals, the five attempt metrics, the campaign INSERT columns), `query-builders.ts` (parameter accumulator, filter and keyset builders) and `projections.ts` (row to wire shape, including the manual call's `AgencyManualCall`). Files in the folder import only the leaves, the delegate files and external modules, never the barrel or another class.
 
-Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`
+Files: `models/agency.model.ts`, `models/membership-invite.model.ts`, `models/notification.model.ts`, `repositories/agency.repository.ts`, `repositories/agency/agent-grouped-stats.ts`, `repositories/agency/agent-roster-stats.ts`, `repositories/agency/agent-session.repository.ts`, `repositories/agency/agent-stats.repository.ts`, `repositories/agency/attempt.repository.ts`, `repositories/agency/campaign-retry.ts`, `repositories/agency/campaign-stats.ts`, `repositories/agency/campaign.repository.ts`, `repositories/agency/contact.repository.ts`, `repositories/agency/fleet-metrics.repository.ts`, `repositories/agency/manual-call.repository.ts`, `repositories/agency/projections.ts`, `repositories/agency/query-builders.ts`, `repositories/agency/softphone-settings.repository.ts`, `repositories/agency/sql-fragments.ts`, `repositories/membership-invite.repository.ts`, `repositories/notification-delivery.repository.ts`, `repositories/notification-preference.repository.ts`, `repositories/telephony-provider.repository.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1008,7 +1013,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/shared-infra-coverage.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/telephony-credential.repository.test.ts` | 31 |
 | `packages/db/test/integration/repositories/tenant.repository.test.ts` | ~13 |
-| `packages/db/test/integration/repositories/usage-counts.repository.test.ts` | ~7 |
+| `packages/db/test/integration/repositories/usage-counts.repository.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/user-addressable-members.repository.test.ts` | ~11 |
 | `packages/db/test/unit/db/repositories/account-settings.repository.test.ts` | 24 |
 | `packages/db/test/unit/db/repositories/account.repository.test.ts` | 23 |
@@ -1023,7 +1028,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/unit/db/repositories/tenant.repository.test.ts` | 15 |
 | `packages/db/test/unit/db/repositories/user.repository.test.ts` | 16 |
 | `packages/db/test/unit/db/repositories/webrtc-call-repository-analysis.test.ts` | 9 |
-| `packages/db/test/unit/db/repositories/webrtc-call-scope.test.ts` | 12 |
+| `packages/db/test/unit/db/repositories/webrtc-call-scope.test.ts` | 13 |
 
 ### `packages/db/src/repositories/platform/`
 
@@ -1055,7 +1060,7 @@ Scenario, flow, guard and setup tests that span several modules.
 
 | Test file | Cases |
 |---|---|
-| `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~11 |
+| `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~14 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
 | `packages/db/test/integration/baseline-down-up.test.ts` | ~3 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
@@ -1064,7 +1069,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
-| `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~28 |
+| `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~31 |
 | `packages/db/test/integration/flows/dialer-analysis-dsar.test.ts` | ~1 |
 | `packages/db/test/integration/flows/dialer-analysis-failure-paths.test.ts` | ~2 |
 | `packages/db/test/integration/flows/dialer-analysis-gating.test.ts` | ~2 |

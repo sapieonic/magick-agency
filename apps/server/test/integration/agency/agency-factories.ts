@@ -255,3 +255,38 @@ export const CLAIM_SELECT_SQL = `
    ORDER BY next_attempt_at
      FOR UPDATE SKIP LOCKED
    LIMIT $2`;
+
+/** A soft-phone session (0005): no campaign, created in `break/soft_phone`. */
+export async function insertSoftphoneSession(overrides: Record<string, unknown> = {}) {
+  return insertRow('agency_agent_sessions', {
+    id: randomUUID(),
+    tenant_id: DEFAULTS.tenantId,
+    account_id: DEFAULTS.accountId,
+    kind: 'softphone',
+    campaign_id: null,
+    agent_user_id: randomUUID(),
+    state: 'break',
+    break_reason: 'soft_phone',
+    ...overrides,
+  });
+}
+
+/**
+ * A manual call (`agency_manual_calls`, 0005) on `session`, queued and untagged
+ * unless overridden; tenant, account and agent are the session's.
+ */
+export async function insertManualCall(
+  session: { id: string; tenant_id: string; account_id: string; agent_user_id: string },
+  overrides: Record<string, unknown> = {},
+) {
+  return insertRow('agency_manual_calls', {
+    id: randomUUID(),
+    tenant_id: session.tenant_id,
+    account_id: session.account_id,
+    session_id: session.id,
+    agent_user_id: session.agent_user_id,
+    destination_e164: '+919812345678',
+    caller_id: '+919000000001',
+    ...overrides,
+  });
+}
