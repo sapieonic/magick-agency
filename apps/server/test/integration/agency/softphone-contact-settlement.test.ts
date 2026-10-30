@@ -90,25 +90,45 @@ describe('soft-phone roster contact (integration)', () => {
   });
 
   it('findForManualMatch is one probe of idx_agency_contacts_campaign_phone_digits (byte-identical spelling)', async () => {
+    // The pattern of T-RES-I11 (agency-dnc-resurrection.test.ts): seeded rows, fresh
+    // statistics, seq scans discouraged. Asserting a plan on an empty, never-ANALYZEd
+    // table asserts whatever stale statistics the earlier files left behind, so the
+    // planner's pick among the campaign_id-prefixed indexes changed with the run.
+    // `enable_seqscan = off` is not cheating here: the question is whether the index
+    // CAN serve the predicate (the expression must match byte for byte), and the
+    // proof is the expression sitting in the scan's Index Cond — not a Filter — and
+    // moving to a Filter once the index is gone.
     const campaign = await insertAgencyCampaign();
+    for (let i = 0; i < 25; i++) {
+      await insertAgencyContact(campaign.id, { phone_e164: `+9198123${String(40_000 + i).padStart(5, '0')}`, source_row_number: i + 1 });
+    }
+    // The method's own predicate, through the same constant it interpolates.
+    const sql = `EXPLAIN SELECT * FROM agency_contacts
+          WHERE campaign_id = $1 AND ${CONTACT_PHONE_DIGITS_SQL} = $2`;
+    const params = [campaign.id, '919812340003'];
     const client = await getTestPool().connect();
     let plan = '';
+    let withoutIndex = '';
     try {
       await client.query('BEGIN');
+      await client.query('ANALYZE agency_contacts');
       await client.query('SET LOCAL enable_seqscan = off');
-      // The method's own predicate, through the same constant it interpolates.
-      const { rows } = await client.query<{ 'QUERY PLAN': string }>(
-        `EXPLAIN SELECT * FROM agency_contacts
-          WHERE campaign_id = $1 AND ${CONTACT_PHONE_DIGITS_SQL} = $2`,
-        [campaign.id, '919812345678'],
-      );
-      plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+      plan = (await client.query<{ 'QUERY PLAN': string }>(sql, params)).rows.map((r) => r['QUERY PLAN']).join('\n');
+      // Same transaction, so the EXPLAIN sees the drop; the ROLLBACK restores it.
+      await client.query('DROP INDEX idx_agency_contacts_campaign_phone_digits');
+      withoutIndex = (await client.query<{ 'QUERY PLAN': string }>(sql, params)).rows.map((r) => r['QUERY PLAN']).join('\n');
     } finally {
       // Always: a pooled client returned mid-transaction poisons every later query.
       await client.query('ROLLBACK');
       client.release();
     }
-    expect(plan).toContain('idx_agency_contacts_campaign_phone_digits');
+    const indexConds = (p: string) => p.split('\n').filter((l) => l.includes('Index Cond:')).join('\n');
+    expect(plan, plan).toContain('idx_agency_contacts_campaign_phone_digits');
+    expect(indexConds(plan), plan).toContain('regexp_replace(');
+    // Without it the digits comparison degrades to a Filter over the campaign's rows.
+    expect(withoutIndex, withoutIndex).not.toContain('idx_agency_contacts_campaign_phone_digits');
+    expect(indexConds(withoutIndex), withoutIndex).not.toContain('regexp_replace(');
+    expect(withoutIndex, withoutIndex).toMatch(/Filter: .*regexp_replace\(/);
   });
 
   // ── the claim ─────────────────────────────────────────────────────────────
