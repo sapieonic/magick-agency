@@ -46,8 +46,15 @@
  * ── Layout ──────────────────────────────────────────────────────────────────
  * This file is the barrel; the declarations live in `./agency/*.ts`, one file per
  * surface, and every name stays importable from `@magick-agency/contracts/agency`.
- * The action error union `AgencyActionErrorCode` is declared in `./errors.ts`
- * with its runtime list, and re-exported here.
+ * The action error union `AgencyActionErrorCode` and the soft-phone union
+ * `AgencySoftphoneErrorCode` are declared in `./errors.ts` with their runtime
+ * lists, and re-exported here.
+ *
+ * **Soft-phone amendment (2026-10-30, `docs/softphone.md`).** `./agency/softphone.ts`
+ * is new; one shape frozen earlier changes, marked `SP:` where it appears:
+ *   1. `AgencyStationServerFrame` gains `AgencyStationManualCallFrame`. The union
+ *      was already declared non-exhaustive, so a client that ignores an unknown
+ *      `event` is unaffected.
  */
 
 export * from './agency/enums';
@@ -59,4 +66,5 @@ export * from './agency/campaign-lifecycle';
 export * from './agency/campaign-defaults';
 export * from './agency/performance';
 export * from './agency/spine';
-export type { AgencyActionErrorCode } from './errors';
+export * from './agency/softphone';
+export type { AgencyActionErrorCode, AgencySoftphoneErrorCode } from './errors';

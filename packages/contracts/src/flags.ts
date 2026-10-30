@@ -1,5 +1,5 @@
 /**
- * The three agency feature flags: keys, defaults, scopes, `envVar` names,
+ * The four agency feature flags: keys, defaults, scopes, `envVar` names,
  * `clientExposed`, owners and descriptions. Super-admins can override them per
  * tenant and account.
  *
@@ -7,7 +7,7 @@
  * env resolver that reads `process.env` do not belong in a package two browser
  * apps import, so the registry and the env resolution are the server's to build
  * on top of {@link AGENCY_FLAGS}. `FlagDefinition` has no `validate` predicate
- * (a function), and none of these three flags needs one.
+ * (a function), and none of these flags needs one.
  */
 
 import type { AllListed } from './primitives';
@@ -128,15 +128,36 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency dialer: bind the agent to a campaign call at the carrier answer instead of before the dial',
   },
+
+  // ── The soft phone: an agent dials a typed number outside pacing ────────────
+  //
+  // `docs/softphone.md`. Off by default, like the dialer: it places real calls on
+  // the account's numbers and its outcomes can move roster contacts (SP6), so a
+  // tenant gets it by an override row, scoped and attributed. On, EVERY agent in
+  // the account has it (SP4, Manas 2026-10-30): there is no per-agent switch, and
+  // `agency.softphone.dial` floors at `agent`. Every soft-phone route checks it
+  // (`softphone_disabled`), and the console shows the soft phone's nav item and
+  // the station's "Switch to soft phone" on it, so it is client-exposed.
+  agency_softphone_enabled: {
+    key: 'agency_softphone_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_SOFTPHONE', // staging: FF_AGENCY_SOFTPHONE=true
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console shows/hides the soft phone
+    owner: 'voice',
+    description: 'Agency soft phone: agents dial a typed number from the browser, outside campaign pacing',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The three agency flag keys. */
+/** The four agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
   'agency_dialer_enabled',
   'agency_late_binding',
   'agency_call_analysis',
+  'agency_softphone_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

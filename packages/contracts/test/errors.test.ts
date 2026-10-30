@@ -3,9 +3,11 @@ import {
   AGENCY_ACTION_ERROR_CODES,
   AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES,
   AGENCY_ROSTER_REFUSAL_CODES,
+  AGENCY_SOFTPHONE_ERROR_CODES,
   type AgencyActionErrorCode,
   type AgencyCampaignLifecycleErrorCode,
   type AgencyRosterRefusalCode,
+  type AgencySoftphoneErrorCode,
   type AgencyStationErrorCode,
 } from '../src/errors';
 import type * as Core from '../src/agency';
@@ -53,8 +55,11 @@ const _stationIsCore: Equals<AgencyStationErrorCode, Core.AgencyStationErrorCode
 // The console-facing layer re-exports the same unions.
 const _consoleActionAgrees: Equals<AgencyApi.AgencyActionErrorCode, AgencyActionErrorCode> = true;
 const _consoleStationAgrees: Equals<AgencyApi.AgencyStationErrorCode, AgencyStationErrorCode> = true;
+const _softphoneExact: Equals<(typeof AGENCY_SOFTPHONE_ERROR_CODES)[number], AgencySoftphoneErrorCode> = true;
+const _softphoneIsCore: Equals<AgencySoftphoneErrorCode, Core.AgencySoftphoneErrorCode> = true;
+const _consoleSoftphoneAgrees: Equals<AgencyApi.AgencySoftphoneErrorCode, AgencySoftphoneErrorCode> = true;
 void [_actionExact, _rosterExact, _lifecycleExact, _actionIsCore, _stationIsCore,
-  _consoleActionAgrees, _consoleStationAgrees];
+  _consoleActionAgrees, _consoleStationAgrees, _softphoneExact, _softphoneIsCore, _consoleSoftphoneAgrees];
 
 function expectUnique(list: readonly string[]): void {
   expect(new Set(list).size).toBe(list.length);
@@ -108,5 +113,47 @@ describe('campaign-lifecycle codes', () => {
     const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
     for (const code of AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES) expect(action.has(code)).toBe(false);
     for (const code of AGENCY_ROSTER_REFUSAL_CODES) expect(action.has(code)).toBe(false);
+  });
+});
+
+describe('soft-phone codes', () => {
+  it('equal the snapshot, in order, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...AGENCY_SOFTPHONE_ERROR_CODES]).toEqual([
+      'softphone_disabled',
+      'invalid_number',
+      'caller_id_not_allowed',
+      'campaign_not_taggable',
+      'dnc_listed',
+      'dnc_unavailable',
+      'outside_calling_hours',
+      'override_note_invalid',
+      'contact_in_flight',
+      'session_on_campaign',
+      'session_on_softphone',
+      'session_not_found',
+      'wrong_session_kind',
+      'not_on_softphone',
+      'manual_call_live',
+      'outcome_pending',
+      'concurrency_limit',
+      'station_unavailable',
+      'call_not_found',
+      'call_settled',
+      'disposition_invalid',
+      'fields_invalid',
+      'settings_invalid',
+    ]);
+    expectUnique(AGENCY_SOFTPHONE_ERROR_CODES);
+  });
+
+  it('is the one list the console layer re-exports, not a copy of it', () => {
+    expect(AgencyApi.AGENCY_SOFTPHONE_ERROR_CODES).toBe(AGENCY_SOFTPHONE_ERROR_CODES);
+  });
+
+  it('do not overlap the action union: the campaign session routes answer from both', () => {
+    // `available` and `break` answer `wrong_session_kind` / `manual_call_live` beside their
+    // action codes, so a console switching on `code` must never find one string in both.
+    const action = new Set<string>(AGENCY_ACTION_ERROR_CODES);
+    for (const code of AGENCY_SOFTPHONE_ERROR_CODES) expect(action.has(code), code).toBe(false);
   });
 });

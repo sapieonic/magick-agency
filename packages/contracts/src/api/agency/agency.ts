@@ -38,6 +38,7 @@ import type {
   AgencyStationReleasedFrame,
   AgencyStationReservedFrame,
   AgencyStationTokenResponse,
+  AgencyStationManualCallFrame,
   AgencyWrapupHoldReason,
 } from '../../agency';
 import type * as Core from '../../agency';
@@ -327,7 +328,9 @@ export type AgencyStationServerFrame =
   | AgencyStationErrorFrame
   | AgencyStationBridgeStatusFrame
   | AgencyStationBridgeEndedFrame
-  | AgencyStationMediaFrame;
+  | AgencyStationMediaFrame
+  // A soft-phone call's state change; re-exported from `./softphone` unchanged.
+  | AgencyStationManualCallFrame;
 
 /**
  * The station socket's close codes (re-mint and retry versus re-bootstrap), declared

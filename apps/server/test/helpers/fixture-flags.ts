@@ -4,7 +4,7 @@ import type { FlagDefinition } from '../../src/feature-flags/registry.js';
  * UNREGISTERED flag definitions of other shapes
  * that the service/snapshot suites use as test subjects.
  *
- * Agency's registry holds only the three agency flags, all boolean and all
+ * Agency's registry holds only the four agency flags, all boolean and all
  * scoped global+tenant+account. The suites exercise the RESOLVER's mechanics
  * through flags of other shapes — a number flag, a flag with no account scope, a
  * flag whose registry default is `true` — and those mechanics are the service's,

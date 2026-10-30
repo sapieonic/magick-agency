@@ -32,9 +32,9 @@ export type MembershipRole = Role;
  * `viewer`. The hierarchy is linear and PERMISSION_MATRIX maps each permission
  * to a *minimum* role, so a floor of `viewer` (10) or higher is unreachable at
  * level 5. Every permission that predates the agency feature floors at `viewer`
- * or above, which means an `agent` membership grants access to exactly the four
- * `agency.*` permissions below, PLUS `proxy.feature_flags.read`, and to nothing
- * else — no campaign list, no analytics, no contacts, no recordings, and no
+ * or above, which means an `agent` membership grants access to exactly the five
+ * agent-floored `agency.*` action permissions below (the four station ones and
+ * `agency.softphone.dial`), PLUS `agency.flags.read`, and to nothing else — no campaign list, no analytics, no contacts, no recordings, and no
  * other `/proxy/*` route. That is the design, not an oversight: agent actions
  * get agency-native routes that can additionally verify the caller is the
  * reserved agent for the attempt.
@@ -42,7 +42,7 @@ export type MembershipRole = Role;
  * The flag map is the single exception, and it is not a softening of the rule —
  * it is the read the rule forgot. the console must resolve it before it can render
  * ANY flag-gated route, so while it floored at `viewer` an agent was locked out
- * of the very product the other four permissions exist to run. See its matrix
+ * of the very product the action permissions exist to run. See its matrix
  * entry. `test/unit/rbac/roles.agent.test.ts` pins both halves.
  *
  * Do not raise this number to "make something work" — raising it silently grants
@@ -113,7 +113,11 @@ export type Permission =
   // agent's own line, and the dialer runtime verifies they are that attempt's reserved agent.
   // These two are number-scoped and list-scoped, so neither floors at `agent`.
   | 'agency.dnc.read'
-  | 'agency.dnc.manage';
+  | 'agency.dnc.manage'
+  // The soft phone (`docs/softphone.md`): dialling a typed number outside pacing,
+  // and the account's soft-phone settings.
+  | 'agency.softphone.dial'
+  | 'agency.softphone.manage';
 
 /** Minimum role required for each permission */
 export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
@@ -163,7 +167,7 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // "they could infer it anyway" would be the wrong argument to lean on.
   //
   // The name starts `agency.`, but it is not an ACTION permission — the four
-  // below remain the only ones of those.
+  // below and `agency.softphone.dial` remain the only ones of those.
   'agency.flags.read': 'agent',
   'agency.campaigns.read': 'viewer',
   'agency.campaigns.write': 'account_admin',
@@ -173,11 +177,11 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // assignment are super-admin-only.
   'agency.phone_numbers.read': 'viewer',
   // ── Agency Dialer ────────────────────────────────────────────────────────
-  // These four are the only agency ACTION permissions floored at `agent` — and,
-  // with `proxy.feature_flags.read` above, the only `agent`-floored permissions
-  // at all. The distinction is worth keeping: these four authorise doing
-  // something to a live call, that one authorises reading the boolean map the
-  // SPA needs to render. Each corresponds to an action an agent takes on the
+  // These four, with `agency.softphone.dial` below, are the only agency ACTION
+  // permissions floored at `agent` — and, with `agency.flags.read` above, the
+  // only `agent`-floored permissions at all. The distinction is worth keeping:
+  // these authorise doing something to a live call, that one authorises reading
+  // the boolean map the SPA needs to render. Each corresponds to an action an agent takes on the
   // call currently on their own station; the dialer runtime
   // additionally verifies the caller is that attempt's reserved agent, an
   // ownership check the generic `/proxy/webrtc-call/:id/end` route cannot
@@ -214,6 +218,23 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   //    nothing else.
   'agency.dnc.read': 'viewer',
   'agency.dnc.manage': 'account_admin',
+  // ── The soft phone ───────────────────────────────────────────────────────
+  // DIAL floors at `agent`: every agent in an account where
+  // `agency_softphone_enabled` is on gets the soft phone, with no per-agent
+  // switch (SP4, Manas 2026-10-30). It is the fifth agent-floored ACTION
+  // permission, and like the four above it acts only on the caller's own
+  // session and calls: the dialer runtime checks the manual call's session is
+  // the caller's, and acting on someone else's call (an outcome on behalf, the
+  // account-wide list) needs `agency.supervise` as well. Every soft-phone route
+  // also requires the flag, so the floor alone grants nothing in an account that
+  // has not turned the feature on.
+  //
+  // MANAGE floors at `account_admin`: the settings it writes (the untagged
+  // outcome catalog, call fields, recording, the default caller ID) apply to
+  // every agent's calls in the account, which is a supervisory change. Reading
+  // them is part of DIAL: the soft phone cannot render without its call fields.
+  'agency.softphone.dial': 'agent',
+  'agency.softphone.manage': 'account_admin',
 };
 
 /** Every permission, for enumeration (tests, route tables, admin screens). */

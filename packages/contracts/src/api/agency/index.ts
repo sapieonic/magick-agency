@@ -18,4 +18,5 @@ export * from './dnc';
 export * from './call-analysis-profile';
 export * from './webrtc-call';
 export * from './attempt-call';
+export * from './softphone';
 export * from './shared';

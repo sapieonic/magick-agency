@@ -22,6 +22,10 @@ const AGENCY_PERMISSIONS: Permission[] = [
   'agency.attempts.handle',
   'agency.attempts.dispose',
   'agency.dnc.write',
+  // The soft phone (docs/softphone.md): every agent in an account with the flag on
+  // dials from it, with no per-agent switch (SP4, Manas 2026-10-30). An action on the
+  // caller's own session, like the four above.
+  'agency.softphone.dial',
 ];
 
 /**
@@ -31,7 +35,7 @@ const AGENCY_PERMISSIONS: Permission[] = [
  *
  * Exactly one member, and adding a second should be argued for on its own terms.
  * `GET /proxy/feature-flags` is the gate map the console resolves before it renders any
- * flag-gated route, so it is infrastructure for the four permissions above rather
+ * flag-gated route, so it is infrastructure for the action permissions above rather
  * than a capability alongside them. While it floored at `viewer` (via the
  * borrowed viewer-floored stats permission) every dedicated agent 403'd, the console's fail-safe
  * closed `FeatureFlagsContext` resolved every flag to `false`, and all four agent
@@ -100,7 +104,7 @@ describe('agent role — grants nothing that predates the Agency Dialer', () => 
     expect(hasPermission('agent', 'tenant.read')).toBe(false);
   });
 
-  it('resolves to exactly the four agency permissions plus the flag map, and nothing else', () => {
+  it('resolves to exactly the five agency action permissions plus the flag map, and nothing else', () => {
     const granted = ALL_PERMISSIONS.filter((p) => hasPermission('agent', p)).sort();
     expect(granted).toEqual([...AGENT_PERMISSIONS].sort());
   });
@@ -142,7 +146,7 @@ describe('agent role — can resolve the feature-flag map', () => {
 });
 
 describe('agency permissions — floors and inheritance', () => {
-  it('all four floor at agent', () => {
+  it('all five floor at agent', () => {
     for (const permission of AGENCY_PERMISSIONS) {
       expect(PERMISSION_MATRIX[permission]).toBe('agent');
     }
@@ -224,7 +228,7 @@ describe('agent → campaign staffing — the floors the assignment routes depen
     expect(granted).toEqual([...AGENT_PERMISSIONS].sort());
 
     // The half that is actually about staffing: nothing here is an agency ACTION
-    // beyond the four an agent already had.
+    // beyond the ones the role already grants (the four station ones and the soft phone's).
     const beyondAgency = granted.filter((p) => !AGENCY_PERMISSIONS.includes(p));
     expect(beyondAgency).toEqual([...AGENT_INFRASTRUCTURE_PERMISSIONS].sort());
   });

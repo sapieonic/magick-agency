@@ -12,9 +12,10 @@ import {
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
 /*
- * The registry holds only the three agency flags.
- *  - "declares …" pins exactly the three agency flags; the shape cases pin
- *    agency_dialer_enabled / agency_call_analysis; defineFlag and the boolean
+ * The registry holds only the four agency flags.
+ *  - "declares …" pins exactly the four agency flags; the shape cases pin
+ *    agency_dialer_enabled / agency_call_analysis / agency_late_binding /
+ *    agency_softphone_enabled; defineFlag and the boolean
  *    resolveEnvDefault cases use agency_dialer_enabled (FF_AGENCY_DIALER); the number
  *    resolveEnvDefault case uses an unregistered fixture copy of
  *    prewarm_ring_delay_ms (resolveEnvDefault takes a definition); the
@@ -40,11 +41,14 @@ describe('feature-flag registry', () => {
       }
     });
 
-    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding', () => {
+    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled', () => {
       expect(getFlag('agency_call_analysis')).toBeDefined();
       expect(getFlag('agency_dialer_enabled')).toBeDefined();
       expect(getFlag('agency_late_binding')).toBeDefined();
-      expect(allFlags().map((f) => f.key)).toEqual(['agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding']);
+      expect(getFlag('agency_softphone_enabled')).toBeDefined();
+      expect(allFlags().map((f) => f.key)).toEqual([
+        'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
+      ]);
     });
 
     it('agency_dialer_enabled is boolean, default false, tri-scoped, client-exposed', () => {
@@ -81,6 +85,17 @@ describe('feature-flag registry', () => {
       // a flag the client can read is a flag the client will eventually branch on.
       expect(f.clientExposed).not.toBe(true);
       expect(f.envVar).toBe('FF_AGENCY_LATE_BINDING');
+    });
+
+    it('agency_softphone_enabled is boolean, default off, tri-scoped, client-exposed', () => {
+      const f = getFlag('agency_softphone_enabled')!;
+      expect(f.type).toBe('boolean');
+      // Off by default: it places real calls and its outcomes move roster contacts (SP6).
+      expect(f.default).toBe(false);
+      expect(f.scopes).toEqual(expect.arrayContaining(['global', 'tenant', 'account']));
+      // The console shows the soft phone's nav item and the station's switch on it.
+      expect(f.clientExposed).toBe(true);
+      expect(f.envVar).toBe('FF_AGENCY_SOFTPHONE');
     });
   });
 
@@ -157,6 +172,7 @@ describe('feature-flag registry', () => {
       const keys = clientExposedFlags().map((f) => f.key);
       expect(keys).toContain('agency_dialer_enabled');
       expect(keys).toContain('agency_call_analysis');
+      expect(keys).toContain('agency_softphone_enabled');
       expect(keys).not.toContain('agency_late_binding');
     });
   });
