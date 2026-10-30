@@ -55,6 +55,7 @@ extends the dialer type and declares only the difference.
 |---|---|---|
 | `AgencyContactRow` | `AgencyRosterContact` | alias |
 | `AgencyAttemptRow` | `AgencyAttempt` | derived: adds `agent_name?: string \| null` (enrichment) |
+| `AgencyManualCall` (a `GET /softphone/calls` row) | `AgencyManualCallListRow` | derived: adds `analysis_status?: DialerAnalysisStatus \| null`, the media leg's summary status (the list read joins it); `AgencyManualCallsPage` is the console's page of it, so the dialer `AgencyManualCallsPage` is not re-exported |
 | `AgencyLineageCampaign` | `AgencyCampaignLineageEntry` | derived: `status: string` |
 | `AgencyAgentOccupancy` | `AgencyOccupancy` | alias |
 | `AgencyStatsBucketUnit` | `AgencyStatsBucketWidth` | alias (`'day' \| 'week' \| 'month'`) |
@@ -87,8 +88,8 @@ package root.
 - `agency-stats.ts`: `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, `AgencyRosterSort`,
   `AgencyRosterPercentiles`, `AgencyGroupDimension`, `AgencyGroupKey`, `AgencyGroupSort`.
 - `softphone.ts` (`docs/softphone.md`): every soft-phone shape the console reads unchanged — the
-  manual call and its vocabularies, call fields, settings, bootstrap, session response, list query
-  and page, disposition and DNC responses, the refusal bodies, `AgencyStationManualCallFrame` —
+  manual call and its vocabularies, call fields, settings, bootstrap, session response, list query,
+  disposition and DNC responses, the refusal bodies, `AgencyStationManualCallFrame` —
   its constants (`SOFTPHONE_*`, `AGENCY_SESSION_KINDS`, `AGENCY_MANUAL_CALL_*`,
   `AGENCY_CALL_FIELD_TYPES`) and `AgencySoftphoneErrorCode` with `AGENCY_SOFTPHONE_ERROR_CODES`
   (from `../../errors`).
@@ -114,7 +115,8 @@ handlers serialise it in `apps/server/src/api/responses/agency-campaign.response
 DNC (`dnc.ts`), analysis profiles (`call-analysis-profile.ts`), the call detail
 (`webrtc-call.ts`, `attempt-call.ts`), and the soft-phone call detail `AgencyManualCallDetail`
 (`softphone.ts`), which carries the media leg's `WebRtcCallRecord` in the attempt detail's
-envelope (`call_availability`).
+envelope (`call_availability`) and the enriched `dispositioned_by_name?` (who saved the outcome,
+joined from `users`).
 
 ## 5. Request fields the server sets itself
 

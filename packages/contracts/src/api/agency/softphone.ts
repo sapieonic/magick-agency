@@ -12,8 +12,9 @@
 
 import type * as Core from '../../agency';
 import type { AgencyManualCall, AgencyManualCallOverrides } from '../../agency';
+import type { AgencyKeysetPage } from '../../agency';
 import type { AgencyCallAvailability } from './attempt-call';
-import type { WebRtcCallRecord } from './webrtc-call';
+import type { DialerAnalysisStatus, WebRtcCallRecord } from './webrtc-call';
 
 export type {
   AgencyCallField,
@@ -33,7 +34,6 @@ export type {
   AgencyManualCallOverridesRequest,
   AgencyManualCallState,
   AgencyManualCallTag,
-  AgencyManualCallsPage,
   AgencySessionKind,
   AgencySoftphoneBootstrap,
   AgencySoftphoneCallPendingRefusal,
@@ -98,6 +98,22 @@ export type AgencyManualCallDispositionRequest = Omit<
 /** `POST /proxy/agency/softphone/calls/:id/dnc`. */
 export type AgencyManualCallDncRequest = Omit<Core.AgencyManualCallDncRequest, 'agent_user_id' | 'on_behalf'>;
 
+// ─── The list ───────────────────────────────────────────────────────────────
+
+/**
+ * A `GET /proxy/agency/softphone/calls` row: the wire row, with `agent_name`
+ * filled, plus its media leg's summary status for the list's Summary column.
+ * Optional so a row built from the dialer type (the live call, a frame) still
+ * fits; the list always sends it.
+ */
+export interface AgencyManualCallListRow extends AgencyManualCall {
+  /** The media leg's `analysis_status`; NULL when there is no leg, it was purged, or analysis never ran. */
+  analysis_status?: DialerAnalysisStatus | null;
+}
+
+/** `GET /proxy/agency/softphone/calls`. Rows carry no contact `context` or `prior_attempts`. */
+export type AgencyManualCallsPage = AgencyKeysetPage<AgencyManualCallListRow>;
+
 // ─── The detail ─────────────────────────────────────────────────────────────
 
 /**
@@ -108,6 +124,12 @@ export type AgencyManualCallDncRequest = Omit<Core.AgencyManualCallDncRequest, '
  */
 export interface AgencyManualCallDetail {
   call: AgencyManualCall;
+  /**
+   * Who saved the outcome (`call.dispositioned_by_user_id`), joined from `users`
+   * by the public API layer; NULL when no outcome is saved or the user row is
+   * gone. Optional for detail fixtures built before it; the route always sends it.
+   */
+  dispositioned_by_name?: string | null;
   overrides: AgencyManualCallOverrides;
   /** Null whenever `call_availability` is not `available`. */
   media: WebRtcCallRecord | null;
