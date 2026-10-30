@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactInviteToken, redactAnalyticsProperties } from '../../analytics/redact';
+import { redactInviteToken, redactAnalyticsProperties, stripJoinPageElements } from '../../analytics/redact';
 import { safeAnalyticsPath } from '../../api/error-analytics';
 
 /**
@@ -40,6 +40,23 @@ describe('redactInviteToken', () => {
 
     expect(redactInviteToken(`/agency/join/${noDigits}`)).toBe('/agency/join/:token');
     expect(safeAnalyticsPath(`/agency/join/${noDigits}`)).toContain(noDigits);
+  });
+
+  it('redacts the workspace invite page’s token too', () => {
+    /*
+      `/join/:token` is where every non-agent invite now lands, and its token is
+      exactly as live as the agent's: whoever holds it claims the membership. A
+      rule keyed only on `/agency/join/` would have published every operator's
+      and admin's invitation in the envelope of every capture on that page.
+    */
+    expect(redactInviteToken(`/join/${TOKEN}`)).toBe('/join/:token');
+    expect(redactInviteToken(`https://app.example.com/join/${TOKEN}?utm=mail`))
+      .toBe('https://app.example.com/join/:token?utm=mail');
+    expect(redactInviteToken(`Your link: https://app.mv.com/join/${TOKEN} — opens once`))
+      .toBe('Your link: https://app.mv.com/join/:token — opens once');
+    // Idempotent, and the bare prefix is not a token.
+    expect(redactInviteToken('/join/:token')).toBe('/join/:token');
+    expect(redactInviteToken('/join')).toBe('/join');
   });
 
   it('covers the API spelling of the token as well as the page one', () => {
@@ -87,5 +104,37 @@ describe('redactAnalyticsProperties', () => {
     const out = redactAnalyticsProperties({ at, url: `/agency/join/${TOKEN}` });
     expect(out.at).toBe(at);
     expect(out.url).toBe('/agency/join/:token');
+  });
+});
+
+describe('stripJoinPageElements', () => {
+  /**
+   * The second line behind the join pages' `ph-no-capture` card: an autocapture
+   * on either invite page loses its DOM-derived payload, because on both pages
+   * that payload is the invitee's address, the inviter's name and the workspace's
+   * name. Pinned for BOTH routes because the workspace page is the newer one, and
+   * a rule written when there was one page is exactly how the second goes
+   * uncovered.
+   */
+  const click = (pathname: string) => ({
+    $pathname: pathname,
+    $elements: [{ tag_name: 'span', $el_text: 'priya@acme.com' }],
+    $elements_chain: 'span:text="priya@acme.com"',
+    $event_type: 'click',
+  });
+
+  it.each(['/agency/join/:token', '/join/:token', 'https://app.mv.com/join/:token'])(
+    'drops the element payload on %s',
+    (pathname) => {
+      const out = stripJoinPageElements(click(pathname)) as Record<string, unknown>;
+      expect(out.$elements).toBeUndefined();
+      expect(out.$elements_chain).toBeUndefined();
+      expect(out.$event_type).toBe('click');
+    },
+  );
+
+  it('leaves every other page’s payload alone', () => {
+    const props = click('/app/team');
+    expect(stripJoinPageElements(props)).toBe(props);
   });
 });

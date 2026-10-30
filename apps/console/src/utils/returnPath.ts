@@ -65,9 +65,10 @@ export const AGENCY_LOGIN_PATH = '/agency/login';
  * silently and stranding people in tenants of their own.
  *
  * Exported as the PREFIX, without the `:token` segment, because that is what the
- * loop guard below needs and because nothing in this app ever constructs one of
- * these URLs: only the API's invite mailer mints a token, and a link built here
- * would be a link with no invite behind it.
+ * loop guard below needs. Only the API's invite mailer MINTS a token; the one
+ * place this app builds one of these URLs is the cross-redirect between the two
+ * invite doors (`components/agency/join/joinDoor.ts`), which re-files a token it
+ * was already handed rather than inventing one.
  *
  * `/agency/join/...` is already an agency surface through the `/agency` entry in
  * {@link AGENCY_SURFACE_PREFIXES}, so `loginPathFor` sends anyone bounced off it
@@ -75,6 +76,27 @@ export const AGENCY_LOGIN_PATH = '/agency/login';
  * new entry there.
  */
 export const AGENCY_JOIN_PATH = '/agency/join';
+
+/**
+ * Where every OTHER emailed invite lands: `/join/:token` — an operator, a viewer,
+ * an account admin, anybody whose role is not `agent`.
+ *
+ * ── Why a second invite page rather than one at a neutral URL ──────────────
+ * Every role now gets a single-use token and an email, and only the agent's has
+ * somewhere specific to go: {@link AGENCY_JOIN_PATH} is written for a station
+ * (its steps, its copy, its `/dialer` landing). A workspace member clicking that
+ * would be told about a station they will never open. And `/login` is not an
+ * answer for them either, for the reason the agency door's comment gives: it has
+ * no signup, and signing in on a different address than the invited one leaves
+ * the real membership unclaimed. So the token claim is the same, and the page
+ * around it is the workspace's — see `pages/auth/JoinPage`.
+ *
+ * Deliberately NOT under `/agency`, so it is not an agency surface: somebody
+ * bounced off it belongs at `/login`, which is what `loginPathFor` answers for a
+ * path it does not recognise. It is a member of {@link LOGIN_LOOP} beside the
+ * agency join page, for the same single-use reason.
+ */
+export const JOIN_PATH = '/join';
 
 /**
  * The path prefixes that belong to the Agency Dialer, and therefore the ones whose
@@ -223,6 +245,9 @@ export function safeReturnPath(raw: string | null | undefined): string | null {
    * to the agency door they just came through. That is the same dead-end loop
    * `/agency/login` is refused for, and it arrives the same way — the param is in
    * the URL, so a stale bookmark or a forwarded link is enough to produce it.
+   * {@link JOIN_PATH} is refused for the identical reason: its token is just as
+   * single-use, and the workspace page's "already used" screen leads back to
+   * `/login` just as surely.
    *
    * Case-insensitive because react-router matches routes case-insensitively, so
    * `/Login` reaches the same component and would loop just as happily. Tested
@@ -235,23 +260,23 @@ export function safeReturnPath(raw: string | null | undefined): string | null {
 }
 
 /**
- * The regex behind the loop guard: either door or the invite landing page, on a
- * segment boundary.
+ * The regex behind the loop guard: either door or either invite landing page, on
+ * a segment boundary.
  *
- * Built from the three exported constants rather than written out, so a path that
+ * Built from the four exported constants rather than written out, so a path that
  * moves cannot leave a stale literal behind here — the loop guard failing open is
  * an infinite redirect, which is the one failure a reader will not diagnose from
  * the symptom.
  *
- * It is still the LOGIN loop despite the third member: all three are places a
- * visitor establishes a credential, and all three answer a post-sign-in arrival
+ * It is still the LOGIN loop despite the two join pages: all four are places a
+ * visitor establishes a credential, and all four answer a post-sign-in arrival
  * with a page that sends them back where they came from. What is worth stating is
- * that {@link isLoginPath} reads this same set, so adding the join page also took
- * the two 401 guards off it — see that function for why that is the answer this
- * page needs rather than a side effect to be undone.
+ * that {@link isLoginPath} reads this same set, so adding a join page also takes
+ * the two 401 guards off it — see that function for why that is the answer these
+ * pages need rather than a side effect to be undone.
  */
 const LOGIN_LOOP = new RegExp(
-  `^(?:${LOGIN_PATH}|${AGENCY_LOGIN_PATH}|${AGENCY_JOIN_PATH})(?:/|$)`,
+  `^(?:${LOGIN_PATH}|${AGENCY_LOGIN_PATH}|${AGENCY_JOIN_PATH}|${JOIN_PATH})(?:/|$)`,
   'i',
 );
 // `(?:/|$)` and not `isAgencySurfacePath`'s `(?:[/?#]|$)`: every caller passes a
@@ -310,6 +335,10 @@ const LOGIN_LOOP = new RegExp(
  *     cannot get back without asking their supervisor for another invitation.
  *     Being in the set costs nothing in return: nobody arrives at
  *     `/agency/join/:token` holding a session whose expiry is worth reporting.
+ *
+ * {@link JOIN_PATH} is in it on exactly these two grounds and no others: it is the
+ * same claim flow on the same raw-`fetch` endpoints, for a workspace role rather
+ * than an agent.
  */
 export function isLoginPath(pathname: string): boolean {
   return LOGIN_LOOP.test(pathname);

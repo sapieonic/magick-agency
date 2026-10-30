@@ -10,7 +10,7 @@ import { CopyableField } from '../../components/common/CopyableField';
 import { trackSetupEvent } from '../../analytics/events';
 import type { InviteUserInput, InviteUserResult } from '../../types/team';
 import { INVITE_ROLES } from './teamRoles';
-import { inviteSignInUrl } from './teamInvites';
+import { inviteSignInUrl, isInvitationLink } from './teamInvites';
 import styles from './TeamPage.module.css';
 
 function getInviteFailureReason(error: unknown): 'validation_error' | 'invite_error' | 'unknown_error' {
@@ -193,6 +193,18 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
      * and the local derivation is then the only one that exists.
      */
     const signInUrl = created.result.sign_in_url ?? inviteSignInUrl(created.role, window.location.origin);
+    /**
+     * Whether that link is the invitation itself or only a sign-in page.
+     *
+     * Every role's invitation is a token link now (`/agency/join/:token` for an
+     * agent, `/join/:token` for anybody else), and a token link does not care
+     * which address they sign in with — the join page confirms a different one
+     * rather than refusing it. A sign-in door (the local fallback, or an older
+     * server's link) still finds them BY address. The panel's advice is about
+     * which of the two this is, so it reads the link rather than the role. See
+     * `isInvitationLink`.
+     */
+    const tokenLink = isInvitationLink(signInUrl);
 
     return (
       /* Overlay click, Escape and the close button all finish the hand-off. */
@@ -205,13 +217,18 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
             product knows to be unnecessary reads as one it cannot be trusted
             about elsewhere.
 
-            The address is still shown, because sign-in is matched on it and
-            a typo is the one failure the supervisor can still fix.
+            The address is still shown, because it is where the mail went and a
+            typo is the one failure the supervisor can still fix. What is NOT said
+            any more is "they have to sign in with this exact address": a mailed
+            invitation is a token link for every role, and the join page lets them
+            confirm a different address rather than refusing it — so that sentence
+            would send somebody with only a personal account away believing they
+            could not join.
           */
           <>
             <p className={styles.handoffLead} data-testid="invite-emailed">
-              We’ve emailed <strong>{created.email}</strong> with a link to join. They
-              have to sign in with this exact address for the invite to find them.
+              We’ve emailed <strong>{created.email}</strong> a link to join. It works
+              once, and they set up their own sign-in from it.
             </p>
             <CopyableField label="Their email" value={created.email} mono />
           </>
@@ -222,11 +239,13 @@ export function InviteModal({ onClose, onInvited, onCreated }: InviteModalProps)
                 still until they act. */}
             <p className={styles.handoffLead} data-testid="invite-handoff">
               <strong>{created.email}</strong> can now join, but we didn’t email them —
-              send them the link yourself. They have to sign in with this exact
-              address for the invite to find them.
+              send them the link yourself.{' '}
+              {tokenLink
+                ? 'It works once, so send it only to them.'
+                : 'They have to sign in with this exact address for the invite to find them.'}
             </p>
             <CopyableField label="Their email" value={created.email} mono />
-            <CopyableField label="Sign-in link" value={signInUrl} mono />
+            <CopyableField label={tokenLink ? 'Invitation link' : 'Sign-in link'} value={signInUrl} mono />
             {created.role === 'agent' && <AgentLinkNote />}
           </>
         )}

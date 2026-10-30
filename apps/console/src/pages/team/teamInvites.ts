@@ -1,11 +1,11 @@
-import { AGENCY_LOGIN_PATH, LOGIN_PATH } from '../../utils/returnPath';
+import { AGENCY_JOIN_PATH, AGENCY_LOGIN_PATH, JOIN_PATH, LOGIN_PATH } from '../../utils/returnPath';
 import type { InviteUserInput, TenantMember } from '../../types/team';
 
 /**
  * The Team page's invitation rules, as pure functions: whether the server has
- * told us a person signed up, which link an invitee is sent, and whether an
- * invitation can be re-issued. Re-exported from `TeamPage` for the tests that
- * import them from there.
+ * told us a person signed up, which link an invitee is sent, whether a link is an
+ * invitation or a sign-in door, and whether an invitation can be re-issued.
+ * Re-exported from `TeamPage` for the tests that import them from there.
  */
 
 /**
@@ -16,11 +16,11 @@ import type { InviteUserInput, TenantMember } from '../../types/team';
  * on purpose. This
  * one gates the Resend control, where an absent field defaulting to `'active'`
  * removes it: against a server that predates `invite_state`, Resend would
- * vanish for every agent in the product at once, silently, with nothing on
+ * vanish for every invitee in the product at once, silently, with nothing on
  * screen to say why. Resend is the only remedy for an expired or never-sent
- * invitation, and before this ticket it was offered to every agent regardless —
- * so `!== 'active'` is exactly the pre-change behaviour when the server is
- * silent, and a narrowing only once the server has something to say.
+ * invitation, and before `invite_state` it was offered regardless — so
+ * `!== 'active'` is exactly the pre-change behaviour when the server is silent,
+ * and a narrowing only once the server has something to say.
  *
  * Written as `!== 'active'` rather than `=== 'pending'` so a third literal
  * the server might add also keeps the control rather than removing it.
@@ -52,23 +52,31 @@ export function inviteNotKnownJoined(member: TenantMember): boolean {
  * **"Nothing sends that invite" is no longer true, and this comment used to say
  * it flatly.** The server had the transport all along (`notifications/mailjet.client.ts`,
  * already sending bulk-dispatch completion mail) and no transactional path wired
- * to it. It now has one: an `agent` invite mints a single-use token, mails a link
- * to `/agency/join/:token`, and the claim endpoint binds whatever identity the
- * invitee arrives with to the membership the TOKEN names — so the email match is
- * not what activates them any more, and an invited agent with no Google account
- * has a way in for the first time.
+ * to it. It now has one, for EVERY role: an invite mints a single-use token and
+ * mails a link — `/agency/join/:token` for an `agent`, `/join/:token` for anybody
+ * else — and the claim endpoint binds whatever identity the invitee arrives with
+ * to the membership the TOKEN names. So the email match is not what activates
+ * them any more, and an invitee with no Google account has a way in.
  *
  * That is why the panel branches instead of asserting: `invite_email.sent` is
  * the server's own answer for this invite, on this deployment, with this
- * configuration. Every other role still gets no token and no mail (see
- * `roleGetsTokenInvite`), and a server with no `platformEmail` block still
- * answers `not_configured` — both land on the hand-off below, which is the older
- * behaviour kept for exactly the cases that still need it rather than a claim
- * about the platform.
+ * configuration. A server with no mail transport still answers `not_configured`
+ * and a refused send answers `failed`; an OLDER server still answers
+ * `not_implemented` for every non-agent role, from before they had a page to land
+ * on. All of them land on the hand-off below, which is the older behaviour kept
+ * for exactly the cases that still need it rather than a claim about the platform.
  *
  * Where mail did not go, the honest fix is unchanged: hand the supervisor the two
  * things they need to pass on themselves, and say plainly that passing them on is
  * now their job.
+ *
+ * ── What THIS function is, now that the server's link carries a token ──────
+ * The FALLBACK, for a server with no `CONSOLE_BASE_URL` to build a link from
+ * (`sign_in_url: null`). It cannot produce a token link — only the server has
+ * ever seen the token — so what it answers is the sign-in door for the role, and
+ * on that path the old rule is still the rule: the invitee is matched by the
+ * address they sign in with, which is why the hand-off says so when it shows this
+ * link and not when it shows the server's (see `isInvitationLink`).
  *
  * ── The agency door for an agent, and why only for an agent ────────────────
  * An `agent` is hierarchy level 5 and inherits no navigation at all, so the app
@@ -104,72 +112,102 @@ export function inviteSignInUrl(role: InviteUserInput['role'], origin: string): 
 }
 
 /**
+ * Whether `url` is a token-bearing invitation link — `/agency/join/<token>` or
+ * `/join/<token>` — rather than a sign-in door.
+ *
+ * ── Why the hand-off has to ask ────────────────────────────────────────────
+ * The two kinds of link activate somebody in opposite ways, and the panel's one
+ * piece of advice is only true of one of them. A sign-in door (an older server's
+ * link, or {@link inviteSignInUrl}'s fallback) finds the membership by the ADDRESS
+ * the invitee signs in with, so "they have to sign in with this exact address" is
+ * the instruction that makes it work. An invitation link finds it by the TOKEN,
+ * and the join page lets them use a different address once they confirm it — so
+ * the same sentence there is false, and it is false in the direction that sends
+ * somebody with only a personal Google account away believing they cannot join.
+ *
+ * Read off the path rather than off the role or the server's `invite_email`,
+ * because it is the LINK the sentence is about, and the path is the one thing
+ * about the link both server generations agree on. A segment after the prefix is
+ * required, so a bare `/join` is not mistaken for one.
+ */
+export function isInvitationLink(url: string): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(url, 'https://invitation-link.invalid').pathname;
+  } catch {
+    return false;
+  }
+  return INVITATION_PATH.test(pathname);
+}
+
+const INVITATION_PATH = new RegExp(`^(?:${AGENCY_JOIN_PATH}|${JOIN_PATH})/[^/]+/?$`, 'i');
+
+/**
  * Whether this member's invitation can be re-issued.
  *
  * ── The one-way door this control closes ───────────────────────────────────
- * An invitation expires after seven days. The server's own copy on the join page
- * then tells the agent to "ask your supervisor to send a new one" — and until
- * this existed, the supervisor could not: `POST /users/invite` answers `409 User
- * already has a membership in this context` for the same address, so the only
- * remaining move was to delete the membership and rebuild it. `POST
- * /invites/resend` is the server's answer (it revokes any outstanding token and mints
- * a fresh one against the SAME membership), and this repo shipped no caller for
- * it, which made the dead end certain rather than possible.
+ * An invitation expires after seven days. The server's own copy on the join pages
+ * then tells the invitee to ask for a new one — and until this existed, nobody
+ * could send it: `POST /users/invite` answers `409 User already has a membership
+ * in this context` for the same address, so the only remaining move was to
+ * delete the membership and rebuild it. `POST /invites/resend` is the server's
+ * answer (it revokes any outstanding token and mints a fresh one against the SAME
+ * membership), and this repo shipped no caller for it, which made the dead end
+ * certain rather than possible.
  *
- * ── Why the predicate is now the role AND `invite_state`, not the role alone ─
- * It used to be the role alone, and the reason was that the members list had no
- * way to answer "has this person signed up?" at all: `GET /tenants/:id/members`
- * returned no `firebase_uid` — the field that distinguishes a `pending_<uuid>`
- * stub from an activated account — and guessing from a null `display_name`
- * would have been worse than not narrowing, since a real email/password user
- * who has signed up has one too. That gap is what `invite_state` closes: the server now answers the identity question itself, on
- * the same route, from the one rule it applies to every role — `pending` iff
- * the stored identity is still a placeholder stub, `active` otherwise.
+ * ── Two conditions, and the role is no longer one of them ──────────────────
+ * It used to require `role === 'agent'` as well, for a reason that was true when
+ * it was written: the server minted a token for an agent and nobody else, so a
+ * resend for any other role sent no claimable link and could not do anything an
+ * invitation was for. Every role now gets a token, an email and a page to land on
+ * (`/join/:token` for everyone but an agent), so a pending operator's expired
+ * invitation is exactly as stuck as a pending agent's was — and the clause that
+ * used to keep a useless button off the menu would now keep the only remedy off
+ * it. Dropped, and asserted for every role in `TeamPage.resendInvite.test.tsx`.
  *
- * What that buys is narrower than it sounds, and the narrowness is why the
- * default matters. `invite_state` is a fact about the PERSON, not about this
- * workspace's invitation: somebody who already had a Magick Agency login reads
- * `active` from the moment they are invited here, so hiding Resend from them is
- * a judgement about who is likely to need it, not a statement that their
- * invitation was used. The server's `POST /invites/resend` has no refusal for an
- * already-joined membership — it would mint and mail a fresh link quite
- * happily — so this narrowing is the UI's own, and it is deliberately the only
- * place the identity signal is allowed to REMOVE a control.
+ * What remains are the two conditions that are about the INVITATION rather than
+ * the role:
  *
- * Hence `inviteNotKnownJoined` rather than `invite_state ===
- * 'pending'`: the two differ only on an absent field, and here that difference
- * is the whole control. A server that predates `invite_state` sends nothing,
- * and reading that as `'active'` would take Resend away from every agent in the
- * product at once — a silent, platform-wide regression on the only remedy for
- * an expired invitation, reachable by an ordinary rollback or by a browser
- * holding a cached SPA. Absent therefore means "still offer it", which is
- * exactly what shipped before this ticket.
+ *  - **`status === 'active'`.** A revoked or deactivated membership has nothing
+ *    to join, and the server refuses to bind a claim to one (it answers
+ *    `revoked`), so a fresh link would be a link to that refusal.
+ *  - **`inviteNotKnownJoined`.** `invite_state` is the server's answer to "has
+ *    this person signed up?" — `pending` iff their stored identity is still a
+ *    placeholder stub. It is a fact about the PERSON, not about this workspace's
+ *    invitation: somebody who already had a login reads `active` from the moment
+ *    they are invited here, so hiding Resend from them is a judgement about who is
+ *    likely to need it, not a statement that their invitation was used. The
+ *    server's `POST /invites/resend` has no refusal for an already-joined
+ *    membership, so this narrowing is the UI's own, and it is deliberately the
+ *    only place the identity signal is allowed to REMOVE a control.
  *
- * The role test is NOT made redundant by any of that and stays for its
- * original, unrelated reason: `roleGetsTokenInvite` in the server mints a token for
- * an `agent` and for nobody else, so a resend for any other role — signed up or
- * not — sends the same non-token mail a first invite would and cannot produce a
- * claimable link. `invite_state` answers "has this person signed up"; it says
- * nothing about whether resending *does* anything, which is what the role test
- * is for. Both conditions narrow different failure modes and neither
- * substitutes for the other.
+ * Hence `inviteNotKnownJoined` rather than `invite_state === 'pending'`: the two
+ * differ only on an absent field, and here that difference is the whole control.
+ * A server that predates `invite_state` sends nothing, and reading that as
+ * `'active'` would take Resend away from everybody at once — a silent,
+ * platform-wide regression on the only remedy for an expired invitation,
+ * reachable by an ordinary rollback or by a browser holding a cached SPA. Absent
+ * therefore means "still offer it".
+ *
+ * ── Against an older server ────────────────────────────────────────────────
+ * A server from before every role had a token answers a non-agent resend with
+ * `not_implemented` and a sign-in-door `sign_in_url` — no mail, no token. That is
+ * still not a dead button: `ResendInviteModal` reads `invite_email` and shows the
+ * hand-off with whatever link the server gave, which is what the Invite modal
+ * does for the same answer. Only the agent-only clause would have been worse.
  *
  * ── What is still imprecise ────────────────────────────────────────────────
  * Two things, and neither is knowable from this route. The members list is a
  * snapshot fetched on page load, so somebody who signs up between that fetch
- * and a supervisor pressing this button still reads `pending` here; and an
- * agent who has a login but has never opened THIS workspace reads `active`, so
- * the control is withheld from a person who may genuinely be waiting on a link.
+ * and a supervisor pressing this button still reads `pending` here; and somebody
+ * who has a login but has never opened THIS workspace reads `active`, so the
+ * control is withheld from a person who may genuinely be waiting on a link.
  * The server's answer to the first is unchanged — the claim fails with
- * `identity_already_bound`, which the join page renders as "You are already set
+ * `identity_already_bound`, which the join pages render as "You are already set
  * up — sign in", one press from the fix. The second costs a supervisor a
  * support request rather than a broken invitation, which is the cheaper of the
  * two ways to be wrong here.
  */
 export function invitationIsResendable(member: TenantMember): boolean {
-  return (
-    member.membership.role === 'agent'
-    && member.membership.status === 'active'
-    && inviteNotKnownJoined(member)
-  );
+  return member.membership.status === 'active' && inviteNotKnownJoined(member);
 }

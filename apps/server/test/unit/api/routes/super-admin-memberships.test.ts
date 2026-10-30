@@ -465,16 +465,25 @@ describe('POST /super-admin/tenants/:id/users', () => {
     });
   });
 
-  it('a role with no token invite records the mailer\'s reason and a null invite_id', async () => {
+  it('a non-agent add issues a token invite for THAT role and records it', async () => {
+    /**
+     * This used to pin `invite_id: null` and `email_reason: 'not_implemented'`
+     * for a `viewer` — the shape of the defect, in which a super admin's added
+     * operators and admins got no token and no mail. The route hands the role to
+     * the shared issuer unchanged, and the audit row carries the row it wrote.
+     */
     mocks.issueInvite.mockResolvedValue({
-      invite: null, signInUrl: 'https://app.example.com/login', inviteEmail: { sent: false, reason: 'not_implemented' },
+      invite: { id: 'invite-viewer' },
+      signInUrl: 'https://app.example.com/join/tok',
+      inviteEmail: { sent: true, messageId: null },
     });
     await post({ email: 'new@acme.test', role: 'viewer' });
 
+    expect(mocks.issueInvite).toHaveBeenCalledWith(expect.objectContaining({ role: 'viewer', invitedBy: null }));
     expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
       details: {
         email: 'new@acme.test', role: 'viewer', name: null, account_id: null,
-        membership_id: MEMBERSHIP, invite_id: null, email_sent: false, email_reason: 'not_implemented',
+        membership_id: MEMBERSHIP, invite_id: 'invite-viewer', email_sent: true,
       },
     }));
   });

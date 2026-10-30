@@ -79,7 +79,12 @@ vi.mock('../../../../src/auth/session.middleware.js', () => ({
 vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async (request: any) => {
     request.tenantId = request.headers['x-tenant-id'] ?? TENANT;
-    request.membership = { role: 'account_admin', account_id: request.headers['x-scope'] ?? null };
+    // `x-role` lets the resend matrix below play every caller role through the
+    // real `canManageRole`; everything else is an `account_admin`.
+    request.membership = {
+      role: request.headers['x-role'] ?? 'account_admin',
+      account_id: request.headers['x-scope'] ?? null,
+    };
   },
 }));
 vi.mock('../../../../src/rbac/rbac.middleware.js', () => ({
@@ -135,6 +140,7 @@ import { resolve } from 'node:path';
 import { inviteRoutes } from '../../../../src/api/routes/invites.routes.js';
 import { LiveInviteConflictError } from '../../../../src/db/repositories/membership-invite.repository.js';
 import { hashInviteToken } from '../../../../src/notifications/invite-token.js';
+import { ROLES } from '@magick-agency/contracts/rbac';
 
 const HOUR = 60 * 60 * 1000;
 
@@ -842,6 +848,89 @@ describe('POST /invites/:token/claim', () => {
   });
 });
 
+describe('the claim flow is the same for EVERY role', () => {
+  /**
+   * Every role is issued a token now (`roleGetsTokenInvite`), so an operator's,
+   * an admin's and an owner's invitation reach these two routes exactly as an
+   * agent's does — through the console's `/join/:token` page instead of
+   * `/agency/join/:token`. Nothing in either route may branch on the role except
+   * the one value that NAMES what the reader is joining. Swept over the
+   * contract's `ROLES`, so a role added there is claimed here without anybody
+   * writing its case.
+   */
+  it.each(ROLES)('GET describes a pending %s invitation, naming the product it lands in', async (role) => {
+    mocks.membershipInviteRepository.findByTokenHash.mockResolvedValue(pendingInvite({ role }));
+    mocks.membershipRepository.findByIdInTenant.mockResolvedValue(activeMembership({ role }));
+    mocks.userRepository.findById.mockResolvedValue({ id: INVITER, display_name: 'Priya Sharma' });
+    const app = await buildApp();
+
+    const res = await app.inject({ method: 'GET', url: `/invites/${TOKEN}` });
+
+    expect(res.statusCode).toBe(200);
+    // Exactly the keys an agent's answer carries — the disclosure surface does
+    // not widen for a more privileged role.
+    expect(Object.keys(res.json().invite).sort()).toEqual(
+      ['email', 'expires_at', 'inviter_name', 'product_name', 'role', 'tenant_name'],
+    );
+    expect(res.json()).toMatchObject({
+      status: 'pending',
+      invite: {
+        email: INVITED_EMAIL,
+        role,
+        tenant_name: 'Acme Collections',
+        inviter_name: 'Priya Sharma',
+        // The same noun the invitation's subject names (`inviteProductName`): the
+        // dialer for an agent, the workspace (the brand) for everyone else.
+        product_name: role === 'agent' ? 'Magick Agency Dialer' : 'Magick Agency',
+      },
+    });
+    await app.close();
+  });
+
+  it.each(ROLES)('POST binds a %s claim and answers the session body', async (role) => {
+    mocks.membershipInviteRepository.findByTokenHash.mockResolvedValue(pendingInvite({ role }));
+    mocks.membershipRepository.findByIdInTenant.mockResolvedValue(activeMembership({ role }));
+    const app = await buildApp();
+
+    const res = await claim(app);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      user: BOUND_USER, tenants: [], memberships: [], governance: {}, is_new: false,
+    });
+    // The bind is confined to the TOKEN's tenant and aimed through the
+    // MEMBERSHIP, whatever the role — the takeover guards are about the user row.
+    expect(mocks.membershipInviteRepository.claimWithIdentity).toHaveBeenCalledWith({
+      inviteId: INVITE_ID,
+      userId: STUB_USER,
+      tenantId: TENANT,
+      identity: expect.objectContaining({ uid: 'fb-real' }),
+    });
+    expect(mocks.redisCache.del).toHaveBeenCalledWith(`cache:membership:${STUB_USER}:${TENANT}`);
+    expect(mocks.auditLog.mock.calls[0]![0]).toMatchObject({
+      action: 'user.invite_claimed',
+      details: { role, membership_id: MEMBERSHIP, email_matched: true },
+    });
+    await app.close();
+  });
+
+  it.each(ROLES.filter((role) => role !== 'agent'))(
+    'POST refuses a %s claim on an offboarded membership exactly as it refuses an agent\'s',
+    async (role) => {
+      mocks.membershipInviteRepository.findByTokenHash.mockResolvedValue(pendingInvite({ role }));
+      mocks.membershipRepository.findByIdInTenant.mockResolvedValue(null);
+      const app = await buildApp();
+
+      const res = await claim(app);
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().status).toBe('revoked');
+      expect(mocks.membershipInviteRepository.claimWithIdentity).not.toHaveBeenCalled();
+      await app.close();
+    },
+  );
+});
+
 describe('the claim path can NEVER provision anything', () => {
   /**
    * The hazard this whole feature removes. `POST /auth/session` path 4 creates a
@@ -1075,6 +1164,65 @@ describe('POST /invites/resend', () => {
     // write, so a refused resend cannot invalidate a live invitation either.
     expect(mocks.issueInvite).not.toHaveBeenCalled();
     expect(mocks.issueInvite).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  /**
+   * The gate, for EVERY caller role against EVERY target role.
+   *
+   * Every role is issued a token now, so this is no longer a formality: without
+   * it an `account_admin` could re-issue — and read in the response body — a
+   * binding link for a `tenant_owner` membership. The expectation is written from
+   * the hierarchy as a list, not by calling `canManageRole`, so the matrix is a
+   * second statement of the rule rather than the rule agreeing with itself:
+   * strictly above the target, never equal.
+   */
+  const LADDER = ['agent', 'viewer', 'operator', 'account_admin', 'tenant_admin', 'tenant_owner'] as const;
+  const MATRIX = LADDER.flatMap((caller) => LADDER.map((target) => [
+    caller, target, LADDER.indexOf(caller) > LADDER.indexOf(target) ? 200 : 403,
+  ] as const));
+
+  it('the ladder is every role in the contract', () => {
+    expect([...LADDER].sort()).toEqual([...ROLES].sort());
+  });
+
+  it.each(MATRIX)('a %s resending for a %s answers %i', async (caller, target, status) => {
+    mocks.membershipRepository.findByIdInTenant.mockResolvedValue(activeMembership({ role: target }));
+    const app = await buildApp();
+
+    const res = await resend(app, { membership_id: MEMBERSHIP }, { 'x-role': caller });
+
+    expect(res.statusCode).toBe(status);
+    if (status === 200) {
+      // Re-issued for the TARGET's role — which picks its claim page and mail.
+      expect(mocks.issueInvite).toHaveBeenCalledWith(expect.objectContaining({ role: target }));
+    } else {
+      expect(mocks.issueInvite).not.toHaveBeenCalled();
+    }
+    await app.close();
+  });
+
+  it('re-issues a non-agent invitation with its own link and records the mail', async () => {
+    mocks.membershipRepository.findByIdInTenant.mockResolvedValue(activeMembership({ role: 'operator' }));
+    mocks.issueInvite.mockResolvedValue({
+      invite: { id: 'invite-op' },
+      signInUrl: 'https://app.example.com/join/tok-op',
+      inviteEmail: { sent: true, messageId: null },
+    });
+    const app = await buildApp();
+
+    const res = await resend(app, { membership_id: MEMBERSHIP });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({
+      invite_email: { sent: true },
+      sign_in_url: 'https://app.example.com/join/tok-op',
+    });
+    expect(mocks.auditLog.mock.calls[0]![0]).toMatchObject({
+      action: 'user.invite_sent',
+      resource_id: 'invite-op',
+      details: { role: 'operator', resend: true, email_sent: true },
+    });
     await app.close();
   });
 

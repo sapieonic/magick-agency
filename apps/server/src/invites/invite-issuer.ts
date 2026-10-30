@@ -44,7 +44,7 @@ const log = createChildLogger({ component: 'invite-issuer' });
  * (`AdoptIdentityOptions`), so the rightful owner spends the invite and is
  * signed in, while a different identity is still refused. Issuance therefore
  * needs no "is this row already bound" branch, and adding one would refuse the
- * ordinary "add an agent who already has a login" invite at the point where the
+ * ordinary "add somebody who already has a login" invite at the point where the
  * supervisor is told it worked.
  *
  * It also does not swallow database errors. Minting and persisting are the parts
@@ -68,10 +68,10 @@ export interface IssuedInvite {
   /**
    * The row, or `null` for a role that gets no token.
    *
-   * `null` is not a failure: only an `agent` invite mints one today (see
-   * `invite-mailer.ts`'s scope note), and a `viewer` invite has never had a
-   * claim flow to bind. Writing an unusable row for them would put a table full
-   * of tokens nothing can redeem in front of the next reader.
+   * Every role gets one today (see {@link roleGetsTokenInvite}), so `null` is
+   * unreachable while that predicate answers `true` throughout. It stays on the
+   * type because the predicate stays a switch: a role refused a token gets no
+   * row, rather than a token no claim page can redeem.
    */
   invite: MembershipInviteRecord | null;
   /**
@@ -86,28 +86,46 @@ export interface IssuedInvite {
 }
 
 /**
- * Whether this role gets a token-bound invitation at all.
+ * Whether this role gets a token-bound invitation at all. **Every role does.**
  *
- * A predicate rather than an inline `=== 'agent'` at three call sites, because
- * the whole feature is scoped by it and a future workspace-onboarding page is
- * expected to widen it. Everything downstream — the row, the join URL, the mail
- * — hangs off this one answer, so widening it is a one-line change here rather
- * than a hunt for the places that assumed `agent`.
+ * It answered `role === 'agent'` while the agency claim page
+ * (`/agency/join/:token`) was the only page built for somebody with no account
+ * yet, and that was the production defect: an invited operator or admin got no
+ * token, no row and no mail, and nobody was told. The workspace claim page
+ * (`/join/:token`) closed the gap, so every role is now issued the same artefact
+ * — a token, a row and a mail — and differs only in which page and which
+ * invitation it is sent to (`inviteSignInUrl`, `templates/invite-email.ts`).
+ *
+ * Kept as a predicate rather than deleted, because it is still the ONE switch
+ * everything downstream hangs off — the row, the join URL, the mail — and the
+ * route-level guards (`canManageRole` on issue and on resend) are what decide who
+ * may receive which role's token, not this. A role that ever needs to be refused a
+ * token again is a one-line change here, and lands on the branch in
+ * {@link issueInvite} that reports it rather than mailing a link with nothing to
+ * claim behind it.
  */
-export function roleGetsTokenInvite(role: MembershipRole): boolean {
-  return role === 'agent';
+export function roleGetsTokenInvite(_role: MembershipRole): boolean {
+  return true;
 }
 
 export async function issueInvite(input: IssueInviteInput): Promise<IssuedInvite> {
   const { role, tenantId } = input;
 
   if (!roleGetsTokenInvite(role)) {
-    // No token, no row, and `inviteSignInUrl` answers `/login` for every
-    // non-agent role. The mailer still runs because it is what reports
-    // `not_implemented`, and that reason is what the console reads to decide
-    // whether to keep showing the hand-off panel.
+    /**
+     * Unreachable today — the predicate answers `true` for every role — and
+     * written for the day it does not.
+     *
+     * No token, no row, and NO mail: the only link such a role could be sent is
+     * the token-less sign-in page, which is the dead end the claim pages exist to
+     * remove. `not_implemented` is the honest reason ("this role has no
+     * invitation"), distinct from `not_configured` so an operator is not sent to
+     * check a `.env` that is fine. Counted like every other outcome, so a
+     * narrowed predicate shows up on `invite_emails_total` the day it ships.
+     */
     const signInUrl = await inviteSignInUrl(role);
-    const inviteEmail = await sendOrReportFailure({ email: input.email, role, tenantId, signInUrl });
+    const inviteEmail: InviteEmailResult = { sent: false, reason: 'not_implemented' };
+    countInviteEmail(role, inviteEmail);
     return { invite: null, signInUrl, inviteEmail };
   }
 
@@ -223,7 +241,7 @@ function countInviteEmail(role: MembershipRole, result: InviteEmailResult): void
  *
  * Failures are SWALLOWED and reported as `null`, which the template renders as a
  * generic fallback. That is the right trade and worth stating: this is one word
- * of context in one sentence, and an invited agent's only route into the product
+ * of context in one sentence, and an invitee's only route into the product
  * must not be blocked by a `tenants` lookup. The same reasoning
  * `resolveSettingsSafe` (`auth/session-payload.ts`) uses for login.
  */

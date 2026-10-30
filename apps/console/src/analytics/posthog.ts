@@ -26,7 +26,8 @@ const isBrowser = (): boolean => typeof window !== 'undefined';
  *
  * ── Why a boundary hook and not five careful call sites ────────────────────
  * posthog-js attaches `$current_url`, `$pathname` and `$host` to EVERY capture,
- * and `/agency/join/:token` is the one route in this app whose URL parameter is a
+ * and the two invite pages (`/agency/join/:token` for an agent, `/join/:token`
+ * for every other role) are the routes in this app whose URL parameter is a
  * secret — a single-use invitation token that claims a membership for whoever
  * holds it. So the token rode in the envelope of the `$pageview`, of every
  * autocapture click, rage click and dead click, and of all five invite events,
@@ -40,12 +41,12 @@ const isBrowser = (): boolean => typeof window !== 'undefined';
  * `$set`/`$set_once` too: person properties carry `$initial_current_url`, which
  * would otherwise pin the token to a profile permanently.
  *
- * ── The token is not the only thing on that page ───────────────────────────
- * `/agency/join/:token` also renders the invitee's address, the inviter's name
+ * ── The token is not the only thing on those pages ─────────────────────────
+ * Both invite pages also render the invitee's address, the inviter's name
  * and the workspace's name, and autocapture — with `capture_dead_clicks`, so a
  * click that does nothing counts — reads the clicked element's text off the DOM.
- * None of that is token-shaped, so the redaction above never touched it. The page
- * itself opts its card out of autocapture with `ph-no-capture`, which is the
+ * None of that is token-shaped, so the redaction above never touched it. The
+ * shared card opts itself out of autocapture with `ph-no-capture`, which is the
  * primary fix; {@link stripJoinPageElements} is the second line here, for the
  * reasons its own docstring gives. Applied AFTER the token pass, so it can read
  * the (already redacted) route off the same properties.

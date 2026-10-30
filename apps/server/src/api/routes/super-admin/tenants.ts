@@ -247,10 +247,11 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     /**
      * Super-admin add creates a `pending_` stub plus membership and sends an
      * invite, through the shared `issueInvite`, so a super-admin invitation is the
-     * same artefact `POST /users/invite` produces. `roleGetsTokenInvite` is
-     * agent-only: an `agent` gets a token and the mail; every other role gets no
-     * token and is matched by session path 2 (a verified email on the `pending_`
-     * stub).
+     * same artefact `POST /users/invite` produces: a token, a `membership_invites`
+     * row and the mail for EVERY role (`roleGetsTokenInvite`) — the agency claim
+     * page for an `agent`, the workspace one for everyone else. Session path 2 (a
+     * verified email on the `pending_` stub) still activates an invitee who
+     * ignores the link and simply signs in.
      *
      * Guarded exactly as `POST /users/invite` guards it
      * (`issueInviteReportingFailure`), for its reason: the membership has committed,

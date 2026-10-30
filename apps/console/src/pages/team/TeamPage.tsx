@@ -22,7 +22,7 @@ import styles from './TeamPage.module.css';
 
 // The invitation rules live in `teamInvites.ts`; re-exported for the tests (and
 // any caller) that import them from the page.
-export { inviteNotKnownJoined, inviteSignInUrl, invitationIsResendable } from './teamInvites';
+export { inviteNotKnownJoined, inviteSignInUrl, invitationIsResendable, isInvitationLink } from './teamInvites';
 
 /* ── Helpers ──────────────────────────────────── */
 

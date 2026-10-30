@@ -630,6 +630,91 @@ export function trackAgencyInviteAddressMismatch(props: EventCatalog['agency_inv
   track('agency_invite_address_mismatch', props);
 }
 
+// --- Workspace invites (the `/join/:token` landing page) --------------------
+//
+// The same funnel as the five `agency_invite_*` events above, for every invite
+// whose role is NOT `agent` — an operator, a viewer, an account admin — which now
+// gets a token and an email too and lands on `pages/auth/JoinPage`.
+//
+// ── Its own five names rather than a `door` on the agency five ────────────
+// The two pages run one claim flow (`components/agency/join/useInviteClaim`), so
+// a dimension on the existing events would have been the smaller diff. It would
+// also have changed what `agency_invite_claim_succeeded` MEANS for every saved
+// insight built on it: those count agents joining a calling floor, and an
+// optional property that older events lack reads as "agency" on every one of
+// them only if somebody remembers to filter for it. Separate names keep both
+// funnels exactly as wide as their titles say, and `AuthDoor`'s precedent — an
+// optional dimension — was for one event family seen through two doors, not two
+// products sharing a page.
+//
+// The properties are the SAME shapes, declared once below and named by both
+// families, so the two funnels cannot drift into measuring different things.
+// Everything said above about the PII rule and the token in the envelope holds
+// here unchanged: no property carries an address, a name or a workspace, and the
+// URL is redacted at the PostHog boundary (`/join/` is one of the shapes
+// `analytics/redact.ts` knows).
+//
+// No `product` super-property is registered on that page (see `App.tsx`), the
+// same as `/login`: it belongs to no shell, and the event names already say
+// which door they came through.
+
+/** {@link trackAgencyInviteViewed}'s workspace twin. */
+export function trackWorkspaceInviteViewed(props: EventCatalog['workspace_invite_viewed']): void {
+  track('workspace_invite_viewed', props);
+}
+
+export function trackWorkspaceInviteClaimAttempted(props: EventCatalog['workspace_invite_claim_attempted']): void {
+  track('workspace_invite_claim_attempted', props);
+}
+
+export function trackWorkspaceInviteClaimSucceeded(props: EventCatalog['workspace_invite_claim_succeeded']): void {
+  track('workspace_invite_claim_succeeded', props);
+}
+
+export function trackWorkspaceInviteClaimFailed(props: EventCatalog['workspace_invite_claim_failed']): void {
+  track('workspace_invite_claim_failed', props);
+}
+
+/** {@link trackAgencyInviteAddressMismatch}'s workspace twin — the same near-miss, one page over. */
+export function trackWorkspaceInviteAddressMismatch(props: EventCatalog['workspace_invite_address_mismatch']): void {
+  track('workspace_invite_address_mismatch', props);
+}
+
+/** The lookup's outcome, as both invite funnels report it. */
+interface InviteViewedProps {
+  /**
+   * Built from {@link InviteUnavailableStatus} rather than restated, so a status
+   * the server adds cannot be reported by the page and silently dropped from the
+   * funnel — the compiler names every place it has to be handled. `pending` and
+   * `unreachable` are this page's own, and neither is a wire value.
+   */
+  status: InviteUnavailableStatus | 'pending' | 'unreachable';
+  /** Null on every status but `pending`, where the invite body is the thing read. */
+  role: AccountRole | null;
+  /** Whether the server could name who sent it. An unnamed invite is colder to receive. */
+  has_inviter: boolean;
+}
+
+interface InviteClaimSucceededProps {
+  method: InviteClaimMethod;
+  /**
+   * Whether the credential's address is the one the invite was sent to. False
+   * only on the Google path, and only after the visitor was shown the mismatch
+   * and confirmed it — which is the difference between a link that was made
+   * deliberately and the stray tenant this page exists to stop.
+   */
+  address_matched: boolean;
+}
+
+interface InviteClaimFailedProps {
+  method: InviteClaimMethod;
+  reason: InviteClaimFailureReason;
+}
+
+interface InviteAddressMismatchProps {
+  outcome: 'shown' | 'confirmed' | 'declined';
+}
+
 // --- The catalog ------------------------------------------------------------
 
 /**
@@ -1117,41 +1202,25 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     reason: 'attempt_changed' | 'attempt_id_mismatch' | 'superseded';
   };
   /** {@link trackAgencyInviteViewed} */
-  agency_invite_viewed: {
-    /**
-     * Built from {@link InviteUnavailableStatus} rather than restated, so a status
-     * the server adds cannot be reported by the page and silently dropped from the
-     * funnel — the compiler names every place it has to be handled. `pending` and
-     * `unreachable` are this page's own, and neither is a wire value.
-     */
-    status: InviteUnavailableStatus | 'pending' | 'unreachable';
-    /** Null on every status but `pending`, where the invite body is the thing read. */
-    role: AccountRole | null;
-    /** Whether the server could name who sent it. An unnamed invite is colder to receive. */
-    has_inviter: boolean;
-  };
+  agency_invite_viewed: InviteViewedProps;
   /** {@link trackAgencyInviteClaimAttempted} */
   agency_invite_claim_attempted: { method: InviteClaimMethod };
   /** {@link trackAgencyInviteClaimSucceeded} */
-  agency_invite_claim_succeeded: {
-    method: InviteClaimMethod;
-    /**
-     * Whether the credential's address is the one the invite was sent to. False
-     * only on the Google path, and only after the visitor was shown the mismatch
-     * and confirmed it — which is the difference between a link that was made
-     * deliberately and the stray tenant this page exists to stop.
-     */
-    address_matched: boolean;
-  };
+  agency_invite_claim_succeeded: InviteClaimSucceededProps;
   /** {@link trackAgencyInviteClaimFailed} */
-  agency_invite_claim_failed: {
-    method: InviteClaimMethod;
-    reason: InviteClaimFailureReason;
-  };
+  agency_invite_claim_failed: InviteClaimFailedProps;
   /** {@link trackAgencyInviteAddressMismatch} */
-  agency_invite_address_mismatch: {
-    outcome: 'shown' | 'confirmed' | 'declined';
-  };
+  agency_invite_address_mismatch: InviteAddressMismatchProps;
+  /** {@link trackWorkspaceInviteViewed} */
+  workspace_invite_viewed: InviteViewedProps;
+  /** {@link trackWorkspaceInviteClaimAttempted} */
+  workspace_invite_claim_attempted: { method: InviteClaimMethod };
+  /** {@link trackWorkspaceInviteClaimSucceeded} */
+  workspace_invite_claim_succeeded: InviteClaimSucceededProps;
+  /** {@link trackWorkspaceInviteClaimFailed} */
+  workspace_invite_claim_failed: InviteClaimFailedProps;
+  /** {@link trackWorkspaceInviteAddressMismatch} */
+  workspace_invite_address_mismatch: InviteAddressMismatchProps;
 }
 
 /** A declared event name. */

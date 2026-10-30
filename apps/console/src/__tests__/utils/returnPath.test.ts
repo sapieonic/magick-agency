@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   AGENCY_JOIN_PATH,
   AGENCY_LOGIN_PATH,
+  JOIN_PATH,
   LOGIN_PATH,
   RETURN_PATH_PARAM,
   currentPath,
@@ -208,6 +209,21 @@ describe('safeReturnPath — the login loop', () => {
     expect(safeReturnPath('/Agency/Join/tok_abc123')).toBeNull();
   });
 
+  it('refuses the workspace invite page for the same single-use reason', () => {
+    /*
+      `/join/:token` is the non-agent twin of the page above — every role now gets
+      a token, and only an agent's lands under `/agency`. Its token is spent by the
+      time a `?next=` could be honoured exactly as the agent's is, so it is refused
+      exactly as the agent's is.
+    */
+    expect(safeReturnPath(JOIN_PATH)).toBeNull();
+    expect(safeReturnPath('/join/tok_abc123')).toBeNull();
+    expect(safeReturnPath('/join/tok_abc123?from=email')).toBeNull();
+    expect(safeReturnPath('/Join/tok_abc123')).toBeNull();
+    // A segment boundary, not a prefix: `/joinery` is somewhere else entirely.
+    expect(safeReturnPath('/joinery')).toBe('/joinery');
+  });
+
   it('still accepts the rest of /agency, which is where people are going', () => {
     // The loop guard must not be widened to the `/agency` prefix: the campaign
     // list is the commonest destination a supervisor is carried back to.
@@ -248,7 +264,7 @@ describe('loginPathFor — which door', () => {
     },
   );
 
-  it.each(['/app', '/app/settings', '/onboarding', '/'])(
+  it.each(['/app', '/app/settings', '/onboarding', '/', '/join/tok_abc123'])(
     'sends the platform surface %j to the primary door',
     (path) => {
       expect(loginPathFor(path)).toBe(LOGIN_PATH);
@@ -349,8 +365,18 @@ describe('isLoginPath', () => {
     },
   );
 
+  it.each(['/join/tok_abc123', '/join', '/Join/tok_abc123'])(
+    'covers the workspace invite page %j on the same grounds as the agency one',
+    (path) => {
+      // The same claim flow on the same raw-`fetch` endpoints, for a workspace
+      // role rather than an agent — so the same set, for the same reasons.
+      expect(isLoginPath(path)).toBe(true);
+    },
+  );
+
   it.each([
     '/loginish',
+    '/joinery',
     '/agency/loginish',
     '/agency/joinery',
     '/agency',

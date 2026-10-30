@@ -175,7 +175,7 @@ locals {
         severity      = "warning"
         no_data_state = "OK"
         summary       = "Team invite emails are not leaving the building"
-        description   = "invite_emails_total{result=\"failed\"} advanced by 2+ in 6h on {{ $labels.service_name }} (role={{ $labels.role }}). The invite was still created, so the inviter believes it worked. For role=agent the invite is the only way into the agency console, so an invited floor never arrives. Check agency's Mailjet credentials and sender; the invite-issuer log line names tenant and role, and affected invitees can be re-sent with POST /invites/resend once mail flows. not_configured and not_implemented are expected and not alerted on."
+        description   = "invite_emails_total{result=\"failed\"} advanced by 2+ in 6h on {{ $labels.service_name }} (role={{ $labels.role }}). The invite was still created, so the inviter believes it worked. Every role's invite mail carries the only link into its claim page (/agency/join for agents, /join for everyone else), so invited agents, operators and admins never arrive. Check agency's Mailjet credentials and sender; the invite-issuer log line names tenant and role, and affected invitees can be re-sent with POST /invites/resend once mail flows. not_configured (no Mailjet block or no CONSOLE_BASE_URL) is expected and not alerted on; not_implemented is no longer emitted."
       },
       {
         uid = "agy-campaign-mail-failures"

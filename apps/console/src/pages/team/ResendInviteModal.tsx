@@ -5,6 +5,7 @@ import { useTenant } from '../../contexts/TenantContext';
 import { resendInvite } from '../../api/invites';
 import { CopyableField } from '../../components/common/CopyableField';
 import type { ResendInviteResult, TenantMember } from '../../types/team';
+import { isInvitationLink } from './teamInvites';
 import styles from './TeamPage.module.css';
 
 /**
@@ -14,8 +15,11 @@ import styles from './TeamPage.module.css';
  * A confirmation rather than a bare menu item that fires, because a resend is not
  * idempotent from the recipient's side — the server revokes the outstanding token
  * first, so pressing this INVALIDATES a link that may be sitting unread in the
- * agent's inbox. A supervisor who meant to press "Change Role" must not discover
+ * invitee's inbox. A supervisor who meant to press "Change Role" must not discover
  * that by having broken the link they were about to be asked about.
+ *
+ * Offered for every role now, not only agents — see `invitationIsResendable` —
+ * because every role's invitation is a token link with a page to land on.
  *
  * The outcome reads `invite_email.sent` exactly as {@link InviteModal} does, and
  * for the same reason: whether anybody was told is the server's answer, per
@@ -82,9 +86,27 @@ export function ResendInviteModal({
             `null` (no `CONSOLE_BASE_URL` configured) the honest thing is to say
             so rather than to substitute the sign-in page, which is a URL that
             looks like the invitation and claims nothing.
+
+            The label follows the link, for the reason the Invite modal's does: a
+            server from before every role had a token answers a non-agent resend
+            with a sign-in DOOR, and calling that the invitation would promise a
+            token it does not carry. Resend is offered for every role now, so that
+            answer is reachable from here for the first time.
           */}
           {result.sign_in_url ? (
-            <CopyableField label="Invitation link" value={result.sign_in_url} mono />
+            <>
+              <CopyableField
+                label={isInvitationLink(result.sign_in_url) ? 'Invitation link' : 'Sign-in link'}
+                value={result.sign_in_url}
+                mono
+              />
+              {!isInvitationLink(result.sign_in_url) && (
+                <p className={styles.handoffNote} data-testid="resend-door-link">
+                  This is a sign-in page, not a one-time invitation, so they have to sign
+                  in with this exact address for the invite to find them.
+                </p>
+              )}
+            </>
           ) : (
             <p className={styles.handoffNote} data-testid="resend-no-link">
               We could not build the link to send. Ask your administrator to set the

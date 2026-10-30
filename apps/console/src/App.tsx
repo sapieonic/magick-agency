@@ -16,7 +16,8 @@ import { AgentLanding } from './components/agency/AgentLanding';
 
 /*
  * Route table. Contents: the agency doors (`/agency/login`,
- * `/agency/join/:token`), the root `HomeRedirect`, the four full-viewport agent
+ * `/agency/join/:token`), the workspace invite page (`/join/:token`), the root
+ * `HomeRedirect`, the four full-viewport agent
  * routes (`/station`, `/dialer`, `/dialer/performance`, `/dialer/attempts`), the
  * whole `/agency` tree, and the `/app` shell — the PLATFORM zone only: Team,
  * Notifications and Call Summaries. Notes:
@@ -37,6 +38,7 @@ import { AgentLanding } from './components/agency/AgentLanding';
 const AppHomeRedirect = lazy(() => import('./pages/AppHomeRedirect'));
 const AgencyLoginPage = lazy(() => import('./pages/agency/AgencyLoginPage'));
 const AgencyJoinPage = lazy(() => import('./pages/agency/AgencyJoinPage'));
+const JoinPage = lazy(() => import('./pages/auth/JoinPage'));
 const VerifyEmailPage = lazy(() => import('./pages/auth/VerifyEmailPage'));
 const AgentConsolePage = lazy(() => import('./pages/agency/AgentConsolePage'));
 const TeamPage = lazy(() => import('./pages/team/TeamPage'));
@@ -160,6 +162,39 @@ export default function App() {
                   </ProductSurface>
                 }
               />
+              {/*
+                Where every OTHER emailed invite lands — an operator, a viewer, an
+                account admin: any role but `agent`, whose link is the route above.
+
+                ── Fully public, for exactly the reasons the route above gives ──
+                No `RequireAuth`, no `RequireCapability`, no `RequireFlag`. The
+                visitor has no account yet, so `RequireAuth` would bounce them to
+                `/login` and throw the token away; and there is no session or tenant
+                for a capability or a flag to be resolved against. The single-use
+                token is the authority and the server enforces it on
+                `POST /invites/:token/claim` — the same endpoint, the same claim,
+                shared code (`components/agency/join/useInviteClaim`). An invite
+                whose role belongs on the other route is forwarded there by either
+                page, so neither URL can strand anybody.
+
+                ── Beside the agency join page, and NOT under `/agency` ─────────
+                It is not an agency surface: a workspace invitee may be joining a
+                tenant with no dialer at all, so `/agency/...` would be a URL that
+                misdescribes itself and would send anyone bounced off it to the
+                agency door (`loginPathFor`). At the top level it is outside every
+                shell for the same reason the route above is.
+
+                ── No `ProductSurface`, unlike the route above ──────────────────
+                That wrapper exists so the agency funnel's events carry
+                `product: 'agency'` with no shell to set it. This page's events are
+                the `workspace_invite_*` family, whose names already say which door
+                they came through, and it belongs to no product the way `/login`
+                belongs to none: a stale `product` on it would be a claim about a
+                shell the visitor has not reached yet. `productSurface.test.tsx`
+                counts the wrapped routes, so adding one here is a deliberate edit
+                there rather than a quiet one.
+              */}
+              <Route path="/join/:token" element={<JoinPage />} />
               <Route path="/verify-email" element={<VerifyEmailPage />} />
 
               {/*

@@ -10,6 +10,12 @@ import {
   trackExportEvent,
   trackApiErrorEvent,
   trackAgencyWaitingForDialer,
+  trackAgencyInviteClaimSucceeded,
+  trackWorkspaceInviteViewed,
+  trackWorkspaceInviteClaimAttempted,
+  trackWorkspaceInviteClaimSucceeded,
+  trackWorkspaceInviteClaimFailed,
+  trackWorkspaceInviteAddressMismatch,
   track,
   type AnalyticsPath,
 } from '../../analytics/events';
@@ -180,6 +186,36 @@ describe('analytics/events catalog', () => {
     trackFeatureGateUnavailable({ gate_type: 'capability', gate: 'agency_dialer_enabled' });
 
     expect(true).toBe(true);
+  });
+
+  it('emits the workspace invite funnel under its own names, with the agency funnel’s shapes', () => {
+    /*
+      `/join/:token` runs the agency page's claim flow for every non-agent role.
+      Its five events are separate NAMES so the agency funnel keeps counting only
+      agents joining a calling floor — and the SAME property shapes, so the two
+      funnels cannot come to measure different things. Both halves asserted.
+    */
+    capture.mockClear();
+    trackWorkspaceInviteViewed({ status: 'pending', role: 'operator', has_inviter: true });
+    trackWorkspaceInviteClaimAttempted({ method: 'google' });
+    trackWorkspaceInviteClaimSucceeded({ method: 'google', address_matched: false });
+    trackWorkspaceInviteClaimFailed({ method: 'create', reason: 'weak_password' });
+    trackWorkspaceInviteAddressMismatch({ outcome: 'shown' });
+    trackAgencyInviteClaimSucceeded({ method: 'google', address_matched: false });
+
+    expect(capture.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      'workspace_invite_viewed',
+      'workspace_invite_claim_attempted',
+      'workspace_invite_claim_succeeded',
+      'workspace_invite_claim_failed',
+      'workspace_invite_address_mismatch',
+      'agency_invite_claim_succeeded',
+    ]);
+    // One shape, two names.
+    expect(capture.mock.calls[2]?.[1]).toEqual(capture.mock.calls[5]?.[1]);
+
+    // @ts-expect-error — the funnel's reasons are a closed set on both families
+    trackWorkspaceInviteClaimFailed({ method: 'create', reason: 'something_else' });
   });
 
   it('routes every emitter through the generic track, name and shape from the catalog', () => {

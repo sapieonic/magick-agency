@@ -6,20 +6,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
  * ── What is being pinned ───────────────────────────────────────────────────
  * Four things, and each is a decision that would otherwise be a comment:
  *
- *  1. **The link rule.** An `agent` gets the JOIN page carrying the minted token,
- *     `/agency/join/:token`; everybody else gets the plain `/login`. This
- *     replaced `/agency/login`, which removed the stray-tenant hazard only by
- *     removing the entrance: an invited agent with no Google account had nothing
- *     to click, since that page deliberately has no signup and Firebase
- *     password-reset cannot mint a credential for a user that does not exist. A
- *     drift here costs an onboarding, not a click.
+ *  1. **The link rule.** Every role gets a JOIN page carrying the minted token:
+ *     `/agency/join/:token` for an `agent`, `/join/:token` for everyone else.
+ *     Without a token the fallbacks are `/agency/login` and `/login`. The agent
+ *     page replaced `/agency/login`, and the workspace page replaced `/login` for
+ *     the same reason: a sign-in page with no signup is no entrance for somebody
+ *     with no account. A drift here costs an onboarding, not a click.
  *  2. **The transport is MAILJET, and it is env-gated.** `config.mailjet` absent
  *     ⇒ `not_configured`. Deliberately NOT `platformEmail`, whose block is now a
  *     reserved seam that nothing reads — the module header carries the argument.
- *  3. **The role gate comes FIRST.** A non-`agent` role reports
- *     `not_implemented` whatever the configuration, because that role has no
- *     invite mail to send and blaming an operator's `.env` for it would send
- *     them to inspect config that is already correct.
+ *  3. **There is no role gate.** Every role is mailed, and the only reasons a
+ *     mail does not leave — no transport, no link, a refusing transport — mean
+ *     the same thing for every role. The gate that answered `not_implemented` for
+ *     every non-`agent` role WAS the production defect, so the cases below sweep
+ *     the contract's `ROLES` rather than a hand-written list.
  *  4. **Totality.** It never throws, whatever the input. The invite route awaits
  *     it inline, so a rejection here would fail an invite whose membership has
  *     already been written.
@@ -65,6 +65,25 @@ vi.mock('@magick-agency/observability', () => ({
 }));
 
 import { sendInviteEmail, inviteSignInUrl } from '../../../src/notifications/invite-mailer.js';
+import { ROLES } from '@magick-agency/contracts/rbac';
+
+/** Every role but `agent`: the ones the workspace invitation and `/join` are for. */
+const WORKSPACE_ROLES = ROLES.filter((role) => role !== 'agent');
+
+/**
+ * The role labels the console's claim page renders (`ROLE_LABELS` in
+ * `apps/console/src/utils/agencyInviteJoinCopy.ts`), written out here rather than
+ * imported from the server's own table — a test that reads the value under test
+ * back out of the module agrees with any typo in it.
+ */
+const EXPECTED_LABEL: Record<(typeof ROLES)[number], string> = {
+  agent: 'Agent',
+  viewer: 'Viewer',
+  operator: 'Operator',
+  account_admin: 'Account admin',
+  tenant_admin: 'Workspace admin',
+  tenant_owner: 'Workspace owner',
+};
 
 /** Replace the mocked config wholesale; the module reads it per call. */
 function setConfig(next: Record<string, unknown>) {
@@ -115,17 +134,35 @@ describe('inviteSignInUrl', () => {
     expect(await inviteSignInUrl('agent', null)).toBe('https://app.example.com/agency/login');
   });
 
-  it.each(['viewer', 'operator', 'account_admin', 'tenant_admin', 'tenant_owner'] as const)(
-    'leaves %s on the default landing, even when handed a token',
+  it.each(WORKSPACE_ROLES)(
+    'sends %s to the WORKSPACE join page, carrying the token',
     async (role) => {
-      // A supervisor is `account_admin` or above and legitimately administers in
-      // `/app`; sending every one of them to the agency door would be wrong for
-      // the majority of tenants, which have no dialer at all. The token is
-      // ignored rather than being an error — the caller mints one per invite and
-      // the ROLE is what decides whether it means anything.
-      expect(await inviteSignInUrl(role, TOKEN)).toBe('https://app.example.com/login');
+      /**
+       * The fix. This was `/login` whatever the token, so an invited operator or
+       * admin with no account met a sign-in page with nothing to sign in with.
+       * `/join/:token` is the workspace's claim page — and NOT the agency one: a
+       * supervisor administers in `/app`, and most tenants have no dialer at all.
+       */
+      expect(await inviteSignInUrl(role, TOKEN)).toBe(`https://app.example.com/join/${TOKEN}`);
     },
   );
+
+  it.each(WORKSPACE_ROLES)('falls back to /login for %s with NO token', async (role) => {
+    // The token-less fallback is unchanged: a caller with nothing to claim gets
+    // the sign-in page rather than a claim page with nothing behind it.
+    expect(await inviteSignInUrl(role)).toBe('https://app.example.com/login');
+    expect(await inviteSignInUrl(role, null)).toBe('https://app.example.com/login');
+    expect(await inviteSignInUrl(role, '')).toBe('https://app.example.com/login');
+  });
+
+  it.each(ROLES)('gives %s exactly one of the two claim pages, never both or neither', async (role) => {
+    // The partition, stated once over every role: the agency door for `agent`,
+    // the workspace door for everyone else. A role added to `ROLES` lands on one
+    // of them without anybody editing this case.
+    const url = await inviteSignInUrl(role, TOKEN);
+    const expected = role === 'agent' ? `/agency/join/${TOKEN}` : `/join/${TOKEN}`;
+    expect(url).toBe(`https://app.example.com${expected}`);
+  });
 
   it('percent-encodes the token into the path', async () => {
     /**
@@ -136,6 +173,8 @@ describe('inviteSignInUrl', () => {
      */
     expect(await inviteSignInUrl('agent', 'a/b+c=', 'https://x.test'))
       .toBe('https://x.test/agency/join/a%2Fb%2Bc%3D');
+    expect(await inviteSignInUrl('operator', 'a/b+c=', 'https://x.test'))
+      .toBe('https://x.test/join/a%2Fb%2Bc%3D');
   });
 
   it('no longer pins a landing path in the link', async () => {
@@ -143,6 +182,7 @@ describe('inviteSignInUrl', () => {
     // client — the join page decides where a claimed agent goes — rather than
     // being copied into a link a server emits and cannot see change.
     expect(await inviteSignInUrl('agent', TOKEN)).not.toContain('next=');
+    expect(await inviteSignInUrl('tenant_admin', TOKEN)).not.toContain('next=');
   });
 
   it('returns null when no base URL is configured, rather than guessing an origin', async () => {
@@ -150,11 +190,13 @@ describe('inviteSignInUrl', () => {
     // in an email is a dead link sent to a real person.
     setConfig({});
     expect(await inviteSignInUrl('agent', TOKEN)).toBeNull();
+    expect(await inviteSignInUrl('account_admin', TOKEN)).toBeNull();
   });
 
   it('does not double the slash on a base URL that ends in one', async () => {
     setConfig({ consoleBaseUrl: 'https://app.example.com/' });
     expect(await inviteSignInUrl('viewer')).toBe('https://app.example.com/login');
+    expect(await inviteSignInUrl('viewer', TOKEN)).toBe(`https://app.example.com/join/${TOKEN}`);
   });
 
   it('takes an explicit base URL over the configured one', async () => {
@@ -182,6 +224,8 @@ describe('inviteSignInUrl', () => {
     expect(await inviteSignInUrl('viewer')).toBe('https://app.example.com/login');
     expect(await inviteSignInUrl('agent', TOKEN))
       .toBe(`https://app.example.com/agency/join/${TOKEN}`);
+    expect(await inviteSignInUrl('operator', TOKEN))
+      .toBe(`https://app.example.com/join/${TOKEN}`);
   });
 
   it('does not strip a slash that is not trailing', async () => {
@@ -234,7 +278,8 @@ describe('inviteSignInUrl', () => {
        * rather than a silent behaviour change inside a test-only PR.
        */
       expect(await inviteSignInUrl('agent', TOKEN, origin)).toBe(`/agency/join/${TOKEN}`);
-      expect(await inviteSignInUrl('viewer', TOKEN, origin)).toBe('/login');
+      expect(await inviteSignInUrl('viewer', TOKEN, origin)).toBe(`/join/${TOKEN}`);
+      expect(await inviteSignInUrl('viewer', null, origin)).toBe('/login');
     },
   );
 
@@ -354,34 +399,121 @@ describe('sendInviteEmail', () => {
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
-  it.each(['viewer', 'operator', 'account_admin', 'tenant_admin'] as const)(
-    'reports not_implemented for %s, even with a fully configured transport',
-    async (role) => {
+  describe('for every role, not only agent', () => {
+    /** The input a workspace invite arrives with: the `/join` link the issuer resolved. */
+    const workspaceInput = (role: (typeof ROLES)[number]) => ({
+      ...input,
+      email: `${role}@example.com`,
+      role,
+      signInUrl: role === 'agent'
+        ? `https://app.example.com/agency/join/${TOKEN}`
+        : `https://app.example.com/join/${TOKEN}`,
+    });
+
+    it.each(ROLES)('mails %s through Mailjet and reports sent: true', async (role) => {
       /**
-       * The role gate runs BEFORE the transport gate, and this is what pins that
-       * order. A non-`agent` invite has no email to send whatever the
-       * configuration — there is no workspace-onboarding page to land them on —
-       * so answering `not_configured` would blame an operator's `.env` for
-       * something this service has simply not built.
+       * THE regression case. A role gate here answered `not_implemented` for
+       * every role but `agent` before the transport was touched, so invited
+       * operators and admins were never mailed — with a fully configured
+       * transport, which is exactly the configuration below.
        */
       configured();
 
-      await expect(sendInviteEmail({ ...input, role })).resolves.toEqual({
+      await expect(sendInviteEmail(workspaceInput(role))).resolves.toEqual({ sent: true, messageId: null });
+
+      expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+      const sent = mocks.sendEmail.mock.calls[0]![0];
+      expect(sent.to).toEqual([{ email: `${role}@example.com` }]);
+      // The link the issuer resolved is the link in the mail, in both parts.
+      expect(sent.htmlBody).toContain(workspaceInput(role).signInUrl);
+      expect(sent.textBody).toContain(workspaceInput(role).signInUrl);
+    });
+
+    it.each(ROLES)('names the product and the role %s will see on the claim page', async (role) => {
+      /**
+       * The mail and the page it leads to must name the same product and the same
+       * role, at the moment the reader is deciding whether this is genuine. The
+       * product matches `GET /invites/:token`'s `product_name` (one function,
+       * `inviteProductName`); the label matches the console's `roleLabel`.
+       */
+      configured();
+
+      await sendInviteEmail(workspaceInput(role));
+
+      const sent = mocks.sendEmail.mock.calls[0]![0];
+      const expectedSubject = role === 'agent'
+        ? "You've been added to the Magick Agency Dialer"
+        : "You've been added to Magick Agency";
+      expect(sent.subject).toBe(expectedSubject);
+      const label = EXPECTED_LABEL[role];
+      const article = /^[aeiou]/i.test(label) ? 'an' : 'a';
+      expect(sent.textBody).toContain(`Priya Sharma has set you up as ${article} ${label} at Acme Collections.`);
+    });
+
+    it.each(WORKSPACE_ROLES)('tells %s nothing about a station, a dialer or calls', async (role) => {
+      // The agent mail's steps promise a station and staffed campaigns. Sent to an
+      // admin of a tenant with no dialer, every one of those sentences is false.
+      configured();
+
+      await sendInviteEmail(workspaceInput(role));
+
+      const { subject, textBody, htmlBody } = mocks.sendEmail.mock.calls[0]![0];
+      for (const part of [subject, textBody, htmlBody]) {
+        expect(part).not.toMatch(/station|dialer|campaign|take calls/i);
+      }
+    });
+
+    it.each(WORKSPACE_ROLES)('reports not_configured for %s with no MAILJET block', async (role) => {
+      // The same answer the agent gets: the operator's setting, not this role.
+      setConfig({ consoleBaseUrl: 'https://app.example.com', brand: BRAND });
+
+      await expect(sendInviteEmail(workspaceInput(role))).resolves.toEqual({
         sent: false,
-        reason: 'not_implemented',
+        reason: 'not_configured',
       });
       expect(mocks.sendEmail).not.toHaveBeenCalled();
-    },
-  );
+    });
 
-  it('reports not_implemented for a non-agent even with NO config at all', async () => {
-    // The other half of the ordering: `not_implemented` means exactly one thing —
-    // this role has no invite mail — and never doubles as "check your config".
-    setConfig({});
+    it.each(WORKSPACE_ROLES)('reports not_configured for %s with no link to send', async (role) => {
+      configured();
 
-    await expect(sendInviteEmail({ ...input, role: 'viewer' })).resolves.toEqual({
-      sent: false,
-      reason: 'not_implemented',
+      await expect(sendInviteEmail({ ...workspaceInput(role), signInUrl: null })).resolves.toEqual({
+        sent: false,
+        reason: 'not_configured',
+      });
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it.each(WORKSPACE_ROLES)('reports failed for %s when the transport refuses or throws', async (role) => {
+      configured();
+      mocks.sendEmail.mockResolvedValueOnce(false);
+      await expect(sendInviteEmail(workspaceInput(role))).resolves.toEqual({ sent: false, reason: 'failed' });
+
+      mocks.sendEmail.mockRejectedValueOnce(new Error('socket hang up'));
+      await expect(sendInviteEmail(workspaceInput(role))).resolves.toEqual({ sent: false, reason: 'failed' });
+    });
+
+    it('never answers not_implemented, for any role in any configuration', async () => {
+      /**
+       * The sweep. `not_implemented` was this module's answer for "this role has
+       * no invite mail"; every role has one now, so no combination of role,
+       * config and transport outcome may produce it — a re-added gate surfaces
+       * here whichever arm it is put on.
+       */
+      const configs = [{}, { consoleBaseUrl: 'https://app.example.com', brand: BRAND }, {
+        consoleBaseUrl: 'https://app.example.com', brand: BRAND, mailjet: MAILJET,
+      }];
+      for (const role of ROLES) {
+        for (const cfg of configs) {
+          for (const delivered of [true, false]) {
+            setConfig(cfg);
+            mocks.sendEmail.mockResolvedValue(delivered);
+            const result = await sendInviteEmail(workspaceInput(role));
+            expect(result, `${role} ${JSON.stringify(cfg)} delivered=${delivered}`)
+              .not.toEqual({ sent: false, reason: 'not_implemented' });
+          }
+        }
+      }
     });
   });
 
@@ -518,21 +650,23 @@ describe('sendInviteEmail', () => {
      * thing that ends up in the log.
      */
     const email = 'private.person@example.com';
-    for (const cfg of [{}, { mailjet: MAILJET }]) {
-      for (const signInUrl of [null, `https://app.example.com/agency/join/${TOKEN}`]) {
-        for (const refuse of [false, true]) {
-          setConfig({ consoleBaseUrl: 'https://app.example.com', brand: BRAND, ...cfg });
-          vi.clearAllMocks();
-          mocks.sendEmail.mockResolvedValue(!refuse);
+    for (const role of ['agent', 'operator'] as const) {
+      for (const cfg of [{}, { mailjet: MAILJET }]) {
+        for (const signInUrl of [null, `https://app.example.com/agency/join/${TOKEN}`]) {
+          for (const refuse of [false, true]) {
+            setConfig({ consoleBaseUrl: 'https://app.example.com', brand: BRAND, ...cfg });
+            vi.clearAllMocks();
+            mocks.sendEmail.mockResolvedValue(!refuse);
 
-          await sendInviteEmail({ ...input, email, signInUrl });
+            await sendInviteEmail({ ...input, role, email, signInUrl });
 
-          const logged = JSON.stringify([
-            mocks.log.debug.mock.calls, mocks.log.warn.mock.calls,
-            mocks.log.info.mock.calls, mocks.log.error.mock.calls,
-          ]);
-          expect(logged, `config=${JSON.stringify(cfg)} signInUrl=${signInUrl} refuse=${refuse}`)
-            .not.toContain(email);
+            const logged = JSON.stringify([
+              mocks.log.debug.mock.calls, mocks.log.warn.mock.calls,
+              mocks.log.info.mock.calls, mocks.log.error.mock.calls,
+            ]);
+            expect(logged, `role=${role} config=${JSON.stringify(cfg)} signInUrl=${signInUrl} refuse=${refuse}`)
+              .not.toContain(email);
+          }
         }
       }
     }

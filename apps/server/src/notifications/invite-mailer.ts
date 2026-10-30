@@ -1,7 +1,7 @@
 import type { AppConfig } from '../config/schema.js';
 import { createChildLogger } from '@magick-agency/observability';
 import type { MembershipRole } from '@magick-agency/db/models/membership.model';
-import { renderAgentInviteEmail } from './templates/agent-invite.template.js';
+import { renderInviteEmailForRole } from './templates/invite-email.js';
 
 const log = createChildLogger({ component: 'invite-mailer' });
 
@@ -49,17 +49,17 @@ async function appConfig(): Promise<AppConfig> {
 }
 
 /**
- * The invite email. **Implemented for the `agent` role; a reported no-op for
- * every other role.**
+ * The invite email, for every role.
  *
- * ── The defect it removes ──────────────────────────────────────────────────
  * ── What it is for ─────────────────────────────────────────────────────────
  * `POST /users/invite` writes a membership and, for an unknown address, a stub
  * user whose `firebase_uid` is `pending_<uuid>`. Without a mail, the invited
  * person would have to arrive at the app on their own and sign in with exactly
  * the address that was typed — and an invited agent with no Google account would
  * have no way in at all: `/agency/login` deliberately has no signup, and Firebase
- * password-reset cannot mint a credential for a user that does not exist.
+ * password-reset cannot mint a credential for a user that does not exist. An
+ * invited operator or admin was in the same position one page over, and was
+ * told nothing at all.
  *
  * This file sends a real email carrying a real token
  * (`src/notifications/invite-token.ts`), and the token — not an email match — is
@@ -73,15 +73,17 @@ async function appConfig(): Promise<AppConfig> {
  * throws. Changing transport means swapping it inside {@link sendInviteEmail},
  * below the config guard; nothing else on this path changes.
  *
- * ── Scope: the `agent` role only ───────────────────────────────────────────
- * Every other role still reports `not_implemented`, and their `sign_in_url` is
- * still `/login`. That is not caution, it is the absence of a destination: an
- * `agent`'s invite lands on `/agency/join/:token`, a page built for somebody with
- * no account yet, and there is no equivalent workspace-onboarding page for a
- * `viewer` or an `account_admin` to be sent to. Mailing them a link into a
- * sign-in page they have no credential for would be the same dead end this change
- * exists to remove, one role over. The template is parameterised on the role
- * label and the product noun so that page can drop in without a second template.
+ * ── Scope: every role, each to its own claim page ──────────────────────────
+ * This was `agent`-only, and every other role reported `not_implemented` with a
+ * `sign_in_url` of `/login` — not out of caution but for want of a destination:
+ * the only page built for somebody with no account yet was the agency one, and
+ * mailing an admin a link into a sign-in page they had no credential for would
+ * have been the same dead end one role over. That page now exists for the
+ * workspace too (`/join/:token`), so every role is mailed a token-bound link
+ * ({@link inviteSignInUrl}) and an invitation worded for what they are joining
+ * (`templates/invite-email.ts`): the dialer for an `agent`, the workspace for
+ * everyone else. There is no role gate in this module any more; whether a role
+ * gets a token at all is `roleGetsTokenInvite`'s single answer, one layer up.
  *
  * ── Never throws, never delays ─────────────────────────────────────────────
  * The membership IS the outcome of an invite; the email is an accelerant. So this
@@ -112,13 +114,17 @@ export type InviteEmailResult =
    */
   | { sent: false; reason: 'not_configured' }
   /**
-   * The role has no invite email. Reachable ONLY for a non-`agent` role — see
-   * the scope note in the module header.
+   * The role has no invitation at all. **No role produces this today, and this
+   * module never does.**
    *
-   * Kept distinct from `not_configured` after the transport landed rather than
-   * out of inertia: it is still the difference between "nobody set this up" and
-   * "we have not built this yet", and collapsing them would tell an operator
-   * their config was wrong when an `account_admin` invite reports no mail.
+   * It is reported only by `issueInvite`, for a role `roleGetsTokenInvite`
+   * refuses — and that predicate answers `true` for every role now that each one
+   * has a claim page. The arm stays on the union because the predicate stays a
+   * switch: narrowing it again must not leave the refused role a choice between
+   * a mail into a sign-in page with a Sign Up tab (the stray-tenant door the
+   * token exists to close) and a reason that blames the operator's config. The
+   * wire contract keeps tolerating it for a rolling deploy either way
+   * (`packages/contracts/src/api/platform/team.ts`).
    */
   | { sent: false; reason: 'not_implemented' }
   /** The transport was attempted and refused or threw. Logged; never thrown. */
@@ -127,7 +133,10 @@ export type InviteEmailResult =
 export interface SendInviteEmailInput {
   /** The invited address, exactly as typed — it is who the mail goes to. */
   email: string;
-  /** Their role in the new membership; decides whether there is a mail at all. */
+  /**
+   * Their role in the new membership. Decides WHICH invitation they receive —
+   * its subject, its steps and the role named in it — never whether there is one.
+   */
   role: MembershipRole;
   /** Whose workspace they were invited to. For attribution and logging. */
   tenantId: string;
@@ -143,7 +152,7 @@ export interface SendInviteEmailInput {
    *
    * Optional, and it FALLS BACK rather than failing: the invite route resolves it from
    * `tenants` on the invite path, and a lookup that returns nothing must not be
-   * the reason an agent never receives their only way in. The template treats it
+   * the reason an invitee never receives their only way in. The template treats it
    * as context rather than as the headline, so a generic value still reads.
    */
   tenantName?: string | null;
@@ -168,7 +177,7 @@ const LOGIN_PATH = '/login';
 const AGENCY_LOGIN_PATH = '/agency/login';
 
 /**
- * The invitation CLAIM page: where a token-bearing link lands.
+ * The invitation CLAIM page for an `agent`: where their token-bearing link lands.
  *
  * A page for somebody who has no account yet. It reads the token, renders
  * `GET /invites/:token`'s answer ("this invitation is for you@…, as an Agent at
@@ -179,9 +188,24 @@ const AGENCY_LOGIN_PATH = '/agency/login';
 const AGENCY_JOIN_PATH = '/agency/join';
 
 /**
+ * The invitation CLAIM page for every other role — the same three steps against
+ * the same two endpoints, outside the agency shell, and finishing in `/app`.
+ *
+ * Public in the console's router for the reason the agency one is: the reader
+ * has no session yet. Both pages call the same role-agnostic endpoints, and the
+ * console sends on a token that arrives at the other page's door — but the door
+ * this function picks is the one that needs no redirect.
+ */
+const WORKSPACE_JOIN_PATH = '/join';
+
+/**
  * The URL an invite should carry.
  *
- * ── The JOIN page for an `agent`, and only for an `agent` ──────────────────
+ * ── A JOIN page for every role that carries a token ────────────────────────
+ * `/agency/join/:token` for an `agent`, `/join/:token` for everyone else. Both
+ * are claim pages for somebody with no account yet; they differ in the shell
+ * around them and where the claimed person lands.
+ *
  * An `agent` is hierarchy level 5 and inherits no navigation at all
  * (`packages/contracts/src/rbac.ts`), so dropping them on the app shell gives
  * them a page with nothing on it.
@@ -198,13 +222,18 @@ const AGENCY_JOIN_PATH = '/agency/join';
  * safer of the two wrong answers — a page with no signup on it, rather than a
  * claim page with nothing to claim.
  *
- * ── Every other role's landing IS the shell ────────────────────────────────
- * Sending them anywhere else would override wherever the product would rather put
- * them next (an onboarding step, a verify-email bounce). A supervisor is
- * `account_admin` or above and legitimately administers in `/app` — team,
- * settings — so their invite lands them there and they reach the dialer from its
- * nav entry. Supervisors are first-class AT the agency door and it routes them
- * correctly; the invite link is simply not where that is decided.
+ * ── Every other role's claim page lands them in the shell ──────────────────
+ * A supervisor is `account_admin` or above and legitimately administers in
+ * `/app` — team, settings — so `/join/:token` finishes there and they reach the
+ * dialer from its nav entry. Supervisors are first-class AT the agency door and
+ * it routes them correctly; the invite link is simply not where that is decided.
+ *
+ * It used to be the bare `/login`, and that was the defect: an invited operator
+ * with no account met a sign-in page with no signup on it and a credential they
+ * did not have — the dead end `/agency/join/:token` removed for agents, left in
+ * place for everyone else. **Without a token they still get `/login`** — the
+ * fallback for a caller with nothing to claim, as `/agency/login` is for an
+ * agent.
  *
  * ── The console's copy of this rule is BEHIND, and that is fine ────────────
  * `inviteSignInUrl` in `apps/console/src/pages/team/TeamPage.tsx` is the same
@@ -214,8 +243,8 @@ const AGENCY_JOIN_PATH = '/agency/join';
  * returns over its own derivation**, so in any deployment with
  * `CONSOLE_BASE_URL` set this side is the only one that decides. The console's
  * copy is reached only when that variable is unset, and it then produces
- * `/agency/login` — the same fallback this function produces without a token.
- * The two therefore agree in every reachable state.
+ * `/agency/login` or `/login` — the same fallbacks this function produces
+ * without a token. The two therefore agree in every reachable state.
  *
  * ── What does NOT catch a drift, despite looking like it should ────────────
  * The server and console suites assert the same literal strings, and that does
@@ -239,12 +268,14 @@ export async function inviteSignInUrl(
   // Trailing slashes are stripped so a `CONSOLE_BASE_URL` with one does not produce
   // `https://app.example.com//login`, which some routers 404 and others redirect.
   const trimmed = origin.replace(/\/+$/, '');
-  if (role !== 'agent') return `${trimmed}${LOGIN_PATH}`;
+  const isAgent = role === 'agent';
   // `encodeURIComponent` even though `base64url` emits nothing that needs it: the
   // alphabet is a property of `invite-token.ts` and this function must not
   // silently depend on it. Change it there and this still emits a valid path.
-  if (token) return `${trimmed}${AGENCY_JOIN_PATH}/${encodeURIComponent(token)}`;
-  return `${trimmed}${AGENCY_LOGIN_PATH}`;
+  if (token) {
+    return `${trimmed}${isAgent ? AGENCY_JOIN_PATH : WORKSPACE_JOIN_PATH}/${encodeURIComponent(token)}`;
+  }
+  return `${trimmed}${isAgent ? AGENCY_LOGIN_PATH : LOGIN_PATH}`;
 }
 
 /** The fallback expiry sentence when a caller passes no `expiresAt`. */
@@ -258,29 +289,16 @@ const FALLBACK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  */
 export async function sendInviteEmail(input: SendInviteEmailInput): Promise<InviteEmailResult> {
   /**
-   * The ROLE gate comes first — before the transport gate — and the order is the
-   * decision, not an accident of writing.
+   * No ROLE gate, and its absence is the fix rather than an omission.
    *
-   * A non-`agent` invite has no email to send whatever the configuration, so
-   * answering `not_configured` for one would blame an operator's `.env` for
-   * something this service has simply not built. Checking the role first makes
-   * `not_implemented` mean exactly one thing: *this role has no invite mail yet*.
-   *
-   * The consequence worth stating, because it IS a behaviour change: a deployment
-   * with no `mailjet` block used to report `not_configured` for every role and now
-   * reports `not_implemented` for the non-agent ones. `invite_email.reason` on the
-   * invite response is the only place either value surfaces, and both mean "keep
-   * showing the supervisor the hand-off panel", so nothing downstream branches
-   * differently on the change.
+   * There used to be one here, ahead of the transport gate, answering
+   * `not_implemented` for every non-`agent` role whatever the configuration. It
+   * was the half of the defect production showed: invited operators and admins
+   * were never mailed at all. Every role has a claim page and an invitation of
+   * its own now, so the two guards below — a transport, and a link to put in it
+   * — are the only reasons a mail does not leave, and they mean the same thing
+   * for every role.
    */
-  if (input.role !== 'agent') {
-    log.debug(
-      { tenantId: input.tenantId, role: input.role },
-      'Invite email skipped: no invite mail exists for this role yet',
-    );
-    return { sent: false, reason: 'not_implemented' };
-  }
-
   const config = await appConfig();
 
   if (!config.mailjet) {
@@ -307,17 +325,18 @@ export async function sendInviteEmail(input: SendInviteEmailInput): Promise<Invi
   }
 
   try {
-    const { subject, textBody, htmlBody } = renderAgentInviteEmail({
+    // The role picks the invitation and supplies its label — the dialer's for an
+    // `agent`, the workspace's for everyone else (`templates/invite-email.ts`).
+    const { subject, textBody, htmlBody } = renderInviteEmailForRole(input.role, {
       brandName: config.brand.name,
       accentColor: config.brand.accent,
       logoUrl: config.brand.logoUrl ?? null,
       joinUrl: input.signInUrl,
       email: input.email,
       // Falls back rather than refusing: a tenant name the route could not resolve
-      // must not be the reason an agent never receives their only way in.
+      // must not be the reason an invitee never receives their only way in.
       tenantName: input.tenantName?.trim() || 'your team',
       inviterName: input.inviterName?.trim() || null,
-      roleLabel: 'Agent',
       // Same reasoning. The row's real `expires_at` is what the claim enforces;
       // this is only the sentence a recipient reads, and the default TTL is the
       // honest approximation when the caller did not pass the row's value.

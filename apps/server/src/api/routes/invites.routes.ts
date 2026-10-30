@@ -16,7 +16,7 @@ import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { redisCache } from '../../cache/redis-cache.js';
 import { membershipCacheKey } from '../middleware/membership-cache-key.js';
 import { hashInviteToken, isInviteExpired } from '../../notifications/invite-token.js';
-import { agencyProductName } from '../../notifications/templates/agent-invite.template.js';
+import { inviteProductName } from '../../notifications/templates/invite-email.js';
 import { issueInvite } from '../../invites/invite-issuer.js';
 import { claimInviteSchema, resendInviteSchema } from '../validators/invite.validator.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
@@ -59,10 +59,20 @@ const log = createChildLogger({ component: 'invite-routes' });
  *
  * ── Registered at `/invites`, with NO `/api` prefix ────────────────────────
  * There is no global prefix, so the console composes these as
- * `${API_BASE}/invites/...`. The join link the email carries points at the
- * console's `/agency/join/:token` page, which is a page and not these endpoints —
- * the page then calls them. Confusing the two produces a link that 404s in a
- * browser and an endpoint nothing reaches.
+ * `${API_BASE}/invites/...`. The join link the email carries points at one of
+ * the console's two claim PAGES — `/agency/join/:token` for an `agent`,
+ * `/join/:token` for every other role (`inviteSignInUrl`) — which are pages and
+ * not these endpoints; both pages then call them. Confusing the two produces a
+ * link that 404s in a browser and an endpoint nothing reaches.
+ *
+ * ── Role-agnostic, and that is now load-bearing ────────────────────────────
+ * Every role is issued a token (`roleGetsTokenInvite`), so these routes serve an
+ * operator's or a workspace owner's claim exactly as they serve an agent's.
+ * Nothing below branches on the role: the membership, its role and its tenant
+ * all come off the stored rows, the bind's guards (`AdoptIdentityOptions`) are
+ * about the USER row rather than the role on it, and the session the claim
+ * answers with lists whatever memberships the user holds. The one role-shaped
+ * value is `product_name`, which names what the reader is joining.
  *
  * ── Why a claim can never provision anything ───────────────────────────────
  * `POST /auth/session` path 4 refuses an identity it does not recognise rather
@@ -169,13 +179,14 @@ function inviteStatus(invite: MembershipInviteRecord): InviteStatus {
 /**
  * The product an invitation is for, as the claim page's heading.
  *
- * Composed the same way the email composes it, from the same function, so the
- * page and the mail that led to it name the same thing. A non-`agent` role
- * cannot reach here today (no row is written for one — see `invite-issuer.ts`),
- * and the branch is written rather than assumed so the widening is one line.
+ * `inviteProductName` from `templates/invite-email.ts` — the SAME function the
+ * email's subject is composed from — so the page and the mail that led to it name
+ * the same thing: the Agency Dialer for an `agent`, the brand's workspace for
+ * every other role. Two copies of that rule would agree until somebody renamed
+ * the product in one of them.
  */
-function inviteProductName(role: MembershipRole): string {
-  return role === 'agent' ? agencyProductName(config.brand.name) : config.brand.name;
+function productNameFor(role: MembershipRole): string {
+  return inviteProductName(role, config.brand.name);
 }
 
 /**
@@ -231,7 +242,8 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
   /**
    * GET /invites/:token — what is this invitation? (PUBLIC)
    *
-   * Rendered by the console's `/agency/join/:token` page before any sign-in, so the
+   * Rendered by the console's claim page (`/agency/join/:token` or `/join/:token`)
+   * before any sign-in, so the
    * recipient can see who invited them and to what before they hand over an
    * identity. That is not decoration: an invitation that asks somebody to
    * authenticate without first saying what they are joining is indistinguishable
@@ -343,7 +355,7 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
         // somebody who is not yet a member of anything would disclose it outside
         // the tenant.
         inviter_name: inviter?.display_name ?? null,
-        product_name: inviteProductName(invite.role),
+        product_name: productNameFor(invite.role),
         expires_at: invite.expires_at,
       },
     });
@@ -880,10 +892,13 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
      * `tenant_owner` can step a co-owner DOWN — a de-escalation, and there is no
      * role above `tenant_owner` to authorise it. Re-issuing a binding credential
      * is the opposite shape, so it takes the same strict test as creating the
-     * membership did. In practice nothing is refused today (only `agent`, the
-     * lowest role, is issued a token at all — see `roleGetsTokenInvite`); the
-     * gate matters the moment that widens, which is a one-line change one file
-     * away.
+     * membership did. It is a live gate, not a formality: every role is issued
+     * a token now (`roleGetsTokenInvite`), so without it an `account_admin`
+     * could resend — and receive in the response body — a binding link for a
+     * `tenant_admin` or `tenant_owner` membership. With it, a caller can re-issue
+     * exactly the roles `POST /users/invite` would have let them create, and the
+     * equal-role case (one `account_admin` re-issuing another's) is refused for
+     * the same reason it is refused on invite.
      *
      * ── 403 here, where the two checks above answer 404 ──────────────────────
      * Deliberate, and it does not weaken the "foreign tenant and nonexistent are
@@ -957,9 +972,10 @@ export async function inviteRoutes(app: FastifyInstance): Promise<void> {
       ...requestAuditActor(request),
       action: 'user.invite_sent',
       resource_type: 'membership_invite',
-      // `null` for a role that mints no token — the act still happened and is
-      // still worth a row, and a resource_id that names nothing is more honest
-      // than one that names the membership and reads as a membership change.
+      // Absent for a role that mints no token (none today — see
+      // `roleGetsTokenInvite`): the act still happened and is still worth a row,
+      // and a resource_id that names nothing is more honest than one that names
+      // the membership and reads as a membership change.
       ...(issued.invite ? { resource_id: issued.invite.id } : {}),
       details: {
         membership_id: membership.id,

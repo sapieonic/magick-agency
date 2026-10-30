@@ -32,4 +32,29 @@ describe('dev proxy prefixes', () => {
     expect(called.size).toBeGreaterThan(5);
     expect([...called].filter((p) => !proxied.has(p)).sort()).toEqual([]);
   });
+
+  /**
+   * The other direction: no proxied prefix may shadow a page the SPA routes.
+   *
+   * A prefix that matched a top-level route would send `pnpm dev`'s deep link to
+   * the API instead of to `index.html` — the invite pages most of all, which are
+   * only ever opened cold from an email. `/join/:token` sits beside the API's own
+   * `/invites/*` and must stay on the SPA's side of the line.
+   */
+  it('never proxies a path the SPA itself routes', () => {
+    const viteConfig = readFileSync(resolve(SRC, '..', 'vite.config.ts'), 'utf8');
+    const block = viteConfig.match(/API_PREFIXES = \[([\s\S]*?)\];/);
+    const proxied = [...(block?.[1] ?? '').matchAll(/'(\/[a-z0-9-]+)'/g)].map((m) => m[1] ?? '');
+    expect(proxied.length).toBeGreaterThan(5);
+
+    const app = readFileSync(resolve(SRC, 'App.tsx'), 'utf8');
+    const routed = [...app.matchAll(/<Route\s+path="(\/[^"]*)"/g)].map((m) => m[1] ?? '');
+    expect(routed).toContain('/join/:token');
+    expect(routed).toContain('/agency/join/:token');
+
+    const shadowed = routed.filter((route) =>
+      proxied.some((prefix) => route === prefix || route.startsWith(`${prefix}/`)),
+    );
+    expect(shadowed).toEqual([]);
+  });
 });

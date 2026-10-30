@@ -326,18 +326,19 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * not fail — it would silently split the address, and
      * `POST /auth/session` path 2 (`findByEmail`, "whichever row Postgres hands
      * back first") would then activate one of the two and leave the other
-     * tenant's invitation permanently unclaimable. For every non-`agent` role
-     * that path IS the activation mechanism — no token is minted
-     * (`roleGetsTokenInvite`) — so splitting the row would break the ordinary
-     * multi-tenant invite outright.
+     * tenant's invitation permanently unclaimable. Path 2 is still an
+     * activation mechanism for EVERY role — an invitee may ignore the mailed
+     * link and simply sign in with the invited, verified address — so splitting
+     * the row would break the ordinary multi-tenant invite outright.
      *
      * What the reuse costs is that the row this route aims a membership at may
      * be an unclaimed `pending_` stub another workspace is waiting on: a
      * super-admin-provisioned owner, or somebody else's pending invitee. Since
-     * `agent` invites mint a token and hand the raw join link back to the
-     * INVITER, that let anybody with a tenant of their own — which is everybody,
-     * `auth.routes.ts` path 4 — obtain a live credential for a row they do not
-     * own, and claiming it returned every membership on the row.
+     * invites mint a token (every role's, now — `roleGetsTokenInvite`) and hand
+     * the raw join link back to the INVITER, that let anybody with a tenant of
+     * their own — which is everybody, `auth.routes.ts` path 4 — obtain a live
+     * credential for a row they do not own, and claiming it returned every
+     * membership on the row.
      *
      * That is closed at the BIND rather than here, and it has to be: the two
      * memberships can be written in either order, so an invite-time check would
@@ -457,8 +458,9 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
      * "could not be resolved" is the same fact from the caller's side.
      *
      * ── What a failure here COSTS ─────────────────────────────────────────
-     * The agent's mail — and for an `agent` that mail is their only route in
-     * (`/agency/login` has no signup). The recovery is `POST /invites/resend`,
+     * The invitee's mail — and for somebody with no account yet that mail is
+     * their only route in (neither `/agency/login` nor `/login` has a signup).
+     * The recovery is `POST /invites/resend`,
      * which is the reason that route exists rather than being a convenience: the
      * membership is written, the response says `sent: false` with a reason, and a
      * supervisor can re-issue without deleting and re-inviting.
@@ -488,8 +490,9 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
       ...requestAuditActor(request),
       action: 'user.invite_sent',
       resource_type: 'membership_invite',
-      // Absent for a role that mints no token: a `resource_id` naming the
-      // membership would read as a membership change on the audit screen.
+      // Absent for a role that mints no token (none today — see
+      // `roleGetsTokenInvite`): a `resource_id` naming the membership would read
+      // as a membership change on the audit screen.
       ...(inviteId ? { resource_id: inviteId } : {}),
       details: {
         membership_id: membership.id,
@@ -514,9 +517,10 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
        * themselves — `sent: false` means keep showing the hand-off panel.
        *
        * `reason` is present only on a failure, and it is not decoration:
-       * `not_configured` is an operator's problem, `not_implemented` is ours, and
-       * `failed` is the mail provider's. A bare boolean would send all three to
-       * the same place.
+       * `not_configured` is an operator's problem and `failed` is the mail
+       * provider's. A bare boolean would send both to the same place.
+       * (`not_implemented` — "this role has no invitation" — was the third, and no
+       * role produces it now that every role has a claim page.)
        */
       invite_email: inviteEmail.sent
         ? { sent: true }

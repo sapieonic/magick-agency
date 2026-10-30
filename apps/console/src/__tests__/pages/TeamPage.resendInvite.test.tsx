@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { ROLES } from '@magick-agency/contracts/rbac';
 import type { TenantMember } from '../../types/team';
 
 /**
@@ -18,6 +19,12 @@ import type { TenantMember } from '../../types/team';
  * The property under test is therefore not "a button renders". It is that the
  * recovery exists, that it is offered where it can actually work, and that it
  * says only what the API's answer supports.
+ *
+ * "Where it can actually work" used to mean agents only, because the API minted a
+ * token for an agent and nobody else. Every role now gets a token, an email and a
+ * page to land on (`/join/:token` for every non-agent), so the predicate is
+ * pinned across every role in `ROLES` — a pending operator's expired invitation
+ * is exactly as stuck as an agent's was.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -44,7 +51,7 @@ vi.mock('../../api/users', () => ({
 vi.mock('../../api/invites', () => ({ resendInvite: mocks.resendInvite }));
 vi.mock('../../analytics/events', () => ({ trackSetupEvent: vi.fn() }));
 
-import TeamPage from '../../pages/team/TeamPage';
+import TeamPage, { invitationIsResendable, isInvitationLink } from '../../pages/team/TeamPage';
 
 /**
  * `inviteState` defaults to `'pending'` because that is the only case this
@@ -130,27 +137,22 @@ afterEach(() => {
 });
 
 describe('resending an invitation', () => {
-  it('is offered for a pending agent, whose invitation is the only one the API mints a token for', () => {
-    /*
-      Two conditions, not one: `invite_state` is the API's own answer to "has
-      this person signed up" (this member defaults to `pending` — see
-      `makeMember`), and the role is still required on top of it because
-      `roleGetsTokenInvite` mints a token for an `agent` and nobody else — a
-      pending `viewer` (below) has not signed up either, but resending to one
-      would be a button that cannot produce a claimable link.
-    */
-    renderTeam('agent');
-    openMenu();
+  /*
+    The roles a `tenant_admin` (this file's viewer, see `beforeEach`) can act on
+    at all — the menu itself is withheld from a peer or a superior by
+    `canManageRole`, which is a separate rule with its own tests. Every one of
+    them is offered Resend while pending: the agent-only clause this replaced
+    would have hidden it from the last three.
+  */
+  it.each(['agent', 'viewer', 'operator', 'account_admin'] as const)(
+    'is offered for a pending %s, because every role now gets a claimable link',
+    (role) => {
+      renderTeam(role);
+      openMenu();
 
-    expect(screen.getByRole('menuitem', { name: /Resend Invite/i })).toBeTruthy();
-  });
-
-  it('is not offered for a role that gets no token, even while pending', () => {
-    renderTeam('viewer');
-    openMenu();
-
-    expect(screen.queryByRole('menuitem', { name: /Resend Invite/i })).toBeNull();
-  });
+      expect(screen.getByRole('menuitem', { name: /Resend Invite/i })).toBeTruthy();
+    },
+  );
 
   it('is not offered without the permission the API enforces on the route', () => {
     // `user.invite`, the same permission `POST /invites/resend` requires. A menu
@@ -160,6 +162,18 @@ describe('resending an invitation', () => {
 
     expect(screen.queryByRole('menuitem', { name: /Resend Invite/i })).toBeNull();
   });
+
+  it.each(['viewer', 'operator'] as const)(
+    'is not offered for a %s who has already signed up either',
+    (role) => {
+      // Dropping the role clause widened WHO may be offered it, not WHEN: the
+      // `invite_state` narrowing below holds for every role.
+      renderTeam(role, undefined, 'active');
+      openMenu();
+
+      expect(screen.queryByRole('menuitem', { name: /Resend Invite/i })).toBeNull();
+    },
+  );
 
   it('is not offered for an agent who has already signed up', () => {
     /*
@@ -244,6 +258,45 @@ describe('resending an invitation', () => {
 
     expect(await screen.findByTestId('resend-handoff')).toBeTruthy();
     expect(screen.getByText('https://app.example.com/agency/join/tok_abc')).toBeTruthy();
+    expect(screen.getByText('Invitation link')).toBeTruthy();
+    expect(screen.queryByTestId('resend-door-link')).toBeNull();
+  });
+
+  it('hands over an operator’s /join link the same way', async () => {
+    mocks.resendInvite.mockResolvedValue({
+      invite_email: { sent: false, reason: 'failed' },
+      sign_in_url: 'https://app.example.com/join/tok_ws',
+    });
+    renderTeam('operator');
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
+
+    expect(await screen.findByTestId('resend-handoff')).toBeTruthy();
+    expect(screen.getByText('https://app.example.com/join/tok_ws')).toBeTruthy();
+    expect(screen.getByText('Invitation link')).toBeTruthy();
+  });
+
+  it('does not call an older server’s sign-in door an invitation', async () => {
+    /*
+      A server from before every role had a token answers a non-agent resend with
+      `not_implemented` and `/login`. Reachable from here for the first time now
+      that Resend is offered to every role, and still tolerated: the hand-off
+      shows the door for what it is, with the address rule it still depends on.
+    */
+    mocks.resendInvite.mockResolvedValue({
+      invite_email: { sent: false, reason: 'not_implemented' },
+      sign_in_url: 'https://app.example.com/login',
+    });
+    renderTeam('viewer');
+    openMenu();
+    fireEvent.click(screen.getByRole('menuitem', { name: /Resend Invite/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send invitation' }));
+
+    expect(await screen.findByTestId('resend-handoff')).toBeTruthy();
+    expect(screen.getByText('Sign-in link')).toBeTruthy();
+    expect(screen.queryByText('Invitation link')).toBeNull();
+    expect(screen.getByTestId('resend-door-link').textContent).toMatch(/this exact address/i);
   });
 
   it('says so rather than substituting a link the API could not build', async () => {
@@ -275,5 +328,53 @@ describe('resending an invitation', () => {
     expect(await screen.findByText('Membership not found')).toBeTruthy();
     // Still pressable: a resend that failed is one worth trying again.
     expect(screen.getByRole('button', { name: 'Send invitation' })).toBeTruthy();
+  });
+});
+
+describe('invitationIsResendable', () => {
+  /**
+   * The predicate on its own, over EVERY role the contract knows — including the
+   * two the menu cannot show a `tenant_admin` (a peer and a superior), because the
+   * predicate is not the place that decides who may act on whom and must not
+   * quietly re-acquire a role rule of its own.
+   */
+  it.each(ROLES)('offers a pending %s a resend', (role) => {
+    expect(invitationIsResendable(makeMember(role, 'pending'))).toBe(true);
+  });
+
+  it.each(ROLES)('offers a %s a resend against a server that sends no invite_state', (role) => {
+    expect(invitationIsResendable(makeMember(role, 'absent'))).toBe(true);
+  });
+
+  it.each(ROLES)('withholds it from a %s who has signed up', (role) => {
+    expect(invitationIsResendable(makeMember(role, 'active'))).toBe(false);
+  });
+
+  it.each(['inactive', 'revoked'] as const)('withholds it from a %s membership', (status) => {
+    // Nothing to join: the API refuses to bind a claim to it and answers `revoked`.
+    const member = makeMember('operator', 'pending');
+    expect(invitationIsResendable({ ...member, membership: { ...member.membership, status } })).toBe(false);
+  });
+});
+
+describe('isInvitationLink', () => {
+  it.each([
+    'https://app.example.com/agency/join/tok_abc',
+    'https://app.example.com/join/tok_abc',
+    '/join/tok_abc',
+    'https://app.example.com/Join/tok_abc?utm=mail',
+  ])('reads %s as an invitation', (url) => {
+    expect(isInvitationLink(url)).toBe(true);
+  });
+
+  it.each([
+    'https://app.example.com/login',
+    'https://app.example.com/agency/login',
+    'https://app.example.com/join',
+    'https://app.example.com/join/',
+    'https://app.example.com/joinery/tok',
+    'https://app.example.com/teams/join/tok',
+  ])('reads %s as a sign-in door, not an invitation', (url) => {
+    expect(isInvitationLink(url)).toBe(false);
   });
 });

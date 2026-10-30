@@ -4,15 +4,19 @@ import type { AccountRole } from '../analytics/events';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 
 /**
- * The agency invite page's pure half: the words it says and the small rules
- * behind them — role labels, the address comparison, Firebase failures as
- * sentences, the password assessment, and the five "cannot be used" screens.
+ * The invite pages' pure half: the words they say and the small rules behind
+ * them — role labels, the address comparison, Firebase failures as sentences, the
+ * password assessment, and the five "cannot be used" screens.
  *
  * Moved out of `AgencyJoinPage` so each rule is unit-tested on its own; the page
- * and the `components/agency/join/` cards render what these return.
+ * and the `components/agency/join/` cards render what these return. The file
+ * name predates the second page: `/join/:token` (`pages/auth/JoinPage`) reads
+ * every rule here too, and only the five screens differ between the two — see
+ * {@link WORKSPACE_UNAVAILABLE_COPY}.
  */
 
-/** Human labels for the roles an invite can carry. Rendered, never branched on. */
+/** Human labels for the roles an invite can carry. Rendered, never branched on —
+ *  which page an invite belongs on is `joinDoorFor`'s question, not a label's. */
 export const ROLE_LABELS: Record<Role, string> = {
   agent: 'Agent',
   viewer: 'Viewer',
@@ -208,6 +212,52 @@ export const UNAVAILABLE_COPY: Record<
   identity_already_bound: {
     title: 'You are already set up',
     body: 'This address already has an account, so there is nothing left to accept. Sign in and your station will open. If signing in does not work, ask your supervisor to send a new invitation.',
+    action: 'sign_in',
+  },
+};
+
+/**
+ * The same five outcomes for `/join/:token` — an invitation to a WORKSPACE
+ * rather than to a calling floor.
+ *
+ * ── Why a second table and not a parameter on the first ────────────────────
+ * The facts and the remedies are identical, and so is the `action` column: the
+ * same two statuses are cured by signing in, for the same reasons. What differs
+ * is who and what the sentences name. {@link UNAVAILABLE_COPY} promises "your
+ * station will open" and sends people to "your supervisor"; an operator or an
+ * account admin has no station and may not have a supervisor — they were
+ * invited by whoever administers the workspace. A table per page keeps each set
+ * of sentences readable as sentences, and the `Record` over
+ * {@link InviteUnavailableStatus} makes a sixth status a compile error in both
+ * rather than a blank screen in one.
+ */
+export const WORKSPACE_UNAVAILABLE_COPY: Record<
+  InviteUnavailableStatus,
+  { title: string; body: string; action: 'sign_in' | 'none' }
+> = {
+  expired: {
+    title: 'This invitation has expired',
+    body: 'Invitations are only good for a few days. Ask whoever invited you to send a new one — it will arrive at the same address and work the same way.',
+    action: 'none',
+  },
+  claimed: {
+    title: 'This invitation has already been used',
+    body: 'The workspace is set up and waiting for you. Sign in with the account you created and it will open.',
+    action: 'sign_in',
+  },
+  revoked: {
+    title: 'This invitation is no longer valid',
+    body: 'It was withdrawn before it was used. Whoever invited you will know why, and can send a new one if it was withdrawn by mistake.',
+    action: 'none',
+  },
+  not_found: {
+    title: 'We cannot find that invitation',
+    body: 'Links like this are long, and email programs often break them across two lines. Go back to the message and copy the whole link, or ask whoever invited you to send it again.',
+    action: 'none',
+  },
+  identity_already_bound: {
+    title: 'You are already set up',
+    body: 'This address already has an account, so there is nothing left to accept. Sign in and the workspace will open. If signing in does not work, ask whoever invited you to send a new invitation.',
     action: 'sign_in',
   },
 };
