@@ -1,10 +1,11 @@
 import { NavLink } from 'react-router-dom';
-import { Bell, ChartNoAxesCombined, ListChecks, PhoneOff, Plus, X, type LucideIcon } from 'lucide-react';
+import { Bell, ChartNoAxesCombined, ListChecks, Phone, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
 import { hasPermission, type Permission } from '../../utils/permissions';
 import { useTenant } from '../../contexts/TenantContext';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import styles from './AgencySidebar.module.css';
 
 interface Props {
@@ -17,6 +18,8 @@ interface NavItem {
   icon: LucideIcon;
   end: boolean;
   permission: Permission;
+  /** A client-exposed flag that must also be on. */
+  flag?: string;
 }
 
 /**
@@ -65,6 +68,19 @@ const NAV_ITEMS: NavItem[] = [
     permission: 'agency.campaigns.read',
   },
   {
+    /*
+     * The soft phone's calls, account-wide (`docs/softphone.md` §7). The server
+     * scopes `GET /softphone/calls` to the whole account only for
+     * `agency.supervise`, so that is the floor here; and the flag, default off.
+     */
+    label: 'Soft-phone calls',
+    to: '/agency/softphone',
+    icon: Phone,
+    end: false,
+    permission: 'agency.supervise',
+    flag: 'agency_softphone_enabled',
+  },
+  {
     label: 'Do Not Call',
     to: '/agency/dnc',
     icon: PhoneOff,
@@ -94,6 +110,16 @@ const NAV_ITEMS: NavItem[] = [
     end: false,
     permission: 'agency.supervise',
   },
+  {
+    /* Leaves the shell like Notifications: the settings live in the platform zone,
+       and the people who edit them (`agency.softphone.manage`) live here. */
+    label: 'Soft phone settings',
+    to: '/app/softphone',
+    icon: Settings2,
+    end: false,
+    permission: 'agency.softphone.manage',
+    flag: 'agency_softphone_enabled',
+  },
 ];
 
 /*
@@ -109,7 +135,10 @@ const SHOW_BADGE = showsShellBadge(brand.name);
 
 export function AgencySidebar({ onClose }: Props) {
   const { role } = useTenant();
-  const items = NAV_ITEMS.filter((item) => hasPermission(role, item.permission));
+  const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const items = NAV_ITEMS.filter(
+    (item) => hasPermission(role, item.permission) && (!item.flag || (item.flag === SOFTPHONE_FLAG && softphone)),
+  );
 
   return (
     <aside className={styles.sidebar}>

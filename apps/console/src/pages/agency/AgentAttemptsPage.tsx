@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
+import { useSoftphoneAvailable } from '../../components/agency/AgentNav';
+import { SoftphoneCallsList } from '../../components/softphone/SoftphoneCallsList';
 import { PhoneOutgoing } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { getMyCampaigns } from '../../api/agencyStats';
@@ -145,6 +148,40 @@ export function AgentAttemptsPage() {
 
   const entries = history.status === 'ready' ? history.entries : [];
 
+  /*
+    ── Soft-phone calls: a tab, not a merged list ─────────────────────────────
+    A manual call is not an attempt (`docs/softphone.md` §2): no try number, no
+    roster contact of its own, an outcome from a different catalog when it is not
+    logged to a campaign, and a call-details record an attempt does not have.
+    Interleaving the two would make every column mean two things, so the agent's
+    soft-phone calls are the second tab of the same page — reachable as
+    `?view=softphone` — and only when the soft phone is on for them.
+  */
+  const softphone = useSoftphoneAvailable();
+  const [params, setParams] = useSearchParams();
+  const view = softphone && params.get('view') === 'softphone' ? 'softphone' : 'campaign';
+  const choose = (next: 'campaign' | 'softphone') => {
+    const updated = new URLSearchParams(params);
+    if (next === 'softphone') updated.set('view', 'softphone');
+    else updated.delete('view');
+    setParams(updated, { replace: true });
+  };
+  const onTabKey = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const next = view === 'campaign' ? 'softphone' : 'campaign';
+    choose(next);
+    document.getElementById(`my-calls-tab-${next}`)?.focus();
+  };
+
+  const campaignPanel = (
+    <AgentAttemptsPanel
+      subject={{ kind: 'me' }}
+      campaignNames={campaignNameMap(entries)}
+      caption="Calls you have taken, newest first"
+    />
+  );
+
   return (
     <AgentSurfaceShell
       icon={<PhoneOutgoing size={20} />}
@@ -160,12 +197,47 @@ export function AgentAttemptsPage() {
         ) : undefined
       }
     >
-      <AgentAttemptsPanel
-        subject={{ kind: 'me' }}
-        campaignNames={campaignNameMap(entries)}
-        caption="Calls you have taken, newest first"
-      />
+      {softphone ? (
+        <>
+          <div role="tablist" aria-label="Which calls" style={{ display: 'flex', gap: 8 }}>
+            {(['campaign', 'softphone'] as const).map((id) => (
+              <button
+                key={id}
+                id={`my-calls-tab-${id}`}
+                type="button"
+                role="tab"
+                aria-selected={view === id}
+                aria-controls={`my-calls-panel-${id}`}
+                tabIndex={view === id ? 0 : -1}
+                className={view === id ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => choose(id)}
+                onKeyDown={onTabKey}
+                data-testid={`my-calls-tab-${id}`}
+              >
+                {id === 'campaign' ? 'Campaign calls' : 'Soft-phone calls'}
+              </button>
+            ))}
+          </div>
+          <div role="tabpanel" id={`my-calls-panel-${view}`} aria-labelledby={`my-calls-tab-${view}`}>
+            {view === 'campaign' ? campaignPanel : <MySoftphoneCalls />}
+          </div>
+        </>
+      ) : (
+        campaignPanel
+      )}
     </AgentSurfaceShell>
+  );
+}
+
+/** The agent's own soft-phone calls — scoped to their user id, whatever their role. */
+function MySoftphoneCalls() {
+  const { user } = useAuth();
+  return (
+    <SoftphoneCallsList
+      scope="me"
+      userId={user?.id ?? null}
+      caption="Soft-phone calls you have made, newest first"
+    />
   );
 }
 

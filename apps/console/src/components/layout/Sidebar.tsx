@@ -10,6 +10,7 @@ import {
   Bell,
   Sparkles,
   Shield,
+  Phone,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
@@ -49,7 +50,7 @@ interface NavSection {
 }
 
 /**
- * One section, ADMIN, holding Team, Notifications and Call Summaries (the analysis
+ * One section, ADMIN, holding Team, Notifications, Call Summaries and Soft phone (the analysis
  * profiles page; its gates are the `agency_call_analysis` flag and the
  * `agency.analytics` capability, the active account's `analyze_calls`). This
  * shell is the platform zone (team and settings); the agency workspace is entered from the
@@ -85,6 +86,11 @@ const NAV_SECTIONS: NavSection[] = [
       // Cmd+K does not help either).
       { label: 'Notifications', to: '/app/notifications', icon: Bell, permission: 'tenant.read' },
       { label: 'Call Summaries', to: '/app/call-summaries', icon: Sparkles, permission: 'agency.analysis_profiles.read', flag: 'agency_call_analysis', capability: 'agency.analytics' },
+      // Settings → Soft phone. Floored at the dial permission because reading the
+      // settings is part of dialling (an agent never renders this sidebar, so in
+      // practice everyone who sees it is a viewer or above); editing needs
+      // `agency.softphone.manage`, which the page checks.
+      { label: 'Soft phone', to: '/app/softphone', icon: Phone, permission: 'agency.softphone.dial', flag: 'agency_softphone_enabled', capability: 'agency' },
     ],
   },
 ];

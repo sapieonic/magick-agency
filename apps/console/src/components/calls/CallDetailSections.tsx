@@ -36,7 +36,7 @@ export function InfoItem({ label, children }: { label: string; children: React.R
   );
 }
 
-export function AnalysisSection({ analysis }: { analysis: CallAnalysisResult }) {
+export function AnalysisSection({ analysis, source }: { analysis: CallAnalysisResult; source?: string }) {
   // Support both nested (common/custom) and legacy flat shape
   const common = analysis.common;
   const summary = common?.summary ?? analysis.summary;
@@ -51,6 +51,11 @@ export function AnalysisSection({ analysis }: { analysis: CallAnalysisResult }) 
       <h3 className={styles.cardTitle}>
         <BarChart3 size={16} className={styles.cardTitleIcon} />
         Call Analysis
+        {source ? (
+          <span className={styles.analysisMeta} data-testid="analysis-source">
+            {source}
+          </span>
+        ) : null}
         {meta?.model && (
           <span className={styles.analysisMeta}>
             {meta.provider}/{meta.model} &middot; {meta.latency_ms ? `${(meta.latency_ms / 1000).toFixed(1)}s` : ''}

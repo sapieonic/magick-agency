@@ -53,6 +53,7 @@ const AgencyAnalyticsPage = lazy(() => import('./pages/agency/AgencyAnalyticsPag
 const AgentHomePage = lazy(() => import('./pages/agency/AgentHomePage'));
 const AgentPerformancePage = lazy(() => import('./pages/agency/AgentPerformancePage'));
 const AgentAttemptsPage = lazy(() => import('./pages/agency/AgentAttemptsPage'));
+const SoftphonePage = lazy(() => import('./pages/agency/SoftphonePage'));
 const AgencyHomeRedirect = lazy(() => import('./pages/agency/AgencyHomeRedirect'));
 const AgencyCampaignDetailPage = lazy(() => import('./pages/agency/AgencyCampaignDetailPage'));
 const DncPage = lazy(() => import('./pages/agency/DncPage'));
@@ -63,6 +64,10 @@ const AgencyCampaignAttemptsPage = lazy(() => import('./pages/agency/AgencyCampa
 const AgencyAttemptCallPage = lazy(() => import('./pages/agency/AgencyAttemptCallPage'));
 const AgencyContactDetailPage = lazy(() => import('./pages/agency/AgencyContactDetailPage'));
 const AgencyCampaignActivityPage = lazy(() => import('./pages/agency/AgencyCampaignActivityPage'));
+const AgencyCampaignManualCallsPage = lazy(() => import('./pages/agency/AgencyCampaignManualCallsPage'));
+const SoftphoneCallsPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallsPage'));
+const SoftphoneCallDetailPage = lazy(() => import('./pages/agency/softphone/SoftphoneCallDetailPage'));
+const SoftphoneSettingsPage = lazy(() => import('./pages/settings/SoftphoneSettingsPage'));
 
 export default function App() {
   return (
@@ -368,6 +373,37 @@ export default function App() {
                   </RequireAuth>
                 }
               />
+              {/*
+                `/dialer/phone` — the soft phone (`docs/softphone.md` §7): an agent
+                dials a typed number from the browser, outside campaign pacing.
+
+                Full-viewport and OUTSIDE both shells for the reason `/station` is —
+                navigating away mid-call drops the socket and cuts the customer off —
+                and gated identically, plus `agency_softphone_enabled` (default off,
+                SP4). The permission, `agency.softphone.dial`, floors at `agent`, so
+                the page checks it itself rather than through a capability: the
+                route is for every agent once the flag is on.
+              */}
+              <Route
+                path="/dialer/phone"
+                element={
+                  <RequireAuth>
+                    <RequireCapability capability="agency">
+                      <RequireFlag flag="agency_dialer_enabled">
+                        <RequireFlag flag="agency_softphone_enabled">
+                          {/* Full-viewport and outside both shells, so the product
+                              dimension has no layout to come from — see
+                              `analytics/ProductSurface`. Inside the gates, so a
+                              refused reader never registers a surface. */}
+                          <ProductSurface product="agency">
+                            <SoftphonePage />
+                          </ProductSurface>
+                        </RequireFlag>
+                      </RequireFlag>
+                    </RequireCapability>
+                  </RequireAuth>
+                }
+              />
               {/* The Agency workspace — its own shell, same auth tree.
                   Gated once here rather than per-route: `AgencyLayout` renders
                   nothing but agency surfaces, so a per-child gate would repeat
@@ -480,6 +516,26 @@ export default function App() {
                 */}
                 <Route path="analytics" element={<AgencyAnalyticsPage />} />
                 <Route path="dnc" element={<DncPage />} />
+                {/*
+                  The soft phone's supervisor surfaces (`docs/softphone.md` §7):
+                  the account's soft-phone calls, one call's detail, and a
+                  campaign's Manual calls — each behind `agency_softphone_enabled`
+                  on top of the subtree's gates. The server floors the
+                  account-wide reads at `agency.supervise`, as the sidebar entry
+                  and the campaign tab do.
+                */}
+                <Route
+                  path="softphone"
+                  element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallsPage /></RequireFlag>}
+                />
+                <Route
+                  path="softphone/calls/:callId"
+                  element={<RequireFlag flag="agency_softphone_enabled"><SoftphoneCallDetailPage /></RequireFlag>}
+                />
+                <Route
+                  path="campaigns/:id/manual-calls"
+                  element={<RequireFlag flag="agency_softphone_enabled"><AgencyCampaignManualCallsPage /></RequireFlag>}
+                />
               </Route>
 
               {/*
@@ -506,6 +562,8 @@ export default function App() {
                     unsubscribe. */}
                 <Route path="notifications" element={<NotificationSettingsPage />} />
                 <Route path="call-summaries" element={<RequireCapability capability="agency.analytics"><RequireFlag flag="agency_call_analysis"><AnalysisProfilesPage /></RequireFlag></RequireCapability>} />
+                {/* Settings → Soft phone: read at the dial floor, edited with `agency.softphone.manage`. */}
+                <Route path="softphone" element={<RequireCapability capability="agency"><RequireFlag flag="agency_softphone_enabled"><SoftphoneSettingsPage /></RequireFlag></RequireCapability>} />
               </Route>
 
               <Route path="*" element={<Navigate to="/app" replace />} />

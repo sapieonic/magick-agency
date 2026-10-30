@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { visibleCampaignTabs, type CampaignTabId } from '../../utils/agencyCampaignTabs';
 import { isKnownCampaignStatus } from '../../utils/agencyCampaignControls';
 import { trackAgencyCampaignTabViewed } from '../../analytics/events';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import type { Role } from '../../types/auth';
 import styles from './CampaignTabs.module.css';
 
@@ -69,7 +70,8 @@ export function CampaignTabs({
 }: CampaignTabsProps) {
   // Never empty and never a single tab: the three panel sections are ungated,
   // so every role that can open a campaign at all gets a real choice here.
-  const tabs = visibleCampaignTabs(role);
+  const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const tabs = visibleCampaignTabs(role, (flag) => flag === SOFTPHONE_FLAG && softphone);
 
   return (
     <nav className={styles.tabs} aria-label="Campaign sections" data-testid="campaign-tabs">
