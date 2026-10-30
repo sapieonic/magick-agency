@@ -34,6 +34,11 @@ export interface QueuedBreakPillProps {
   /** Set when the last cancel attempt failed. */
   cancelFailed: boolean;
   onCancel: () => void;
+  /**
+   * The queued break is the switch to the soft phone (SP7). Same queue, same ✕,
+   * different sentence: it is not a break the agent asked for by name.
+   */
+  softphone?: boolean;
 }
 
 export function QueuedBreakPill({
@@ -41,6 +46,7 @@ export function QueuedBreakPill({
   cancelling,
   cancelFailed,
   onCancel,
+  softphone = false,
 }: QueuedBreakPillProps) {
   /**
    * **Focus must survive re-render**, and the way this achieves it is by removing
@@ -94,12 +100,14 @@ export function QueuedBreakPill({
         trying to read mid-call.
       */}
       <span className={styles.chip} data-testid="queued-break-chip">
-        <span className={styles.chipText}>Break after this call — {reasonLabel}</span>
+        <span className={styles.chipText}>
+          {softphone ? 'Switching to the soft phone after this call' : `Break after this call — ${reasonLabel}`}
+        </span>
         <button
           type="button"
           className={styles.cancel}
           // A real accessible name, not a bare glyph.
-          aria-label="Cancel queued break"
+          aria-label={softphone ? 'Cancel the switch to the soft phone' : 'Cancel queued break'}
           // NOT `disabled`: disabling a focused element blurs it in real
           // browsers, which would drop a keyboard agent to `<body>` mid-call on
           // their own click. See the note above.

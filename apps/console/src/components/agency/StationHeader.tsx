@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { CueSettings } from './CueSettings';
 import { StationIdentity, type StationIdentityUser } from './StationIdentity';
@@ -30,6 +31,8 @@ export function StationHeader({
   onExit,
   connection,
   missedPings,
+  extra,
+  subline,
 }: {
   user: StationIdentityUser | null | undefined;
   /** Null while the bootstrap is still loading. */
@@ -45,11 +48,20 @@ export function StationHeader({
   onExit: () => void;
   connection: StationConnection;
   missedPings: number;
+  /**
+   * The soft phone's header controls when the station is switched to it (SP7):
+   * where the call is logged, recording, and **Return to campaign**. Before cue
+   * settings, after the disclosures — none of it acts on a call, which is why it
+   * is here and not in the action bar.
+   */
+  extra?: ReactNode;
+  /** Replaces the campaign name under the agent's name (the soft phone says so). */
+  subline?: string;
 }) {
   return (
     <header className={styles.header}>
       <div className={styles.identity}>
-        <StationIdentity user={user} subline={campaignName ?? 'Loading…'} />
+        <StationIdentity user={user} subline={subline ?? campaignName ?? 'Loading…'} />
       </div>
       <div className={styles.headerRight}>
         {/* Recording is disclosed as a dot PLUS the word — in several
@@ -85,6 +97,7 @@ export function StationHeader({
           contact panel to find the switch is the same "operable but effectively
           unreachable" shape this guards against.
         */}
+        {extra}
         <CueSettings prefs={cuePrefs} onChange={onCuePrefsChange} />
         {/*
           The way OUT of the station, beside cue settings and deliberately not

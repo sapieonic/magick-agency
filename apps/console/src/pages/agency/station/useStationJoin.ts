@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createAgencySession, leaveAgencySession } from '../../../api/agency';
 import { useMountedRef } from '../../../hooks/useMountedRef';
+import { errorCode } from '../../../utils/agencyErrors';
 import {
   conflictIsMidCall,
   joinConflictFallbackSentence,
@@ -42,6 +43,12 @@ import type {
 export interface StationJoin {
   bootstrap: AgencySessionBootstrap | null;
   joinError: string | null;
+  /**
+   * 409 `session_on_softphone`: the agent's live session is a soft-phone session
+   * (`docs/softphone.md` §2), which has no campaign to name the way
+   * `session_on_other_campaign` does. The remedy is closing the soft phone.
+   */
+  onSoftphoneElsewhere: boolean;
   joinConflict: AgencySessionConflict | null;
   switchConfirm: boolean;
   switching: boolean;
@@ -65,6 +72,7 @@ export function useStationJoin({
 }): StationJoin {
   const [bootstrap, setBootstrap] = useState<AgencySessionBootstrap | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [onSoftphoneElsewhere, setOnSoftphoneElsewhere] = useState(false);
   /**
    * The `409 session_on_other_campaign` refusal, kept apart from `joinError`.
    *
@@ -175,6 +183,11 @@ export function useStationJoin({
          * message — the API states the campaign and their state there precisely so
          * this screen can name both. See `agencyJoinConflict.ts`.
          */
+        if (errorCode(err) === 'session_on_softphone') {
+          setOnSoftphoneElsewhere(true);
+          trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
+          return;
+        }
         const conflict = parseJoinConflict(err);
         if (conflict) {
           rememberLiveSessionFromConflict(tenantId, conflict);
@@ -426,6 +439,7 @@ export function useStationJoin({
   return {
     bootstrap,
     joinError,
+    onSoftphoneElsewhere,
     joinConflict,
     switchConfirm,
     switching,
