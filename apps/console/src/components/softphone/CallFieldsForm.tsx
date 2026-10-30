@@ -17,15 +17,25 @@ export function CallFieldsForm({
   values,
   errors,
   disabled,
+  loading = false,
   onChange,
 }: {
   fields: readonly AgencyCallField[];
+  /** The field set is not known yet (the bootstrap is on its way): no fields is not "none". */
+  loading?: boolean;
   values: AgencyCallFieldValues;
   errors: Record<string, string>;
   disabled: boolean;
   onChange: (key: string, value: CallFieldValue) => void;
 }) {
   const idBase = useId();
+  if (fields.length === 0 && loading) {
+    return (
+      <p className={styles.emptyFields} data-testid="call-fields-loading">
+        Loading the call details…
+      </p>
+    );
+  }
   if (fields.length === 0) {
     return (
       <p className={styles.emptyFields} data-testid="call-fields-empty">

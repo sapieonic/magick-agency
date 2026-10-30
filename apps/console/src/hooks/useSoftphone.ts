@@ -373,6 +373,18 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
 
   const taggableCampaigns = useMemo(() => bootstrap?.taggable_campaigns ?? [], [bootstrap]);
   const fields = useMemo(() => bootstrap?.call_fields ?? [], [bootstrap]);
+  /**
+   * Whether the field set is known. Until the bootstrap lands, `fields` is `[]`
+   * because nothing has said what it is — not because the account has none — and
+   * `fields` on the wire REPLACES the stored values (`cleanFieldValues`). So no
+   * request carries `fields` before this is true: the server keeps what it holds
+   * when the key is absent, and the values come back to the form when the set
+   * arrives (the re-hydration below).
+   */
+  const fieldsKnown = bootstrap !== null;
+  const fieldSetRef = useLatestRef({ known: fieldsKnown, fields });
+  /** The agent typed into a call field since the call's values were last taken from the server. */
+  const fieldsTouchedRef = useRef(false);
 
   // The station's campaign, preselected once the list that can confirm it arrives.
   useEffect(() => {
@@ -412,8 +424,11 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     prevCallRef.current = call;
     if (call && hydratedForRef.current !== call.id) {
       hydratedForRef.current = call.id;
+      fieldsTouchedRef.current = false;
       // A call we did not place from this screen (a reload, a reconnect, a second
       // window): take what the server holds. One we placed already matches the draft.
+      // (Before the field set is known this compares against nothing; the
+      // re-hydration below takes the server's values when the set arrives.)
       setFieldValues((current) => (sameFieldValues(fields, current, call.fields) ? current : { ...call.fields }));
       setNotesState((current) => (current.trim() === '' ? (call.notes ?? '') : current));
       setNumberState((current) => current || call.destination_e164);
@@ -427,6 +442,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (!call && prev) {
       // Settled (outcome saved, lapsed, or an unanswered call closed): back to Ready.
       hydratedForRef.current = null;
+      fieldsTouchedRef.current = false;
       setLastCall(newest && newest.id === prev.id ? newest : prev);
       setNumberState('');
       setFieldValues({});
@@ -445,6 +461,24 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     // `newest` is read for the settled copy only; the effect is keyed on the call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [call?.id, call === null]);
+
+  /**
+   * The field set arriving after the call (a reload where the `manual_call` frame
+   * beats `GET /bootstrap`, or the station's SP7 path, whose bootstrap only starts
+   * once the session reads as on the soft phone): the form was hydrated against
+   * no fields, so take the server's values again — unless the agent has typed
+   * into a field since, which is newer than any copy we hold.
+   */
+  const callForFieldsRef = useLatestRef(call);
+  const fieldsWereKnownRef = useRef(fieldsKnown);
+  useEffect(() => {
+    const wasKnown = fieldsWereKnownRef.current;
+    fieldsWereKnownRef.current = fieldsKnown;
+    if (wasKnown || !fieldsKnown) return;
+    const current = callForFieldsRef.current;
+    if (!current || fieldsTouchedRef.current) return;
+    setFieldValues({ ...current.fields });
+  }, [fieldsKnown, callForFieldsRef]);
 
   // ── Recent calls ──────────────────────────────────────────────────────────
   const recentSeq = useRef(0);
@@ -695,11 +729,15 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     const target = callRef.current;
     if (!target || !tenantId || !accountId) return;
     const { fieldValues: values, notes: text } = draftRef.current;
+    // Read at send time, not from the render that armed the timer: a save armed
+    // before the field set arrived may fire after it.
+    const fieldSet = fieldSetRef.current;
     const sentAt = Date.now();
     setNotesMeta((m) => ({ ...m, inFlight: true }));
     const result = await updateManualCall(
       target.id,
-      { fields: cleanFieldValues(fields, values), notes: text },
+      // Notes alone until the field set is known: `fields` would replace the stored values.
+      fieldSet.known ? { fields: cleanFieldValues(fieldSet.fields, values), notes: text } : { notes: text },
       tenantId,
       accountId,
     );
@@ -723,7 +761,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (!terminal && refusal.code !== 'fields_invalid') {
       saveTimerRef.current = setTimeout(() => void flushSave(), NOTES_DEBOUNCE_MS * 4);
     }
-  }, [tenantId, accountId, fields, adoptCall]);
+  }, [tenantId, accountId, fieldSetRef, adoptCall]);
 
   const scheduleSave = useCallback(() => {
     if (!callRef.current) return;
@@ -737,6 +775,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
 
   const setFieldValue = useCallback(
     (key: string, value: CallFieldValue) => {
+      fieldsTouchedRef.current = true;
       setFieldValues((current) => ({ ...current, [key]: value }));
       setFieldErrors((current) => {
         if (!(key in current)) return current;
@@ -821,7 +860,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         code: payload.disposition_code,
         ...(payload.notes ? { notes: payload.notes } : {}),
         ...(payload.callback_at ? { callback_at: payload.callback_at } : {}),
-        fields: cleaned,
+        // Absent until the field set is known: the server then keeps (and checks) the stored values.
+        ...(fieldsKnown ? { fields: cleaned } : {}),
       },
       tenantId,
       accountId,
@@ -854,7 +894,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setPadRejection(refusalCopy(refusal));
     }
     setAnnouncement(`The outcome wasn’t saved. ${refusalCopy(refusal)}`);
-  }, [call, saving, tenantId, accountId, clock, fields, fieldValues, saveBlockAt, catalog, fullForm, adoptCall, loadBootstrap]);
+  }, [call, saving, tenantId, accountId, clock, fields, fieldsKnown, fieldValues, saveBlockAt, catalog, fullForm, adoptCall, loadBootstrap]);
 
   // ── Hang up ───────────────────────────────────────────────────────────────
   const hangup = useCallback(async () => {

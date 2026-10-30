@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, act, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, act, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 const mocks = vi.hoisted(() => ({
@@ -279,6 +279,68 @@ describe('on the soft phone, in the station', () => {
     await mounted();
     await frame({ event: 'ready', session_id: 'sess-1', state: 'break' });
     expect(screen.getByTestId('station-softphone')).toBeTruthy();
+  });
+
+  describe('a reload mid-call keeps the call details the agent typed', () => {
+    const SP_SESSION = {
+      session_id: 'sess-1',
+      kind: 'campaign',
+      campaign_id: 'camp-1',
+      campaign_name: 'Home Loan Renewals',
+      state: 'break',
+      break_reason: 'soft_phone',
+      on_softphone: true,
+    };
+    const typed = { customer_name: 'Rahul Verma', reason: 'Rate query' };
+    const live = step(manualCall({ session_id: 'sess-1', fields: typed, notes: 'Asked about rates' }), 9, {
+      state: 'bridged',
+      bridged_at: '2026-10-30T10:00:09Z',
+    });
+
+    async function typeNote(text: string) {
+      mocks.updateManualCall.mockClear();
+      fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: text } });
+      await waitFor(() => expect(mocks.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
+      return mocks.updateManualCall.mock.calls[0]![1] as Record<string, unknown>;
+    }
+
+    beforeEach(() => {
+      mocks.updateManualCall.mockResolvedValue({ ok: true, value: live });
+    });
+
+    it('the manual_call frame before the bootstrap (which waits for the ready frame): the fields come back with the set', async () => {
+      let resolveBootstrap!: (value: unknown) => void;
+      mocks.getSoftphoneBootstrap.mockReturnValue(new Promise((resolve) => (resolveBootstrap = resolve)));
+      await mounted();
+      await frame({ event: 'ready', session_id: 'sess-1', state: 'break' });
+      await frame({ event: 'manual_call', call: live });
+      expect(mocks.getSoftphoneBootstrap).toHaveBeenCalled();
+
+      await act(async () =>
+        resolveBootstrap({
+          ...SP_BOOTSTRAP,
+          taggable_campaigns: [CAMPAIGN],
+          session: SP_SESSION,
+          call: live,
+        }),
+      );
+      expect(screen.getByTestId('station-softphone')).toBeTruthy();
+      expect((screen.getByTestId('call-field-customer_name') as HTMLInputElement).value).toBe('Rahul Verma');
+      expect((screen.getByTestId('call-field-reason') as HTMLSelectElement).value).toBe('Rate query');
+      const sent = await typeNote('Asked about rates, wants it in writing');
+      expect(sent).toEqual({ fields: typed, notes: 'Asked about rates, wants it in writing' });
+    });
+
+    it('the bootstrap before the manual_call frame: the frame’s values fill the form and are sent back', async () => {
+      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...SP_BOOTSTRAP, taggable_campaigns: [CAMPAIGN], session: SP_SESSION, call: null });
+      await mounted();
+      await frame({ event: 'ready', session_id: 'sess-1', state: 'break' });
+      expect(screen.getByTestId('station-softphone')).toBeTruthy();
+      await frame({ event: 'manual_call', call: live });
+      expect((screen.getByTestId('call-field-customer_name') as HTMLInputElement).value).toBe('Rahul Verma');
+      const sent = await typeNote('Asked about rates, wants it in writing');
+      expect(sent).toEqual({ fields: typed, notes: 'Asked about rates, wants it in writing' });
+    });
   });
 
   it('an ordinary break stays an ordinary break, with End break', async () => {

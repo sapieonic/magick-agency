@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, act, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, act, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 const mocks = vi.hoisted(() => ({
@@ -126,6 +126,57 @@ describe('/dialer/phone', () => {
       latestSocket().emit({ event: 'manual_call', call: step(manualCall(), 9, { state: 'bridged', bridged_at: '2026-10-30T10:00:09Z' }) }),
     );
     expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+  });
+
+  describe('a reload mid-call keeps the call details the agent typed', () => {
+    const SP_SESSION = { session_id: 'sess-sp', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
+    const typed = { customer_name: 'Rahul Verma', reason: 'Rate query' };
+    const live = step(manualCall({ fields: typed, notes: 'Asked about rates' }), 9, {
+      state: 'bridged',
+      bridged_at: '2026-10-30T10:00:09Z',
+    });
+
+    async function typeNote(text: string) {
+      mocks.updateManualCall.mockClear();
+      fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: text } });
+      await waitFor(() => expect(mocks.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
+      return mocks.updateManualCall.mock.calls[0]![1] as Record<string, unknown>;
+    }
+
+    beforeEach(() => {
+      mocks.updateManualCall.mockResolvedValue({ ok: true, value: live });
+    });
+
+    it('the frame before the bootstrap: notes save alone, then the fields come back with the set', async () => {
+      let resolveBootstrap!: (value: unknown) => void;
+      mocks.getSoftphoneBootstrap.mockReturnValue(new Promise((resolve) => (resolveBootstrap = resolve)));
+      await mount();
+      await act(async () => latestSocket().open());
+      await act(async () => latestSocket().emit({ event: 'manual_call', call: live }));
+      expect(screen.getByTestId('rail-label').textContent).toBe('On call');
+      expect(screen.getByTestId('call-fields-loading')).toBeTruthy();
+
+      // No field set yet: `fields` would replace the stored values, so it is not sent.
+      const early = await typeNote('Asked about rates, wants it in writing');
+      expect(early).toEqual({ notes: 'Asked about rates, wants it in writing' });
+
+      await act(async () => resolveBootstrap({ ...BOOTSTRAP, session: SP_SESSION, call: live }));
+      expect((screen.getByTestId('call-field-customer_name') as HTMLInputElement).value).toBe('Rahul Verma');
+      expect((screen.getByTestId('call-field-reason') as HTMLSelectElement).value).toBe('Rate query');
+
+      const later = await typeNote('Asked about rates, wants it in writing today');
+      expect(later).toEqual({ fields: typed, notes: 'Asked about rates, wants it in writing today' });
+    });
+
+    it('the bootstrap before the frame: the frame’s values fill the form and are sent back', async () => {
+      await mount();
+      await act(async () => latestSocket().open());
+      await act(async () => latestSocket().emit({ event: 'manual_call', call: live }));
+      expect((screen.getByTestId('call-field-customer_name') as HTMLInputElement).value).toBe('Rahul Verma');
+      expect((screen.getByTestId('call-field-reason') as HTMLSelectElement).value).toBe('Rate query');
+      const sent = await typeNote('Asked about rates, wants it in writing');
+      expect(sent).toEqual({ fields: typed, notes: 'Asked about rates, wants it in writing' });
+    });
   });
 
   it('closes the soft phone: leaves the session and goes home', async () => {

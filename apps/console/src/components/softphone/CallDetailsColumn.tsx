@@ -102,6 +102,7 @@ export function CallDetailsColumn({ sp }: { sp: SoftphoneState }) {
         values={sp.fieldValues}
         errors={sp.fieldErrors}
         disabled={sp.placing}
+        loading={sp.bootstrap === null}
         onChange={sp.setFieldValue}
       />
 
