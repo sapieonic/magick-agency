@@ -119,7 +119,9 @@ Owned by `AgencyRuntime`. One call at a time per session.
    deferred-hangup window applies, so a wifi blip mid-conversation survives). `ringing` is
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
    (`concurrency_limit`, a dead socket) or the carrier refuses outright is ended `failed`, its
-   contact claim released and no attempt charged.
+   contact claim released and no attempt charged. So is a dial that throws before the bridge is asked (a
+   database fault on the `dialing` write): it is abandoned unplaced and the error reaches the
+   caller, so nothing is left `queued` holding the session.
    Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
    `allow_recording` in the bridge as today). Profile: tag's `analysis_profile_id`, else
    settings', else the account default (the analysis hook's fallback).

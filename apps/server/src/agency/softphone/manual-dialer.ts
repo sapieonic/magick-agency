@@ -234,19 +234,32 @@ export class ManualDialer {
       endRequestedBy: null,
     };
     this.live.set(call.id, entry);
-    entry.priors = await this.priorsFor(call.contact_id, call.id);
-    await this.sendFrame(call);
+    // ── Everything between the registration and the bridge is guarded ──────────
+    // A throw here (a DB fault on the `dialing` write) would otherwise strand the
+    // call until a restart: the row `queued`, the Redis claim held, the contact
+    // `in_flight`, and the live entry kept — so the orphan sweep spares it, a
+    // hang-up finds no bridge call, and every later dial or `available` answers
+    // `manual_call_live`. It is abandoned unplaced (ended `failed`, contact and
+    // claim released, no attempt charged) and the error goes on to the caller.
+    try {
+      entry.priors = await this.priorsFor(call.contact_id, call.id);
+      await this.sendFrame(call);
 
-    // Hung up before the carrier was ever contacted: nothing to ring.
-    if (entry.endRequestedBy) {
-      const requestedBy = entry.endRequestedBy;
-      await this.serial(call.id, () => this.abandonUnplaced(call.id, {
-        outcome: 'canceled', endReason: requestedBy === 'supervisor' ? 'supervisor_released' : 'agent_hangup',
-      }));
-      return { ok: true };
+      // Hung up before the carrier was ever contacted: nothing to ring.
+      if (entry.endRequestedBy) {
+        const requestedBy = entry.endRequestedBy;
+        await this.serial(call.id, () => this.abandonUnplaced(call.id, {
+          outcome: 'canceled', endReason: requestedBy === 'supervisor' ? 'supervisor_released' : 'agent_hangup',
+        }));
+        return { ok: true };
+      }
+      const dialing = await agencyManualCallRepository.advanceState(call.id, 'dialing');
+      if (dialing?.changed) await this.sendFrame(dialing.call);
+    } catch (err) {
+      log.error({ err, manualCallId: call.id }, 'Soft-phone dial failed before the bridge');
+      await this.serial(call.id, () => this.abandonUnplaced(call.id));
+      throw err;
     }
-    const dialing = await agencyManualCallRepository.advanceState(call.id, 'dialing');
-    if (dialing?.changed) await this.sendFrame(dialing.call);
 
     let webrtcCallId: string;
     try {

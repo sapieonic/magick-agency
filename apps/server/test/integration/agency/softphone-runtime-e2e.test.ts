@@ -50,7 +50,7 @@ import { buildApp } from '../../../src/app.js';
 import type { AppContext } from '../../../src/app-context.js';
 import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../../../src/bootstrap/agency.js';
 import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
-import { agencyAgentSessionRepository } from '../../../src/db/repositories/agency.repository.js';
+import { agencyAgentSessionRepository, agencyManualCallRepository } from '../../../src/db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import type { SoftphoneActor } from '../../../src/agency/softphone/types.js';
 import { setAvailableGuarded } from '../../../src/agency/softphone/session-guard.js';
@@ -325,6 +325,47 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
       await runtime.softphone.hangup(actor(agent), next.call.id);
       await waitFor('second call settled', async () => (await manualRow(next.call.id)).settled_at);
     }
+  });
+
+  it('a database fault before the bridge ends the call failed, releases the contact and the claim, and the session dials again', async () => {
+    const agent = randomUUID();
+    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const contact = await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100090' });
+    const session = await softphoneSession(agent);
+    await openStation(session.id);
+    const dials = fakeAdapter.initiateCall.mock.calls.length;
+
+    // The `dialing` write fails once (a DB fault after the row committed and Redis was claimed).
+    const real = agencyManualCallRepository.advanceState.bind(agencyManualCallRepository);
+    const fault = vi.spyOn(agencyManualCallRepository, 'advanceState').mockImplementation(async (id, state, ...rest) => {
+      if (state === 'dialing') throw new Error('connection terminated unexpectedly');
+      return real(id, state, ...rest);
+    });
+    let thrown: unknown = null;
+    try {
+      await runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '+919811100090', campaignId: campaign.id });
+    } catch (err) {
+      thrown = err;
+    } finally {
+      fault.mockRestore();
+    }
+    expect((thrown as Error | null)?.message).toBe('connection terminated unexpectedly');
+    expect(fakeAdapter.initiateCall.mock.calls.length).toBe(dials); // the carrier never saw it
+
+    const { rows: [row] } = await getTestPool().query('SELECT * FROM agency_manual_calls WHERE session_id = $1', [session.id]);
+    expect(row).toMatchObject({ state: 'ended', outcome: 'failed', end_reason: 'failed' });
+    expect(row.settled_at).not.toBeNull();
+    const c = await contactRow(contact.id);
+    expect(c.state).toBe('pending');
+    expect(c.attempt_count).toBe(0);
+    expect(await runtime.agents.manualCallOf(session.id)).toBeNull();
+    expect(runtime.manualDialer.activeManualCallIds()).not.toContain(row.id);
+
+    // Nothing is stranded: the session dials again.
+    const next = await runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '+919811100090', campaignId: campaign.id });
+    if (!next.ok) throw new Error(next.refusal.code);
+    await runtime.softphone.hangup(actor(agent), next.call.id);
+    await waitFor('second call settled', async () => (await manualRow(next.call.id)).settled_at);
   });
 
   it('DNC: refused with the entry, overridable with a note (stored); a bad note and a failed lookup are not', async () => {
