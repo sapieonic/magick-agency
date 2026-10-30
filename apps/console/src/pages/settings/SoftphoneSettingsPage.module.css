@@ -179,16 +179,39 @@
   background: var(--bg-primary);
 }
 
+/* The label has the first row to itself; key, type and the row's buttons share
+   the second. In one row of four, a half-width card left the label ~100px and
+   every label read "Customer na…". DOM (and so tab) order is unchanged. */
 .fieldRowTop {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 130px auto;
+  grid-template-columns: minmax(0, 1fr) 130px auto;
+  grid-template-areas:
+    'label label label'
+    'key type actions';
   gap: 10px;
   align-items: end;
+}
+
+.fieldRowTop > :nth-child(1) {
+  grid-area: label;
+}
+
+.fieldRowTop > :nth-child(2) {
+  grid-area: key;
+}
+
+.fieldRowTop > :nth-child(3) {
+  grid-area: type;
+}
+
+.fieldRowTop > :nth-child(4) {
+  grid-area: actions;
 }
 
 @media (max-width: 720px) {
   .fieldRowTop {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'label' 'key' 'type' 'actions';
   }
 }
 
