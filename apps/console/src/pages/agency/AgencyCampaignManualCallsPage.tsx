@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import { Phone } from 'lucide-react';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { useTenant } from '../../contexts/TenantContext';
+import { useGovernance } from '../../contexts/GovernanceContext';
+import { AGENCY_ANALYTICS_CAPABILITY } from '../../utils/agencyCampaignRecording';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { SoftphoneCallsList } from '../../components/softphone/SoftphoneCallsList';
@@ -18,6 +20,7 @@ import styles from './AgencyCampaignAttemptsPage.module.css';
  * fixed.
  */
 export default function AgencyCampaignManualCallsPage() {
+  const { isEnabled } = useGovernance();
   const { id } = useParams<{ id: string }>();
   const { tenantId, accountId, role } = useTenant();
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
@@ -59,6 +62,7 @@ export default function AgencyCampaignManualCallsPage() {
         scope="account"
         campaignId={id}
         detailPath={(call) => `/agency/softphone/calls/${call.id}`}
+        showSummary={isEnabled(AGENCY_ANALYTICS_CAPABILITY)}
         caption={`Soft-phone calls logged to ${campaign?.name ?? 'this campaign'}, newest first`}
       />
     </div>

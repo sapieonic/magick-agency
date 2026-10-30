@@ -1,6 +1,8 @@
 import { Phone } from 'lucide-react';
 import { PageDescription } from '../../../components/common/PageDescription';
 import { SoftphoneCallsList } from '../../../components/softphone/SoftphoneCallsList';
+import { useGovernance } from '../../../contexts/GovernanceContext';
+import { AGENCY_ANALYTICS_CAPABILITY } from '../../../utils/agencyCampaignRecording';
 import spine from '../../../components/agency/SpineListLayout.module.css';
 import styles from '../AgencyCampaignAttemptsPage.module.css';
 
@@ -20,6 +22,7 @@ export const SOFTPHONE_CALLS_DESCRIPTION =
  * `agency.supervise` — which is also what the sidebar entry checks.
  */
 export default function SoftphoneCallsPage() {
+  const { isEnabled } = useGovernance();
   return (
     <div className={styles.page}>
       <header className={spine.header}>
@@ -43,6 +46,7 @@ export default function SoftphoneCallsPage() {
         scope="account"
         defaultToday
         detailPath={(call) => `/agency/softphone/calls/${call.id}`}
+        showSummary={isEnabled(AGENCY_ANALYTICS_CAPABILITY)}
         caption="Soft-phone calls in this account, newest first"
       />
     </div>

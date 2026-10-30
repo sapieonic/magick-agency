@@ -15,6 +15,7 @@ import { formatDialNumber } from '../../utils/softphone/phoneInput';
 import { catalogForCall, loggedToLabel, manualCallOutcome } from '../../utils/softphone/callLabels';
 import {
   EMPTY_SOFTPHONE_CALLS_DRAFT,
+  SOFTPHONE_CALL_STATUS_OPTIONS,
   activeFilterCount,
   queryFromDraft,
   summariseCalls,
@@ -23,7 +24,13 @@ import {
 } from '../../utils/softphone/callStats';
 import { formatCount } from '../../utils/format/number';
 import { ATTEMPT_OUTCOME_LABELS } from '../../types/agency-spine';
-import { AGENCY_MANUAL_CALL_OUTCOMES, type AgencyManualCall, type AgencySoftphoneBootstrap } from '../../types/softphone';
+import { ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES, ANALYSIS_STATUS_TOOLTIPS, SILENT_ANALYSIS_STATUSES } from '../../utils/vocabulary';
+import {
+  AGENCY_MANUAL_CALL_OUTCOMES,
+  type AgencyManualCall,
+  type AgencyManualCallListRow,
+  type AgencySoftphoneBootstrap,
+} from '../../types/softphone';
 import spine from '../agency/SpineListLayout.module.css';
 import styles from './SoftphoneCallsList.module.css';
 
@@ -40,6 +47,12 @@ export interface SoftphoneCallsListProps {
   detailPath?: (call: AgencyManualCall) => string | null;
   /** Initial date range: today, as the supervisor's list opens. */
   defaultToday?: boolean;
+  /**
+   * Show the Summary column (each call's analysis status). The supervisor's
+   * surfaces pass the account's analytics capability; the agent's own list,
+   * which opens no detail, leaves it off.
+   */
+  showSummary?: boolean;
   caption: string;
 }
 
@@ -60,6 +73,7 @@ export function SoftphoneCallsList({
   campaignId,
   detailPath,
   defaultToday = false,
+  showSummary = false,
   caption,
 }: SoftphoneCallsListProps) {
   const { tenantId, accountId } = useTenant();
@@ -68,7 +82,7 @@ export function SoftphoneCallsList({
     : EMPTY_SOFTPHONE_CALLS_DRAFT;
   const [draft, setDraft] = useState<SoftphoneCallsDraft>(initialDraft);
   const [applied, setApplied] = useState<SoftphoneCallsDraft>(initialDraft);
-  const [rows, setRows] = useState<AgencyManualCall[]>([]);
+  const [rows, setRows] = useState<AgencyManualCallListRow[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -271,6 +285,22 @@ export function SoftphoneCallsList({
             </select>
           </label>
           <label className={spine.field}>
+            <span className={spine.fieldLabel}>Status</span>
+            <select
+              className={styles.select}
+              value={draft.status}
+              onChange={(e) => set({ status: e.target.value as SoftphoneCallsDraft['status'] })}
+              data-testid="filter-status"
+            >
+              <option value="">Any</option>
+              {SOFTPHONE_CALL_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className={spine.field}>
             <span className={spine.fieldLabel}>Phone number</span>
             <span className={spine.inputWrap}>
               <Search size={14} className={spine.inputIcon} aria-hidden="true" />
@@ -358,6 +388,7 @@ export function SoftphoneCallsList({
                   {campaignId ? null : <th>Logged to</th>}
                   <th>Outcome</th>
                   <th>Talk</th>
+                  {showSummary ? <th>Summary</th> : null}
                   {detailPath ? <th>Call</th> : null}
                 </tr>
               </thead>
@@ -403,6 +434,11 @@ export function SoftphoneCallsList({
                         ) : null}
                       </td>
                       <td className={styles.mono}>{formatTalkTime(call.talk_seconds)}</td>
+                      {showSummary ? (
+                        <td>
+                          <SummaryStatus status={call.analysis_status ?? null} />
+                        </td>
+                      ) : null}
                       {detailPath ? (
                         <td>
                           {path ? (
@@ -436,6 +472,31 @@ export function SoftphoneCallsList({
         </>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A row's summary stage, in the call detail's own words: the short label, the
+ * detail's sentence (or the one-line tooltip) on hover. No status, or one the
+ * detail renders nothing for (`skipped`), is a dash — there is no summary to wait for.
+ */
+function SummaryStatus({ status }: { status: string | null }) {
+  if (!status || SILENT_ANALYSIS_STATUSES.has(status) || !ANALYSIS_STATUS_LABELS[status]) {
+    return (
+      <span className={styles.muted} data-testid="summary-status" data-status="none">
+        —
+      </span>
+    );
+  }
+  return (
+    <span
+      className={styles.summary}
+      data-status={status}
+      title={ANALYSIS_STATUS_MESSAGES[status] ?? ANALYSIS_STATUS_TOOLTIPS[status]}
+      data-testid="summary-status"
+    >
+      {ANALYSIS_STATUS_LABELS[status]}
+    </span>
   );
 }
 

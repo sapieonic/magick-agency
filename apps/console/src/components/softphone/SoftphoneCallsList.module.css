@@ -124,6 +124,31 @@
   white-space: nowrap;
 }
 
+.summary {
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.summary[data-status='completed'] {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.summary[data-status='pending'],
+.summary[data-status='awaiting_recording'] {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.summary[data-status='failed'] {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
 .openLink {
   display: inline-flex;
   align-items: center;

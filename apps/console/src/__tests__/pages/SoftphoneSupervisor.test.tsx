@@ -31,11 +31,13 @@ vi.mock('../../api/calls', () => ({ retryAnalysis: vi.fn(), fetchRecordingBlobUr
 vi.mock('../../components/audio/AudioWaveform', () => ({ AudioWaveform: () => <div data-testid="waveform" /> }));
 
 import SoftphoneCallsPage from '../../pages/agency/softphone/SoftphoneCallsPage';
-import SoftphoneCallDetailPage from '../../pages/agency/softphone/SoftphoneCallDetailPage';
+import SoftphoneCallDetailPage, { savedByLine } from '../../pages/agency/softphone/SoftphoneCallDetailPage';
 import AgencyCampaignManualCallsPage from '../../pages/agency/AgencyCampaignManualCallsPage';
 import { todayLocal } from '../../utils/softphone/callStats';
 import { BOOTSTRAP, CAMPAIGN, manualCall } from '../helpers/softphone';
 import type { WebRtcCallRecord } from '../../types/webrtc-call';
+import type { AgencyManualCallListRow } from '../../types/softphone';
+import { ANALYSIS_STATUS_LABELS, ANALYSIS_STATUS_MESSAGES } from '../../utils/vocabulary';
 
 /**
  * The supervisor's soft-phone surfaces (`docs/softphone.md` §7): the account
@@ -44,7 +46,7 @@ import type { WebRtcCallRecord } from '../../types/webrtc-call';
  * extracted are labelled apart and an override's reason is shown.
  */
 
-const TAGGED = manualCall({
+const TAGGED: AgencyManualCallListRow = manualCall({
   id: 'mc-tag',
   agent_user_id: 'u-1',
   agent_name: 'Priya Nair',
@@ -57,8 +59,11 @@ const TAGGED = manualCall({
   disposition_source: 'campaign',
   dnc_overridden: true,
   settled_at: '2026-10-30T10:06:00Z',
+  dispositioned_at: '2026-10-30T10:06:00Z',
+  dispositioned_by_user_id: 'u-1',
 });
-const UNTAGGED = manualCall({
+const TAGGED_ROW: AgencyManualCallListRow = { ...TAGGED, analysis_status: 'completed' };
+const UNTAGGED: AgencyManualCallListRow = manualCall({
   id: 'mc-free',
   agent_user_id: 'u-2',
   agent_name: 'Arjun Kulkarni',
@@ -81,7 +86,11 @@ beforeEach(() => {
     { membership: { role: 'agent' }, user: { id: 'u-1', display_name: 'Priya Nair', email: 'p@x' } },
     { membership: { role: 'agent' }, user: { id: 'u-2', display_name: 'Arjun Kulkarni', email: 'a@x' } },
   ]);
-  mocks.listManualCalls.mockResolvedValue({ rows: [TAGGED, UNTAGGED, AWAITING], next_cursor: 'cur-2', limit: 50 });
+  mocks.listManualCalls.mockResolvedValue({
+    rows: [TAGGED_ROW, { ...UNTAGGED, analysis_status: 'pending' }, { ...AWAITING, analysis_status: null }],
+    next_cursor: 'cur-2',
+    limit: 50,
+  });
 });
 afterEach(cleanup);
 
@@ -151,6 +160,40 @@ describe('Soft-phone calls (the account list)', () => {
       limit: 50,
     });
     expect(screen.getByText('5 active')).toBeTruthy();
+  });
+
+  it('lists what the Waiting for an outcome tile counts: the Status filter sends the server’s status', async () => {
+    await renderList();
+    expect([...(screen.getByTestId('filter-status') as HTMLSelectElement).options].map((o) => o.textContent)).toEqual([
+      'Any',
+      'On a call now',
+      'Waiting for an outcome',
+      'Done',
+    ]);
+    fireEvent.change(screen.getByTestId('filter-status'), { target: { value: 'awaiting_outcome' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('filter-apply'));
+    });
+    expect(mocks.listManualCalls.mock.calls[1]![0]).toMatchObject({ status: 'awaiting_outcome' });
+    expect(screen.getByText('2 active')).toBeTruthy();
+  });
+
+  it('shows each call’s summary stage in the detail’s words, a dash when there is none', async () => {
+    await renderList();
+    const header = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(header).toContain('Summary');
+    const status = (id: string) => within(screen.getByTestId(`softphone-row-${id}`)).getByTestId('summary-status');
+    expect(status('mc-tag').textContent).toBe(ANALYSIS_STATUS_LABELS.completed);
+    expect(status('mc-free').textContent).toBe(ANALYSIS_STATUS_LABELS.pending);
+    expect(status('mc-free').getAttribute('title')).toBe(ANALYSIS_STATUS_MESSAGES.pending);
+    expect(status('mc-wait').textContent).toBe('—');
+  });
+
+  it('leaves the Summary column out when the account has analysis off', async () => {
+    mocks.isEnabled.mockImplementation(() => false);
+    await renderList();
+    expect(screen.getAllByRole('columnheader').map((h) => h.textContent)).not.toContain('Summary');
+    expect(screen.queryByTestId('summary-status')).toBeNull();
   });
 
   it('refuses an inverted date range before it is sent', async () => {
@@ -240,12 +283,15 @@ describe('a soft-phone call’s detail', () => {
   it('labels the agent’s outcome and call details apart from the AI’s analysis, and shows the override’s reason', async () => {
     mocks.getManualCall.mockResolvedValue({
       call: { ...TAGGED, notes: 'Wants it in writing.', fields: { customer_name: 'Rahul Verma', reason: 'Rate query', follow_up: true } },
+      dispositioned_by_name: 'Priya Nair',
       overrides: { dnc_note: 'Customer called in and asked us to ring back', dnc_entry_id: 'dnc-1', hours_note: null },
       media: MEDIA,
       call_availability: 'available',
     });
     await renderDetail();
     expect(mocks.getManualCall).toHaveBeenCalledWith('mc-tag', 't-1', 'a-1');
+    // Who saved the outcome, by name.
+    expect(document.body.textContent).toMatch(/Saved[^·]+· by Priya Nair(?!,)/);
     const headings = screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent);
     expect(headings).toEqual(expect.arrayContaining(['OutcomeAgent', 'Call detailsAgent', 'OverridesAgent']));
     expect(screen.getByTestId('analysis-source').textContent).toBe('AI');
@@ -257,6 +303,24 @@ describe('a soft-phone call’s detail', () => {
     // The trail goes back through the campaign the call was logged to.
     const trail = within(screen.getByRole('navigation', { name: 'Breadcrumb' }));
     expect(trail.getByRole('link', { name: 'Home Loan Renewals' }).getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
+  });
+
+  it('names the supervisor who saved an outcome on the agent’s behalf, and says only what it knows without a name', async () => {
+    const onBehalf = { ...TAGGED, dispositioned_on_behalf: true, dispositioned_by_user_id: 'sup-1' };
+    expect(savedByLine(onBehalf, 'Meera Iyer')).toMatch(/ · by Meera Iyer, on the agent’s behalf$/);
+    expect(savedByLine(onBehalf, null)).toMatch(/ · by a supervisor, on the agent’s behalf$/);
+    expect(savedByLine(TAGGED, null)).not.toMatch(/ by /);
+    expect(savedByLine({ ...TAGGED, dispositioned_at: null }, 'Priya Nair')).toBeNull();
+
+    mocks.getManualCall.mockResolvedValue({
+      call: onBehalf,
+      dispositioned_by_name: 'Meera Iyer',
+      overrides: { dnc_note: null, dnc_entry_id: null, hours_note: null },
+      media: MEDIA,
+      call_availability: 'available',
+    });
+    await renderDetail();
+    expect(document.body.textContent).toMatch(/· by Meera Iyer, on the agent’s behalf/);
   });
 
   it('shows the record alone for a call that was never placed', async () => {

@@ -50,6 +50,8 @@ export interface SoftphoneCallsDraft {
   campaignId: string;
   outcome: string;
   phone: string;
+  /** `''` any, else the server's `status`: `live`, `awaiting_outcome`, `settled`. */
+  status: '' | NonNullable<AgencyManualCallListQuery['status']>;
 }
 
 export const EMPTY_SOFTPHONE_CALLS_DRAFT: SoftphoneCallsDraft = {
@@ -59,7 +61,15 @@ export const EMPTY_SOFTPHONE_CALLS_DRAFT: SoftphoneCallsDraft = {
   campaignId: '',
   outcome: '',
   phone: '',
+  status: '',
 };
+
+/** The Status filter's choices, in the words of the stats strip. */
+export const SOFTPHONE_CALL_STATUS_OPTIONS: ReadonlyArray<{ value: NonNullable<AgencyManualCallListQuery['status']>; label: string }> = [
+  { value: 'live', label: 'On a call now' },
+  { value: 'awaiting_outcome', label: 'Waiting for an outcome' },
+  { value: 'settled', label: 'Done' },
+];
 
 /**
  * Draft → query. Dates are the reader's calendar days, inclusive of the "to" day
@@ -82,6 +92,7 @@ export function queryFromDraft(
   const campaign = fixed.campaignId ?? draft.campaignId;
   if (campaign) query.campaign_id = campaign;
   if (draft.outcome) query.outcome = draft.outcome as AgencyManualCallListQuery['outcome'];
+  if (draft.status) query.status = draft.status;
   const digits = draft.phone.replace(/[^\d]/g, '');
   if (digits) query.phone = digits;
   return query;
@@ -94,6 +105,7 @@ export function activeFilterCount(draft: SoftphoneCallsDraft, fixedCampaign: boo
   if (!fixedAgent && draft.agentUserId) n += 1;
   if (!fixedCampaign && draft.campaignId) n += 1;
   if (draft.outcome) n += 1;
+  if (draft.status) n += 1;
   if (draft.phone.replace(/[^\d]/g, '')) n += 1;
   return n;
 }

@@ -59,8 +59,28 @@ export function manualIdentityFacts(call: AgencyManualCall): CallFact[] {
   ];
 }
 
+/**
+ * When the outcome was saved, and by whom: the name the detail route joins
+ * (`dispositioned_by_name`), so a supervisor's save on the agent's behalf says
+ * which supervisor. Without a name (none sent, or the user row is gone) the
+ * sentence says only what is known.
+ */
+export function savedByLine(call: AgencyManualCall, dispositionedByName: string | null | undefined): string | null {
+  if (!call.dispositioned_at) return null;
+  const when = formatSpineTimestamp(call.dispositioned_at);
+  const name = dispositionedByName?.trim() || null;
+  if (call.dispositioned_on_behalf) {
+    return name ? `${when} · by ${name}, on the agent’s behalf` : `${when} · by a supervisor, on the agent’s behalf`;
+  }
+  return name ? `${when} · by ${name}` : when;
+}
+
 /** The outcome the agent saved, labelled as the agent's. */
-export function manualOutcomeCard(call: AgencyManualCall, bootstrap: AgencySoftphoneBootstrap | null): CallFactCard {
+export function manualOutcomeCard(
+  call: AgencyManualCall,
+  bootstrap: AgencySoftphoneBootstrap | null,
+  dispositionedByName: string | null = null,
+): CallFactCard {
   const outcome = manualCallOutcome(call, catalogForCall(call, bootstrap));
   const facts: CallFact[] = [
     {
@@ -71,9 +91,7 @@ export function manualOutcomeCard(call: AgencyManualCall, bootstrap: AgencySoftp
     },
     {
       label: 'Saved',
-      value: call.dispositioned_at
-        ? `${formatSpineTimestamp(call.dispositioned_at)}${call.dispositioned_on_behalf ? ' · by a supervisor, on the agent’s behalf' : ''}`
-        : null,
+      value: savedByLine(call, dispositionedByName),
     },
   ];
   if (call.callback_at) facts.push({ label: 'Call back', value: formatSpineTimestamp(call.callback_at) });
@@ -187,7 +205,7 @@ export default function SoftphoneCallDetailPage() {
 
   const cards = useMemo(() => {
     if (!detail) return [];
-    const list: CallFactCard[] = [manualOutcomeCard(detail.call, bootstrap)];
+    const list: CallFactCard[] = [manualOutcomeCard(detail.call, bootstrap, detail.dispositioned_by_name ?? null)];
     const fields = manualFieldsCard(detail.call, bootstrap?.call_fields ?? []);
     if (fields) list.push(fields);
     const overrides = manualOverridesCard(detail.overrides);
