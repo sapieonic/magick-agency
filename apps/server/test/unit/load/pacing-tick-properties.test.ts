@@ -38,7 +38,7 @@ const { repos, settings } = vi.hoisted(() => ({
       unclaimMany: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(true),
     },
-    attempt: { countLive: vi.fn(), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
+    attempt: { countLive: vi.fn(), countLiveForAccount: vi.fn(), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     session: { findLiveForCampaign: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
   },
   settings: { getMaxConcurrentCalls: vi.fn() },
@@ -110,7 +110,7 @@ describe('pacing tick arithmetic, as a property (load)', () => {
 
     const moduleMocks = [
       repos.campaign.findById, repos.session.findLiveForCampaign, settings.getMaxConcurrentCalls,
-      repos.attempt.countLive, repos.attempt.create, repos.contact.claimDialable, repos.contact.unclaim,
+      repos.attempt.countLive, repos.attempt.countLiveForAccount, repos.attempt.create, repos.contact.claimDialable, repos.contact.unclaim,
       repos.contact.unclaimMany, repos.contact.markState,
     ];
     for (let k = 0; k < cases; k++) {
@@ -121,7 +121,7 @@ describe('pacing tick arithmetic, as a property (load)', () => {
       repos.campaign.findById.mockResolvedValue(CAMPAIGN);
       repos.session.findLiveForCampaign.mockResolvedValue(f.sessions.map((id) => ({ id })));
       settings.getMaxConcurrentCalls.mockResolvedValue(f.limit);
-      repos.attempt.countLive.mockResolvedValue(f.occupied);
+      repos.attempt.countLiveForAccount.mockResolvedValue(f.occupied);
       repos.contact.claimDialable.mockImplementation(async (_c: string, limit: number) =>
         Array.from({ length: Math.min(limit, f.roster) }, (_, i) => ({
           id: `c${i}`, phone_e164: `+91987654${String(i).padStart(4, '0')}`, context: {}, attempt_count: 0, timezone: null,

@@ -695,7 +695,11 @@ export class PacingEngine {
     const accountLimit = await accountSettingsRepository.getMaxConcurrentCalls(
       campaign.tenant_id, campaign.account_id,
     );
-    const occupied = await agencyAttemptRepository.countLive(campaign.id);
+    // The WHOLE ACCOUNT's live calls: every campaign's attempts plus the soft
+    // phone's live manual calls (docs/softphone.md §4.1). `accountLimit` is the
+    // account's ceiling, and a manual call holds a carrier slot like any attempt
+    // while belonging to no campaign, so no per-campaign count can see it.
+    const occupied = await agencyAttemptRepository.countLiveForAccount(campaign.tenant_id, campaign.account_id);
 
     /**
      * **The two limits constrain different things, and subtracting one from the
@@ -715,7 +719,7 @@ export class PacingEngine {
      *
      * The correct reading is that they bound different quantities:
      *   • `accountLimit` caps **total concurrency**, so `occupied` counts against
-     *     it — which is why `countLive` includes bridged
+     *     it — which is why `countLiveForAccount` includes bridged
      *     attempts (see the note on `tickOnce`).
      *   • `candidates.length` caps **new dials**, because only an idle agent can
      *     take one. Attempts already in flight have their agent and must not be

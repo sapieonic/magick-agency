@@ -53,7 +53,7 @@ const { repos, settings } = vi.hoisted(() => ({
       unclaim: vi.fn().mockResolvedValue(undefined),
       unclaimMany: vi.fn().mockResolvedValue(undefined),
     },
-    attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
+    attempt: { countLive: vi.fn().mockResolvedValue(0), countLiveForAccount: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     session: { findLiveForCampaign: vi.fn().mockResolvedValue([]) },
   },
   settings: { getMaxConcurrentCalls: vi.fn().mockResolvedValue(5) },
