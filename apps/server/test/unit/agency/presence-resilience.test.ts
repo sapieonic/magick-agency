@@ -738,6 +738,20 @@ describe('failure mode 6 — the process restarted', () => {
     expect(repos.session.setState, 'a live agent was mirrored as break').not.toHaveBeenCalled();
   });
 
+  it('a station that closes during a live SOFT-PHONE call does not write the agent offline', async () => {
+    // docs/softphone.md §4.1 step 9: the socket is the manual call's media leg, so
+    // the bridge (its grace once answered, its hangup before) owns the outcome —
+    // writing `offline` here would leave nothing for the reconnect to resume onto.
+    const { runtime } = makeRuntime();
+    await runtime.agents.set('s1', 'break', { leaseMs: AGENT_LEASE_MS.break });
+    const live = vi.spyOn(runtime.manualDialer, 'hasLiveCall').mockReturnValue(true);
+    expect(await runtime.releaseStationOnClose('s1')).toBe(false);
+    expect((await runtime.agents.get('s1'))?.state).toBe('break');
+    live.mockReturnValue(false);
+    expect(await runtime.releaseStationOnClose('s1')).toBe(true);
+    expect((await runtime.agents.get('s1'))?.state).toBe('offline');
+  });
+
   it('reads nothing from the durable row at all', async () => {
     // Acceptance (d), asserted as an absence rather than an outcome. Any future
     // "fall back to the row when Redis is empty" would satisfy the two tests
@@ -762,7 +776,7 @@ describe('the owned browser dialer is untouched', () => {
     const { record } = await (world.bridge as any).placeOutboundLeg({
       tenantId: 't1', accountId: 'a1', callerId: '+14155550100',
       destinationPhone: '+14155550199', browserHangupOutcome: 'browser_hangup',
-      agencyAttemptId: 'att-owned',
+      correlation: { kind: 'attempt', campaignId: 'camp-1', agencyAttemptId: 'att-owned' },
     });
     expect(world.bridge.getSession(record.id)!.browserWsOwned).toBe(true);
     expect(world.bridge.reattachBorrowedBrowserLeg('att-owned', new StationSocket() as any)).toBe(false);
@@ -807,7 +821,7 @@ describe('the supersession guard is not the window ', () => {
     const ws = new StationSocket();
     await world.bridge.createBridgedCall({
       tenantId: 't1', accountId: 'a1', callerId: '+14155550100',
-      destinationPhone: '+14155550199', campaignId: 'camp-1', agencyAttemptId: 'att-nograce',
+      destinationPhone: '+14155550199', correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-nograce' },
       browserSocket: ws as any,
     });
     const session = world.bridge.getSession('call-1')!;

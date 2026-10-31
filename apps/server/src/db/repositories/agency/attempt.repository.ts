@@ -341,6 +341,39 @@ export class AgencyAttemptRepository {
     return Number(rows[0]?.n ?? 0);
   }
 
+  /**
+   * Live calls on the WHOLE ACCOUNT: the non-terminal attempts of every campaign
+   * of `(tenantId, accountId)` plus the account's live soft-phone calls
+   * (`agency_manual_calls`, `state <> 'ended'`). Pacing headroom subtracts this from
+   * the account's concurrency (docs/softphone.md §4.1): a manual call holds a
+   * carrier slot exactly like a campaign call, and it belongs to no campaign, so no
+   * per-campaign count can see it. {@link countLive} stays per campaign.
+   *
+   * "Live" as {@link countLive} means it (every non-terminal state, bridged
+   * included), spelled as its literal `state <> 'ended'`, byte for byte the predicate of
+   * `idx_agency_attempts_account_live (tenant_id, account_id)` (0005), so the planner
+   * can prove the partial index applies (a bound parameter cannot be). The attempt
+   * half is keyed on the attempt's own `tenant_id` / `account_id` (NOT NULL, copied
+   * from the campaign by {@link create}, the one INSERT), never on the account's
+   * campaign set: that probed every campaign the account had ever had, per running
+   * campaign, every tick. The manual half is served by `idx_agency_manual_calls_live`.
+   *
+   * An awaiting-outcome manual call (ended, unsettled) holds no slot and is not
+   * counted.
+   */
+  async countLiveForAccount(tenantId: string, accountId: string): Promise<number> {
+    const { rows } = await getPool().query<{ n: string }>(
+      `SELECT (
+         (SELECT COUNT(*) FROM agency_call_attempts a
+           WHERE a.tenant_id = $1::uuid AND a.account_id = $2::uuid AND a.state <> 'ended')
+         +
+         (SELECT COUNT(*) FROM agency_manual_calls m
+           WHERE m.account_id = $2::uuid AND m.tenant_id = $1::uuid AND m.state <> 'ended')
+       )::text AS n`,
+      [tenantId, accountId],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
 
   /**
    * One campaign's attempts, newest first, keyset-paginated — the supervisor

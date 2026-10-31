@@ -27,8 +27,12 @@ export default function RequireFlag({
 
   useEffect(() => {
     if (!unavailable) return;
-    // Only the two agency flags a route is gated on are tracked.
-    if (flag !== 'agency_dialer_enabled' && flag !== 'agency_call_analysis') return;
+    // Only the three agency flags a route is gated on are tracked.
+    if (
+      flag !== 'agency_dialer_enabled'
+      && flag !== 'agency_call_analysis'
+      && flag !== 'agency_softphone_enabled'
+    ) return;
 
     trackFeatureGateUnavailable({
       gate_type: 'feature_flag',

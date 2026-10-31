@@ -8,7 +8,7 @@ import {
   agencyContactRepository,
 } from '../db/repositories/agency.repository.js';
 import type { StationRegistry } from './station-registry.js';
-import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
+import { AgentStateMachine, AGENT_LEASE_MS, type AgentSetResult } from './agent-state-machine.js';
 import type { DialCommand, DialOptions } from './dial-dispatcher.js';
 import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
 import { settleContact } from './dialer/contact-settlement.js';
@@ -18,8 +18,10 @@ import {
   releaseReasonFor,
   requiresDisposition,
 } from './outcome-classifier.js';
+import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
   AgencyActiveAttempt,
+  AgencyAgentState,
   AgencyAttemptOutcome,
   AgencyMissedRelease,
   AgencyPriorAttempt,
@@ -27,6 +29,9 @@ import type {
   AgencyAbandonReason,
 } from '@magick-agency/contracts/agency';
 import type { WrapupManager } from './wrapup-manager.js';
+import { isCampaignSession } from '../db/models/agency.model.js';
+import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
+import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -41,6 +46,16 @@ import {
   agencyBindTotal,
   agencyAbandonedReasonTotal,
 } from '@magick-agency/observability/metrics/agency';
+
+/**
+ * What {@link AgencyDialer.releaseAgent} did: the state it wrote (`offline` for a
+ * departed agent, else `break` for a queued break or `available`) and the write's
+ * result. A refused `available` (`manual_call_live`, `softphone_session`) moved nothing.
+ */
+export interface AgentReleaseResult {
+  state: 'available' | 'break' | 'offline';
+  result: AgentSetResult;
+}
 
 const log = createChildLogger({ component: 'agency-dialer' });
 
@@ -406,8 +421,9 @@ export class AgencyDialer {
       record: cmd.campaign.record_calls,
       analysisProfileId: cmd.campaign.analysis_profile_id,
       initiatedBy: cmd.sessionId,
-      campaignId: cmd.campaignId,
-      agencyAttemptId: attemptId,
+      // The attempt is the correlation: lifecycle events, the bind, the re-attach
+      // and every forced end are keyed on `attemptId` (docs/seams.md §3.1).
+      correlation: { kind: 'attempt' as const, campaignId: cmd.campaignId, agencyAttemptId: attemptId },
       // The deferred-hangup grace. Supplied by us, never chosen by the bridge — the
       // dialer depends on the bridge and never the reverse, so the bridge must stay
       // ignorant of what an agency reconnect is worth, and the browser dialer keeps
@@ -1394,8 +1410,13 @@ export class AgencyDialer {
    * interrupted. Doing it here and nowhere else is what makes "queued" mean one
    * thing — every route into the pool, whether the agent had a wrap-up, skipped
    * one, or had one forced, passes through this method.
+   *
+   * Returns what it did: the state written and the write's {@link AgentSetResult}.
+   * `manual_call_live` / `softphone_session` mean the soft phone's guard refused
+   * `available` and NOTHING moved; the supervisor's force-available answers that
+   * as a 409 rather than claiming the agent is back. The settle paths ignore it.
    */
-  async releaseAgent(sessionId: string): Promise<void> {
+  async releaseAgent(sessionId: string): Promise<AgentReleaseResult> {
     // ── NOT purely replica-local, contrary to an earlier version of this note ──
     //
     // On the settle path this does run on the bridging replica, and there the
@@ -1420,9 +1441,9 @@ export class AgencyDialer {
     // out of the pool, and they rehydrate into `break` anyway.
     if (!stillHere) {
       this.breaks.cancel(sessionId);
-      await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
+      const set = await this.agents.set(sessionId, 'offline', { leaseMs: AGENT_LEASE_MS.available });
       await mirrored(agencyAgentSessionRepository.setState(sessionId, 'offline'), sessionId, 'Could not mirror released agent state');
-      return;
+      return { state: 'offline', result: set };
     }
 
     // Consumed, not peeked: a queued break applies exactly once, so an agent who
@@ -1431,10 +1452,23 @@ export class AgencyDialer {
     const queuedBreak = this.breaks.take(sessionId);
     const state = queuedBreak ? 'break' : 'available';
     const since = new Date();
+    // A queued switch to the soft phone applying now is audited (SP7), with the state
+    // it applied from; read only for that rare case.
+    const switchFrom = queuedBreak?.code === SOFTPHONE_BREAK_REASON
+      ? (await Promise.resolve().then(() => this.agents.get(sessionId)).catch(() => null))?.state ?? null
+      : null;
 
-    await this.agents.set(sessionId, state, {
+    const set = await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
     });
+    // The soft phone's guard (docs/softphone.md §4.1): `available` is refused while
+    // the session holds a soft-phone call or is a soft-phone session. The agent
+    // stays on their `soft_phone` break, so nothing is mirrored and no frame claims
+    // a move that did not happen (a supervisor's force-available reaches here).
+    if (set === 'manual_call_live' || set === 'softphone_session') {
+      log.info({ sessionId, refused: set }, 'Release to available refused — the session is on the soft phone');
+      return { state, result: set };
+    }
     await mirrored(
       agencyAgentSessionRepository.setState(sessionId, state, queuedBreak?.code ?? null),
       sessionId, 'Could not mirror released agent state',
@@ -1449,6 +1483,35 @@ export class AgencyDialer {
     if (queuedBreak) {
       log.info({ sessionId, reason: queuedBreak.code }, 'Queued break applied after wrap-up');
     }
+    if (queuedBreak?.code === SOFTPHONE_BREAK_REASON && set === 'ok') {
+      await this.auditQueuedSwitchApplied(sessionId, switchFrom);
+    }
+    return { state, result: set };
+  }
+
+  /**
+   * `agency_session.softphone_started` with `queued: true, applied: true` for a switch
+   * the agent queued and this release just applied: the request was audited when it
+   * was made; this is the instant they actually moved. The `system` actor, because
+   * nothing was pressed now. Best-effort: a session row that cannot be read costs the
+   * row, never the release.
+   */
+  private async auditQueuedSwitchApplied(sessionId: string, fromState: AgencyAgentState | null): Promise<void> {
+    const session = await Promise.resolve().then(() => agencyAgentSessionRepository.findById(sessionId)).catch((err) => {
+      log.warn({ err, sessionId }, 'Could not read the session to audit an applied soft-phone switch');
+      return null;
+    });
+    if (!session || !isCampaignSession(session)) return;
+    auditSoftphoneStarted({
+      tenantId: session.tenant_id,
+      accountId: session.account_id,
+      sessionId,
+      campaignId: session.campaign_id,
+      actor: SYSTEM_AUDIT_ACTOR,
+      fromState,
+      queued: true,
+      applied: true,
+    });
   }
 
   /**

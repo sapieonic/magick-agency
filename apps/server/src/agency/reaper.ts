@@ -3,10 +3,18 @@ import {
   agencyAgentSessionRepository,
   agencyAttemptRepository,
   agencyContactRepository,
+  agencyManualCallRepository,
 } from '../db/repositories/agency.repository.js';
+import type { AgencyManualCallRecord } from '../db/models/agency.model.js';
+import { auditLogger } from '../audit/audit-logger.js';
 import { AUTO_DISPOSITION_CODE } from './disposition.js';
 import { requiresDisposition } from './outcome-classifier.js';
 import { resolveOurFaultRedial, resolveRetryDecision } from './retry-policy.js';
+import {
+  applyNoOutcomeSettlement,
+  noOutcomeSettlementFor,
+  type NoOutcomeSettled,
+} from './softphone/manual-settlement.js';
 import {
   agencyOurFaultRetirementTotal,
 } from '@magick-agency/observability/metrics/agency';
@@ -94,6 +102,17 @@ export interface AgencyReaperDeps {
     ids: () => string[];
     forget: (attemptIds: readonly string[]) => void;
   };
+  /**
+   * The soft phone's half (docs/softphone.md §4.1 steps 8 and 10): this process's
+   * live manual calls (the periodic orphan sweep spares them), and what to do with
+   * calls the sweeps closed — clear each settled one's Redis claim and tell its
+   * session. Absent, the periodic orphan sweep is skipped (it could not tell a
+   * live call from an orphan); the startup sweep and the lapse still run.
+   */
+  manual?: {
+    activeIds: () => string[];
+    onClosed: (rows: readonly AgencyManualCallRecord[]) => Promise<void>;
+  };
 }
 
 /**
@@ -140,10 +159,16 @@ export class AgencyReaper {
 
     // Every station socket died with the process, so no agent is really available.
     // They rehydrate into `break` on reconnect, never `available`.
+    // Soft-phone calls nothing can own any more (step 10): ended `orphaned`; one
+    // that never bridged is settled and its contact claim released, one that bridged
+    // is left awaiting its outcome. Before pacing starts, as the attempts are: a
+    // live manual row holds an account concurrency slot in pacing's headroom.
+    const manual = await this.sweepManualCalls({ startup: true });
+
     const agents = await agencyAgentSessionRepository.markAllOffline();
 
-    if (attempts.length > 0 || agents > 0) {
-      log.warn({ attempts: attempts.length, agents }, 'Agency startup reaper recovered stranded rows');
+    if (attempts.length > 0 || agents > 0 || manual.orphaned > 0 || manual.lapsed > 0) {
+      log.warn({ attempts: attempts.length, agents, manualCalls: manual }, 'Agency startup reaper recovered stranded rows');
     }
     return { attempts: attempts.length, agents };
   }
@@ -160,6 +185,8 @@ export class AgencyReaper {
         log.error({ err }, 'Agency auto-disposition sweep failed'));
       void this.sweepStrandedContacts().catch((err) =>
         log.error({ err }, 'Agency stranded-contact sweep failed'));
+      void this.sweepManualCalls().catch((err) =>
+        log.error({ err }, 'Agency soft-phone sweep failed'));
     }, SWEEP_INTERVAL_MS);
     this.timer.unref?.();
   }
@@ -407,6 +434,101 @@ export class AgencyReaper {
       log.warn({ count: stranded.length }, 'Agency reaper requeued contacts stranded in_flight');
     }
     return stranded.length;
+  }
+
+  /**
+   * The soft phone's two sweeps (docs/softphone.md §4.1 steps 8 and 10).
+   *
+   * - **Orphans** (`reapOrphaned`): at startup every non-terminal manual call (no
+   *   process can own one); periodically the ones this process is not driving
+   *   (`manual.activeIds()`) and older than {@link LEAK_THRESHOLD_MS}, so a call
+   *   being placed right now is never reaped. One that never bridged is settled in
+   *   the same statement; one that bridged stays awaiting its outcome (the agent
+   *   can still write it up after reconnecting), its contact claim KEPT.
+   * - **Lapses** (`lapseUnsettled`): an ended call with no outcome after
+   *   `SOFTPHONE_OUTCOME_LAPSE_MS`, or whose session left, is closed (a bridged one
+   *   `no_disposition`); one that never bridged, after only
+   *   `MANUAL_UNANSWERED_SETTLE_GRACE_MS` (the dialer's own settle failed).
+   *
+   * Both return rows and release nothing; here, for every row that is now settled,
+   * its claimed contact is settled as any call closed without an outcome is
+   * (`manual-settlement.ts`): a dial the carrier never saw gives the claim back
+   * uncharged; a placed one is charged and the tag's retry policy decides — a lapsed
+   * `connected` call `completed` by the default policy, an unbridged orphan back on
+   * the roster on the our-fault ledger, as {@link requeueOrphanedContact} does for an
+   * attempt. `manual.onClosed` clears the Redis claim. Each closed
+   * row gets an `audit_logs` system event (`agency_manual_call.orphaned` /
+   * `.lapsed`, actor `system:agency-reaper`): nobody pressed anything, and the
+   * record of why a call ended or a contact was given back is the audit question.
+   *
+   * Never throws: a failing half is logged and the other half still runs.
+   */
+  async sweepManualCalls(opts: { startup?: boolean } = {}): Promise<{ orphaned: number; lapsed: number }> {
+    let orphaned: AgencyManualCallRecord[] = [];
+    let lapsed: AgencyManualCallRecord[] = [];
+    try {
+      if (opts.startup) {
+        orphaned = await agencyManualCallRepository.reapOrphaned({ liveIds: [] });
+      } else if (this.deps.manual) {
+        orphaned = await agencyManualCallRepository.reapOrphaned({
+          liveIds: this.deps.manual.activeIds(),
+          createdBefore: new Date(Date.now() - LEAK_THRESHOLD_MS),
+        });
+      }
+    } catch (err) {
+      log.error({ err }, 'Soft-phone orphan sweep failed');
+    }
+    try {
+      lapsed = await agencyManualCallRepository.lapseUnsettled();
+    } catch (err) {
+      log.error({ err }, 'Soft-phone lapse sweep failed');
+    }
+    await this.closeManualRows(orphaned, 'orphaned');
+    await this.closeManualRows(lapsed, 'lapsed');
+    if (orphaned.length > 0 || lapsed.length > 0) {
+      log.warn({ orphaned: orphaned.length, lapsed: lapsed.length }, 'Agency reaper closed soft-phone calls');
+    }
+    return { orphaned: orphaned.length, lapsed: lapsed.length };
+  }
+
+  private async closeManualRows(rows: readonly AgencyManualCallRecord[], why: 'orphaned' | 'lapsed'): Promise<void> {
+    if (rows.length === 0) return;
+    for (const row of rows) {
+      let settled: NoOutcomeSettled | null = null;
+      if (row.settled_at !== null && row.contact_claimed) {
+        settled = await noOutcomeSettlementFor(row)
+          .then((settlement) => (settlement ? applyNoOutcomeSettlement(row, settlement) : null))
+          .catch((err) => {
+            log.error({ err, manualCallId: row.id }, 'Failed to settle a soft-phone contact claim — the stranded-contact sweep requeues it');
+            return null;
+          });
+      }
+      auditLogger.log({
+        ...(row.webrtc_call_id ? { callId: row.webrtc_call_id } : {}),
+        tenantId: row.tenant_id,
+        accountId: row.account_id,
+        eventType: `agency_manual_call.${why}`,
+        eventCategory: 'call',
+        severity: 'warn',
+        actor: 'system:agency-reaper',
+        eventData: {
+          manual_call_id: row.id,
+          session_id: row.session_id,
+          agent_user_id: row.agent_user_id,
+          campaign_id: row.campaign_id,
+          contact_id: row.contact_id,
+          settled: row.settled_at !== null,
+          bridged: row.bridged_at !== null,
+          disposition_code: row.disposition_code,
+          // Where the claimed contact went, and which ledger paid: `none` for a dial
+          // the carrier never saw (claim given back), else the retry policy's answer.
+          contact_state: settled?.state ?? null,
+          contact_charged: settled?.charge ?? null,
+        },
+      });
+    }
+    await this.deps.manual?.onClosed(rows).catch((err) =>
+      log.error({ err, count: rows.length }, 'Failed to release the Redis claims of swept soft-phone calls'));
   }
 
   /**

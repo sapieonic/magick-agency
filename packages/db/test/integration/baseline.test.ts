@@ -34,7 +34,8 @@ afterAll(closeTestPool);
 
 /**
  * Every table the migrations own (partitions excluded): the baseline's, plus the two
- * tenant carrier credential tables from 0002_telephony_credentials.sql.
+ * tenant carrier credential tables from 0002_telephony_credentials.sql and the two
+ * soft-phone tables from 0005_softphone.sql.
  */
 const EXPECTED_TABLES = [
   // identity
@@ -59,6 +60,8 @@ const EXPECTED_TABLES = [
   // agency dialer runtime
   'agency_campaigns', 'agency_contacts', 'agency_agent_sessions', 'agency_agent_session_events',
   'agency_call_attempts', 'agency_ingest_chunks', 'agency_dnc_outbox', 'agency_calls',
+  // the soft phone (0005, docs/softphone.md)
+  'agency_manual_calls', 'agency_softphone_settings',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
@@ -83,6 +86,8 @@ const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
   ['trg_agency_dnc_outbox_updated_at', 'agency_dnc_outbox'],
   ['trg_agency_calls_updated_at', 'agency_calls'],
   ['trg_dialer_analysis_jobs_updated_at', 'dialer_analysis_jobs'],
+  ['trg_agency_manual_calls_updated_at', 'agency_manual_calls'],
+  ['trg_agency_softphone_settings_updated_at', 'agency_softphone_settings'],
 ];
 
 const ALL_TRIGGERS: Array<[trigger: string, table: string]> = [

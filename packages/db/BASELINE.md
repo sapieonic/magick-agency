@@ -5,7 +5,7 @@ under [Later migrations](#later-migrations). This file is their inventory: the r
 they follow, every table with its purpose and columns, the unique indexes that carry invariants, the
 triggers and functions, how it is tested, and the schema questions still open. Read it before
 writing a repository, a migration or an import script. Column lists are generated from the SQL;
-the SQL is the authority. As of 2026-10-09.
+the SQL is the authority. As of 2026-10-30.
 
 ## Rules
 
@@ -22,7 +22,7 @@ the SQL is the authority. As of 2026-10-09.
 
 ## Tables
 
-33 tables in the baseline (35 with 0002), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
+33 tables in the baseline (35 with 0002, 37 with 0005), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
 
 | Group | Tables |
 |---|---|
@@ -162,11 +162,11 @@ Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provi
 
 Columns: `id`, `campaign_id`, `tenant_id`, `account_id`, `phone_e164`, `context`, `source_row_number`, `timezone`, `state`, `attempt_count`, `last_outcome`, `last_disposition`, `next_attempt_at`, `suppressed_reason`, `created_at`, `updated_at`, `our_fault_attempts`, `row_fingerprint`, `csv_line_number`, `source_contact_id`, `root_contact_id`.
 
-**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`).
+**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below).
 
-Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state`, `break_reason`, `state_since`, `owner_replica`, `last_heartbeat`, `joined_at`, `left_at`, `created_at`, `updated_at`.
+Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state`, `break_reason`, `state_since`, `owner_replica`, `last_heartbeat`, `joined_at`, `left_at`, `created_at`, `updated_at`, `kind`.
 
-**`agency_agent_session_events`**. Agent state transitions, for seat-time reporting.
+**`agency_agent_session_events`**. Agent state transitions, for seat-time reporting. `campaign_id` is nullable since 0005.
 
 Columns: `id`, `session_id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `from_state`, `to_state`, `break_reason`, `at`.
 
@@ -185,6 +185,8 @@ Columns: `id`, `tenant_id`, `phone_e164`, `reason`, `added_by`, `status`, `attem
 **`agency_calls`**. A bridged call: carrier ids, status and outcome, timings, recording, analysis status and result, conversation log, transcript metadata. `provider` defaults to `'voicelink'`.
 
 Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `provider`, `provider_call_id`, `status`, `outcome`, `error_code`, `error_message`, `initiated_by`, `metadata`, `answered_at`, `ended_at`, `duration_seconds`, `talk_time_seconds`, `created_at`, `updated_at`, `recording_requested`, `recording_url`, `recording_duration_seconds`, `analysis_profile_id`, `analysis_language`, `analysis_status`, `call_analysis`, `conversation_log`, `transcript_meta`, `analysis_consent`, `analysis_consent_at`, `campaign_id`, `agency_attempt_id`, `status`, `analysis_status`.
+
+0002 adds `telephony_credential_id` and `provider_request_id`; 0005 adds `origin` and `manual_call_id`.
 
 ## Unique indexes
 
@@ -213,6 +215,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_agency_attempt_live` | `agency_call_attempts` |
 | `uq_agency_ingest_chunk` | `agency_ingest_chunks` |
 | `uq_dialer_analysis_jobs_call` | `dialer_analysis_jobs` |
+| `uq_agency_manual_call_unsettled` (0005) | `agency_manual_calls` |
+| `uq_agency_softphone_settings_account` (0005) | `agency_softphone_settings` |
 
 ## Triggers and functions
 
@@ -239,6 +243,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_agency_dnc_outbox_updated_at` | BEFORE UPDATE | `agency_dnc_outbox` | `update_updated_at()` |
 | `trg_agency_calls_updated_at` | BEFORE UPDATE | `agency_calls` | `update_updated_at()` |
 | `trg_dialer_analysis_jobs_updated_at` | BEFORE UPDATE | `dialer_analysis_jobs` | `update_updated_at()` |
+| `trg_agency_manual_calls_updated_at` (0005) | BEFORE UPDATE | `agency_manual_calls` | `update_updated_at()` |
+| `trg_agency_softphone_settings_updated_at` (0005) | BEFORE UPDATE | `agency_softphone_settings` | `update_updated_at()` |
 
 Functions:
 
@@ -343,6 +349,74 @@ would scan every contact. Keyed on `id` rather than `updated_at`, so contact wri
 `test/integration/db/contacts-in-flight-index-migration.test.ts` (the definition, and that the
 planner can use it and `uq_agency_attempt_number` for the sweep's query) and the down → up
 inventory suite.
+
+### 0005 — `migrations/0005_softphone.sql`
+
+The soft phone (`docs/softphone.md` §3; rulings SP1–SP7, Manas 2026-10-30): an agent dials a
+typed number outside pacing, optionally logged ("tagged") to one of their campaigns.
+
+- **`agency_agent_sessions`**: `kind VARCHAR(16) NOT NULL DEFAULT 'campaign'`; `campaign_id` DROP
+  NOT NULL (the campaign FK and its cascade stay). CHECKs: `ck_agency_agent_session_kind` (`campaign
+  | softphone`); `ck_agency_agent_session_kind_campaign` (`(kind = 'campaign') = (campaign_id IS NOT
+  NULL)`); `ck_agency_agent_session_softphone_state` (a soft-phone session is only ever `break` or
+  `offline`, so pacing can never reserve it). `uq_agency_agent_live_tenant` is unchanged and spans
+  both kinds.
+- **`agency_agent_session_events.campaign_id`**: DROP NOT NULL (copied from the session).
+- **`agency_manual_calls`**: one row per soft-phone dial, the soft phone's audit spine. `id`,
+  `tenant_id`, `account_id`, `session_id` (→ `agency_agent_sessions`, no cascade, like
+  `agency_call_attempts.reserved_agent_id`), `agent_user_id`, `campaign_id` (the tag), `contact_id`
+  (the roster match), `contact_claimed`, `contact_prior_state`, `webrtc_call_id`, `destination_e164`,
+  `caller_id`, `state`, `outcome`, `end_reason`, `disposition_code`, `disposition_source`, `notes`,
+  `callback_at`, `fields` (JSONB object), `recording_requested`, `analysis_profile_id`,
+  `dnc_override_note`, `dnc_override_entry_id`, `hours_override_note`, `dialed_at`, `answered_at`,
+  `bridged_at`, `ended_at`, `talk_seconds`, `dispositioned_by_user_id`, `dispositioned_at`,
+  `dispositioned_on_behalf`, `settled_at`, `created_at`, `updated_at`. No FK on the tag, contact,
+  leg, profile or DNC entry ids (each side purges or is deleted independently). CHECKs: `state`,
+  `outcome`, `end_reason`, `disposition_source` and `contact_prior_state` vocabularies (the
+  contract's `AGENCY_MANUAL_CALL_*` lists); `disposition_source = 'campaign'` exactly on a tagged
+  call; a contact match only on a tag, a claim only with a contact and a prior state; override
+  notes 10–500 characters after trimming, a DNC note only with its entry id; `ended_at` set exactly
+  when `ended`; `settled_at` only once `ended`; `talk_seconds >= 0`. Indexes:
+  `uq_agency_manual_call_unsettled (session_id) WHERE settled_at IS NULL` (one live or
+  outcome-awaiting call per session; the lapse sweep reads it too); `idx_agency_manual_calls_agent
+  (tenant_id, account_id, agent_user_id, created_at DESC, id DESC)` and
+  `idx_agency_manual_calls_account (tenant_id, account_id, created_at DESC, id DESC)` (the two
+  keyset lists); `idx_agency_manual_calls_live (account_id) WHERE state <> 'ended'` (pacing headroom
+  across the account, the reapers); `idx_agency_manual_calls_campaign (campaign_id, created_at
+  DESC) WHERE campaign_id IS NOT NULL`; `idx_agency_manual_calls_contact (contact_id) WHERE
+  contact_id IS NOT NULL AND settled_at IS NULL` (the stranded-contact sweep and the pre-dial
+  match); `idx_agency_manual_calls_contact_history (contact_id, created_at DESC, id DESC) WHERE
+  contact_id IS NOT NULL` (a contact's soft-phone calls, settled included: `GET
+  /softphone/calls?contact_id=`). No index on `webrtc_call_id`: nothing looks a manual call up by
+  its leg. Trigger `trg_agency_manual_calls_updated_at`.
+- **`agency_call_attempts`**: `idx_agency_attempts_account_live (tenant_id, account_id) WHERE state
+  <> 'ended'`, the attempt half of pacing's account-wide headroom (`countLiveForAccount`, every
+  tick): an index-only scan of the account's live attempts instead of a probe per campaign the
+  account has ever had (~1.5 ms / 164 buffers → ~0.2 ms / 16 at 2,010 campaigns). Built with a
+  plain `CREATE INDEX` over the existing rows, as 0003's.
+- **`agency_calls`**: `origin VARCHAR(16) NOT NULL DEFAULT 'campaign'` (`campaign | manual`) and
+  `manual_call_id UUID` (correlation, no FK). CHECKs: `ck_agency_calls_origin`;
+  `ck_agency_calls_manual_correlation` (`manual_call_id` set exactly on a manual leg, whose
+  `campaign_id` and `agency_attempt_id` are NULL, so no campaign aggregation counts it). Index
+  `idx_agency_calls_manual_call (manual_call_id) WHERE manual_call_id IS NOT NULL`. A manual leg is
+  still an agency call (SP5); `WebRtcCallScope`'s `'agency'` predicate must take it in before
+  soft-phone calls are placed.
+- **`agency_softphone_settings`**: one optional row per (tenant, account), for untagged calls (call
+  fields apply to every call). `id`, `tenant_id`, `account_id`, `disposition_catalog` (JSONB array,
+  `[]` = the built-in catalog), `call_fields` (JSONB array, at most 20), `analysis_profile_id`,
+  `record_calls` (default false), `default_caller_id`, `created_at`, `updated_at`.
+  `uq_agency_softphone_settings_account (tenant_id, account_id)`; trigger
+  `trg_agency_softphone_settings_updated_at`. No FK to tenants/accounts, as `account_settings`.
+- **Down** raises, before changing anything, while any session or session event has a NULL
+  `campaign_id` (deleting soft-phone sessions would take their calls' audit trail), and while any
+  manual call or `origin = 'manual'` leg exists (calls made from a campaign session switched to the
+  soft phone leave no soft-phone session behind); otherwise it drops the attempts' account index,
+  the settings table, the `agency_calls` columns and index, the manual-calls table, and restores
+  `campaign_id NOT NULL` and drops `kind` with its CHECKs.
+- **Tests**: `test/integration/db/softphone-migration.test.ts` (every CHECK from both sides, each
+  vocabulary against the contract's list, the unsettled-call index, the FKs, the index definitions
+  and three plans) and the baseline suites (table set, triggers, the down → up inventory, and the
+  Down refusal while a soft-phone session or a switched campaign session's manual call exists).
 
 ## Tests
 

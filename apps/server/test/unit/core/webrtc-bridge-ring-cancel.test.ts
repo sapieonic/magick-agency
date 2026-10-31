@@ -139,8 +139,7 @@ const BRIDGED = {
   accountId: 'a1',
   callerId: '+14155550100',
   destinationPhone: '+14155550199',
-  campaignId: 'camp-1',
-  agencyAttemptId: 'att-1',
+  correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-1' },
 };
 const VL_BRIDGED = { ...BRIDGED, provider: 'voicelink' as const };
 

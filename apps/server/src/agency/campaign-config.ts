@@ -1,4 +1,5 @@
 import { isUsableTimezone } from './calling-hours.js';
+import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG — THE INTERNAL HANDLER'S OWN BOUNDARY ───────────
@@ -453,8 +454,26 @@ export function validateAgencyCampaignConfig(
   if (record['abandonment_ceiling_pct'] !== undefined) {
     issues.push(...validateAbandonmentCeiling(record['abandonment_ceiling_pct']));
   }
+  if (record['break_reasons'] !== undefined) {
+    issues.push(...validateBreakReasonsReserved(record['break_reasons']));
+  }
   issues.push(...validateCallingWindow(record, base));
   return issues;
+}
+
+/**
+ * A campaign's break catalog may not list the soft phone's reserved reason
+ * ({@link SOFTPHONE_BREAK_REASON}). The catalog drops it when read
+ * (`resolveBreakReasons`), so it could never be taken from `/break`; refusing it at the
+ * write tells the operator so instead of storing an entry that silently does nothing.
+ */
+function validateBreakReasonsReserved(value: unknown): CampaignConfigIssue[] {
+  if (!Array.isArray(value)) return [];
+  const reserved = value.some((r) => !!r && typeof r === 'object'
+    && (r as { code?: unknown }).code === SOFTPHONE_BREAK_REASON);
+  return reserved
+    ? [{ field: 'break_reasons', message: `break_reasons may not list "${SOFTPHONE_BREAK_REASON}": it is reserved for the soft phone.` }]
+    : [];
 }
 
 /**

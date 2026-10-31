@@ -1,5 +1,15 @@
 const DEFAULT_COUNTRY_CODE = process.env.DEFAULT_PHONE_COUNTRY_CODE?.replace(/^\+/, '') || '91';
 
+/**
+ * The platform's default country code for a number typed without one, digits only
+ * (`DEFAULT_PHONE_COUNTRY_CODE`, else `91`) — what {@link normalizePhoneToE164}
+ * applies when no `defaultCountryCode` is passed. There is no per-account country
+ * in the schema, so this is the soft phone's "account default region" too.
+ */
+export function defaultPhoneCountryCode(): string {
+  return DEFAULT_COUNTRY_CODE;
+}
+
 export const E164_REGEX = /^\+[1-9]\d{6,14}$/;
 
 export interface NormalizeOptions {

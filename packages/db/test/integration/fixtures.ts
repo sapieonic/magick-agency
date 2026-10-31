@@ -78,6 +78,33 @@ export async function insertSession(campaignId: string, o: Overrides = {}): Prom
   });
 }
 
+/** A soft-phone session (0005): no campaign, in `break/soft_phone`. */
+export async function insertSoftphoneSession(o: Overrides = {}): Promise<Row> {
+  return insertRow('agency_agent_sessions', {
+    kind: 'softphone',
+    campaign_id: null,
+    tenant_id: TENANT,
+    account_id: ACCOUNT,
+    agent_user_id: randomUUID(),
+    state: 'break',
+    break_reason: 'soft_phone',
+    ...o,
+  });
+}
+
+/** A queued, untagged manual call on `sessionId` (0005). */
+export async function insertManualCall(sessionId: string, o: Overrides = {}): Promise<Row> {
+  return insertRow('agency_manual_calls', {
+    tenant_id: TENANT,
+    account_id: ACCOUNT,
+    session_id: sessionId,
+    agent_user_id: randomUUID(),
+    destination_e164: '+14155550101',
+    caller_id: '+14155550100',
+    ...o,
+  });
+}
+
 export async function insertAttempt(campaignId: string, contactId: string, o: Overrides = {}): Promise<Row> {
   return insertRow('agency_call_attempts', {
     campaign_id: campaignId,
@@ -156,6 +183,8 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
   const outbox = await insertRow('agency_dnc_outbox', { tenant_id: TENANT, phone_e164: '+14155550101', ...backdated });
   const call = await insertCall(backdated);
   const analysis = await insertRow('dialer_analysis_jobs', { call_id: call.id, tenant_id: TENANT, account_id: ACCOUNT, ...backdated });
+  const manualCall = await insertManualCall(session.id, backdated);
+  const softphoneSettings = await insertRow('agency_softphone_settings', { tenant_id: TENANT, account_id: ACCOUNT, ...backdated });
 
   return [
     { trigger: 'tenants_updated_at', table: 'tenants', id: tenant.id, touch: "name = 'renamed'" },
@@ -179,5 +208,7 @@ export async function seedUpdatedAtRows(): Promise<Array<{ trigger: string; tabl
     { trigger: 'trg_agency_dnc_outbox_updated_at', table: 'agency_dnc_outbox', id: outbox.id, touch: 'attempts = 1' },
     { trigger: 'trg_agency_calls_updated_at', table: 'agency_calls', id: call.id, touch: "status = 'ringing'" },
     { trigger: 'trg_dialer_analysis_jobs_updated_at', table: 'dialer_analysis_jobs', id: analysis.id, touch: "error_code = 'X'" },
+    { trigger: 'trg_agency_manual_calls_updated_at', table: 'agency_manual_calls', id: manualCall.id, touch: "notes = 'n'" },
+    { trigger: 'trg_agency_softphone_settings_updated_at', table: 'agency_softphone_settings', id: softphoneSettings.id, touch: 'record_calls = true' },
   ];
 }

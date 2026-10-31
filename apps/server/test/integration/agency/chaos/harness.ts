@@ -333,21 +333,22 @@ export class ScriptedBridge {
   }
 
   async createBridgedCall(params: {
-    agencyAttemptId: string;
+    correlation: { kind: 'attempt'; agencyAttemptId: string };
     destinationPhone: string;
     callerId: string;
     browserCloseGraceMs?: number;
   }): Promise<{ id: string }> {
     const callId = randomUUID();
-    const script = this.scripts.get(params.agencyAttemptId) ?? this.defaultScript;
+    const attemptId = params.correlation.agencyAttemptId;
+    const script = this.scripts.get(attemptId) ?? this.defaultScript;
     this.dialed.push({
-      attemptId: params.agencyAttemptId,
+      attemptId,
       destinationPhone: params.destinationPhone,
       callerId: params.callerId,
     });
     const call: PendingCall = {
       callId,
-      attemptId: params.agencyAttemptId,
+      attemptId,
       script,
       opened: false,
       // Captured, never assumed. The real bridge treats an omitted or 0 value as
@@ -359,7 +360,7 @@ export class ScriptedBridge {
       graceArmed: false,
       ended: false,
     };
-    this.byAttempt.set(params.agencyAttemptId, call);
+    this.byAttempt.set(attemptId, call);
     this.queue.push(call);
     return { id: callId };
   }

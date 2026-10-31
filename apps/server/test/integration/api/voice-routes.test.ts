@@ -78,7 +78,7 @@ async function dial() {
     tenantId: TENANT, accountId: ACCOUNT,
     callerId: '+919800000001', destinationPhone: '+919800000002',
     browserSocket: stationWs() as any,
-    campaignId: CAMPAIGN, agencyAttemptId: uuidFor(`attempt-${Math.random()}`),
+    correlation: { kind: 'attempt' as const, campaignId: CAMPAIGN, agencyAttemptId: uuidFor(`attempt-${Math.random()}`) },
   });
   const req = fakeAdapter.initiateCall.mock.calls.at(-1)![0] as unknown as { statusCallbackUrl: string; mediaStreamUrl: string };
   const webhookToken = new URL(req.statusCallbackUrl).searchParams.get('token')!;

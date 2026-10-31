@@ -26,9 +26,15 @@ const mocks = vi.hoisted(() => ({
   removeDncEntry: vi.fn(),
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
+  /** The client flags on; the soft phone's, unless a test turns it off. */
+  flags: new Set<string>(['agency_softphone_enabled']),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
+  SOFTPHONE_FLAG: 'agency_softphone_enabled',
+  useFeatureFlagEnabled: (flag: string) => mocks.flags.has(flag),
+}));
 vi.mock('../../hooks/useTeam', () => ({ useTeam: mocks.useTeam }));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
@@ -94,10 +100,9 @@ describe('DNC — scope, and what actually suppresses a call', () => {
    *  * claiming it stops everything means the operator never adds the
    *    tenant-wide entry the customer actually asked for.
    *
-   * The dial-time set is `dnc:{tenantId}`, filled from `listTenantWidePhones`
-   * (`account_id IS NULL AND campaign_id IS NULL`); the import-time filter is
-   * `findSuppressed`, whose predicate matches a row scoped to the account or the
-   * campaign being imported. That difference is what these pin.
+   * Every check (dial time, roster import, the soft phone) reads `dnc_entries` with
+   * the same widening predicate (decision B8): a scoped row is enforced exactly for
+   * its account or campaign, and nowhere else. That reach is what these pin.
    */
   it('shows a tenant-wide entry as enforced across every agency campaign', async () => {
     render(<DncPage />);
@@ -128,12 +133,15 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     expect(title).not.toMatch(/not enforced/i);
     expect(badge.textContent).not.toMatch(/not enforced/i);
     expect(title).toContain('Enforced for one campaign only');
+    expect(title).toContain('that campaign won’t dial this number');
+    // The soft phone's untagged call honours it too (docs/softphone.md §4.1 step 2).
+    expect(title).toContain('not logged to a campaign is stopped too');
     // OVER-claim guard: it must not imply the workspace-wide block.
-    expect(title).toContain('NOT in the dialer’s block list');
-    expect(title).toContain('every other campaign');
+    expect(title).toMatch(/Every other campaign in this workspace can still call/i);
   });
 
-  it('shows an account-scoped entry as import-only, which a campaign row is not', async () => {
+  it('shows an account-scoped entry as enforced for that account\'s dials and soft phone', async () => {
+    // The row a soft-phone Mark DNC writes on a call logged to no campaign.
     mocks.listDncEntries.mockResolvedValue(page([entry({ account_id: 'account-9' })]));
 
     render(<DncPage />);
@@ -141,11 +149,13 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     const badge = await screen.findByTestId('dnc-scope-account');
     expect(badge.textContent).toBe('One account');
     const title = badge.getAttribute('title') ?? '';
-    expect(title).toContain('at roster import only');
-    // OVER-claim guard: no mark creates an account-scoped row, so nothing swept
-    // the contacts already imported and they remain dialable.
-    expect(title).toContain('NOT in the dialer’s block list');
-    expect(title).toContain('already imported');
+    // UNDER-claim guard: the dial-time check reads the account's rows (B8), so it must
+    // not say a contact already imported can still be called.
+    expect(title).toContain('none of that account’s campaigns will dial this number');
+    expect(title).toContain('The soft phone stops a call to it from that account');
+    expect(title).not.toMatch(/import only|already imported|block list/i);
+    // OVER-claim guard: other accounts are untouched.
+    expect(title).toContain('Campaigns in other accounts are unaffected');
     // And it is a DIFFERENT answer from the campaign one, not a shared "narrow"
     // bucket — collapsing the two is how the old boolean got this wrong.
     expect(badge.textContent).not.toBe('One campaign');
@@ -199,9 +209,40 @@ describe('DNC — agency-only, and the copy has to say so', () => {
     expect(document.body.textContent).toMatch(/Agency campaigns don’t dial the numbers on this list/);
     // The sentence a customer needs and the page never had: what this list does
     // NOT cover.
-    expect(document.body.textContent).toMatch(
-      /does not apply to AI calls, broadcasts or the Softphone/,
-    );
+    expect(document.body.textContent).toMatch(/does not apply to AI calls or broadcasts/);
+  });
+
+  it('says the soft phone is covered too, with an audited override (SP1)', async () => {
+    render(<DncPage />);
+    await screen.findByText('+919820041772');
+
+    // The old copy said DNC did NOT apply to the soft phone; it does now. A soft-phone
+    // dial to a listed number is refused, and placing it anyway needs a written
+    // reason that is logged with the agent's name.
+    expect(document.body.textContent).not.toMatch(/not apply to[^.]*soft ?phone/i);
+    expect(document.body.textContent).toMatch(/The soft phone checks it too/);
+    // Exactly what the pre-dial reads (docs/softphone.md §4.1 step 2): a tagged call the
+    // tag's scopes, an untagged one the account's and every one of its campaigns'.
+    expect(document.body.textContent).toMatch(/a call logged to a campaign is stopped by the entries that campaign honours/);
+    expect(document.body.textContent).toMatch(/a call logged to no campaign by an entry for the workspace, its account or any of the account’s campaigns/);
+    expect(document.body.textContent).toMatch(/writing down why — that reason is logged with their name/);
+  });
+
+  it('says nothing about the soft phone where it is off (agency_softphone_enabled)', async () => {
+    mocks.flags.delete('agency_softphone_enabled');
+    try {
+      mocks.listDncEntries.mockResolvedValue(page([entry({ account_id: 'account-9' })]));
+      render(<DncPage />);
+      const badge = await screen.findByTestId('dnc-scope-account');
+      // Positive first, so the negatives cannot pass on a page that failed to render.
+      expect(document.body.textContent).toMatch(/Agency campaigns don’t dial the numbers on this list/);
+      expect(document.body.textContent).toMatch(/Agents add numbers from the station when a customer asks/);
+      expect(document.body.textContent).not.toMatch(/soft phone/i);
+      expect(badge.getAttribute('title')).toContain('none of that account’s campaigns will dial this number');
+      expect(badge.getAttribute('title')).not.toMatch(/soft phone/i);
+    } finally {
+      mocks.flags.add('agency_softphone_enabled');
+    }
   });
 
   it('never presents itself as platform-wide regulatory compliance', async () => {

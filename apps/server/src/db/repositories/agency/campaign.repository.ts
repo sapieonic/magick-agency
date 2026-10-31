@@ -282,6 +282,33 @@ export class AgencyCampaignRepository {
   }
 
   /**
+   * The campaigns a soft-phone call may be logged to (docs/softphone.md §6, bootstrap):
+   * the account's campaigns in `statuses`, and — with `staffedUserId` — only those the
+   * user is actively staffed on, newest first, at most `limit`. The staffing filter is
+   * IN the statement, before the cap, so an agent's campaigns are never cut by the
+   * account's newer ones (`uq_agency_campaign_agent_active_campaign` serves the probe).
+   */
+  async listSoftphoneTaggable(
+    tenantId: string,
+    accountId: string,
+    opts: { statuses: readonly string[]; staffedUserId: string | null; limit: number },
+  ): Promise<AgencyCampaignRecord[]> {
+    const { rows } = await getPool().query<AgencyCampaignRecord>(
+      `SELECT c.* FROM agency_campaigns c
+        WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid
+          AND c.status = ANY($3::text[])
+          AND ($4::uuid IS NULL OR EXISTS (
+                SELECT 1 FROM agency_campaign_agents a
+                 WHERE a.tenant_id = $1::uuid AND a.user_id = $4::uuid
+                   AND a.campaign_id = c.id AND a.unassigned_at IS NULL))
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT $5`,
+      [tenantId, accountId, [...opts.statuses], opts.staffedUserId, opts.limit],
+    );
+    return rows;
+  }
+
+  /**
    * Patch mutable configuration. Deliberately cannot write `status` — lifecycle is
    * {@link transitionStatus} only, so a config edit can never race the pacing
    * leader's `running → completed` / `stopping → stopped` transitions.

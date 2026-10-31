@@ -12,12 +12,31 @@ export { AgencyCampaignRepository, agencyCampaignRepository } from './agency/cam
 export { AgencyContactRepository, agencyContactRepository } from './agency/contact.repository.js';
 export { AgencyAttemptRepository, agencyAttemptRepository } from './agency/attempt.repository.js';
 export { AgencyAgentSessionRepository, agencyAgentSessionRepository } from './agency/agent-session.repository.js';
+export type { AgencySoftphoneJoinResult } from './agency/agent-session.repository.js';
+export { AgencyManualCallRepository, agencyManualCallRepository } from './agency/manual-call.repository.js';
+export type {
+  AgencyManualCallAdvanceState,
+  AgencyManualCallCreateInput,
+  AgencyManualCallDispositionRefusal,
+  AgencyManualCallListFilters,
+  AgencyManualCallListRow,
+} from './agency/manual-call.repository.js';
+export {
+  AgencySoftphoneSettingsRepository,
+  agencySoftphoneSettingsRepository,
+  SOFTPHONE_SETTINGS_DEFAULTS,
+  SoftphoneSettingsInvalidError,
+  validateSoftphoneSettings,
+} from './agency/softphone-settings.repository.js';
+export type { SoftphoneSettingsIssue } from './agency/softphone-settings.repository.js';
 export {
   AgencyAbandonmentRepository,
   AgencyLiveConcurrencyRepository,
   agencyAbandonmentRepository,
   agencyLiveConcurrencyRepository,
 } from './agency/fleet-metrics.repository.js';
-export type { AgencyLiveAttemptStateRow } from './agency/fleet-metrics.repository.js';
+export type { AgencyLiveAttemptStateRow, AgencyLiveManualCallStateRow } from './agency/fleet-metrics.repository.js';
 export { AgencyAgentStatsRepository, agencyAgentStatsRepository } from './agency/agent-stats.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
+export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';
+export type { AgencyManualCallJoinedRow } from './agency/projections.js';

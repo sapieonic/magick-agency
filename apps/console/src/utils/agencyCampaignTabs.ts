@@ -34,6 +34,7 @@ export type CampaignTabId =
   | 'agents'
   | 'contacts'
   | 'attempts'
+  | 'manual'
   | 'activity'
   | 'settings';
 
@@ -53,6 +54,8 @@ export interface CampaignTabDefinition {
   permission: Permission | null;
   /** Path relative to the agency workspace root. */
   path: (campaignId: string) => string;
+  /** A client-exposed flag that must also be on (the soft phone's tab). */
+  flag?: string;
 }
 
 export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
@@ -93,6 +96,16 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
     path: (id) => `/agency/campaigns/${id}/attempts`,
   },
   {
+    id: 'manual',
+    label: 'Soft-phone calls',
+    hint: 'Calls agents placed from the soft phone and logged to this campaign',
+    // The account's soft-phone list, tag-filtered: the server scopes it to the
+    // whole account for `agency.supervise`, the same floor as Call attempts.
+    permission: 'agency.supervise',
+    path: (id) => `/agency/campaigns/${id}/manual-calls`,
+    flag: 'agency_softphone_enabled',
+  },
+  {
     id: 'activity',
     label: 'Activity',
     hint: 'Who did what on this campaign, and when',
@@ -122,9 +135,14 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
 ];
 
 /** The tabs a given role may actually reach, in tab order. */
-export function visibleCampaignTabs(role: Role | undefined): CampaignTabDefinition[] {
+export function visibleCampaignTabs(
+  role: Role | undefined,
+  isFlagEnabled: (flag: string) => boolean = () => false,
+): CampaignTabDefinition[] {
   return CAMPAIGN_TABS.filter(
-    (tab) => tab.permission === null || hasPermission(role, tab.permission),
+    (tab) =>
+      (tab.permission === null || hasPermission(role, tab.permission))
+      && (!tab.flag || isFlagEnabled(tab.flag)),
   );
 }
 

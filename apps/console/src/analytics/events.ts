@@ -68,7 +68,7 @@ type CapabilityGateId =
   | 'agency'
   | 'agency.recording'
   | 'agency.analytics';
-type FeatureFlagGateId = 'agency_dialer_enabled' | 'agency_call_analysis';
+type FeatureFlagGateId = 'agency_dialer_enabled' | 'agency_call_analysis' | 'agency_softphone_enabled';
 type FeatureGateUnavailableProps =
   | {
       gate_type: 'capability';
@@ -533,6 +533,40 @@ export function trackAgentAttemptsLoadMoreFailed(props: EventCatalog['agent_atte
 
 export function trackAgencyStaleResponseDiscarded(props: EventCatalog['agency_stale_response_discarded']): void {
   track('agency_stale_response_discarded', props);
+}
+
+// --- The soft phone (`docs/softphone.md`) ------------------------------------
+//
+// IDs, enum labels, counts and booleans only: never the dialled number, the
+// override note or a call-field value. `tagged` says whether the call was logged
+// to a campaign, which is the soft phone's one structural fork.
+
+export function trackAgencySoftphoneCallPlaced(props: EventCatalog['agency_softphone_call_placed']): void {
+  track('agency_softphone_call_placed', props);
+}
+
+export function trackAgencySoftphoneCallRefused(props: EventCatalog['agency_softphone_call_refused']): void {
+  track('agency_softphone_call_refused', props);
+}
+
+export function trackAgencySoftphoneOverrideConfirmed(props: EventCatalog['agency_softphone_override_confirmed']): void {
+  track('agency_softphone_override_confirmed', props);
+}
+
+export function trackAgencySoftphoneOutcomeSaved(props: EventCatalog['agency_softphone_outcome_saved']): void {
+  track('agency_softphone_outcome_saved', props);
+}
+
+export function trackAgencySoftphoneHangup(props: EventCatalog['agency_softphone_hangup']): void {
+  track('agency_softphone_hangup', props);
+}
+
+export function trackAgencySoftphoneDncMarked(props: EventCatalog['agency_softphone_dnc_marked']): void {
+  track('agency_softphone_dnc_marked', props);
+}
+
+export function trackAgencySoftphoneSwitch(props: EventCatalog['agency_softphone_switch']): void {
+  track('agency_softphone_switch', props);
 }
 
 // --- Agency invites (the `/agency/join/:token` landing page) ----------------
@@ -1214,6 +1248,54 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
   agency_stale_response_discarded: {
     surface: 'disposition' | 'attempts_list' | 'dnc' | 'hangup';
     reason: 'attempt_changed' | 'attempt_id_mismatch' | 'superseded';
+  };
+  /** {@link trackAgencySoftphoneCallPlaced} */
+  agency_softphone_call_placed: {
+    tagged: boolean;
+    /** Which refusals the agent dialled through with a note. */
+    overrides: 'none' | 'dnc' | 'hours' | 'both';
+    /** How the number got into the field. */
+    entry: 'typed' | 'pasted' | 'redial';
+    /** `station`: a campaign session switched to the soft phone (SP7). */
+    surface: 'softphone_page' | 'station';
+  };
+  /** {@link trackAgencySoftphoneCallRefused} */
+  agency_softphone_call_refused: {
+    /** A soft-phone refusal code, or `unknown`. */
+    code: string;
+    tagged: boolean;
+  };
+  /** {@link trackAgencySoftphoneOverrideConfirmed} */
+  agency_softphone_override_confirmed: {
+    kind: 'dnc' | 'hours';
+    note_length_bucket: 'under_50' | '50_200' | 'over_200';
+  };
+  /** {@link trackAgencySoftphoneOutcomeSaved} */
+  agency_softphone_outcome_saved: {
+    tagged: boolean;
+    selection_method: 'number_key' | 'click';
+    field_count: number;
+    has_callback: boolean;
+  };
+  /** {@link trackAgencySoftphoneHangup} */
+  agency_softphone_hangup: {
+    /** The call's state when the agent hung up — `ringing` is the SP3 case. */
+    state: 'queued' | 'dialing' | 'ringing' | 'answered' | 'bridged';
+    accepted: boolean;
+  };
+  /** {@link trackAgencySoftphoneDncMarked} */
+  agency_softphone_dnc_marked: {
+    tagged: boolean;
+    accepted: boolean;
+  };
+  /** {@link trackAgencySoftphoneSwitch} */
+  agency_softphone_switch: {
+    action: 'start' | 'return' | 'cancel_queued';
+    /** `start` only: whether the switch was queued behind a call or wrap-up. */
+    queued: boolean;
+    outcome: 'accepted' | 'refused';
+    /** A soft-phone refusal code when refused. */
+    code: string | null;
   };
   /** {@link trackAgencyInviteViewed} */
   agency_invite_viewed: InviteViewedProps;

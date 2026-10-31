@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { runner } from 'node-pg-migrate';
 import { afterAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../../src/migrations-dir.js';
-import { TEST_DB_URL, closeTestPool, getTestPool } from '../helpers/test-db.js';
+import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../helpers/test-db.js';
+import { insertCall, insertCampaign, insertManualCall, insertSession, insertSoftphoneSession } from './fixtures.js';
 
 /**
  * Every migration's Down section drops everything its Up section creates, and the
@@ -44,12 +46,59 @@ async function inventory(): Promise<string[]> {
 
 const ALL_MIGRATIONS = [
   '0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index',
+  '0005_softphone',
 ];
 
 describe('migrations down → up', () => {
   afterAll(closeTestPool);
 
+  it('0005 down refuses while a soft-phone session exists, and changes nothing', async () => {
+    // Reverting agency_agent_sessions.campaign_id to NOT NULL cannot keep a soft-phone
+    // session, and deleting one would take its manual calls' audit trail with it, so
+    // the Down section raises before it alters anything (one transaction).
+    await truncateAll();
+    const session = await insertSoftphoneSession();
+    await insertManualCall(session.id);
+    const before = await inventory();
+
+    await expect(migrate('down')).rejects.toThrow(/soft-phone sessions exist/);
+    expect(await inventory()).toEqual(before);
+    const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
+    expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
+    await truncateAll();
+  });
+
+  it('0005 down refuses while a manual call from a switched CAMPAIGN session exists, and changes nothing', async () => {
+    // SP7: an agent on a campaign switched to the soft phone and dialled. No session or
+    // session event has a NULL campaign_id, so the session guard alone would let the Down
+    // drop agency_manual_calls and the call's audit trail with it.
+    await truncateAll();
+    const campaign = await insertCampaign();
+    const session = await insertSession(campaign.id, { state: 'break', break_reason: 'soft_phone' });
+    await insertManualCall(session.id, { campaign_id: campaign.id });
+    const before = await inventory();
+
+    await expect(migrate('down')).rejects.toThrow(/soft-phone calls exist/);
+    expect(await inventory()).toEqual(before);
+    expect((await getTestPool().query('SELECT count(*)::int AS n FROM agency_manual_calls')).rows[0].n).toBe(1);
+    const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
+    expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
+    await truncateAll();
+  });
+
+  it('0005 down refuses while a manual media leg exists, its manual call already purged', async () => {
+    await truncateAll();
+    await insertCall({ origin: 'manual', manual_call_id: randomUUID() });
+    const before = await inventory();
+    await expect(migrate('down')).rejects.toThrow(/soft-phone calls exist/);
+    expect(await inventory()).toEqual(before);
+    await truncateAll();
+  });
+
   it('down removes every object the migrations created; up restores the same set', async () => {
+    // Another file may have left a soft-phone session behind, which 0005's Down refuses
+    // to drop (the test above); the rows themselves do not matter to the inventory.
+    await truncateAll();
     const before = await inventory();
     // Sanity: the baseline is applied (globalSetup ran it).
     expect(before).toContain('rel:p:platform_audit_log');
@@ -59,6 +108,8 @@ describe('migrations down → up', () => {
     expect(before).toContain('ext:uuid-ossp');
     expect(before).toContain('rel:r:telephony_credentials');
     expect(before).toContain('rel:r:telephony_credential_secrets');
+    expect(before).toContain('rel:r:agency_manual_calls');
+    expect(before).toContain('rel:r:agency_softphone_settings');
 
     await migrate('down');
     expect(await inventory()).toEqual([]);

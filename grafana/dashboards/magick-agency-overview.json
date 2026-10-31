@@ -55,7 +55,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Agency dialer capacity, split by what it is doing. `dialing` is capacity committed to phones that may never answer; `bridged` is conversations actually earning. The split is the point: a flat concurrency number cannot tell 40 phones ringing from 40 conversations, which is the blind spot that made the 2026-09-08 pilot's bridge rate unreadable.\n\nAGGREGATED WITH `max`, NOT `sum`: the underlying SQL is fleet-wide and every replica publishes the identical series, so `sum` would report one multiple of the truth per replica. Same rule as the abandonment gauge beside it.\n\n`ringing` is a legal attempt state that nothing in the codebase writes — expect no series for it. An empty panel (rather than a zero) means the 90s staleness TTL expired and no replica is publishing: treat that as the metric being down, not the dialer idle.",
+      "description": "Agency capacity in use, split by what it is doing: the dialer's campaign attempts by state, and the soft phone's live calls stacked on top. `dialing` is capacity committed to phones that may never answer; `bridged` is conversations actually earning. The split is the point: a flat concurrency number cannot tell 40 phones ringing from 40 conversations, which is the blind spot that made the 2026-09-08 pilot's bridge rate unreadable. Soft-phone calls hold carrier slots exactly like attempts and pacing's headroom subtracts them, but they belong to no campaign, so without the second series this panel showed headroom pacing did not have.\n\nREDUCED WITH `max` ACROSS REPLICAS, THEN SUMMED: the underlying SQL is fleet-wide and every replica publishes the identical series, so `max by` each series' own labels collapses the replicas (a bare `sum` would report one multiple of the truth per replica), and only then are campaigns and tenants summed. Same rule as the abandonment gauge beside it.\n\n`ringing` is a legal attempt state that nothing in the campaign dialer writes — expect no attempt series for it (the soft phone does write it). An empty panel (rather than a zero) means the 90s staleness TTL expired and no replica is publishing: treat that as the metric being down, not the dialer idle.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -99,14 +99,20 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Live Attempts by State",
+      "title": "Agency Dialer — Live Calls by State (campaign + soft phone)",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "max by (state) (agency_live_attempts_current{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"})",
+          "expr": "sum by (state) (max by (tenant_id, campaign_id, state) (agency_live_attempts_current{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}))",
           "interval": "1m",
           "legendFormat": "{{state}}",
           "refId": "A"
+        },
+        {
+          "expr": "sum(max by (tenant_id, state) (agency_live_manual_calls_current{deployment_environment=~\"$environment\", service_name=~\"$service_name\", tenant_id=~\"$tenant_id\"}))",
+          "interval": "1m",
+          "legendFormat": "soft phone",
+          "refId": "B"
         }
       ]
     },

@@ -286,8 +286,13 @@
 
 /* ── Body: the frozen three-column grid ─────────────────────────────────── */
 
+/* Basis 0, not auto: the body takes what the header, rail and action bar leave
+   and never more. With `auto` a tall column (a callback picker open under six
+   outcomes) made the body ask for its content's height, and the flex shrink
+   that paid for it came partly out of the rail and the action bar — both moved,
+   and the bar's hang-up hint was cut off. */
 .body {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr) 320px;
   gap: 20px;
@@ -755,6 +760,15 @@
   text-decoration: underline;
 }
 
+/* The same, as a button: an escape that also changes the account first. */
+button.fatalEscape {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .srOnly {
   position: absolute;
   width: 1px;
@@ -791,6 +805,7 @@
  * ones an agent reaches for without looking.
  */
 .actionBar {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -863,6 +878,21 @@
 /* Pushes hang-up to the far end, away from everything else an agent presses. */
 .actionBar > *:last-child {
   margin-left: auto;
+}
+
+/*
+ * Words give way before controls do. A stated reason (and the queued-break pill,
+ * `QueuedBreakPill.module.css`) starts from nothing (basis 0) and grows to its own width when there is room;
+ * when there is not, it wraps or truncates in place. Measured from their full
+ * width instead, Break + Switch to soft phone + the "switching after this call"
+ * pill + Save's reason was wider than the bar at 1440px, so pressing Switch
+ * mid-call wrapped Hang up onto a second row under the agent's cursor.
+ */
+.actionBar > .blockReason,
+.actionBar > .breakAlreadyStarted {
+  flex: 1 1 0;
+  min-width: 6rem;
+  max-width: max-content;
 }
 
 /*

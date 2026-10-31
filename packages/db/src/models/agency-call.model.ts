@@ -7,7 +7,8 @@
 // WebRtc* type names are kept so the bridge and the runtime import them
 // (docs/seams.md). `sip_connection_id` (SIP) is dropped from the record and the
 // create input, as the baseline dropped the column. `telephony_credential_id`
-// (BYOC) and `provider_request_id` came back in 0002_telephony_credentials.sql.
+// (BYOC) and `provider_request_id` came back in 0002_telephony_credentials.sql;
+// `origin` and `manual_call_id` (the soft phone) are 0005_softphone.sql's.
 
 import type { CallAnalysisResult } from './call.model.js';
 
@@ -20,6 +21,13 @@ export type WebRtcCallStatus =
   | 'no_answer'
   | 'busy'
   | 'canceled';
+
+/**
+ * Which spine a media leg belongs to (`agency_calls.origin`, 0005): `campaign`, placed
+ * by pacing for an `agency_call_attempts` row; `manual`, a soft-phone dial for an
+ * `agency_manual_calls` row (docs/softphone.md). Both are agency calls (SP5).
+ */
+export type WebRtcCallOrigin = 'campaign' | 'manual';
 
 /** Statuses a call may still be live in (used by the stale-call sweep). */
 export const WEBRTC_NON_TERMINAL_STATUSES: readonly WebRtcCallStatus[] = [
@@ -140,6 +148,15 @@ export interface WebRtcCallRecord {
   campaign_id: string | null;
   /** The `agency_call_attempts.id` this leg belongs to. Correlation only, no FK. */
   agency_attempt_id: string | null;
+  /**
+   * `manual` for a soft-phone leg, whose `campaign_id` and `agency_attempt_id` stay
+   * NULL (CHECKed), so no campaign aggregation counts it. Immutable after insert.
+   * `scopeClause('agency')` takes it as well as `campaign_id IS NOT NULL`, so a
+   * manual leg is in the agency call scope (SP5).
+   */
+  origin: WebRtcCallOrigin;
+  /** The `agency_manual_calls.id` this leg belongs to (set exactly when `origin` is `manual`). Correlation only, no FK. */
+  manual_call_id: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -163,6 +180,16 @@ export interface CreateWebRtcCallInput {
   // ── Agency dialer back-references, set at intake and immutable after ──
   campaign_id?: string | null;
   agency_attempt_id?: string | null;
+  /**
+   * `manual` for a soft-phone leg (docs/softphone.md §4.3): then `manual_call_id` is
+   * required and `campaign_id` / `agency_attempt_id` must be NULL
+   * (`ck_agency_calls_manual_correlation` refuses anything else). Omitted: `campaign`.
+   * Both are in `create`'s INSERT column list — an optional field that is not would
+   * typecheck and be dropped silently.
+   */
+  origin?: WebRtcCallOrigin;
+  /** The `agency_manual_calls.id` a manual leg is placed for. Correlation only, no FK. */
+  manual_call_id?: string | null;
 }
 
 export interface UpdateWebRtcCallInput {

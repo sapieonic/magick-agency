@@ -56,7 +56,7 @@ const { repos, settings } = vi.hoisted(() => ({
       unclaimMany: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
     },
-    attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
+    attempt: { countLive: vi.fn().mockResolvedValue(0), countLiveForAccount: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     // `setState` mirrors the winning reservation durably — the
     // supervisor's agents-by-state breakdown cannot see `reserved` otherwise.
     session: {

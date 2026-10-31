@@ -2309,6 +2309,104 @@
       "path": "/proxy/webrtc-call/:id/browser-stream",
       "status": "not_served",
       "reason": "WebRTC softphone (dialer product, not agency): not served (out of scope) (built by src/utils/webrtc-ws.ts from `browser_ws_url` + ?token=)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/softphone/bootstrap",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/softphone/calls",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/softphone/calls/:id",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/softphone/calls/:id/recording",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/softphone/settings",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "PUT",
+      "path": "/proxy/agency/softphone/settings",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/softphone/sessions",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/softphone",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/sessions/:id/softphone/return",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/softphone/calls",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "PATCH",
+      "path": "/proxy/agency/softphone/calls/:id",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/softphone/calls/:id/hangup",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/softphone/calls/:id/disposition",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/softphone/calls/:id/dnc",
+      "source": "apps/console/src/api/softphone.ts",
+      "status": "served",
+      "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
     }
   ]
 }

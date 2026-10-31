@@ -7,12 +7,24 @@ import { getPool } from '../connection.js';
  *
  * Read-only and charges nothing. It counts facts agency already records:
  *
- *  - `dials` — `agency_call_attempts` with `dialed_at` in the window;
+ *  - `dials` — `agency_call_attempts` with `dialed_at` in the window, plus
+ *    soft-phone dials (`agency_manual_calls`) the same way;
  *  - `answered_calls` — those with `answered_at IS NOT NULL`;
  *  - `connected_calls` — those with `bridged_at IS NOT NULL`;
- *  - `talk_seconds` — Σ `talk_seconds` over those attempts;
+ *  - `talk_seconds` — Σ `talk_seconds` over those dials;
  *  - `analysis_audio_seconds` — Σ `dialer_analysis_jobs.analysis_audio_seconds`
- *    for the jobs on those attempts' calls.
+ *    for the jobs on those dials' calls.
+ *
+ * ── Manual calls are counted at the agency rate (SP5) ──────────────────────
+ * A soft-phone dial (docs/softphone.md) is an agency call, metered like a campaign
+ * dial: its row in `agency_manual_calls` carries the same four columns
+ * (`dialed_at`, `answered_at`, `bridged_at`, `talk_seconds`) and the same
+ * `webrtc_call_id` correlation, so the two spines are UNION ALLed into one set of
+ * dials before the per-account roll-up and every column keeps one meaning. The two
+ * tables are disjoint by construction (a manual call never writes an attempt), so
+ * the union cannot double-count. `agency_manual_calls` has no `dialed_at` index: the
+ * soft phone's volume is a small fraction of pacing's, and a usage report is not on
+ * a hot path; add one when a plan on real volume says so.
  *
  * ── One window rule for every column ───────────────────────────────────────
  * Half-open `[from, to)` on the ATTEMPT's `dialed_at`. Analysis seconds are
@@ -90,21 +102,32 @@ export class UsageCountsRepository {
   async countByAccount(filter: UsageCountsFilter): Promise<UsageCountsRow[]> {
     const pool = getPool();
     const result = await pool.query<RawUsageCountsRow>(
-      `WITH per_account AS (
-         SELECT a.tenant_id,
-                a.account_id,
-                COUNT(*)                                          AS dials,
-                COUNT(*) FILTER (WHERE a.answered_at IS NOT NULL) AS answered_calls,
-                COUNT(*) FILTER (WHERE a.bridged_at  IS NOT NULL) AS connected_calls,
-                COALESCE(SUM(a.talk_seconds), 0)                  AS talk_seconds,
-                COALESCE(SUM(j.analysis_audio_seconds), 0)        AS analysis_audio_seconds
+      `WITH dials AS (
+         SELECT a.tenant_id, a.account_id, a.answered_at, a.bridged_at, a.talk_seconds, a.webrtc_call_id
            FROM agency_call_attempts a
-           LEFT JOIN dialer_analysis_jobs j ON j.call_id = a.webrtc_call_id
           WHERE a.dialed_at >= $1::timestamptz
             AND a.dialed_at <  $2::timestamptz
             AND ($3::uuid IS NULL OR a.tenant_id  = $3::uuid)
             AND ($4::uuid IS NULL OR a.account_id = $4::uuid)
-          GROUP BY a.tenant_id, a.account_id
+         UNION ALL
+         -- Soft-phone dials, under the same window rule and filters (SP5).
+         SELECT m.tenant_id, m.account_id, m.answered_at, m.bridged_at, m.talk_seconds, m.webrtc_call_id
+           FROM agency_manual_calls m
+          WHERE m.dialed_at >= $1::timestamptz
+            AND m.dialed_at <  $2::timestamptz
+            AND ($3::uuid IS NULL OR m.tenant_id  = $3::uuid)
+            AND ($4::uuid IS NULL OR m.account_id = $4::uuid)
+       ), per_account AS (
+         SELECT d.tenant_id,
+                d.account_id,
+                COUNT(*)                                          AS dials,
+                COUNT(*) FILTER (WHERE d.answered_at IS NOT NULL) AS answered_calls,
+                COUNT(*) FILTER (WHERE d.bridged_at  IS NOT NULL) AS connected_calls,
+                COALESCE(SUM(d.talk_seconds), 0)                  AS talk_seconds,
+                COALESCE(SUM(j.analysis_audio_seconds), 0)        AS analysis_audio_seconds
+           FROM dials d
+           LEFT JOIN dialer_analysis_jobs j ON j.call_id = d.webrtc_call_id
+          GROUP BY d.tenant_id, d.account_id
        )
        SELECT p.tenant_id,
               COALESCE(t.name, p.tenant_id::text)   AS tenant_name,

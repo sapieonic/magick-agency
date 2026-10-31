@@ -27,6 +27,11 @@ import {
   type AgencyContactDetail,
 } from '../../types/agency-spine';
 import type { AgencyCampaign } from '../../types/agency-campaign';
+import type { AgencyManualCallListRow } from '../../types/softphone';
+import { listManualCalls } from '../../api/softphone';
+import { manualCallOutcome } from '../../utils/softphone/callLabels';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { usePermission } from '../../hooks/usePermission';
 import styles from './AgencyContactDetailPage.module.css';
 
 /**
@@ -89,6 +94,26 @@ export function AgencyContactDetailPage() {
   const [moreError, setMoreError] = useState<string | null>(null);
 
   /**
+   * The soft-phone calls that matched this contact (docs/softphone.md §5, SP6): a call an
+   * agent dialled by hand to this number, logged to this campaign, claims the contact
+   * and its outcome settles it — so "why was this number called" has to show those too.
+   * A section of its own, loaded on its own: they are not campaign attempts (no pacing,
+   * no attempt row), and a failure here must not take the attempt history with it.
+   * `null` while loading or where the section is not shown.
+   *
+   * Shown to `agency.supervise` only. `GET /softphone/calls` answers a caller without it
+   * with their OWN calls alone (docs/softphone.md §6), and this page opens from `viewer`
+   * up: below supervise the list would say "no soft-phone call has been made to this
+   * contact" while a colleague's call claimed it. No section beats a wrong one.
+   */
+  const softphoneFlagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const canSupervise = usePermission('agency.supervise');
+  const softphoneOn = softphoneFlagOn && canSupervise;
+  const [manualCalls, setManualCalls] = useState<AgencyManualCallListRow[] | null>(null);
+  const [manualMore, setManualMore] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+
+  /**
    * Which contact the in-flight requests belong to.
    *
    * Nothing cancels a fetch when the operator moves to another contact or
@@ -136,6 +161,24 @@ export function AgencyContactDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!softphoneOn || !contactId || !tenantId || !accountId) return;
+    let cancelled = false;
+    setManualCalls(null);
+    setManualError(null);
+    listManualCalls({ contact_id: contactId, limit: PAGE_SIZE }, tenantId, accountId)
+      .then((page) => {
+        if (cancelled) return;
+        setManualCalls(page.rows);
+        setManualMore(page.next_cursor !== null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setManualError(getErrorMessage(err, 'Could not load this contact’s soft-phone calls.'));
+      });
+    return () => { cancelled = true; };
+  }, [softphoneOn, contactId, tenantId, accountId]);
 
   /**
    * The history pages, and it must.
@@ -428,6 +471,65 @@ export function AgencyContactDetailPage() {
           </div>
         )}
       </section>
+
+      {softphoneOn && (
+        <section className={styles.section} aria-labelledby="contact-softphone-heading" data-testid="contact-softphone-calls">
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle} id="contact-softphone-heading">Soft-phone calls</h2>
+          </div>
+          <p className={styles.mutedNote}>
+            Calls an agent dialled by hand from the soft phone to this number, logged to this
+            campaign. They are not campaign attempts, but a call that claimed this contact settles
+            it with its outcome and counts toward its attempts.
+          </p>
+          {manualError ? (
+            <p className={styles.moreError} role="alert" data-testid="contact-softphone-error">{manualError}</p>
+          ) : manualCalls === null ? (
+            <p className={styles.mutedNote}>Loading…</p>
+          ) : manualCalls.length === 0 ? (
+            <p className={styles.mutedNote} data-testid="contact-softphone-empty">
+              No soft-phone call has been made to this contact.
+            </p>
+          ) : (
+            <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Agent</th>
+                    <th>What happened</th>
+                    <th>This contact</th>
+                    <th>Talk time</th>
+                    <th>Call</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {manualCalls.map((call) => (
+                    <tr key={call.id} data-testid={`contact-softphone-call-${call.id}`}>
+                      <td className={styles.when}>{formatSpineTimestamp(call.created_at)}</td>
+                      <td className={call.agent_name ? undefined : styles.mutedCell}>{call.agent_name ?? 'Unknown agent'}</td>
+                      <td>{manualCallOutcome(call, campaign?.disposition_catalog).text}</td>
+                      <td>{call.contact?.claimed ? 'Claimed by this call' : 'Linked only'}</td>
+                      <td className={styles.numeric}>{formatTalkTime(call.talk_seconds)}</td>
+                      <td>
+                        <Link to={`/agency/softphone/calls/${call.id}`} className={styles.recordingLink}>
+                          Open soft-phone call
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {manualMore && (
+                <p className={styles.mutedNote}>
+                  Showing the latest {manualCalls.length}.{' '}
+                  <Link to="/agency/softphone" className={styles.sectionLink}>All soft-phone calls</Link>
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -53,6 +53,7 @@ Details and next steps: [`status.md`](status.md).
 | [`modules.md`](modules.md) | Every module and file group, what it does, and which test files cover it |
 | [`decisions.md`](decisions.md) | Every decision by ID: settled S1–S8, launch decisions, build decisions B1–B24, rulings Q1–Q9 and later rulings, still open with owner |
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
+| [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |

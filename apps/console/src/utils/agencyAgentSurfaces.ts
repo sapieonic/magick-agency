@@ -36,7 +36,7 @@
  * same agent. Reaching the chooser is what Leave is for.
  */
 
-export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts';
+export type AgentSurfaceId = 'campaigns' | 'performance' | 'attempts' | 'phone';
 
 export interface AgentSurface {
   id: AgentSurfaceId;
@@ -62,6 +62,25 @@ export const AGENT_SURFACES: readonly AgentSurface[] = [
   { id: 'performance', to: '/dialer/performance', label: 'My performance' },
   { id: 'attempts', to: '/dialer/attempts', label: 'My calls' },
 ];
+
+/**
+ * The soft phone (`docs/softphone.md` §7), the fourth screen — shown only when
+ * `agency_softphone_enabled` is on for the account and the caller holds
+ * `agency.softphone.dial`, which is every agent once the flag is on (SP4).
+ *
+ * Kept OUT of {@link AGENT_SURFACES} rather than added to it, for two reasons the
+ * three would not survive: it is not always there (the list above is a fixed
+ * map, and the station's history links are pinned against it), and it is not a
+ * history screen in the first person ("My …") — it is a tool, named as the
+ * product names it. Placed second, after the campaigns it sits beside.
+ */
+export const SOFTPHONE_SURFACE: AgentSurface = { id: 'phone', to: '/dialer/phone', label: 'Soft phone' };
+
+/** The agent's screens for this account: the three, plus the soft phone when it is on for them. */
+export function agentSurfacesFor(options: { softphone: boolean }): readonly AgentSurface[] {
+  if (!options.softphone) return AGENT_SURFACES;
+  return [AGENT_SURFACES[0]!, SOFTPHONE_SURFACE, ...AGENT_SURFACES.slice(1)];
+}
 
 /** The surface at a path, or `null`. Exact match — none of these has children. */
 export function agentSurfaceAt(pathname: string): AgentSurface | null {

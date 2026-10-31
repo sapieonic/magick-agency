@@ -16,7 +16,7 @@ import {
  * `envVar` defaults rather than importing `config/index.js`, so it stays free of
  * the config graph (the service, routes and the dialer runtime all import the registry).
  *
- * The catalog holds the three agency flags, and their definitions are not
+ * The catalog holds the four agency flags, and their definitions are not
  * restated here: each is `defineFlag`'d from `AGENCY_FLAGS` in
  * `@magick-agency/contracts/flags`, which carries the keys, defaults, scopes,
  * env vars, owners, descriptions and comments. `FlagScope` / `FlagType` are the
@@ -104,4 +104,6 @@ export const FLAGS = {
   agency_dialer_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_dialer_enabled),
 
   agency_late_binding: defineFlag<boolean>(AGENCY_FLAGS.agency_late_binding),
+
+  agency_softphone_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_softphone_enabled),
 } as const;

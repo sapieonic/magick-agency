@@ -136,6 +136,13 @@ export interface CallFact {
 export interface CallFactCard {
   title: string;
   facts: CallFact[];
+  /**
+   * Who wrote these facts, said beside the title (`Agent`). Where one call shows
+   * both what a person entered and what the AI extracted — the soft phone's call
+   * details next to the summary's custom dimensions — the reader must not have
+   * to guess which is which.
+   */
+  source?: string;
 }
 
 export interface CallDetailViewProps {
@@ -174,6 +181,8 @@ export interface CallDetailViewProps {
   /** `undefined` when the caller cannot re-run a summary ⇒ no retry button. */
   onRetryAnalysis: (() => Promise<void>) | undefined;
   onReload: () => void;
+  /** The analysis card's source label (`AI`), beside its title. Absent: no label. */
+  analysisSource?: string;
 }
 
 /** Adapt a transcript turn to the shared TranscriptSection's shape. */
@@ -268,6 +277,11 @@ export function FactCard({ card, icon }: { card: CallFactCard; icon: React.React
       <h3 className={styles.cardTitle}>
         <span className={styles.cardTitleIcon}>{icon}</span>
         {card.title}
+        {card.source ? (
+          <span className={styles.sourceBadge} data-source={card.source.toLowerCase()} data-testid="fact-card-source">
+            {card.source}
+          </span>
+        ) : null}
       </h3>
       <div className={styles.infoGrid}>
         {card.facts.map((fact) => (
@@ -294,6 +308,7 @@ export function CallDetailView({
   fetchRecording,
   onRetryAnalysis,
   onReload,
+  analysisSource,
 }: CallDetailViewProps) {
   const conversationLog = call.conversation_log ?? null;
   const transcriptEntries = useMemo(
@@ -441,7 +456,7 @@ export function CallDetailView({
           null/absent status render nothing at all — a call nobody asked to
           summarize shouldn't grow a card explaining that. */}
       {analysisEnabled && call.analysis_status === 'completed' && call.call_analysis && (
-        <AnalysisSection analysis={call.call_analysis} />
+        <AnalysisSection analysis={call.call_analysis} source={analysisSource} />
       )}
 
       {analysisEnabled && needsAnalysisStatusCard(call.analysis_status) && (

@@ -162,6 +162,14 @@ export interface HoldToConfirmButtonProps {
   enabled: boolean;
   /** Visible stated reason when there is nothing to hang up. */
   disabledReason?: string | null;
+  /**
+   * Hold the reason line's height while there is no reason to show, so the
+   * control is exactly as tall enabled as disabled. The action bars set it: their
+   * height must not change between states, and a line that appears only when
+   * there is no call moved the bar — and every column above it — by one line
+   * each time a call started or ended.
+   */
+  reserveReasonLine?: boolean;
   /** Fire-and-forget on the socket. The authoritative end is `released`. */
   onConfirm: () => void;
   /**
@@ -175,6 +183,7 @@ export function HoldToConfirmButton({
   attemptId,
   enabled,
   disabledReason = null,
+  reserveReasonLine = false,
   onConfirm,
   copy = HANGUP_COPY,
 }: HoldToConfirmButtonProps) {
@@ -450,6 +459,11 @@ export function HoldToConfirmButton({
 
       {!enabled && disabledReason ? (
         <span className={styles.blockedReason}>{disabledReason}</span>
+      ) : reserveReasonLine && phase !== 'failed' ? (
+        // The failure line, when there is one, takes the reserved line's place.
+        <span className={styles.blockedReason} aria-hidden="true">
+          {'\u00a0'}
+        </span>
       ) : null}
     </div>
   );

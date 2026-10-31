@@ -54,3 +54,41 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* The soft phone's header row: the same entries, sized for a 56px bar. */
+.headerNav {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+  margin-left: 20px;
+  min-width: 0;
+}
+
+.headerNav .item {
+  padding: 6px 10px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.headerNav .current {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* Not a link while a call would be cut off by leaving: muted, and says why on hover. */
+.locked {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.locked:hover {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+@media (max-width: 1023px) {
+  .headerNav {
+    display: none;
+  }
+}

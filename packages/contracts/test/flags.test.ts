@@ -6,12 +6,13 @@ const EXPECTED = {
   agency_dialer_enabled: { default: false, envVar: 'FF_AGENCY_DIALER', clientExposed: true },
   agency_late_binding: { default: false, envVar: 'FF_AGENCY_LATE_BINDING', clientExposed: undefined },
   agency_call_analysis: { default: false, envVar: 'FF_AGENCY_CALL_ANALYSIS', clientExposed: true },
+  agency_softphone_enabled: { default: false, envVar: 'FF_AGENCY_SOFTPHONE', clientExposed: true },
 } as const;
 
 describe('agency flags', () => {
-  it('are exactly the three keys', () => {
+  it('are exactly the four keys', () => {
     expect(Object.keys(AGENCY_FLAGS).sort()).toEqual([...AGENCY_FLAG_KEYS].sort());
-    expect(AGENCY_FLAG_KEYS).toHaveLength(3);
+    expect(AGENCY_FLAG_KEYS).toHaveLength(4);
   });
 
   it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {
@@ -26,7 +27,11 @@ describe('agency flags', () => {
   });
 
   it('keeps late binding off the client', () => {
-    const map: AgencyClientFlagMap = { agency_dialer_enabled: true, agency_call_analysis: false };
+    const map: AgencyClientFlagMap = {
+      agency_dialer_enabled: true,
+      agency_call_analysis: false,
+      agency_softphone_enabled: false,
+    };
     expect(Object.keys(map)).not.toContain('agency_late_binding');
   });
 

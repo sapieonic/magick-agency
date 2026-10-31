@@ -94,6 +94,20 @@ describe('AgencyRuntime — the hop collapses (in-process equivalence)', () => {
     expect('attemptBatcher' in (runtime.pacing as object)).toBe(false);
   });
 
+  it('registers the queued-break release on the engine: the break queue, released through releaseAgent', async () => {
+    const runtime = new AgencyRuntime(fakeBridge(), null, '');
+    const seam = (runtime.pacing as unknown as {
+      queuedBreakRelease: { hasQueuedBreak(id: string): boolean; release(id: string): Promise<unknown> } | null;
+    }).queuedBreakRelease;
+    expect(seam).not.toBeNull();
+    expect(seam!.hasQueuedBreak('s1')).toBe(false);
+    runtime.breaks.queue('s1', { code: 'soft_phone', label: 'Soft phone' });
+    expect(seam!.hasQueuedBreak('s1')).toBe(true);
+    const release = vi.spyOn(runtime.dialer, 'releaseAgent').mockResolvedValue({ state: 'break', result: 'ok' } as never);
+    await seam!.release('s1');
+    expect(release).toHaveBeenCalledWith('s1');
+  });
+
   it('starts dialer → startup reaper → periodic reaper → pacing, then the gauges, and reaches no network', async () => {
     const runtime = new AgencyRuntime(fakeBridge(), null, '');
     const order: string[] = [];

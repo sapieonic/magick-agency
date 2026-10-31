@@ -7,6 +7,8 @@ import { useAgencyAudio, type AgencyAudioState } from '../../hooks/useAgencyAudi
 import { useAgencyCues, type CueFlash } from '../../hooks/useAgencyCues';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import { useServerClock, type ServerClock } from '../../hooks/useServerClock';
+import { audioTarget } from '../../utils/softphone/audioTarget';
+import { SOFTPHONE_BREAK_REASON, SOFTPHONE_BREAK_REASON_LABEL } from '../../types/softphone';
 import { useAgencyNotes } from '../../hooks/useAgencyNotes';
 import { useBreakQueue } from '../../hooks/useBreakQueue';
 import { useDispositionSubmit } from '../../hooks/useDispositionSubmit';
@@ -121,6 +123,11 @@ export interface AgencyConsoleState {
   cancelling: boolean;
   cancelFailed: boolean;
   breakAlreadyStarted: boolean;
+  /** The queued break is the soft-phone switch (SP7): the pill says "Switching after this call". */
+  pendingSoftphone: boolean;
+  /** Switch this campaign session to the soft phone (`POST /sessions/:id/softphone`). */
+  requestSoftphone: () => void;
+  softphoneRejection: string | null;
 
   /** Non-blocking line in the idle slot after the next call completes. */
   lostDispositionNotice: string | null;
@@ -216,16 +223,25 @@ export function useAgencyConsole(
    * `stationIsGone`, from the pad gate — see `utils/agencyPadGate` for why
    * `disconnected` is in it and `reconnecting` is not.
    */
+  /*
+   * ── The soft phone rides the same gates ─────────────────────────────────────
+   * A campaign session switched to the soft phone (SP7) places its calls on THIS
+   * socket, so the same microphone and playback serve them: `audioTarget` arms on
+   * a manual call's dial and opens the uplink on its `bridged_at`, exactly as it
+   * does for an attempt's `reserved` and `bridged`. One `sync`, one owner — a
+   * second effect syncing the soft phone would fight this one for the mic.
+   */
+  const target = audioTarget({ stationIsGone, live, manualCall: station.manualCall });
   useEffect(() => {
     audio.sync({
-      attemptId: stationIsGone ? null : (live?.attempt.attempt_id ?? null),
-      bridged: !stationIsGone && live?.bridgedAt != null,
+      attemptId: target.id,
+      bridged: target.bridged,
       send: station.sendMedia,
     });
     // `audio.sync` and not `audio`: the hook returns a fresh object each render,
     // so depending on the whole thing would re-run this on every repaint of the
     // console. `sync` itself is memoized and stable for the shift.
-  }, [audio.sync, stationIsGone, live?.attempt.attempt_id, live?.bridgedAt, station.sendMedia]);
+  }, [audio.sync, target.id, target.bridged, station.sendMedia]);
 
   const [announcement, setAnnouncement] = useState('');
   const [presenceBusy, setPresenceBusy] = useState(false);
@@ -361,7 +377,12 @@ export function useAgencyConsole(
   );
 
   const labelFor = (code: string | null) =>
-    code === null ? null : (breaks.breakReasons.find((r) => r.code === code)?.label ?? code);
+    code === null
+      ? null
+      : code === SOFTPHONE_BREAK_REASON
+        // Reserved: never in a campaign's `break_reasons`, so it has no catalog label.
+        ? SOFTPHONE_BREAK_REASON_LABEL
+        : (breaks.breakReasons.find((r) => r.code === code)?.label ?? code);
 
   return {
     station,
@@ -408,6 +429,9 @@ export function useAgencyConsole(
     cancelling: breaks.cancelling,
     cancelFailed: breaks.cancelFailed,
     breakAlreadyStarted: breaks.breakAlreadyStarted,
+    pendingSoftphone: breaks.pendingBreakCode === SOFTPHONE_BREAK_REASON,
+    requestSoftphone: breaks.requestSoftphone,
+    softphoneRejection: breaks.softphoneRejection,
     lostDispositionNotice: disposition.lostDispositionNotice,
     announcement,
   };

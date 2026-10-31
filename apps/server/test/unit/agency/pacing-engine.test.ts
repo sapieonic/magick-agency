@@ -36,7 +36,7 @@ const { repos, settings } = vi.hoisted(() => ({
       unclaim: vi.fn().mockResolvedValue(undefined),
       unclaimMany: vi.fn().mockResolvedValue(undefined),
     },
-    attempt: { countLive: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
+    attempt: { countLive: vi.fn().mockResolvedValue(0), countLiveForAccount: vi.fn().mockResolvedValue(0), create: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     // `setState` mirrors the winning reservation durably — the
     // supervisor's agents-by-state breakdown cannot see `reserved` otherwise.
     session: {
@@ -157,6 +157,7 @@ beforeEach(() => {
   repos.campaign.countOutstanding.mockResolvedValue(0);
   repos.contact.claimDialable.mockResolvedValue([]);
   repos.attempt.countLive.mockResolvedValue(0);
+  repos.attempt.countLiveForAccount.mockResolvedValue(0);
   repos.attempt.create.mockImplementation(async (p: any) => ({
     id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: p.attemptNumber,
   }));
@@ -221,7 +222,7 @@ describe('PacingEngine tick arithmetic', () => {
     // only to be refused by the guard, every tick, forever, whenever agents
     // outnumber the account limit.
     settings.getMaxConcurrentCalls.mockResolvedValue(3);
-    repos.attempt.countLive.mockResolvedValue(3); // all three slots are live calls
+    repos.attempt.countLiveForAccount.mockResolvedValue(3); // all three slots are live calls
     repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }, { id: 's3' }]);
     const { e } = engine(
       makeStations(['s1', 's2', 's3']),
@@ -250,7 +251,7 @@ describe('PacingEngine tick arithmetic', () => {
     // Two agents, one mid-call. The idle one is free to take a call and the
     // account ceiling is nowhere near — so exactly one dial.
     settings.getMaxConcurrentCalls.mockResolvedValue(10);
-    repos.attempt.countLive.mockResolvedValue(1); // s1's live call
+    repos.attempt.countLiveForAccount.mockResolvedValue(1); // s1's live call
     repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
     const { e } = engine(
       makeStations(['s1', 's2']),
@@ -266,7 +267,7 @@ describe('PacingEngine tick arithmetic', () => {
   it('keeps dialling for the idle majority while a minority is busy', async () => {
     // Four agents, one busy. Three idle ⇒ three dials, not `3 - 1 = 2`.
     settings.getMaxConcurrentCalls.mockResolvedValue(10);
-    repos.attempt.countLive.mockResolvedValue(1);
+    repos.attempt.countLiveForAccount.mockResolvedValue(1);
     repos.session.findLiveForCampaign.mockResolvedValue([
       { id: 's1' }, { id: 's2' }, { id: 's3' }, { id: 's4' },
     ]);
@@ -284,7 +285,7 @@ describe('PacingEngine tick arithmetic', () => {
     // account limit. Ceiling 2, one call already up, two idle agents ⇒ one dial,
     // because the ceiling — not the agent count — is what binds here.
     settings.getMaxConcurrentCalls.mockResolvedValue(2);
-    repos.attempt.countLive.mockResolvedValue(1);
+    repos.attempt.countLiveForAccount.mockResolvedValue(1);
     repos.session.findLiveForCampaign.mockResolvedValue([
       { id: 's1' }, { id: 's2' }, { id: 's3' },
     ]);
@@ -301,7 +302,7 @@ describe('PacingEngine tick arithmetic', () => {
     // Ceiling 1, one live call, another agent idle and waiting. Correctly zero —
     // this is the account limit doing its job, not the double-count.
     settings.getMaxConcurrentCalls.mockResolvedValue(1);
-    repos.attempt.countLive.mockResolvedValue(1);
+    repos.attempt.countLiveForAccount.mockResolvedValue(1);
     repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
     const { e } = engine(
       makeStations(['s1', 's2']),
@@ -310,6 +311,39 @@ describe('PacingEngine tick arithmetic', () => {
 
     await e.tickOnce('camp-1');
     expect(repos.contact.claimDialable).not.toHaveBeenCalled();
+  });
+
+  // ── The soft phone (docs/softphone.md §2, §4.1) ──────────────────────────
+  it('headroom is the WHOLE ACCOUNT\'s live calls: a live manual call shrinks the dials', async () => {
+    // Ceiling 3, three idle agents. One campaign attempt elsewhere in the account
+    // plus one live soft-phone call hold two slots, so ONE dial — a per-campaign
+    // count would have seen neither and dialled three into a full carrier.
+    settings.getMaxConcurrentCalls.mockResolvedValue(3);
+    repos.attempt.countLive.mockResolvedValue(0); // nothing live on THIS campaign
+    repos.attempt.countLiveForAccount.mockResolvedValue(2);
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }, { id: 's3' }]);
+    const { e } = engine(
+      makeStations(['s1', 's2', 's3']),
+      makeAgents({ s1: 'available', s2: 'available', s3: 'available' }),
+    );
+
+    await e.tickOnce('camp-1');
+    expect(repos.attempt.countLiveForAccount).toHaveBeenCalledWith('t1', 'a1');
+    expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 1);
+  });
+
+  it('never reserves an agent who is on the soft phone (a break)', async () => {
+    // The soft phone IS a break: pacing reserves only `available`, so the
+    // switched agent is not a candidate, by construction.
+    settings.getMaxConcurrentCalls.mockResolvedValue(10);
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    const { e } = engine(
+      makeStations(['s1', 's2']),
+      makeAgents({ s1: 'break', s2: 'available' }),
+    );
+
+    await e.tickOnce('camp-1');
+    expect(repos.contact.claimDialable).toHaveBeenCalledWith('camp-1', 1);
   });
 
   it('clamps to zero — and REPORTS zero — when occupied exceeds the ceiling', async () => {
@@ -331,7 +365,7 @@ describe('PacingEngine tick arithmetic', () => {
     const idle = vi.spyOn(metrics.agencyTickIdleTotal, 'inc');
     try {
       settings.getMaxConcurrentCalls.mockResolvedValue(1);
-      repos.attempt.countLive.mockResolvedValue(4);
+      repos.attempt.countLiveForAccount.mockResolvedValue(4);
       repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
       const { e } = engine(
         makeStations(['s1', 's2']),
@@ -440,6 +474,55 @@ describe('PacingEngine reserve-before-dial', () => {
     await e.tickOnce('camp-1');
 
     expect(agents.set).toHaveBeenCalledWith('s2', 'available');
+  });
+
+  it.each([
+    { code: 'lunch', label: 'Lunch' },
+    { code: 'soft_phone', label: 'Soft phone' },
+  ])('a $code break queued while the agent was reserved is applied when pacing hands them back, not lost', async (reason) => {
+    // The agent pressed Break (or Switch to soft phone) while the tick held them
+    // `reserved`, so the route queued it (`breakMustWait`). The roster then ran dry
+    // and the tick returned them as surplus: a plain `available` write would strand
+    // the queue until their next call ended. The real release path applies it.
+    const { BreakRegistry } = await import('@magick-agency/domain/break-manager');
+    const { AgencyDialer } = await import('../../../src/agency/agency-dialer.js');
+    const breaks = new BreakRegistry();
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    agents.reserve.mockImplementation(async (id: string) => {
+      if (id === 's2') breaks.queue('s2', reason);
+      return 'reserved';
+    });
+    const stations = { ...makeStations(['s1', 's2']), send: vi.fn(() => true) };
+    const dialer = new AgencyDialer({} as any, stations as any, agents as any, {} as any, breaks);
+    const { e } = engine(stations, agents, vi.fn());
+    e.registerQueuedBreakRelease({
+      hasQueuedBreak: (id) => breaks.peek(id) !== null,
+      release: (id) => dialer.releaseAgent(id),
+    });
+
+    await e.tickOnce('camp-1');
+
+    expect(agents.set).not.toHaveBeenCalledWith('s2', 'available');
+    expect(agents.set).toHaveBeenCalledWith('s2', 'break', expect.objectContaining({ leaseMs: expect.any(Number) }));
+    expect(repos.session.setState).toHaveBeenCalledWith('s2', 'break', reason.code);
+    expect(stations.send).toHaveBeenCalledWith('s2', expect.objectContaining({ event: 'agent_state', state: 'break', break_reason: reason.code }));
+    expect(breaks.peek('s2')).toBeNull(); // consumed exactly once
+  });
+
+  it('without a queued break the surplus return stays the one Redis write (no mirror, no frame)', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    const release = vi.fn();
+    const { e } = engine(makeStations(['s1', 's2']), agents, vi.fn());
+    e.registerQueuedBreakRelease({ hasQueuedBreak: () => false, release });
+
+    await e.tickOnce('camp-1');
+
+    expect(agents.set).toHaveBeenCalledWith('s2', 'available');
+    expect(release).not.toHaveBeenCalled();
   });
 
   it('reserves the longest-idle agent first, and does not let the pool order decide', async () => {

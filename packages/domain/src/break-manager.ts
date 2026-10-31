@@ -1,4 +1,4 @@
-import type { AgencyBreakReason } from '@magick-agency/contracts/agency';
+import { SOFTPHONE_BREAK_REASON, type AgencyBreakReason } from '@magick-agency/contracts/agency';
 
 /**
  * Break / not-ready with reason codes.
@@ -49,12 +49,18 @@ export function resolveBreakReasons(
   // Defensive on shape as well as emptiness: the column is CHECKed to be a JSON
   // array, but nothing constrains its ELEMENTS, so a malformed catalog must degrade
   // to the built-ins rather than 500 every break request on this campaign.
+  //
+  // The soft phone's reserved reason is never one of them, whatever the column holds:
+  // it is entered only through the soft-phone switch, which checks the flag and audits
+  // the switch (SP7). Listed here, `POST /sessions/:id/break` would put the agent on
+  // the soft phone with neither; dropped, it refuses it as `unknown_break_reason`.
   if (!Array.isArray(configured)) return [...DEFAULT_BREAK_REASONS];
   const valid = configured.filter(
     (r): r is AgencyBreakReason =>
       !!r && typeof r === 'object'
       && typeof (r as AgencyBreakReason).code === 'string'
-      && (r as AgencyBreakReason).code.length > 0,
+      && (r as AgencyBreakReason).code.length > 0
+      && (r as AgencyBreakReason).code !== SOFTPHONE_BREAK_REASON,
   );
   return valid.length > 0 ? valid : [...DEFAULT_BREAK_REASONS];
 }

@@ -3,6 +3,7 @@ import { authMiddleware } from '../middleware/auth.middleware.js';
 import type { AgencyRuntime } from '../../agency/runtime.js';
 import { registerSessionRoutes } from './agency/sessions.js';
 import { registerAttemptRoutes } from './agency/attempts.js';
+import { registerSoftphoneRoutes } from './agency/softphone.js';
 
 export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // This module is the session and attempt handlers only, registered on the
@@ -19,5 +20,7 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     // The handlers, by family (`./agency/`), inside this one authenticated scope.
     await registerSessionRoutes(sub, runtime);
     await registerAttemptRoutes(sub, runtime);
+    // The soft phone (docs/softphone.md §6), and the switch of a campaign session to it.
+    await registerSoftphoneRoutes(sub, runtime);
   });
 }

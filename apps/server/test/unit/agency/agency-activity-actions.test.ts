@@ -25,7 +25,19 @@ import { PLATFORM_AUDIT_ACTIONS } from '../../../src/audit/platform/catalog.js';
  * catalog's other entries are `schedule.*`/`recurring_schedule.*`, which carry
  * no campaign scope and would be a filter that always returns nothing.
  */
-const CAMPAIGN_SCOPED = /^(agency_|dnc_)/;
+const CAMPAIGN_SCOPED_PREFIX = /^(agency_|dnc_)/;
+
+/**
+ * The `agency_*` actions that are ACCOUNT-wide and never carry a campaign: the
+ * soft-phone settings (docs/softphone.md §6). Offering one here would be a filter
+ * that always returns nothing, so the module's type narrows it out and this list
+ * states it for the runtime checks.
+ */
+const ACCOUNT_WIDE: ReadonlySet<string> = new Set(['agency_softphone_settings.updated']);
+
+const CAMPAIGN_SCOPED = {
+  test: (action: string) => CAMPAIGN_SCOPED_PREFIX.test(action) && !ACCOUNT_WIDE.has(action),
+};
 
 const served = new Set(CAMPAIGN_ACTIVITY_ACTIONS.map((action) => action.value));
 
@@ -85,6 +97,26 @@ describe('the campaign activity action vocabulary', () => {
 
     expect(schedulerActions.length).toBeGreaterThan(0);
     expect(schedulerActions.filter((action) => (served as ReadonlySet<string>).has(action))).toEqual([]);
+  });
+
+  it('leaves the account-wide soft-phone settings action out', () => {
+    for (const action of ACCOUNT_WIDE) {
+      expect((PLATFORM_AUDIT_ACTIONS as readonly string[]).includes(action), action).toBe(true);
+      expect((served as ReadonlySet<string>).has(action), action).toBe(false);
+    }
+  });
+
+  /**
+   * SP7: a supervisor reads the campaign's trail to see an agent switch to the soft
+   * phone and back, and the soft-phone calls logged to the campaign, including the
+   * ones the reaper closed.
+   */
+  it('offers the soft-phone switch, the tagged soft-phone calls and the reaper\'s closes', () => {
+    for (const action of [
+      'agency_session.softphone_started', 'agency_session.softphone_ended',
+      'agency_manual_call.placed', 'agency_manual_call.dispositioned',
+      'agency_manual_call.orphaned', 'agency_manual_call.lapsed',
+    ]) expect(served.has(action as never), action).toBe(true);
   });
 
   /**

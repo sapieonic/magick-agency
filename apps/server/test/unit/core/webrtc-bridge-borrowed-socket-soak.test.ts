@@ -115,8 +115,7 @@ const BRIDGED = {
   accountId: 'a1',
   callerId: '+14155550100',
   destinationPhone: '+14155550199',
-  campaignId: 'camp-1',
-  agencyAttemptId: 'att-1',
+  correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-1' },
 };
 
 /** ~8 hours at 1.6 min/call. The real load a station socket sees. */
@@ -184,7 +183,7 @@ describe('borrowed station socket — 8-hour shift soak', () => {
     for (let i = 1; i <= SHIFT_ATTEMPTS; i++) {
       await mgr.createBridgedCall({
         ...BRIDGED,
-        agencyAttemptId: `att-${i}`,
+        correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: `att-${i}` },
         browserSocket: ws as any,
       });
       midAttempt.push(Object.fromEntries(EVENTS.map((e) => [e, ws.listenerCount(e)])));

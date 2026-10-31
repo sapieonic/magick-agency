@@ -70,6 +70,8 @@ const { repos } = vi.hoisted(() => ({
     session: { findById: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn() },
   },
 }));
+const { accounts } = vi.hoisted(() => ({ accounts: { findByIdInTenant: vi.fn() } }));
+vi.mock('@magick-agency/db/repositories/account.repository', () => ({ accountRepository: accounts }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAttemptRepository: repos.attempt,
   agencyCampaignRepository: repos.campaign,
@@ -108,6 +110,8 @@ function makeRuntime() {
     agents: { get: agentsGet, set: vi.fn(), clear: vi.fn() },
     wrapup: { stateFor: vi.fn(() => null) },
     stations: { send: vi.fn(() => true), attach: vi.fn(), detach: vi.fn(), isLocallyOwned: vi.fn(() => true) },
+    // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
+    softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
     dialer: { hasLiveAttempt: vi.fn(() => false), noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null) },
     breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false) },
     tokens: { mint, verifyAndConsume: vi.fn() },
@@ -140,7 +144,66 @@ beforeEach(async () => {
     id === 'camp-new' ? REQUESTED : id === 'camp-old' ? OTHER : null);
   mint.mockResolvedValue({ token: 'tok', expiresAt: new Date('2026-08-16T12:02:00.000Z') });
   agentsGet.mockResolvedValue(null);
+  accounts.findByIdInTenant.mockImplementation(async (id: string, tenantId: string) =>
+    id === 'a2' && tenantId === 't1' ? { id: 'a2', tenant_id: 't1', name: 'North Region' } : null);
   app = await buildApp();
+});
+
+describe('POST /sessions — agent live on the soft phone', () => {
+  it('409s session_on_softphone with the session, naming no campaign', async () => {
+    // A soft-phone session (docs/softphone.md) holds the agent's one live session in
+    // the tenant and has no campaign, so `session_on_other_campaign` has nothing to
+    // name. The remedy is leaving the soft phone.
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_campaign',
+      session: liveSession({ kind: 'softphone', campaign_id: null, break_reason: 'soft_phone' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict',
+      code: 'session_on_softphone',
+      message: expect.stringMatching(/soft phone/i),
+      session_id: 'sess-old',
+      account_id: 'a1',
+      account_name: null,
+    });
+    // No campaign lookup for a NULL id, no token, no state touched.
+    expect(repos.campaign.findById).toHaveBeenCalledTimes(1);
+    expect(repos.campaign.findById).toHaveBeenCalledWith('camp-new');
+    expect(mint).not.toHaveBeenCalled();
+    expect(repos.session.setState).not.toHaveBeenCalled();
+  });
+
+  it('names the sibling account a soft-phone session is in, where the console leaves it', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'on_softphone',
+      session: liveSession({ account_id: 'a2', kind: 'softphone', campaign_id: null, break_reason: 'soft_phone' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      code: 'session_on_softphone', session_id: 'sess-old', account_id: 'a2', account_name: 'North Region',
+    });
+    expect(accounts.findByIdInTenant).toHaveBeenCalledWith('a2', 't1');
+  });
+
+  it('a failed account-name read still answers the 409, with the account id', async () => {
+    accounts.findByIdInTenant.mockRejectedValue(new Error('db down'));
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'on_softphone',
+      session: liveSession({ account_id: 'a2', kind: 'softphone', campaign_id: null, break_reason: 'soft_phone' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ code: 'session_on_softphone', account_id: 'a2', account_name: null });
+  });
 });
 
 describe('POST /sessions — agent already live on another campaign', () => {

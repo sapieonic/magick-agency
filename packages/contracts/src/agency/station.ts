@@ -7,6 +7,7 @@
 
 import type { AgencyStationWrapupFrame, AgencyWrapupState } from './actions';
 import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, AgencyCampaignStatus } from './enums';
+import type { AgencyStationManualCallFrame } from './softphone';
 
 // ─── The station socket envelope ────────────────────────────────────────────
 //
@@ -94,7 +95,9 @@ export type AgencyStationServerFrame =
   | AgencyStationErrorFrame
   | AgencyStationBridgeStatusFrame
   | AgencyStationBridgeEndedFrame
-  | AgencyStationMediaFrame;
+  | AgencyStationMediaFrame
+  // SP: a soft-phone call's every state change (`./softphone.ts`).
+  | AgencyStationManualCallFrame;
 
 /**
  * Sent once, immediately on socket open, after session rehydration.

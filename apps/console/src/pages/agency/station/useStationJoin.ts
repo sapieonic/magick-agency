@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createAgencySession, leaveAgencySession } from '../../../api/agency';
+import { closeSoftphoneSession } from '../softphone/closeSoftphoneSession';
 import { useMountedRef } from '../../../hooks/useMountedRef';
+import { errorBody, errorCode } from '../../../utils/agencyErrors';
 import {
   conflictIsMidCall,
   joinConflictFallbackSentence,
@@ -42,6 +44,25 @@ import type {
 export interface StationJoin {
   bootstrap: AgencySessionBootstrap | null;
   joinError: string | null;
+  /**
+   * 409 `session_on_softphone`: the agent's live session is a soft-phone session
+   * (`docs/softphone.md` §2), which has no campaign to name the way
+   * `session_on_other_campaign` does. The remedy is closing the soft phone.
+   */
+  onSoftphoneElsewhere: boolean;
+  /**
+   * The soft-phone screen's one-click remedy: leave that session
+   * (`POST /sessions/:id/leave`, which works on a soft-phone session) and join
+   * this campaign. See `closeSoftphoneAndJoin` below.
+   */
+  closeSoftphoneAndJoin: () => void;
+  closingSoftphone: boolean;
+  closeSoftphoneFailure: string | null;
+  /**
+   * The soft phone still holds a call — live, or ended and owing its outcome — so
+   * it was not closed: the agent finishes it there first.
+   */
+  softphoneCallPending: boolean;
   joinConflict: AgencySessionConflict | null;
   switchConfirm: boolean;
   switching: boolean;
@@ -65,6 +86,15 @@ export function useStationJoin({
 }): StationJoin {
   const [bootstrap, setBootstrap] = useState<AgencySessionBootstrap | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [onSoftphoneElsewhere, setOnSoftphoneElsewhere] = useState(false);
+  /**
+   * `session_on_softphone`'s `session_id` and `account_id`: the session Close the soft
+   * phone and join leaves, and the account it is in (a sibling one, possibly).
+   */
+  const softphoneSessionRef = useRef<SoftphoneSessionRef>(NO_SOFTPHONE_SESSION);
+  const [closingSoftphone, setClosingSoftphone] = useState(false);
+  const [closeSoftphoneFailure, setCloseSoftphoneFailure] = useState<string | null>(null);
+  const [softphoneCallPending, setSoftphoneCallPending] = useState(false);
   /**
    * The `409 session_on_other_campaign` refusal, kept apart from `joinError`.
    *
@@ -175,6 +205,12 @@ export function useStationJoin({
          * message — the API states the campaign and their state there precisely so
          * this screen can name both. See `agencyJoinConflict.ts`.
          */
+        if (errorCode(err) === 'session_on_softphone') {
+          softphoneSessionRef.current = softphoneSessionOf(err);
+          setOnSoftphoneElsewhere(true);
+          trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
+          return;
+        }
         const conflict = parseJoinConflict(err);
         if (conflict) {
           rememberLiveSessionFromConflict(tenantId, conflict);
@@ -404,6 +440,86 @@ export function useStationJoin({
     }
   }, [joinConflict, tenantId, accountId, campaignId]);
 
+  /**
+   * "Close the soft phone and join": leave the agent's soft-phone session, then
+   * join this campaign — the soft-phone twin of `confirmSwitch`, in two requests
+   * because `session_on_softphone` already carries the `session_id`.
+   *
+   * The close is `closeSoftphoneSession`'s, the same one the soft phone's own "Close
+   * it and open the soft phone here" runs: it closes nothing while a call there is
+   * live or owes its outcome (`softphoneCallPending`, which the screen turns into
+   * "finish it on the soft phone"), and it reads and leaves the session with the
+   * session's OWN account, the refusal's `account_id` (one live session per agent
+   * per tenant, so it may be in a sibling account, and `leave` is scoped to it).
+   * A session that is already gone (`session_ended`, 404) is what the close wanted,
+   * so the join goes ahead.
+   */
+  const closeSoftphoneAndJoin = useCallback(async () => {
+    if (closingSoftphone || !tenantId || !accountId) return;
+    setClosingSoftphone(true);
+    setCloseSoftphoneFailure(null);
+    setSoftphoneCallPending(false);
+    const done = (failure: string | null, pending = false) => {
+      if (!mountedRef.current) return;
+      setClosingSoftphone(false);
+      setCloseSoftphoneFailure(failure);
+      setSoftphoneCallPending(pending);
+    };
+
+    const closed = await closeSoftphoneSession({
+      tenantId,
+      accountId,
+      sessionId: softphoneSessionRef.current.sessionId,
+      sessionAccountId: softphoneSessionRef.current.accountId,
+    });
+    if (closed.kind === 'call_pending') {
+      done(null, true);
+      return;
+    }
+    if (closed.kind === 'no_session') {
+      done(SOFTPHONE_CLOSE_NO_SESSION_COPY);
+      return;
+    }
+    if (closed.kind === 'failed') {
+      done(closed.message);
+      return;
+    }
+    softphoneSessionRef.current = NO_SOFTPHONE_SESSION;
+
+    try {
+      const session = await createAgencySession(campaignId, tenantId, accountId);
+      rememberLiveSessionFromBootstrap(tenantId, session);
+      if (!mountedRef.current) return;
+      setClosingSoftphone(false);
+      setOnSoftphoneElsewhere(false);
+      setBootstrap(session);
+    } catch (err: unknown) {
+      if (errorCode(err) === 'session_on_softphone') {
+        // Opened again meanwhile (another window): this screen still describes it.
+        softphoneSessionRef.current = softphoneSessionOf(err);
+        done(SOFTPHONE_REOPENED_COPY);
+        return;
+      }
+      const conflict = parseJoinConflict(err);
+      if (conflict) rememberLiveSessionFromConflict(tenantId, conflict);
+      if (!mountedRef.current) return;
+      setClosingSoftphone(false);
+      setOnSoftphoneElsewhere(false);
+      if (conflict) {
+        setJoinConflict(conflict);
+        return;
+      }
+      // The soft phone IS closed: the ordinary join screen is the honest state,
+      // as for `confirmSwitch`'s failed rejoin.
+      const detail = err instanceof Error ? err.message : null;
+      setJoinError(
+        detail
+          ? `Closed the soft phone, but couldn’t join this campaign — ${detail}`
+          : 'Closed the soft phone, but couldn’t join this campaign. Try again.',
+      );
+    }
+  }, [closingSoftphone, tenantId, accountId, campaignId, mountedRef]);
+
   const beginSwitch = useCallback(() => {
     // A fresh attempt at a (possibly brand-new, post-swap)
     // conflict always starts from scratch.
@@ -426,6 +542,11 @@ export function useStationJoin({
   return {
     bootstrap,
     joinError,
+    onSoftphoneElsewhere,
+    closeSoftphoneAndJoin: () => void closeSoftphoneAndJoin(),
+    closingSoftphone,
+    closeSoftphoneFailure,
+    softphoneCallPending,
     joinConflict,
     switchConfirm,
     switching,
@@ -434,6 +555,29 @@ export function useStationJoin({
     confirmSwitch,
     cancelSwitch,
   };
+}
+
+/** `session_on_softphone` named no session and the soft phone's bootstrap had none either. */
+export const SOFTPHONE_CLOSE_NO_SESSION_COPY =
+  'We couldn’t find your soft-phone session to close. Open the soft phone and close it there.';
+
+/** The soft phone was opened again (another window) between the close and the join. */
+export const SOFTPHONE_REOPENED_COPY =
+  'The soft phone was opened again, maybe in another window. Close it there, or try again.';
+
+/** The soft-phone session a `session_on_softphone` refusal named, and its account. */
+interface SoftphoneSessionRef {
+  sessionId: string | null;
+  accountId: string | null;
+}
+
+const NO_SOFTPHONE_SESSION: SoftphoneSessionRef = { sessionId: null, accountId: null };
+
+/** The `session_id` and `account_id` on a `session_on_softphone` refusal; null for either it lacks. */
+function softphoneSessionOf(err: unknown): SoftphoneSessionRef {
+  const body = errorBody(err) as { session_id?: unknown; account_id?: unknown } | null;
+  const text = (v: unknown) => (typeof v === 'string' && v.length > 0 ? v : null);
+  return { sessionId: text(body?.session_id), accountId: text(body?.account_id) };
 }
 
 export function useLiveSessionTouch({

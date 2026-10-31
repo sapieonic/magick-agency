@@ -9,18 +9,32 @@ import { createChildLogger } from '@magick-agency/observability';
 import { agencyAgentSessionRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
+import { onSoftphoneBreak, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
+import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
   AgencyActionErrorResponse,
+  AgencyAgentState,
   AgencyCreateSessionRequest,
+  AgencyManualCall,
   AgencySessionBootstrap,
   AgencySessionCampaignConflict,
   AgencySessionStateResponse,
+  AgencySoftphoneCallPendingRefusal,
+  AgencySoftphoneErrorResponse,
+  AgencySoftphoneSessionOnSoftphoneRefusal,
   AgencyStationTokenResponse,
 } from '@magick-agency/contracts/agency';
-import { requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
+import { isCampaignSession } from '../../../db/models/agency.model.js';
+import { accountNameInTenant, requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
+import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
+
+/** The `softphone_audit` key for an answer that left the soft phone, else nothing. */
+function exitAudit(left: boolean, audit: SoftphoneSessionExitAudit): Record<string, SoftphoneSessionExitAudit> {
+  return left ? { [SOFTPHONE_SESSION_AUDIT_KEY]: audit } : {};
+}
 
 /**
  * Registered by `agencyRoutes` inside its authenticated scope (`sub`, the one carrying
@@ -64,13 +78,30 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // reasoning). Refused with the old campaign NAMED: an agent who is told
     // only "conflict" has no way to find the station they left open.
     if (!join.ok) {
+      // The agent's live session is a soft-phone session (docs/softphone.md): there
+      // is no campaign to name in `session_on_other_campaign`, so it gets its own
+      // 409, whose remedy is leaving the soft phone.
+      // Named with the account it is in, which may be a sibling of this one: `leave`
+      // is scoped to the session's account, so the console closes it with that one.
+      const liveSession = join.session;
+      if (!isCampaignSession(liveSession)) {
+        const refusal: AgencySoftphoneSessionOnSoftphoneRefusal = {
+          error: 'Conflict',
+          code: 'session_on_softphone',
+          message: 'You are on the soft phone. Leave the soft phone before joining a campaign — an agent can hold only one live station at a time.',
+          session_id: liveSession.id,
+          account_id: liveSession.account_id,
+          account_name: await accountNameInTenant(liveSession.account_id, liveSession.tenant_id),
+        };
+        return reply.code(409).send(refusal);
+      }
       // `.catch` because this lookup exists ONLY to make the refusal readable.
       // Letting it reject would convert a 409 the agent can act on into a 500
       // they cannot — and `campaign_id` below already carries everything the
       // console needs to route them.
-      const other = await agencyCampaignRepository.findById(join.session.campaign_id)
+      const other = await agencyCampaignRepository.findById(liveSession.campaign_id)
         .catch((err) => {
-          log.warn({ err, campaignId: join.session.campaign_id }, 'Could not resolve conflicting campaign name');
+          log.warn({ err, campaignId: liveSession.campaign_id }, 'Could not resolve conflicting campaign name');
           return null;
         });
       // Redis, not the row — the row is a durable mirror and this field is what
@@ -79,7 +110,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // key: no key means no lease, so nothing is in flight and the mirror is
       // then the closest truthful reading. A 500 here would hide a conflict the
       // agent can actually resolve behind one they cannot.
-      const live = await runtime.agents.get(join.session.id);
+      const live = await runtime.agents.get(liveSession.id);
       // ── Scoped to the TENANT, and deliberately not to the account ─────────
       // `findById` is unscoped, so the name has to be checked against something
       // here. The right scope is the constraint's scope: this session is the
@@ -96,7 +127,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // `ON DELETE CASCADE`, so a live session outlives its campaign never — and
       // is here because a TypeError on the error path would turn an actionable
       // 409 into an opaque 500.
-      const otherName = other && other.tenant_id === join.session.tenant_id
+      const otherName = other && other.tenant_id === liveSession.tenant_id
         ? other.name
         : 'another campaign';
       const conflict: AgencySessionCampaignConflict = {
@@ -111,13 +142,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         message:
           `You are still joined to "${otherName}". ` +
           `Leave that station before joining another campaign — an agent can hold only one live station at a time.`,
-        campaign_id: join.session.campaign_id,
+        campaign_id: liveSession.campaign_id,
         campaign_name: otherName,
-        state: live?.state ?? join.session.state,
+        state: live?.state ?? liveSession.state,
       };
       log.warn({
         agentUserId: body.agent_user_id, requestedCampaignId: campaign.id,
-        liveCampaignId: join.session.campaign_id, state: conflict.state,
+        liveCampaignId: liveSession.campaign_id, state: conflict.state,
       }, 'Agency join refused — agent already live on another campaign');
       return reply.code(409).send(conflict);
     }
@@ -149,7 +180,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // after a page reload, mid-call, would have `available` written over their
     // live `on_call` lease and the next tick would reserve them for a second
     // call. Nothing may derive availability from the durable mirror.
-    const state = await runtime.rehydrateAgent(session.id);
+    const state = await runtime.rehydrateAgent(session.id, session);
 
     const minted = await runtime.tokens.mint(session.id);
 
@@ -209,6 +240,14 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/available', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // A soft-phone session can never be `available` (docs/softphone.md §2, §6).
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign to go available on.',
+      };
+      return reply.code(409).send(err);
+    }
     // Only an agent whose socket is actually attached may go available — the
     // whole point of the break-on-return rule (an agent with no live lease comes
     // back on `break`, never `available`; see `rehydrateAgent`).
@@ -309,10 +348,49 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // fastest wrap-ups would otherwise be missing from entirely.
     runtime.wrapup.cancel(session.id, 'agent_returned');
 
-    await runtime.agents.set(session.id, 'available', { leaseMs: AGENT_LEASE_MS.available });
+    // On the soft phone's break before the write: going available ends it (SP7), and
+    // the public layer audits that (`softphone_audit`, `softphone-audit.ts`).
+    const leavingSoftphone = onSoftphoneBreak(await runtime.agents.get(session.id), session);
+
+    // Refused, atomically in the same Lua write, while the session holds a soft-phone
+    // call — live or awaiting its outcome (docs/softphone.md §4.1 step 1, §6).
+    // `unavailable` (Redis did not answer) keeps this route's behaviour from before
+    // the guard: the write was logged and the mirror written; the lease is the
+    // authority and pacing reads Redis, which then holds no `available`.
+    //
+    // Except when leaving the soft phone, and for a `manual` claim that would not
+    // clear: then Redis still says `break` (and may still hold the claim), so answering
+    // `available` would show the agent ready while pacing never reserves them, and
+    // audit a soft-phone exit that did not happen. Nothing is written; retry
+    // (`503 dial_failed`, as `POST /softphone/return` answers the same result).
+    const set = await setAvailableGuarded(runtime.agents, session.id);
+    if (!set.ok && (set.refusal.code === 'claim_not_released' || (set.refusal.code === 'unavailable' && leavingSoftphone))) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Service Unavailable', code: 'dial_failed',
+        message: 'Could not change your status just now; nothing changed. Try again.',
+      };
+      return reply.code(503).send(err);
+    }
+    if (!set.ok && set.refusal.code !== 'unavailable') {
+      if (set.refusal.code === 'manual_call_live') {
+        const err: AgencySoftphoneCallPendingRefusal = {
+          error: 'Conflict', code: 'manual_call_live', call: set.refusal.call,
+          message: 'Save the outcome of your soft-phone call before going available.',
+        };
+        return reply.code(409).send(err);
+      }
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign to go available on.',
+      };
+      return reply.code(409).send(err);
+    }
     await agencyAgentSessionRepository.setState(session.id, 'available');
     runtime.stations.send(session.id, { event: 'agent_state', state: 'available', since: new Date().toISOString() });
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, state: 'available', since: new Date().toISOString() });
+    return reply.send({
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'available', since: new Date().toISOString(),
+      ...exitAudit(leavingSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'available', withdrawn: false }),
+    });
   });
 
   // ── POST /sessions/:id/force-available — supervisor override ────────────
@@ -326,14 +404,58 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // this route's floor).
     const session = await requireOwnedSession(request, reply, { supervisorMayAct: true });
     if (!session) return reply;
+    // A soft-phone session has no campaign pool to return the agent to, and can never
+    // be `available` (docs/softphone.md §2, §6).
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign to make the agent available on.',
+      };
+      return reply.code(409).send(err);
+    }
+    // A campaign session on the soft phone owing an outcome stays out of the pool:
+    // the supervisor is told so with the call (docs/softphone.md §4.1 step 1, §6),
+    // read from the database first as `available` does, and again when the release's
+    // own Lua guard refused (a dial that committed in between).
+    const manualCallLive = (call: AgencyManualCall) => {
+      const err: AgencySoftphoneCallPendingRefusal = {
+        error: 'Conflict', code: 'manual_call_live', call,
+        message: 'The agent has a soft-phone call open: its outcome must be saved before they can go available.',
+      };
+      return reply.code(409).send(err);
+    };
+    // A forced wrap-up never starts on the soft phone; a plain release from it ends it.
+    const leavingSoftphone = onSoftphoneBreak(await runtime.agents.get(session.id), session);
     const forced = await runtime.wrapup.force(session.id);
-    if (!forced) {
+    let state: AgencyAgentState;
+    let endedSoftphone = false;
+    if (forced) {
+      // The forced wrap-up already released the agent (a queued break applies there).
+      state = (await runtime.agents.get(session.id))?.state ?? 'offline';
+    } else {
+      const owed = await owedSoftphoneCall(runtime.agents, session.id);
+      if (owed) return manualCallLive(owed);
       // Not in wrap-up — fall through to a plain return rather than 409ing. A
       // supervisor pressing this on an agent who just finished should not get an
       // error for winning a race by half a second.
-      await runtime.dialer.releaseAgent(session.id);
+      const released = await runtime.dialer.releaseAgent(session.id);
+      if (released.result === 'manual_call_live' || released.result === 'softphone_session') {
+        const call = await owedSoftphoneCall(runtime.agents, session.id);
+        if (call) return manualCallLive(call);
+        const err: AgencySoftphoneErrorResponse = {
+          error: 'Conflict', code: 'wrong_session_kind',
+          message: 'This session is on the soft phone; it cannot be made available.',
+        };
+        return reply.code(409).send(err);
+      }
+      // What was written: `break` for a queued break, `offline` when the station is gone.
+      state = released.state;
+      endedSoftphone = leavingSoftphone && released.state === 'available' && released.result === 'ok';
     }
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, state: 'available', since: new Date().toISOString() });
+    return reply.send({
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString(),
+      ...exitAudit(endedSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'force_available', withdrawn: false }),
+    });
   });
 
   // ── POST /sessions/:id/break ───────────────────────────────────────────
@@ -342,6 +464,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/break', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // A soft-phone session has no campaign and so no break catalog; it is always on
+    // the reserved `soft_phone` break (docs/softphone.md §6).
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign breaks.',
+      };
+      return reply.code(409).send(err);
+    }
     const campaign = await agencyCampaignRepository.findById(session.campaign_id);
     if (!campaign) {
       return reply.code(404).send({ error: 'Not Found', message: 'Campaign not found' });
@@ -368,6 +499,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // the pacing tick follows. A DB row reading `available` for an agent who is
     // actually bridged would apply a break mid-conversation.
     if (breakMustWait(live?.state)) {
+      // The queue holds one break: another reason queued over a queued switch to the
+      // soft phone REPLACES it, so the switch is withdrawn here and audited as such
+      // (SP7, `via: 'break'` with the reason that took its place), as the ✕ on the
+      // queued-switch pill is (`break/cancel`). Without it the trail would read
+      // `softphone_started` (`queued: true`) with no end.
+      const withdrawingSwitch = runtime.breaks.peek(session.id)?.code === SOFTPHONE_BREAK_REASON
+        && check.reason.code !== SOFTPHONE_BREAK_REASON;
       runtime.breaks.queue(session.id, check.reason);
       // Echoed on the frame too, not just this response: the queue outlives the
       // request, so an agent who reconnects must still be told a break is pending.
@@ -405,21 +543,65 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         });
       }
       const queued: AgencySessionStateResponse = {
-        session_id: session.id, campaign_id: session.campaign_id, state: live!.state, since,
+        session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live!.state, since,
         pending_state: 'break', break_reason: check.reason.code,
       };
-      return reply.send(queued);
+      return reply.send({
+        ...queued,
+        ...exitAudit(withdrawingSwitch, {
+          campaign_id: session.campaign_id, from_state: live!.state, via: 'break', withdrawn: true, break_reason: check.reason.code,
+        }),
+      });
     }
 
-    await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
-    await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
+    // From the soft phone's break to another one: that ends the soft phone (SP7).
+    const leavingSoftphone = onSoftphoneBreak(live, session) && check.reason.code !== SOFTPHONE_BREAK_REASON;
+    // …which it may not while a soft-phone call is live or owes its outcome: the call
+    // belongs to the soft phone the agent would be leaving, and the console would stop
+    // showing it. The same rule as `available` (`setAvailableGuarded`), read from the
+    // database, which a lapsed lease cannot have lost — and checked and written under
+    // the session row's lock, which the dial takes too (`setBreakLeavingSoftphone`), so
+    // a Call pressed just before the break cannot slip in between the check and the
+    // write. Redis already says `break`, so the row is written first.
+    if (leavingSoftphone) {
+      let left = false;
+      for (let pass = 0; pass < 2; pass++) {
+        left = (await agencyAgentSessionRepository.setBreakLeavingSoftphone(session.id, check.reason.code)).ok;
+        if (left) break;
+        const owed = await owedSoftphoneCall(runtime.agents, session.id);
+        if (owed) {
+          const err: AgencySoftphoneCallPendingRefusal = {
+            error: 'Conflict', code: 'manual_call_live', call: owed,
+            message: 'Save the outcome of your soft-phone call before taking another break.',
+          };
+          return reply.code(409).send(err);
+        }
+        // The call settled between the two reads: nothing is owed now, so write again.
+      }
+      if (!left) {
+        const err: AgencySoftphoneErrorResponse = {
+          error: 'Service Unavailable', code: 'dial_failed',
+          message: 'Could not change your status just now; nothing changed. Try again.',
+        };
+        return reply.code(503).send(err);
+      }
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+    } else {
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+      await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
+    }
     runtime.stations.send(session.id, {
       event: 'agent_state', state: 'break', since, break_reason: check.reason.code,
     });
     const applied: AgencySessionStateResponse = {
-      session_id: session.id, campaign_id: session.campaign_id, state: 'break', since, break_reason: check.reason.code,
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'break', since, break_reason: check.reason.code,
     };
-    return reply.send(applied);
+    return reply.send({
+      ...applied,
+      ...exitAudit(leavingSoftphone, {
+        campaign_id: session.campaign_id, from_state: 'break', via: 'break', withdrawn: false, break_reason: check.reason.code,
+      }),
+    });
   });
 
   // ── POST /sessions/:id/break/cancel ────────────────────────────────────
@@ -430,7 +612,22 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/break/cancel', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // A soft-phone session's only break is the reserved `soft_phone` one it was opened
+    // in, and nothing is ever queued on it (docs/softphone.md §6). A CAMPAIGN session's
+    // queued switch to the soft phone is an ordinary queued break (`breaks.queue` with
+    // `soft_phone`, `SoftphoneService.switchToSoftphone`), and cancelling it here is the
+    // console's ✕ on the queued-switch pill: it falls through to the cancel below.
+    if (!isCampaignSession(session)) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Conflict', code: 'wrong_session_kind',
+        message: 'This is a soft-phone session; it has no campaign break to cancel. Close the soft phone instead.',
+      };
+      return reply.code(409).send(err);
+    }
 
+    // A queued switch to the soft phone withdrawn by the ✕ is audited as that (SP7),
+    // not as a plain break cancel: the public layer reads `softphone_audit`.
+    const withdrawingSwitch = runtime.breaks.peek(session.id)?.code === SOFTPHONE_BREAK_REASON;
     const cancelled = runtime.breaks.cancel(session.id);
     const live = await runtime.agents.get(session.id);
     const since = new Date().toISOString();
@@ -483,9 +680,14 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     }
     // Nothing queued and not on break ⇒ idempotent success (double-click safety).
     const body: AgencySessionStateResponse = {
-      session_id: session.id, campaign_id: session.campaign_id, state: live?.state ?? session.state, since,
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live?.state ?? session.state, since,
     };
-    return reply.send(body);
+    return reply.send({
+      ...body,
+      ...exitAudit(cancelled && withdrawingSwitch, {
+        campaign_id: session.campaign_id, from_state: live?.state ?? null, via: 'break_cancel', withdrawn: true,
+      }),
+    });
   });
 
   // ── POST /sessions/:id/leave ───────────────────────────────────────────
@@ -520,6 +722,16 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // before the dial is placed and cleared only when the attempt settles, so it
     // covers `dialing` through `bridged` AND the deferred-hangup window — during
     // which the socket is already gone and every other signal reads idle.
+    // A live soft-phone call is the same refusal: the station socket is its media
+    // leg (docs/softphone.md §4.1). One awaiting its outcome does not hold the
+    // leave; the lapse sweep closes a call whose session left.
+    if (runtime.softphone.hasLiveCall(session.id) && !runtime.dialer.hasLiveAttempt(session.id)) {
+      const err: AgencyActionErrorResponse = {
+        error: 'Conflict', code: 'agent_on_live_call',
+        message: 'Hang up your soft-phone call before leaving the station.',
+      };
+      return reply.code(409).send(err);
+    }
     if (runtime.dialer.hasLiveAttempt(session.id)) {
       // ── Under late binding the agent can see NO call, so the message had to
       //    change — and only the message (`FF_AGENCY_LATE_BINDING`) ───────────
@@ -574,6 +786,6 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     await runtime.agents.clear(session.id);
     await agencyAgentSessionRepository.leave(session.id);
     await runtime.stations.detach(session.id);
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, state: 'offline', since: new Date().toISOString() });
+    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'offline', since: new Date().toISOString() });
   });
 }

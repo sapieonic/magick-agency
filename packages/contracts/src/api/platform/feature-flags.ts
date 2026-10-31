@@ -10,7 +10,7 @@ export type FeatureFlagMap = Record<string, boolean | number | string>;
 export type FeatureFlagStatus = 'loading' | 'ready' | 'error';
 
 // The map is served by agency itself (permission `agency.flags.read`, floor
-// `agent`), and its client-exposed keys are exactly
-// `agency_dialer_enabled` and `agency_call_analysis` — see `AgencyClientFlagMap`
+// `agent`), and its client-exposed keys are exactly `agency_dialer_enabled`,
+// `agency_call_analysis` and `agency_softphone_enabled` — see `AgencyClientFlagMap`
 // in `../../flags`, the narrowed form. `FeatureFlagMap` stays the open record
 // because the console's `FeatureFlagsContext` reads it that way.

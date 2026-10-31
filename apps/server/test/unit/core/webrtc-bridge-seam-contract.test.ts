@@ -16,6 +16,7 @@ import {
   WebRtcCallError,
   type WebRtcOutboundParams,
   type WebRtcBridgedCallParams,
+  type WebRtcCallCorrelation,
   type WebRtcLifecycleEvent,
   type WebRtcLifecycleListener,
   type WebRtcRejectReason,
@@ -49,10 +50,13 @@ interface CoreOutboundParams {
   analysisLanguage?: string | null;
   analysisConsent?: boolean | null;
 }
+/** What a leg belongs to: a campaign attempt, or a soft-phone call (docs/softphone.md §4.3). */
+type CoreCallCorrelation =
+  | { kind: 'attempt'; campaignId: string; agencyAttemptId: string }
+  | { kind: 'manual'; manualCallId: string };
 interface CoreBridgedCallParams extends CoreOutboundParams {
   browserSocket: WebSocket;
-  campaignId: string;
-  agencyAttemptId: string;
+  correlation: CoreCallCorrelation;
   browserCloseGraceMs?: number;
 }
 interface CoreLifecycleEvent {
@@ -95,6 +99,7 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcOutboundParams>().toEqualTypeOf<CoreOutboundParams>();
     expectTypeOf<Omit<WebRtcBridgedCallParams, keyof CoreOutboundParams>>()
       .toEqualTypeOf<Omit<CoreBridgedCallParams, keyof CoreOutboundParams>>();
+    expectTypeOf<WebRtcCallCorrelation>().toEqualTypeOf<CoreCallCorrelation>();
     expectTypeOf<WebRtcLifecycleEvent>().toEqualTypeOf<CoreLifecycleEvent>();
     expectTypeOf<WebRtcLifecycleListener>().toEqualTypeOf<(event: CoreLifecycleEvent) => void>();
     expectTypeOf<WebRtcRejectReason>().toEqualTypeOf<CoreRejectReason>();

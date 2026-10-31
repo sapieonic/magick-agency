@@ -142,7 +142,7 @@ const PARAMS = {
   destinationPhone: '+14155550199',
 };
 /** the agency back-references every bridge call carries. */
-const AGENCY = { campaignId: 'camp-1', agencyAttemptId: 'att-1' };
+const AGENCY = { correlation: { kind: 'attempt' as const, campaignId: 'camp-1', agencyAttemptId: 'att-1' } };
 
 // `as any` (type-only) — this tsconfig typechecks tests; `eventType` is a string here.
 const ev = (eventType: string, metadata: Record<string, unknown> = {}) => ({

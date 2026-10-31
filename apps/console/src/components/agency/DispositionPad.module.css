@@ -5,7 +5,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2, 8px);
-  min-height: 0;
+  /* Its own height in the outcome column, which scrolls when the pad, an open
+     callback picker and the notes are taller than it: shrunk, the picker drew
+     over the notes below it. */
+  flex-shrink: 0;
 }
 
 .title {
@@ -49,9 +52,13 @@
   flex-direction: column;
   gap: 4px;
   /* Past nine the pad scrolls rather than shrinking its rows — a 20px row is not
-     a pointer target on a screen where a misclick records the wrong outcome. */
+     a pointer target on a screen where a misclick records the wrong outcome.
+     Up to nine it never gives up height to its siblings: with a shrinkable list
+     the callback picker took the list's room, leaving three and a half of six
+     outcomes in a nested scroller. Nine 40px rows and their gaps. */
+  flex-shrink: 0;
+  max-height: calc(9 * 40px + 8 * 4px);
   overflow-y: auto;
-  min-height: 0;
 }
 
 .option {

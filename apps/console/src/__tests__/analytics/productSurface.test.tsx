@@ -209,6 +209,8 @@ describe('who calls it', () => {
     'AgentHomePage',
     'AgentPerformancePage',
     'AgentAttemptsPage',
+    // `/dialer/phone`, the soft phone: full-viewport for the station's reason.
+    'SoftphonePage',
     'AgencyJoinPage',
   ];
 

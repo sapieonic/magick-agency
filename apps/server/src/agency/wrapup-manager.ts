@@ -85,7 +85,7 @@ export class WrapupManager {
     private readonly stations: StationRegistry,
     private readonly agents: AgentStateMachine,
     /** Called when an agent leaves wrap-up and should re-enter the pool. */
-    private readonly onReturn: (sessionId: string, resolution: WrapupResolution) => Promise<void>,
+    private readonly onReturn: (sessionId: string, resolution: WrapupResolution) => Promise<unknown>,
   ) {}
 
   /** Wrap-ups currently running on this replica (observability + tests). */

@@ -14,6 +14,29 @@ import {
   AGENCY_CAMPAIGN_STATS_FIELDS,
   AGENCY_STATS_ROUTE_FIELDS,
 } from '../src/agency';
+import {
+  AGENCY_CALL_FIELD_TYPES,
+  AGENCY_MANUAL_CALL_DISPOSITION_SOURCES,
+  AGENCY_MANUAL_CALL_END_REASONS,
+  AGENCY_MANUAL_CALL_OUTCOMES,
+  AGENCY_MANUAL_CALL_STATES,
+  AGENCY_SESSION_KINDS,
+  SOFTPHONE_BREAK_REASON,
+  SOFTPHONE_BREAK_REASON_LABEL,
+  SOFTPHONE_CALL_FIELDS_MAX,
+  SOFTPHONE_CALL_FIELD_KEY_MAX,
+  SOFTPHONE_CALL_FIELD_KEY_PATTERN,
+  SOFTPHONE_OUTCOME_LAPSE_MS,
+  SOFTPHONE_OVERRIDE_NOTE_MAX,
+  SOFTPHONE_OVERRIDE_NOTE_MIN,
+  type AgencyAttemptOutcome,
+  type AgencyAttemptState,
+  type AgencyManualCallOutcome,
+  type AgencyManualCallState,
+  type AgencySessionStateResponse,
+  type AgencyStationManualCallFrame,
+  type AgencyStationServerFrame,
+} from '../src/agency';
 import { SESSION_REFUSAL_CODES } from '../src/api/platform/auth';
 import {
   TELEPHONY_CREDENTIAL_ERROR_CODES,
@@ -24,6 +47,19 @@ import type { Equals } from './type-equals';
 // The list is exactly the union (the runtime list's own guard covers the other side).
 const _credentialCodesExact: Equals<(typeof TELEPHONY_CREDENTIAL_ERROR_CODES)[number], TelephonyCredentialErrorCode> = true;
 void _credentialCodesExact;
+
+// The soft phone (docs/softphone.md). Its state and outcome vocabularies are the attempt's,
+// so the station and the soft phone cannot disagree about a word; the frame is in both
+// server-frame unions; a session-state answer may name no campaign (a soft-phone session).
+const _manualStateIsAttempt: Equals<AgencyManualCallState, AgencyAttemptState> = true;
+const _manualOutcomeIsAttempt: Equals<AgencyManualCallOutcome, AgencyAttemptOutcome> = true;
+const _frameInUnion: Equals<Extract<AgencyStationServerFrame, { event: 'manual_call' }>, AgencyStationManualCallFrame> = true;
+const _consoleFrameInUnion: Equals<
+  Extract<AgencyApi.AgencyStationServerFrame, { event: 'manual_call' }>,
+  AgencyStationManualCallFrame
+> = true;
+const _sessionCampaignNullable: Equals<AgencySessionStateResponse['campaign_id'], string | null> = true;
+void [_manualStateIsAttempt, _manualOutcomeIsAttempt, _frameInUnion, _consoleFrameInUnion, _sessionCampaignNullable];
 
 describe('package surface', () => {
   it('exposes the two API layers as namespaces', () => {
@@ -105,6 +141,33 @@ describe('package surface', () => {
     // The console wire layer re-exports the same objects rather than copies.
     expect(AgencyApi.AGENCY_DEFAULT_DISPOSITION_CATALOG).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
     expect(AgencyApi.AGENCY_OUR_FAULT_RETRY_DEFAULT).toBe(AGENCY_OUR_FAULT_RETRY_DEFAULT);
+  });
+
+  it('declares the soft-phone constants and vocabularies once (SNAPSHOT, written out by hand)', () => {
+    expect(SOFTPHONE_BREAK_REASON).toBe('soft_phone');
+    expect(SOFTPHONE_BREAK_REASON_LABEL).toBe('Soft phone');
+    expect(SOFTPHONE_OVERRIDE_NOTE_MIN).toBe(10);
+    expect(SOFTPHONE_OVERRIDE_NOTE_MAX).toBe(500);
+    expect(SOFTPHONE_CALL_FIELDS_MAX).toBe(20);
+    expect(SOFTPHONE_CALL_FIELD_KEY_MAX).toBe(50);
+    expect(SOFTPHONE_OUTCOME_LAPSE_MS).toBe(30 * 60_000);
+    for (const key of ['amount', 'loan_id', 'a1']) expect(SOFTPHONE_CALL_FIELD_KEY_PATTERN.test(key), key).toBe(true);
+    for (const key of ['Amount', '1st', '_x', 'loan-id', '']) expect(SOFTPHONE_CALL_FIELD_KEY_PATTERN.test(key), key).toBe(false);
+    expect([...AGENCY_SESSION_KINDS]).toEqual(['campaign', 'softphone']);
+    expect([...AGENCY_MANUAL_CALL_STATES]).toEqual(['queued', 'dialing', 'ringing', 'answered', 'bridged', 'ended']);
+    expect([...AGENCY_MANUAL_CALL_OUTCOMES]).toEqual([
+      'connected', 'no_answer', 'busy', 'failed', 'machine', 'invalid', 'abandoned', 'agent_disconnected', 'orphaned', 'canceled',
+    ]);
+    expect([...AGENCY_MANUAL_CALL_END_REASONS]).toEqual([
+      'completed', 'no_answer', 'busy', 'failed', 'invalid', 'agent_disconnected',
+      'agent_hangup', 'remote_hangup', 'supervisor_released', 'orphaned',
+    ]);
+    expect([...AGENCY_MANUAL_CALL_DISPOSITION_SOURCES]).toEqual(['campaign', 'softphone']);
+    expect([...AGENCY_CALL_FIELD_TYPES]).toEqual(['text', 'number', 'choice', 'boolean', 'date']);
+    // The console wire layer re-exports the same values rather than copies.
+    expect(AgencyApi.SOFTPHONE_BREAK_REASON).toBe(SOFTPHONE_BREAK_REASON);
+    expect(AgencyApi.AGENCY_MANUAL_CALL_STATES).toBe(AGENCY_MANUAL_CALL_STATES);
+    expect(AgencyApi.SOFTPHONE_CALL_FIELD_KEY_PATTERN).toBe(SOFTPHONE_CALL_FIELD_KEY_PATTERN);
   });
 
   it('declares both rate floors, side by side and different on purpose', () => {

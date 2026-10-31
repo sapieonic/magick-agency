@@ -10,7 +10,7 @@
  *   - `./agency`  the dialer runtime's frozen agency contract (frames, payloads, unions);
  *   - `./errors`  every agency error vocabulary as union + `as const` list;
  *   - `./rbac`    roles, permissions, the permission matrix, `hasPermission`;
- *   - `./flags`   the three agency feature flags;
+ *   - `./flags`   the four agency feature flags;
  *   - `./primitives` `SortOrder`, `STATS_BUCKET_UNITS`, `OffsetPage`, `AllListed`.
  *
  * NAMESPACED: the HTTP API layers, because they reuse names the root already

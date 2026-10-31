@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import type {
-  AgencyAgentState,
-  AgencySessionBootstrap,
-  AgencyStationServerFrame,
-} from '../types/agency';
+import type { AgencyAgentState, AgencyStationServerFrame } from '../types/agency';
 import { AGENCY_STATION_CLOSE } from '../types/agency';
 import { mintStationToken } from '../api/agency';
 import {
@@ -32,8 +28,10 @@ import { useStationUnloadGuard } from './useStationUnloadGuard';
 import type {
   AgencyStationAudioSink,
   LiveAttempt,
+  StationSocketBootstrap,
   UseAgencyStationResult,
 } from './agencyStation/types';
+import { isCallLive } from '../utils/softphone/callState';
 import { useLatestRef } from './useLatestRef';
 
 /**
@@ -76,6 +74,7 @@ export type {
   StationConnection,
   AgencyStationAudioSink,
   LiveAttempt,
+  StationSocketBootstrap,
   UseAgencyStationResult,
 } from './agencyStation/types';
 export type { DiagnosticEntry } from '../utils/agencyDiagnostics';
@@ -108,7 +107,7 @@ function abandon(socket: WebSocket | null, reason = 'replaced'): void {
 }
 
 export function useAgencyStation(
-  bootstrap: AgencySessionBootstrap | null,
+  bootstrap: StationSocketBootstrap | null,
   options: {
     tenantId?: string;
     /**
@@ -168,6 +167,7 @@ export function useAgencyStation(
     lastError,
     dialing,
     missedPings,
+    manualCall,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
   if (diagnosticsRef.current === null) {
@@ -218,7 +218,7 @@ export function useAgencyStation(
    */
   const tokenSpentRef = useRef(false);
   /** The bootstrap `tokenSpentRef` is about, so a new one re-arms it. */
-  const tokenBootstrapRef = useRef<AgencySessionBootstrap | null>(null);
+  const tokenBootstrapRef = useRef<StationSocketBootstrap | null>(null);
   /**
    * Timestamps of proven-live-then-died cycles inside the flap window. Bounded by
    * pruning, not by a cap on writes, so the count is honest.
@@ -276,6 +276,13 @@ export function useAgencyStation(
    * `utils/agencyStationReducer`).
    */
   const agentStateRef = useRef<AgencyAgentState>('offline');
+  /**
+   * Whether a soft-phone call is on the line, as of the last `manual_call` frame —
+   * for the unload guard, which must not let a tab close silently over a customer
+   * the agent is talking to from the soft phone (their agent state is `break`, so
+   * `agentStateRef` alone would wave the close through).
+   */
+  const manualLiveRef = useRef(false);
   /**
    * The estimator and its current offset live in refs, not in the frame handler's
    * dependency list.
@@ -916,6 +923,27 @@ export function useAgencyStation(
           return;
         }
 
+        case 'manual_call': {
+          /**
+           * **A soft-phone call's every state change** (`docs/softphone.md` §4.1
+           * step 5), and its restatement after a reconnect (step 9). The whole
+           * row; the reducer keeps it unless it is older than the copy held.
+           *
+           * Guarded like `media`: the union says `call` is there, the socket is
+           * not bound by the union, and a malformed frame must cost one frame.
+           */
+          const call = (frame as { call?: unknown }).call;
+          if (!call || typeof call !== 'object' || typeof (call as { id?: unknown }).id !== 'string') {
+            logDiagnostic('manual_call_malformed', JSON.stringify(frame).slice(0, 200));
+            return;
+          }
+          const typed = frame.call;
+          manualLiveRef.current = isCallLive(typed);
+          dispatch({ type: 'manual_call', call: typed });
+          logDiagnostic('manual_call', `${typed.id} ${typed.state}`);
+          return;
+        }
+
         case 'error': {
           // Non-fatal by contract; the socket stays open.
           dispatch({ type: 'error', frame });
@@ -1359,7 +1387,12 @@ export function useAgencyStation(
     socketRef.current = null;
     abandon(socket, 'unload');
   }, [clearTimers]);
-  useStationUnloadGuard({ agentStateRef, onPageHide: retireForUnload, onRestore: reconnect });
+  useStationUnloadGuard({
+    agentStateRef,
+    busyRef: manualLiveRef,
+    onPageHide: retireForUnload,
+    onRestore: reconnect,
+  });
 
   return {
     connection,
@@ -1394,6 +1427,7 @@ export function useAgencyStation(
     dialing,
     missedPings,
     diagnostics: diagnostics.entries,
+    manualCall,
     reconnect,
     sendMedia,
   };

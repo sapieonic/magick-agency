@@ -549,6 +549,16 @@ describe('the floor as a table', () => {
     expect(screen.getByTestId('floor-row-call').textContent).toContain('2× AHT');
   });
 
+  it('shows an agent on the soft phone as "Soft phone", with no long-break flag after hours of it', () => {
+    renderFloor({ stats: stats([agent({ session_id: 'sp', agent_name: 'Priya', state: 'break', break_reason: 'soft_phone', state_since: ago(3 * 3600) })]) });
+    const row = screen.getByTestId('floor-row-sp');
+    expect(row.textContent).toContain('Soft phone');
+    expect(row.textContent).not.toContain('soft_phone');
+    expect(row.textContent).not.toContain('Long break');
+    fireEvent.click(screen.getByRole('button', { name: 'Priya' }));
+    expect(screen.getByTestId('agent-drawer-state').textContent).toBe('Soft phone');
+  });
+
   it('keeps the break reason beside the state', () => {
     renderFloor({ stats: stats([agent({ session_id: 'brk', state: 'break', break_reason: 'Lunch' })]) });
     expect(screen.getByTestId('floor-row-brk').textContent).toContain('On break · Lunch');

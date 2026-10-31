@@ -36,6 +36,7 @@ import type { WebRtcCallRecord, WebRtcCallStatus } from '@magick-agency/db/model
 import {
   WebRtcCallError,
   type WebRtcBridgedCallParams,
+  type WebRtcCallCorrelation,
   type WebRtcLifecycleEvent,
   type WebRtcLifecycleListener,
   type WebRtcOutboundParams,
@@ -46,6 +47,7 @@ import { admitBridgeCall } from './bridge/admission.js';
 export {
   WebRtcCallError,
   type WebRtcBridgedCallParams,
+  type WebRtcCallCorrelation,
   type WebRtcLifecycleEvent,
   type WebRtcLifecycleListener,
   type WebRtcOutboundParams,
@@ -412,8 +414,8 @@ export class WebRtcBridgeManager {
    * there is no browser connect to gate.
    */
   private async placeOutboundLeg(params: WebRtcOutboundParams & {
-    campaignId?: string | null;
-    agencyAttemptId?: string | null;
+    /** What the leg belongs to; persisted as back-references and as the correlation id. */
+    correlation: WebRtcCallCorrelation;
     /** Supplied ⇒ borrowed AND bound now: attached here, detached (never closed) at teardown. */
     browserSocket?: WebSocket;
     /**
@@ -481,9 +483,22 @@ export class WebRtcBridgeManager {
         analysis_consent: params.analysisConsent ?? null,
         analysis_consent_at: params.analysisConsent === true ? new Date() : null,
         // Agency back-references: the only thing on this row that knows the dialer
-        // runtime exists.
-        campaign_id: params.campaignId ?? null,
-        agency_attempt_id: params.agencyAttemptId ?? null,
+        // runtime exists. A soft-phone leg carries its manual call and NO campaign or
+        // attempt id (`ck_agency_calls_manual_correlation`), so no campaign
+        // aggregation over `agency_calls` ever counts it (docs/softphone.md §2).
+        ...(params.correlation.kind === 'attempt'
+          ? {
+            campaign_id: params.correlation.campaignId,
+            agency_attempt_id: params.correlation.agencyAttemptId,
+            origin: 'campaign' as const,
+            manual_call_id: null,
+          }
+          : {
+            campaign_id: null,
+            agency_attempt_id: null,
+            origin: 'manual' as const,
+            manual_call_id: params.correlation.manualCallId,
+          }),
       });
     } catch (err) {
       await this.releaseSlotsByKey(concurrencyKey, params.tenantId, params.accountId, provider);
@@ -502,11 +517,16 @@ export class WebRtcBridgeManager {
     session.concurrencyKey = concurrencyKey;
     session.slotsHeld = true;
     session.recordEnabled = recordEnabled;
-    session.correlationId = params.agencyAttemptId ?? null;
+    session.correlationId = params.correlation.kind === 'attempt'
+      ? params.correlation.agencyAttemptId
+      : params.correlation.manualCallId;
+    // Before answer a manual leg's close hangs up at once (`browserCloseGraceMs`).
+    session.browserLegGraceAfterAnswerOnly = params.correlation.kind === 'manual';
     // Read back off the persisted row, not off `params`, so the value handed on at
     // finalize is the one that was durably recorded.
     session.campaignId = record.campaign_id ?? null;
     session.agencyAttemptId = record.agency_attempt_id ?? null;
+    session.manualCallId = record.manual_call_id ?? null;
     session.telephonyCredentialId = record.telephony_credential_id ?? null;
     // A carrier that negotiates the media stream via a `start` frame (VoiceLink)
     // holds the relay until a valid `start` (correct codec/rate) arrives.
@@ -1010,7 +1030,10 @@ export class WebRtcBridgeManager {
       // Nothing is written anywhere for this — it is a `setTimeout` and nothing
       // else, and it cannot become a Redis TTL even in principle, because what it
       // defers is resuming media onto this in-memory session.
-      if (graceMs > 0 && !session.browserWsOwned && !session.isTearingDown) {
+      // A manual (soft-phone) leg holds the window only once answered — see
+      // `WebRtcBridgedCallParams.browserCloseGraceMs`.
+      const graceApplies = !session.browserLegGraceAfterAnswerOnly || session.answeredAt != null;
+      if (graceMs > 0 && graceApplies && !session.browserWsOwned && !session.isTearingDown) {
         log.info({ callId, graceMs, outcome: hangupOutcome }, 'Borrowed browser leg closed — holding for re-attach');
         session.armBrowserLegGrace(graceMs, hangUpForBrowserClose);
         return;

@@ -37,7 +37,13 @@ describe('role hierarchy', () => {
 /**
  * Every permission's expected floor.
  */
-const FLOORS: ReadonlyArray<{ permission: Permission; floor: Role; masterName: string; masterLine: number }> = [
+const FLOORS: ReadonlyArray<{
+  permission: Permission;
+  floor: Role;
+  /** NULL for a permission Magick Agency added with no earlier name. */
+  masterName: string | null;
+  masterLine: number | null;
+}> = [
   { permission: 'tenant.read', floor: 'viewer', masterName: 'tenant.read', masterLine: 80 },
   { permission: 'account.read', floor: 'viewer', masterName: 'account.read', masterLine: 83 },
   { permission: 'user.invite', floor: 'account_admin', masterName: 'user.invite', masterLine: 86 },
@@ -57,6 +63,9 @@ const FLOORS: ReadonlyArray<{ permission: Permission; floor: Role; masterName: s
   { permission: 'agency.supervise', floor: 'account_admin', masterName: 'agency.supervise', masterLine: 192 },
   { permission: 'agency.dnc.read', floor: 'viewer', masterName: 'agency.dnc.read', masterLine: 207 },
   { permission: 'agency.dnc.manage', floor: 'account_admin', masterName: 'agency.dnc.manage', masterLine: 208 },
+  // The soft phone (docs/softphone.md, SP4): dial at the agent floor, settings at account_admin.
+  { permission: 'agency.softphone.dial', floor: 'agent', masterName: null, masterLine: null },
+  { permission: 'agency.softphone.manage', floor: 'account_admin', masterName: null, masterLine: null },
 ];
 
 describe('permission floors', () => {
@@ -69,7 +78,7 @@ describe('permission floors', () => {
   });
 
   it('has the seven agency.* keys', () => {
-    const masterAgency = FLOORS.filter((f) => f.masterName.startsWith('agency.')).map((f) => f.permission);
+    const masterAgency = FLOORS.filter((f) => f.masterName?.startsWith('agency.')).map((f) => f.permission);
     expect(masterAgency).toHaveLength(7);
   });
 
@@ -85,20 +94,22 @@ describe('permission floors', () => {
 });
 
 describe('the agent role', () => {
-  it('reaches exactly the four action permissions plus the flag map', () => {
+  it('reaches exactly the five action permissions plus the flag map', () => {
     expect(PERMISSIONS.filter((p) => hasPermission('agent', p)).sort()).toEqual([
       'agency.attempts.dispose',
       'agency.attempts.handle',
       'agency.dnc.write',
       'agency.flags.read',
+      'agency.softphone.dial',
       'agency.station.connect',
     ]);
   });
 
-  it('cannot supervise, read campaigns or the DNC list', () => {
+  it('cannot supervise, read campaigns or the DNC list, or manage the soft phone', () => {
     expect(hasPermission('agent', 'agency.supervise')).toBe(false);
     expect(hasPermission('agent', 'agency.campaigns.read')).toBe(false);
     expect(hasPermission('agent', 'agency.dnc.read')).toBe(false);
+    expect(hasPermission('agent', 'agency.softphone.manage')).toBe(false);
   });
 });
 

@@ -1,7 +1,11 @@
+import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
-import { ChartNoAxesCombined, ListChecks, PhoneOutgoing } from 'lucide-react';
-import { AGENT_SURFACES, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
+import { ChartNoAxesCombined, ListChecks, Phone, PhoneOutgoing } from 'lucide-react';
+import { agentSurfacesFor, type AgentSurfaceId } from '../../utils/agencyAgentSurfaces';
+import { useTenant } from '../../contexts/TenantContext';
+import { hasPermission } from '../../utils/permissions';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import styles from './AgentNav.module.css';
 
 /**
@@ -32,14 +36,54 @@ import styles from './AgentNav.module.css';
 
 const ICONS: Record<AgentSurfaceId, typeof ListChecks> = {
   campaigns: ListChecks,
+  phone: Phone,
   performance: ChartNoAxesCombined,
   attempts: PhoneOutgoing,
 };
 
-export function AgentNav({ current }: { current: AgentSurfaceId }) {
+/** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
+export function useSoftphoneAvailable(): boolean {
+  // Fails closed with no provider above (the same reasoning as `useFeatureFlagEnabled`):
+  // `useTenant` reads its context before it throws, so the hook order is stable.
+  let role: ReturnType<typeof useTenant>['role'];
+  try {
+    role = useTenant().role;
+  } catch {
+    role = undefined;
+  }
+  const flagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  return flagOn && hasPermission(role, 'agency.softphone.dial');
+}
+
+export function AgentNav({
+  current,
+  variant = 'pills',
+  lockedReason = null,
+  leaveHint = null,
+}: {
+  current: AgentSurfaceId;
+  /** `header`: the compact row in the soft phone's header bar, with no version label. */
+  variant?: 'pills' | 'header';
+  /**
+   * Set while leaving would cut a customer off (a soft-phone call that is live or
+   * owes its outcome): the other entries render as text with this as their
+   * reason instead of as links, so the page cannot be navigated away under a call.
+   */
+  lockedReason?: string | null;
+  /**
+   * What following a link leaves behind (the soft phone, still open): read as
+   * each link's description, so it is heard before the agent goes, and shown as
+   * its tooltip. Ignored while `lockedReason` is set.
+   */
+  leaveHint?: string | null;
+}) {
+  const softphone = useSoftphoneAvailable();
+  const hintId = useId();
+  const hint = lockedReason ? null : leaveHint;
+  const surfaces = agentSurfacesFor({ softphone });
   return (
-    <nav className={styles.nav} aria-label="Your screens">
-      {AGENT_SURFACES.map((surface) => {
+    <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
+      {surfaces.map((surface) => {
         const Icon = ICONS[surface.id];
         const active = surface.id === current;
 
@@ -58,11 +102,30 @@ export function AgentNav({ current }: { current: AgentSurfaceId }) {
           );
         }
 
+        if (lockedReason) {
+          return (
+            <span
+              key={surface.id}
+              className={`${styles.item} ${styles.locked}`}
+              aria-disabled="true"
+              title={lockedReason}
+              data-testid={`agent-nav-${surface.id}`}
+              data-current="false"
+              data-locked="true"
+            >
+              <Icon size={15} aria-hidden="true" />
+              {surface.label}
+            </span>
+          );
+        }
+
         return (
           <Link
             key={surface.id}
             className={styles.item}
             to={surface.to}
+            title={hint ?? undefined}
+            aria-describedby={hint ? hintId : undefined}
             data-testid={`agent-nav-${surface.id}`}
             data-current="false"
           >
@@ -72,8 +135,14 @@ export function AgentNav({ current }: { current: AgentSurfaceId }) {
         );
       })}
       {/* These pages have no sidebar to carry it, and agents are the ones who report from the
-          field. Not a link, so it adds nothing to the tab order. */}
-      <AppVersion version={__APP_VERSION__} variant="inline" />
+          field. Not a link, so it adds nothing to the tab order. The soft phone's header
+          carries its own. */}
+      {variant === 'pills' ? <AppVersion version={__APP_VERSION__} variant="inline" /> : null}
+      {hint ? (
+        <span id={hintId} hidden>
+          {hint}
+        </span>
+      ) : null}
     </nav>
   );
 }

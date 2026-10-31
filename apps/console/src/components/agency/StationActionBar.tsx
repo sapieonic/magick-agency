@@ -1,4 +1,6 @@
 import type { RefObject } from 'react';
+import { Phone } from 'lucide-react';
+import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
 import { BreakMenu, type BreakMenuHandle } from './BreakMenu';
 import { QueuedBreakPill } from './QueuedBreakPill';
 import { DncControl, type DncControlHandle } from './DncControl';
@@ -70,8 +72,15 @@ export function StationActionBar({
   dnc,
   onHangup,
   hangupFailure,
+  softphoneAvailable = false,
 }: {
   cons: AgencyConsoleState;
+  /**
+   * `agency_softphone_enabled` is on and the caller holds `agency.softphone.dial`:
+   * offer **Switch to soft phone** (SP7) beside Break and as the break menu's last
+   * entry. Optional so every existing caller and test is unaffected.
+   */
+  softphoneAvailable?: boolean;
   breakMenuRef: RefObject<BreakMenuHandle | null>;
   dncRef: RefObject<DncControlHandle | null>;
   mayMarkDnc: boolean;
@@ -85,17 +94,42 @@ export function StationActionBar({
   onHangup: () => void;
   hangupFailure: string | null;
 }) {
-  // Tab order within the bar is fixed: Break → Save → Hang up.
+  // Tab order within the bar is fixed: Break → (Soft phone) → Save → Hang up.
+  const menuReasons = softphoneAvailable
+    ? [...cons.breakReasons, { code: SOFTPHONE_BREAK_REASON, label: 'Switch to soft phone' }]
+    : cons.breakReasons;
   return (
     <div className={styles.actionBar}>
       <BreakMenu
         handleRef={breakMenuRef}
-        reasons={cons.breakReasons}
+        reasons={menuReasons}
         queuedReasonLabel={cons.pendingBreakLabel}
         busy={cons.breakBusy}
         rejection={cons.breakRejection}
-        onSelect={cons.requestBreak}
+        onSelect={(code) => (code === SOFTPHONE_BREAK_REASON ? cons.requestSoftphone() : cons.requestBreak(code))}
       />
+
+      {/*
+        Switch to soft phone (SP7). A presence action like Break, so it sits beside
+        Break and never between Save and Hang up. While a switch is queued it stays
+        where it is — the station disables, it never removes, so nothing after it
+        moves — reading "Switching after this call", and the pill below carries the
+        ✕. `aria-disabled`, never `disabled`, for the focus reason `BreakMenu` gives.
+      */}
+      {softphoneAvailable ? (
+        <button
+          type="button"
+          className={styles.mute}
+          aria-disabled={cons.breakBusy || cons.pendingSoftphone || undefined}
+          onClick={() => {
+            if (!cons.breakBusy && !cons.pendingSoftphone) cons.requestSoftphone();
+          }}
+          data-testid="switch-to-softphone"
+        >
+          <Phone size={15} aria-hidden="true" style={{ marginRight: 6 }} />
+          {cons.pendingSoftphone ? 'Switching after this call' : 'Switch to soft phone'}
+        </button>
+      ) : null}
 
       {cons.pendingBreakLabel ? (
         <QueuedBreakPill
@@ -103,7 +137,14 @@ export function StationActionBar({
           cancelling={cons.cancelling}
           cancelFailed={cons.cancelFailed}
           onCancel={cons.cancelBreak}
+          softphone={cons.pendingSoftphone}
         />
+      ) : null}
+
+      {softphoneAvailable && cons.softphoneRejection ? (
+        <span className={styles.breakAlreadyStarted} role="status" data-testid="switch-to-softphone-refused">
+          {cons.softphoneRejection}
+        </span>
       ) : null}
 
       {/* Not an error: the queued break was promoted to a real one, which is the
@@ -163,6 +204,7 @@ export function StationActionBar({
         attemptId={cons.station.live?.attempt.attempt_id ?? null}
         enabled={Boolean(cons.station.live)}
         disabledReason={cons.station.live ? null : 'No call in progress'}
+        reserveReasonLine
         onConfirm={onHangup}
       />
 

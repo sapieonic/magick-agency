@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { getTestPool, closeTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertWebrtcCall } from '../setup/factories.js';
@@ -70,6 +71,37 @@ describe('webrtcCallRepository (integration)', () => {
       });
       expect(row.initiated_by).toBe('user-42');
       expect(row.metadata).toEqual({ source: 'agency', priority: 3 });
+    });
+
+    it('defaults origin to campaign with no manual_call_id', async () => {
+      const row = await webrtcCallRepository.create({
+        tenant_id: TENANT, account_id: ACCOUNT, caller_id: '+14155550100', destination_phone: '+14155550199',
+        campaign_id: DEFAULTS.campaignId,
+      });
+      expect(row.origin).toBe('campaign');
+      expect(row.manual_call_id).toBeNull();
+    });
+
+    it('persists a soft-phone leg: origin manual and its manual_call_id (both in the INSERT list)', async () => {
+      const manualCallId = randomUUID();
+      const row = await webrtcCallRepository.create({
+        tenant_id: TENANT, account_id: ACCOUNT, caller_id: '+14155550100', destination_phone: '+14155550199',
+        origin: 'manual', manual_call_id: manualCallId,
+      });
+      expect(row.origin).toBe('manual');
+      expect(row.manual_call_id).toBe(manualCallId);
+      expect(row.campaign_id).toBeNull();
+      expect(row.agency_attempt_id).toBeNull();
+      // Read back, not just echoed by RETURNING.
+      const stored = await webrtcCallRepository.findById(row.id);
+      expect(stored).toMatchObject({ origin: 'manual', manual_call_id: manualCallId });
+    });
+
+    it('refuses a manual leg that names a campaign (ck_agency_calls_manual_correlation)', async () => {
+      await expect(webrtcCallRepository.create({
+        tenant_id: TENANT, account_id: ACCOUNT, caller_id: '+14155550100', destination_phone: '+14155550199',
+        origin: 'manual', manual_call_id: randomUUID(), campaign_id: DEFAULTS.campaignId,
+      })).rejects.toThrow(/ck_agency_calls_manual_correlation/);
     });
   });
 

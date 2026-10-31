@@ -1,12 +1,14 @@
 /*
  * Shared by the session and attempt handlers: the retry banner, the advertised station
- * intervals, the action-error reply, the session and attempt ownership checks, and the
- * callback dial time. Part of `agency.routes.ts`.
+ * intervals, the action-error reply, the session and attempt ownership checks, the
+ * callback dial time, and the account name a live-session refusal carries. Part of
+ * `agency.routes.ts`.
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { createChildLogger } from '@magick-agency/observability';
+import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import {
   agencyAgentSessionRepository,
   agencyAttemptRepository,
@@ -17,7 +19,7 @@ import { dispositionErrorMessage } from '../../../agency/disposition.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { DEFERRED_HANGUP_MS, STATION_HEARTBEAT_GRACE_MS } from '@magick-agency/domain/timers';
-import { callingWindowState, nextWindowOpen, resolveCallingWindow } from '../../../agency/calling-hours.js';
+import { resolveCallingWindow, scheduleCallbackInWindow } from '../../../agency/calling-hours.js';
 import type {
   AgencyActionErrorCode,
   AgencyActionErrorResponse,
@@ -286,8 +288,22 @@ export async function resolveCallbackDialTime(
 ): Promise<Date> {
   const contact = await agencyContactRepository.findById(contactId).catch(() => null);
   const window = resolveCallingWindow(campaign, { timezone: contact?.timezone ?? null });
-  // Evaluated AT the requested instant, not now: the question is whether the
-  // window is open when the agent promised, which for a callback is days away.
-  if (callingWindowState(window, requestedAt) === 'open') return requestedAt;
-  return nextWindowOpen(window, requestedAt) ?? requestedAt;
+  return scheduleCallbackInWindow(window, requestedAt);
+}
+
+/**
+ * The name of an account of this tenant, for a refusal that names where the agent's
+ * live session is (`session_on_softphone`, `session_on_campaign`: one live session per
+ * agent per tenant, so it may be in a sibling account). Best-effort, as the
+ * conflicting campaign's name is: a failed read is NULL and the refusal still carries
+ * `account_id`, never a 500 in place of an actionable 409. Tenant-scoped
+ * (`findByIdInTenant`), so a corrupt row can never name another tenant's account.
+ */
+export async function accountNameInTenant(accountId: string, tenantId: string): Promise<string | null> {
+  try {
+    return (await accountRepository.findByIdInTenant(accountId, tenantId))?.name ?? null;
+  } catch (err) {
+    log.warn({ err, accountId }, 'Could not resolve the live session\'s account name');
+    return null;
+  }
 }

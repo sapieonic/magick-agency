@@ -4,7 +4,7 @@ The module boundaries inside `apps/server` and the fixed interfaces between them
 each module area owns, which config keys each declares, where shared infrastructure lives, and the
 two cross-module seams. Read it before moving a file, adding a config key, route plugin or
 bootstrap, or changing anything under `apps/server/src/seams/`. Source comments cite this file.
-Checked against the tree on 2026-10-09.
+Checked against the tree on 2026-10-09; §3.1 on 2026-10-30.
 
 The rule for the seams below: change the interface deliberately, in one commit with its consumers
 and its pinning test, never by adapting one side to the other.
@@ -77,10 +77,21 @@ class WebRtcBridgeManager {
 }
 export class WebRtcCallError extends Error {}
 export interface WebRtcOutboundParams {}
-export interface WebRtcBridgedCallParams {}
+export type WebRtcCallCorrelation =
+  | { kind: 'attempt'; campaignId: string; agencyAttemptId: string }
+  | { kind: 'manual'; manualCallId: string };
+export interface WebRtcBridgedCallParams {} // WebRtcOutboundParams + browserSocket, correlation, browserCloseGraceMs?
 export interface WebRtcLifecycleEvent {}
 export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 ```
+
+`correlation` says what a leg belongs to: a campaign attempt (the dialer) or a soft-phone call
+(`agency_manual_calls`, `docs/softphone.md` §4.3). The `agency_calls` insert writes `campaign_id` +
+`agency_attempt_id` with `origin = 'campaign'` for an attempt, and `origin = 'manual'` +
+`manual_call_id` with no campaign or attempt id for a manual call (`ck_agency_calls_manual_correlation`).
+The session's `correlationId`, which lifecycle events carry and every correlation-keyed member above
+takes, is the attempt id or the manual call id. A `manual` leg honours `browserCloseGraceMs` only once
+the carrier has answered: a station close while the phone still rings hangs up at once.
 
 The exported types and `WebRtcCallError` are defined in `apps/server/src/core/bridge/bridge-types.ts`
 and re-exported unchanged from `webrtc-bridge-manager.ts`, which stays the seam's module path (import

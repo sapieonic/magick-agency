@@ -58,7 +58,7 @@ const { pool } = vi.hoisted(() => ({ pool: { query: vi.fn(), connect: vi.fn() } 
 vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
 
 const {
-  publishLiveConcurrency, refreshLiveConcurrency, resetLiveConcurrencyMetricsState,
+  publishLiveConcurrency, publishLiveManualCalls, refreshLiveConcurrency, resetLiveConcurrencyMetricsState,
   UNKNOWN_ATTEMPT_STATE,
 } = await import('../../../src/agency/live-concurrency-metrics.js');
 const { collectMetric } = await import('../../helpers/otel-metric-reader.js');
@@ -402,3 +402,46 @@ describe('live concurrency · a label value is owned by code, never by the colum
     expect((await collectProm()).map((s) => s.labels['campaign_id'])).toEqual(['camp-1']);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The soft phone's live calls: their own family, beside the attempts.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('live soft-phone calls · agency_live_manual_calls_current', () => {
+  const MANUAL = 'agency_live_manual_calls_current';
+  const collectManual = async () => (await collectMetric(reader, MANUAL))
+    .map((p) => ({ value: p.value, attrs: p.attributes as Record<string, string> }));
+
+  it('exports the published snapshot, labelled tenant and state only', async () => {
+    publishLiveManualCalls([
+      { tenant_id: 't1', state: 'ringing', live: 2 },
+      { tenant_id: 't1', state: 'bridged', live: 1 },
+    ]);
+    const samples = await collectManual();
+    expect(Object.fromEntries(samples.map((s) => [s.attrs['state'], s.value]))).toEqual({ ringing: 2, bridged: 1 });
+    expect(Object.keys(samples[0]!.attrs)).toEqual(['tenant_id', 'state']);
+    // Its own family: the attempts' series is untouched by it.
+    expect(await collectOtel()).toEqual([]);
+  });
+
+  it('folds a state outside the manual-call vocabulary (and `ended`) into `unknown`, summed', async () => {
+    publishLiveManualCalls([
+      { tenant_id: 't1', state: 'weird', live: 2 },
+      { tenant_id: 't1', state: 'ended', live: 1 },
+      { tenant_id: 't1', state: 'queued', live: 4 },
+    ]);
+    const samples = await collectManual();
+    expect(Object.fromEntries(samples.map((s) => [s.attrs['state'], s.value]))).toEqual({ [UNKNOWN_ATTEMPT_STATE]: 3, queued: 4 });
+  });
+
+  it('the refresh reads both families; one failing read leaves the other published', async () => {
+    pool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM agency_manual_calls')) return { rows: [{ tenant_id: 't1', state: 'dialing', live: '3' }] };
+      throw new Error('attempts read failed');
+    });
+    await expect(refreshLiveConcurrency()).rejects.toThrow('attempts read failed');
+    expect((await collectManual()).map((s) => [s.attrs['state'], s.value])).toEqual([['dialing', 3]]);
+    expect(await collectOtel()).toEqual([]);
+  });
+});
+

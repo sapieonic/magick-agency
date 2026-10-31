@@ -54,7 +54,7 @@ function dialerWith(bridge: unknown, stations: never, agents: InstanceType<typeo
   // types both as `any` (TS7022) and stops checking arity at this call site.
   const wrapup = new WrapupManager(
     stations, agents,
-    (sessionId: string): Promise<void> => dialer.releaseAgent(sessionId),
+    (sessionId: string): Promise<unknown> => dialer.releaseAgent(sessionId),
   );
   const dialer = new AgencyDialer(bridge as never, stations, agents, wrapup, new BreakRegistry());
   return dialer;
@@ -124,13 +124,13 @@ function fakeBridge(ringMs: number) {
       listeners.push(l);
       return () => { /* no-op */ };
     },
-    async createBridgedCall(params: { agencyAttemptId: string }) {
+    async createBridgedCall(params: { correlation: { agencyAttemptId: string } }) {
       const callId = randomUUID();
       const t = setTimeout(() => {
         for (const l of listeners) {
           l({
             callId,
-            correlationId: params.agencyAttemptId,
+            correlationId: params.correlation.agencyAttemptId,
             phase: 'bridged',
             status: 'in_progress',
             answered: true,

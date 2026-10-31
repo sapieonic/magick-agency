@@ -7,7 +7,9 @@ import type {
   AgencyStationReadyFrame,
   AgencyStationReleasedFrame,
 } from '../types/agency';
+import type { AgencyManualCall } from '../types/softphone';
 import type { WrapupAnchor } from './agencyWrapup';
+import { newerCall } from './softphone/callState';
 import type { LiveAttempt, StationConnection } from '../hooks/agencyStation/types';
 
 /**
@@ -60,6 +62,8 @@ export interface StationState {
   lastError: AgencyStationErrorFrame | null;
   dialing: boolean;
   missedPings: number;
+  /** The session's soft-phone call, as the newest `manual_call` frame stated it. */
+  manualCall: AgencyManualCall | null;
 }
 
 export const INITIAL_STATION_STATE: StationState = {
@@ -79,6 +83,7 @@ export const INITIAL_STATION_STATE: StationState = {
   lastError: null,
   dialing: true,
   missedPings: 0,
+  manualCall: null,
 };
 
 export type StationAction =
@@ -98,7 +103,9 @@ export type StationAction =
   | { type: 'campaign_state'; dialing: boolean }
   /** `offsetMs`: the estimator's new offset, or null when the pong carried no sample. */
   | { type: 'pong'; offsetMs: number | null }
-  | { type: 'error'; frame: AgencyStationErrorFrame };
+  | { type: 'error'; frame: AgencyStationErrorFrame }
+  /** A `manual_call` frame: the whole row, kept only when it is not older than the copy held. */
+  | { type: 'manual_call'; call: AgencyManualCall };
 
 /**
  * `state` itself when nothing in `changes` differs — so a frame that restates
@@ -248,5 +255,9 @@ export function stationReducer(state: StationState, action: StationAction): Stat
 
     case 'error':
       return patch(state, { lastError: action.frame });
+
+    case 'manual_call':
+      // The frame's copy goes first so it wins a tie: the frame is the authority.
+      return patch(state, { manualCall: newerCall(action.call, state.manualCall) });
   }
 }

@@ -236,19 +236,18 @@ export class FloorCarrier {
   }
 
   async createBridgedCall(params: {
-    agencyAttemptId: string;
+    correlation: { kind: 'attempt'; agencyAttemptId: string; campaignId: string };
     destinationPhone: string;
     tenantId: string;
     accountId: string;
     provider?: string;
-    campaignId?: string;
     initiatedBy?: string;
     browserCloseGraceMs?: number;
   }): Promise<{ id: string }> {
-    const attemptId = params.agencyAttemptId;
+    const attemptId = params.correlation.agencyAttemptId;
     if (this.live.has(attemptId) || this.ended.has(attemptId)) this.duplicateDials.push(attemptId);
     const provider = params.provider ?? 'voicelink';
-    const campaignId = params.campaignId ?? '';
+    const campaignId = params.correlation.campaignId;
     if (this.admission) {
       try {
         await this.admission.admit({ attemptId, tenantId: params.tenantId, accountId: params.accountId, provider });

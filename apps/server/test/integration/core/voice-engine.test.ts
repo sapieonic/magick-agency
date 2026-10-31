@@ -83,8 +83,7 @@ async function dial(accountId: string) {
     callerId: '+919800000001',
     destinationPhone: '+919800000002',
     browserSocket: stationWs() as any,
-    campaignId: CAMPAIGN,
-    agencyAttemptId: attempt,
+    correlation: { kind: 'attempt' as const, campaignId: CAMPAIGN, agencyAttemptId: attempt },
   });
   return { record, attempt };
 }

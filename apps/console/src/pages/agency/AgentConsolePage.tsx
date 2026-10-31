@@ -9,6 +9,9 @@ import { useStationExit } from './station/useStationExit';
 import { useStationShortcuts } from './station/useStationShortcuts';
 import { useHangup } from './station/useHangup';
 import { useDncAction } from './station/useDncAction';
+import { useStationSoftphone } from './station/useStationSoftphone';
+import { SoftphoneView } from '../../components/softphone/SoftphoneView';
+import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader';
 import { StateRail } from '../../components/agency/StateRail';
 import {
   DispositionPad,
@@ -19,6 +22,7 @@ import { NotesField } from '../../components/agency/NotesField';
 import type { BreakMenuHandle } from '../../components/agency/BreakMenu';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
+import { SoftphoneJoinScreen } from '../../components/agency/SoftphoneJoinScreen';
 import { StationFatal } from '../../components/agency/StationFatal';
 import { StationHeader } from '../../components/agency/StationHeader';
 import { ContactPanel } from '../../components/agency/ContactPanel';
@@ -149,8 +153,16 @@ export default function AgentConsolePage() {
     accountId,
   });
 
+  const softphone = useStationSoftphone({
+    bootstrap,
+    cons,
+    tenantId: tenantId ?? undefined,
+    accountId: accountId ?? undefined,
+    userId: user?.id ?? null,
+  });
+
   useStationShortcuts(
-    { agentState, cons, bootstrap },
+    { agentState, cons, bootstrap, suspended: softphone.active },
     { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef },
   );
 
@@ -178,6 +190,23 @@ export default function AgentConsolePage() {
     );
   }
 
+  /*
+    The agent's live session is a SOFT-PHONE session (`session_on_softphone`):
+    one session per agent per tenant, and that one has no campaign to name, so the
+    remedy is closing the soft phone — one click here, unless a call there is not
+    finished.
+  */
+  if (join.onSoftphoneElsewhere) {
+    return (
+      <SoftphoneJoinScreen
+        closing={join.closingSoftphone}
+        failure={join.closeSoftphoneFailure}
+        callPending={join.softphoneCallPending}
+        onCloseAndJoin={join.closeSoftphoneAndJoin}
+      />
+    );
+  }
+
   if (join.joinError) {
     return (
       <StationFatal
@@ -185,6 +214,116 @@ export default function AgentConsolePage() {
         toCampaign={exit.canExitToCampaign}
         campaignId={exit.stationCampaignId}
       />
+    );
+  }
+
+  const micBanner = (
+    <>
+      {micNotice ? (
+        <p className={styles.micFailure} role="alert" data-testid="mic-failure">
+          <strong>{micNotice.headline}</strong> {micNotice.remedy}
+          {/*
+            The button IS the fix, not a link to it. A browser's autoplay policy
+            is lifted by any user gesture, so for `audio_blocked` the click that
+            dismisses the banner is the same click that resumes both contexts —
+            and on a mid-call reload it is the only control the agent has any
+            reason to press. `agencyAudioNotice` supplies `action` for exactly
+            that one kind; every other failure needs something done outside the
+            page, and a button there would be a promise we cannot keep.
+          */}
+          {micNotice.action ? (
+            <button
+              type="button"
+              className={styles.micFailureAction}
+              onClick={audio.resume}
+              data-testid="mic-resume"
+            >
+              {micNotice.action}
+            </button>
+          ) : null}
+        </p>
+      ) : null}
+    </>
+  );
+
+  /*
+    ── On the soft phone (SP7) ─────────────────────────────────────────────────
+    The session is on `break/soft_phone`: the soft phone renders in place, on this
+    station's socket and microphone, under this station's header. Its rail
+    replaces the station's — whose break arm offers End break, which a soft-phone
+    break must never show — and Return to campaign sits in the header, disabled
+    with its reason while a call is live or owes its outcome.
+  */
+  if (softphone.active) {
+    const busy = softphone.sp.call !== null;
+    return (
+      <div className={styles.shell} data-testid="station-softphone">
+        <StationHeader
+          user={user}
+          campaignName={bootstrap?.campaign_name}
+          subline={bootstrap ? `${bootstrap.campaign_name} · Soft phone` : undefined}
+          recordCalls={false}
+          muted={audio.muted}
+          cuePrefs={cons.cuePrefs}
+          onCuePrefsChange={cons.setCuePrefs}
+          // Leaving while a soft-phone call is unsettled would cut the customer off:
+          // the menu's own "finish this call first" rule, read off the call.
+          agentState={busy ? 'on_call' : agentState}
+          canExit={exit.canExitToCampaign}
+          leaving={exit.leaving}
+          onLeave={exit.openLeave}
+          onExit={exit.exitStation}
+          connection={connection}
+          missedPings={missedPings}
+          extra={
+            <>
+              <SoftphoneDisclosures sp={softphone.sp} showMuted={false} />
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={softphone.returnToCampaign}
+                disabled={softphone.returnBlockedReason !== null || softphone.returning}
+                aria-describedby={softphone.returnBlockedReason || softphone.returnFailure ? 'return-to-campaign-reason' : undefined}
+                data-testid="return-to-campaign"
+              >
+                {softphone.returning ? 'Returning…' : 'Return to campaign'}
+              </button>
+              {softphone.returnFailure || softphone.returnBlockedReason ? (
+                <span
+                  id="return-to-campaign-reason"
+                  className={styles.blockReason}
+                  role={softphone.returnFailure ? 'alert' : undefined}
+                  data-testid="return-to-campaign-reason"
+                >
+                  {softphone.returnFailure ?? softphone.returnBlockedReason}
+                </span>
+              ) : null}
+            </>
+          }
+        />
+        {micBanner}
+        <SoftphoneView
+          sp={softphone.sp}
+          connection={connection}
+          clock={clock}
+          fromCampaign
+          onReconnect={station.reconnect}
+          shortcutsEnabled={!exit.leaveConfirm}
+        />
+        <ConfirmDialog
+          open={exit.leaveConfirm}
+          title={LEAVE_CONFIRM_TITLE}
+          message={
+            exit.leaveFailure
+              ? `Your station is still open — ${exit.leaveFailure}`
+              : LEAVE_CONFIRM_MESSAGE
+          }
+          confirmLabel={exit.leaving ? 'Leaving…' : LEAVE_CONFIRM_ACTION}
+          disabled={exit.leaving}
+          onConfirm={exit.confirmLeave}
+          onCancel={exit.cancelLeave}
+        />
+      </div>
     );
   }
 
@@ -229,30 +368,7 @@ export default function AgentConsolePage() {
         talks into nothing. It is not scoped to a call — a blocked microphone
         found during pre-flight has to be fixable before the first one arrives.
       */}
-      {micNotice ? (
-        <p className={styles.micFailure} role="alert" data-testid="mic-failure">
-          <strong>{micNotice.headline}</strong> {micNotice.remedy}
-          {/*
-            The button IS the fix, not a link to it. A browser's autoplay policy
-            is lifted by any user gesture, so for `audio_blocked` the click that
-            dismisses the banner is the same click that resumes both contexts —
-            and on a mid-call reload it is the only control the agent has any
-            reason to press. `agencyAudioNotice` supplies `action` for exactly
-            that one kind; every other failure needs something done outside the
-            page, and a button there would be a promise we cannot keep.
-          */}
-          {micNotice.action ? (
-            <button
-              type="button"
-              className={styles.micFailureAction}
-              onClick={audio.resume}
-              data-testid="mic-resume"
-            >
-              {micNotice.action}
-            </button>
-          ) : null}
-        </p>
-      ) : null}
+      {micBanner}
 
       {/* The rail is the ONLY polite live region on this screen. */}
       <StateRail
@@ -418,6 +534,7 @@ export default function AgentConsolePage() {
         dnc={dnc}
         onHangup={hangup}
         hangupFailure={hangupFailure}
+        softphoneAvailable={softphone.available}
       />
 
       {/*

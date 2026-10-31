@@ -84,6 +84,53 @@ async function attempt(opts: {
   );
 }
 
+/**
+ * One soft-phone dial (`agency_manual_calls`, 0005) on its own soft-phone session,
+ * with an optional media leg and analysis job (SP5: metered like a campaign dial).
+ */
+async function manualCall(opts: {
+  tenantId: string;
+  accountId: string;
+  dialedAt: Date | null;
+  answered?: boolean;
+  bridged?: boolean;
+  talkSeconds?: number | null;
+  analysisSeconds?: number | null;
+}) {
+  const pool = getTestPool();
+  const session = await pool.query(
+    `INSERT INTO agency_agent_sessions (tenant_id, account_id, kind, campaign_id, agent_user_id, state, break_reason)
+     VALUES ($1, $2, 'softphone', NULL, $3, 'break', 'soft_phone') RETURNING id`,
+    [opts.tenantId, opts.accountId, randomUUID()],
+  );
+  const manualCallId = randomUUID();
+  let callId: string | null = null;
+  if (opts.analysisSeconds !== undefined) {
+    const call = await insertWebrtcCall({
+      tenant_id: opts.tenantId, account_id: opts.accountId, campaign_id: null,
+      origin: 'manual', manual_call_id: manualCallId,
+    });
+    callId = call.id;
+    await pool.query(
+      `INSERT INTO dialer_analysis_jobs (call_id, tenant_id, account_id, status, analysis_audio_seconds)
+       VALUES ($1, $2, $3, 'completed', $4)`,
+      [callId, opts.tenantId, opts.accountId, opts.analysisSeconds],
+    );
+  }
+  await pool.query(
+    `INSERT INTO agency_manual_calls
+       (id, tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id, state,
+        webrtc_call_id, dialed_at, answered_at, bridged_at, ended_at, talk_seconds, settled_at)
+     VALUES ($1, $2, $3, $4, $5, '+14155550199', '+14155550100', 'ended', $6, $7, $8, $9, now(), $10, now())`,
+    [
+      manualCallId, opts.tenantId, opts.accountId, session.rows[0].id, randomUUID(), callId, opts.dialedAt,
+      opts.answered ? opts.dialedAt : null,
+      opts.bridged ? opts.dialedAt : null,
+      opts.talkSeconds ?? null,
+    ],
+  );
+}
+
 async function workspace(name: string) {
   const tenant = await insertTenant({ name });
   const accountA = await insertAccount({ tenant_id: tenant.id, name: `${name} A` });
@@ -131,6 +178,35 @@ describe('usageCountsRepository.countByAccount (integration)', () => {
         dials: 1, answered_calls: 1, connected_calls: 1, talk_seconds: 45, analysis_audio_seconds: 40,
       },
     ]);
+  });
+
+  it('soft-phone dials are counted with the campaign dials, at the same rate and under the same rules (SP5)', async () => {
+    const w = await workspace('Manual');
+    const base = { tenantId: w.tenant.id, accountId: w.accountA.id, campaignId: w.campaignA };
+    await attempt({ ...base, dialedAt: IN, answered: true, bridged: true, talkSeconds: 60, analysisSeconds: 55 });
+    const manual = { tenantId: w.tenant.id, accountId: w.accountA.id };
+    await manualCall({ ...manual, dialedAt: IN, answered: true, bridged: true, talkSeconds: 90, analysisSeconds: 80 });
+    await manualCall({ ...manual, dialedAt: IN });                                   // no answer
+    await manualCall({ ...manual, dialedAt: TO, talkSeconds: 1000 });               // outside [from, to)
+    await manualCall({ ...manual, dialedAt: null });                                // never dialled
+    await manualCall({ tenantId: w.tenant.id, accountId: w.accountB.id, dialedAt: IN, answered: true, talkSeconds: 5 });
+
+    const rows = await usageCountsRepository.countByAccount({ from: FROM, to: TO });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        account_id: w.accountA.id, dials: 3, answered_calls: 2, connected_calls: 2,
+        talk_seconds: 150, analysis_audio_seconds: 135,
+      }),
+      expect.objectContaining({ account_id: w.accountB.id, dials: 1, answered_calls: 1, connected_calls: 0, talk_seconds: 5 }),
+    ]);
+
+    // The tenant / account narrowing applies to the manual half too.
+    const narrowed = await usageCountsRepository.countByAccount({
+      from: FROM, to: TO, tenantId: w.tenant.id, accountId: w.accountB.id,
+    });
+    expect(narrowed.map((r) => [r.account_id, r.dials])).toEqual([[w.accountB.id, 1]]);
+    // An account with ONLY soft-phone dials still gets a row.
+    expect(rows.map((r) => r.account_id)).toContain(w.accountB.id);
   });
 
   it('the window is half-open [from, to) on dialed_at; undialed attempts never count', async () => {

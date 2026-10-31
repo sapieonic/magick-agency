@@ -58,6 +58,23 @@ describe('resolveBreakReasons', () => {
   });
 });
 
+describe('the soft phone\'s reserved reason', () => {
+  // Entered only through the soft-phone switch, which checks the flag and audits it (SP7).
+  it('is never in a campaign\'s catalog, whatever the column holds', () => {
+    const configured = [{ code: 'lunch', label: 'Lunch' }, { code: 'soft_phone', label: 'Soft phone' }];
+    expect(resolveBreakReasons(configured)).toEqual([{ code: 'lunch', label: 'Lunch' }]);
+    // A catalog of only it degrades to the built-ins, which never list it either.
+    const onlyIt = resolveBreakReasons([{ code: 'soft_phone', label: 'Soft phone' }]);
+    expect(onlyIt).toEqual([...DEFAULT_BREAK_REASONS]);
+    expect(onlyIt.map((r) => r.code)).not.toContain('soft_phone');
+  });
+
+  it('is refused by `validateBreakReason`, so `/break` answers unknown_break_reason', () => {
+    const check = validateBreakReason([{ code: 'soft_phone', label: 'Soft phone' }, { code: 'lunch', label: 'Lunch' }], 'soft_phone');
+    expect(check).toEqual({ ok: false, allowed: ['lunch'] });
+  });
+});
+
 describe('validateBreakReason', () => {
   it('(d) rejects an unknown code and echoes the valid set', () => {
     const res = validateBreakReason([{ code: 'lunch', label: 'Lunch' }], 'siesta');

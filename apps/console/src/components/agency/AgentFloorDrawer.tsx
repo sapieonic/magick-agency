@@ -6,7 +6,7 @@ import { ApiError } from '../../api/client';
 import { Modal } from '@magick-agency/web-ui/components/Modal';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import {
-  AGENCY_FLOOR_STATE_LABELS,
+  floorStateLabel,
   FORCE_AVAILABLE_CONFIRM,
   FORCE_AVAILABLE_REASON_MAX,
   agentDisplayName,
@@ -149,8 +149,7 @@ export function AgentFloorDrawer({
           <div className={styles.fact}>
             <dt>State</dt>
             <dd data-testid="agent-drawer-state">
-              {AGENCY_FLOOR_STATE_LABELS[agent.state]}
-              {agent.state === 'break' && agent.break_reason ? ` · ${agent.break_reason}` : ''}
+              {floorStateLabel(agent)}
             </dd>
           </div>
           <div className={styles.fact}>

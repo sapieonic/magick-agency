@@ -152,9 +152,18 @@ const OCCUPANCY_VARIANTS = {
          -- intervals -- about 42 days of "offline" inside a 24-hour bucket -- and a
          -- session abandoned in a non-offline state inflates shift_seconds by the
          -- same construction.
+         --
+         -- The campaign join is LEFT: a soft-phone session (kind softphone,
+         -- campaign_id NULL, docs/softphone.md §2) is shift time on the soft_phone
+         -- break, and the roster variant counts it, so an INNER join here made the
+         -- two reads disagree for any agent who used the soft phone. With no campaign
+         -- there is no zone to resolve: the lateral finds nothing and
+         -- AGENCY_RESOLVED_ZONE_SQL buckets the session in UTC, the same fallback an
+         -- unresolvable campaign zone gets. A campaign filter still drops it
+         -- (s.campaign_id = $n is never true of NULL), as it does in the roster.
          SELECT s.id, s.left_at, s.joined_at, ${AGENCY_RESOLVED_ZONE_SQL} AS zone
            FROM agency_agent_sessions s
-           JOIN agency_campaigns c ON c.id = s.campaign_id
+           LEFT JOIN agency_campaigns c ON c.id = s.campaign_id
            ${AGENCY_RESOLVED_ZONE_JOIN_SQL}
           WHERE s.agent_user_id = $1
             AND s.tenant_id = $4

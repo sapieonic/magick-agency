@@ -3,8 +3,16 @@ import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
-import { agencyAgentSessionRepository } from '../db/repositories/agency.repository.js';
-import { AGENCY_STATION_CLOSE, type AgencyAgentState } from '@magick-agency/contracts/agency';
+import {
+  agencyAgentSessionRepository,
+  agencyManualCallRepository,
+} from '../db/repositories/agency.repository.js';
+import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
+import {
+  AGENCY_STATION_CLOSE,
+  SOFTPHONE_BREAK_REASON,
+  type AgencyAgentState,
+} from '@magick-agency/contracts/agency';
 import { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
@@ -23,6 +31,8 @@ import { DncRegistry } from './dnc-registry.js';
 import { notifyAgencyCampaignFinished } from './campaign-completion-notice.js';
 import { WrapupManager } from './wrapup-manager.js';
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
+import { ManualDialer } from './softphone/manual-dialer.js';
+import { SoftphoneService } from './softphone/softphone-service.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
@@ -62,6 +72,14 @@ export class AgencyRuntime {
    * never does.
    */
   readonly dnc: DncRegistry;
+  /** The soft phone's dialer: places manual calls and owns them until they end (docs/softphone.md §4.1). */
+  readonly manualDialer: ManualDialer;
+  /**
+   * The soft phone's runtime surface for the public API layer (docs/softphone.md
+   * §4, §6): typed methods answering refusals that map 1:1 onto
+   * `AgencySoftphoneErrorCode`. See `softphone/softphone-service.ts`.
+   */
+  readonly softphone: SoftphoneService;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -86,8 +104,15 @@ export class AgencyRuntime {
     // Same shape as the telephony guard host's `registerWebrtcActiveIdsProvider`: the sweeper
     // asks what is live rather than being told, so nothing has to remember to
     // update it.
+    this.manualDialer = new ManualDialer(bridge, this.stations, this.agents);
     this.reaper = new AgencyReaper({
       activeAttemptIds: () => this.dialer.activeAttemptIds(),
+      // The soft phone's orphan sweep spares this process's live manual calls; a
+      // call the sweeps close has its Redis claim cleared and its session told.
+      manual: {
+        activeIds: () => this.manualDialer.activeManualCallIds(),
+        onClosed: (rows) => this.manualDialer.onCallsClosedBySweep(rows),
+      },
       ownerOf: (sessionId) => this.stations.ownerOf(sessionId),
       unrecordedEnds: {
         ids: () => this.dialer.unrecordedEndedAttemptIds(),
@@ -99,6 +124,14 @@ export class AgencyRuntime {
     // Decision B8: the registry is one indexed read of `dnc_entries` and fails closed
     // on any read fault. The default argument is the shared `dncRepository`.
     this.dnc = new DncRegistry();
+    this.softphone = new SoftphoneService({
+      agents: this.agents,
+      stations: this.stations,
+      breaks: this.breaks,
+      dialer: this.dialer,
+      dnc: this.dnc,
+      manual: this.manualDialer,
+    });
     const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, this.stations, this.agents, dispatcher, this.dnc,
@@ -106,6 +139,12 @@ export class AgencyRuntime {
     // The engine's "something may want to know a campaign finished" seam carries the
     // supervisors' completion notice. See `campaign-completion-notice.ts`.
     this.pacing.registerCompletionNotifier({ notifyCampaignFinished: notifyAgencyCampaignFinished });
+    // A break (or a switch to the soft phone) queued while pacing held the agent
+    // `reserved` is applied by the one release path when pacing hands them back.
+    this.pacing.registerQueuedBreakRelease({
+      hasQueuedBreak: (sessionId) => this.breaks.peek(sessionId) !== null,
+      release: (sessionId) => this.dialer.releaseAgent(sessionId),
+    });
   }
 
   // ─── Presence resilience ──────────────────────────────────────────────────
@@ -130,15 +169,70 @@ export class AgencyRuntime {
    * `offline`, and before one the row may say `available`, so no row-derived rule
    * is safe. `break` is the one answer that is correct in every case — the agent
    * chooses to go available, and nothing dials into them until they do.
+   *
+   * ── The soft phone (docs/softphone.md §2, §4.1) ─────────────────────────────
+   * A soft-phone session, or a campaign session whose row is on the `soft_phone`
+   * break, rehydrates through `AgentStateMachine.rehydrateSoftphone`: a lapsed or
+   * `offline` lease becomes `break` and the row keeps `break_reason = soft_phone`
+   * (the plain path below would null it), the session is marked soft-phone in
+   * Redis (never `available`), and a call it still holds — live, or awaiting its
+   * outcome — re-claims the `manual` field, so the guard on `available` holds
+   * again after a lease lapsed.
+   *
+   * **The unsettled call alone makes a session soft-phone flavoured**, whatever
+   * its row's `kind` and `break_reason` say. The `manual` field is the guard on
+   * `available`, and it lives in the lease: a lease that lapsed while an outcome
+   * was owed took it, and a row whose break reason was lost (an `offline` write
+   * from an older build, a restart) must not be the gap through which the plain
+   * path below rehydrates the session as an ordinary break and the agent goes
+   * `available` with a soft-phone outcome owed. So the session's unsettled call is
+   * read on every rehydrate, not only for a row already known to be on the soft
+   * phone.
+   *
+   * @param session The row the caller already read (the join and the station
+   *   socket both have). Its `kind` and `break_reason` say whether the soft-phone
+   *   path applies (as does an unsettled call); its `state` is still never
+   *   consulted. Omitted, only the unsettled call can make it soft-phone flavoured.
    */
-  async rehydrateAgent(sessionId: string): Promise<AgencyAgentState> {
+  async rehydrateAgent(
+    sessionId: string,
+    session?: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'> | null,
+  ): Promise<AgencyAgentState> {
+    const row = session ?? null;
+    const unsettled = await Promise.resolve()
+      .then(() => agencyManualCallRepository.findUnsettledForSession(sessionId)).catch((err) => {
+        log.warn({ err, sessionId }, 'Could not read the session\'s soft-phone call to rehydrate');
+        return null;
+      });
+    const softphoneFlavoured = unsettled !== null
+      || (!!row && (row.kind === 'softphone' || row.break_reason === SOFTPHONE_BREAK_REASON));
+    if (softphoneFlavoured) {
+      const rehydrated = await this.agents.rehydrateSoftphone(sessionId, {
+        softphoneSession: row?.kind === 'softphone',
+        unsettledManualCallId: unsettled?.id ?? null,
+      });
+      if (rehydrated) {
+        // Mirrored when the lease was rewritten, and also when the row had lost its
+        // soft-phone reason (an unsettled call found it): the bootstrap's
+        // `on_softphone` and the return route read the row.
+        if (rehydrated.changed || (rehydrated.state === 'break' && row?.break_reason !== SOFTPHONE_BREAK_REASON)) {
+          await agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
+            .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
+        }
+        return rehydrated.state;
+      }
+      // Redis could not answer: fall through to the plain rule, which also fails
+      // toward `break`.
+    }
     const live = await this.agents.get(sessionId);
     if (live) return live.state;
 
     await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
     // Best-effort mirror. Redis is the authority; a failed write here costs a
     // durable record, never correctness.
-    await agencyAgentSessionRepository.setState(sessionId, 'break')
+    await (softphoneFlavoured
+      ? agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
+      : agencyAgentSessionRepository.setState(sessionId, 'break'))
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
     return 'break';
   }
@@ -166,6 +260,10 @@ export class AgencyRuntime {
     // already gets from the bridge; it is a no-op for every announced attempt.
     this.dialer.noteStationClosed(sessionId);
     if (this.dialer.hasLiveAttempt(sessionId)) return false;
+    // The same rule for a live soft-phone call: the station socket is its media leg,
+    // and the bridge's grace (after the answer) or its immediate hangup (before)
+    // owns the outcome.
+    if (this.manualDialer.hasLiveCall(sessionId)) return false;
     // ── BELT AND BRACES: THE SUPERSEDE GATE, RE-ASKED AT THE WRITE ──────────
     //
     // The close handler's own `socketFor` check might look as though it races this
@@ -299,6 +397,9 @@ export class AgencyRuntime {
         this.dialer.noteStationClosed(entry.sessionId);
         continue;
       }
+      // A live soft-phone call: this socket IS its media leg (bound before the
+      // dial), so rule 1 holds as written.
+      if (this.manualDialer.hasLiveCall(entry.sessionId)) continue;
 
       if (entry.ws.readyState === 3 /* CLOSED */) {
         log.warn({
@@ -376,6 +477,7 @@ export class AgencyRuntime {
 
   async start(): Promise<void> {
     this.dialer.start();
+    this.manualDialer.start();
     await this.reaper.reapOnStartup();
     this.reaper.start();
     this.pacing.start();
@@ -417,6 +519,7 @@ export class AgencyRuntime {
     this.liveConcurrencyMetrics?.stop();
     this.liveConcurrencyMetrics = null;
     this.dialer.stop();
+    this.manualDialer.stop();
     // Timers only — agents are NOT returned to the pool here. Their sockets die
     // with the process and a restart lands them in `break` on reconnect, so returning
     // them to `available` on the way out would be a lie the next boot inherits.

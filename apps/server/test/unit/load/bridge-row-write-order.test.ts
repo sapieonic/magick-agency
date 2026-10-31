@@ -126,7 +126,7 @@ describe(`bridge row writes under a reordering pool (calls ${CALLS}, seed ${LOAD
     for (let i = 0; i < CALLS; i++) {
       const record = await mgr.createBridgedCall({
         tenantId: 't1', accountId: 'a1', callerId: '+919800000001', destinationPhone: '+919800000002',
-        browserSocket: station() as never, campaignId: 'camp', agencyAttemptId: `att-${i}`,
+        browserSocket: station() as never, correlation: { kind: 'attempt' as const, campaignId: 'camp', agencyAttemptId: `att-${i}` },
       });
       ids.push(record.id);
     }

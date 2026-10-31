@@ -30,7 +30,8 @@ against.
 | `AgencyStationBridgeStatusFrame` | `status` is a 10-member literal union | `status: string` | The console's diagnostic frame is deliberately wide |
 | `AgencyDispositionResponse` | `extends AgencyCampaignScoped` (`campaign_id`); `contact_state: AgencyContactState`; `callback_requested_at?: string \| null` | no `campaign_id`; `contact_state: string`; `callback_requested_at?: string \| null` | The console shows the requested callback time beside the window-adjusted `next_attempt_at` |
 | `AgencyDncResponse` | `extends AgencyCampaignScoped`; `contact_state: AgencyContactState` | no `campaign_id`; `contact_state: string` | Additive on the console side |
-| `AgencySessionStateResponse` | `extends AgencyCampaignScoped`; `pending_state?: AgencyAgentState`; `break_reason?: string` | no `campaign_id`; both `\| null` | The server never sends `null` |
+| `AgencySessionStateResponse` | `campaign_id: string \| null` (NULL for a soft-phone session); `kind: AgencySessionKind`; `pending_state?: AgencyAgentState`; `break_reason?: string` | no `campaign_id`; `kind` inherited; both `\| null` | The server never sends `null` for the two optional fields |
+| `AgencySoftphoneCreateSessionRequest`, `AgencyManualCallCreateRequest`, `AgencyManualCallUpdateRequest`, `AgencyManualCallHangupRequest`, `AgencyManualCallDispositionRequest`, `AgencyManualCallDncRequest` | carry the actor (`agent_user_id`, and `on_behalf` where a supervisor may act) | derived: the same bodies without them (§5); the session create and the hangup are `Record<string, never>` | The public API layer fills the actor from the authenticated session |
 | `AgencyWrapupState` | `seconds_total: number`; `held_reason: AgencyWrapupHoldReason \| null` (required; 2 members) | no `seconds_total`; `held_reason?: AgencyWrapupHold \| null` (2 members) | `supervisor_hold` is declared on both sides but nothing produces it (`docs/decisions.md`, still open) |
 | `AgencyStationReadyFrame` | `active_wrapup?: AgencyWrapupState` (dialer) | `active_wrapup?: AgencyWrapupState` (console, above) | Otherwise the dialer frame |
 | `AgencySupervisorAgent` | no name | `agent_name: string \| null` | Public API layer enrichment: it joins the name from `users` |
@@ -54,6 +55,7 @@ extends the dialer type and declares only the difference.
 |---|---|---|
 | `AgencyContactRow` | `AgencyRosterContact` | alias |
 | `AgencyAttemptRow` | `AgencyAttempt` | derived: adds `agent_name?: string \| null` (enrichment) |
+| `AgencyManualCall` (a `GET /softphone/calls` row) | `AgencyManualCallListRow` | derived: adds `analysis_status?: DialerAnalysisStatus \| null`, the media leg's summary status (the list read joins it); `AgencyManualCallsPage` is the console's page of it, so the dialer `AgencyManualCallsPage` is not re-exported |
 | `AgencyLineageCampaign` | `AgencyCampaignLineageEntry` | derived: `status: string` |
 | `AgencyAgentOccupancy` | `AgencyOccupancy` | alias |
 | `AgencyStatsBucketUnit` | `AgencyStatsBucketWidth` | alias (`'day' \| 'week' \| 'month'`) |
@@ -85,12 +87,19 @@ package root.
   `AgencyKeysetPage`, `AgencyContactDetail`.
 - `agency-stats.ts`: `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, `AgencyRosterSort`,
   `AgencyRosterPercentiles`, `AgencyGroupDimension`, `AgencyGroupKey`, `AgencyGroupSort`.
+- `softphone.ts` (`docs/softphone.md`): every soft-phone shape the console reads unchanged — the
+  manual call and its vocabularies, call fields, settings, bootstrap, session response, list query,
+  disposition and DNC responses, the refusal bodies, `AgencyStationManualCallFrame` —
+  its constants (`SOFTPHONE_*`, `AGENCY_SESSION_KINDS`, `AGENCY_MANUAL_CALL_*`,
+  `AGENCY_CALL_FIELD_TYPES`) and `AgencySoftphoneErrorCode` with `AGENCY_SOFTPHONE_ERROR_CODES`
+  (from `../../errors`).
 
 The rename-only pairs of §2 are aliases of the dialer type: `AgencyRosterContact`,
 `AgencyAgentStatsByCampaign`, `AgencyWrapupHold`, `AgencyStatsBucketWidth`.
 
-`AgencyStationReadyFrame`, `AgencyStationWrapupFrame` and `AgencyStationServerFrame` read the
-same as their dialer counterparts but are NOT identical: the first two reference
+`AgencyStationReadyFrame`, `AgencyStationWrapupFrame` and `AgencyStationServerFrame` (which
+takes in the re-exported `AgencyStationManualCallFrame`) read the same as their dialer
+counterparts but are NOT identical: the first two reference
 `AgencyWrapupState`, and the union also takes in `AgencyStationBridgeStatusFrame`, both of which
 differ (§1). The ready frame is derived (§1); the wrap-up frame (two members) and the server-frame
 union stay declared in `api/agency/agency.ts`.
@@ -103,8 +112,11 @@ handlers serialise it in `apps/server/src/api/responses/agency-campaign.response
 (`AgencyRetryOutcome` / `Policy` / `Rule`), `AGENCY_RETRY_REFUSAL_CODES`, staffing
 (`AgencyMyAssignment(s)`, `AgencyAssignment`, `AgencyAssignedAgent`, `AgencyAgentAssignment`,
 `AgencyStaffingHistory*`), the `*WithName` roster and group rows, activity (`agency-activity.ts`),
-DNC (`dnc.ts`), analysis profiles (`call-analysis-profile.ts`), and the call detail
-(`webrtc-call.ts`, `attempt-call.ts`).
+DNC (`dnc.ts`), analysis profiles (`call-analysis-profile.ts`), the call detail
+(`webrtc-call.ts`, `attempt-call.ts`), and the soft-phone call detail `AgencyManualCallDetail`
+(`softphone.ts`), which carries the media leg's `WebRtcCallRecord` in the attempt detail's
+envelope (`call_availability`) and the enriched `dispositioned_by_name?` (who saved the outcome,
+joined from `users`).
 
 ## 5. Request fields the server sets itself
 
@@ -112,3 +124,5 @@ DNC (`dnc.ts`), analysis profiles (`call-analysis-profile.ts`), and the call det
   layer from the authenticated session, never taken from the client; it remains in `agency.ts`
   because the internal handlers parse it. A candidate for removal.
 - `on_behalf` is likewise decided server-side, from `agency.supervise`.
+- The soft-phone request bodies (`../../agency/softphone.ts`) carry the same two fields for the
+  internal handlers; the console's are derived without them (§1).

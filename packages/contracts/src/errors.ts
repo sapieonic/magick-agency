@@ -277,3 +277,98 @@ const _allLifecycleCodesListed: AllListed<
   typeof AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES
 > = true;
 void _allLifecycleCodesListed;
+
+// ─── 4. Soft-phone refusals ─────────────────────────────────────────────────
+//
+// The codes of the soft-phone routes (`/proxy/agency/softphone/*`, `docs/softphone.md`
+// §6) and the two soft-phone refusals the campaign session routes raise
+// (`wrong_session_kind`, `manual_call_live`). Outside the action union for the same
+// reason the lifecycle codes are: these are not an attempt action's refusals, and
+// folding them in would make that union claim members its routes never raise. The
+// body is `AgencySoftphoneErrorResponse` (`./agency/softphone`), narrowed per code
+// where a refusal carries structured fields. HTTP status beside each code.
+
+/** Why a soft-phone route refused. */
+export type AgencySoftphoneErrorCode =
+  /** 403. `agency_softphone_enabled` is off for this tenant/account (SP4), on a route that starts work (open a NEW session, dial, switch) or the recording / settings. Finishing a call is never refused by it. */
+  | 'softphone_disabled'
+  /** 400. `to` does not normalise to a dialable E.164 number. */
+  | 'invalid_number'
+  /** 400. `caller_id` is not the tag's `caller_ids`, or not one of the account's numbers when untagged. `allowed_codes` lists the allowed set. */
+  | 'caller_id_not_allowed'
+  /** 403. `campaign_id` is not a campaign the caller may log to (bootstrap's `taggable_campaigns`). */
+  | 'campaign_not_taggable'
+  /** 409. The number is on the DNC list (SP1). Overridable with `overrides.dnc_note`; carries the entry. */
+  | 'dnc_listed'
+  /** 503. The DNC lookup failed. Fails closed and cannot be overridden (SP1). */
+  | 'dnc_unavailable'
+  /** 409. The tagged campaign's calling window is closed (SP2). Overridable with `overrides.hours_note`. */
+  | 'outside_calling_hours'
+  /** 400. An override note is outside `SOFTPHONE_OVERRIDE_NOTE_MIN`–`_MAX` characters after trimming. */
+  | 'override_note_invalid'
+  /** 409. A campaign attempt is live on the matched roster contact. No override (§4.1 step 2). */
+  | 'contact_in_flight'
+  /** 409. `POST /sessions` while the agent is live on a campaign (in this account or a sibling one: `account_id`); switch that session instead (§4.2). */
+  | 'session_on_campaign'
+  /** 409. The campaign join while the agent's live session is a soft-phone session; and `POST /sessions` while it is one in another account (`account_id`). */
+  | 'session_on_softphone'
+  /** 404. `session_id` is not the caller's live session in this tenant. */
+  | 'session_not_found'
+  /** 409. A campaign session route (`available`, `break`, `break/cancel`, `force-available`) on a soft-phone session, or a switch route on one. */
+  | 'wrong_session_kind'
+  /** 409. A dial from a session that is not on the soft phone (`break/soft_phone`), e.g. a campaign session that has not switched yet. */
+  | 'not_on_softphone'
+  /** 409. The session has a manual call that is live (or, for `/softphone/return` and `available`, ended and awaiting its outcome). */
+  | 'manual_call_live'
+  /** 409. A dial while the session's last call awaits its outcome: one unsettled call per session. */
+  | 'outcome_pending'
+  /** 429. The account, provider or global concurrency guard refused the dial. */
+  | 'concurrency_limit'
+  /** 409. The session has no attached station socket to dial the agent leg on. */
+  | 'station_unavailable'
+  /** 503. The dial could not be placed for a reason that is not the caller's: the agent state store did not answer, or the bridge refused in a way this version does not name. Nothing was dialled; retry. Also the switch to the soft phone and the return from it when the agent state store cannot take the write: nothing changed. */
+  | 'dial_failed'
+  /** 404. No such call, or one the caller may not see (an agent sees only their own). */
+  | 'call_not_found'
+  /** 409. The call's outcome is already saved (with a different code) or lapsed. */
+  | 'call_settled'
+  /** 400. The outcome code is not in the call's catalog (`allowed_codes` is set), or its note / callback time is missing or invalid. */
+  | 'disposition_invalid'
+  /** 400. A call-field value is of the wrong type, an unknown key, or a required field is empty on the outcome. `details` per key. */
+  | 'fields_invalid'
+  /** 400. `PUT /settings` body is invalid (catalog, call fields, profile or caller ID). `details` per path. */
+  | 'settings_invalid';
+
+/** Runtime list of {@link AgencySoftphoneErrorCode}, in declaration order. */
+export const AGENCY_SOFTPHONE_ERROR_CODES = [
+  'softphone_disabled',
+  'invalid_number',
+  'caller_id_not_allowed',
+  'campaign_not_taggable',
+  'dnc_listed',
+  'dnc_unavailable',
+  'outside_calling_hours',
+  'override_note_invalid',
+  'contact_in_flight',
+  'session_on_campaign',
+  'session_on_softphone',
+  'session_not_found',
+  'wrong_session_kind',
+  'not_on_softphone',
+  'manual_call_live',
+  'outcome_pending',
+  'concurrency_limit',
+  'station_unavailable',
+  'dial_failed',
+  'call_not_found',
+  'call_settled',
+  'disposition_invalid',
+  'fields_invalid',
+  'settings_invalid',
+] as const satisfies readonly AgencySoftphoneErrorCode[];
+
+const _allSoftphoneCodesListed: AllListed<
+  AgencySoftphoneErrorCode,
+  typeof AGENCY_SOFTPHONE_ERROR_CODES
+> = true;
+void _allSoftphoneCodesListed;

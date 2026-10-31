@@ -11,6 +11,7 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { PageDescription } from '../../components/common/PageDescription';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import {
   DNC_SOURCE_LABELS,
   type DncAddSummary,
@@ -31,17 +32,18 @@ const PAGE_SIZE = 50;
  * direction: it prints "this does not stop any call" beside the number of a
  * customer who asked not to be called, next to a suppression that is live.
  *
- * The two enforcement points are separate and only the first is workspace-wide:
+ * Every enforcement point reads the one `dnc_entries` table with the same widening
+ * predicate (decision B8), `(account_id IS NULL OR account_id = <the dial's account>)
+ * AND (campaign_id IS NULL OR campaign_id = <the dial's campaign>)`:
  *
- *  1. **Dial time.** `pre-dial-gates.ts` asks `DncRegistry.check(tenantId, …)`,
- *     which reads the flat `dnc:{tenantId}` Redis set. The server publishes into it
- *     from `listTenantWidePhones` — `account_id IS NULL AND campaign_id IS NULL`
- *     (`dnc.repository.ts`). So ONLY a tenant-wide row is consulted here.
- *  2. **Roster import.** The server's ingest calls `dncRepository.findSuppressed`,
- *     whose predicate is `(account_id IS NULL OR account_id = $3) AND
- *     (campaign_id IS NULL OR campaign_id = $4)`. A scoped row therefore DOES
- *     drop the number — from that campaign's imports, or from that account's
- *     campaigns' imports. This is the point the old copy denied outright.
+ *  1. **Dial time.** `pre-dial-gates.ts` asks `DncRegistry.check` with the
+ *     campaign's account and id, so a tenant-wide row, an account row for that
+ *     account, or a row for that campaign stops the dial.
+ *  2. **Roster import.** The ingest's `dncRepository.findSuppressed`, the same
+ *     predicate: the number is dropped from the imports it would stop dialling.
+ *  3. **The soft phone** (`docs/softphone.md` §4.1 step 2). A call logged to a
+ *     campaign reads that campaign's scopes; a call logged to none reads the
+ *     tenant, its account, and a row for ANY campaign of that account.
  *
  * A campaign-scoped row additionally has its campaign's existing roster rows
  * suppressed at the moment an agent marks it (the API's `suppressByPhone`), but
@@ -85,6 +87,15 @@ const SCOPE_LABEL: Record<DncScopeKind, string> = {
   account: 'One account',
 };
 
+/**
+ * The soft-phone half of each scoped row's tooltip, shown only where the soft phone is on
+ * (`agency_softphone_enabled`): where it is off, no soft-phone call exists to be stopped.
+ */
+const SCOPE_SOFTPHONE_NOTE: Partial<Record<DncScopeKind, string>> = {
+  campaign: ' A soft-phone call from the same account that is not logged to a campaign is stopped too.',
+  account: ' The soft phone stops a call to it from that account.',
+};
+
 const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   // "Enforced everywhere" is what this said, and it was the widest claim on the
   // page — read as every kind of call honouring the number. DNC is an
@@ -96,15 +107,14 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
     + 'campaign in this workspace will call it, and it is dropped from every roster import. It '
     + 'does not stop AI calls or broadcasts.',
   campaign:
-    'Enforced for one campaign only: this number is dropped from that campaign’s roster imports, '
-    + 'and an agent’s mid-call mark also suppresses the contacts already on it. It is NOT in the '
-    + 'dialer’s block list, so every other campaign in this workspace can still call this number. '
-    + 'Add a workspace-wide entry if the customer asked never to be called.',
-  account:
-    'Enforced for one account’s campaigns, at roster import only: this number is dropped when '
-    + 'contacts are imported. It is NOT in the dialer’s block list, so a contact already imported '
-    + 'can still be called, and campaigns in other accounts are unaffected. Add a workspace-wide '
+    'Enforced for one campaign only: that campaign won’t dial this number and drops it from its '
+    + 'roster imports, and an agent’s mid-call mark also suppresses the contacts already on it. '
+    + 'Every other campaign in this workspace can still call this number. Add a workspace-wide '
     + 'entry if the customer asked never to be called.',
+  account:
+    'Enforced for one account: none of that account’s campaigns will dial this number, and it is '
+    + 'dropped from that account’s roster imports. Campaigns in other accounts are unaffected. Add '
+    + 'a workspace-wide entry if the customer asked never to be called.',
 };
 
 /**
@@ -129,6 +139,7 @@ const SOURCE_TOOLTIP: Partial<Record<DncSource, string>> = {
 
 export function DncPage() {
   const { tenantId, accountId, role } = useTenant();
+  const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const { showToast, showErrorToast } = useToast();
 
   const [entries, setEntries] = useState<DncEntry[]>([]);
@@ -266,8 +277,10 @@ export function DncPage() {
       <h1 className={styles.title}>Do Not Call</h1>
 
       {/*
-        This list governs agency campaigns, and the copy has to say so. It stops
-        agency campaigns from dialing a number and nothing else. Presenting it as
+        This list governs agency campaigns and the soft phone, and the copy has to
+        say so. It stops agency campaigns from dialing a number, and stops a
+        soft-phone dial unless the agent overrides it with a written reason, which
+        is audited (SP1, `docs/softphone.md`). Presenting it as
         compliance for every kind of call would leave an operator believing a customer
         who asked not to be called is protected everywhere — the one
         misunderstanding on this page that costs a customer something.
@@ -276,17 +289,26 @@ export function DncPage() {
         pageKey="agency-dnc"
         description={
           'Agency campaigns don’t dial the numbers on this list — every campaign for a '
-          + 'workspace-wide entry, or only the campaign or account the Scope column names. It does '
-          + 'not apply to AI calls, broadcasts or the Softphone. Agents add numbers from the '
-          + 'station when a customer asks; you can also add them in bulk here.'
+          + 'workspace-wide entry, or only the campaign or account the Scope column names. '
+          // The soft phone's sentence only where it is on (SP4): elsewhere it describes a
+          // surface the account does not have.
+          + (softphoneOn
+            ? 'The soft phone checks it too: a call logged to a campaign is stopped by the entries that '
+              + 'campaign honours, and a call logged to no campaign by an entry for the workspace, its '
+              + 'account or any of the account’s campaigns. An agent who is stopped can call only by '
+              + 'writing down why — that reason is logged with their name. '
+            : '')
+          + 'It does not apply to AI calls or broadcasts. Agents add numbers '
+          + (softphoneOn ? 'from the station and the soft phone ' : 'from the station ')
+          + 'when a customer asks; you can also add them in bulk here.'
         }
         tips={[
           'A workspace-wide entry blocks the number in every agency campaign and account.',
           'Adding a number that is already listed is harmless — it stays listed once.',
           'Removing a number lets agency campaigns dial it again — if the customer asked not to '
           + 'be called, leave it listed.',
-          'An entry scoped to one campaign or account IS enforced, but only there and only when '
-          + 'contacts are imported — it is not in the dialer’s block list. See the Scope column.',
+          'An entry scoped to one campaign or account IS enforced, but only there. See the Scope '
+          + 'column.',
         ]}
       />
 
@@ -421,7 +443,7 @@ export function DncPage() {
                       return (
                         <span
                           className={kind === 'tenant' ? styles.scopeGlobal : styles.scopeNarrow}
-                          title={SCOPE_TOOLTIP[kind]}
+                          title={SCOPE_TOOLTIP[kind] + (softphoneOn ? SCOPE_SOFTPHONE_NOTE[kind] ?? '' : '')}
                           data-testid={`dnc-scope-${kind}`}
                         >
                           {SCOPE_LABEL[kind]}

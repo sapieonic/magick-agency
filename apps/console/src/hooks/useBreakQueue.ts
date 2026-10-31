@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import { setAgentBreak, cancelQueuedBreak } from '../api/agency';
+import { switchToSoftphone } from '../api/softphone';
 import {
   trackAgencyBreakRequested,
   trackAgencyBreakRejected,
   trackAgencyQueuedBreakResolved,
+  trackAgencySoftphoneSwitch,
 } from '../analytics/events';
+import { SOFTPHONE_BREAK_REASON } from '../types/softphone';
+import { refusalCopy } from '../utils/softphone/refusalCopy';
 import { errorBody } from '../utils/agencyErrors';
 import { resyncCatalog, numberKeysRemapped } from '../utils/agencyCatalogSync';
 import { BREAK_REJECTED_COPY } from '../components/agency/BreakMenu';
@@ -46,6 +50,16 @@ export interface BreakQueueState {
    * pill has no subject left. Never touches the rail.
    */
   clearQueuedBreak: () => void;
+  /**
+   * **Switch to the soft phone** (SP7, `docs/softphone.md` §4.2): a break with the
+   * reserved reason `soft_phone`, through its own route. Queued exactly like a
+   * break while the agent is reserved, on a call or in wrap-up — the same queue,
+   * the same pill, the same ✕ (`/break/cancel`) — and the station shows the soft
+   * phone when `agent_state` reports `break/soft_phone`.
+   */
+  requestSoftphone: () => void;
+  /** The switch's own refusal, said in the action bar (never inside the break menu). */
+  softphoneRejection: string | null;
 }
 
 export function useBreakQueue(options: {
@@ -79,6 +93,7 @@ export function useBreakQueue(options: {
   const [cancelling, setCancelling] = useState(false);
   const [cancelFailed, setCancelFailed] = useState(false);
   const [breakAlreadyStarted, setBreakAlreadyStarted] = useState(false);
+  const [softphoneRejection, setSoftphoneRejection] = useState<string | null>(null);
 
   /**
    * The statement count at the moment a response lands — read at that moment,
@@ -235,6 +250,29 @@ export function useBreakQueue(options: {
     }
   }, [bootstrap, tenantId, accountId, cancelling, writeQueue, announce]);
 
+  const requestSoftphone = useCallback(async () => {
+    if (!bootstrap || breakBusy) return;
+    setBreakBusy(true);
+    setSoftphoneRejection(null);
+    setBreakRejection(null);
+    setBreakAlreadyStarted(false);
+    const result = await switchToSoftphone(bootstrap.session_id, tenantId, accountId);
+    setBreakBusy(false);
+    if (result.ok) {
+      const queued = Boolean(result.value.pending_state);
+      // Queued: the pill. Immediate: nothing to queue — the `agent_state` frame that
+      // follows is what puts the soft phone on screen.
+      writeQueue(queued ? (result.value.break_reason ?? SOFTPHONE_BREAK_REASON) : null);
+      if (queued) announce('Switching to the soft phone after this call.');
+      trackAgencySoftphoneSwitch({ action: 'start', queued, outcome: 'accepted', code: null });
+      return;
+    }
+    const copy = refusalCopy(result.refusal, 'status');
+    setSoftphoneRejection(copy);
+    announce(`Couldn’t switch to the soft phone. ${copy}`);
+    trackAgencySoftphoneSwitch({ action: 'start', queued: false, outcome: 'refused', code: result.refusal.code });
+  }, [bootstrap, breakBusy, tenantId, accountId, writeQueue, announce]);
+
   const clearBreakAlreadyStarted = useCallback(() => setBreakAlreadyStarted(false), []);
   const clearQueuedBreak = useCallback(() => writeQueue(null), [writeQueue]);
 
@@ -250,5 +288,7 @@ export function useBreakQueue(options: {
     breakAlreadyStarted,
     clearBreakAlreadyStarted,
     clearQueuedBreak,
+    requestSoftphone: () => void requestSoftphone(),
+    softphoneRejection,
   };
 }

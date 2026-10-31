@@ -185,7 +185,7 @@ export async function getAgencyAttemptCall(
  *    it. The server answers 502 for an unresolvable credential or a provider fetch
  *    failure; that is not "the recording is gone" and must not read as it.
  */
-async function recordingRefusal(res: Response): Promise<RecordingOutcome> {
+export async function recordingRefusal(res: Response): Promise<RecordingOutcome> {
   if (res.status === 403) return { status: 'forbidden' };
   if (res.status === 404) {
     let code: unknown;

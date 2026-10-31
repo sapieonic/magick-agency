@@ -149,6 +149,14 @@ describe('WebRtcCallRepository — dialer/agency scope predicate', () => {
      * carrying both clauses would satisfy that and match no rows at all. The two
      * scopes have to be exclusive, so check the dialer clause is absent too.
      */
+    it('takes soft-phone legs too: campaign_id IS NOT NULL OR origin = manual, as one group', async () => {
+      await repo.findByIdScoped('wc-1', 't1', 'a1', 'agency');
+      await repo.listByTenant('t1', 'a1', 'agency');
+      for (const i of [0, 1, 2]) {
+        expect(sqlAt(i)).toContain("(campaign_id IS NOT NULL OR origin = 'manual')");
+      }
+    });
+
     it('does not also emit the dialer predicate', async () => {
       await repo.listByTenant('t1', 'a1', 'agency');
       for (const i of [0, 1]) {

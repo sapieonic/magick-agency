@@ -35,13 +35,24 @@ export interface StationShortcutTargets {
  * frame since.
  */
 export function useStationShortcuts(
-  state: { agentState: AgencyAgentState; cons: AgencyConsoleState; bootstrap: AgencySessionBootstrap | null },
+  state: {
+    agentState: AgencyAgentState;
+    cons: AgencyConsoleState;
+    bootstrap: AgencySessionBootstrap | null;
+    /**
+     * The station is showing the soft phone (SP7), which has its own keyboard
+     * (`useSoftphoneShortcuts`). Nothing here may fire then: digits would pick a
+     * campaign outcome, and `A` would end the soft-phone break as an ordinary one.
+     */
+    suspended?: boolean;
+  },
   { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef }: StationShortcutTargets,
 ): void {
   const shortcutStateRef = useLatestRef(state);
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      const { agentState, cons, bootstrap } = shortcutStateRef.current;
+      const { agentState, cons, bootstrap, suspended } = shortcutStateRef.current;
+      if (suspended) return;
       // Analytics only: every shortcut reports against the station's campaign.
       const stationCampaign = bootstrap?.campaign_id ?? '';
       const shortcutUsed = (
