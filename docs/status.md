@@ -201,6 +201,28 @@ transfer and conference. Seen and left: light-theme `<select>` elements show no 
 
 ## Test counts
 
+Latest run, 2026-10-31, after the soft phone, from inside each package (`pnpm lint` clean in
+8 packages; `pnpm build`, `pnpm test:grafana` 31 and `pnpm test:release` 10 pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7136 passed + 4 expected fail (340 files) | 1419 passed + 10 expected fail, 1 failed (151 files) |
+| `packages/db` | 427 | 493 (44 files) |
+| `apps/console` | 4730 (244 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 94 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 53 | — |
+| `packages/observability` | 14 | — |
+
+The one integration failure is a timing flake in the load suite:
+`load/voicelink-media-ws-load.test.ts` ("start negotiation failures", seed 24301) ended one call
+`provider_start_timeout` instead of `unsupported_media_format` under the full run's load. Run alone
+it passed 8 of 8 on this branch and 8 of 8 on `c9fd548`; the branch does not touch media
+negotiation. `load/agent-churn.test.ts` passed in this run (pre-existing flake, see above).
+The baseline before the soft phone, on `c9fd548`: server 6947 unit / 1301 integration, db 426 /
+469, console 4560.
+
 Latest run, 2026-10-23, after the load and scenario suites, `apps/server` only, from inside the
 package: lint clean in 8 packages; unit 6755 passed + 4 expected fail + 42 skipped (332 files);
 integration 1288 passed + 10 expected fail (141 files, about 9.5 min on 4 CPUs; the load files add about 5). Other packages are unchanged since the run below.
