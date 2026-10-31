@@ -31,17 +31,18 @@ const PAGE_SIZE = 50;
  * direction: it prints "this does not stop any call" beside the number of a
  * customer who asked not to be called, next to a suppression that is live.
  *
- * The two enforcement points are separate and only the first is workspace-wide:
+ * Every enforcement point reads the one `dnc_entries` table with the same widening
+ * predicate (decision B8), `(account_id IS NULL OR account_id = <the dial's account>)
+ * AND (campaign_id IS NULL OR campaign_id = <the dial's campaign>)`:
  *
- *  1. **Dial time.** `pre-dial-gates.ts` asks `DncRegistry.check(tenantId, …)`,
- *     which reads the flat `dnc:{tenantId}` Redis set. The server publishes into it
- *     from `listTenantWidePhones` — `account_id IS NULL AND campaign_id IS NULL`
- *     (`dnc.repository.ts`). So ONLY a tenant-wide row is consulted here.
- *  2. **Roster import.** The server's ingest calls `dncRepository.findSuppressed`,
- *     whose predicate is `(account_id IS NULL OR account_id = $3) AND
- *     (campaign_id IS NULL OR campaign_id = $4)`. A scoped row therefore DOES
- *     drop the number — from that campaign's imports, or from that account's
- *     campaigns' imports. This is the point the old copy denied outright.
+ *  1. **Dial time.** `pre-dial-gates.ts` asks `DncRegistry.check` with the
+ *     campaign's account and id, so a tenant-wide row, an account row for that
+ *     account, or a row for that campaign stops the dial.
+ *  2. **Roster import.** The ingest's `dncRepository.findSuppressed`, the same
+ *     predicate: the number is dropped from the imports it would stop dialling.
+ *  3. **The soft phone** (`docs/softphone.md` §4.1 step 2). A call logged to a
+ *     campaign reads that campaign's scopes; a call logged to none reads the
+ *     tenant, its account, and a row for ANY campaign of that account.
  *
  * A campaign-scoped row additionally has its campaign's existing roster rows
  * suppressed at the moment an agent marks it (the API's `suppressByPhone`), but
@@ -96,15 +97,16 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
     + 'campaign in this workspace will call it, and it is dropped from every roster import. It '
     + 'does not stop AI calls or broadcasts.',
   campaign:
-    'Enforced for one campaign only: this number is dropped from that campaign’s roster imports, '
-    + 'and an agent’s mid-call mark also suppresses the contacts already on it. It is NOT in the '
-    + 'dialer’s block list, so every other campaign in this workspace can still call this number. '
-    + 'Add a workspace-wide entry if the customer asked never to be called.',
-  account:
-    'Enforced for one account’s campaigns, at roster import only: this number is dropped when '
-    + 'contacts are imported. It is NOT in the dialer’s block list, so a contact already imported '
-    + 'can still be called, and campaigns in other accounts are unaffected. Add a workspace-wide '
+    'Enforced for one campaign only: that campaign won’t dial this number and drops it from its '
+    + 'roster imports, and an agent’s mid-call mark also suppresses the contacts already on it. '
+    + 'A soft-phone call from the same account that is not logged to a campaign is stopped too. '
+    + 'Every other campaign in this workspace can still call this number. Add a workspace-wide '
     + 'entry if the customer asked never to be called.',
+  account:
+    'Enforced for one account: none of that account’s campaigns will dial this number, the soft '
+    + 'phone stops a call to it from that account, and it is dropped from that account’s roster '
+    + 'imports. Campaigns in other accounts are unaffected. Add a workspace-wide entry if the '
+    + 'customer asked never to be called.',
 };
 
 /**
@@ -279,18 +281,20 @@ export function DncPage() {
         description={
           'Agency campaigns don’t dial the numbers on this list — every campaign for a '
           + 'workspace-wide entry, or only the campaign or account the Scope column names. The soft '
-          + 'phone checks it too: an agent who calls a listed number is stopped, and can call only by '
-          + 'writing down why — that reason is logged with their name. It does not apply to AI calls '
-          + 'or broadcasts. Agents add numbers from the station and the soft phone when a customer '
-          + 'asks; you can also add them in bulk here.'
+          + 'phone checks it too: a call logged to a campaign is stopped by the entries that campaign '
+          + 'honours, and a call logged to no campaign by an entry for the workspace, its account or '
+          + 'any of the account’s campaigns. An agent who is stopped can call only by writing down '
+          + 'why — that reason is logged with their name. It does not apply to AI calls or '
+          + 'broadcasts. Agents add numbers from the station and the soft phone when a customer asks; '
+          + 'you can also add them in bulk here.'
         }
         tips={[
           'A workspace-wide entry blocks the number in every agency campaign and account.',
           'Adding a number that is already listed is harmless — it stays listed once.',
           'Removing a number lets agency campaigns dial it again — if the customer asked not to '
           + 'be called, leave it listed.',
-          'An entry scoped to one campaign or account IS enforced, but only there and only when '
-          + 'contacts are imported — it is not in the dialer’s block list. See the Scope column.',
+          'An entry scoped to one campaign or account IS enforced, but only there. See the Scope '
+          + 'column.',
         ]}
       />
 

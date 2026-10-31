@@ -314,6 +314,42 @@ export class DncRepository {
     return result.rows[0] ?? null;
   }
 
+  /**
+   * {@link findMatchingEntry} for a dial that names an ACCOUNT but no campaign: the
+   * soft phone's untagged call (docs/softphone.md §4.1 step 2). A tenant-wide row, an
+   * account-wide row for `accountId`, or a campaign-scoped row for ANY campaign of
+   * that account suppresses — the last because a station mark writes campaign-scoped
+   * rows by default, and a number a customer asked one of the account's campaigns to
+   * stop calling must not be rung by hand from the same account with no campaign
+   * named. Rows of another account's campaigns never match.
+   *
+   * One statement: the `dnc_entries` side is the `idx_dnc_entries_tenant_phone`
+   * probe (a handful of rows per number), and each campaign-scoped candidate is
+   * resolved by the `agency_campaigns` primary key. `dnc_entries.campaign_id` has no
+   * FK, so a row whose campaign is gone matches nothing here (it reaches no dial
+   * either). Same ordering as {@link findMatchingEntry}: the widest entry first.
+   */
+  async findMatchingEntryForAccount(
+    tenantId: string,
+    accountId: string,
+    phone: string,
+  ): Promise<DncEntryRecord | null> {
+    const pool = getPool();
+    const result = await pool.query<DncEntryRecord>(
+      `SELECT d.* FROM dnc_entries d
+        WHERE d.tenant_id = $1::uuid
+          AND d.phone_e164 = $2
+          AND (d.account_id IS NULL OR d.account_id = $3::uuid)
+          AND (d.campaign_id IS NULL OR EXISTS (
+                SELECT 1 FROM agency_campaigns c
+                 WHERE c.id = d.campaign_id AND c.tenant_id = $1::uuid AND c.account_id = $3::uuid))
+        ORDER BY (d.campaign_id IS NOT NULL), (d.account_id IS NOT NULL), d.created_at, d.id
+        LIMIT 1`,
+      [tenantId, phone, accountId],
+    );
+    return result.rows[0] ?? null;
+  }
+
   async findById(id: string, tenantId: string): Promise<DncEntryRecord | null> {
     // Tenant-scoped by construction — an entry id is not a capability.
     const pool = getPool();

@@ -248,6 +248,36 @@ export class AgencyContactRepository {
   }
 
   /**
+   * The oldest contact `in_flight` on ANY campaign of the account whose number is
+   * `phoneE164`, or null: the soft phone's roster guard for an UNTAGGED dial (§4.1
+   * step 2). A campaign attempt, or another soft-phone call's claim, is live on that
+   * customer, so an untagged call to them is refused `contact_in_flight` as a tagged
+   * one is. Read only: an untagged call never claims or settles a contact (SP6).
+   *
+   * Served by the partial `idx_agency_contacts_in_flight` (only the in-flight rows),
+   * then narrowed to the account and the digits prefilter; the decision is
+   * {@link normalizeE164} on both sides, as in {@link findForManualMatch}.
+   */
+  async findInFlightForAccount(
+    tenantId: string,
+    accountId: string,
+    phoneE164: string,
+  ): Promise<AgencyContactRecord | null> {
+    const target = normalizeE164(phoneE164);
+    if (!target) return null;
+    const { rows } = await getPool().query<AgencyContactRecord>(
+      `SELECT * FROM agency_contacts
+        WHERE state = 'in_flight' AND tenant_id = $1 AND account_id = $2
+          AND ${CONTACT_PHONE_DIGITS_SQL} = $3`,
+      [tenantId, accountId, target.slice(1)],
+    );
+    return rows
+      .filter((row) => normalizeE164(row.phone_e164) === target)
+      .sort((a, b) => a.created_at.getTime() - b.created_at.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0]
+      ?? null;
+  }
+
+  /**
    * Claim a roster contact for a soft-phone call (§4.1 step 3, §5): `pending →
    * in_flight`, the same transition `claimDialable` makes for pacing, so pacing
    * cannot take the contact while the call is live or awaiting its outcome.

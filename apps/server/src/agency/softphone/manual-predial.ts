@@ -17,17 +17,23 @@
  *     `default_caller_id` when it is still allowed, else the account's default
  *     number (the first of `findAvailableForAccount`, which orders `is_default`
  *     first). Not allowed → `caller_id_not_allowed` with the set.
- *  4. Tagged only — the roster match (`findForManualMatch`): any match `in_flight`
- *     refuses `contact_in_flight`, no override; else the oldest `pending` match is
- *     the one to claim, else the oldest match is linked.
+ *  4. The roster guard. Tagged: the match on the tag (`findForManualMatch`): any
+ *     match `in_flight` refuses `contact_in_flight`, no override; else the oldest
+ *     `pending` match is the one to claim, else the oldest match is linked.
+ *     Untagged: the number `in_flight` on ANY campaign of the account
+ *     (`findInFlightForAccount`) refuses `contact_in_flight` with that campaign;
+ *     nothing is claimed or linked (SP6 settles tagged calls only).
  *  5. Tagged only — the calling window, in the matched contact's timezone, else
  *     the campaign default (`resolveCallingWindow`): closed → `outside_calling_hours`
  *     with the window and its next opening, unless `hours_note` overrides it. A
  *     window that cannot be evaluated (an unusable timezone) is closed with no
  *     next opening — overridable like any closed window.
- *  6. DNC (tenant, account, tag): `DncRegistry.checkEntry` — a hit is `dnc_listed`
- *     with the entry unless `dnc_note` overrides it; a lookup failure is
- *     `dnc_unavailable` and is NEVER overridable (fail closed, SP1).
+ *  6. DNC: `DncRegistry.checkEntry`, one read. Tagged: tenant, account and the tag,
+ *     as the tag's own dials check. Untagged: tenant, account, and a campaign-scoped
+ *     entry of ANY campaign of the account (the default scope of an agent's station
+ *     mark, which an untagged call would otherwise never meet). A hit is
+ *     `dnc_listed` with the entry unless `dnc_note` overrides it; a lookup failure
+ *     is `dnc_unavailable` and is NEVER overridable (fail closed, SP1).
  *
  * Then what the dial uses: recording (the tag's `record_calls`, else the settings')
  * and the analysis profile (the tag's, else the settings', else null — the
@@ -79,6 +85,8 @@ export interface ManualPredialInput {
 export interface ManualPredialDeps {
   dnc: Pick<DncRegistry, 'checkEntry'>;
   findRosterMatches: (campaignId: string, phoneE164: string) => Promise<AgencyContactRecord[]>;
+  /** Untagged: the number's contact `in_flight` on any campaign of the account, or null. */
+  findInFlightInAccount: (phoneE164: string) => Promise<AgencyContactRecord | null>;
 }
 
 type Refused = { ok: false; refusal: SoftphoneRefusal };
@@ -176,12 +184,17 @@ export async function runManualPredial(
   });
   if (!caller.ok) return caller;
 
-  // 4. The roster match.
+  // 4. The roster guard: the tag's match, or (untagged) the account's live contact.
   let contact: AgencyContactRecord | null = null;
   if (input.tag) {
     const picked = pickRosterContact(input.tag.id, await deps.findRosterMatches(input.tag.id, destinationE164));
     if (!picked.ok) return picked;
     contact = picked.contact;
+  } else {
+    const live = await deps.findInFlightInAccount(destinationE164);
+    if (live) {
+      return { ok: false, refusal: { code: 'contact_in_flight', campaign_id: live.campaign_id, contact_id: live.id } };
+    }
   }
 
   // 5. The calling window (tagged).
@@ -207,10 +220,13 @@ export async function runManualPredial(
 
   // 6. DNC. Fails closed, and the failure has no override.
   let dncOverride: ManualDialPlan['dncOverride'] = null;
-  const dnc = await deps.dnc.checkEntry(input.tenantId, destinationE164, {
-    accountId: input.accountId,
-    campaignId: input.tag?.id ?? null,
-  });
+  const dnc = await deps.dnc.checkEntry(
+    input.tenantId,
+    destinationE164,
+    input.tag
+      ? { accountId: input.accountId, campaignId: input.tag.id }
+      : { accountId: input.accountId, everyCampaignOfAccount: true },
+  );
   if (dnc.result === 'unavailable') return { ok: false, refusal: { code: 'dnc_unavailable' } };
   if (dnc.result === 'unverifiable') return { ok: false, refusal: { code: 'invalid_number' } };
   if (dnc.result === 'suppressed') {

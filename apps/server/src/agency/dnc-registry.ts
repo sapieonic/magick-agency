@@ -69,6 +69,18 @@ export interface DncCheckScope {
 }
 
 /**
+ * {@link DncRegistry.checkEntry}'s scope: a {@link DncCheckScope}, or the soft
+ * phone's UNTAGGED dial — an account and no campaign, where a campaign-scoped row
+ * of ANY campaign of that account suppresses too
+ * (`DncRepository.findMatchingEntryForAccount`). A distinct shape rather than a
+ * `campaignId: null` reading, because `null` already means "do not check that tier"
+ * and the station's own check depends on that.
+ */
+export type DncEntryCheckScope =
+  | DncCheckScope
+  | { accountId: string; everyCampaignOfAccount: true };
+
+/**
  * Normalize to the exact form the roster stores.
  *
  * A mismatch here is a silent fail-open — `+14155550100` and `14155550100` are
@@ -102,12 +114,13 @@ export type DncEntryCheck =
 export class DncRegistry {
   /**
    * @param repo Injected for tests; defaults to the shared `dnc_entries` repository.
-   *   `findMatchingEntry` is only {@link checkEntry}'s; a registry built without it
-   *   answers `unavailable` there (fail closed).
+   *   `findMatchingEntry` and `findMatchingEntryForAccount` are only
+   *   {@link checkEntry}'s; a registry built without the one a scope needs answers
+   *   `unavailable` there (fail closed).
    */
   constructor(
     private readonly repo: Pick<typeof dncRepository, 'findSuppressed'>
-      & Partial<Pick<typeof dncRepository, 'findMatchingEntry'>> = dncRepository,
+      & Partial<Pick<typeof dncRepository, 'findMatchingEntry' | 'findMatchingEntryForAccount'>> = dncRepository,
   ) {}
 
   /**
@@ -117,16 +130,26 @@ export class DncRegistry {
    *
    * The scope label is the entry's own: campaign-scoped when it names a campaign
    * (an account-and-campaign row included), else account, else tenant.
+   *
+   * `{ accountId, everyCampaignOfAccount: true }` (the soft phone's untagged dial)
+   * also matches a campaign-scoped row of any campaign of that account, in the same
+   * one read; see {@link DncEntryCheckScope}.
    */
-  async checkEntry(tenantId: string, phoneE164: string, scope: DncCheckScope): Promise<DncEntryCheck> {
+  async checkEntry(tenantId: string, phoneE164: string, scope: DncEntryCheckScope): Promise<DncEntryCheck> {
     const phone = normalizeE164(phoneE164);
     if (!phone) return { result: 'unverifiable' };
     try {
-      if (!this.repo.findMatchingEntry) throw new Error('no DNC entry lookup on this registry');
-      const entry = await this.repo.findMatchingEntry(
-        { tenantId, accountId: scope.accountId, campaignId: scope.campaignId },
-        phone,
-      );
+      let entry: Awaited<ReturnType<typeof dncRepository.findMatchingEntry>>;
+      if ('everyCampaignOfAccount' in scope) {
+        if (!this.repo.findMatchingEntryForAccount) throw new Error('no account-wide DNC entry lookup on this registry');
+        entry = await this.repo.findMatchingEntryForAccount(tenantId, scope.accountId, phone);
+      } else {
+        if (!this.repo.findMatchingEntry) throw new Error('no DNC entry lookup on this registry');
+        entry = await this.repo.findMatchingEntry(
+          { tenantId, accountId: scope.accountId, campaignId: scope.campaignId },
+          phone,
+        );
+      }
       if (!entry) return { result: 'clear' };
       return {
         result: 'suppressed',

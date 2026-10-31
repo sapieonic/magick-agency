@@ -114,10 +114,15 @@ Owned by `AgencyRuntime`. One call at a time per session.
    allowed set (tagged: the campaign's `caller_ids`, default the pool's round-robin pick as pacing
    dials; untagged: the account's assigned numbers, `findAvailableForAccount`, default the
    settings' `default_caller_id` while still assigned, else the account's default number); roster
-   match on the tag (`campaign_id` + phone digits, the existing index) — a contact `in_flight`
-   with a live campaign attempt refuses `contact_in_flight` with no override; calling window
-   (tagged) → `outside_calling_hours` unless overridden; DNC (tenant, account, tag) →
-   `dnc_listed` unless overridden, lookup error → `dnc_unavailable` (503).
+   guard — tagged, the match on the tag (`campaign_id` + phone digits, the existing index), and
+   a contact `in_flight` refuses `contact_in_flight` with no override; untagged, the number
+   `in_flight` on ANY campaign of the account (`findInFlightForAccount`, the partial in-flight
+   index) refuses `contact_in_flight` with that campaign, and nothing is claimed or linked;
+   calling window (tagged) → `outside_calling_hours` unless overridden; DNC, one read →
+   `dnc_listed` unless overridden, lookup error → `dnc_unavailable` (503). Tagged, it reads the
+   tag's own dials' scopes (tenant, account, the tag); untagged, tenant, account and a
+   campaign-scoped entry of any campaign of the account (`findMatchingEntryForAccount`), so the
+   campaign-scoped row an agent's station mark writes by default stops an untagged call too.
 3. **Insert** the manual-call row (`queued`) and, for a roster match in `pending`, claim the
    contact (`pending → in_flight`, `FOR UPDATE SKIP LOCKED`, recording its prior state). A
    contact in any other state is linked, not claimed.

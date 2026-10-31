@@ -38,10 +38,11 @@ function input(over: Partial<ManualPredialInput> = {}): ManualPredialInput {
   };
 }
 
-function deps(opts: { matches?: AgencyContactRecord[]; dnc?: unknown } = {}) {
+function deps(opts: { matches?: AgencyContactRecord[]; dnc?: unknown; inFlight?: AgencyContactRecord | null } = {}) {
   return {
     dnc: { checkEntry: vi.fn().mockResolvedValue(opts.dnc ?? { result: 'clear' }) },
     findRosterMatches: vi.fn().mockResolvedValue(opts.matches ?? []),
+    findInFlightInAccount: vi.fn().mockResolvedValue(opts.inFlight ?? null),
   };
 }
 
@@ -130,11 +131,28 @@ describe('the roster match', () => {
     expect(pickRosterContact('camp-1', [])).toEqual({ ok: true, contact: null });
   });
 
-  it('is skipped for an untagged call', async () => {
+  it('is skipped for an untagged call, which claims and links nothing', async () => {
     const d = deps();
     const r = await runManualPredial(input({ tag: null, accountNumbers: ['+15550000001'] }), d);
-    expect(r.ok).toBe(true);
+    expect(r.ok && r.plan.contact).toBeNull();
     expect(d.findRosterMatches).not.toHaveBeenCalled();
+    expect(d.findInFlightInAccount).toHaveBeenCalledWith('+919811100001');
+  });
+
+  it('untagged: the number in flight on any campaign of the account refuses, naming that campaign', async () => {
+    const live = contact('c9', 'in_flight', { campaign_id: 'camp-other' } as Partial<AgencyContactRecord>);
+    const d = deps({ inFlight: live });
+    const r = await runManualPredial(input({ tag: null, accountNumbers: ['+15550000001'] }), d);
+    expect(r.ok ? null : r.refusal).toEqual({ code: 'contact_in_flight', campaign_id: 'camp-other', contact_id: 'c9' });
+    // Refused before DNC is asked, as a tagged in-flight match is.
+    expect(d.dnc.checkEntry).not.toHaveBeenCalled();
+  });
+
+  it('tagged: the account-wide guard is not asked (the tag\'s own match decides)', async () => {
+    const d = deps({ inFlight: contact('c9', 'in_flight') });
+    const r = await runManualPredial(input(), d);
+    expect(r.ok).toBe(true);
+    expect(d.findInFlightInAccount).not.toHaveBeenCalled();
   });
 });
 
@@ -179,13 +197,31 @@ describe('calling hours (SP2)', () => {
 });
 
 describe('DNC (SP1)', () => {
-  it('checks tenant, account and the tag', async () => {
+  it('checks tenant, account and the tag; untagged, tenant, account and every campaign of the account', async () => {
     const d = deps();
     await runManualPredial(input(), d);
     expect(d.dnc.checkEntry).toHaveBeenCalledWith('t1', '+919811100001', { accountId: 'a1', campaignId: 'camp-1' });
     const u = deps();
     await runManualPredial(input({ tag: null, accountNumbers: ['+15550000001'] }), u);
-    expect(u.dnc.checkEntry).toHaveBeenCalledWith('t1', '+919811100001', { accountId: 'a1', campaignId: null });
+    expect(u.dnc.checkEntry).toHaveBeenCalledWith('t1', '+919811100001', { accountId: 'a1', everyCampaignOfAccount: true });
+  });
+
+  it('untagged: a campaign-scoped hit refuses dnc_listed with that entry, and a note overrides it', async () => {
+    const r = await runManualPredial(
+      input({ tag: null, accountNumbers: ['+15550000001'] }),
+      deps({ dnc: { result: 'suppressed', entry: ENTRY } }),
+    );
+    expect(r.ok ? null : r.refusal).toMatchObject({ code: 'dnc_listed', entry: { id: 'dnc-1', scope: 'campaign' } });
+    const o = await runManualPredial(
+      input({ tag: null, accountNumbers: ['+15550000001'], overrides: { dnc_note: 'The customer rang us asking to be called.' } }),
+      deps({ dnc: { result: 'suppressed', entry: ENTRY } }),
+    );
+    expect(o.ok && o.plan.dncOverride).toEqual({ note: 'The customer rang us asking to be called.', entryId: 'dnc-1' });
+    const down = await runManualPredial(
+      input({ tag: null, accountNumbers: ['+15550000001'], overrides: { dnc_note: 'The customer rang us asking to be called.' } }),
+      deps({ dnc: { result: 'unavailable' } }),
+    );
+    expect(down.ok ? null : down.refusal.code).toBe('dnc_unavailable');
   });
 
   it('a hit refuses with the entry; a DNC note overrides it and records the entry id', async () => {

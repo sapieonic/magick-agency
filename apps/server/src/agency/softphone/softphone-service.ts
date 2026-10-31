@@ -262,6 +262,7 @@ export class SoftphoneService {
     }, {
       dnc: this.deps.dnc,
       findRosterMatches: (campaignId, phone) => agencyContactRepository.findForManualMatch(campaignId, phone),
+      findInFlightInAccount: (phone) => agencyContactRepository.findInFlightForAccount(actor.tenantId, actor.accountId, phone),
     });
     if (!predial.ok) {
       // The session's unsettled call comes first in the order of refusals, but it was
