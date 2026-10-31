@@ -11,6 +11,8 @@
  * the part only the browser can: strip what a paste drags in (spaces, dashes,
  * brackets, a `tel:` prefix, the trunk `0`, an international `00`) so the field
  * shows the number the agent meant, and refuse a Call that cannot be a number.
+ * Typing gets the two prefix rules too (`normaliseTypedNumber`): the field sits
+ * beside the account's country-code chip, so whatever it holds is read after it.
  */
 
 /** The pad's keys, in the order a phone draws them. */
@@ -63,11 +65,30 @@ export function sanitiseDialInput(raw: string): string {
   return out.slice(0, MAX_DIAL_LENGTH);
 }
 
+/**
+ * What a typed number means, beside the country-code chip.
+ *
+ * A number without a `+` is shown after the chip ("+91"), so a typed trunk `0`
+ * read "+91 098204 61733" — a number nobody has. The server strips the trunk
+ * `0` from a national number anyway (`normalizePhoneToE164`), so dropping it here
+ * changes nothing that is dialled and makes the field read as the call will.
+ * A typed `00` is the international prefix, as on paste: it becomes the `+`
+ * (the server would otherwise strip both zeros and read the rest in the
+ * account's country).
+ *
+ * A lone `0` is kept: until the next key it could be either.
+ */
+export function normaliseTypedNumber(value: string): string {
+  if (value.startsWith('00')) return sanitiseDialInput(`+${value.slice(2)}`);
+  if (/^0[1-9]/.test(value)) return value.slice(1);
+  return value;
+}
+
 /** One pad key (or typed character) onto the end of the number. */
 export function appendDialKey(value: string, key: string): string {
   if (key === '+') return value.length === 0 ? '+' : value;
   if (!isDialChar(key)) return value;
-  return sanitiseDialInput(value + key);
+  return normaliseTypedNumber(sanitiseDialInput(value + key));
 }
 
 /** Backspace: the last character, whatever it was. */
@@ -80,6 +101,8 @@ export function deleteLastDialChar(value: string): string {
  *
  *  - `+91 98204 61733`, `+91-98204-61733`, `(+91) 98204 61733` → `+919820461733`
  *  - `0091 98204 61733` → `+919820461733` (the international `00`)
+ *  - `+44 (0)20 7946 0018` → `+442079460018`: the bracketed trunk `0` written
+ *    after a country code is for dialling inside the country, never after it
  *  - `098204 61733`, `022 2659 4410` → `+919820461733`, `+912226594410`: a leading
  *    trunk `0` is the national format, so the account's country code replaces it
  *  - `tel:+919820461733` → `+919820461733`
@@ -90,7 +113,12 @@ export function deleteLastDialChar(value: string): string {
  * account says otherwise), accepted with or without its `+`.
  */
 export function normalisePastedNumber(raw: string, defaultCountryCode: string): string {
-  const withoutScheme = raw.trim().replace(/^tel:/i, '');
+  const withoutScheme = raw
+    .trim()
+    .replace(/^tel:/i, '')
+    // `+44 (0)20…`, `(+91) (0) 98204…`, `0044 (0)20…`: drop the "(0)" while it is
+    // still bracketed — once the brackets go it is indistinguishable from a digit.
+    .replace(/^(\(?\s*(?:\+|00)\s*\d{1,3}\s*\)?)[\s.-]*\(\s*0\s*\)/, '$1 ');
   // Digits and a plus; everything else a paste drags in is formatting.
   let compact = withoutScheme.replace(/[^\d+]/g, '');
   const leadingPlus = compact.startsWith('+');

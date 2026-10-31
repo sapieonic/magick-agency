@@ -5,6 +5,7 @@ import {
   dialBlockReason,
   formatDialNumber,
   normalisePastedNumber,
+  normaliseTypedNumber,
   sanitiseDialInput,
 } from '../../utils/softphone/phoneInput';
 
@@ -79,5 +80,52 @@ describe('formatDialNumber — display only', () => {
   it('leaves what it cannot recognise unchanged', () => {
     expect(formatDialNumber('+442079460958')).toBe('+442079460958');
     expect(formatDialNumber(null)).toBe('');
+  });
+});
+
+describe('the trunk "(0)" written after a country code, on paste', () => {
+  it.each([
+    ['+44 (0)20 7946 0018', '+442079460018'],
+    ['+91 (0) 98204 61733', '+919820461733'],
+    ['+44(0)20 7946 0018', '+442079460018'],
+    ['(+44) (0)20 7946 0018', '+442079460018'],
+    ['0044 (0)20 7946 0018', '+442079460018'],
+  ])('%s → %s', (raw, expected) => {
+    expect(normalisePastedNumber(raw, '+91')).toBe(expected);
+  });
+
+  it('leaves a bracketed area code alone: only a lone (0) is the trunk prefix', () => {
+    expect(normalisePastedNumber('+44 (020) 7946 0018', '+91')).toBe('+4402079460018');
+  });
+});
+
+describe('normaliseTypedNumber — a typed number, read after the country-code chip', () => {
+  it('drops a typed trunk 0, so "098204 61733" reads +91 98204 61733 and not +91 0…', () => {
+    expect(normaliseTypedNumber(sanitiseDialInput('098204 61733'))).toBe('9820461733');
+    expect(normaliseTypedNumber('022')).toBe('22');
+  });
+
+  it('reads a typed 00 as the international prefix, as a paste does', () => {
+    expect(normaliseTypedNumber('0044')).toBe('+44');
+    expect(normaliseTypedNumber('00')).toBe('+');
+    expect(normalisePastedNumber('0044 20 7946 0958', '+91')).toBe(normaliseTypedNumber('00442079460958'));
+  });
+
+  it('keeps a lone 0 until the next key says which it is', () => {
+    expect(normaliseTypedNumber('0')).toBe('0');
+  });
+
+  it('leaves everything else as typed', () => {
+    expect(normaliseTypedNumber('9820461733')).toBe('9820461733');
+    expect(normaliseTypedNumber('+919820461733')).toBe('+919820461733');
+    expect(normaliseTypedNumber('+44020')).toBe('+44020');
+    expect(normaliseTypedNumber('')).toBe('');
+  });
+
+  it('applies key by key on the pad: 0, 9 → 9; 0, 0, 4, 4 → +44', () => {
+    expect(appendDialKey(appendDialKey('', '0'), '9')).toBe('9');
+    let value = '';
+    for (const key of ['0', '0', '4', '4']) value = appendDialKey(value, key);
+    expect(value).toBe('+44');
   });
 });

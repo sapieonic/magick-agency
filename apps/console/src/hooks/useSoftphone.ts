@@ -36,6 +36,7 @@ import {
   dialBlockReason,
   formatDialNumber,
   normalisePastedNumber,
+  normaliseTypedNumber,
   sanitiseDialInput,
   type DialBlockReason,
 } from '../utils/softphone/phoneInput';
@@ -550,7 +551,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   // ── Dial ──────────────────────────────────────────────────────────────────
   const setNumber = useCallback((raw: string) => {
     entryRef.current = 'typed';
-    setNumberState(sanitiseDialInput(raw));
+    setNumberState(normaliseTypedNumber(sanitiseDialInput(raw)));
     setDialError(null);
   }, []);
   const pressKey = useCallback((key: string) => {

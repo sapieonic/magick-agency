@@ -272,8 +272,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   columns (dial pad with caller ID and "Log to" campaign | call details fields and the roster
   contact | outcome pad, notes, callback; recent calls when idle), action bar. The rail, columns
   and action bar keep identical positions in every state (pinned by a geometry test).
-- **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0`, spaces and
-  `tel:`; Enter calls. Redial fills the pad and focuses Call rather than dialling at once, so a
+- **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a
+  bracketed `(0)` after a country code, `+44 (0)20…`), spaces and `tel:`; typing drops a leading
+  trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls. Redial fills the pad and focuses Call rather than dialling at once, so a
   misclick never rings a customer. "Log to" is locked once a call is placed. Single-key shortcuts
   are ignored while typing in a field or a focused `<select>`.
 - **Audio.** On `/dialer/phone` the playback context is warmed and the microphone probed on the

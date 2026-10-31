@@ -163,6 +163,20 @@ describe('Ready', () => {
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('+919820461733');
   });
 
+  it('reads a typed number as it will be dialled: a trunk 0 dropped beside the +91 chip, 00 as +', async () => {
+    await mount();
+    const field = screen.getByTestId('dial-number') as HTMLInputElement;
+    fireEvent.change(field, { target: { value: '098204 61733' } });
+    expect(field.value).toBe('9820461733');
+    // The chip and the field read "+91 9820461733", not "+91 09820461733".
+    expect(field.parentElement!.textContent).toContain('+91');
+    fireEvent.change(field, { target: { value: '' } });
+    for (const key of '0044') press(key);
+    expect(field.value).toBe('+44');
+    // A number with its own + shows no chip.
+    expect(field.parentElement!.textContent).not.toContain('+91');
+  });
+
   it('logs to a campaign: its caller IDs, its outcomes, and the tag on the request', async () => {
     api.placeManualCall.mockResolvedValue({ ok: true, value: manualCall({ tag: { campaign_id: 'camp-1', campaign_name: CAMPAIGN.campaign_name } }) });
     await mount();
