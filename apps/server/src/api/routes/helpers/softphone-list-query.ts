@@ -6,7 +6,8 @@ import type { AgencyManualCallListFilters } from '../../../db/repositories/agenc
  * `GET /softphone/calls`'s query (`AgencyManualCallListQuery`), validated at the public
  * edge and again by the internal handler, from this one schema. Every id is a UUID before
  * it reaches a `::uuid` cast (22P02 otherwise); `campaign_id` is a campaign or `untagged`;
- * `phone` is digits (a suffix match); `from` / `to` bound `created_at`, `to` exclusive.
+ * `phone` is digits (a suffix match); `contact_id` a roster contact; `from` / `to` bound
+ * `created_at`, `to` exclusive.
  * Unknown keys are stripped.
  */
 export const SOFTPHONE_LIST_DEFAULT_LIMIT = 50;
@@ -21,6 +22,8 @@ export const softphoneListQuerySchema = z.object({
   outcome: z.enum(AGENCY_MANUAL_CALL_OUTCOMES).optional(),
   disposition_code: z.string().min(1).max(50).optional(),
   phone: z.string().regex(/^\d{1,20}$/, 'digits only').optional(),
+  /** A roster contact's soft-phone calls (the contact detail). Another agent's calls need supervise, as always. */
+  contact_id: z.string().uuid().optional(),
   from: z.string().datetime({ offset: true }).optional(),
   to: z.string().datetime({ offset: true }).optional(),
 });
@@ -37,6 +40,7 @@ export function softphoneListFilters(query: SoftphoneListQuery): Omit<AgencyManu
     ...(query.outcome ? { outcome: query.outcome } : {}),
     ...(query.disposition_code ? { dispositionCode: query.disposition_code } : {}),
     ...(query.phone ? { phoneDigits: query.phone } : {}),
+    ...(query.contact_id ? { contactId: query.contact_id } : {}),
     ...(query.from ? { from: new Date(query.from) } : {}),
     ...(query.to ? { to: new Date(query.to) } : {}),
   };

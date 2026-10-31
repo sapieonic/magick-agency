@@ -750,6 +750,34 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 
+  // ── A13: a roster contact's soft-phone calls ───────────────────────────────────────
+  it('GET /softphone/calls?contact_id= lists the calls that matched a contact, settled included; an agent only their own', async () => {
+    const acct = await freshAccount();
+    const agent = await user(tenant, acct, 'agent');
+    const colleague = await user(tenant, acct, 'agent');
+    const sup = await user(tenant, acct, 'account_admin');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'paused' });
+    await staff(campaign.id as string, agent.id, acct);
+    const contact = await insertAgencyContact(campaign.id as string, { tenant_id: tenant, account_id: acct, phone_e164: '+919811300090' });
+    const other = await insertAgencyContact(campaign.id as string, { tenant_id: tenant, account_id: acct, phone_e164: '+919811300091' });
+    const { sessionId, station } = await openSoftphone(agent);
+    const first = await placeAndRingOut(agent, sessionId, station, '+919811300090', { campaign_id: campaign.id });
+    await placeAndRingOut(agent, sessionId, station, '+919811300091', { campaign_id: campaign.id });
+    const second = await placeAndRingOut(agent, sessionId, station, '+919811300090', { campaign_id: campaign.id });
+
+    const ids = (res: { json: () => { rows: Array<{ id: string }> } }) => res.json().rows.map((r) => r.id);
+    const bySup = await get(`/proxy/agency/softphone/calls?contact_id=${contact.id}`, sup);
+    expect(bySup.statusCode, bySup.body).toBe(200);
+    expect(ids(bySup)).toEqual([second, first]);
+    expect(bySup.json().rows[0]).toMatchObject({ contact: { contact_id: contact.id, claimed: true }, settled_at: expect.any(String) });
+    expect(ids(await get(`/proxy/agency/softphone/calls?contact_id=${contact.id}`, agent))).toEqual([second, first]);
+    // Another agent's calls are supervise-only: a colleague sees none of them.
+    expect(ids(await get(`/proxy/agency/softphone/calls?contact_id=${contact.id}`, colleague))).toEqual([]);
+    expect(ids(await get(`/proxy/agency/softphone/calls?contact_id=${other.id}`, sup))).toHaveLength(1);
+    expect((await get('/proxy/agency/softphone/calls?contact_id=not-a-uuid', sup)).statusCode).toBe(400);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
   it('a supervisor reads it on the DNC list as an account entry', async () => {
     const list = await get('/dnc?phone=%2B919811300010', supervisor);
     expect(list.statusCode, list.body).toBe(200);

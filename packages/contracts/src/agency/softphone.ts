@@ -686,6 +686,8 @@ export interface AgencyManualCallListQuery {
   disposition_code?: string;
   /** Digits matched against `destination_e164`. */
   phone?: string;
+  /** The roster contact the call matched (claimed or linked): the contact detail's soft-phone calls. */
+  contact_id?: string;
   /** ISO-8601 bounds on `created_at`, inclusive start, exclusive end. */
   from?: string;
   to?: string;

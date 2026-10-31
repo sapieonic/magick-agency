@@ -385,8 +385,10 @@ typed number outside pacing, optionally logged ("tagged") to one of their campai
   across the account, the reapers); `idx_agency_manual_calls_campaign (campaign_id, created_at
   DESC) WHERE campaign_id IS NOT NULL`; `idx_agency_manual_calls_contact (contact_id) WHERE
   contact_id IS NOT NULL AND settled_at IS NULL` (the stranded-contact sweep and the pre-dial
-  match). No index on `webrtc_call_id`: nothing looks a manual call up by its leg. Trigger
-  `trg_agency_manual_calls_updated_at`.
+  match); `idx_agency_manual_calls_contact_history (contact_id, created_at DESC, id DESC) WHERE
+  contact_id IS NOT NULL` (a contact's soft-phone calls, settled included: `GET
+  /softphone/calls?contact_id=`). No index on `webrtc_call_id`: nothing looks a manual call up by
+  its leg. Trigger `trg_agency_manual_calls_updated_at`.
 - **`agency_call_attempts`**: `idx_agency_attempts_account_live (tenant_id, account_id) WHERE state
   <> 'ended'`, the attempt half of pacing's account-wide headroom (`countLiveForAccount`, every
   tick): an index-only scan of the account's live attempts instead of a probe per campaign the

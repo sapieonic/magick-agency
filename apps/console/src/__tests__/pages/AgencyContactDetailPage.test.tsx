@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
   // then fails to typecheck (vitest does not typecheck, so only `tsc`
   // catches it).
   isEnabled: vi.fn((_capability: string) => true),
+  listManualCalls: vi.fn(),
+  softphoneOn: false,
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
@@ -42,7 +44,14 @@ vi.mock('../../api/agencySpine', () => ({
   getCampaignAttempts: mocks.getCampaignAttempts,
 }));
 
+vi.mock('../../api/softphone', () => ({ listManualCalls: mocks.listManualCalls }));
+vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
+  SOFTPHONE_FLAG: 'agency_softphone_enabled',
+  useFeatureFlagEnabled: () => mocks.softphoneOn,
+}));
+
 import ContactDetailPage from '../../pages/agency/AgencyContactDetailPage';
+import { manualCall } from '../helpers/softphone';
 
 const CONTACT: AgencyContactDetail = {
   id: 'contact-1', phone_e164: '+919876500001', state: 'completed', attempt_count: 4,
@@ -496,5 +505,49 @@ describe('a response that arrives after the operator moved on', () => {
 
     expect(screen.queryByTestId('contact-attempt-attempt-old')).toBeNull();
     expect(screen.getByTestId('contact-attempt-attempt-c2')).toBeTruthy();
+  });
+});
+
+describe('the soft-phone calls that touched the contact (SP6)', () => {
+  afterEach(() => { mocks.softphoneOn = false; });
+
+  it('lists them by contact, apart from the attempts, each opening the soft-phone call', async () => {
+    mocks.softphoneOn = true;
+    const claimed = manualCall({
+      id: 'mc-7', agent_name: 'Asha Rao', state: 'ended', outcome: 'connected', talk_seconds: 65,
+      disposition_code: 'not_interested', disposition_source: 'campaign', settled_at: '2026-08-18T10:02:00.000Z',
+      tag: { campaign_id: 'camp-1', campaign_name: 'Q3 Renewals' },
+      contact: { contact_id: 'contact-1', state: 'completed', claimed: true },
+    });
+    mocks.listManualCalls.mockResolvedValue({ rows: [claimed], next_cursor: null, limit: 50 });
+    renderPage();
+    const section = await screen.findByTestId('contact-softphone-calls');
+    expect(mocks.listManualCalls).toHaveBeenCalledWith({ contact_id: 'contact-1', limit: 50 }, 'tenant-1', 'account-1');
+    expect(within(section).getByRole('heading', { name: 'Soft-phone calls' })).toBeTruthy();
+    const row = await within(section).findByTestId('contact-softphone-call-mc-7');
+    expect(row.textContent).toMatch(/Asha Rao/);
+    expect(row.textContent).toMatch(/Claimed by this call/);
+    expect(within(row).getByRole('link', { name: 'Open soft-phone call' }).getAttribute('href')).toBe('/agency/softphone/calls/mc-7');
+    // The attempt history is unchanged beside it.
+    expect(screen.getByTestId('contact-attempt-attempt-1')).toBeTruthy();
+  });
+
+  it('says when there are none, and a failure stays in its section', async () => {
+    mocks.softphoneOn = true;
+    mocks.listManualCalls.mockResolvedValueOnce({ rows: [], next_cursor: null, limit: 50 });
+    renderPage();
+    expect(await screen.findByTestId('contact-softphone-empty')).toBeTruthy();
+    cleanup();
+    mocks.listManualCalls.mockRejectedValueOnce(new Error('down'));
+    renderPage();
+    expect(await screen.findByTestId('contact-softphone-error')).toBeTruthy();
+    expect(screen.getByTestId('contact-attempt-attempt-1')).toBeTruthy();
+  });
+
+  it('is absent where the soft phone is off, and nothing is asked', async () => {
+    renderPage();
+    await screen.findByTestId('contact-attempt-attempt-1');
+    expect(screen.queryByTestId('contact-softphone-calls')).toBeNull();
+    expect(mocks.listManualCalls).not.toHaveBeenCalled();
   });
 });

@@ -247,6 +247,7 @@ export function manualCallQuery(query: AgencyManualCallListQuery): string {
     'outcome',
     'disposition_code',
     'phone',
+    'contact_id',
     'from',
     'to',
   ];

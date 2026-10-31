@@ -114,6 +114,8 @@ export interface AgencyManualCallListFilters {
   dispositionCode?: string;
   /** Digits only; matched as a SUFFIX of `destination_e164` ("the last four digits"). */
   phoneDigits?: string;
+  /** The roster contact the call matched (claimed or linked): `idx_agency_manual_calls_contact_history`. */
+  contactId?: string;
   /** Bounds on `created_at`: inclusive start, exclusive end. */
   from?: Date;
   to?: Date;
@@ -651,6 +653,7 @@ export class AgencyManualCallRepository {
     else if (f.status === 'settled') conditions.push('m.settled_at IS NOT NULL');
     if (f.outcome) conditions.push(`m.outcome = ${bind.add(f.outcome)}::varchar`);
     if (f.dispositionCode) conditions.push(`m.disposition_code = ${bind.add(f.dispositionCode)}::varchar`);
+    if (f.contactId) conditions.push(`m.contact_id = ${bind.add(f.contactId)}::uuid`);
     if (f.phoneDigits !== undefined) {
       // Re-stripped here, as `phoneCondition` does: the only place a `%` or `_`
       // could become a LIKE wildcard. A digit-less term matches nothing.

@@ -230,6 +230,13 @@ CREATE INDEX idx_agency_manual_calls_contact
   ON agency_manual_calls (contact_id)
   WHERE contact_id IS NOT NULL AND settled_at IS NULL;
 
+-- A roster contact's soft-phone history, settled calls included (the contact detail's
+-- "Soft-phone calls": `GET /softphone/calls?contact_id=`), newest first on the lists' keyset.
+-- The partial index above holds unsettled calls only, so it cannot answer this.
+CREATE INDEX idx_agency_manual_calls_contact_history
+  ON agency_manual_calls (contact_id, created_at DESC, id DESC)
+  WHERE contact_id IS NOT NULL;
+
 -- No index on webrtc_call_id: nothing looks a manual call up by its media leg. The bridge's
 -- lifecycle events carry the manual call's own id (the correlation, §4.3), and the list
 -- joins agency_calls FROM the manual call's row.

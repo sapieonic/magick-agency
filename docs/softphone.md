@@ -62,7 +62,8 @@ Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-1
   session (`settled_at IS NULL`), which covers a live call and one awaiting its outcome, so an
   agent cannot dial again before saving the last outcome.
   Indexes for the agent's own list, the account list (keyset on `created_at DESC, id DESC`),
-  live calls, the tag (`campaign_id, created_at DESC`) and the contact.
+  live calls, the tag (`campaign_id, created_at DESC`), the contact's unsettled call (`contact_id`
+  WHERE unsettled) and the contact's history (`contact_id, created_at DESC, id DESC`).
 - `agency_calls`: `origin VARCHAR(16) NOT NULL DEFAULT 'campaign'` (`campaign|manual`),
   `manual_call_id UUID` (correlation, no FK, like `agency_attempt_id`).
 - `agency_softphone_settings`, one row per (tenant, account), all optional: `disposition_catalog`
@@ -290,7 +291,7 @@ from `audit` (a success without the envelope is a 502).
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
 | `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf. The same code again is a replay: notes and callback last-write-wins, and a corrected callback moves the `next_attempt_at` of the contact this call settled while it is still `pending` on that code (`rescheduleFromManualReplay`, as the station's replay re-runs `markState`); no DNC mark, settlement or claim release repeats, and its audit row carries `replay: true` |
 | `POST /softphone/calls/:id/dnc` | `softphone.dial` | `{ reason? }`: campaign scope when tagged, else the call's account (`scope: 'account'`); never tenant-wide |
-| `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `from`, `to` (exclusive). Rows carry `agent_name` and the media leg's `analysis_status` |
+| `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `contact_id` (the roster contact the call matched, claimed or linked, settled calls included: `idx_agency_manual_calls_contact_history`; an agent still sees only their own calls), `from`, `to` (exclusive). Rows carry `agent_name` and the media leg's `analysis_status` |
 | `GET /softphone/calls/:id` | `softphone.dial` | `AgencyManualCallDetail`: the call (contact context, prior attempts, `agent_name`), `dispositioned_by_name`, the override notes, `call_availability`, and — with supervise only — the media leg (recording, transcript, AI analysis) with the attempt detail's entitlement strip (`allow_recording`, `analyze_calls` of the account). An agent reading their own call gets the call record with `media: null`: a call's media is `agency.supervise`'s, as a campaign call's is (`rbac.ts`); the internal handler and the public route both withhold it |
 | `GET /softphone/calls/:id/recording` | `agency.supervise` | the bytes through the authenticated proxy (no signed URL), range forwarded; 403 `capability_disabled` without `allow_recording`; 404 `call_never_placed` / `call_purged` / no recording; any call of the account. An agent's own call is refused too (RBAC 403; the internal handler refuses a non-supervise actor itself) |
 | `GET /softphone/settings` | `softphone.dial` | `{ settings }` |
@@ -421,6 +422,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
+- **Roster contact detail.** Where the flag is on, a "Soft-phone calls" section below the
+  attempts lists the soft-phone calls that matched the contact (`GET /softphone/calls?contact_id=`),
+  each saying whether it claimed the contact and opening the soft-phone call's detail.
 - **DNC page.** Where `agency_softphone_enabled` is on, its copy says exactly what the soft phone
   reads (a tagged call the tag's scopes; an untagged one the workspace's, its account's and any of
   the account's campaigns'), with an audited override (SP1), and the account and campaign scope

@@ -251,6 +251,9 @@ describe('0005 — agency_manual_calls', () => {
     expect(await indexDef('idx_agency_manual_calls_contact')).toMatch(
       /\(contact_id\) WHERE \(\(contact_id IS NOT NULL\) AND \(settled_at IS NULL\)\)/,
     );
+    expect(await indexDef('idx_agency_manual_calls_contact_history')).toMatch(
+      /\(contact_id, created_at DESC, id DESC\) WHERE \(contact_id IS NOT NULL\)/,
+    );
     // Nothing looks a manual call up by its media leg, so 0005 indexes nothing on it.
     expect(await indexDef('idx_agency_manual_calls_webrtc')).toBeUndefined();
     // The attempt half of pacing's account-wide headroom (countLiveForAccount).
@@ -277,6 +280,12 @@ describe('0005 — agency_manual_calls', () => {
           AND (created_at, id) < (now(), '${randomUUID()}'::uuid)
         ORDER BY created_at DESC, id DESC LIMIT 50`,
     )).toContain('idx_agency_manual_calls_account');
+    // A contact's history (settled calls included) is its own index, not the unsettled one.
+    expect(await planOf(
+      `SELECT id FROM agency_manual_calls
+        WHERE tenant_id = '${TENANT}'::uuid AND account_id = ${account} AND contact_id = '${randomUUID()}'::uuid
+        ORDER BY created_at DESC, id DESC LIMIT 50`,
+    )).toContain('idx_agency_manual_calls_contact_history');
   });
 });
 
