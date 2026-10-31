@@ -6,7 +6,7 @@ caller IDs, recording setting and summary profile, and its outcome updates the r
 the number is on that campaign's roster. This page is the design the code implements: the data
 model, the runtime, the API, the console and the rules. Read it before changing anything under
 `apps/server/src/agency/softphone/`, the `softphone` routes, or the console's soft-phone screens.
-Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-10-30; §4.1 updated to the runtime and §6 to the routes as built the same day.
+Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-10-30; §4.1, §6 and §7 updated to the code as built the same day.
 
 ## 1. Rulings it rests on (Manas, 2026-10-30)
 
@@ -266,17 +266,57 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
 
 ## 7. Console
 
-- `/dialer/phone`: the soft phone, a fourth agent nav item. Same frozen geometry as the station:
-  header, state rail (Ready, Dialing, Ringing, On call, Outcome), three columns (dial pad with
-  caller ID and "Log to" campaign | call details fields and roster contact | outcome pad, notes,
-  callback | recent calls when idle), action bar.
-- The station: **Switch to soft phone** in the action bar / break menu, the soft-phone view in
-  place (same socket and mic), **Return to campaign** in the header.
-- DNC and calling-hours refusals open an override dialog that requires a note.
-- Supervisor: **Soft-phone calls** in the agency sidebar (list with filters, detail with summary,
-  custom dimensions, recording, transcript and the agent's call details); the campaign shows its
-  manual calls; Settings → **Soft phone** for account admins.
-- My calls includes the agent's soft-phone calls.
+- **`/dialer/phone`** (`SoftphonePage`): the soft phone, a fourth agent nav item ("Soft phone",
+  shown when the flag is on and the caller has `agency.softphone.dial`). Same frozen geometry as
+  the station: header, state rail (Ready, Dialing, Ringing, On call, Outcome needed), three
+  columns (dial pad with caller ID and "Log to" campaign | call details fields and the roster
+  contact | outcome pad, notes, callback; recent calls when idle), action bar. The rail, columns
+  and action bar keep identical positions in every state (pinned by a geometry test).
+- **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0`, spaces and
+  `tel:`; Enter calls. Redial fills the pad and focuses Call rather than dialling at once, so a
+  misclick never rings a customer. "Log to" is locked once a call is placed. Single-key shortcuts
+  are ignored while typing in a field or a focused `<select>`.
+- **Audio.** On `/dialer/phone` the playback context is warmed and the microphone probed on the
+  agent's first gesture on the page, so the permission prompt never lands mid-call. The mic opens
+  when dialing starts and sends only once bridged; it is released when the call ends. The ringback
+  is generated in the browser (400 + 450 Hz, ring-ring). While ringing, Mute silences only the
+  ringback ("Mute ring"); the microphone's mute is separate, and answering with the microphone
+  muted is announced assertively. The SP3 warning shows while ringing; hang-up is hold-to-confirm
+  (or `E` twice).
+- **Outcome.** The outcome pad uses the tagged campaign's catalog, else the soft-phone catalog,
+  else the built-ins, with the station's rules (keys 1–9, required notes, callback times). An
+  unsettled call blocks the next dial; the dial-pad column shows "Closes in m:ss" from
+  `outcome_due_at` before the call lapses to `no_disposition`.
+- **Call details.** The fields form is hydrated from the call and saved debounced (700 ms). Until
+  the field set has loaded (for example a reload where the `manual_call` frame beats the
+  bootstrap) the console sends no `fields`, so stored values are never wiped; on the server an
+  omitted `fields` is "unchanged", and `{}` clears only when the account has call fields.
+- **Overrides (SP1, SP2).** A `dnc_listed` or `outside_calling_hours` refusal opens a dialog that
+  shows what matched (the DNC entry's scope, reason and date; the window, timezone and next
+  opening), says the call is logged with the agent's name and note, and requires a note of 10–500
+  characters before "Call anyway". A second refusal of the other kind keeps the first note.
+  `dnc_unavailable` and `dial_failed` are plain errors with no override; `contact_in_flight` says
+  the campaign is calling that customer right now.
+- **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
+  agent is reserved, on a call or in wrap-up the switch is queued: the button stays in place,
+  disabled, reading "Switching after this call", and a pill with ✕ cancels it. When `agent_state`
+  reports `break/soft_phone` the soft phone renders in place on the same socket and microphone,
+  with the campaign preselected as the tag and **Return to campaign** in the header (disabled,
+  with the reason, while a manual call is live or awaiting its outcome). The ordinary End break
+  and the station's own shortcuts are suspended. After a reload during a soft-phone break the
+  station reads `session.on_softphone` from the bootstrap.
+- **Supervisor.** **Soft-phone calls** in the agency sidebar (`agency.supervise`): a stats strip
+  over the listed rows, filters (dates, agent, "Logged to" including "Not logged", what happened,
+  status including "Waiting for an outcome", number), keyset paging, a Summary column from
+  `analysis_status` (hidden when the account's analytics capability is off), DNC / hours override
+  badges. The call detail reuses the call view (summary, sentiment, custom dimensions, recording,
+  transcript) plus the outcome, who saved it (with the on-behalf marker) and the agent's call
+  details, each labelled with its source (Agent / AI), and any override note. Each campaign has a
+  **Manual calls** tab. **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
+  otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
+  profile, recording, default caller ID.
+- **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
+- **DNC page.** Its copy says DNC applies to the soft phone, with an audited override (SP1).
 
 ## 8. Not built (yet)
 
