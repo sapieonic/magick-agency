@@ -59,6 +59,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Settings → Soft phone', () => {
+  it('says who turns the soft phone on, and promises nothing about exports', async () => {
+    await renderPage();
+    const pill = screen.getByTestId('softphone-settings-access');
+    const hint = document.getElementById(pill.getAttribute('aria-describedby')!)!;
+    expect(hint.textContent).toMatch(/platform administrator turns it on and off/);
+    expect(document.body.textContent).not.toMatch(/export/i);
+  });
+
   it('is read-only without agency.softphone.manage', async () => {
     await renderPage('operator');
     expect(screen.getByTestId('softphone-settings-readonly')).toBeTruthy();

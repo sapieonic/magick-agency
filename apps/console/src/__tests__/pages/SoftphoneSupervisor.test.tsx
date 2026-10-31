@@ -218,7 +218,37 @@ describe('Soft-phone calls (the account list)', () => {
   it('says when nothing matches the filters, as a fact about the query', async () => {
     mocks.listManualCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 50 });
     await renderList();
+    fireEvent.change(screen.getByTestId('filter-outcome'), { target: { value: 'busy' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('filter-apply'));
+    });
     expect(screen.getByText('Nothing matches those filters')).toBeTruthy();
+  });
+
+  it('says a quiet day is a quiet day, not a filter that matched nothing', async () => {
+    mocks.listManualCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 50 });
+    await renderList();
+    expect(screen.getByText('No soft-phone calls today')).toBeTruthy();
+    expect(screen.getByText('Widen the date range to see earlier calls.')).toBeTruthy();
+  });
+
+  it('Clear goes back to the view it opened on (today), not to all time', async () => {
+    await renderList();
+    // The opening view is nothing to clear.
+    expect(screen.queryByTestId('filter-clear')).toBeNull();
+    fireEvent.change(screen.getByTestId('filter-from'), { target: { value: '2026-10-01' } });
+    fireEvent.change(screen.getByTestId('filter-outcome'), { target: { value: 'busy' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('filter-apply'));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('filter-clear'));
+    });
+    const query = mocks.listManualCalls.mock.calls.at(-1)![0];
+    expect(query.from).toBe(new Date(`${todayLocal()}T00:00:00`).toISOString());
+    expect(query.to).toBeDefined();
+    expect(query.outcome).toBeUndefined();
+    expect(screen.queryByTestId('filter-clear')).toBeNull();
   });
 });
 

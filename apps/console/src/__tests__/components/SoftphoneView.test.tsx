@@ -216,6 +216,15 @@ describe('Ready', () => {
     expect(screen.getByTestId('log-to-fixed').textContent).toBe(CAMPAIGN.campaign_name);
   });
 
+  it('says a closed window is the campaign’s time, which the customer’s own may not share', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, taggable_campaigns: [{ ...CAMPAIGN, calling_window_open: false }] });
+    await mount();
+    fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
+    expect(screen.getByTestId('window-closed-hint').textContent).toBe(
+      'Outside this campaign’s calling hours (campaign time). Calling may need a reason.',
+    );
+  });
+
   it('preselects the station’s campaign as the tag (SP7)', async () => {
     await mount({ presetCampaignId: 'camp-1' });
     expect((screen.getByTestId('log-to-select') as HTMLSelectElement).value).toBe('camp-1');
@@ -332,6 +341,31 @@ describe('refusals and overrides (SP1, SP2)', () => {
       fireEvent.click(screen.getByTestId('override-confirm'));
     });
     expect(screen.getByTestId('override-error').textContent).toBe('The note needs 10 to 500 characters.');
+  });
+
+  it('fields_invalid at Call marks the fields the server named, either path form', async () => {
+    api.placeManualCall.mockResolvedValueOnce({
+      ok: false,
+      refusal: {
+        code: 'fields_invalid',
+        status: 400,
+        message: 'x',
+        details: [
+          { path: 'fields.customer_name', message: 'At most 200 characters.' },
+          { path: 'reason', message: 'Not one of the choices.' },
+        ],
+      },
+    });
+    await mount();
+    await dialTo();
+    expect(screen.getByTestId('dial-error').textContent).toBe(
+      'Some call details need fixing. The fields are marked in Call details.',
+    );
+    const name = screen.getByTestId('call-field-customer_name');
+    expect(name.getAttribute('aria-invalid')).toBe('true');
+    expect(document.getElementById(name.getAttribute('aria-describedby')!)!.textContent).toContain('At most 200 characters.');
+    expect(screen.getByTestId('call-field-reason').getAttribute('aria-invalid')).toBe('true');
+    expect(screen.getByTestId('call-field-follow_up').getAttribute('aria-invalid')).toBeNull();
   });
 
   it('dnc_unavailable is a plain error with no override', async () => {
@@ -524,6 +558,27 @@ describe('the call, driven by manual_call frames', () => {
     );
   });
 
+  it('D opens the same Mark DNC confirmation, only once a call is placed', async () => {
+    const view = await mount();
+    press('d');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('');
+    await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
+    press('d');
+    expect(screen.getByRole('dialog').textContent).toMatch(/Add this number to Do Not Call\?/);
+    expect(api.markManualCallDnc).not.toHaveBeenCalled();
+  });
+
+  it('lays the action bar out in the station’s order: Save, Mark DNC, Mute, Hang up', async () => {
+    await mount();
+    const bar = screen.getByTestId('softphone-action-bar');
+    const order = [...bar.querySelectorAll('button')]
+      .map((b) => b.getAttribute('data-testid') ?? b.textContent?.trim() ?? '')
+      .filter((id) => id !== '');
+    expect(order.slice(0, 3)).toEqual(['softphone-save', 'softphone-dnc', 'softphone-mute']);
+    expect(order[3]).toMatch(/Hold to hang up/);
+  });
+
   it('autosaves the notes onto the live call', async () => {
     const view = await mount();
     await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
@@ -551,7 +606,7 @@ describe('the outcome window', () => {
     );
     expect(rail()).toBe('Outcome needed');
     expect(screen.getByTestId('outcome-closes').textContent).toMatch(
-      /^Dialing is blocked until this call has an outcome\. Closes in 1:(29|30) — then it closes with no outcome\.$/,
+      /^Dialing is blocked until this call has an outcome\. Without one, it closes in 1:(29|30)\.$/,
     );
   });
 });

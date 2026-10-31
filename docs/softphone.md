@@ -270,15 +270,22 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   shown when the flag is on and the caller has `agency.softphone.dial`). Same frozen geometry as
   the station: header, state rail (Ready, Dialing, Ringing, On call, Outcome needed), three
   columns (dial pad with caller ID and "Log to" campaign | call details fields and the roster
-  contact | outcome pad, notes, callback; recent calls when idle), action bar. The rail, columns
+  contact | outcome pad, notes, callback; recent calls when idle, each with its day: Today,
+  Yesterday or a date), action bar (Save outcome, Mark DNC, Mute, Hang up: the station's order, so
+  the in-place swap moves nothing to the other side). The rail, columns
   and action bar keep identical positions in every state (pinned by a geometry test).
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a
   bracketed `(0)` after a country code, `+44 (0)20…`), spaces and `tel:`; typing drops a leading
   trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls.
   One dial is in flight at a time (a ref, not only the disabled button), so a double-click or
-  Enter on top of a click places one call. Redial fills the pad and focuses Call rather than dialling at once, so a
-  misclick never rings a customer. "Log to" is locked once a call is placed. Single-key shortcuts
-  are ignored while typing in a field or a focused `<select>`.
+  Enter on top of a click places one call. Redial fills the pad and focuses Call rather than
+  dialling at once, so a misclick never rings a customer. "Log to" is locked once a call is
+  placed; a closed calling window under it reads "(campaign time)" and "may need a reason", since
+  the dial checks the contact's timezone when the number is on the roster (SP2). A
+  `fields_invalid` refusal at Call marks the fields it names (`fields.<key>` or `<key>`).
+  Single-key shortcuts are ignored while typing in a field or a focused `<select>`. On a call the letters are the
+  station's: `M` mute, `N` notes, `C` callback, `D` the Mark DNC confirmation; in Ready every key
+  that means anything is a dial character, and `D` is not one.
 - **Audio.** On `/dialer/phone` the playback context is warmed and the microphone probed on the
   agent's first gesture on the page, so the permission prompt never lands mid-call. The mic opens
   when dialing starts and sends only once bridged; it is released when the call ends. The ringback
@@ -290,7 +297,7 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   else the built-ins, with the station's rules (keys 1–9, required notes, callback times). Notes
   the agent cleared are sent as `notes: ''` with the outcome (the pending autosave is cancelled
   at Save, and an absent `notes` keeps the stored text); notes never touched are left out. An
-  unsettled call blocks the next dial; the dial-pad column shows "Closes in m:ss" from
+  unsettled call blocks the next dial; the dial-pad column shows "Without one, it closes in m:ss" from
   `outcome_due_at` before the call lapses to `no_disposition`.
 - **Call details.** The fields form is hydrated from the call and saved debounced (700 ms). Until
   the field set has loaded (for example a reload where the `manual_call` frame beats the
@@ -321,7 +328,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   badges. The call detail reuses the call view (summary, sentiment, custom dimensions, recording,
   transcript) plus the outcome, who saved it (with the on-behalf marker) and the agent's call
   details, each labelled with its source (Agent / AI), and any override note. Each campaign has a
-  **Manual calls** tab. **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
+  **Soft-phone calls** tab (the sidebar's name for the same calls; the path stays
+  `/manual-calls`). **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).

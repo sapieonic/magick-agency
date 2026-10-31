@@ -9,6 +9,14 @@ import type { AgencyManualCallContact } from '../../types/softphone';
 import type { AgencyContextDisplay, AgencyDisposition } from '../../types/agency';
 import styles from './SoftphoneView.module.css';
 
+/**
+ * `calling_window_open` is the campaign's window in the campaign's default
+ * timezone; the dial is checked in the contact's when the number is on the
+ * roster (SP2), so this can only say "may".
+ */
+export const SOFTPHONE_WINDOW_CLOSED_HINT =
+  'Outside this campaign’s calling hours (campaign time). Calling may need a reason.';
+
 function initials(name: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
   if (words.length === 0) return '—';
@@ -80,7 +88,7 @@ export function CallDetailsColumn({ sp }: { sp: SoftphoneState }) {
           </span>
           {sp.setupEditable && campaign && !campaign.calling_window_open ? (
             <span className={styles.hint} data-testid="window-closed-hint">
-              This campaign is outside its calling hours right now — calling needs a reason.
+              {SOFTPHONE_WINDOW_CLOSED_HINT}
             </span>
           ) : null}
         </div>

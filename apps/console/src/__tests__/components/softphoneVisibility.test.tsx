@@ -94,6 +94,8 @@ describe('the campaign tabs', () => {
     as('account_admin', true);
     render(<MemoryRouter><CampaignTabs campaignId="camp-1" active="manual" role="account_admin" /></MemoryRouter>);
     const tab = screen.getByTestId('campaign-tab-manual');
+    // Named as the sidebar names the same calls.
+    expect(tab.textContent).toContain('Soft-phone calls');
     expect(tab.getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
     expect(tab.getAttribute('aria-current')).toBe('page');
   });

@@ -41,7 +41,7 @@ export default function AgencyCampaignManualCallsPage() {
         items={[
           { label: 'Campaigns', href: '/agency/campaigns' },
           ...(campaign ? [{ label: campaign.name, href: `/agency/campaigns/${campaign.id}` }] : []),
-          { label: 'Manual calls' },
+          { label: 'Soft-phone calls' },
         ]}
       />
       <CampaignTabs campaignId={id} active="manual" role={role} campaignStatus={campaign?.status} />
@@ -50,7 +50,7 @@ export default function AgencyCampaignManualCallsPage() {
           <span className={spine.titleIcon} aria-hidden="true">
             <Phone size={20} />
           </span>
-          <h1 className={spine.title}>Manual calls</h1>
+          <h1 className={spine.title}>Soft-phone calls</h1>
           {campaign ? <AgencyCampaignStatusBadge status={campaign.status} /> : null}
         </div>
       </header>

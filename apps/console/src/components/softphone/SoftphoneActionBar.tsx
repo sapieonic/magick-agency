@@ -17,8 +17,12 @@ export const SOFTPHONE_HANGUP_COPY: HoldToConfirmCopy = {
 };
 
 /**
- * The soft phone's action bar: Mute → Mark DNC → Save outcome → Hang up, in that
- * order in every state.
+ * The soft phone's action bar: Save outcome → Mark DNC → Mute → Hang up, in that
+ * order in every state — the station's own order (`StationActionBar`: Save →
+ * Mark DNC → Mute → Hang up), so when the station swaps the soft phone in place
+ * (SP7) nothing the agent reaches for changes sides. The group sits right, with
+ * Save's stated reason growing left into the spacer, so a reason appearing moves
+ * nothing either.
  *
  * The station's rule 3: every control renders in every state and is disabled
  * with a stated reason when there is nothing to act on, so the tab order and the
@@ -34,6 +38,24 @@ export function SoftphoneActionBar({ sp, clock }: { sp: SoftphoneState; clock: S
 
   return (
     <div className={styles.actionBar} data-testid="softphone-action-bar">
+      <span className={styles.spacer} />
+
+      <SaveControl sp={sp} clock={clock} />
+
+      <button
+        type="button"
+        className={`${station.mute} ${styles.dncButton}`}
+        onClick={sp.openDnc}
+        disabled={!sp.dncEnabled || sp.dncInFlight || sp.dncOutcome !== null}
+        aria-keyshortcuts="d"
+        data-testid="softphone-dnc"
+      >
+        {sp.dncInFlight ? 'Adding to Do Not Call…' : sp.dncOutcome ? 'On Do Not Call' : 'Mark DNC'}
+        <span className={styles.kbd} aria-hidden="true" style={{ marginLeft: 8 }}>
+          D
+        </span>
+      </button>
+
       <button
         type="button"
         className={`${station.mute} ${styles.muteButton}`}
@@ -50,20 +72,6 @@ export function SoftphoneActionBar({ sp, clock }: { sp: SoftphoneState; clock: S
           M
         </span>
       </button>
-
-      <button
-        type="button"
-        className={station.mute}
-        onClick={sp.openDnc}
-        disabled={!sp.dncEnabled || sp.dncInFlight || sp.dncOutcome !== null}
-        data-testid="softphone-dnc"
-      >
-        {sp.dncInFlight ? 'Adding to Do Not Call…' : sp.dncOutcome ? 'On Do Not Call' : 'Mark DNC'}
-      </button>
-
-      <span className={styles.spacer} />
-
-      <SaveControl sp={sp} clock={clock} />
 
       <div className={styles.hangupSlot}>
         <HoldToConfirmButton

@@ -97,7 +97,7 @@ export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
   },
   {
     id: 'manual',
-    label: 'Manual calls',
+    label: 'Soft-phone calls',
     hint: 'Calls agents placed from the soft phone and logged to this campaign',
     // The account's soft-phone list, tag-filtered: the server scopes it to the
     // whole account for `agency.supervise`, the same floor as Call attempts.

@@ -602,6 +602,12 @@
   min-width: 200px;
 }
 
+/* Wide enough for its longest label ("Adding to Do Not Call…"), so nothing before it moves when the label changes. */
+.dncButton {
+  min-width: 15rem;
+  justify-content: center;
+}
+
 /* Wide enough for its longest label ("Unmute ring"), so nothing after it moves when the label changes. */
 .muteButton {
   min-width: 10.5rem;

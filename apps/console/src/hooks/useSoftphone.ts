@@ -686,6 +686,13 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
             : SOFTPHONE_REFUSAL_COPY.contact_in_flight,
         );
         return;
+      case 'fields_invalid':
+        // The details typed before Call are on screen: mark the ones the server
+        // named (`fields.<key>` or `<key>`) rather than leave the agent to hunt.
+        setOverridePrompt(null);
+        if (refusal.details?.length) setFieldErrors(fieldErrorsFromDetails(refusal.details));
+        setDialError(SOFTPHONE_REFUSAL_COPY.fields_invalid);
+        return;
       case 'caller_id_not_allowed':
       case 'campaign_not_taggable':
         setOverridePrompt(null);

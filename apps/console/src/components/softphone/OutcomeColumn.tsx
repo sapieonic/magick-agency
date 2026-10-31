@@ -3,8 +3,7 @@ import { RotateCcw } from 'lucide-react';
 import { DispositionPad, type DispositionPadHandle } from '../agency/DispositionPad';
 import { NotesField } from '../agency/NotesField';
 import { formatDialNumber } from '../../utils/softphone/phoneInput';
-import { catalogForCall, loggedToLabel, manualCallOutcome } from '../../utils/softphone/callLabels';
-import { formatClockTime } from '../../utils/format/date';
+import { catalogForCall, loggedToLabel, manualCallOutcome, recentCallWhen } from '../../utils/softphone/callLabels';
 import { SOFTPHONE_NOTES_DISABLED_COPY, type SoftphoneState } from '../../hooks/useSoftphone';
 import type { ServerClock } from '../../hooks/useServerClock';
 import styles from './SoftphoneView.module.css';
@@ -85,7 +84,7 @@ function RecentCalls({ sp }: { sp: SoftphoneState }) {
         <ul className={styles.recentList} aria-label="Recent calls">
           {sp.recent.map((call) => {
             const outcome = manualCallOutcome(call, catalogForCall(call, sp.bootstrap));
-            const when = formatClockTime(new Date(call.created_at));
+            const when = recentCallWhen(new Date(call.created_at));
             const number = formatDialNumber(call.destination_e164);
             return (
               <li key={call.id} className={styles.recentRow} data-testid={`recent-${call.id}`}>

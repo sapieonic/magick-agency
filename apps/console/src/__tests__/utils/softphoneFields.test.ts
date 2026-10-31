@@ -156,6 +156,12 @@ describe('override notes', () => {
 });
 
 describe('refusal copy', () => {
+  it('gives the refusals an agent can hit by mistake a next step, not just a fact', () => {
+    expect(SOFTPHONE_REFUSAL_COPY.wrong_session_kind).toMatch(/Close the soft phone, then join the campaign/);
+    expect(SOFTPHONE_REFUSAL_COPY.call_not_found).toMatch(/Reload the page/);
+    expect(SOFTPHONE_REFUSAL_COPY.fields_invalid).toMatch(/marked in Call details/);
+  });
+
   it('has a sentence for every soft-phone code', () => {
     for (const code of AGENCY_SOFTPHONE_ERROR_CODES) {
       expect(SOFTPHONE_REFUSAL_COPY[code], code).toMatch(/\S/);

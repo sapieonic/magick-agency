@@ -15,8 +15,11 @@ import type { ServerClock } from '../../hooks/useServerClock';
  * deletes, Enter calls, and a paste anywhere on the page lands as a cleaned
  * number. **On call / Outcome needed**: `1`–`9` pick an outcome in the catalog's
  * own order (the station's muscle memory), Enter saves once the call has ended.
- * `M` mutes, `N` goes to the notes, `C` picks the callback outcome, `Ctrl`/`⌘`+
+ * `M` mutes, `N` goes to the notes, `C` picks the callback outcome, `D` opens the
+ * Mark DNC confirmation (the station's key; never the mark itself), `Ctrl`/`⌘`+
  * `Enter` saves from anywhere; `E` twice hangs up (the hold button's own key).
+ * The letters are only read once a call is placed — in Ready every key that
+ * means anything is a dial character, and `D` is not one.
  *
  * Nothing fires while focus is in a text field (the number field types for
  * itself) or a `<select>` (its own type-ahead), or while a dialog is open, and
@@ -97,6 +100,14 @@ export function useSoftphoneShortcuts(
       }
       if (key === 'c') {
         if (padRef.current?.selectCallback()) event.preventDefault();
+        return;
+      }
+      if (key === 'd') {
+        // The same confirmation the button opens, refused where the button is disabled.
+        if (sp.dncEnabled && !sp.dncInFlight && sp.dncOutcome === null) {
+          event.preventDefault();
+          sp.openDnc();
+        }
         return;
       }
       if (key >= '1' && key <= '9') {

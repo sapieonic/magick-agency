@@ -228,7 +228,7 @@ function OutcomeCloses({ dueAt, clock }: { dueAt: string; clock: ServerClock }) 
       {' '}
       {ms > 0 ? (
         <>
-          Closes in <span className={styles.mono}>{formatDuration(ms)}</span> — then it closes with no outcome.
+          Without one, it closes in <span className={styles.mono}>{formatDuration(ms)}</span>.
         </>
       ) : (
         'Closing with no outcome…'

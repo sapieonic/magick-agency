@@ -188,9 +188,14 @@ export default function SoftphoneSettingsPage() {
             <div className={styles.row}>
               <div className={styles.rowText}>
                 <p className={styles.rowLabel}>The soft phone is on for this account</p>
-                <span className={styles.rowHint}>Every agent in the account sees “Soft phone”.</span>
+                <span className={styles.rowHint} id="sp-access-hint">
+                  Every agent in the account sees “Soft phone”. Your platform administrator turns it on and off for the
+                  account; it isn’t a setting on this page.
+                </span>
               </div>
-              <span className={styles.onPill}>On</span>
+              <span className={styles.onPill} aria-describedby="sp-access-hint" data-testid="softphone-settings-access">
+                On
+              </span>
             </div>
             <div className={styles.row}>
               <div className={styles.rowText}>
@@ -459,9 +464,8 @@ export default function SoftphoneSettingsPage() {
             </button>
           ) : null}
           <p className={styles.note}>
-            Up to {SOFTPHONE_CALL_FIELDS_MAX} fields. A field’s key can’t change once it is saved, so the values on
-            past calls keep their meaning and exports stay comparable. Every call uses this set, whether or not it is
-            logged to a campaign.
+            Up to {SOFTPHONE_CALL_FIELDS_MAX} fields. A field’s key can’t change once it is saved, so the values saved
+            on past calls keep their meaning. Every call uses this set, whether or not it is logged to a campaign.
           </p>
         </section>
       </div>

@@ -77,9 +77,16 @@ export function SoftphoneCallsList({
   caption,
 }: SoftphoneCallsListProps) {
   const { tenantId, accountId } = useTenant();
-  const initialDraft: SoftphoneCallsDraft = defaultToday
-    ? { ...EMPTY_SOFTPHONE_CALLS_DRAFT, from: todayLocal(), to: todayLocal() }
-    : EMPTY_SOFTPHONE_CALLS_DRAFT;
+  /**
+   * The view the list opens on — today, for the supervisor's list — and what
+   * Clear goes back to. Clearing to all time instead would trade one filter
+   * for an unbounded read the supervisor never asked for. Fixed at mount, so a
+   * list left open past midnight clears to the day it opened on, which is the
+   * day its rows are about.
+   */
+  const [initialDraft] = useState<SoftphoneCallsDraft>(() =>
+    defaultToday ? { ...EMPTY_SOFTPHONE_CALLS_DRAFT, from: todayLocal(), to: todayLocal() } : EMPTY_SOFTPHONE_CALLS_DRAFT,
+  );
   const [draft, setDraft] = useState<SoftphoneCallsDraft>(initialDraft);
   const [applied, setApplied] = useState<SoftphoneCallsDraft>(initialDraft);
   const [rows, setRows] = useState<AgencyManualCallListRow[]>([]);
@@ -179,6 +186,10 @@ export function SoftphoneCallsList({
   const invertedRange = Boolean(draft.from && draft.to && draft.from > draft.to);
   const active = activeFilterCount(applied, Boolean(campaignId), scope === 'me');
   const filtered = active > 0;
+  /** Anything other than the opening view applied: what Clear is offered for. */
+  const changedFromDefault = (Object.keys(initialDraft) as (keyof SoftphoneCallsDraft)[]).some(
+    (key) => applied[key] !== initialDraft[key],
+  );
   const showAgent = scope === 'account';
   const set = (patch: Partial<SoftphoneCallsDraft>) => setDraft((current) => ({ ...current, ...patch }));
 
@@ -333,13 +344,13 @@ export function SoftphoneCallsList({
             >
               Apply
             </button>
-            {filtered ? (
+            {changedFromDefault ? (
               <button
                 type="button"
                 className="btn-secondary"
                 onClick={() => {
-                  setDraft(EMPTY_SOFTPHONE_CALLS_DRAFT);
-                  setApplied(EMPTY_SOFTPHONE_CALLS_DRAFT);
+                  setDraft(initialDraft);
+                  setApplied(initialDraft);
                 }}
                 data-testid="filter-clear"
               >
@@ -366,11 +377,19 @@ export function SoftphoneCallsList({
       {!loading && !error && rows.length === 0 ? (
         <EmptyState
           icon={<Phone size={32} />}
-          title={filtered ? 'Nothing matches those filters' : 'No soft-phone calls yet'}
+          title={
+            defaultToday && !changedFromDefault
+              ? 'No soft-phone calls today'
+              : filtered
+                ? 'Nothing matches those filters'
+                : 'No soft-phone calls yet'
+          }
           description={
-            filtered
-              ? 'Widen the date range or clear the filters to see every call.'
-              : 'Calls placed from the soft phone appear here as they are made.'
+            defaultToday && !changedFromDefault
+              ? 'Widen the date range to see earlier calls.'
+              : filtered
+                ? 'Widen the date range or clear the filters to see every call.'
+                : 'Calls placed from the soft phone appear here as they are made.'
           }
         />
       ) : null}

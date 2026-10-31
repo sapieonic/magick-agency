@@ -1,5 +1,6 @@
 import { dispositionLabel } from '../agencySpineCopy';
 import { attemptOutcomeLabel } from '../../types/agency-spine';
+import { formatClockTime, formatDayMonth, formatDayMonthYear } from '../format/date';
 import type { AgencyDisposition } from '../../types/agency';
 import type { AgencyManualCall, AgencySoftphoneBootstrap } from '../../types/softphone';
 
@@ -41,4 +42,19 @@ export function manualCallOutcome(
 /** "Home Loan Renewals – Oct" or the words for none. */
 export function loggedToLabel(call: Pick<AgencyManualCall, 'tag'>): string {
   return call.tag?.campaign_name ?? 'Not logged to a campaign';
+}
+
+/**
+ * When a recent call was placed, with its day: "Today, 09:05 am", "Yesterday,
+ * 06:40 pm", "28 Oct, 11:12 am" (and the year once it is not this one). A time
+ * alone read as today for a call from last week. Calendar days are the reader's.
+ */
+export function recentCallWhen(at: Date, now: Date = new Date()): string {
+  const time = formatClockTime(at);
+  const day = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (day(at) === day(now)) return `Today, ${time}`;
+  if (day(at) === day(yesterday)) return `Yesterday, ${time}`;
+  const date = at.getFullYear() === now.getFullYear() ? formatDayMonth(at) : formatDayMonthYear(at);
+  return `${date}, ${time}`;
 }

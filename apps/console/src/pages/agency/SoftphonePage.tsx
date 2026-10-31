@@ -27,6 +27,10 @@ import type { StationSocketBootstrap } from '../../hooks/agencyStation/types';
 import type { AgencySoftphoneSessionResponse } from '../../types/softphone';
 import station from '../../components/agency/AgentStation.module.css';
 
+/** The Close soft phone confirmation: where it lands, and how to come back. */
+export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
+  'This ends your soft-phone session and takes you to My campaigns. To call again, choose Soft phone at the top of the page.';
+
 /**
  * `/dialer/phone` — the soft phone for an agent who is not on a campaign
  * (`docs/softphone.md` §2, §7).
@@ -253,7 +257,7 @@ function SoftphoneConsole({
         message={
           closeFailure
             ? `Your soft phone is still open — ${closeFailure}`
-            : 'Your soft-phone session ends. Open it again from your screens whenever you need it.'
+            : SOFTPHONE_CLOSE_CONFIRM_MESSAGE
         }
         confirmLabel={closing ? 'Closing…' : 'Close soft phone'}
         disabled={closing}
