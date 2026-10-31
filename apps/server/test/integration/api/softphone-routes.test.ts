@@ -321,6 +321,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     const agent = await user(tenant, account, 'agent');
     const colleague = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({
+      status: 'paused',
       tenant_id: tenant, account_id: account, name: 'Renewals', disposition_catalog: CATALOG,
       caller_ids: ['+919000000001'], record_calls: true,
     });
@@ -472,7 +473,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
 
   it('DNC over HTTP: 409 dnc_listed with the entry, then placed with an override note, audited with note and entry', async () => {
     const agent = await user(tenant, account, 'agent');
-    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
     await staff(campaign.id, agent.id);
     const { rows: [entry] } = await getTestPool().query(
       `INSERT INTO dnc_entries (tenant_id, account_id, campaign_id, phone_e164, source, reason)
@@ -522,7 +523,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
 
   it('the switch from a campaign session: queued, applied, return refused while unsettled, return — audited and on the campaign trail', async () => {
     const agent = await user(tenant, account, 'agent');
-    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
     const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
     expect(joined.statusCode, joined.body).toBe(201);
     const sessionId = joined.json().session_id as string;
@@ -605,7 +606,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   // answer 409 `manual_call_live` until the outcome is saved.
   it('a station drop, a lapsed lease and a reconnect keep an agent owing a soft-phone outcome out of the pool', async () => {
     const agent = await user(tenant, account, 'agent');
-    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
     const { sessionId, station, callId } = await campaignSessionOwingAnOutcome(agent, campaign.id, '+919811200060');
 
     // The lid closes: presence goes `offline`, and the row keeps the soft-phone break reason.
@@ -671,7 +672,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
 
   it('break/cancel withdraws a queued switch; a soft-phone session refuses break/cancel and force-available', async () => {
     const agent = await user(tenant, account, 'agent');
-    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
     const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
     const sessionId = joined.json().session_id as string;
     const station = await connect(joined.json().station_ws_url);
@@ -865,7 +866,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   // claim re-taken, and `available` must refuse.
   it('a server restart with the lease lapsed keeps an agent owing a soft-phone outcome out of the pool', async () => {
     const agent = await user(tenant, account, 'agent');
-    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
     const { sessionId, station, callId } = await campaignSessionOwingAnOutcome(agent, campaign.id, '+919811200070');
 
     await drop(station);

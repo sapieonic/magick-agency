@@ -242,6 +242,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
   it('a tagged call: ring → answer → bridge → hang up → outcome → contact settled, Redis released', async () => {
     const agent = randomUUID();
     const campaign = await insertAgencyCampaign({
+      status: 'paused',
       tenant_id: TENANT, account_id: ACCOUNT, record_calls: true, disposition_catalog: CATALOG,
       caller_ids: ['+919000000001', '+919000000002'],
     });
@@ -314,7 +315,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('an unanswered call settles at once: one attempt charged, the retry policy\'s delay before pacing redials, claim released', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     const contact = await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100002' });
     const session = await softphoneSession(agent);
     const station = await openStation(session.id);
@@ -348,7 +349,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('a database fault before the bridge ends the call failed, releases the contact and the claim, and the session dials again', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     const contact = await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100090' });
     const session = await softphoneSession(agent);
     await openStation(session.id);
@@ -389,7 +390,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('refusals before a line is up answer what happened: the carrier refusal ended, Redis down and an unknown bridge refusal dial_failed', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     const contact = await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100095' });
     const session = await softphoneSession(agent);
     await openStation(session.id);
@@ -431,7 +432,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('call fields: omitted keeps them, {} keeps them once the account has no call fields, {} clears while it has', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     const setFields = (fields: unknown[]) => getTestPool().query(
       `INSERT INTO agency_softphone_settings (tenant_id, account_id, call_fields) VALUES ($1, $2, $3::jsonb)
        ON CONFLICT (tenant_id, account_id) DO UPDATE SET call_fields = EXCLUDED.call_fields`,
@@ -486,7 +487,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('DNC: refused with the entry, overridable with a note (stored); a bad note and a failed lookup are not', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     const { rows: [entry] } = await getTestPool().query(
       `INSERT INTO dnc_entries (tenant_id, account_id, campaign_id, phone_e164, source, reason)
        VALUES ($1, NULL, NULL, '+919811100010', 'import', 'asked twice') RETURNING id`, [TENANT]);
@@ -530,6 +531,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     const agent = randomUUID();
     // A window that is never open (start = end).
     const campaign = await insertAgencyCampaign({
+      status: 'paused',
       tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG,
       calling_window_start: '09:00:00', calling_window_end: '09:00:00', default_timezone: 'Asia/Kolkata',
     });
@@ -558,7 +560,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('contact_in_flight: a live campaign attempt on the roster contact refuses the dial, no override', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     const contact = await insertAgencyContact(campaign.id, {
       tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100030', state: 'in_flight',
     });
@@ -576,7 +578,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('a campaign the agent is not staffed on is not taggable', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT });
     const session = await softphoneSession(agent);
     await openStation(session.id);
     const refused = await runtime.softphone.placeCall(actor(agent, { supervise: false }), {
@@ -587,7 +589,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   it('concurrent placeCall on one session: exactly one wins, the other sees its call', async () => {
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100050' });
     const session = await softphoneSession(agent);
     await openStation(session.id);
@@ -615,7 +617,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     // the session's unsettled-call check before A commits, and reads the roster after
     // A claimed the contact. The contact is `in_flight` because of B's OWN session.
     const agent = randomUUID();
-    const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100055' });
     const session = await softphoneSession(agent);
     await openStation(session.id);
@@ -659,7 +661,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     const session = await softphoneSession(agent);
     const first = await openStation(session.id);
     const placed = await runtime.softphone.placeCall(actor(agent), {
-      sessionId: session.id, to: '+919811100060', campaignId: (await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT })).id,
+      sessionId: session.id, to: '+919811100060', campaignId: (await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: ACCOUNT })).id,
     });
     if (!placed.ok) throw new Error(placed.refusal.code);
     const webrtcCallId = await webrtcCallIdOf(placed.call.id);
@@ -777,7 +779,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
       tenant_id: TENANT, account_id: NARROW_ACCOUNT, status: 'running', wrapup_seconds: 0,
       disposition_catalog: JSON.stringify([]),
     });
-    const tag = await insertAgencyCampaign({ tenant_id: TENANT, account_id: NARROW_ACCOUNT });
+    const tag = await insertAgencyCampaign({ status: 'paused', tenant_id: TENANT, account_id: NARROW_ACCOUNT });
     await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: NARROW_ACCOUNT, phone_e164: '+919811100080' });
 
     // The soft-phone call takes the account's only slot first.
