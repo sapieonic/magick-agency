@@ -112,8 +112,9 @@ Owned by `AgencyRuntime`. One call at a time per session.
    (`setAvailableGuarded`, `owedSoftphoneCall`): one that exists refuses `manual_call_live` and
    re-claims the `manual` field, so a lease that lapsed and was rewritten without it cannot let
    an agent owing an outcome into the pacing pool.
-2. **Pre-dial** (`manual-predial.ts`), in order: override notes when given (bounds); E.164
-   (`normalizePhoneToE164` then `normalizeE164`; the schema has no account country, so the default
+2. **Pre-dial** (`manual-predial.ts`), in order: override notes when given (bounds, in characters
+   as the CHECK counts them); E.164 (a bracketed trunk `(0)` directly after the country code dropped,
+   `+44 (0)20…` → `+4420…`, a soft-phone-local step; then `normalizePhoneToE164` then `normalizeE164`; the schema has no account country, so the default
    region is the platform's, `DEFAULT_PHONE_COUNTRY_CODE`, `+91` by default); caller ID in the
    allowed set (tagged: the campaign's `caller_ids`, default the pool's round-robin pick as pacing
    dials; untagged: the account's assigned numbers, `findAvailableForAccount`, default the

@@ -7,8 +7,9 @@
  *     after trimming, else `override_note_invalid`. Checked up front — a note is
  *     USED only when its refusal would otherwise fire, but a malformed one is
  *     refused whether or not it would have been needed.
- *  2. The number: `normalizePhoneToE164` with the default region (the ingest's
- *     normaliser), then the dial-time canonical form (`normalizeE164`), else
+ *  2. The number: a bracketed trunk `(0)` after the country code dropped
+ *     (`+44 (0)20…`), then `normalizePhoneToE164` with the default region (the
+ *     ingest's normaliser), then the dial-time canonical form (`normalizeE164`), else
  *     `invalid_number`.
  *  3. The caller ID, in the allowed set: tagged, the campaign's `caller_ids`
  *     (`usableCallerIds`, the pacing engine's definition); untagged, the account's
@@ -119,10 +120,23 @@ export function validateOverrideNote(
   return { ok: true, note };
 }
 
-/** The dialled number, normalised as the roster stores numbers; null when not dialable. */
+/**
+ * The trunk prefix written in brackets after a country code — `+44 (0)20 7946 0018` —
+ * which is dialled only from inside the country. Read literally it is a digit of the
+ * number (`+4402079460018`, a wrong call), so it is dropped. Only a bracketed `0`
+ * DIRECTLY after a `+` and the country code's 1–3 digits: nothing else is touched.
+ */
+const TRUNK_AFTER_COUNTRY_CODE = /^(\s*\+\s*\d{1,3})\s*\(\s*0\s*\)/;
+
+/**
+ * The dialled number, normalised as the roster stores numbers; null when not dialable.
+ * A soft-phone-local pre-step drops a bracketed trunk `(0)` after the country code
+ * ({@link TRUNK_AFTER_COUNTRY_CODE}); the shared `normalizePhoneToE164` (roster ingest)
+ * is unchanged.
+ */
 export function normalizeDialledNumber(to: unknown, defaultCountryCode: string): string | null {
   if (typeof to !== 'string') return null;
-  const local = normalizePhoneToE164(to, { defaultCountryCode });
+  const local = normalizePhoneToE164(to.replace(TRUNK_AFTER_COUNTRY_CODE, '$1 '), { defaultCountryCode });
   return normalizeE164(local);
 }
 

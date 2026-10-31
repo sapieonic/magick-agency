@@ -106,6 +106,9 @@ export function deleteLastDialChar(value: string): string {
  *  - `098204 61733`, `022 2659 4410` → `+919820461733`, `+912226594410`: a leading
  *    trunk `0` is the national format, so the account's country code replaces it
  *  - `tel:+919820461733` → `+919820461733`
+ *  - `+44 (0)20 7946 0018` → `+442079460018`: a bracketed trunk `0` after the country
+ *    code is dialled only from inside the country, so it is dropped (the server does
+ *    the same for a typed one)
  *  - `98204 61733` → `9820461733`: a bare national number is left for the server,
  *    which normalises it in the account's region (see the module note)
  *

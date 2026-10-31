@@ -56,6 +56,16 @@ describe('the number', () => {
     expect(normalizeDialledNumber('4155550100', '1')).toBe('+14155550100');
   });
 
+  it('drops a bracketed trunk (0) directly after a country code, and nothing else', () => {
+    expect(normalizeDialledNumber('+44 (0)20 7946 0018', '91')).toBe('+442079460018');
+    expect(normalizeDialledNumber('+91 (0) 98204 61733', '91')).toBe('+919820461733');
+    expect(normalizeDialledNumber('+44(0)2079460018', '91')).toBe('+442079460018');
+    // A bracketed area code, or a (0) anywhere else, is formatting as before.
+    expect(normalizeDialledNumber('+1 (415) 555-0100', '91')).toBe('+14155550100');
+    expect(normalizeDialledNumber('+44 20 (0)7946 0018', '91')).toBe('+4420079460018');
+    expect(normalizeDialledNumber('(0)98204 61733', '91')).toBe('+919820461733');
+  });
+
   it('refuses what is not dialable', async () => {
     for (const to of ['', 'abc', '123', '+0123456789', 42, null]) {
       const r = await runManualPredial(input({ to }), deps());

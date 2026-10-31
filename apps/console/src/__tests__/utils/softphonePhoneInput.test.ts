@@ -19,6 +19,10 @@ describe('normalisePastedNumber — what a paste drags in, cleaned', () => {
     ['098204 61733', '+919820461733'],
     ['022 2659 4410', '+912226594410'],
     ['  +44 20 7946 0958 ', '+442079460958'],
+    // A bracketed trunk 0 after the country code is not part of the number.
+    ['+44 (0)20 7946 0018', '+442079460018'],
+    ['+91 (0) 98204 61733', '+919820461733'],
+    ['+44 20 (0)7946 0018', '+4420079460018'],
   ])('%s → %s', (raw, expected) => {
     expect(normalisePastedNumber(raw, '+91')).toBe(expected);
   });
