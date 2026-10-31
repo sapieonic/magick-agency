@@ -412,6 +412,59 @@ describe('the call, driven by manual_call frames', () => {
     expect((screen.getByTestId('dial-number') as HTMLInputElement).value).toBe('');
   });
 
+  it('notes cleared just before Save are saved cleared, not left as the old text', async () => {
+    const ended = manualCall({
+      state: 'ended',
+      outcome: 'connected',
+      end_reason: 'remote_hangup',
+      requires_disposition: true,
+      bridged_at: '2026-10-30T10:00:08Z',
+      ended_at: '2026-10-30T10:01:00Z',
+      talk_seconds: 52,
+      notes: 'Wants it in writing',
+      fields: { customer_name: 'Rahul Verma', reason: 'Rate query' },
+    });
+    api.dispositionManualCall.mockResolvedValue({
+      ok: true,
+      value: { call: { ...ended, disposition_code: 'resolved', settled_at: '2026-10-30T10:01:10Z' }, contact_state: null, next_attempt_at: null, callback_requested_at: null },
+    });
+    const view = await mount();
+    await view.frame(ended);
+    expect((screen.getByLabelText(/Notes/) as HTMLTextAreaElement).value).toBe('Wants it in writing');
+    press('1');
+    // Cleared and saved inside the 700 ms autosave window: the PATCH never goes.
+    fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: '' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('softphone-save'));
+    });
+    expect(api.updateManualCall).not.toHaveBeenCalled();
+    expect(api.dispositionManualCall.mock.calls[0]![1]).toMatchObject({ code: 'resolved', notes: '' });
+  });
+
+  it('notes never touched are left out of the outcome, so the stored text is kept', async () => {
+    const ended = manualCall({
+      state: 'ended',
+      outcome: 'connected',
+      end_reason: 'remote_hangup',
+      requires_disposition: true,
+      bridged_at: '2026-10-30T10:00:08Z',
+      ended_at: '2026-10-30T10:01:00Z',
+      talk_seconds: 52,
+      fields: { customer_name: 'Rahul Verma', reason: 'Rate query' },
+    });
+    api.dispositionManualCall.mockResolvedValue({
+      ok: true,
+      value: { call: { ...ended, disposition_code: 'resolved', settled_at: '2026-10-30T10:01:10Z' }, contact_state: null, next_attempt_at: null, callback_requested_at: null },
+    });
+    const view = await mount();
+    await view.frame(ended);
+    press('1');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('softphone-save'));
+    });
+    expect(api.dispositionManualCall.mock.calls[0]![1]).not.toHaveProperty('notes');
+  });
+
   it('a call that was never answered goes straight back to Ready, saying how it ended', async () => {
     const view = await mount();
     await view.frame(manualCall({ state: 'ringing' }));

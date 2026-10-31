@@ -394,6 +394,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const fieldSetRef = useLatestRef({ known: fieldsKnown, fields });
   /** The agent typed into a call field since the call's values were last taken from the server. */
   const fieldsTouchedRef = useRef(false);
+  /** The agent edited the notes on this call (so blank on screen means cleared, not never typed). */
+  const notesTouchedRef = useRef(false);
 
   // The station's campaign, preselected once the list that can confirm it arrives.
   useEffect(() => {
@@ -434,6 +436,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (call && hydratedForRef.current !== call.id) {
       hydratedForRef.current = call.id;
       fieldsTouchedRef.current = false;
+      notesTouchedRef.current = false;
       setRingMuted(false);
       // A call we did not place from this screen (a reload, a reconnect, a second
       // window): take what the server holds. One we placed already matches the draft.
@@ -453,6 +456,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       // Settled (outcome saved, lapsed, or an unanswered call closed): back to Ready.
       hydratedForRef.current = null;
       fieldsTouchedRef.current = false;
+      notesTouchedRef.current = false;
       setRingMuted(false);
       setLastCall(newest && newest.id === prev.id ? newest : prev);
       setNumberState('');
@@ -816,6 +820,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const setNotes = useCallback(
     (value: string) => {
       setNotesState(value);
+      notesTouchedRef.current = true;
       notesSaveRef.current = { ...notesSaveRef.current, lastKeystrokeAt: Date.now() };
       setNotesMeta((m) => ({ ...m, tick: m.tick + 1 }));
       scheduleSave();
@@ -879,11 +884,19 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     setSaving(true);
     setPadRejection(null);
     const cleaned = cleanFieldValues(fields, fieldValues);
+    /*
+      Notes the agent cleared go as `''`: the debounced PATCH that would have
+      cleared them was cancelled just above, and an absent `notes` keeps the
+      stored text (`recordDisposition`'s `COALESCE`, which keeps it for NULL only).
+      Untouched blank notes stay absent, so a save never clears what another
+      window wrote.
+    */
+    const notesField = payload.notes ? { notes: payload.notes } : notesTouchedRef.current ? { notes: '' } : {};
     const result = await dispositionManualCall(
       target.id,
       {
         code: payload.disposition_code,
-        ...(payload.notes ? { notes: payload.notes } : {}),
+        ...notesField,
         ...(payload.callback_at ? { callback_at: payload.callback_at } : {}),
         // Absent until the field set is known: the server then keeps (and checks) the stored values.
         ...(fieldsKnown ? { fields: cleaned } : {}),

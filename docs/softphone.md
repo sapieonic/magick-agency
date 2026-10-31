@@ -285,7 +285,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   muted is announced assertively. The SP3 warning shows while ringing; hang-up is hold-to-confirm
   (or `E` twice).
 - **Outcome.** The outcome pad uses the tagged campaign's catalog, else the soft-phone catalog,
-  else the built-ins, with the station's rules (keys 1–9, required notes, callback times). An
+  else the built-ins, with the station's rules (keys 1–9, required notes, callback times). Notes
+  the agent cleared are sent as `notes: ''` with the outcome (the pending autosave is cancelled
+  at Save, and an absent `notes` keeps the stored text); notes never touched are left out. An
   unsettled call blocks the next dial; the dial-pad column shows "Closes in m:ss" from
   `outcome_due_at` before the call lapses to `no_disposition`.
 - **Call details.** The fields form is hydrated from the call and saved debounced (700 ms). Until
