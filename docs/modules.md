@@ -179,7 +179,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/disposition.test.ts` | 19 |
 | `apps/server/test/unit/agency/dnc-availability.test.ts` | 6 |
 | `apps/server/test/unit/agency/dnc-mark-route.test.ts` | 37 |
-| `apps/server/test/unit/agency/dnc-mark.test.ts` | 16 |
+| `apps/server/test/unit/agency/dnc-mark.test.ts` | 18 |
 | `apps/server/test/unit/agency/dnc-registry.test.ts` | 9 |
 | `apps/server/test/unit/agency/dnc-resurrection.test.ts` | 12 |
 | `apps/server/test/unit/agency/exhaustion-completion.test.ts` | 21 |
@@ -257,8 +257,8 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 | `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 10 |
 | `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 14 |
 | `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
-| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 19 |
-| `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | 21 |
+| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 20 |
+| `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | 26 |
 
 ### `apps/server/src/agency/pacing/`
 
@@ -409,8 +409,8 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/user.routes.test.ts` | 47 |
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
-| `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 42 |
-| `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 43 |
+| `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
+| `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 48 |
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 12 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 17 |
 
@@ -1361,7 +1361,7 @@ Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeCol
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | 40 |
+| `apps/console/src/__tests__/components/SoftphoneView.test.tsx` | 43 |
 
 `SoftphoneView.test.tsx` drives the view through `useSoftphone` with a fake station socket (`__tests__/helpers/fakeSocket.ts`, `__tests__/helpers/softphone.ts`): Ready, refusals and overrides, the call from `manual_call` frames, the outcome window, finish mode, keys on a focused select, the ringback, mute and reconnect. `SoftphoneCallsList` is tested through `SoftphoneSupervisor.test.tsx` and `AgentAttemptsPage.softphone.test.tsx` (`pages/`).
 
@@ -1444,7 +1444,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 39 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 19 |
-| `apps/console/src/__tests__/pages/DncPage.test.tsx` | 21 |
+| `apps/console/src/__tests__/pages/DncPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
@@ -1577,7 +1577,6 @@ Files: `audioTarget.ts`, `callFields.ts`, `callLabels.ts`, `callState.ts`, `call
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/utils/softphoneCallState.test.ts` | 17 |
-| `apps/console/src/__tests__/utils/softphoneCallLabels.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/softphoneFields.test.ts` | 18 |
 | `apps/console/src/__tests__/utils/softphoneOverrides.timezone.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/softphonePhoneInput.test.ts` | 31 |
