@@ -662,3 +662,13 @@ describe('PATCH /:id — caller_ids may not be emptied', () => {
     expect(campaigns.update).toHaveBeenCalledWith('camp-1', { name: 'Renamed' });
   });
 });
+
+describe('break_reasons at the write', () => {
+  it('refuses a catalog listing the soft phone\'s reserved reason, and nothing else about it', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    expect(validate({ break_reasons: [{ code: 'lunch', label: 'Lunch' }, { code: 'soft_phone', label: 'Soft phone' }] }))
+      .toEqual([{ field: 'break_reasons', message: expect.stringContaining('reserved for the soft phone') }]);
+    expect(validate({ break_reasons: [{ code: 'lunch', label: 'Lunch' }] })).toEqual([]);
+    expect(validate({ break_reasons: [] })).toEqual([]);
+  });
+});

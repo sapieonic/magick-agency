@@ -130,6 +130,7 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     const { contact, call } = await claimedCall({ contact: { attempt_count: 1 } });
     bridge.createBridgedCall.mockRejectedValueOnce(new WebRtcCallError('full', 'account_concurrency_limit', 429));
     expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: false, failure: 'concurrency_limit' });
+    expect(dialer.hasLiveCall(call.session_id as string)).toBe(false);
 
     const row = await callRow(call.id as string);
     expect(row).toMatchObject({ state: 'ended', outcome: 'failed', dialed_at: null });
@@ -216,6 +217,7 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     await atRead;
 
     expect(dialer.activeManualCallIds()).toContain(call.id);
+    expect(dialer.hasLiveCall(call.session_id as string)).toBe(true);
     const swept = await reaper.sweepManualCalls();
     expect(swept.orphaned).toBe(0);
 
@@ -225,6 +227,8 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     expect(row).toMatchObject({ state: 'ended', outcome: 'connected', end_reason: 'remote_hangup', talk_seconds: 612 });
     expect(row.settled_at).toBeNull(); // bridged: the outcome is owed
     expect(dialer.activeManualCallIds()).not.toContain(call.id);
+    // The per-session read agrees: the station sweep and `leave` no longer see a live call.
+    expect(dialer.hasLiveCall(call.session_id as string)).toBe(false);
   });
 
   // ── a settle that fails ───────────────────────────────────────────────────

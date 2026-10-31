@@ -74,6 +74,7 @@ import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../s
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
+import { agencyAgentSessionRepository, agencySoftphoneSettingsRepository } from '../../../src/db/repositories/agency.repository.js';
 
 const CATALOG = JSON.stringify([
   { code: 'interested', label: 'Interested', is_success: true, terminal: true },
@@ -1000,6 +1001,215 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     ringOut(leg);
     await waitFor('settled frame', () => lastCall(station)?.settled_at);
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  // ── Review round 3 (PR review): leaving the soft phone, the reserved break ──────────
+
+  /** A campaign session switched to the soft phone, with no call on it. */
+  async function campaignSessionOnSoftphone(agent: Who, campaignId: string) {
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaignId });
+    expect(joined.statusCode, joined.body).toBe(201);
+    const sessionId = joined.json().session_id as string;
+    const station = await connect(joined.json().station_ws_url);
+    const switched = await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent);
+    expect(switched.statusCode, switched.body).toBe(200);
+    expect(switched.json()).toMatchObject({ state: 'break', break_reason: 'soft_phone' });
+    return { sessionId, station };
+  }
+
+  it('available from the soft phone: a refused Redis write or a claim that will not clear is 503, nothing written or audited', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
+    const { sessionId } = await campaignSessionOnSoftphone(agent, campaign.id);
+    const exits = async () => (await auditRows('agency_session.softphone_ended', sessionId)).length;
+
+    // (a) Redis does not take the write.
+    const set = vi.spyOn(runtime.agents, 'set').mockResolvedValueOnce('unavailable');
+    const down = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    set.mockRestore();
+    expect(down.statusCode, down.body).toBe(503);
+    expect(down.json()).toMatchObject({ code: 'dial_failed' });
+    expect(down.json()).not.toHaveProperty('softphone_audit');
+    expect(await sessionRow(sessionId)).toEqual({ state: 'break', break_reason: 'soft_phone' });
+    expect(await exits()).toBe(0);
+
+    // (b) A stale `manual` claim the release cannot clear: the Lua guard keeps refusing
+    // with no call owed. It is not "Redis was down": Redis still says `break`.
+    await getTestRedis().hset(leaseKey(sessionId), 'manual', randomUUID());
+    const release = vi.spyOn(runtime.agents, 'releaseManual').mockResolvedValue(false);
+    const stuck = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    release.mockRestore();
+    expect(stuck.statusCode, stuck.body).toBe(503);
+    expect(stuck.json()).toMatchObject({ code: 'dial_failed' });
+    expect((await runtime.agents.get(sessionId))?.state).toBe('break');
+    expect(await sessionRow(sessionId)).toEqual({ state: 'break', break_reason: 'soft_phone' });
+    expect(await exits()).toBe(0);
+
+    // With the release working again, the stale claim clears and the agent goes available.
+    const ok = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(await exits()).toBe(1);
+
+    // (c) The same stuck claim on an ordinary break (not the soft phone): still refused,
+    // because Redis keeps the agent on `break` — it is not "Redis was down".
+    expect((await post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'lunch' })).statusCode).toBe(200);
+    await getTestRedis().hset(leaseKey(sessionId), 'manual', randomUUID());
+    const stuckRelease = vi.spyOn(runtime.agents, 'releaseManual').mockResolvedValue(false);
+    const onLunch = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    stuckRelease.mockRestore();
+    expect(onLunch.statusCode, onLunch.body).toBe(503);
+    expect(onLunch.json()).toMatchObject({ code: 'dial_failed' });
+    expect(await sessionRow(sessionId)).toEqual({ state: 'break', break_reason: 'lunch' });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/available`, agent)).statusCode).toBe(200);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('a break taken from the soft phone while a dial holds the session row waits for it, then refuses manual_call_live', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
+    const { sessionId } = await campaignSessionOnSoftphone(agent, campaign.id);
+
+    // The dial's transaction (`placeCall` step 3): the session row locked, the call not
+    // yet inserted. The break is pressed now, so it reads no owed call before it waits.
+    const dial = await getTestPool().connect();
+    let callId: string;
+    try {
+      await dial.query('BEGIN');
+      await dial.query('SELECT id FROM agency_agent_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
+      const lunch = post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'lunch' });
+      await waitFor('the break waiting on the session row', async () => {
+        const { rows } = await getTestPool().query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`);
+        return rows[0]!.n > 0;
+      });
+      const { rows } = await dial.query<{ id: string }>(
+        `INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id)
+         VALUES ($1, $2, $3, $4, '+919811200090', $5) RETURNING id`,
+        [tenant, account, sessionId, agent.id, accountNumber],
+      );
+      callId = rows[0]!.id;
+      await dial.query('COMMIT');
+      const refused = await lunch;
+      expect(refused.statusCode, refused.body).toBe(409);
+      expect(refused.json()).toMatchObject({ code: 'manual_call_live', call: { id: callId } });
+    } finally {
+      dial.release();
+    }
+    expect(await sessionRow(sessionId)).toEqual({ state: 'break', break_reason: 'soft_phone' });
+    expect((await runtime.agents.get(sessionId))?.state).toBe('break');
+
+    await getTestPool().query(
+      `UPDATE agency_manual_calls SET state = 'ended', ended_at = now(), settled_at = now() WHERE id = $1`, [callId]);
+    await runtime.agents.releaseManual(sessionId, callId);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('a dial whose session left the soft phone after its first read refuses not_on_softphone under the row lock', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
+    const { sessionId } = await campaignSessionOnSoftphone(agent, campaign.id);
+
+    // A `/break` to lunch commits between the dial's read of the session and its lock
+    // (Redis says `break` either way).
+    const original = agencySoftphoneSettingsRepository.get.bind(agencySoftphoneSettingsRepository);
+    const spy = vi.spyOn(agencySoftphoneSettingsRepository, 'get').mockImplementationOnce(async (t, a) => {
+      expect((await agencyAgentSessionRepository.setBreakLeavingSoftphone(sessionId, 'lunch')).ok).toBe(true);
+      return original(t, a);
+    });
+    const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811200091' });
+    spy.mockRestore();
+    expect(placed.statusCode, placed.body).toBe(409);
+    expect(placed.json()).toMatchObject({ code: 'not_on_softphone' });
+    const { rows } = await getTestPool().query('SELECT id FROM agency_manual_calls WHERE session_id = $1', [sessionId]);
+    expect(rows).toEqual([]);
+    expect(await runtime.agents.manualCallOf(sessionId)).toBeNull();
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('the soft phone\'s reserved break is refused on /break and in a campaign\'s break catalog', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({
+      status: 'paused', tenant_id: tenant, account_id: account,
+      break_reasons: JSON.stringify([{ code: 'lunch', label: 'Lunch' }, { code: 'soft_phone', label: 'Sneaky' }]),
+    });
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    expect(joined.statusCode, joined.body).toBe(201);
+    const sessionId = joined.json().session_id as string;
+    expect(joined.json().break_reasons).toEqual([{ code: 'lunch', label: 'Lunch' }]);
+    await connect(joined.json().station_ws_url);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/available`, agent)).statusCode).toBe(200);
+
+    const sneaky = await post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'soft_phone' });
+    expect(sneaky.statusCode, sneaky.body).toBe(400);
+    expect(sneaky.json()).toMatchObject({ code: 'unknown_break_reason', allowed_codes: ['lunch'] });
+    expect((await runtime.agents.get(sessionId))?.state).toBe('available');
+    expect(await auditRows('agency_session.softphone_started', sessionId)).toEqual([]);
+
+    const write = await patch(`/proxy/agency/campaigns/${campaign.id}`, supervisor, {
+      break_reasons: [{ code: 'soft_phone', label: 'Soft phone' }],
+    });
+    expect(write.statusCode, write.body).toBe(400);
+    expect(write.body).toContain('break_reasons');
+    await runtime.agents.set(sessionId, 'break');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('a suppress outcome on a tagged call takes every roster row with the number off the tag, as Mark DNC does', async () => {
+    const agent = await user(tenant, account, 'agent');
+    // `[]` is the built-in catalog, whose `do_not_call` suppresses.
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: '[]' });
+    await staff(campaign.id, agent.id);
+    const phone = '+919811200092';
+    const first = await insertAgencyContact(campaign.id, { tenant_id: tenant, account_id: account, phone_e164: phone });
+    const twin = await insertAgencyContact(campaign.id, { tenant_id: tenant, account_id: account, phone_e164: phone });
+    const other = await insertAgencyContact(campaign.id, { tenant_id: tenant, account_id: account, phone_e164: '+919811200093' });
+    const { sessionId, station } = await openSoftphone(agent);
+
+    const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: phone, campaign_id: campaign.id });
+    expect(placed.statusCode, placed.body).toBe(201);
+    const callId = placed.json().id as string;
+    const leg = await legOf(callId);
+    answer(leg);
+    await waitFor('bridged', () => lastCall(station)?.state === 'bridged');
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/hangup`, agent)).statusCode).toBe(200);
+    await carrierEnded(leg);
+    await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+
+    const outcome = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'do_not_call' });
+    expect(outcome.statusCode, outcome.body).toBe(200);
+    expect(outcome.json()).toMatchObject({ contact_state: 'suppressed' });
+    const { rows } = await getTestPool().query<{ id: string; state: string }>(
+      'SELECT id, state FROM agency_contacts WHERE campaign_id = $1', [campaign.id]);
+    const states = Object.fromEntries(rows.map((r) => [r.id, r.state]));
+    expect(states).toEqual({ [first.id as string]: 'suppressed', [twin.id as string]: 'suppressed', [other.id as string]: 'pending' });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('the bootstrap shows a tagged campaign\'s profile by the dial\'s rule: the campaign\'s, else the soft-phone settings\'', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const { rows: [profile] } = await getTestPool().query<{ id: string }>(
+      `INSERT INTO call_analysis_profiles (tenant_id, account_id, name, is_active) VALUES ($1, $2, $3, true) RETURNING id`,
+      [tenant, account, `Soft-phone profile ${randomUUID().slice(0, 6)}`]);
+    const plain = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
+    await staff(plain.id, agent.id);
+    const before = await agencySoftphoneSettingsRepository.get(tenant, account);
+    await agencySoftphoneSettingsRepository.upsert(tenant, account, {
+      disposition_catalog: before.disposition_catalog, call_fields: before.call_fields,
+      analysis_profile_id: profile!.id, record_calls: before.record_calls, default_caller_id: before.default_caller_id,
+    });
+    try {
+      const boot = await get('/proxy/agency/softphone/bootstrap', agent);
+      expect(boot.statusCode, boot.body).toBe(200);
+      const tagged = boot.json().taggable_campaigns.find((c: { campaign_id: string }) => c.campaign_id === plain.id);
+      expect(tagged.analysis_profile).toMatchObject({ id: profile!.id });
+      expect(boot.json().untagged.analysis_profile).toMatchObject({ id: profile!.id });
+    } finally {
+      await agencySoftphoneSettingsRepository.upsert(tenant, account, {
+        disposition_catalog: before.disposition_catalog, call_fields: before.call_fields,
+        analysis_profile_id: before.analysis_profile_id, record_calls: before.record_calls, default_caller_id: before.default_caller_id,
+      });
+    }
   }, 30_000);
 
   // ── Finding 1, the restart variant: last in the file, because it restarts the runtime ──
