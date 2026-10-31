@@ -573,15 +573,6 @@ export class AgencyManualCallRepository {
     return rows[0] ?? null;
   }
 
-  /** The call a media leg was placed for (carrier events carry the call id). */
-  async findByWebrtcCallId(webrtcCallId: string): Promise<AgencyManualCallRecord | null> {
-    const { rows } = await getPool().query<AgencyManualCallRecord>(
-      'SELECT * FROM agency_manual_calls WHERE webrtc_call_id = $1 LIMIT 1',
-      [webrtcCallId],
-    );
-    return rows[0] ?? null;
-  }
-
   /**
    * One agent's calls ("My calls"), newest first, keyset on `(created_at DESC, id
    * DESC)` over `idx_agency_manual_calls_agent`. Scoped to the tenant and account

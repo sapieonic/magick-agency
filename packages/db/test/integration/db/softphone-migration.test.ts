@@ -251,14 +251,26 @@ describe('0005 — agency_manual_calls', () => {
     expect(await indexDef('idx_agency_manual_calls_contact')).toMatch(
       /\(contact_id\) WHERE \(\(contact_id IS NOT NULL\) AND \(settled_at IS NULL\)\)/,
     );
-    expect(await indexDef('idx_agency_manual_calls_webrtc')).toMatch(/\(webrtc_call_id\) WHERE \(webrtc_call_id IS NOT NULL\)/);
+    // Nothing looks a manual call up by its media leg, so 0005 indexes nothing on it.
+    expect(await indexDef('idx_agency_manual_calls_webrtc')).toBeUndefined();
+    // The attempt half of pacing's account-wide headroom (countLiveForAccount).
+    expect(await indexDef('idx_agency_attempts_account_live')).toMatch(
+      /ON public\.agency_call_attempts USING btree \(tenant_id, account_id\) WHERE \(\(state\)::text <> 'ended'::text\)$/,
+    );
   });
 
-  it('the planner can use the live index for an account count and the keyset for a page', async () => {
+  it('the planner can use the live indexes for an account count and the keyset for a page', async () => {
     const account = `'${ACCOUNT}'::uuid`;
     expect(await planOf(
       `SELECT count(*) FROM agency_manual_calls WHERE account_id = ${account} AND state <> 'ended'`,
     )).toContain('idx_agency_manual_calls_live');
+    // countLiveForAccount's attempt half: one probe of the account, not one per campaign.
+    const attempts = await planOf(
+      `SELECT count(*) FROM agency_call_attempts
+        WHERE tenant_id = '${TENANT}'::uuid AND account_id = ${account} AND state <> 'ended'`,
+    );
+    expect(attempts, attempts).toContain('idx_agency_attempts_account_live');
+    expect(attempts, attempts).toMatch(/Index Cond: \(\(tenant_id = .*\) AND \(account_id = .*\)\)/);
     expect(await planOf(
       `SELECT id FROM agency_manual_calls
         WHERE tenant_id = '${TENANT}'::uuid AND account_id = ${account}

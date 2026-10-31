@@ -385,8 +385,13 @@ typed number outside pacing, optionally logged ("tagged") to one of their campai
   across the account, the reapers); `idx_agency_manual_calls_campaign (campaign_id, created_at
   DESC) WHERE campaign_id IS NOT NULL`; `idx_agency_manual_calls_contact (contact_id) WHERE
   contact_id IS NOT NULL AND settled_at IS NULL` (the stranded-contact sweep and the pre-dial
-  match); `idx_agency_manual_calls_webrtc (webrtc_call_id) WHERE webrtc_call_id IS NOT NULL`.
-  Trigger `trg_agency_manual_calls_updated_at`.
+  match). No index on `webrtc_call_id`: nothing looks a manual call up by its leg. Trigger
+  `trg_agency_manual_calls_updated_at`.
+- **`agency_call_attempts`**: `idx_agency_attempts_account_live (tenant_id, account_id) WHERE state
+  <> 'ended'`, the attempt half of pacing's account-wide headroom (`countLiveForAccount`, every
+  tick): an index-only scan of the account's live attempts instead of a probe per campaign the
+  account has ever had (~1.5 ms / 164 buffers → ~0.2 ms / 16 at 2,010 campaigns). Built with a
+  plain `CREATE INDEX` over the existing rows, as 0003's.
 - **`agency_calls`**: `origin VARCHAR(16) NOT NULL DEFAULT 'campaign'` (`campaign | manual`) and
   `manual_call_id UUID` (correlation, no FK). CHECKs: `ck_agency_calls_origin`;
   `ck_agency_calls_manual_correlation` (`manual_call_id` set exactly on a manual leg, whose
@@ -401,13 +406,15 @@ typed number outside pacing, optionally logged ("tagged") to one of their campai
   `uq_agency_softphone_settings_account (tenant_id, account_id)`; trigger
   `trg_agency_softphone_settings_updated_at`. No FK to tenants/accounts, as `account_settings`.
 - **Down** raises, before changing anything, while any session or session event has a NULL
-  `campaign_id` (deleting soft-phone sessions would take their calls' audit trail); otherwise it
-  drops the settings table, the `agency_calls` columns and index, the manual-calls table, and
-  restores `campaign_id NOT NULL` and drops `kind` with its CHECKs.
+  `campaign_id` (deleting soft-phone sessions would take their calls' audit trail), and while any
+  manual call or `origin = 'manual'` leg exists (calls made from a campaign session switched to the
+  soft phone leave no soft-phone session behind); otherwise it drops the attempts' account index,
+  the settings table, the `agency_calls` columns and index, the manual-calls table, and restores
+  `campaign_id NOT NULL` and drops `kind` with its CHECKs.
 - **Tests**: `test/integration/db/softphone-migration.test.ts` (every CHECK from both sides, each
   vocabulary against the contract's list, the unsettled-call index, the FKs, the index definitions
-  and two plans) and the baseline suites (table set, triggers, the down → up inventory, and the
-  Down refusal while a soft-phone session exists).
+  and three plans) and the baseline suites (table set, triggers, the down → up inventory, and the
+  Down refusal while a soft-phone session or a switched campaign session's manual call exists).
 
 ## Tests
 

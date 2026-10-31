@@ -239,7 +239,6 @@ describe('AgencyManualCallRepository (integration)', () => {
     expect(await repo.attachWebrtcCall(call.id, leg)).toBe(true);
     expect(await repo.attachWebrtcCall(call.id, randomUUID())).toBe(false);
     expect(await row(call.id)).toMatchObject({ webrtc_call_id: leg, state: 'bridged' });
-    expect((await repo.findByWebrtcCallId(leg))?.id).toBe(call.id);
   });
 
   it('end: first end wins, a second terminal event gets null; end does not settle', async () => {

@@ -31,9 +31,6 @@ import { projectAttemptRow } from './projections.js';
 
 const log = createChildLogger({ component: 'agency-repository' });
 
-/** `AGENCY_ATTEMPT_LIVE_STATES` as a SQL literal list — constants only, never input. */
-const LIVE_ATTEMPT_STATES_SQL = AGENCY_ATTEMPT_LIVE_STATES.map((state) => `'${state}'`).join(', ');
-
 /**
  * The attempt-row projection the three attempt reads serve (`listForCampaign`,
  * `findForCampaign`, `listForAgent`), in the order {@link projectAttemptRow} reads
@@ -353,10 +350,13 @@ export class AgencyAttemptRepository {
    * per-campaign count can see it. {@link countLive} stays per campaign.
    *
    * "Live" as {@link countLive} means it (every non-terminal state, bridged
-   * included). The attempt half spells the live states as a literal `IN` list, the
-   * predicate of `idx_agency_attempts_live`, so the planner can prove the partial
-   * index applies (a bound array parameter cannot be); the campaign set is the
-   * account's campaigns. The manual half is served by `idx_agency_manual_calls_live`.
+   * included), spelled as its literal `state <> 'ended'`, byte for byte the predicate of
+   * `idx_agency_attempts_account_live (tenant_id, account_id)` (0005), so the planner
+   * can prove the partial index applies (a bound parameter cannot be). The attempt
+   * half is keyed on the attempt's own `tenant_id` / `account_id` (NOT NULL, copied
+   * from the campaign by {@link create}, the one INSERT), never on the account's
+   * campaign set: that probed every campaign the account had ever had, per running
+   * campaign, every tick. The manual half is served by `idx_agency_manual_calls_live`.
    *
    * An awaiting-outcome manual call (ended, unsettled) holds no slot and is not
    * counted.
@@ -365,9 +365,7 @@ export class AgencyAttemptRepository {
     const { rows } = await getPool().query<{ n: string }>(
       `SELECT (
          (SELECT COUNT(*) FROM agency_call_attempts a
-           WHERE a.state IN (${LIVE_ATTEMPT_STATES_SQL})
-             AND a.campaign_id IN (SELECT c.id FROM agency_campaigns c
-                                    WHERE c.tenant_id = $1::uuid AND c.account_id = $2::uuid))
+           WHERE a.tenant_id = $1::uuid AND a.account_id = $2::uuid AND a.state <> 'ended')
          +
          (SELECT COUNT(*) FROM agency_manual_calls m
            WHERE m.account_id = $2::uuid AND m.tenant_id = $1::uuid AND m.state <> 'ended')

@@ -8,7 +8,9 @@
 --      copy of campaign_id follows.
 --   2. agency_manual_calls: one row per soft-phone dial. Never agency_contacts or
 --      agency_call_attempts, so retries, roster completion, per-campaign pacing headroom
---      and the abandonment predicate cannot read a manual call by accident.
+--      and the abandonment predicate cannot read a manual call by accident. Pacing
+--      headroom counts them with the account's live attempts, which gain an account
+--      index for that count (idx_agency_attempts_account_live).
 --   3. agency_calls gains `origin` (campaign | manual) and `manual_call_id`, the media
 --      leg's correlation to (2). A manual leg keeps campaign_id NULL, so no campaign
 --      aggregation over agency_calls counts it.
@@ -20,7 +22,9 @@
 -- rewrite the table (PG 11+); DROP NOT NULL is catalog-only; each new CHECK scans its
 -- table once to validate. Migrations run at container start, before the server listens
 -- (docker/entrypoint.sh), so nothing is writing these tables meanwhile. The new indexes
--- are on empty tables, or partial on a column every existing row has NULL.
+-- are on empty tables, or partial on a column every existing row has NULL, except
+-- idx_agency_attempts_account_live: it reads agency_call_attempts once under SHARE (writes
+-- wait, and none run at that point) and keeps only the live rows, a handful.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down
 -- marker comments (see 0001_baseline.sql's header for the regex).
@@ -203,6 +207,17 @@ CREATE INDEX idx_agency_manual_calls_live
   ON agency_manual_calls (account_id)
   WHERE state <> 'ended';
 
+-- The attempt half of the same count. It used to reach the attempts through the account's
+-- campaigns (idx_agency_attempts_live is per campaign), which reads every campaign the
+-- account has EVER had on every tick of every running campaign: 2,010 campaigns cost ~1.5 ms
+-- and 164 buffers a tick, against ~0.2 ms and 16 here, an index-only scan of the account's
+-- live attempts. tenant_id and account_id are NOT NULL on agency_call_attempts and the one
+-- INSERT (AgencyAttemptRepository.create) copies them from the campaign, so they say the
+-- same thing as the campaign join did. Predicate as idx_agency_attempts_live's (0003).
+CREATE INDEX idx_agency_attempts_account_live
+  ON agency_call_attempts (tenant_id, account_id)
+  WHERE state <> 'ended';
+
 -- A campaign's manual calls (the campaign page's list).
 CREATE INDEX idx_agency_manual_calls_campaign
   ON agency_manual_calls (campaign_id, created_at DESC)
@@ -215,10 +230,9 @@ CREATE INDEX idx_agency_manual_calls_contact
   ON agency_manual_calls (contact_id)
   WHERE contact_id IS NOT NULL AND settled_at IS NULL;
 
--- Bridge lifecycle → manual call (a carrier event carries the call id).
-CREATE INDEX idx_agency_manual_calls_webrtc
-  ON agency_manual_calls (webrtc_call_id)
-  WHERE webrtc_call_id IS NOT NULL;
+-- No index on webrtc_call_id: nothing looks a manual call up by its media leg. The bridge's
+-- lifecycle events carry the manual call's own id (the correlation, §4.3), and the list
+-- joins agency_calls FROM the manual call's row.
 
 CREATE TRIGGER trg_agency_manual_calls_updated_at
   BEFORE UPDATE ON agency_manual_calls
@@ -300,16 +314,25 @@ COMMENT ON TABLE agency_softphone_settings IS
 -- Down Migration
 
 -- Reverting campaign_id to NOT NULL cannot keep a soft-phone session, and deleting them
--- would delete the manual calls' sessions and their audit trail with them. So this
--- refuses, loudly and before changing anything, while one exists: an operator who
--- really means to roll back deletes those rows deliberately first.
+-- would delete the manual calls' sessions and their audit trail with them. Dropping
+-- agency_manual_calls loses the same trail for calls made from a CAMPAIGN session that
+-- switched to the soft phone (SP7), which no session row betrays, and dropping
+-- agency_calls.origin leaves their media legs unexplained. So this refuses, loudly and
+-- before changing anything, while any of them exists: an operator who really means to
+-- roll back deletes those rows deliberately first.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM agency_agent_sessions WHERE campaign_id IS NULL)
      OR EXISTS (SELECT 1 FROM agency_agent_session_events WHERE campaign_id IS NULL) THEN
     RAISE EXCEPTION '0005_softphone down: soft-phone sessions exist (agency_agent_sessions or agency_agent_session_events with campaign_id NULL); delete them deliberately before rolling back';
   END IF;
+  IF EXISTS (SELECT 1 FROM agency_manual_calls)
+     OR EXISTS (SELECT 1 FROM agency_calls WHERE origin = 'manual') THEN
+    RAISE EXCEPTION '0005_softphone down: soft-phone calls exist (agency_manual_calls, or agency_calls with origin manual); delete them deliberately before rolling back';
+  END IF;
 END $$;
+
+DROP INDEX IF EXISTS idx_agency_attempts_account_live;
 
 DROP TABLE IF EXISTS agency_softphone_settings;
 
