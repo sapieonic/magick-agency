@@ -177,6 +177,29 @@ describe('Ready', () => {
     expect(field.parentElement!.textContent).not.toContain('+91');
   });
 
+  it('a double-click on Call places one call', async () => {
+    let answer: (value: unknown) => void = () => {};
+    api.placeManualCall.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    await mount();
+    fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+    const call = screen.getByTestId('dial-call');
+    // Both presses land before React renders the first one's "Calling…": the
+    // guard cannot be the disabled button alone.
+    act(() => {
+      fireEvent.click(call);
+      fireEvent.click(call);
+    });
+    // And a second press once it has rendered.
+    act(() => {
+      fireEvent.click(call);
+      press('Enter');
+    });
+    await act(async () => {
+      answer({ ok: true, value: manualCall() });
+    });
+    expect(api.placeManualCall).toHaveBeenCalledTimes(1);
+  });
+
   it('logs to a campaign: its caller IDs, its outcomes, and the tag on the request', async () => {
     api.placeManualCall.mockResolvedValue({ ok: true, value: manualCall({ tag: { campaign_id: 'camp-1', campaign_name: CAMPAIGN.campaign_name } }) });
     await mount();

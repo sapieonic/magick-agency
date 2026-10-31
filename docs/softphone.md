@@ -274,7 +274,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   and action bar keep identical positions in every state (pinned by a geometry test).
 - **Dialing.** Digits by click or keyboard; paste normalises `+91`, `00`, a trunk `0` (also a
   bracketed `(0)` after a country code, `+44 (0)20…`), spaces and `tel:`; typing drops a leading
-  trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls. Redial fills the pad and focuses Call rather than dialling at once, so a
+  trunk `0` (the field reads after the country-code chip) and turns `00` into `+`; Enter calls.
+  One dial is in flight at a time (a ref, not only the disabled button), so a double-click or
+  Enter on top of a click places one call. Redial fills the pad and focuses Call rather than dialling at once, so a
   misclick never rings a customer. "Log to" is locked once a call is placed. Single-key shortcuts
   are ignored while typing in a field or a focused `<select>`.
 - **Audio.** On `/dialer/phone` the playback context is warmed and the microphone probed on the

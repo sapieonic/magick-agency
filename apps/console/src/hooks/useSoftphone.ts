@@ -589,9 +589,17 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
             : null;
   const canDial = dialUnavailableReason === null && dialBlock === null && !placing;
 
+  /**
+   * One dial in flight, held in a ref and not only in `placing`: two presses that
+   * land before React renders the first one's "Calling…" (a double-click, Enter
+   * on top of a click) both read the `placing` of the render before, and each
+   * would place a call to the customer.
+   */
+  const placingRef = useRef(false);
   const place = useCallback(
     async (overrides: AgencyManualCallOverridesRequest) => {
-      if (!sessionId || !tenantId || !accountId) return;
+      if (!sessionId || !tenantId || !accountId || placingRef.current) return;
+      placingRef.current = true;
       setPlacing(true);
       setDialError(null);
       setOverrideError(null);
@@ -608,6 +616,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         tenantId,
         accountId,
       );
+      placingRef.current = false;
       setPlacing(false);
       if (result.ok) {
         setOverridePrompt(null);
