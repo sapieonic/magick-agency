@@ -96,7 +96,7 @@ export function softphoneRefusalMessage(refusal: SoftphoneRefusal): string {
     case 'outcome_pending': return 'Save the outcome of your last call before dialling again.';
     case 'concurrency_limit': return 'All lines are busy. Try again shortly.';
     case 'station_unavailable': return 'Your station is not connected.';
-    case 'dial_failed': return 'The call could not be placed just now. Nothing was dialled; try again.';
+    case 'dial_failed': return 'That could not be done just now. Nothing was dialled or changed; try again.';
     case 'call_not_found': return 'Call not found.';
     case 'call_settled': return 'This call\'s outcome is already saved or has lapsed.';
     case 'disposition_invalid': return 'That outcome cannot be saved as submitted.';

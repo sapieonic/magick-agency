@@ -326,7 +326,7 @@ export type AgencySoftphoneErrorCode =
   | 'concurrency_limit'
   /** 409. The session has no attached station socket to dial the agent leg on. */
   | 'station_unavailable'
-  /** 503. The dial could not be placed for a reason that is not the caller's: the agent state store did not answer, or the bridge refused in a way this version does not name. Nothing was dialled; retry. */
+  /** 503. The dial could not be placed for a reason that is not the caller's: the agent state store did not answer, or the bridge refused in a way this version does not name. Nothing was dialled; retry. Also the switch to the soft phone and the return from it when the agent state store cannot take the write: nothing changed. */
   | 'dial_failed'
   /** 404. No such call, or one the caller may not see (an agent sees only their own). */
   | 'call_not_found'

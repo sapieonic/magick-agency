@@ -19,7 +19,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *  4. only `running` / `paused` campaigns can be tagged, staffing is filtered before the
  *     cap, and a call whose campaign completes mid-call keeps its catalog (`call_campaign`);
  *  5. a same-code outcome replay propagates a corrected callback time to the contact and
- *     repeats nothing else (no DNC mark, no claim release, no second settling audit).
+ *     repeats nothing else (no DNC mark, no claim release, no second settling audit);
+ *  6. the switch and the return report what Redis did: `dial_failed` when it could not
+ *     take the write, and the switch never overwrites a reservation made meanwhile.
  */
 
 const mocks = vi.hoisted(() => {
@@ -628,6 +630,76 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect((await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'call_back', callback_at: late })).statusCode).toBe(200);
     expect((await contactRow()).next_attempt_at.toISOString()).toBe(corrected);
     await getTestPool().query(`UPDATE agency_contacts SET state = 'pending' WHERE id = $1`, [contact.id]);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  // ── 6. The switch and the return against the agent state store (A10) ──────────────────
+  it('the return refuses dial_failed when Redis cannot take the write, and changes nothing', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, status: 'paused' });
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const sessionId = joined.json().session_id as string;
+    const station = await connect(joined.json().station_ws_url);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent)).json()).toMatchObject({ state: 'break', break_reason: 'soft_phone' });
+
+    const set = vi.spyOn(runtime.agents, 'set').mockResolvedValueOnce('unavailable');
+    const framesBefore = station.frames.length;
+    const failed = await post(`/proxy/agency/sessions/${sessionId}/softphone/return`, agent);
+    set.mockRestore();
+    expect(failed.statusCode, failed.body).toBe(503);
+    expect(failed.json().code).toBe('dial_failed');
+    const { rows: [row] } = await getTestPool().query('SELECT state, break_reason FROM agency_agent_sessions WHERE id = $1', [sessionId]);
+    expect(row).toEqual({ state: 'break', break_reason: 'soft_phone' });
+    expect(station.frames.slice(framesBefore).some((f) => f['event'] === 'agent_state' && f['state'] === 'available')).toBe(false);
+    expect((await runtime.agents.get(sessionId))?.state).toBe('break');
+    expect((await auditRows('agency_session.softphone_ended', sessionId))).toHaveLength(0);
+
+    const back = await post(`/proxy/agency/sessions/${sessionId}/softphone/return`, agent);
+    expect(back.statusCode, back.body).toBe(200);
+    expect(back.json().state).toBe('available');
+    await runtime.agents.set(sessionId, 'break');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  it('the switch is a CAS from the state it read: a reservation made meanwhile is kept and the switch queued', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, status: 'paused' });
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const sessionId = joined.json().session_id as string;
+    await connect(joined.json().station_ws_url);
+    await runtime.agents.set(sessionId, 'available');
+
+    // The switch reads `available`; a pacing tick reserves the agent before its write.
+    const attemptId = randomUUID();
+    const realGet = runtime.agents.get.bind(runtime.agents);
+    const get = vi.spyOn(runtime.agents, 'get').mockImplementationOnce(async (id: string) => {
+      const seen = await realGet(id);
+      expect(await runtime.agents.reserve(sessionId, attemptId)).toBe('reserved');
+      return seen;
+    });
+    const switched = await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent);
+    get.mockRestore();
+    expect(switched.statusCode, switched.body).toBe(200);
+    expect(switched.json()).toMatchObject({ state: 'reserved', pending_state: 'break', break_reason: 'soft_phone' });
+    const now = await runtime.agents.get(sessionId);
+    expect(now).toMatchObject({ state: 'reserved', attemptId });
+    expect(runtime.breaks.peek(sessionId)?.code).toBe('soft_phone');
+    const [started] = await auditRows('agency_session.softphone_started', sessionId);
+    expect(started.details).toMatchObject({ from_state: 'available', queued: true });
+
+    // Redis unable to take the write at all: dial_failed, nothing claimed to have happened.
+    runtime.breaks.cancel(sessionId);
+    await runtime.agents.set(sessionId, 'available');
+    const transition = vi.spyOn(runtime.agents, 'transition').mockResolvedValue(false);
+    const getNull = vi.spyOn(runtime.agents, 'get').mockResolvedValueOnce({ state: 'available', attemptId: null, since: null, manualCallId: null, softphone: false })
+      .mockResolvedValueOnce(null);
+    const failed = await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent);
+    transition.mockRestore();
+    getNull.mockRestore();
+    expect(failed.statusCode, failed.body).toBe(503);
+    expect(failed.json().code).toBe('dial_failed');
+    expect((await runtime.agents.get(sessionId))?.state).toBe('available');
+    await runtime.agents.set(sessionId, 'break');
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 

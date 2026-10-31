@@ -657,38 +657,56 @@ export class SoftphoneService {
    * break route does). Already on the soft phone, or the switch already queued: an
    * idempotent success marked `unchanged` (not audited a second time).
    *
-   * Refusals: `session_not_found`; `wrong_session_kind` (a soft-phone session).
+   * The immediate switch is a CAS from the state just read (`transition`), never an
+   * unconditional set: a pacing tick that reserved the agent between the read and the
+   * write must not have its fresh `reserved` overwritten (the dial would ring with no
+   * agent). A lost CAS re-reads once — now reserved, the switch is queued like any
+   * break — and a write Redis cannot answer is `dial_failed` (503, nothing changed).
+   *
+   * Refusals: `session_not_found`; `wrong_session_kind` (a soft-phone session);
+   * `dial_failed` (the agent state store did not answer, or the state kept moving).
    */
   async switchToSoftphone(sessionId: string, actor: SoftphoneActor): Promise<SoftphoneResult<SessionSwitchSuccess>> {
     const session = await this.ownSession(sessionId, actor);
     if (!session) return refuse({ code: 'session_not_found' });
     if (!isCampaignSession(session)) return refuse({ code: 'wrong_session_kind' });
-    const live = await this.deps.agents.get(session.id);
+    const base = { session_id: session.id, campaign_id: session.campaign_id, kind: session.kind } as const;
+    let live = await this.deps.agents.get(session.id);
     const fromState = live?.state ?? null;
     const since = new Date().toISOString();
-    const base = { session_id: session.id, campaign_id: session.campaign_id, kind: session.kind } as const;
 
-    if (live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON) {
-      return {
-        ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: true,
-        response: { ...base, state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON },
-      };
-    }
-    if (breakMustWait(live?.state)) {
-      const alreadyQueued = this.deps.breaks.peek(session.id)?.code === SOFTPHONE_BREAK_REASON;
-      this.deps.breaks.queue(session.id, { code: SOFTPHONE_BREAK_REASON, label: SOFTPHONE_BREAK_REASON_LABEL });
-      if (!this.deps.dialer.hasUnannouncedAttempt(session.id)) {
-        this.deps.stations.send(session.id, {
-          event: 'agent_state', state: live!.state, since,
-          pending_state: 'break', pending_break_reason: SOFTPHONE_BREAK_REASON,
-        });
+    for (let pass = 0; pass < 2; pass++) {
+      if (live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON) {
+        return {
+          ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: true,
+          response: { ...base, state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON },
+        };
       }
-      return {
-        ok: true, fromState, campaignId: session.campaign_id, queued: true, unchanged: alreadyQueued,
-        response: { ...base, state: live!.state, since, pending_state: 'break', break_reason: SOFTPHONE_BREAK_REASON },
-      };
+      if (breakMustWait(live?.state)) {
+        const busy = live!.state;
+        const alreadyQueued = this.deps.breaks.peek(session.id)?.code === SOFTPHONE_BREAK_REASON;
+        this.deps.breaks.queue(session.id, { code: SOFTPHONE_BREAK_REASON, label: SOFTPHONE_BREAK_REASON_LABEL });
+        if (!this.deps.dialer.hasUnannouncedAttempt(session.id)) {
+          this.deps.stations.send(session.id, {
+            event: 'agent_state', state: busy, since,
+            pending_state: 'break', pending_break_reason: SOFTPHONE_BREAK_REASON,
+          });
+        }
+        return {
+          ok: true, fromState, campaignId: session.campaign_id, queued: true, unchanged: alreadyQueued,
+          response: { ...base, state: busy, since, pending_state: 'break', break_reason: SOFTPHONE_BREAK_REASON },
+        };
+      }
+      // No lease at all: there is no state to race (a reservation CASes from a live
+      // `available`), so the write creates it.
+      const moved = live
+        ? await this.deps.agents.transition(session.id, live.state, 'break', { leaseMs: AGENT_LEASE_MS.break })
+        : (await this.deps.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break })) === 'ok';
+      if (moved) break;
+      if (pass === 1 || !live) return refuse({ code: 'dial_failed' });
+      live = await this.deps.agents.get(session.id);
+      if (!live) return refuse({ code: 'dial_failed' });
     }
-    await this.deps.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
     await agencyAgentSessionRepository.setState(session.id, 'break', SOFTPHONE_BREAK_REASON);
     this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON });
     return {
@@ -703,7 +721,9 @@ export class SoftphoneService {
    * stays in its current state). Refusals: `session_not_found`; `wrong_session_kind`
    * (a soft-phone session); `manual_call_live` while a call is live or awaiting its
    * outcome; `not_on_softphone`; `station_unavailable` (no station socket here —
-   * going available needs one, as `POST /sessions/:id/available` does).
+   * going available needs one, as `POST /sessions/:id/available` does); `dial_failed`
+   * when the agent state store cannot answer the write (nothing is written to the
+   * session row and no frame is sent: the agent is still on the soft phone).
    */
   async returnFromSoftphone(sessionId: string, actor: SoftphoneActor): Promise<SoftphoneResult<SessionSwitchSuccess>> {
     const session = await this.ownSession(sessionId, actor);
@@ -731,8 +751,13 @@ export class SoftphoneService {
     if (!this.deps.stations.isLocallyOwned(session.id)) return refuse({ code: 'station_unavailable' });
 
     const set = await setAvailableGuarded(this.deps.agents, session.id);
-    if (!set.ok && set.refusal.code === 'manual_call_live') return refuse(set.refusal);
-    if (!set.ok && set.refusal.code === 'wrong_session_kind') return refuse(set.refusal);
+    if (!set.ok) {
+      // Redis did not take the write: reporting `available` here would put the agent
+      // in the DB and on the console as ready while pacing (which reads Redis) never
+      // sees them. Nothing changed; retry.
+      if (set.refusal.code === 'unavailable') return refuse({ code: 'dial_failed' });
+      return refuse(set.refusal);
+    }
     await agencyAgentSessionRepository.setState(session.id, 'available');
     this.deps.stations.send(session.id, { event: 'agent_state', state: 'available', since });
     return { ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: false, response: { ...base, state: 'available', since } };
