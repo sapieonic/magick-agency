@@ -544,6 +544,15 @@ describe('the soft-phone calls that touched the contact (SP6)', () => {
     expect(screen.getByTestId('contact-attempt-attempt-1')).toBeTruthy();
   });
 
+  it('is absent below agency.supervise, whose list would hold only their own calls', async () => {
+    mocks.softphoneOn = true;
+    mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'viewer' });
+    renderPage();
+    await screen.findByTestId('contact-attempt-attempt-1');
+    expect(screen.queryByTestId('contact-softphone-calls')).toBeNull();
+    expect(mocks.listManualCalls).not.toHaveBeenCalled();
+  });
+
   it('is absent where the soft phone is off, and nothing is asked', async () => {
     renderPage();
     await screen.findByTestId('contact-attempt-attempt-1');

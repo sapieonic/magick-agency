@@ -424,9 +424,11 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
-- **Roster contact detail.** Where the flag is on, a "Soft-phone calls" section below the
-  attempts lists the soft-phone calls that matched the contact (`GET /softphone/calls?contact_id=`),
-  each saying whether it claimed the contact and opening the soft-phone call's detail.
+- **Roster contact detail.** Where the flag is on and the caller holds `agency.supervise`, a
+  "Soft-phone calls" section below the attempts lists the soft-phone calls that matched the contact
+  (`GET /softphone/calls?contact_id=`), each saying whether it claimed the contact and opening the
+  soft-phone call's detail. Below supervise the section is not shown: the list would hold only the
+  caller's own calls, and "none" would be untrue when a colleague called the number.
 - **DNC page.** Where `agency_softphone_enabled` is on, its copy says exactly what the soft phone
   reads (a tagged call the tag's scopes; an untagged one the workspace's, its account's and any of
   the account's campaigns'), with an audited override (SP1), and the account and campaign scope

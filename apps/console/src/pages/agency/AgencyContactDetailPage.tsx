@@ -31,6 +31,7 @@ import type { AgencyManualCallListRow } from '../../types/softphone';
 import { listManualCalls } from '../../api/softphone';
 import { manualCallOutcome } from '../../utils/softphone/callLabels';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { usePermission } from '../../hooks/usePermission';
 import styles from './AgencyContactDetailPage.module.css';
 
 /**
@@ -98,9 +99,16 @@ export function AgencyContactDetailPage() {
    * and its outcome settles it — so "why was this number called" has to show those too.
    * A section of its own, loaded on its own: they are not campaign attempts (no pacing,
    * no attempt row), and a failure here must not take the attempt history with it.
-   * `null` while loading or where the soft phone is off.
+   * `null` while loading or where the section is not shown.
+   *
+   * Shown to `agency.supervise` only. `GET /softphone/calls` answers a caller without it
+   * with their OWN calls alone (docs/softphone.md §6), and this page opens from `viewer`
+   * up: below supervise the list would say "no soft-phone call has been made to this
+   * contact" while a colleague's call claimed it. No section beats a wrong one.
    */
-  const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const softphoneFlagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const canSupervise = usePermission('agency.supervise');
+  const softphoneOn = softphoneFlagOn && canSupervise;
   const [manualCalls, setManualCalls] = useState<AgencyManualCallListRow[] | null>(null);
   const [manualMore, setManualMore] = useState(false);
   const [manualError, setManualError] = useState<string | null>(null);
