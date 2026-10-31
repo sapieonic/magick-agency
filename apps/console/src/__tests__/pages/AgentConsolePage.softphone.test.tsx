@@ -213,6 +213,15 @@ describe('Switch to soft phone', () => {
     });
     expect(screen.getByTestId('switch-to-softphone-refused').textContent).toMatch(/turned off for this account/);
   });
+
+  it('a switch Redis did not take says the status did not change, not that a call was not placed', async () => {
+    mocks.switchToSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 503, message: 'x' } });
+    await mounted();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('switch-to-softphone'));
+    });
+    expect(screen.getByTestId('switch-to-softphone-refused').textContent).toBe('Couldn’t change your status just now; nothing changed. Try again.');
+  });
 });
 
 describe('on the soft phone, in the station', () => {
@@ -256,6 +265,15 @@ describe('on the soft phone, in the station', () => {
     expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Finish this call and save its outcome first.');
     // It re-reads the bootstrap to show the call it did not know about.
     expect(mocks.getSoftphoneBootstrap.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a return Redis did not take says the status did not change, not that a call was not placed', async () => {
+    mocks.returnFromSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 503, message: 'x' } });
+    await onSoftphone();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('return-to-campaign'));
+    });
+    expect(screen.getByTestId('return-to-campaign-reason').textContent).toBe('Couldn’t change your status just now; nothing changed. Try again.');
   });
 
   it('with the flag turned off it is still the soft phone, in finish mode: the call, Return to campaign, no dial pad', async () => {

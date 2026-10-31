@@ -398,7 +398,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   with the campaign preselected as the tag and **Return to campaign** in the header (disabled,
   with the reason, while a manual call is live or awaiting its outcome). The ordinary End break
   and the station's own shortcuts are suspended. After a reload during a soft-phone break the
-  station reads `session.on_softphone` from the bootstrap.
+  station reads `session.on_softphone` from the bootstrap. A switch or return refused
+  `dial_failed` (the agent state store did not take the write) says the agent's status did not
+  change, not that a call was not placed (`refusalCopy`'s `status` context).
 - **Joining a campaign with the soft phone open.** The join's 409 `session_on_softphone` screen
   offers **Close the soft phone and join** (`useStationJoin.closeSoftphoneAndJoin`): it reads the
   soft-phone bootstrap first and closes nothing while a call there is live or owes its outcome

@@ -267,8 +267,9 @@ export function useBreakQueue(options: {
       trackAgencySoftphoneSwitch({ action: 'start', queued, outcome: 'accepted', code: null });
       return;
     }
-    setSoftphoneRejection(refusalCopy(result.refusal));
-    announce(`Couldn’t switch to the soft phone. ${refusalCopy(result.refusal)}`);
+    const copy = refusalCopy(result.refusal, 'status');
+    setSoftphoneRejection(copy);
+    announce(`Couldn’t switch to the soft phone. ${copy}`);
     trackAgencySoftphoneSwitch({ action: 'start', queued: false, outcome: 'refused', code: result.refusal.code });
   }, [bootstrap, breakBusy, tenantId, accountId, writeQueue, announce]);
 

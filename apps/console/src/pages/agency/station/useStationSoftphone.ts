@@ -121,7 +121,7 @@ export function useStationSoftphone({
       // The server holds a call we do not show: take its copy, then say why.
       sp.reloadBootstrap();
     }
-    setReturnFailure(refusalCopy(result.refusal));
+    setReturnFailure(refusalCopy(result.refusal, 'status'));
   }, [bootstrap, returning, sp, tenantId, accountId]);
 
   return {

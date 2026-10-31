@@ -16,7 +16,7 @@ import {
 } from '../../utils/softphone/fieldSettings';
 import { draftFromSettings, payloadFromDraft, validateSettingsDraft } from '../../utils/softphone/settingsForm';
 import { overrideNoteBlock, overrideNoteLength, withOverride } from '../../utils/softphone/overrides';
-import { SOFTPHONE_REFUSAL_COPY } from '../../utils/softphone/refusalCopy';
+import { refusalCopy, SOFTPHONE_REFUSAL_COPY } from '../../utils/softphone/refusalCopy';
 import { summariseCalls, queryFromDraft, EMPTY_SOFTPHONE_CALLS_DRAFT } from '../../utils/softphone/callStats';
 import { AGENCY_SOFTPHONE_ERROR_CODES, type AgencyCallField } from '../../types/softphone';
 import { manualCall } from '../helpers/softphone';
@@ -166,6 +166,16 @@ describe('refusal copy', () => {
     expect(SOFTPHONE_REFUSAL_COPY.wrong_session_kind).toMatch(/Close the soft phone, then join the campaign/);
     expect(SOFTPHONE_REFUSAL_COPY.call_not_found).toMatch(/Reload the page/);
     expect(SOFTPHONE_REFUSAL_COPY.fields_invalid).toMatch(/marked in Call details/);
+  });
+
+  it('a status change Redis did not take is not a call that was not placed', () => {
+    const refusal = { code: 'dial_failed', status: 503, message: 'x' } as const;
+    expect(refusalCopy(refusal)).toMatch(/call couldn’t be placed/);
+    expect(refusalCopy(refusal, 'status')).toBe('Couldn’t change your status just now; nothing changed. Try again.');
+    expect(refusalCopy(refusal, 'status')).not.toMatch(/call|dialled/i);
+    // Codes the status context does not reword keep their one sentence.
+    expect(refusalCopy({ code: 'manual_call_live', status: 409, message: 'x' }, 'status')).toBe(SOFTPHONE_REFUSAL_COPY.manual_call_live);
+    expect(refusalCopy({ code: 'unknown', status: 500, message: 'The server’s words' }, 'status')).toBe('The server’s words');
   });
 
   it('has a sentence for every soft-phone code', () => {

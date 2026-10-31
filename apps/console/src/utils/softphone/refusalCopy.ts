@@ -39,8 +39,26 @@ export const SOFTPHONE_REFUSAL_COPY: Record<AgencySoftphoneErrorCode, string> = 
   settings_invalid: 'Some settings need fixing.',
 };
 
+/**
+ * What the refused request was doing, where one code means different things.
+ *
+ * `call` (the default): placing or finishing a call, which is what the table above
+ * is written for. `status`: the station's switch to the soft phone and Return to
+ * campaign (`POST /sessions/:id/softphone[/return]`). Those answer `dial_failed`
+ * when the agent state store did not take the write (docs/softphone.md §6), and
+ * nothing was being dialled: the agent's status is what did not change, so the
+ * call sentence would describe a call they never tried to place.
+ */
+export type SoftphoneRefusalContext = 'call' | 'status';
+
+/** The `status` context's sentences, for the codes whose meaning it changes. */
+export const SOFTPHONE_STATUS_REFUSAL_COPY: Partial<Record<AgencySoftphoneErrorCode, string>> = {
+  dial_failed: 'Couldn’t change your status just now; nothing changed. Try again.',
+};
+
 /** The line to show for a refusal: ours for a known code, the server's otherwise. */
-export function refusalCopy(refusal: SoftphoneRefusal): string {
+export function refusalCopy(refusal: SoftphoneRefusal, context: SoftphoneRefusalContext = 'call'): string {
   if (refusal.code === 'unknown') return refusal.message;
-  return SOFTPHONE_REFUSAL_COPY[refusal.code];
+  return (context === 'status' ? SOFTPHONE_STATUS_REFUSAL_COPY[refusal.code] : undefined)
+    ?? SOFTPHONE_REFUSAL_COPY[refusal.code];
 }
