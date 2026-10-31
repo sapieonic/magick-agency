@@ -413,7 +413,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(detail.json()).toMatchObject({
       call: { id: call.id, agent_name: expect.any(String), contact: { contact_id: contact.id } },
       dispositioned_by_name: expect.any(String),
-      overrides: { dnc_note: null, dnc_entry_id: null, hours_note: null },
+      overrides: { dnc_note: null, dnc_entry_id: null, dnc_entry: null, hours_note: null },
       call_availability: 'available',
       media: null,
     });
@@ -500,7 +500,11 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(placed.json().dnc_overridden).toBe(true);
     const callId = placed.json().id as string;
     const detail = await get(`/proxy/agency/softphone/calls/${callId}`, supervisor);
-    expect(detail.json().overrides).toEqual({ dnc_note: note, dnc_entry_id: entry.id, hours_note: null });
+    // The entry as the refusal showed it, not just its id (A12).
+    expect(detail.json().overrides).toEqual({
+      dnc_note: note, dnc_entry_id: entry.id, hours_note: null,
+      dnc_entry: { id: entry.id, scope: 'tenant', reason: 'asked twice', created_at: expect.any(String), campaign_id: null },
+    });
 
     const [override] = await auditRows('agency_manual_call.dnc_overridden', callId);
     expect(override).toMatchObject({ user_id: agent.id, campaign_id: campaign.id, resource_type: 'agency_manual_call' });

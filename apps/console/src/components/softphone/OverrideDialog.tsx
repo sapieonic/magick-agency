@@ -60,18 +60,20 @@ export function OverrideDialog({
       size="md"
       closeOnOverlayClick={false}
       footer={
+        // "Don't call" is the primary action: the safe answer to a DNC hit or a closed
+        // window is the default one, and calling anyway is the exception the note justifies.
         <div className={styles.dialogFooter}>
-          <button type="button" className="btn-secondary" onClick={onCancel} disabled={submitting}>
-            Don’t call
-          </button>
           <button
             type="button"
-            className="btn-ember"
+            className="btn-secondary"
             onClick={() => onConfirm(note)}
             disabled={block !== null || submitting}
             data-testid="override-confirm"
           >
             {submitting ? 'Calling…' : description.confirmLabel}
+          </button>
+          <button type="button" className="btn-primary" onClick={onCancel} disabled={submitting} data-testid="override-cancel">
+            Don’t call
           </button>
         </div>
       }

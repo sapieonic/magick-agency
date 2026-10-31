@@ -102,6 +102,15 @@ export function normalizeE164(raw: string | null | undefined): string | null {
  * on a `suppressed` — what the soft phone's `dnc_listed` refusal shows and its
  * override records (docs/softphone.md SP1).
  */
+/**
+ * How far an entry reaches, as the soft phone names it (`dnc_listed`, the call detail):
+ * campaign-scoped when it names a campaign (an account-and-campaign row included), else
+ * account, else tenant.
+ */
+export function dncEntryScope(entry: { account_id: string | null; campaign_id: string | null }): 'tenant' | 'account' | 'campaign' {
+  return entry.campaign_id !== null ? 'campaign' : entry.account_id !== null ? 'account' : 'tenant';
+}
+
 export type DncEntryCheck =
   | { result: 'clear' }
   | {
@@ -155,7 +164,7 @@ export class DncRegistry {
         result: 'suppressed',
         entry: {
           id: entry.id,
-          scope: entry.campaign_id !== null ? 'campaign' : entry.account_id !== null ? 'account' : 'tenant',
+          scope: dncEntryScope(entry),
           reason: entry.reason,
           created_at: entry.created_at,
         },

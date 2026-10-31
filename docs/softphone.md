@@ -380,7 +380,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
 - **Overrides (SP1, SP2).** A `dnc_listed` or `outside_calling_hours` refusal opens a dialog that
   shows what matched (the DNC entry's scope, reason and date; the window, timezone and next
   opening), says the call is logged with the agent's name and note, and requires a note of 10–500
-  characters before "Call anyway". A second refusal of the other kind keeps the first note.
+  characters before "Call anyway". "Don't call" is the dialog's primary action and "Call anyway"
+  the secondary one. A campaign entry an untagged call met is named "One of this account's
+  campaigns". A second refusal of the other kind keeps the first note.
   `dnc_unavailable` and `dial_failed` are plain errors with no override; `contact_in_flight` says
   the campaign is calling that customer right now.
 - **The station (SP7).** **Switch to soft phone** in the action bar and the break menu. While the
@@ -409,9 +411,10 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   `analysis_status` (hidden when the account's analytics capability is off), DNC / hours override
   badges. The call detail reuses the call view (summary, sentiment, custom dimensions, recording,
   transcript) plus the outcome, who saved it (with the on-behalf marker) and the agent's call
-  details, each labelled with its source (Agent / AI), and any override note. Each campaign has a
-  **Soft-phone calls** tab (the sidebar's name for the same calls; the path stays
-  `/manual-calls`). **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
+  details, each labelled with its source (Agent / AI), and any override note with the DNC entry it
+  overrode as the agent saw it (reach, reason, date: the detail's `overrides.dnc_entry`), never as
+  an id. Each campaign has a **Soft-phone calls** tab (the sidebar's name for the same calls; the
+  path stays `/manual-calls`). **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).

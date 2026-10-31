@@ -324,6 +324,21 @@ describe('refusals and overrides (SP1, SP2)', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('Don’t call is the primary action and Call anyway the secondary one', async () => {
+    api.placeManualCall.mockResolvedValueOnce(DNC);
+    await mount();
+    await dialTo();
+    expect(screen.getByRole('button', { name: 'Don’t call' }).className).toBe('btn-primary');
+    expect(screen.getByTestId('override-confirm').className).toBe('btn-secondary');
+  });
+
+  it('a campaign entry an untagged call met is named as one of the account’s campaigns', async () => {
+    api.placeManualCall.mockResolvedValueOnce({ ...DNC, refusal: { ...DNC.refusal, entry: { ...DNC.refusal.entry, scope: 'campaign' } } });
+    await mount();
+    await dialTo();
+    expect(screen.getByTestId('override-dialog-dnc').textContent).toMatch(/Listed forOne of this account’s campaigns/);
+  });
+
   it('Don’t call closes the dialog and places nothing', async () => {
     api.placeManualCall.mockResolvedValueOnce(DNC);
     await mount();

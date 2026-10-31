@@ -314,7 +314,10 @@ describe('a soft-phone call’s detail', () => {
     mocks.getManualCall.mockResolvedValue({
       call: { ...TAGGED, notes: 'Wants it in writing.', fields: { customer_name: 'Rahul Verma', reason: 'Rate query', follow_up: true } },
       dispositioned_by_name: 'Priya Nair',
-      overrides: { dnc_note: 'Customer called in and asked us to ring back', dnc_entry_id: 'dnc-1', hours_note: null },
+      overrides: {
+        dnc_note: 'Customer called in and asked us to ring back', dnc_entry_id: 'dnc-1', hours_note: null,
+        dnc_entry: { id: 'dnc-1', scope: 'campaign', reason: 'Asked twice', created_at: '2026-10-12T09:00:00Z', campaign_id: 'camp-1' },
+      },
       media: MEDIA,
       call_availability: 'available',
     });
@@ -330,6 +333,11 @@ describe('a soft-phone call’s detail', () => {
     expect(document.body.textContent).toMatch(/Follow-up neededYes/);
     expect(document.body.textContent).toMatch(/Callback requested/);
     expect(document.body.textContent).toMatch(/Called through Do Not CallCustomer called in and asked us to ring back/);
+    // The entry as the agent saw it — reach, reason, date — never its id.
+    expect(document.body.textContent).toMatch(/Listed forThe campaign Home Loan Renewals/);
+    expect(document.body.textContent).toMatch(/ReasonAsked twice/);
+    expect(document.body.textContent).toMatch(/Listed on12 Oct 2026/);
+    expect(document.body.textContent).not.toContain('dnc-1');
     // The trail goes back through the campaign the call was logged to.
     const trail = within(screen.getByRole('navigation', { name: 'Breadcrumb' }));
     expect(trail.getByRole('link', { name: 'Home Loan Renewals' }).getAttribute('href')).toBe('/agency/campaigns/camp-1/manual-calls');
@@ -345,7 +353,7 @@ describe('a soft-phone call’s detail', () => {
     mocks.getManualCall.mockResolvedValue({
       call: onBehalf,
       dispositioned_by_name: 'Meera Iyer',
-      overrides: { dnc_note: null, dnc_entry_id: null, hours_note: null },
+      overrides: { dnc_note: null, dnc_entry_id: null, dnc_entry: null, hours_note: null },
       media: MEDIA,
       call_availability: 'available',
     });
@@ -356,7 +364,7 @@ describe('a soft-phone call’s detail', () => {
   it('shows the record alone for a call that was never placed', async () => {
     mocks.getManualCall.mockResolvedValue({
       call: manualCall({ state: 'ended', outcome: 'failed', settled_at: 'x' }),
-      overrides: { dnc_note: null, dnc_entry_id: null, hours_note: null },
+      overrides: { dnc_note: null, dnc_entry_id: null, dnc_entry: null, hours_note: null },
       media: null,
       call_availability: 'never_placed',
     });

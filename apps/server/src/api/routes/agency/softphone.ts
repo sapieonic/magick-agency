@@ -41,6 +41,8 @@ import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type { SoftphoneActor } from '../../../agency/softphone/types.js';
 import { resolveManualCatalog } from '../../../agency/softphone/manual-disposition.js';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
+import { dncEntryScope } from '../../../agency/dnc-registry.js';
+import { dncRepository } from '../../../dnc/dnc.repository.js';
 import { callingWindowState } from '../../../agency/calling-hours.js';
 import { defaultPhoneCountryCode } from '../../../utils/phone-normalizer.js';
 import { formatWebRtcCallResponse } from '../../responses/webrtc-call.response.js';
@@ -421,11 +423,23 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       ? await webrtcCallRepository.findByIdScoped(row.webrtc_call_id, actor.tenantId, actor.accountId, 'agency')
       : null;
     const shownMedia = actor.supervise && media ? formatWebRtcCallResponse(media, softphoneRecordingPath(row.id)) : null;
+    // The overridden entry as the refusal showed it, so the detail names its reach,
+    // reason and date rather than an id. Tenant-scoped read; enrichment, so a failed
+    // read (or an entry since removed) is NULL, never a 500.
+    const entry = row.dnc_override_entry_id
+      ? await dncRepository.findById(row.dnc_override_entry_id, actor.tenantId).catch(() => null)
+      : null;
     return reply.send({
       call,
       overrides: {
         dnc_note: row.dnc_override_note,
         dnc_entry_id: row.dnc_override_entry_id,
+        dnc_entry: entry
+          ? {
+            id: entry.id, scope: dncEntryScope(entry), reason: entry.reason,
+            created_at: entry.created_at.toISOString(), campaign_id: entry.campaign_id,
+          }
+          : null,
         hours_note: row.hours_override_note,
       },
       media: shownMedia,

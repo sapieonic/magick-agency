@@ -76,24 +76,40 @@ const DNC_SCOPE_COPY = {
   account: 'This account',
 } as const;
 
+/**
+ * How far a DNC entry reaches, in words. `campaignName` is the campaign the entry is
+ * for when the caller knows it (a call logged to that campaign); a campaign entry an
+ * UNTAGGED call met is one of the account's campaigns (docs/softphone.md §4.1 step 2),
+ * which is all this copy claims.
+ */
+export function dncEntryReach(
+  entry: Pick<SoftphoneDncListedRefusal['entry'], 'scope'>,
+  campaignName: string | null,
+): string {
+  if (entry.scope !== 'campaign') return DNC_SCOPE_COPY[entry.scope];
+  return campaignName ? `The campaign ${campaignName}` : 'One of this account’s campaigns';
+}
+
+/** An entry's reason and the date it was added, as the dialog and the call detail show them. */
+export function dncEntryFacts(
+  entry: Pick<SoftphoneDncListedRefusal['entry'], 'reason' | 'created_at'>,
+): Array<{ label: string; value: string }> {
+  const facts = [{ label: 'Reason', value: entry.reason?.trim() ? entry.reason.trim() : 'No reason was recorded' }];
+  const added = formatDate(entry.created_at);
+  if (added) facts.push({ label: 'Added', value: added });
+  return facts;
+}
+
 export function describeDncRefusal(
   refusal: SoftphoneDncListedRefusal,
   context: { number: string; campaignName: string | null },
 ): OverrideDescription {
   const { entry } = refusal;
-  const scope =
-    entry.scope === 'campaign'
-      ? context.campaignName
-        ? `The campaign ${context.campaignName}`
-        : 'The campaign this call is logged to'
-      : DNC_SCOPE_COPY[entry.scope];
   const facts = [
     { label: 'Number', value: formatDialNumber(context.number) || context.number },
-    { label: 'Listed for', value: scope },
-    { label: 'Reason', value: entry.reason?.trim() ? entry.reason.trim() : 'No reason was recorded' },
+    { label: 'Listed for', value: dncEntryReach(entry, context.campaignName) },
+    ...dncEntryFacts(entry),
   ];
-  const added = formatDate(entry.created_at);
-  if (added) facts.push({ label: 'Added', value: added });
   return {
     title: 'This number is on the Do Not Call list',
     facts,

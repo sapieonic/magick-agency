@@ -19,6 +19,7 @@ import { catalogForCall, loggedToLabel, manualCallOutcome } from '../../../utils
 import { fieldLabel, formatFieldValue } from '../../../utils/softphone/callFields';
 import { callEndSummary } from '../../../utils/softphone/callState';
 import { formatDialNumber } from '../../../utils/softphone/phoneInput';
+import { dncEntryFacts, dncEntryReach } from '../../../utils/softphone/overrides';
 import type {
   AgencyCallField,
   AgencyManualCall,
@@ -114,12 +115,28 @@ export function manualFieldsCard(call: AgencyManualCall, fields: readonly Agency
   return { title: 'Call details', facts, source: 'Agent' };
 }
 
-/** The agent's reasons for calling through a refusal (SP1, SP2) — only when one was used. */
-export function manualOverridesCard(overrides: AgencyManualCallOverrides): CallFactCard | null {
+/**
+ * The agent's reasons for calling through a refusal (SP1, SP2) — only when one was used.
+ * The DNC entry is shown as the agent saw it (its reach, reason and date), never as an
+ * id; an entry removed since says so.
+ */
+export function manualOverridesCard(
+  overrides: AgencyManualCallOverrides,
+  call?: Pick<AgencyManualCall, 'tag'>,
+): CallFactCard | null {
   const facts: CallFact[] = [];
   if (overrides.dnc_note) {
     facts.push({ label: 'Called through Do Not Call', value: overrides.dnc_note, prose: true });
-    if (overrides.dnc_entry_id) facts.push({ label: 'DNC entry', value: overrides.dnc_entry_id, mono: true });
+    const entry = overrides.dnc_entry;
+    if (entry) {
+      const campaignName = entry.campaign_id && call?.tag?.campaign_id === entry.campaign_id ? call.tag.campaign_name : null;
+      facts.push({ label: 'Listed for', value: dncEntryReach(entry, campaignName) });
+      for (const fact of dncEntryFacts(entry)) {
+        facts.push({ label: fact.label === 'Added' ? 'Listed on' : fact.label, value: fact.value });
+      }
+    } else if (overrides.dnc_entry_id) {
+      facts.push({ label: 'DNC entry', value: 'Removed from the list since this call', muted: true });
+    }
   }
   if (overrides.hours_note) {
     facts.push({ label: 'Called outside calling hours', value: overrides.hours_note, prose: true });
@@ -208,7 +225,7 @@ export default function SoftphoneCallDetailPage() {
     const list: CallFactCard[] = [manualOutcomeCard(detail.call, bootstrap, detail.dispositioned_by_name ?? null)];
     const fields = manualFieldsCard(detail.call, bootstrap?.call_fields ?? []);
     if (fields) list.push(fields);
-    const overrides = manualOverridesCard(detail.overrides);
+    const overrides = manualOverridesCard(detail.overrides, detail.call);
     if (overrides) list.push(overrides);
     const contact = contactCard(detail.call);
     if (contact) list.push(contact);

@@ -409,6 +409,12 @@ export interface AgencyManualCallOverrides {
   dnc_note: string | null;
   /** The `dnc_entries.id` the DNC override was for. */
   dnc_entry_id: string | null;
+  /**
+   * That entry as the `dnc_listed` refusal showed it — how far it reaches, why, since
+   * when — plus its campaign (`campaign` scope). NULL when no DNC override was used, or
+   * the entry has since been removed from the list (`dnc_entry_id` still names it).
+   */
+  dnc_entry: (AgencySoftphoneDncListedRefusal['entry'] & { campaign_id: string | null }) | null;
   hours_note: string | null;
 }
 
