@@ -15,6 +15,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   SOFTPHONE_BREAK_REASON,
+  SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES,
   type AgencyCallFieldValues,
   type AgencySoftphoneBootstrap,
   type AgencySoftphoneCampaign,
@@ -23,7 +24,6 @@ import {
   type AgencySoftphoneSessionSummary,
   type AgencySoftphoneSettingsUpdateRequest,
 } from '@magick-agency/contracts/agency';
-import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { tenantPhoneAssignmentRepository } from '@magick-agency/db/repositories/tenant-phone-assignment.repository';
 import { callAnalysisProfileRepository } from '@magick-agency/db/repositories/call-analysis-profile.repository';
 import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
@@ -61,7 +61,11 @@ import {
 
 const log = createChildLogger({ component: 'agency-softphone-routes' });
 
-/** At most this many campaigns are offered as tags (a supervisor sees the whole account). */
+/**
+ * At most this many campaigns are offered as tags, newest first. Applied AFTER the status
+ * and staffing filters (`listSoftphoneTaggable`), so it bounds a supervisor's whole-account
+ * list and never cuts an agent's staffed campaigns behind the account's newer ones.
+ */
 const TAGGABLE_CAMPAIGNS_MAX = 500;
 
 /** Where this instance serves a manual call's recording bytes (the public layer repoints it). */
@@ -177,21 +181,18 @@ async function buildBootstrap(
   actor: SoftphoneActor,
 ): Promise<Omit<AgencySoftphoneBootstrap, 'softphone_enabled'>> {
   const { tenantId, accountId } = actor;
-  const [settings, numbers, campaigns, staffed, live] = await Promise.all([
+  const [settings, numbers, taggable, live] = await Promise.all([
     agencySoftphoneSettingsRepository.get(tenantId, accountId),
     tenantPhoneAssignmentRepository.findAvailableForAccount(tenantId, accountId),
-    agencyCampaignRepository.list(tenantId, accountId, TAGGABLE_CAMPAIGNS_MAX, 0),
-    actor.supervise ? Promise.resolve(null) : agencyCampaignAgentRepository.listActiveForUser(tenantId, actor.userId),
+    // The same rule as `SoftphoneService.taggable`: in the account, running or paused, and
+    // staffed unless a supervisor — filtered in the query, before the cap.
+    agencyCampaignRepository.listSoftphoneTaggable(tenantId, accountId, {
+      statuses: SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES,
+      staffedUserId: actor.supervise ? null : actor.userId,
+      limit: TAGGABLE_CAMPAIGNS_MAX,
+    }),
     agencyAgentSessionRepository.findLiveForAgent(tenantId, actor.userId),
   ]);
-
-  // The same rule as `SoftphoneService.taggable`: in the account, and staffed unless a supervisor.
-  const staffedIds = staffed ? new Set(staffed.map((s) => s.campaign_id)) : null;
-  const taggable = campaigns.rows.filter((c) => staffedIds === null || staffedIds.has(c.id));
-  const profiles = await profileSummaries(
-    [...taggable.map((c) => c.analysis_profile_id), settings.analysis_profile_id], tenantId, accountId,
-  );
-  const now = new Date();
 
   const callerIds = numbers
     .map((n) => n.phone_number)
@@ -229,6 +230,23 @@ async function buildBootstrap(
     if (live.account_id === accountId) call = await runtime.softphone.getLiveForSession(live.id);
   }
 
+  // The call's own campaign, whatever its status now: the outcome is saved against ITS
+  // catalog, so a reload after the campaign completed (or the agent was unstaffed) must
+  // not leave the console with the untagged catalog and a refused first save.
+  const tagId = call?.tag?.campaign_id ?? null;
+  const callCampaignRecord = tagId
+    ? taggable.find((c) => c.id === tagId)
+      ?? await agencyCampaignRepository.findById(tagId)
+        .then((c) => (c && c.tenant_id === tenantId && c.account_id === accountId ? c : null))
+        .catch(() => null)
+    : null;
+
+  const profiles = await profileSummaries(
+    [...taggable.map((c) => c.analysis_profile_id), callCampaignRecord?.analysis_profile_id ?? null, settings.analysis_profile_id],
+    tenantId, accountId,
+  );
+  const now = new Date();
+
   return {
     taggable_campaigns: taggable.map((c) => taggableCampaign(c, profiles, now)),
     untagged: {
@@ -242,6 +260,7 @@ async function buildBootstrap(
     default_country_code: `+${defaultPhoneCountryCode()}`,
     session,
     call,
+    call_campaign: callCampaignRecord ? taggableCampaign(callCampaignRecord, profiles, now) : null,
   };
 }
 

@@ -8,7 +8,9 @@ import styles from '../AgencyCampaignAttemptsPage.module.css';
 
 export const SOFTPHONE_CALLS_DESCRIPTION =
   'Every call agents placed from the soft phone — logged to a campaign or not — with the outcome they saved. '
-  + 'Soft-phone calls are not paced and never count toward a campaign’s attempts.';
+  + 'Soft-phone calls are not paced and are not listed among a campaign’s attempts, but a call logged '
+  + 'to a campaign whose roster has the number waiting to be called settles that contact as a campaign '
+  + 'call would, and counts toward the contact’s attempts.';
 
 /**
  * `/agency/softphone` — the supervisor's "Soft-phone calls" (`docs/softphone.md`

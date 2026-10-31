@@ -15,7 +15,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *     and lands on the DNC audit trail (`dnc_entry.created`) once;
  *  3. `agency_softphone_enabled` switched off mid-call: the agent can still finish
  *     (details, hang up, outcome, return) and bootstrap says `softphone_enabled: false`;
- *     dialling, opening a session and switching are refused.
+ *     dialling, opening a session and switching are refused;
+ *  4. only `running` / `paused` campaigns can be tagged, staffing is filtered before the
+ *     cap, and a call whose campaign completes mid-call keeps its catalog (`call_campaign`).
  */
 
 const mocks = vi.hoisted(() => {
@@ -46,6 +48,7 @@ vi.mock('../../../src/telephony/factory.js', () => ({
 }));
 
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import type { FastifyInstance } from 'fastify';
 import { closePool, getPool, initDbPool } from '@magick-agency/db';
@@ -71,6 +74,7 @@ import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
 import { DncRegistry } from '../../../src/agency/dnc-registry.js';
 import { markDnc } from '../../../src/agency/dnc-mark.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
+import { agencyCampaignRepository } from '../../../src/db/repositories/agency.repository.js';
 
 class FakePstnSocket extends EventEmitter {
   readyState = 1;
@@ -93,6 +97,10 @@ interface Who { id: string; tok: string }
 interface Station { ws: WebSocket; frames: Array<Record<string, any>> }
 
 const NOTE = 'The customer rang in and asked us to call back.';
+const CATALOG = JSON.stringify([
+  { code: 'renewed', label: 'Renewed', is_success: true, terminal: true },
+  { code: 'call_back', label: 'Call back', requires_datetime: true },
+]);
 
 describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (integration)', () => {
   let app: FastifyInstance;
@@ -205,6 +213,23 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     await carrierEnded(leg);
     await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
     return callId;
+  }
+
+  /** An account of its own, for a test that needs a running campaign (one per account). */
+  async function freshAccount(): Promise<string> {
+    const acct = (await insertAccount({ tenant_id: tenant })).id as string;
+    await getTestPool().query(
+      `INSERT INTO account_settings (tenant_id, account_id, allow_recording, analyze_calls, max_concurrent_calls)
+       VALUES ($1, $2, true, true, 20)`, [tenant, acct]);
+    return acct;
+  }
+
+  async function staff(campaignId: string, userId: string, acct = account) {
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agents (id, tenant_id, account_id, campaign_id, user_id, assigned_by, assigned_at)
+       VALUES ($1, $2, $3, $4, $5, $5, now())`,
+      [randomUUID(), tenant, acct, campaignId, userId],
+    );
   }
 
   /** The buffered audit logger writes on flush. */
@@ -431,6 +456,90 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect(back.statusCode, back.body).toBe(200);
     expect(back.json()).toMatchObject({ state: 'available', campaign_id: campaign.id });
     await runtime.agents.set(sessionId, 'break');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  // ── 4. Taggable campaigns (§6 bootstrap, `SoftphoneService.taggable`) ──────────────
+  it('listSoftphoneTaggable: running and paused only, the staffing filter before the cap', async () => {
+    const acct = (await insertAccount({ tenant_id: tenant })).id as string;
+    const agentId = (await user(tenant, acct, 'agent')).id;
+    const mk = async (status: string, staffed: boolean, minutesAgo: number) => {
+      const c = await insertAgencyCampaign({
+        tenant_id: tenant, account_id: acct, status, created_at: new Date(Date.now() - minutesAgo * 60_000),
+      });
+      if (staffed) await staff(c.id as string, agentId, acct);
+      return c.id as string;
+    };
+    const oldRunning = await mk('running', true, 50);
+    const paused = await mk('paused', true, 40);
+    await mk('completed', true, 30);
+    await mk('draft', true, 25);
+    await mk('stopped', true, 22);
+    // Newer than every staffed one, and not the agent's: under the old take-then-filter
+    // these filled the cap first. (One running campaign per account: `uq_agency_campaign_running`.)
+    const unstaffed = [await mk('paused', false, 10), await mk('paused', false, 5)];
+    const ask = (staffedUserId: string | null, limit: number) => agencyCampaignRepository
+      .listSoftphoneTaggable(tenant, acct, { statuses: ['running', 'paused'], staffedUserId, limit })
+      .then((rows) => rows.map((r) => r.id));
+    expect(await ask(agentId, 500)).toEqual([paused, oldRunning]);
+    expect(await ask(agentId, 2)).toEqual([paused, oldRunning]);
+    expect(await ask(agentId, 1)).toEqual([paused]);
+    expect(await ask(null, 500)).toEqual([...unstaffed].reverse().concat([paused, oldRunning]));
+  });
+
+  it('a draft or completed campaign cannot be tagged; a paused one can; bootstrap lists the same', async () => {
+    const acct = await freshAccount();
+    const agent = await user(tenant, acct, 'agent');
+    const sup = await user(tenant, acct, 'account_admin');
+    const running = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'running' });
+    const paused = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'paused' });
+    const completed = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'completed' });
+    const draft = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'draft' });
+    for (const c of [running, paused, completed, draft]) await staff(c.id as string, agent.id, acct);
+    const { sessionId, station } = await openSoftphone(agent);
+
+    const boot = await get('/proxy/agency/softphone/bootstrap', agent);
+    expect(boot.json().taggable_campaigns.map((c: { campaign_id: string }) => c.campaign_id).sort())
+      .toEqual([running.id, paused.id].sort());
+    for (const c of [completed, draft]) {
+      const refused = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811300040', campaign_id: c.id });
+      expect(refused.statusCode, `${c.status as string}`).toBe(403);
+      expect(refused.json().code).toBe('campaign_not_taggable');
+    }
+    // A supervisor's whole-account reach does not widen the status rule.
+    const supBoot = await get('/proxy/agency/softphone/bootstrap', sup);
+    const supIds = supBoot.json().taggable_campaigns.map((c: { campaign_id: string }) => c.campaign_id);
+    expect(supIds).toEqual(expect.arrayContaining([running.id, paused.id]));
+    expect(supIds).not.toContain(completed.id);
+    expect(supIds).not.toContain(draft.id);
+
+    await placeAndRingOut(agent, sessionId, station, '+919811300041', { campaign_id: paused.id });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  it('a tagged call whose campaign completes mid-call: bootstrap still describes it, and the outcome saves', async () => {
+    const acct = await freshAccount();
+    const agent = await user(tenant, acct, 'agent');
+    const campaign = await insertAgencyCampaign({
+      tenant_id: tenant, account_id: acct, status: 'running', disposition_catalog: CATALOG,
+    });
+    await staff(campaign.id as string, agent.id, acct);
+    const { sessionId, station } = await openSoftphone(agent);
+    const callId = await placeOwingAnOutcome(agent, sessionId, station, '+919811300050', { campaign_id: campaign.id });
+
+    await getTestPool().query(`UPDATE agency_campaigns SET status = 'completed' WHERE id = $1`, [campaign.id]);
+    // The console reloads: the campaign is no longer a tag to choose, but it is the call's.
+    const boot = await get('/proxy/agency/softphone/bootstrap', agent);
+    expect(boot.json().taggable_campaigns.map((c: { campaign_id: string }) => c.campaign_id)).not.toContain(campaign.id);
+    expect(boot.json().call).toMatchObject({ id: callId, tag: { campaign_id: campaign.id } });
+    expect(boot.json().call_campaign).toMatchObject({
+      campaign_id: campaign.id, status: 'completed',
+      disposition_catalog: [expect.objectContaining({ code: 'renewed' }), expect.objectContaining({ code: 'call_back' })],
+    });
+    const saved = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'renewed' });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().call).toMatchObject({ disposition_code: 'renewed', disposition_source: 'campaign' });
+    expect((await get('/proxy/agency/softphone/bootstrap', agent)).json()).toMatchObject({ call: null, call_campaign: null });
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 

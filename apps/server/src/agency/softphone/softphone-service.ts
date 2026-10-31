@@ -21,6 +21,7 @@ import { getPool } from '@magick-agency/db';
 import {
   SOFTPHONE_BREAK_REASON,
   SOFTPHONE_BREAK_REASON_LABEL,
+  SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES,
   type AgencyAgentState,
   type AgencyCallFieldValues,
   type AgencyManualCall,
@@ -181,11 +182,16 @@ export class SoftphoneService {
     return wire;
   }
 
-  /** The tag, when the actor may log to it: in the account, and staffed unless a supervisor. */
+  /**
+   * The tag, when the actor may log to it: in the account, `running` or `paused`
+   * (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`), and staffed unless a supervisor — the
+   * rule bootstrap's `taggable_campaigns` lists by.
+   */
   private async taggable(campaignId: string, actor: SoftphoneActor): Promise<AgencyCampaignRecord | null> {
     if (!isUuid(campaignId)) return null;
     const campaign = await agencyCampaignRepository.findById(campaignId);
     if (!campaign || campaign.tenant_id !== actor.tenantId || campaign.account_id !== actor.accountId) return null;
+    if (!(SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES as readonly string[]).includes(campaign.status)) return null;
     if (actor.supervise) return campaign;
     const staffed = await agencyCampaignAgentRepository.listActiveForUser(actor.tenantId, actor.userId);
     return staffed.some((s) => s.campaign_id === campaign.id) ? campaign : null;

@@ -277,7 +277,7 @@ from `audit` (a success without the envelope is a 502).
 
 | Method and path (`/proxy/agency`) | Permission | What |
 |---|---|---|
-| `GET /softphone/bootstrap` | `softphone.dial` | taggable campaigns (agent: active staffing; supervise: every campaign of the account), each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) |
+| `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
 | `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state` |
 | `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
@@ -348,10 +348,12 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   ringback ("Mute ring"); the microphone's mute is separate, and answering with the microphone
   muted is announced assertively. The SP3 warning shows while ringing; hang-up is hold-to-confirm
   (or `E` twice).
-- **Outcome.** The outcome pad uses the tagged campaign's catalog, else the soft-phone catalog,
-  else the built-ins, with the station's rules (keys 1–9, required notes, callback times). Notes
-  the agent cleared are sent as `notes: ''` with the outcome (the pending autosave is cancelled
-  at Save, and an absent `notes` keeps the stored text); notes never touched are left out. An
+- **Outcome.** The outcome pad uses the tagged campaign's catalog (from `taggable_campaigns`,
+  else bootstrap's `call_campaign` for a campaign that can no longer be tagged), else the
+  soft-phone catalog, else the built-ins, with the station's rules (keys 1–9, required notes,
+  callback times). Notes the agent cleared are sent as `notes: ''` with the outcome (the pending
+  autosave is cancelled at Save, and an absent `notes` keeps the stored text); notes never touched
+  are left out. An
   unsettled call blocks the next dial; the dial-pad column shows "Without one, it closes in m:ss" from
   `outcome_due_at` before the call lapses to `no_disposition`.
 - **Call details.** The fields form is hydrated from the call and saved debounced (700 ms). Until

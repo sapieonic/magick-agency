@@ -18,7 +18,9 @@ export function catalogForCall(
   if (!bootstrap) return undefined;
   const fromCampaign = call.disposition_source === 'campaign' || (call.disposition_source === null && call.tag !== null);
   if (fromCampaign && call.tag) {
-    return bootstrap.taggable_campaigns.find((c) => c.campaign_id === call.tag!.campaign_id)?.disposition_catalog;
+    const id = call.tag.campaign_id;
+    return bootstrap.taggable_campaigns.find((c) => c.campaign_id === id)?.disposition_catalog
+      ?? (bootstrap.call_campaign?.campaign_id === id ? bootstrap.call_campaign.disposition_catalog : undefined);
   }
   return bootstrap.untagged.disposition_catalog;
 }

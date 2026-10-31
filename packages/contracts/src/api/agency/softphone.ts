@@ -72,6 +72,7 @@ export {
   SOFTPHONE_OUTCOME_LAPSE_MS,
   SOFTPHONE_OVERRIDE_NOTE_MAX,
   SOFTPHONE_OVERRIDE_NOTE_MIN,
+  SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES,
 } from '../../agency';
 /** The runtime list of {@link Core.AgencySoftphoneErrorCode}; the console keys its copy off it. */
 export { AGENCY_SOFTPHONE_ERROR_CODES } from '../../errors';

@@ -25,7 +25,7 @@ const LEG = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const repos = vi.hoisted(() => ({
   session: { joinSoftphone: vi.fn(), findLiveForAgent: vi.fn(), findById: vi.fn() },
-  campaign: { findById: vi.fn(), list: vi.fn() },
+  campaign: { findById: vi.fn(), list: vi.fn(), listSoftphoneTaggable: vi.fn() },
   manual: { findById: vi.fn(), listForAgent: vi.fn(), listForAccount: vi.fn() },
   settings: { get: vi.fn(), upsert: vi.fn() },
   numbers: { findAvailableForAccount: vi.fn() },
@@ -410,10 +410,47 @@ describe('GET /softphone/bootstrap', () => {
     record_calls: true, analysis_profile_id: PROFILE, context_display: {},
   });
   beforeEach(() => {
-    repos.campaign.list.mockResolvedValue({ rows: [campaign(CAMPAIGN, 'Staffed'), campaign(OTHER_CAMPAIGN, 'Other')], total: 2 });
-    repos.staffing.listActiveForUser.mockResolvedValue([{ campaign_id: CAMPAIGN }]);
+    // The query applies the status and staffing filters (real SQL:
+    // softphone-policy-routes.test.ts); here, what it is asked.
+    repos.campaign.listSoftphoneTaggable.mockImplementation(async (_t: string, _a: string, opts: { staffedUserId: string | null }) =>
+      opts.staffedUserId ? [campaign(CAMPAIGN, 'Staffed')] : [campaign(CAMPAIGN, 'Staffed'), campaign(OTHER_CAMPAIGN, 'Other')]);
     repos.session.findLiveForAgent.mockResolvedValue(null);
     repos.profiles.findByIdScoped.mockResolvedValue({ id: PROFILE, name: 'Sales summary' });
+  });
+
+  it('asks for running and paused campaigns, staffed unless supervising, capped after the filter', async () => {
+    await get(`/softphone/bootstrap?actor_user_id=${AGENT}`);
+    expect(repos.campaign.listSoftphoneTaggable).toHaveBeenLastCalledWith(TENANT, ACCOUNT, {
+      statuses: ['running', 'paused'], staffedUserId: AGENT, limit: 500,
+    });
+    await get(`/softphone/bootstrap?actor_user_id=${AGENT}&supervise=true`);
+    expect(repos.campaign.listSoftphoneTaggable).toHaveBeenLastCalledWith(TENANT, ACCOUNT, {
+      statuses: ['running', 'paused'], staffedUserId: null, limit: 500,
+    });
+    expect(repos.campaign.list).not.toHaveBeenCalled();
+  });
+
+  it('call_campaign: the unsettled call\'s own campaign, even when it can no longer be tagged', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue({
+      id: SESSION, tenant_id: TENANT, account_id: ACCOUNT, kind: 'softphone', campaign_id: null, state: 'break', break_reason: 'soft_phone', left_at: null,
+    });
+    runtime.agents.get.mockResolvedValue({ state: 'break' });
+    runtime.breaks.peek.mockReturnValue(null as never);
+    runtime.softphone.getLiveForSession.mockResolvedValue({ id: CALL, tag: { campaign_id: OTHER_CAMPAIGN, campaign_name: 'Done' } } as never);
+    const done = { ...campaign(OTHER_CAMPAIGN, 'Done'), tenant_id: TENANT, account_id: ACCOUNT, status: 'completed',
+      disposition_catalog: [{ code: 'sold', label: 'Sold' }] };
+    repos.campaign.findById.mockResolvedValue(done);
+    const boot = (await get(`/softphone/bootstrap?actor_user_id=${AGENT}`)).json();
+    expect(boot.taggable_campaigns.map((c: { campaign_id: string }) => c.campaign_id)).toEqual([CAMPAIGN]);
+    expect(boot.call_campaign).toMatchObject({
+      campaign_id: OTHER_CAMPAIGN, status: 'completed', disposition_catalog: [{ code: 'sold', label: 'Sold' }],
+    });
+    // Another account's campaign is never described.
+    repos.campaign.findById.mockResolvedValue({ ...done, account_id: 'another' });
+    expect((await get(`/softphone/bootstrap?actor_user_id=${AGENT}`)).json().call_campaign).toBeNull();
+    // An untagged call, or none: null.
+    runtime.softphone.getLiveForSession.mockResolvedValue(null as never);
+    expect((await get(`/softphone/bootstrap?actor_user_id=${AGENT}`)).json().call_campaign).toBeNull();
   });
 
   it('an agent gets their staffed campaigns; a supervisor every campaign of the account', async () => {
@@ -430,7 +467,6 @@ describe('GET /softphone/bootstrap', () => {
     });
     const sup = (await get(`/softphone/bootstrap?actor_user_id=${AGENT}&supervise=true`)).json();
     expect(sup.taggable_campaigns).toHaveLength(2);
-    expect(repos.staffing.listActiveForUser).toHaveBeenCalledTimes(1);
   });
 
   it('the settings\' default caller ID while still assigned; the live session with a queued switch', async () => {

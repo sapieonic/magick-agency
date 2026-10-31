@@ -442,7 +442,14 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
 
   const setupEditable = call === null && !placing && !finishOnly;
   const tagCampaignId = call ? (call.tag?.campaign_id ?? null) : tagDraft;
-  const campaign = tagCampaignId ? (taggableCampaigns.find((c) => c.campaign_id === tagCampaignId) ?? null) : null;
+  // A placed call's campaign may no longer be taggable (completed, the agent unstaffed):
+  // bootstrap still describes it as `call_campaign`, so its outcomes stay its own.
+  const callCampaign = call?.tag && bootstrap?.call_campaign?.campaign_id === call.tag.campaign_id
+    ? bootstrap.call_campaign
+    : null;
+  const campaign = tagCampaignId
+    ? (taggableCampaigns.find((c) => c.campaign_id === tagCampaignId) ?? (call ? callCampaign : null))
+    : null;
   const callerIdOptions = useMemo(
     () => (tagDraft ? (taggableCampaigns.find((c) => c.campaign_id === tagDraft)?.caller_ids ?? []) : (bootstrap?.untagged.caller_ids ?? [])),
     [tagDraft, taggableCampaigns, bootstrap],
@@ -458,6 +465,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
 
   const baseCatalog: AgencyDisposition[] = call?.tag
     ? (taggableCampaigns.find((c) => c.campaign_id === call.tag!.campaign_id)?.disposition_catalog
+      ?? callCampaign?.disposition_catalog
       ?? bootstrap?.untagged.disposition_catalog
       ?? [])
     : (bootstrap?.untagged.disposition_catalog ?? []);

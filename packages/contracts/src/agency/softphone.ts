@@ -81,6 +81,18 @@ void _allSessionKindsListed;
 export const SOFTPHONE_OVERRIDE_NOTE_MIN = 10;
 export const SOFTPHONE_OVERRIDE_NOTE_MAX = 500;
 
+/**
+ * The campaign statuses a soft-phone call may be logged to: a campaign that is live
+ * (`running`) or will be again (`paused`). A draft has not started, and a stopping,
+ * stopped or completed campaign is over, so a call logged to one would settle roster
+ * contacts nobody is working. A call already logged keeps its tag whatever the
+ * campaign does next; only the choice at dial is limited.
+ */
+export const SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES = [
+  'running',
+  'paused',
+] as const satisfies readonly AgencyCampaignStatus[];
+
 /** At most this many call fields per account (`agency_softphone_settings.call_fields`). */
 export const SOFTPHONE_CALL_FIELDS_MAX = 20;
 
@@ -419,10 +431,11 @@ export interface AgencySoftphoneProfileSummary {
 }
 
 /**
- * A campaign the caller may log a call to: for an agent, the campaigns they are
- * actively staffed on; for an `agency.supervise` holder, every campaign in the
- * account. Everything the tagged call uses, so choosing a tag needs no second
- * request.
+ * A campaign the caller may log a call to, in {@link SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES}:
+ * for an agent, the campaigns they are actively staffed on; for an `agency.supervise`
+ * holder, every such campaign in the account. Everything the tagged call uses, so
+ * choosing a tag needs no second request. Bootstrap's `call_campaign` has the same
+ * shape for the campaign the caller's call is already logged to.
  */
 export interface AgencySoftphoneCampaign {
   campaign_id: string;
@@ -489,6 +502,13 @@ export interface AgencySoftphoneBootstrap {
   session: AgencySoftphoneSessionSummary | null;
   /** The session's live call, or its ended call still awaiting an outcome; NULL otherwise. */
   call: AgencyManualCall | null;
+  /**
+   * The campaign `call` is logged to, described as a taggable campaign is, whether or
+   * not it can still be chosen as a tag (paused since, completed or stopped, the agent
+   * unstaffed): its `disposition_catalog` is the one the call's outcome is saved
+   * against. NULL when there is no call, it is untagged, or the campaign is gone.
+   */
+  call_campaign: AgencySoftphoneCampaign | null;
 }
 
 // ─── Sessions ───────────────────────────────────────────────────────────────

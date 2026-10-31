@@ -800,3 +800,33 @@ describe('reconnect', () => {
     expect((screen.getByLabelText(/Notes/) as HTMLTextAreaElement).value).toBe('From before the drop');
   });
 });
+
+describe('a tagged call whose campaign can no longer be tagged', () => {
+  it('keeps its campaign’s outcomes after a reload (bootstrap’s call_campaign), so the first save is accepted', async () => {
+    // The campaign completed mid-call: it left `taggable_campaigns`, and the reloaded
+    // console must not fall back to the untagged catalog, which the server refuses.
+    const owed = manualCall({
+      tag: { campaign_id: CAMPAIGN.campaign_id, campaign_name: CAMPAIGN.campaign_name },
+      state: 'ended', outcome: 'connected', end_reason: 'remote_hangup', requires_disposition: true,
+      bridged_at: '2026-10-30T10:00:08Z', ended_at: '2026-10-30T10:01:00Z', talk_seconds: 52,
+    });
+    api.getSoftphoneBootstrap.mockResolvedValue({
+      ...BOOTSTRAP, call_fields: [], taggable_campaigns: [], call: owed,
+      call_campaign: { ...CAMPAIGN, status: 'completed' },
+    });
+    api.dispositionManualCall.mockResolvedValue({
+      ok: true,
+      value: { call: { ...owed, disposition_code: 'interested', requires_disposition: false, settled_at: '2026-10-30T10:01:10Z' },
+        contact_state: null, next_attempt_at: null, callback_requested_at: null },
+    });
+    await mount();
+    expect(rail()).toBe('Outcome needed');
+    expect(screen.getByText('Interested, renewing')).toBeTruthy();
+    expect(screen.queryByText('Query resolved')).toBeNull();
+    press('1');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('softphone-save'));
+    });
+    expect(api.dispositionManualCall).toHaveBeenCalledWith('mc-1', expect.objectContaining({ code: 'interested' }), 't-1', 'a-1');
+  });
+});
