@@ -422,6 +422,17 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   closing the soft phone for something else decides alike. "Open the soft phone" stays as the second way. The soft
   phone is not closed when the agent navigates away (a reload, StrictMode's double mount and a
   second tab make an unmount a poor signal); the nav says it stays open instead.
+- **Live on a campaign (`session_on_campaign`).** `/dialer/phone` offers **Switch to soft phone**
+  on that campaign session and goes to its station, which shows the soft phone in place (§4.2). The
+  session may be in a sibling account (the refusal's `account_id`): every route on it, and the
+  station that shows the soft phone, are scoped to that account, so the switch is sent with it and,
+  once taken, the console moves to that account (`setActiveAccountId`, what the account switcher
+  does) before going to the station; the soft phone then runs wholly in its session's account, and
+  "Go to station" moves the same way. The screen names the account ("You're live on <campaign> in
+  <account>") and says the switch takes the agent there. When the account is not in the console's
+  account list it says "You're live on <campaign> in another account — switch to that account to use
+  the soft phone there." and offers no switch, since one could not land. A refused switch keeps the
+  console where it is and says why (`refusalCopy`'s `status` context).
 - **The soft phone open in a sibling account (the flag on here).** `POST /softphone/sessions`
   refuses `session_on_softphone` with that session's account (§6), and `/dialer/phone` says "Your
   soft phone is open in another account", naming it (the refusal's `account_name`, else the

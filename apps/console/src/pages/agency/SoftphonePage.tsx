@@ -504,11 +504,27 @@ function ElsewhereScreen({
   );
 }
 
+/** The honest screen for a campaign session in an account the console cannot switch to. */
+export const SOFTPHONE_CAMPAIGN_ELSEWHERE_COPY = (campaign: string, account: string | null) =>
+  `You’re live on ${campaign} in ${account ?? 'another account'} — switch to that account to use the soft phone there.`;
+
 /**
  * The 409 `session_on_campaign` answer: the agent is still at a campaign station.
  * The remedy is switching THAT session to the soft phone (§4.2) — queued behind a
  * call or wrap-up exactly like a break — and the station then shows the soft
  * phone in place.
+ *
+ * ── A campaign session in a sibling account ──────────────────────────────────
+ * One live session per agent per TENANT, so the session may be in another account
+ * (`refusal.account_id`). Every route on it is scoped to that account, and so is the
+ * station that shows the soft phone in place: switching it with this account's id
+ * is a 404, and `/station` in this account cannot open that campaign. So the switch
+ * is sent with the session's account and, once it is taken, the CONSOLE moves to
+ * that account (`setActiveAccountId`, what the account switcher does) before going
+ * to the station: the soft phone then runs entirely in the account its session
+ * lives in, with no call made across accounts. "Go to station" moves the same way.
+ * When the console cannot switch to that account (it is not in the caller's list)
+ * the screen says where the session is and offers no button that would fail.
  */
 function CampaignSessionScreen({
   refusal,
@@ -520,16 +536,25 @@ function CampaignSessionScreen({
   accountId: string | null;
 }) {
   const navigate = useNavigate();
+  const { accounts, setActiveAccountId } = useTenant();
   const [switching, setSwitching] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const stationPath = `/station?campaign=${encodeURIComponent(refusal.campaign_id)}`;
   const midCall = refusal.state === 'reserved' || refusal.state === 'on_call' || refusal.state === 'wrapup';
   const stateLabel = AGENCY_FLOOR_STATE_LABELS[refusal.state]?.toLowerCase() ?? refusal.state;
+  const elsewhere = refusal.account_id !== accountId;
+  const there = siblingAccount(accounts, refusal);
+
+  /** To the station, in the session's account when it is another. */
+  const goToStation = () => {
+    if (elsewhere) setActiveAccountId(refusal.account_id);
+    navigate(stationPath);
+  };
 
   const onSwitch = async () => {
     setSwitching(true);
     setFailure(null);
-    const result = await switchToSoftphone(refusal.session_id, tenantId ?? undefined, accountId ?? undefined);
+    const result = await switchToSoftphone(refusal.session_id, tenantId ?? undefined, refusal.account_id);
     trackAgencySoftphoneSwitch({
       action: 'start',
       queued: result.ok ? Boolean(result.value.pending_state) : false,
@@ -537,24 +562,44 @@ function CampaignSessionScreen({
       code: result.ok ? null : result.refusal.code,
     });
     if (result.ok) {
-      navigate(stationPath);
+      goToStation();
       return;
     }
     setSwitching(false);
-    setFailure(refusalCopy(result.refusal));
+    setFailure(refusalCopy(result.refusal, 'status'));
   };
 
+  if (elsewhere && !there.switchable) {
+    return (
+      <div className={station.shell}>
+        <div className={station.fatal} role="alert" data-testid="softphone-on-campaign">
+          <h1>You’re live on {refusal.campaign_name} in {there.name ?? 'another account'}</h1>
+          <p data-testid="softphone-on-campaign-elsewhere">
+            {SOFTPHONE_CAMPAIGN_ELSEWHERE_COPY(refusal.campaign_name, there.name)}
+          </p>
+          <StationEscape toCampaign={false} campaignId="" />
+        </div>
+      </div>
+    );
+  }
+
+  const where = elsewhere ? ` in ${there.name ?? 'another account'}` : '';
   return (
     <div className={station.shell}>
       <div className={station.fatal} role="alert" data-testid="softphone-on-campaign">
-        <h1>You’re still at the {refusal.campaign_name} station</h1>
+        <h1>
+          {elsewhere
+            ? `You’re live on ${refusal.campaign_name}${where}`
+            : `You’re still at the ${refusal.campaign_name} station`}
+        </h1>
         <p>
-          You’re joined to {refusal.campaign_name} — {stateLabel}. You can only have one session at a time.
+          You’re joined to {refusal.campaign_name}{where} — {stateLabel}. You can only have one session at a time.
         </p>
         <p>
           {midCall
             ? 'Switch that station to the soft phone and it switches after this call and its wrap-up. You stay on the campaign and can go back to it from the station.'
             : 'Switch that station to the soft phone. You stay on the campaign and can go back to it from the station.'}
+          {elsewhere ? ` This takes you to ${there.name ?? 'that account'}.` : ''}
         </p>
         <button
           type="button"
@@ -563,16 +608,22 @@ function CampaignSessionScreen({
           disabled={switching}
           data-testid="softphone-switch-from-campaign"
         >
-          {switching ? 'Switching…' : 'Switch to soft phone'}
+          {switching ? 'Switching…' : elsewhere ? `Switch to soft phone${where}` : 'Switch to soft phone'}
         </button>
         {failure ? (
           <p className="error-text" data-testid="softphone-switch-failure">
             {failure}
           </p>
         ) : null}
-        <Link className={station.fatalEscape} to={stationPath} data-testid="softphone-go-to-station">
-          Go to station
-        </Link>
+        {elsewhere ? (
+          <button type="button" className={station.fatalEscape} onClick={goToStation} data-testid="softphone-go-to-station">
+            Go to station{where}
+          </button>
+        ) : (
+          <Link className={station.fatalEscape} to={stationPath} data-testid="softphone-go-to-station">
+            Go to station
+          </Link>
+        )}
       </div>
     </div>
   );

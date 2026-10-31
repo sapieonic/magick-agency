@@ -332,6 +332,70 @@ describe('/dialer/phone', () => {
       fireEvent.click(screen.getByTestId('softphone-switch-from-campaign'));
     });
     expect(screen.getByTestId('softphone-switch-failure').textContent).toMatch(/turned off for this account/);
+    // A switch the agent state store did not take changed the status, not a call.
+    mocks.switchToSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'dial_failed', status: 503, message: 'x' } });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('softphone-switch-from-campaign'));
+    });
+    expect(screen.getByTestId('softphone-switch-failure').textContent).toMatch(/Couldn’t change your status/);
+    expect(screen.queryByTestId('where')).toBeNull();
+  });
+
+  describe('a campaign session in another account of the workspace', () => {
+    const ELSEWHERE = {
+      code: 'session_on_campaign', status: 409, message: 'x', session_id: 'sess-camp', campaign_id: 'camp-9',
+      campaign_name: 'Gold Loans', state: 'available', account_id: 'a-2', account_name: 'North Region',
+    };
+
+    it('switches that session with ITS account, then moves the console to that account and its station', async () => {
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
+      mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-camp', state: 'break', break_reason: 'soft_phone' } });
+      await mount();
+      const screenEl = screen.getByTestId('softphone-on-campaign');
+      expect(screenEl.textContent).toMatch(/You’re live on Gold Loans in North Region/);
+      expect(screenEl.textContent).toMatch(/This takes you to North Region\./);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Switch to soft phone in North Region' }));
+      });
+      // This account's id would be the 404 of a session that does not exist here.
+      expect(mocks.switchToSoftphone).toHaveBeenCalledWith('sess-camp', 't-1', 'a-2');
+      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2');
+      expect(screen.getByTestId('where').textContent).toBe('/station?campaign=camp-9');
+    });
+
+    it('a refused switch leaves the console in this account, and says why', async () => {
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
+      mocks.switchToSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
+      await mount();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-switch-from-campaign'));
+      });
+      expect(mocks.setActiveAccountId).not.toHaveBeenCalled();
+      expect(screen.getByTestId('softphone-switch-failure').textContent).toMatch(/turned off/);
+    });
+
+    it('Go to station moves to that account first', async () => {
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
+      await mount();
+      fireEvent.click(screen.getByRole('button', { name: 'Go to station in North Region' }));
+      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2');
+      expect(screen.getByTestId('where').textContent).toBe('/station?campaign=camp-9');
+      expect(mocks.switchToSoftphone).not.toHaveBeenCalled();
+    });
+
+    it('an account the console cannot switch to: says where, and offers no button that would fail', async () => {
+      mocks.useTenant.mockReturnValue({
+        tenantId: 't-1', accountId: 'a-1', role: 'agent', accounts: [ACCOUNTS[0]], setActiveAccountId: mocks.setActiveAccountId,
+      });
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: { ...ELSEWHERE, account_name: null } });
+      await mount();
+      expect(screen.getByTestId('softphone-on-campaign-elsewhere').textContent).toBe(
+        'You’re live on Gold Loans in another account — switch to that account to use the soft phone there.',
+      );
+      expect(screen.queryByTestId('softphone-switch-from-campaign')).toBeNull();
+      expect(screen.queryByTestId('softphone-go-to-station')).toBeNull();
+      expect(screen.getByTestId('station-escape')).toBeTruthy();
+    });
   });
 
   describe('a soft-phone session open in another account of the workspace (the flag on here)', () => {
