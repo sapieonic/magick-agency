@@ -25,7 +25,11 @@ Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-1
 - **The soft phone is a break.** While on the soft phone an agent's session is in `break` with the
   reserved reason code `soft_phone` (`SOFTPHONE_BREAK_REASON`). Pacing reserves only `available`
   agents, so pacing can never reserve an agent who is on the soft phone, by construction, and
-  occupancy reports soft-phone time as a break reason with no new agent state.
+  occupancy reports soft-phone time as a break reason with no new agent state. No campaign's
+  break catalog lists it: `resolveBreakReasons` drops it whatever the column holds, so
+  `POST /sessions/:id/break` refuses it as `unknown_break_reason`, and a campaign config listing it
+  is refused at the write. Whether a session is on the soft phone is one rule,
+  `onSoftphoneBreak` (`session-guard.ts`): Redis says `break` and the row's reason is `soft_phone`.
 - **Two ways in, one dialer.**
   - An agent who is not on a campaign opens a **soft-phone session**:
     `agency_agent_sessions.kind = 'softphone'`, `campaign_id IS NULL`. It is created in
@@ -166,7 +170,8 @@ Owned by `AgencyRuntime`. One call at a time per session.
    `agency.dnc.manage`; `markDnc`'s `accountScope`, used by this path only); then the contact
    settles (§5); then the Redis `manual` field is released.
    **Mark DNC** on a tagged call also suppresses every roster row of the tag carrying the number,
-   as the station's mark does.
+   as the station's mark does, and so does a suppress outcome on a tagged call (after the call's
+   own contact settles; a swept row keeps any reason it was already suppressed for).
 8. **Lapse.** An ended call with no outcome after `SOFTPHONE_OUTCOME_LAPSE_MS` (30 min), or
    whose session left, is closed `no_disposition` (`settled_at` set) by the reaper sweep, and its
    claimed contact is settled by the tag's retry policy (§5, "no outcome"). Only a call that bridged
@@ -206,6 +211,13 @@ dashboard's capacity panel stacks them on the attempts.
   break queued while reserved is never stranded.
 - `POST /proxy/agency/sessions/:id/softphone/return` → refuses `manual_call_live` while a manual
   call is live or awaiting an outcome; otherwise ends the break (`available`).
+- `available` and another break from the soft phone refuse `manual_call_live` the same way. A
+  break to another reason checks the owed call and writes the reason under the session row's
+  lock (`setBreakLeavingSoftphone`), which the dial's transaction takes too and re-checks the
+  reason under, so a Call pressed just before the break either lands first (the break refuses) or
+  is refused `not_on_softphone`. When the state store does not take the write (`available` from
+  the soft phone with Redis down, or a stale `manual` claim that will not clear on any break),
+  both answer `503 dial_failed`: nothing is written or audited, retry.
 - Audit (`softphone-audit.ts`, the one writer): `agency_session.softphone_started` and
   `agency_session.softphone_ended` in `platform_audit_log` (session, campaign, from-state), plus the
   existing `audit_logs` session events. `started`: the switch route (`queued` when deferred), and

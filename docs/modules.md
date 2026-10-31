@@ -156,7 +156,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-analysis-profile-route.test.ts` | 13 |
 | `apps/server/test/unit/agency/campaign-behavioral-settings.test.ts` | 52 |
 | `apps/server/test/unit/agency/campaign-completion-notice.test.ts` | 6 |
-| `apps/server/test/unit/agency/campaign-config-route.test.ts` | 57 |
+| `apps/server/test/unit/agency/campaign-config-route.test.ts` | 58 |
 | `apps/server/test/unit/agency/campaign-list-route.test.ts` | 6 |
 | `apps/server/test/unit/agency/campaign-conversion-stats.test.ts` | 9 |
 | `apps/server/test/unit/agency/campaign-health.test.ts` | 19 |
@@ -246,7 +246,7 @@ Files: `contact-settlement.ts`, `live-attempt.ts`
 
 ### `apps/server/src/agency/softphone/`
 
-The soft phone's runtime (docs/softphone.md §4, §5): `softphone-service.ts` (`SoftphoneService`, `AgencyRuntime.softphone`: place, hang up, details, outcome, DNC, switch and return, reads; typed refusals, no HTTP), `manual-dialer.ts` (`ManualDialer`: dials a committed row agent-first through the bridge with a `manual` correlation, applies lifecycle events in order, settles unanswered calls, re-attaches on reconnect, takes the sweeps' closed rows), `manual-predial.ts` (number, caller ID, roster match, calling window, DNC, overrides), `manual-disposition.ts` (catalog, outcome and roster decision, and the retry-policy decision for a call closed with no outcome), `manual-settlement.ts` (that decision read and written for the dialer and the reaper), `softphone-audit.ts` (the one writer of `agency_session.softphone_started` / `.softphone_ended`), `call-fields.ts` (call-field values against the set in force), `session-guard.ts` (`setAvailableGuarded`: the `available` write and its `manual_call_live` refusal), `types.ts` (the refusal union and actor).
+The soft phone's runtime (docs/softphone.md §4, §5): `softphone-service.ts` (`SoftphoneService`, `AgencyRuntime.softphone`: place, hang up, details, outcome, DNC, switch and return, reads; typed refusals, no HTTP), `manual-dialer.ts` (`ManualDialer`: dials a committed row agent-first through the bridge with a `manual` correlation, applies lifecycle events in order, settles unanswered calls, re-attaches on reconnect, takes the sweeps' closed rows), `manual-predial.ts` (number, caller ID, roster match, calling window, DNC, overrides), `manual-disposition.ts` (catalog, outcome and roster decision, and the retry-policy decision for a call closed with no outcome), `manual-settlement.ts` (that decision read and written for the dialer and the reaper), `softphone-audit.ts` (the one writer of `agency_session.softphone_started` / `.softphone_ended`), `call-fields.ts` (call-field values against the set in force), `session-guard.ts` (`setAvailableGuarded`: the `available` write and its `manual_call_live` refusal; `onSoftphoneBreak`, the one "on the soft phone" rule), `types.ts` (the refusal union and actor).
 
 Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-predial.ts`, `manual-settlement.ts`, `session-guard.ts`, `softphone-audit.ts`, `softphone-service.ts`, `types.ts`
 
@@ -411,7 +411,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 49 |
-| `apps/server/test/integration/api/softphone-routes.test.ts` | 14 |
+| `apps/server/test/integration/api/softphone-routes.test.ts` | 20 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 
 ### `apps/server/src/api/validators/`
@@ -1121,7 +1121,7 @@ Files: `abandonment-predicate.ts`, `break-manager.ts`, `index.ts`, `keyset-curso
 
 | Test file | Cases |
 |---|---|
-| `packages/domain/test/unit/agency/break-manager.test.ts` | 18 |
+| `packages/domain/test/unit/agency/break-manager.test.ts` | 20 |
 | `packages/domain/test/unit/agency/elapsed-seconds.test.ts` | 3 |
 | `packages/domain/test/unit/agency/keyset-cursor.test.ts` | 9 |
 | `packages/domain/test/unit/agency/retry-campaign-bounds.test.ts` | 4 |
