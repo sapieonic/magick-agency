@@ -109,6 +109,14 @@ describe('agent churn at floor scale (load)', () => {
     const midTalkExpired: string[] = [];
     const midTalkResumed: string[] = [];
     const ringDrops: string[] = [];
+    /**
+     * Attempts an agent came back ONTO: a reconnect inside the re-attach window
+     * resumes the agent's live attempt, ringing or talking. A mid-ring drop is never
+     * expired by this test, so an agent whose return lands while that call still
+     * rings is re-attached to it — the wifi blip the window exists for — and the
+     * answer then finds a station. That call is not abandoned.
+     */
+    const resumedOnto = new Set<string>();
     const tally = { breakIdle: 0, breakQueued: 0, dropIdle: 0, dropRinging: 0, dropTalking: 0, leave: 0, join: 0 };
 
     const comeBack = async (a: Agent, round: number) => {
@@ -116,6 +124,10 @@ describe('agent churn at floor scale (load)', () => {
         const { resumed } = await world.reconnect(a);
         if (resumed) {
           // Back onto a call that was still live: on the floor again, and busy.
+          const { rows } = await db.query<{ id: string }>(
+            `SELECT id FROM agency_call_attempts WHERE reserved_agent_id = $1 AND state <> 'ended'
+              ORDER BY created_at DESC LIMIT 1`, [a.sessionId]);
+          if (rows[0]) resumedOnto.add(rows[0].id);
           away.delete(a.sessionId);
           return;
         }
@@ -186,7 +198,8 @@ describe('agent churn at floor scale (load)', () => {
           away.set(a.sessionId, 'dropped');
           ringDrops.push(c.attemptId);
           tally.dropRinging++;
-          // Never back onto that attempt: the answer (if any) finds no station.
+          // Back later than the drop: if the call is still ringing then, the return
+          // re-attaches onto it (`resumedOnto`); otherwise its answer finds no station.
           schedule(round + rng.int(3, 5), () => comeBack(a, round));
         }
       }
@@ -402,10 +415,11 @@ describe('agent churn at floor scale (load)', () => {
       const n = abandoned.filter((a) => a.campaign_id === c.id).length;
       expect(await metricValue('agency_abandoned_total', { campaign_id: c.id }) ?? 0, `campaign ${c.spec.label} — ${summary}`).toBe(n);
     }
-    // A ring drop whose call was answered is abandoned; one that rang out is not.
+    // A ring drop whose call was answered with no station is abandoned; one that
+    // rang out, or whose agent came back onto it before the answer, is not.
     for (const id of ringDrops) {
       const a = outcomeOf.get(id)!;
-      if (a.answered_at) expect(a.outcome, `${id} — ${summary}`).toBe('abandoned');
+      if (a.answered_at && !resumedOnto.has(id)) expect(a.outcome, `${id} — ${summary}`).toBe('abandoned');
       else expect(a.outcome, `${id} — ${summary}`).not.toBe('abandoned');
     }
   }, 600_000);
