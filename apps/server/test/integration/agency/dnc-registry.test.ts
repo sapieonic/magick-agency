@@ -223,7 +223,7 @@ describe('DncRegistry + markDnc over real dnc_entries', () => {
     }
   });
 
-  it('findInFlightForAccount: the number in flight on any campaign of the account, by the in-flight index', async () => {
+  it('findInFlightForAccount: the number in flight on any campaign of the account, by an index read', async () => {
     const one = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
     const two = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
     const elsewhere = await insertAgencyCampaign({ tenant_id: tenant, account_id: otherAccount });
@@ -247,7 +247,11 @@ describe('DncRegistry + markDnc over real dnc_entries', () => {
         [tenant, account, PHONE.slice(1)],
       );
       const plan = rows.map((r: Record<string, string>) => r['QUERY PLAN']).join('\n');
-      expect(plan).toMatch(/idx_agency_contacts_in_flight/);
+      // An index read, never a scan of the contacts table. WHICH index is the planner's
+      // choice: `idx_agency_contacts_in_flight` on fresh statistics, and
+      // `idx_agency_contacts_phone` once a full run has filled the table, are both
+      // bounded reads, so the test pins the property rather than the plan.
+      expect(plan).toMatch(/Index (Only )?Scan|Bitmap Index Scan/);
       expect(plan).not.toMatch(/Seq Scan/);
     } finally {
       await client.query('ROLLBACK');
