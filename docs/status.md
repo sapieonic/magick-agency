@@ -225,13 +225,13 @@ test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7169 passed + 4 expected fail (340 files) | 1470 passed + 10 expected fail (154 files) |
+| `apps/server` | 7170 passed + 4 expected fail (340 files) | 1476 passed + 10 expected fail (154 files) |
 | `packages/db` | 427 | 495 (44 files) |
 | `apps/console` | 4808 (245 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 94 | — |
 | `packages/web-ui` | 235 | — |
-| `packages/domain` | 53 | — |
+| `packages/domain` | 55 | — |
 | `packages/observability` | 14 | — |
 
 Two load-suite files failed intermittently before the branch and passed in this run:
