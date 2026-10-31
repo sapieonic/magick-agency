@@ -83,7 +83,7 @@ describe('DncRegistry + markDnc over real dnc_entries', () => {
 
   it('the tenant escalation (campaignId omitted) writes a tenant-wide row', async () => {
     const r = await markDnc({ tenantId: tenant, phoneE164: PHONE });
-    expect(r.written).toEqual({ campaign_id: null });
+    expect(r.written).toEqual({ id: expect.any(String), campaign_id: null, account_id: null });
     expect(await check(account, otherCampaign)).toBe('suppressed');
   });
 
