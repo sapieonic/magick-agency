@@ -91,14 +91,20 @@ export interface ManualPredialDeps {
 
 type Refused = { ok: false; refusal: SoftphoneRefusal };
 
-/** An override note: absent → null; out of bounds → the refusal; else the trimmed text. */
+/**
+ * An override note: absent → null; out of bounds → the refusal; else the trimmed text.
+ * The bounds count CHARACTERS (code points), as `ck_agency_manual_call_*_override`'s
+ * `char_length` does: `.length` counts UTF-16 units, so an emoji would count twice and a
+ * note the database refuses (a 9-character one that reads as 10) could pass here.
+ */
 export function validateOverrideNote(
   raw: unknown,
   field: 'dnc_note' | 'hours_note',
 ): { ok: true; note: string | null } | Refused {
   if (raw === undefined || raw === null) return { ok: true, note: null };
   const note = typeof raw === 'string' ? raw.trim() : '';
-  if (typeof raw !== 'string' || note.length < SOFTPHONE_OVERRIDE_NOTE_MIN || note.length > SOFTPHONE_OVERRIDE_NOTE_MAX) {
+  const length = [...note].length;
+  if (typeof raw !== 'string' || length < SOFTPHONE_OVERRIDE_NOTE_MIN || length > SOFTPHONE_OVERRIDE_NOTE_MAX) {
     return {
       ok: false,
       refusal: {

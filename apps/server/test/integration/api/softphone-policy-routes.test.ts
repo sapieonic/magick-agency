@@ -543,6 +543,28 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 
+  // ── A7: an override note's length is counted in characters, as the CHECK counts it ──
+  it('an override note is counted in characters: 9 + an emoji is refused cleanly, 499 + an emoji is stored', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const { sessionId, station } = await openSoftphone(agent);
+    await getTestPool().query(
+      `INSERT INTO dnc_entries (tenant_id, phone_e164, source, reason) VALUES ($1, '+919811300060', 'import', 'listed')`, [tenant]);
+    // Ten UTF-16 units, nine characters: the database CHECK would refuse it (a 500), so
+    // the pre-dial does, with its own 400.
+    const short = await post('/proxy/agency/softphone/calls', agent, {
+      session_id: sessionId, to: '+919811300060', overrides: { dnc_note: '12345678😀' },
+    });
+    expect(short.statusCode, short.body).toBe(400);
+    expect(short.json().code).toBe('override_note_invalid');
+    // 501 units, 500 characters: within the CHECK, so placed and stored as written.
+    const long = `${'x'.repeat(499)}😀`;
+    const callId = await placeAndRingOut(agent, sessionId, station, '+919811300060', { overrides: { dnc_note: long } });
+    const { rows: [stored] } = await getTestPool().query(
+      'SELECT dnc_override_note, char_length(dnc_override_note) AS n FROM agency_manual_calls WHERE id = $1', [callId]);
+    expect(stored).toEqual({ dnc_override_note: long, n: 500 });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
   it('a supervisor reads it on the DNC list as an account entry', async () => {
     const list = await get('/dnc?phone=%2B919811300010', supervisor);
     expect(list.statusCode, list.body).toBe(200);

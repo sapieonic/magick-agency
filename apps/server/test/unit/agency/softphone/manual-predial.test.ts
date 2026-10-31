@@ -71,6 +71,15 @@ describe('override notes (10–500 characters after trimming)', () => {
     expect(validateOverrideNote(undefined, 'dnc_note')).toEqual({ ok: true, note: null });
   });
 
+  it('counts characters (code points), as the database CHECK does, not UTF-16 units', () => {
+    // Nine characters, ten UTF-16 units: the CHECK refuses it, so must this.
+    expect(validateOverrideNote('12345678😀', 'dnc_note').ok).toBe(false);
+    expect(validateOverrideNote('123456789😀', 'dnc_note')).toEqual({ ok: true, note: '123456789😀' });
+    // 500 characters, 501 units: within the CHECK, so within this.
+    expect(validateOverrideNote(`${'x'.repeat(499)}😀`, 'dnc_note').ok).toBe(true);
+    expect(validateOverrideNote(`${'x'.repeat(500)}😀`, 'dnc_note').ok).toBe(false);
+  });
+
   it('refuses outside them, and a non-string', () => {
     for (const raw of ['012345678', '          ', 'x'.repeat(501), 7, {}]) {
       const r = validateOverrideNote(raw, 'dnc_note');

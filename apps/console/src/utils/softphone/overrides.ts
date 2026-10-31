@@ -24,9 +24,17 @@ export type OverrideKind = 'dnc' | 'hours';
 
 export type OverrideNoteBlock = 'too_short' | 'too_long';
 
+/**
+ * A note's length as the server and the database count it: characters (code points)
+ * after trimming, so an emoji is one, not the two UTF-16 units `.length` reports.
+ */
+export function overrideNoteLength(note: string): number {
+  return [...note.trim()].length;
+}
+
 /** The note's length is checked after trimming, as the server does (`override_note_invalid`). */
 export function overrideNoteBlock(note: string): OverrideNoteBlock | null {
-  const length = note.trim().length;
+  const length = overrideNoteLength(note);
   if (length < SOFTPHONE_OVERRIDE_NOTE_MIN) return 'too_short';
   if (length > SOFTPHONE_OVERRIDE_NOTE_MAX) return 'too_long';
   return null;

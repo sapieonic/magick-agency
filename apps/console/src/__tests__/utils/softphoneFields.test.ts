@@ -15,7 +15,7 @@ import {
   newFieldRow,
 } from '../../utils/softphone/fieldSettings';
 import { draftFromSettings, payloadFromDraft, validateSettingsDraft } from '../../utils/softphone/settingsForm';
-import { overrideNoteBlock, withOverride } from '../../utils/softphone/overrides';
+import { overrideNoteBlock, overrideNoteLength, withOverride } from '../../utils/softphone/overrides';
 import { SOFTPHONE_REFUSAL_COPY } from '../../utils/softphone/refusalCopy';
 import { summariseCalls, queryFromDraft, EMPTY_SOFTPHONE_CALLS_DRAFT } from '../../utils/softphone/callStats';
 import { AGENCY_SOFTPHONE_ERROR_CODES, type AgencyCallField } from '../../types/softphone';
@@ -143,6 +143,12 @@ describe('override notes', () => {
   it('needs 10–500 characters after trimming', () => {
     expect(overrideNoteBlock('   short   ')).toBe('too_short');
     expect(overrideNoteBlock('Customer asked for this')).toBeNull();
+    // Characters, as the server and the database count them: an emoji is one, not two
+    // UTF-16 units (nine characters stay too short; 500 with an emoji are not too long).
+    expect(overrideNoteLength('12345678😀')).toBe(9);
+    expect(overrideNoteBlock('12345678😀')).toBe('too_short');
+    expect(overrideNoteBlock(`${'x'.repeat(499)}😀`)).toBeNull();
+    expect(overrideNoteBlock(`${'x'.repeat(500)}😀`)).toBe('too_long');
     expect(overrideNoteBlock('x'.repeat(501))).toBe('too_long');
   });
 

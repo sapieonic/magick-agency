@@ -3,6 +3,7 @@ import { Modal } from '@magick-agency/web-ui/components/Modal';
 import {
   OVERRIDE_NOTE_BLOCK_COPY,
   overrideNoteBlock,
+  overrideNoteLength,
 } from '../../utils/softphone/overrides';
 import { SOFTPHONE_OVERRIDE_NOTE_MAX } from '../../types/softphone';
 import type { OverridePrompt } from '../../hooks/useSoftphone';
@@ -48,7 +49,7 @@ export function OverrideDialog({
   if (!prompt) return null;
   const { description } = prompt;
   const block = overrideNoteBlock(note);
-  const trimmed = note.trim().length;
+  const trimmed = overrideNoteLength(note);
   const showBlock = note.length > 0 && block !== null;
 
   return (
