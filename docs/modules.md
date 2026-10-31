@@ -104,7 +104,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/chaos/restart-mid-bridge.test.ts` | ~2 |
 | `apps/server/test/integration/agency/chaos/roster-exactly-once.test.ts` | ~8 |
 | `apps/server/test/integration/agency/chaos/settle-write-failure.test.ts` | ~3 |
-| `apps/server/test/integration/agency/dnc-registry.test.ts` | ~14 |
+| `apps/server/test/integration/agency/dnc-registry.test.ts` | ~17 |
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
@@ -113,7 +113,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/softphone-mixed-data-reads.test.ts` | 5 |
 | `apps/server/test/integration/agency/softphone-session-join.test.ts` | ~9 |
 | `apps/server/test/integration/agency/softphone-session-route.test.ts` | 1 |
-| `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~6 |
+| `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~7 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
 | `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 27 |
