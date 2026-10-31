@@ -78,8 +78,10 @@ export function softphoneEnabled(request: FastifyRequest): Promise<boolean> {
  * without the permission is told that, and the RBAC refusal stays the one the agent-reach
  * sweep reads. A flag read that throws is a 500: fail closed.
  *
- * **Only on the routes that START work**: opening a soft-phone session, placing a call,
- * switching a campaign session to the soft phone, plus the recording and the settings.
+ * **Only on the routes that START work**: placing a call, switching a campaign session to
+ * the soft phone, plus the recording and the settings; opening a NEW soft-phone session is
+ * refused by the session route itself, which with the flag off only rehydrates an existing
+ * one (`rehydrate_only`), so a console reloaded mid-call can reconnect its station.
  * The routes that FINISH work already started — hang up, details, the outcome, Mark DNC,
  * the call reads, the return to the campaign, and bootstrap (which reports the flag as
  * `softphone_enabled`) — stay open while it is off, so an agent the flag is switched off

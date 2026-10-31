@@ -161,6 +161,8 @@ describe('floors and the flag', () => {
     `POST ${P}/softphone/calls/${CALL}/disposition`,
     `POST ${P}/softphone/calls/${CALL}/dnc`,
     `POST ${P}/sessions/${SESSION}/softphone/return`,
+    // Rehydrate only (`rehydrate_only`): an existing session comes back, none is opened.
+    `POST ${P}/softphone/sessions`,
   ]);
 
   it('with the flag off, the routes that start work answer 403 softphone_disabled without reaching the internal handler', async () => {
@@ -172,7 +174,6 @@ describe('floors and the flag', () => {
       'GET /softphone/settings',
       'POST /sessions/66666666-6666-4666-8666-666666666666/softphone',
       'POST /softphone/calls',
-      'POST /softphone/sessions',
       'PUT /softphone/settings',
     ]);
     for (const r of starts) {
@@ -193,6 +194,16 @@ describe('floors and the flag', () => {
       expect(res.json()?.code, `${r.method} ${r.url}`).not.toBe('softphone_disabled');
       expect(mocks.callCore, `${r.method} ${r.url}`).toHaveBeenCalledTimes(1);
     }
+  });
+
+  it('the session open asks the internal handler to rehydrate only while the flag is off', async () => {
+    mocks.callCore.mockResolvedValue(plain({ session_id: SESSION, station_ws_url: `/api/v1/agency/station/${SESSION}?token=t` }, 200));
+    const agent = await appAs('agent');
+    await agent.inject({ method: 'POST', url: `${P}/softphone/sessions`, payload: { rehydrate_only: false } });
+    expect(lastCore().body).toEqual({ agent_user_id: AGENT });
+    mocks.flagEnabled.mockResolvedValue(false);
+    await agent.inject({ method: 'POST', url: `${P}/softphone/sessions`, payload: {} });
+    expect(lastCore().body).toEqual({ agent_user_id: AGENT, rehydrate_only: true });
   });
 
   it('bootstrap reports the flag as softphone_enabled (a failed read reports it off)', async () => {

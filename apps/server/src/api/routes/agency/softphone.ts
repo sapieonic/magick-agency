@@ -303,6 +303,15 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
   sub.post('/softphone/sessions', async (request, reply) => {
     const actor = bodyActor(request, reply);
     if (!actor) return reply;
+    // `rehydrate_only` (the public layer, with `agency_softphone_enabled` off): only the
+    // agent's existing live soft-phone session in this account comes back, so a
+    // reloaded console can finish its call; nothing new is opened.
+    if ((request.body as { rehydrate_only?: unknown } | undefined)?.rehydrate_only === true) {
+      const existing = await agencyAgentSessionRepository.findLiveForAgent(actor.tenantId, actor.userId);
+      if (!existing || existing.left_at || existing.kind !== 'softphone' || existing.account_id !== actor.accountId) {
+        return sendSoftphoneRefusal(reply, { code: 'softphone_disabled' });
+      }
+    }
     const join = await agencyAgentSessionRepository.joinSoftphone({
       tenantId: actor.tenantId, accountId: actor.accountId, agentUserId: actor.userId, replicaId: runtime.replicaId,
     });

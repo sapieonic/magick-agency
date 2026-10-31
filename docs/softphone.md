@@ -258,12 +258,15 @@ placed in the window, at the outcome.
 Public routes in `api/routes/proxy-agency-softphone.routes.ts` (with `proxy-agency-softphone/`),
 registered by the agency plugin under `/proxy/agency`; each runs an internal handler
 (`api/routes/agency/softphone.ts`, under `/api/v1/agency`) through `callCore` (B16). Every route
-authenticates and applies its RBAC floor. The routes that START work — open a soft-phone session,
-place a call, switch a campaign session to the soft phone — and the recording and settings then
+authenticates and applies its RBAC floor. The routes that START work — open a NEW soft-phone
+session, place a call, switch a campaign session to the soft phone — and the recording and settings then
 require `agency_softphone_enabled` (403 `softphone_disabled`; after RBAC, so a caller without the
 permission is told that). The routes that FINISH work already started are not gated, so an agent
 the flag is switched off under mid-call is never stranded: details, hang-up, the outcome, Mark
-DNC, `GET /softphone/calls` and `/calls/:id`, `/sessions/:id/softphone/return`, and bootstrap,
+DNC, `GET /softphone/calls` and `/calls/:id`, `/sessions/:id/softphone/return`, `POST
+/softphone/sessions` when it REHYDRATES the agent's existing live soft-phone session in the account
+(200 with its station details, so a console reloaded mid-call reconnects; with no such session it
+is `softphone_disabled` and nothing is opened), and bootstrap,
 which reports the flag as `softphone_enabled` (the console shows only the finish view when it is
 `false`; a failed flag read reports `false`). Each route then validates its
 body or query (ids are UUIDs at the edge; a malformed `:id` is the family's not-found), and answers a
@@ -281,7 +284,7 @@ from `audit` (a success without the envelope is a 502).
 | Method and path (`/proxy/agency`) | Permission | What |
 |---|---|---|
 | `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
-| `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state` |
+| `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state`. With the flag off it only rehydrates an existing live soft-phone session in this account (the internal handler's `rehydrate_only`); else 403 `softphone_disabled` |
 | `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
@@ -418,7 +421,10 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
 - **My calls** has a "Soft-phone calls" tab (`?view=softphone`).
-- **DNC page.** Its copy says DNC applies to the soft phone, with an audited override (SP1).
+- **DNC page.** Where `agency_softphone_enabled` is on, its copy says exactly what the soft phone
+  reads (a tagged call the tag's scopes; an untagged one the workspace's, its account's and any of
+  the account's campaigns'), with an audited override (SP1), and the account and campaign scope
+  tooltips say the soft phone honours them; where it is off, the page does not mention the soft phone.
 
 ## 8. Not built (yet)
 

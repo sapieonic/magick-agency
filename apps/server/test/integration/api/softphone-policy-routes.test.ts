@@ -463,6 +463,39 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 
+  it('the flag off: a reloaded console rehydrates its existing soft-phone session; nobody opens a new one', async () => {
+    const dimmed = await freshAccount();
+    const agent = await user(tenant, dimmed, 'agent');
+    const other = await user(tenant, dimmed, 'agent');
+    const { sessionId, station } = await openSoftphone(agent);
+    const callId = await placeOwingAnOutcome(agent, sessionId, station, '+919811300035');
+    await getTestPool().query(
+      `INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, account_id, value)
+       VALUES ('agency_softphone_enabled', 'account', $1, $2, 'false'::jsonb)`, [tenant, dimmed]);
+    await getFeatureFlagService().invalidate({ tenantId: tenant });
+
+    // The reload: the same session, 200, with what the station needs to reconnect.
+    const again = await post('/proxy/agency/softphone/sessions', agent);
+    expect(again.statusCode, again.body).toBe(200);
+    expect(again.json()).toMatchObject({
+      session_id: sessionId, kind: 'softphone', state: 'break', break_reason: 'soft_phone', intervals: expect.any(Object),
+    });
+    expect(again.json().station_ws_url).toMatch(new RegExp(`^/proxy/agency/station/${sessionId}\\?token=`));
+    const back = await connect(again.json().station_ws_url);
+    expect(await waitFor('the owed call after ready', () => lastCall(back))).toMatchObject({ id: callId, requires_disposition: true });
+    // An agent with no soft-phone session is not given one.
+    const fresh = await post('/proxy/agency/softphone/sessions', other);
+    expect(fresh.statusCode).toBe(403);
+    expect(fresh.json().code).toBe('softphone_disabled');
+    const { rows } = await getTestPool().query('SELECT id FROM agency_agent_sessions WHERE agent_user_id = $1', [other.id]);
+    expect(rows).toHaveLength(0);
+
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'voicemail' })).statusCode).toBe(200);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+    // Left: nothing to rehydrate any more.
+    expect((await post('/proxy/agency/softphone/sessions', agent)).json().code).toBe('softphone_disabled');
+  }, 40_000);
+
   // ── 4. Taggable campaigns (§6 bootstrap, `SoftphoneService.taggable`) ──────────────
   it('listSoftphoneTaggable: running and paused only, the staffing filter before the cap', async () => {
     const acct = (await insertAccount({ tenant_id: tenant })).id as string;

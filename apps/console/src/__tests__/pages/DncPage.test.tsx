@@ -26,9 +26,15 @@ const mocks = vi.hoisted(() => ({
   removeDncEntry: vi.fn(),
   showToast: vi.fn(),
   showErrorToast: vi.fn(),
+  /** The client flags on; the soft phone's, unless a test turns it off. */
+  flags: new Set<string>(['agency_softphone_enabled']),
 }));
 
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
+vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
+  SOFTPHONE_FLAG: 'agency_softphone_enabled',
+  useFeatureFlagEnabled: (flag: string) => mocks.flags.has(flag),
+}));
 vi.mock('../../hooks/useTeam', () => ({ useTeam: mocks.useTeam }));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: mocks.showErrorToast }),
@@ -146,7 +152,7 @@ describe('DNC — scope, and what actually suppresses a call', () => {
     // UNDER-claim guard: the dial-time check reads the account's rows (B8), so it must
     // not say a contact already imported can still be called.
     expect(title).toContain('none of that account’s campaigns will dial this number');
-    expect(title).toContain('the soft phone stops a call to it from that account');
+    expect(title).toContain('The soft phone stops a call to it from that account');
     expect(title).not.toMatch(/import only|already imported|block list/i);
     // OVER-claim guard: other accounts are untouched.
     expect(title).toContain('Campaigns in other accounts are unaffected');
@@ -220,6 +226,23 @@ describe('DNC — agency-only, and the copy has to say so', () => {
     expect(document.body.textContent).toMatch(/a call logged to a campaign is stopped by the entries that campaign honours/);
     expect(document.body.textContent).toMatch(/a call logged to no campaign by an entry for the workspace, its account or any of the account’s campaigns/);
     expect(document.body.textContent).toMatch(/writing down why — that reason is logged with their name/);
+  });
+
+  it('says nothing about the soft phone where it is off (agency_softphone_enabled)', async () => {
+    mocks.flags.delete('agency_softphone_enabled');
+    try {
+      mocks.listDncEntries.mockResolvedValue(page([entry({ account_id: 'account-9' })]));
+      render(<DncPage />);
+      const badge = await screen.findByTestId('dnc-scope-account');
+      // Positive first, so the negatives cannot pass on a page that failed to render.
+      expect(document.body.textContent).toMatch(/Agency campaigns don’t dial the numbers on this list/);
+      expect(document.body.textContent).toMatch(/Agents add numbers from the station when a customer asks/);
+      expect(document.body.textContent).not.toMatch(/soft phone/i);
+      expect(badge.getAttribute('title')).toContain('none of that account’s campaigns will dial this number');
+      expect(badge.getAttribute('title')).not.toMatch(/soft phone/i);
+    } finally {
+      mocks.flags.add('agency_softphone_enabled');
+    }
   });
 
   it('never presents itself as platform-wide regulatory compliance', async () => {

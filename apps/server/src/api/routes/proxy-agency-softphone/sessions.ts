@@ -20,6 +20,7 @@ import {
   sendCoreRefusal,
   softphoneActorOrRefuse,
   softphoneAuditTenancy,
+  softphoneEnabled,
   unwrapCoreAnswer,
 } from './shared.js';
 
@@ -28,7 +29,8 @@ const emptyBody = z.object({}).strip();
 
 export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Promise<void> {
   const dial = [requirePermission('agency.softphone.dial'), requireSoftphoneEnabled];
-  // The return to the campaign finishes work, so the flag never refuses it (`shared.ts`).
+  // The return to the campaign finishes work, so the flag never refuses it (`shared.ts`);
+  // nor the session open, which with the flag off only rehydrates an existing session.
   const finish = [requirePermission('agency.softphone.dial')];
 
   /**
@@ -37,16 +39,22 @@ export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Prom
    * campaign and state) when the agent is live on a campaign: the remedy is the switch
    * on that session, never a second one. `station_ws_url` is rewritten onto
    * `/proxy/agency/station` as the campaign join's is.
+   *
+   * With `agency_softphone_enabled` off, only an EXISTING live soft-phone session in
+   * this account is rehydrated (200, its station details), so a console reloaded mid-call
+   * can reconnect its station and finish; opening a new one is `softphone_disabled`
+   * (the internal handler's `rehydrate_only`). A flag read that throws is a 500.
    */
-  app.post('/softphone/sessions', { preHandler: dial }, async (request, reply) => {
+  app.post('/softphone/sessions', { preHandler: finish }, async (request, reply) => {
     if (!parseOr400(emptyBody, request.body ?? {}, reply, 'agency')) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
     if (!actor) return reply;
+    const enabled = await softphoneEnabled(request);
     const result = await callCore({
       method: 'POST',
       path: '/agency/softphone/sessions',
       // Only the agent: nobody opens a soft-phone session for someone else.
-      body: { agent_user_id: actor.agent_user_id },
+      body: { agent_user_id: actor.agent_user_id, ...(enabled ? {} : { rehydrate_only: true }) },
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });

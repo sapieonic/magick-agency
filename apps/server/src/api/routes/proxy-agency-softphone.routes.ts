@@ -12,7 +12,7 @@ import { registerSoftphoneSettingsRoutes } from './proxy-agency-softphone/settin
  * `/proxy/agency` (decision B16): `/softphone/*` and the two switch routes on a campaign
  * session (`/sessions/:id/softphone`, `/sessions/:id/softphone/return`, §4.2). Each route
  * authenticates (session, tenant context) and applies its RBAC floor; a route that STARTS
- * work (open a session, dial, switch) or reads the recording or settings then requires
+ * work (dial, switch; a NEW session is refused by its route) or reads the recording or settings then requires
  * `agency_softphone_enabled` (`softphone_disabled`, 403), while the routes that FINISH a
  * call already started do not (`shared.ts`, `requireSoftphoneEnabled`). Each validates its
  * body or query and runs the internal handler (`agency/softphone.ts`) in-process through

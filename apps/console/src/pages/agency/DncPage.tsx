@@ -11,6 +11,7 @@ import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { PageDescription } from '../../components/common/PageDescription';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import {
   DNC_SOURCE_LABELS,
   type DncAddSummary,
@@ -86,6 +87,15 @@ const SCOPE_LABEL: Record<DncScopeKind, string> = {
   account: 'One account',
 };
 
+/**
+ * The soft-phone half of each scoped row's tooltip, shown only where the soft phone is on
+ * (`agency_softphone_enabled`): where it is off, no soft-phone call exists to be stopped.
+ */
+const SCOPE_SOFTPHONE_NOTE: Partial<Record<DncScopeKind, string>> = {
+  campaign: ' A soft-phone call from the same account that is not logged to a campaign is stopped too.',
+  account: ' The soft phone stops a call to it from that account.',
+};
+
 const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   // "Enforced everywhere" is what this said, and it was the widest claim on the
   // page — read as every kind of call honouring the number. DNC is an
@@ -99,14 +109,12 @@ const SCOPE_TOOLTIP: Record<DncScopeKind, string> = {
   campaign:
     'Enforced for one campaign only: that campaign won’t dial this number and drops it from its '
     + 'roster imports, and an agent’s mid-call mark also suppresses the contacts already on it. '
-    + 'A soft-phone call from the same account that is not logged to a campaign is stopped too. '
     + 'Every other campaign in this workspace can still call this number. Add a workspace-wide '
     + 'entry if the customer asked never to be called.',
   account:
-    'Enforced for one account: none of that account’s campaigns will dial this number, the soft '
-    + 'phone stops a call to it from that account, and it is dropped from that account’s roster '
-    + 'imports. Campaigns in other accounts are unaffected. Add a workspace-wide entry if the '
-    + 'customer asked never to be called.',
+    'Enforced for one account: none of that account’s campaigns will dial this number, and it is '
+    + 'dropped from that account’s roster imports. Campaigns in other accounts are unaffected. Add '
+    + 'a workspace-wide entry if the customer asked never to be called.',
 };
 
 /**
@@ -131,6 +139,7 @@ const SOURCE_TOOLTIP: Partial<Record<DncSource, string>> = {
 
 export function DncPage() {
   const { tenantId, accountId, role } = useTenant();
+  const softphoneOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const { showToast, showErrorToast } = useToast();
 
   const [entries, setEntries] = useState<DncEntry[]>([]);
@@ -280,13 +289,18 @@ export function DncPage() {
         pageKey="agency-dnc"
         description={
           'Agency campaigns don’t dial the numbers on this list — every campaign for a '
-          + 'workspace-wide entry, or only the campaign or account the Scope column names. The soft '
-          + 'phone checks it too: a call logged to a campaign is stopped by the entries that campaign '
-          + 'honours, and a call logged to no campaign by an entry for the workspace, its account or '
-          + 'any of the account’s campaigns. An agent who is stopped can call only by writing down '
-          + 'why — that reason is logged with their name. It does not apply to AI calls or '
-          + 'broadcasts. Agents add numbers from the station and the soft phone when a customer asks; '
-          + 'you can also add them in bulk here.'
+          + 'workspace-wide entry, or only the campaign or account the Scope column names. '
+          // The soft phone's sentence only where it is on (SP4): elsewhere it describes a
+          // surface the account does not have.
+          + (softphoneOn
+            ? 'The soft phone checks it too: a call logged to a campaign is stopped by the entries that '
+              + 'campaign honours, and a call logged to no campaign by an entry for the workspace, its '
+              + 'account or any of the account’s campaigns. An agent who is stopped can call only by '
+              + 'writing down why — that reason is logged with their name. '
+            : '')
+          + 'It does not apply to AI calls or broadcasts. Agents add numbers '
+          + (softphoneOn ? 'from the station and the soft phone ' : 'from the station ')
+          + 'when a customer asks; you can also add them in bulk here.'
         }
         tips={[
           'A workspace-wide entry blocks the number in every agency campaign and account.',
@@ -429,7 +443,7 @@ export function DncPage() {
                       return (
                         <span
                           className={kind === 'tenant' ? styles.scopeGlobal : styles.scopeNarrow}
-                          title={SCOPE_TOOLTIP[kind]}
+                          title={SCOPE_TOOLTIP[kind] + (softphoneOn ? SCOPE_SOFTPHONE_NOTE[kind] ?? '' : '')}
                           data-testid={`dnc-scope-${kind}`}
                         >
                           {SCOPE_LABEL[kind]}

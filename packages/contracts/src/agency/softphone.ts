@@ -507,9 +507,10 @@ export interface AgencySoftphoneBootstrap {
    * `agency_softphone_enabled` for the caller's tenant and account, read by the public
    * API layer. Bootstrap answers while it is off, as do the routes that FINISH work
    * already started (hang up, details, outcome, Mark DNC, the call reads, the return
-   * to the campaign; docs/softphone.md §6), so an agent the flag was switched off
-   * under can finish their call: with `false` the console offers only that. Starting
-   * work (open a session, dial, switch) is refused `softphone_disabled`.
+   * to the campaign, and `POST /sessions` rehydrating an existing soft-phone session;
+   * docs/softphone.md §6), so an agent the flag was switched off under can finish their
+   * call: with `false` the console offers only that. Starting work (open a new session,
+   * dial, switch) is refused `softphone_disabled`.
    */
   softphone_enabled: boolean;
   taggable_campaigns: AgencySoftphoneCampaign[];
