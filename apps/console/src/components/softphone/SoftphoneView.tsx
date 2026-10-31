@@ -59,7 +59,8 @@ export function SoftphoneView({
     const previous = previousCallId.current;
     previousCallId.current = callId;
     if (callId !== null && previous !== callId) bodyRef.current?.focus();
-    if (callId === null && previous !== null) numberInputRef.current?.focus();
+    // Finish mode has no number field: the body, so focus is never left on a removed control.
+    if (callId === null && previous !== null) (numberInputRef.current ?? bodyRef.current)?.focus();
   }, [callId]);
 
   useEffect(() => {

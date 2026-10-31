@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { agentLandingPath } from '../../utils/agencyStationExit';
 import styles from './AgentStation.module.css';
@@ -32,6 +33,12 @@ export function SoftphoneJoinScreen({
   callPending: boolean;
   onCloseAndJoin: () => void;
 }) {
+  // The button the agent pressed is replaced by the reason: focus goes to what
+  // they can do about it, not back to the top of the page.
+  const openRef = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    if (callPending) openRef.current?.focus();
+  }, [callPending]);
   return (
     <div className={styles.shell}>
       <div className={styles.fatal} role="alert" data-testid="join-on-softphone">
@@ -60,6 +67,7 @@ export function SoftphoneJoinScreen({
           </p>
         ) : null}
         <Link
+          ref={openRef}
           className={callPending ? styles.fatalAction : styles.fatalEscape}
           to="/dialer/phone"
           data-testid="join-open-softphone"

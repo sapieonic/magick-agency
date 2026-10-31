@@ -628,6 +628,9 @@ describe('finish mode: the soft phone turned off for the account', () => {
       fireEvent.click(screen.getByTestId('softphone-save'));
     });
     expect(api.dispositionManualCall).toHaveBeenCalled();
+    // Settled, in finish mode: no number field to land on, so focus is the body's.
+    expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/can’t start new calls/);
+    expect(document.activeElement).toBe(screen.getByTestId('softphone-body'));
   });
 
   it('once nothing is left to finish there is no dial pad: no number field, keypad, Call or redial', async () => {

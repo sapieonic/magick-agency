@@ -417,6 +417,7 @@ describe('joining a campaign while on the soft phone', () => {
     // The way to finish it is the one action left.
     expect(screen.queryByRole('button', { name: 'Close the soft phone and join' })).toBeNull();
     expect(screen.getByTestId('join-open-softphone').getAttribute('href')).toBe('/dialer/phone');
+    expect(document.activeElement).toBe(screen.getByTestId('join-open-softphone'));
   });
 
   it('a live call the server refuses to leave (agent_on_live_call) says the same, and joins nothing', async () => {
