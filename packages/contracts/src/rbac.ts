@@ -225,7 +225,10 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // permission, and like the four above it acts only on the caller's own
   // session and calls: the dialer runtime checks the manual call's session is
   // the caller's, and acting on someone else's call (an outcome on behalf, the
-  // account-wide list) needs `agency.supervise` as well. Every soft-phone route
+  // account-wide list) needs `agency.supervise` as well. So does hearing or reading a
+  // call's media, even the caller's own: a soft-phone call's recording, transcript
+  // and AI analysis are supervise-only, as a campaign call's are (no recordings, no
+  // analytics, above); DIAL reads the call record only. Every soft-phone route
   // also requires the flag, so the floor alone grants nothing in an account that
   // has not turned the feature on.
   //

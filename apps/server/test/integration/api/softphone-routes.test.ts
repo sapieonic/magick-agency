@@ -405,6 +405,8 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect((await get(`/proxy/agency/softphone/calls?phone=12ab`, agent)).statusCode).toBe(400);
     expect((await get(`/proxy/agency/softphone/calls?campaign_id=not-a-uuid`, agent)).statusCode).toBe(400);
 
+    // The agent reads their own call's record; its media leg (recording, transcript,
+    // analysis) is supervise-only, as a campaign call's is.
     const detail = await get(`/proxy/agency/softphone/calls/${call.id}`, agent);
     expect(detail.statusCode, detail.body).toBe(200);
     expect(detail.json()).toMatchObject({
@@ -412,13 +414,15 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
       dispositioned_by_name: expect.any(String),
       overrides: { dnc_note: null, dnc_entry_id: null, hours_note: null },
       call_availability: 'available',
-      media: { id: leg, recording_url: null },
+      media: null,
     });
 
-    // A supervisor reads every call in the account.
+    // A supervisor reads every call in the account, with its media leg.
     const supList = await get(`/proxy/agency/softphone/calls?agent_user_id=${agent.id}`, supervisor);
     expect(supList.json().rows.map((r: { id: string }) => r.id)).toEqual([call.id]);
-    expect((await get(`/proxy/agency/softphone/calls/${call.id}`, supervisor)).statusCode).toBe(200);
+    const supDetail = await get(`/proxy/agency/softphone/calls/${call.id}`, supervisor);
+    expect(supDetail.statusCode).toBe(200);
+    expect(supDetail.json().media).toMatchObject({ id: leg, recording_url: null });
 
     const [placedRow] = await auditRows('agency_manual_call.placed', call.id);
     expect(placedRow).toMatchObject({
@@ -822,16 +826,17 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(malformed.statusCode).toBe(404);
     expect(malformed.json().code).toBe('call_not_found');
 
-    // Recording: own call → past the gates (no recording on a fake carrier: 404 without a code);
-    // a colleague → 404 call_not_found; an account without allow_recording → 403.
+    // Recording: supervise-only, the agent's own call included (RBAC 403); a supervisor →
+    // past the gates (no recording on a fake carrier: 404 without a code); an account
+    // without allow_recording → 403.
     const own = await get(`/proxy/agency/softphone/calls/${callId}/recording`, agent);
-    expect(own.statusCode).toBe(404);
-    expect(own.headers['content-type']).toMatch(/json/);
-    expect(own.json().code).toBeUndefined();
-    const theirs = await get(`/proxy/agency/softphone/calls/${callId}/recording`, colleague);
-    expect(theirs.statusCode).toBe(404);
-    expect(theirs.json().code).toBe('call_not_found');
-    expect((await get(`/proxy/agency/softphone/calls/${callId}/recording`, supervisor)).statusCode).toBe(404);
+    expect(own.statusCode).toBe(403);
+    expect(own.json().message).toMatch(/Insufficient permissions/);
+    expect((await get(`/proxy/agency/softphone/calls/${callId}/recording`, colleague)).statusCode).toBe(403);
+    const sup = await get(`/proxy/agency/softphone/calls/${callId}/recording`, supervisor);
+    expect(sup.statusCode).toBe(404);
+    expect(sup.headers['content-type']).toMatch(/json/);
+    expect(sup.json().code).toBeUndefined();
     const noRecording = await get(`/proxy/agency/softphone/calls/${callId}/recording`, siblingSupervisor, sibling);
     expect(noRecording.statusCode).toBe(403);
     expect(noRecording.json()).toEqual({ error: 'capability_disabled', capability: 'agency.recording' });

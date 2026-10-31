@@ -132,7 +132,11 @@ export interface AgencyManualCallDetail {
    */
   dispositioned_by_name?: string | null;
   overrides: AgencyManualCallOverrides;
-  /** Null whenever `call_availability` is not `available`. */
+  /**
+   * Null whenever `call_availability` is not `available`, and always for a caller
+   * without `agency.supervise`: a call's recording, transcript and analysis are
+   * supervise-only, the caller's own call included.
+   */
   media: WebRtcCallRecord | null;
   /** `never_placed`: refused or failed before the media leg was created. */
   call_availability: AgencyCallAvailability;

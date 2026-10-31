@@ -300,25 +300,45 @@ describe('GET /softphone/calls/:id and its recording', () => {
     repos.calls.findByIdScoped.mockResolvedValue(null);
     expect((await get(`/softphone/calls/${CALL}?actor_user_id=${AGENT}`)).json()).toMatchObject({ call_availability: 'purged', media: null });
     repos.calls.findByIdScoped.mockResolvedValue({ id: LEG, recording_url: 'https://rec' });
-    const available = (await get(`/softphone/calls/${CALL}?actor_user_id=${AGENT}`)).json();
+    const available = (await get(`/softphone/calls/${CALL}?actor_user_id=${AGENT}&supervise=true`)).json();
     expect(available.call_availability).toBe('available');
     expect(available.media.recording_url).toBe(`/api/v1/agency/softphone/calls/${CALL}/recording`);
     expect(repos.calls.findByIdScoped).toHaveBeenCalledWith(LEG, TENANT, ACCOUNT, 'agency');
   });
 
-  it('the recording: call_never_placed, call_purged, another agent\'s → call_not_found, own → the proxy', async () => {
+  it('an agent reading their own call gets the record, never the media leg (recording, transcript, analysis)', async () => {
+    repos.manual.findById.mockResolvedValue(row({ notes: 'n', fields: { policy_no: 'P1' } }));
+    repos.calls.findByIdScoped.mockResolvedValue({ id: LEG, recording_url: 'https://rec', call_analysis: { summary: 's' } });
+    const own = await get(`/softphone/calls/${CALL}?actor_user_id=${AGENT}`);
+    expect(own.statusCode).toBe(200);
+    expect(own.json()).toMatchObject({ call: { id: CALL }, call_availability: 'available', media: null });
+    expect(own.body).not.toContain('https://rec');
+  });
+
+  it('the recording (supervise): call_never_placed, call_purged, out of the account → call_not_found, else the proxy', async () => {
+    const sup = `actor_user_id=${AGENT}&supervise=true`;
     repos.manual.findById.mockResolvedValue(row({ webrtc_call_id: null }));
-    expect((await get(`/softphone/calls/${CALL}/recording?actor_user_id=${AGENT}`)).json().code).toBe('call_never_placed');
+    expect((await get(`/softphone/calls/${CALL}/recording?${sup}`)).json().code).toBe('call_never_placed');
     repos.manual.findById.mockResolvedValue(row());
     repos.calls.findByIdScoped.mockResolvedValue(null);
-    expect((await get(`/softphone/calls/${CALL}/recording?actor_user_id=${AGENT}`)).json().code).toBe('call_purged');
+    expect((await get(`/softphone/calls/${CALL}/recording?${sup}`)).json().code).toBe('call_purged');
+    repos.manual.findById.mockResolvedValue(null);
+    expect((await get(`/softphone/calls/${CALL}/recording?${sup}`)).json().code).toBe('call_not_found');
     repos.manual.findById.mockResolvedValue(row({ agent_user_id: COLLEAGUE }));
-    expect((await get(`/softphone/calls/${CALL}/recording?actor_user_id=${AGENT}`)).json().code).toBe('call_not_found');
+    repos.calls.findByIdScoped.mockResolvedValue({ id: LEG, recording_url: 'https://rec' });
+    const any = await get(`/softphone/calls/${CALL}/recording?${sup}`);
+    expect(any.statusCode).toBe(200);
+    expect(any.body).toBe('bytes');
+  });
+
+  it('the recording refuses an agent, their own call included, before any read', async () => {
+    repos.manual.findById.mockClear();
     repos.manual.findById.mockResolvedValue(row());
     repos.calls.findByIdScoped.mockResolvedValue({ id: LEG, recording_url: 'https://rec' });
     const own = await get(`/softphone/calls/${CALL}/recording?actor_user_id=${AGENT}`);
-    expect(own.statusCode).toBe(200);
-    expect(own.body).toBe('bytes');
+    expect(own.statusCode).toBe(403);
+    expect(own.json()).toEqual({ error: 'Forbidden', message: 'Insufficient permissions. Required: agency.supervise' });
+    expect(repos.manual.findById).not.toHaveBeenCalled();
   });
 });
 

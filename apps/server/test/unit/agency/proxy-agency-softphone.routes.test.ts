@@ -109,13 +109,14 @@ beforeEach(() => {
 });
 
 /** Every soft-phone route, with a body that passes its schema. */
-const ROUTES: Array<{ method: 'GET' | 'POST' | 'PATCH' | 'PUT'; url: string; body?: unknown; floor: 'dial' | 'manage' }> = [
+const ROUTES: Array<{ method: 'GET' | 'POST' | 'PATCH' | 'PUT'; url: string; body?: unknown; floor: 'dial' | 'supervise' | 'manage' }> = [
   { method: 'GET', url: `${P}/softphone/bootstrap`, floor: 'dial' },
   { method: 'POST', url: `${P}/softphone/sessions`, body: {}, floor: 'dial' },
   { method: 'POST', url: `${P}/softphone/calls`, body: { session_id: SESSION, to: '9811100001' }, floor: 'dial' },
   { method: 'GET', url: `${P}/softphone/calls`, floor: 'dial' },
   { method: 'GET', url: `${P}/softphone/calls/${CALL}`, floor: 'dial' },
-  { method: 'GET', url: `${P}/softphone/calls/${CALL}/recording`, floor: 'dial' },
+  // A call's recording is supervise-only, the caller's own included (docs/softphone.md §6).
+  { method: 'GET', url: `${P}/softphone/calls/${CALL}/recording`, floor: 'supervise' },
   { method: 'PATCH', url: `${P}/softphone/calls/${CALL}`, body: { notes: 'x' }, floor: 'dial' },
   { method: 'POST', url: `${P}/softphone/calls/${CALL}/hangup`, body: {}, floor: 'dial' },
   { method: 'POST', url: `${P}/softphone/calls/${CALL}/disposition`, body: { code: 'interested' }, floor: 'dial' },
@@ -134,14 +135,14 @@ const rbac403 = (res: { statusCode: number; body: string }) =>
   res.statusCode === 403 && /Insufficient permissions/.test(res.body);
 
 describe('floors and the flag', () => {
-  it('an agent and a viewer reach every route but PUT /settings; an account admin reaches all', async () => {
+  it('an agent and a viewer reach every route but PUT /settings and the recording; an account admin reaches all', async () => {
     const agent = await appAs('agent');
     const viewer = await appAs('viewer');
     const admin = await appAs('account_admin');
     for (const r of ROUTES) {
-      expect(rbac403(await call(agent, r)), `agent ${r.method} ${r.url}`).toBe(r.floor === 'manage');
+      expect(rbac403(await call(agent, r)), `agent ${r.method} ${r.url}`).toBe(r.floor !== 'dial');
       // `viewer` sits above `agent` in the hierarchy, so it holds the agent floor too.
-      expect(rbac403(await call(viewer, r)), `viewer ${r.method} ${r.url}`).toBe(r.floor === 'manage');
+      expect(rbac403(await call(viewer, r)), `viewer ${r.method} ${r.url}`).toBe(r.floor !== 'dial');
       expect(rbac403(await call(admin, r)), `admin ${r.method} ${r.url}`).toBe(false);
     }
   });
@@ -357,7 +358,12 @@ describe('enrichment', () => {
     mocks.callCore.mockResolvedValue(plain({
       call: wireCall(), overrides: { dnc_note: null, dnc_entry_id: null, hours_note: null }, media, call_availability: 'available',
     }));
-    const app = await appAs('agent');
+    // An agent never gets the media leg, even should the internal handler send one.
+    const agent = await appAs('agent');
+    const own = await agent.inject({ method: 'GET', url: `${P}/softphone/calls/${CALL}` });
+    expect(own.json()).toMatchObject({ call: { agent_name: 'Asha Agent' }, media: null, call_availability: 'available' });
+    expect(own.body).not.toContain('call_analysis');
+    const app = await appAs('account_admin');
     const full = await app.inject({ method: 'GET', url: `${P}/softphone/calls/${CALL}` });
     expect(full.json()).toMatchObject({
       call: { agent_name: 'Asha Agent' },
@@ -387,7 +393,7 @@ describe('enrichment', () => {
 describe('the recording route', () => {
   it('403 capability_disabled without allow_recording, before the internal handler', async () => {
     mocks.accountSettings.mockResolvedValue({ allow_recording: false, analyze_calls: true });
-    const app = await appAs('agent');
+    const app = await appAs('account_admin');
     const res = await app.inject({ method: 'GET', url: `${P}/softphone/calls/${CALL}/recording` });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toEqual({ error: 'capability_disabled', capability: 'agency.recording' });
@@ -396,12 +402,12 @@ describe('the recording route', () => {
 
   it('a settings read that fails is nothing granted (fail closed)', async () => {
     mocks.accountSettings.mockRejectedValue(new Error('down'));
-    const app = await appAs('agent');
+    const app = await appAs('account_admin');
     expect((await app.inject({ method: 'GET', url: `${P}/softphone/calls/${CALL}/recording` })).statusCode).toBe(403);
   });
 
   it('streams the bytes with the range forwarded; a buffered refusal is decoded to JSON', async () => {
-    const app = await appAs('agent');
+    const app = await appAs('account_admin');
     mocks.callCore.mockResolvedValue(plain(Buffer.from('ID3audio'), 206, {
       'content-type': 'audio/mpeg', 'content-length': '8', 'content-range': 'bytes 0-7/100',
     }));
@@ -410,7 +416,7 @@ describe('the recording route', () => {
     expect(ok.headers['content-type']).toBe('audio/mpeg');
     expect(ok.headers['content-range']).toBe('bytes 0-7/100');
     expect(ok.body).toBe('ID3audio');
-    expect(lastCore()).toMatchObject({ rawResponse: true, headers: { range: 'bytes=0-7' }, query: { actor_user_id: AGENT } });
+    expect(lastCore()).toMatchObject({ rawResponse: true, headers: { range: 'bytes=0-7' }, query: { actor_user_id: SUPERVISOR, supervise: 'true' } });
 
     mocks.callCore.mockResolvedValue(plain(Buffer.from(JSON.stringify({ error: 'Not Found', code: 'call_purged', message: 'm' })), 404,
       { 'content-type': 'application/json' }));

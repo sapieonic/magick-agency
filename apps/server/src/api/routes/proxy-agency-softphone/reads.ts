@@ -3,7 +3,10 @@
  * (docs/softphone.md §6). Part of `proxy-agency-softphone.routes.ts`.
  *
  * An agent reads their own calls; an `agency.supervise` holder every call in the account
- * (the internal handler applies it from the actor). Enrichment here: `agent_name` on the
+ * (the internal handler applies it from the actor). A call's MEDIA — the recording, the
+ * transcript and the AI analysis — is `agency.supervise`'s even on the caller's own call,
+ * as a campaign call's is (`rbac.ts`): an agent's detail carries `media: null` and the
+ * recording route floors at `agency.supervise`. Enrichment here: `agent_name` on the
  * list, the detail and bootstrap's call, and the dispositioned-by name on the detail
  * (`users`, one query, degrading to NULL). The detail's media leg gets the attempt
  * detail's entitlement strip (`shapeMediaCall`) and the recording route its gate.
@@ -115,9 +118,11 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
 
   /**
    * GET /proxy/agency/softphone/calls/:id — the call (contact context and prior
-   * attempts), its override notes, and its media leg in the attempt detail's envelope
-   * (`call_availability`: `available` | `purged` | `never_placed`). 404 `call_not_found`
-   * for another agent's call (unless supervising), another account's or tenant's, or none.
+   * attempts), its override notes, and — for an `agency.supervise` holder only — its
+   * media leg in the attempt detail's envelope (`call_availability`: `available` |
+   * `purged` | `never_placed`; `media` is null for an agent, whose own call is the
+   * record only). 404 `call_not_found` for another agent's call (unless supervising),
+   * another account's or tenant's, or none.
    */
   app.get<{ Params: { id: string } }>('/softphone/calls/:id', { preHandler: dial }, async (request, reply) => {
     const actor = softphoneActorOrRefuse(request, reply);
@@ -136,29 +141,35 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
       });
     }
     const detail = result.body;
+    // Defence in depth on the internal handler's rule: no media leg without supervise.
+    const media = actor.supervise ? detail.media : null;
     const names = await namesInTenant(
       [detail.call.agent_user_id, detail.call.dispositioned_by_user_id], request.tenantId!,
     );
-    const grants = detail.media ? await accountMediaGrants(request) : { recording: false, analytics: false };
+    const grants = media ? await accountMediaGrants(request) : { recording: false, analytics: false };
     return reply.send({
       ...detail,
       call: withAgentName(detail.call, names),
       dispositioned_by_name: detail.call.dispositioned_by_user_id
         ? names.get(detail.call.dispositioned_by_user_id) ?? null
         : null,
-      media: detail.media ? shapeMediaCall(detail.media, grants, publicRecordingPath(request.params.id)) : null,
+      media: media ? shapeMediaCall(media, grants, publicRecordingPath(request.params.id)) : null,
     });
   });
 
   /**
    * GET /proxy/agency/softphone/calls/:id/recording — the bytes (buffered by `callCore`),
-   * so the carrier URL never reaches a client and no signed link is minted. An agent may
-   * play their own calls, a supervisor any in the account. Refusals as the attempt
+   * so the carrier URL never reaches a client and no signed link is minted. Floors at
+   * `agency.supervise` (any call in the account), as a campaign call's recording does: an
+   * agent does not hear recordings, their own included. Refusals as the attempt
    * recording's: 403 `capability_disabled` without `allow_recording`; 404 `call_purged` /
    * `call_never_placed`, or the proxy's no-recording 404; decoded to JSON, never bytes.
    */
   app.get<{ Params: { id: string } }>('/softphone/calls/:id/recording', {
-    preHandler: [...dial, requireAccountRecording],
+    preHandler: [
+      requirePermission('agency.softphone.dial'), requirePermission('agency.supervise'),
+      requireSoftphoneEnabled, requireAccountRecording,
+    ],
   }, async (request, reply) => {
     const actor = softphoneActorOrRefuse(request, reply);
     if (!actor) return reply;

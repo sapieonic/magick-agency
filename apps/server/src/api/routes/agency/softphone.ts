@@ -382,7 +382,11 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     }));
   });
 
-  // ── GET /softphone/calls/:id — the call, its overrides and its media leg ──
+  // ── GET /softphone/calls/:id — the call, its overrides and (supervise) its media leg ──
+  // The media leg carries the recording, the transcript and the AI analysis, which are
+  // `agency.supervise`'s even on the caller's own call, as a campaign call's are
+  // (`rbac.ts`): an agent reads the call record (`call`, `overrides`, availability)
+  // with `media: null`. The public route strips it too.
   sub.get<{ Params: { id: string } }>('/softphone/calls/:id', async (request, reply) => {
     const actor = queryActor(request, reply);
     if (!actor) return reply;
@@ -393,6 +397,7 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     const media = row.webrtc_call_id
       ? await webrtcCallRepository.findByIdScoped(row.webrtc_call_id, actor.tenantId, actor.accountId, 'agency')
       : null;
+    const shownMedia = actor.supervise && media ? formatWebRtcCallResponse(media, softphoneRecordingPath(row.id)) : null;
     return reply.send({
       call,
       overrides: {
@@ -400,17 +405,23 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
         dnc_entry_id: row.dnc_override_entry_id,
         hours_note: row.hours_override_note,
       },
-      media: media ? formatWebRtcCallResponse(media, softphoneRecordingPath(row.id)) : null,
+      media: shownMedia,
       call_availability: !row.webrtc_call_id ? 'never_placed' : media ? 'available' : 'purged',
     });
   });
 
   // ── GET /softphone/calls/:id/recording — the bytes, through the authenticated proxy ──
-  // The same refusals as the attempt's recording (`call_purged`, `call_never_placed`,
-  // and the proxy's `No recording available`); the carrier URL never reaches a client.
+  // `agency.supervise` only, the caller's own call included (the detail's rule above;
+  // the public route's floor is the same). The same refusals as the attempt's recording
+  // (`call_purged`, `call_never_placed`, and the proxy's `No recording available`); the
+  // carrier URL never reaches a client.
   sub.get<{ Params: { id: string } }>('/softphone/calls/:id/recording', async (request, reply) => {
     const actor = queryActor(request, reply);
     if (!actor) return reply;
+    if (!actor.supervise) {
+      // The RBAC refusal's body, as the public floor answers it.
+      return reply.code(403).send({ error: 'Forbidden', message: 'Insufficient permissions. Required: agency.supervise' });
+    }
     const row = await visibleCall(request.params.id, actor);
     if (!row) return sendSoftphoneRefusal(reply, { code: 'call_not_found' });
     const media = row.webrtc_call_id

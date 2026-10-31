@@ -16,11 +16,14 @@ import { registerSoftphoneSettingsRoutes } from './proxy-agency-softphone/settin
  * and runs the internal handler (`agency/softphone.ts`) in-process through `callCore`.
  *
  * The floors:
- *  - `agency.softphone.dial` (agent) on every route but one: the agent's own session and
+ *  - `agency.softphone.dial` (agent) on every route but two: the agent's own session and
  *    calls. Reading or acting on ANOTHER agent's call, listing the account's calls, and
  *    tagging a campaign one is not staffed on need `agency.supervise` as well, which this
  *    layer derives from the caller's role (`shared.ts`, `resolveSoftphoneActor`) and the
- *    internal handler applies; it is never taken from the body.
+ *    internal handler applies; it is never taken from the body. So does a call's media
+ *    (the detail's `media`, withheld from an agent even on their own call).
+ *  - `agency.supervise` on `GET /softphone/calls/:id/recording`: no recordings for agents,
+ *    their own calls included, as for a campaign call (`rbac.ts`).
  *  - `agency.softphone.manage` (account admin) on `PUT /softphone/settings`.
  *
  * Ids: the agency plugin's wrapper scope answers a malformed `:id` with this family's

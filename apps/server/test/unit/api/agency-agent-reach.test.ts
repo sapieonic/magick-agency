@@ -124,11 +124,12 @@ const EXPECTED_AGENT_REACHABLE = [
   // The soft phone (docs/softphone.md §6, SP4): `agency.softphone.dial` floors at `agent`.
   // Every route but `PUT /softphone/settings` (`agency.softphone.manage`, account_admin).
   // Another agent's calls and the account list are the internal handler's refusal
-  // (`call_not_found`, 403), applied from the role-derived `supervise`, not RBAC's.
+  // (`call_not_found`, 403), applied from the role-derived `supervise`, not RBAC's. A
+  // call's recording is NOT here: it floors at `agency.supervise`, the agent's own call
+  // included (no recordings for agents, `rbac.ts`).
   'GET /proxy/agency/softphone/bootstrap',
   'GET /proxy/agency/softphone/calls',
   'GET /proxy/agency/softphone/calls/:id',
-  'GET /proxy/agency/softphone/calls/:id/recording',
   'GET /proxy/agency/softphone/settings',
   'PATCH /proxy/agency/softphone/calls/:id',
   'POST /proxy/agency/sessions/:id/softphone',
