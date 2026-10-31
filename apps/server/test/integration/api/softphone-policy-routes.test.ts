@@ -717,8 +717,9 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     const now = await runtime.agents.get(sessionId);
     expect(now).toMatchObject({ state: 'reserved', attemptId });
     expect(runtime.breaks.peek(sessionId)?.code).toBe('soft_phone');
+    // Audited from the state the switch was decided on: the re-read after the lost CAS.
     const [started] = await auditRows('agency_session.softphone_started', sessionId);
-    expect(started.details).toMatchObject({ from_state: 'available', queued: true });
+    expect(started.details).toMatchObject({ from_state: 'reserved', queued: true });
 
     // Redis unable to take the write at all: dial_failed, nothing claimed to have happened.
     runtime.breaks.cancel(sessionId);

@@ -132,7 +132,10 @@ export interface DncSuccess {
 
 export interface SessionSwitchSuccess {
   response: AgencySessionStateResponse;
-  /** The state the session was in when asked (audit's from-state). */
+  /**
+   * The state the answer was decided from (audit's from-state): for the switch, the
+   * read of the pass that decided, so a re-read after a lost CAS, not the first read.
+   */
   fromState: AgencyAgentState | null;
   campaignId: string;
   /** `switchToSoftphone` only: deferred behind a reservation, call or wrap-up. */
@@ -668,7 +671,8 @@ export class SoftphoneService {
    * unconditional set: a pacing tick that reserved the agent between the read and the
    * write must not have its fresh `reserved` overwritten (the dial would ring with no
    * agent). A lost CAS re-reads once — now reserved, the switch is queued like any
-   * break — and a write Redis cannot answer is `dial_failed` (503, nothing changed).
+   * break, and `fromState` is that re-read — and a write Redis cannot answer is
+   * `dial_failed` (503, nothing changed).
    *
    * Refusals: `session_not_found`; `wrong_session_kind` (a soft-phone session);
    * `dial_failed` (the agent state store did not answer, or the state kept moving).
@@ -679,13 +683,16 @@ export class SoftphoneService {
     if (!isCampaignSession(session)) return refuse({ code: 'wrong_session_kind' });
     const base = { session_id: session.id, campaign_id: session.campaign_id, kind: session.kind } as const;
     let live = await this.deps.agents.get(session.id);
-    const fromState = live?.state ?? null;
+    // What the decision was made from, for the audit's `from_state`: the state read on
+    // the pass that decided, which after a lost CAS is the re-read (`reserved`, say),
+    // not the first read the CAS lost on.
+    const fromState = () => live?.state ?? null;
     const since = new Date().toISOString();
 
     for (let pass = 0; pass < 2; pass++) {
       if (live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON) {
         return {
-          ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: true,
+          ok: true, fromState: fromState(), campaignId: session.campaign_id, queued: false, unchanged: true,
           response: { ...base, state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON },
         };
       }
@@ -700,7 +707,7 @@ export class SoftphoneService {
           });
         }
         return {
-          ok: true, fromState, campaignId: session.campaign_id, queued: true, unchanged: alreadyQueued,
+          ok: true, fromState: fromState(), campaignId: session.campaign_id, queued: true, unchanged: alreadyQueued,
           response: { ...base, state: busy, since, pending_state: 'break', break_reason: SOFTPHONE_BREAK_REASON },
         };
       }
@@ -717,7 +724,7 @@ export class SoftphoneService {
     await agencyAgentSessionRepository.setState(session.id, 'break', SOFTPHONE_BREAK_REASON);
     this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON });
     return {
-      ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: false,
+      ok: true, fromState: fromState(), campaignId: session.campaign_id, queued: false, unchanged: false,
       response: { ...base, state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON },
     };
   }
