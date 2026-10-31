@@ -441,7 +441,7 @@ export function dispositionManualCall(
   );
 }
 
-/** `POST /calls/:id/dnc`: campaign scope when tagged, else tenant — the server decides. */
+/** `POST /calls/:id/dnc`: campaign scope when tagged, else the call’s account — the server decides. */
 export function markManualCallDnc(
   callId: string,
   reason: string | undefined,
