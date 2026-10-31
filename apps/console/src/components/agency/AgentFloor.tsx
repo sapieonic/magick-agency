@@ -5,7 +5,7 @@ import {
   perAgentLabel,
   AGENCY_FLOOR_RISK_FLAG,
   AGENCY_FLOOR_RISK_NOTE,
-  AGENCY_FLOOR_STATE_LABELS,
+  floorStateLabel,
   AGENCY_FLOOR_TICK_MS,
   agentInitials,
   canForceAvailable,
@@ -316,8 +316,7 @@ function AgentRow({
         <span className={styles.stateCell}>
           <span className={styles.stateDot} data-state={agent.state} aria-hidden="true" />
           <span className={styles.stateLabel}>
-            {AGENCY_FLOOR_STATE_LABELS[agent.state]}
-            {agent.state === 'break' && agent.break_reason ? ` · ${agent.break_reason}` : ''}
+            {floorStateLabel(agent)}
           </span>
         </span>
       </td>

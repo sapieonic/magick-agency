@@ -2,6 +2,7 @@ import type {
   AgencyAgentLiveState,
   AgencySupervisorAgent,
 } from '../types/agency-campaign';
+import { SOFTPHONE_BREAK_REASON, SOFTPHONE_BREAK_REASON_LABEL } from '../types/softphone';
 import { formatCount } from './format/number';
 import { ON_SHIFT_STATES, stateShares } from './agency/metrics';
 
@@ -185,8 +186,10 @@ export function floorRisk(
     }
   }
 
-  // 3. On break beyond half an hour.
-  if (agent.state === 'break' && elapsedMs !== null) {
+  // 3. On break beyond half an hour. Not the soft phone: that "break" is the
+  //    agent working calls by hand (`docs/softphone.md` §2), and half an hour of
+  //    it is a shift, not an agent who walked away.
+  if (agent.state === 'break' && !isOnSoftphone(agent) && elapsedMs !== null) {
     if (elapsedMs > LONG_BREAK_SECONDS * 1000) return 'long_break';
   }
 
@@ -293,6 +296,29 @@ export const AGENCY_FLOOR_STATE_LABELS: Record<AgencyAgentLiveState, string> = {
   wrapup: 'Wrapping up',
   break: 'On break',
 };
+
+/**
+ * Whether this agent's break is the soft phone (`break` with the reserved reason
+ * `soft_phone`, SP7): pacing cannot reserve them, but they are working.
+ */
+export function isOnSoftphone(agent: Pick<AgencySupervisorAgent, 'state' | 'break_reason'>): boolean {
+  return agent.state === 'break' && agent.break_reason === SOFTPHONE_BREAK_REASON;
+}
+
+/**
+ * The agent's state as the floor and the drawer write it: the state, and a
+ * break's reason code beside it — except the soft phone, which is named for
+ * what it is rather than read as an idle "On break · soft_phone".
+ *
+ * Whether a soft-phone agent is on a call right now is not on the wire
+ * (`AgencySupervisorAgent` carries the session's state and reason only), so the
+ * label says where they are and nothing it cannot know.
+ */
+export function floorStateLabel(agent: Pick<AgencySupervisorAgent, 'state' | 'break_reason'>): string {
+  if (isOnSoftphone(agent)) return SOFTPHONE_BREAK_REASON_LABEL;
+  const label = AGENCY_FLOOR_STATE_LABELS[agent.state];
+  return agent.state === 'break' && agent.break_reason ? `${label} · ${agent.break_reason}` : label;
+}
 
 /**
  * The order the state summary reads in — busiest first, `offline` last.

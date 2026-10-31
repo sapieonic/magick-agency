@@ -306,6 +306,10 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   with the reason, while a manual call is live or awaiting its outcome). The ordinary End break
   and the station's own shortcuts are suspended. After a reload during a soft-phone break the
   station reads `session.on_softphone` from the bootstrap.
+- **Live floor.** A campaign agent on `break/soft_phone` reads "Soft phone" on the floor and in its
+  drawer (`floorStateLabel`), never "On break · soft_phone", and is exempt from the 30-minute
+  long-break flag. Whether they are on a call right now is not in the floor's data
+  (`AgencySupervisorAgent` carries the session's state and reason only).
 - **Supervisor.** **Soft-phone calls** in the agency sidebar (`agency.supervise`): a stats strip
   over the listed rows, filters (dates, agent, "Logged to" including "Not logged", what happened,
   status including "Waiting for an outcome", number), keyset paging, a Summary column from

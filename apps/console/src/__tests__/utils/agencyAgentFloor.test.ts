@@ -17,6 +17,7 @@ import {
   canForceAvailable,
   floorRisk,
   floorRiskSummary,
+  floorStateLabel,
   floorStateSlices,
   floorTotals,
   floorZeroStates,
@@ -156,6 +157,13 @@ describe('floorRisk — the thresholds', () => {
     expect(floorRisk(over, NOW, THRESHOLDS)).toBe('long_break');
     const under = agent({ state: 'break', break_reason: 'Lunch', state_since: ago(LONG_BREAK_SECONDS - 1) });
     expect(floorRisk(under, NOW, THRESHOLDS)).toBe('none');
+  });
+
+  it('rank 3 never fires for the soft phone: that break is the agent working calls by hand', () => {
+    const hours = agent({ state: 'break', break_reason: 'soft_phone', state_since: ago(LONG_BREAK_SECONDS * 4) });
+    expect(floorRisk(hours, NOW, THRESHOLDS)).toBe('none');
+    // A dropped station still says so: the exemption is the break's, nothing else's.
+    expect(floorRisk({ ...hours, connected: false }, NOW, THRESHOLDS)).toBe('disconnected');
   });
 
   it('rank 4 fires on `connected: false`', () => {
@@ -640,5 +648,17 @@ describe('Overview and the Agents tab agree about who is on shift', () => {
     */
     expect(totals.handled).toBe(19);
     expect(totals.perAgent).toBeCloseTo(19 / 2);
+  });
+});
+
+describe('floorStateLabel — the state as a supervisor reads it', () => {
+  it('names the soft phone for what it is, not as an idle break with a raw code', () => {
+    expect(floorStateLabel({ state: 'break', break_reason: 'soft_phone' })).toBe('Soft phone');
+  });
+
+  it('keeps any other break reason beside the state, and a plain state alone', () => {
+    expect(floorStateLabel({ state: 'break', break_reason: 'Lunch' })).toBe('On break · Lunch');
+    expect(floorStateLabel({ state: 'break', break_reason: null })).toBe('On break');
+    expect(floorStateLabel({ state: 'on_call', break_reason: null })).toBe(AGENCY_FLOOR_STATE_LABELS.on_call);
   });
 });
