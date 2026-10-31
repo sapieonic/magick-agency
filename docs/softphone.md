@@ -430,8 +430,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   does) before going to the station; the soft phone then runs wholly in its session's account, and
   "Go to station" moves the same way. The screen names the account ("You're live on <campaign> in
   <account>") and says the switch takes the agent there. When the account is not in the console's
-  account list it says "You're live on <campaign> in another account — switch to that account to use
-  the soft phone there." and offers no switch, since one could not land. A refused switch keeps the
+  account list it says "You're live on <campaign> in <account> — switch to that account to use the
+  soft phone there." ("another account" when the refusal has no name) and offers no switch, since
+  one could not land. A refused switch keeps the
   console where it is and says why (`refusalCopy`'s `status` context).
 - **The soft phone open in a sibling account (the flag on here).** `POST /softphone/sessions`
   refuses `session_on_softphone` with that session's account (§6), and `/dialer/phone` says "Your
