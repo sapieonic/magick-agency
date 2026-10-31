@@ -535,6 +535,20 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
 
     // From the soft phone's break to another one: that ends the soft phone (SP7).
     const leavingSoftphone = onSoftphoneBreak(live, session) && check.reason.code !== SOFTPHONE_BREAK_REASON;
+    // …which it may not while a soft-phone call is live or owes its outcome: the call
+    // belongs to the soft phone the agent would be leaving, and the console would stop
+    // showing it. The same rule as `available` (`setAvailableGuarded`), read from the
+    // database, which a lapsed lease cannot have lost.
+    if (leavingSoftphone) {
+      const owed = await owedSoftphoneCall(runtime.agents, session.id);
+      if (owed) {
+        const err: AgencySoftphoneCallPendingRefusal = {
+          error: 'Conflict', code: 'manual_call_live', call: owed,
+          message: 'Save the outcome of your soft-phone call before taking another break.',
+        };
+        return reply.code(409).send(err);
+      }
+    }
     await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
     await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
     runtime.stations.send(session.id, {

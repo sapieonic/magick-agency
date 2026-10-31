@@ -634,6 +634,11 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(available.statusCode, available.body).toBe(409);
     expect(available.json()).toMatchObject({ code: 'manual_call_live', call: { id: callId } });
     expect((await runtime.agents.get(sessionId))?.state).toBe('break');
+    // Another break would leave the soft phone with the call still on it: refused too.
+    const lunch = await post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'lunch' });
+    expect(lunch.statusCode, lunch.body).toBe(409);
+    expect(lunch.json()).toMatchObject({ code: 'manual_call_live', call: { id: callId } });
+    expect(await sessionRow(sessionId)).toEqual({ state: 'break', break_reason: 'soft_phone' });
     const boot = await get('/proxy/agency/softphone/bootstrap', agent);
     expect(boot.json().session).toMatchObject({ session_id: sessionId, on_softphone: true });
     expect(boot.json().call).toMatchObject({ id: callId });
