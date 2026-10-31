@@ -229,8 +229,13 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // call's media, even the caller's own: a soft-phone call's recording, transcript
   // and AI analysis are supervise-only, as a campaign call's are (no recordings, no
   // analytics, above); DIAL reads the call record only. Every soft-phone route
-  // also requires the flag, so the floor alone grants nothing in an account that
-  // has not turned the feature on.
+  // that STARTS work (a new soft-phone session, a dial, the switch from a campaign)
+  // also requires the `agency_softphone_enabled` flag, as do the recording and the
+  // settings, so the floor alone starts nothing in an account that has not turned
+  // the feature on. The routes that FINISH work already started (call details,
+  // hang-up, the outcome, Mark DNC, reading the calls, Return to campaign,
+  // rehydrating an existing session) are not gated, so an agent is never
+  // stranded mid-call when the flag goes off (docs/softphone.md §6).
   //
   // MANAGE floors at `account_admin`: the settings it writes (the untagged
   // outcome catalog, call fields, recording, the default caller ID) apply to
