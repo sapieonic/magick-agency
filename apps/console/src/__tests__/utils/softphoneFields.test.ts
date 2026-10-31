@@ -174,8 +174,8 @@ describe('refusal copy', () => {
     expect(refusalCopy(refusal, 'status')).toBe('Couldn’t change your status just now; nothing changed. Try again.');
     expect(refusalCopy(refusal, 'status')).not.toMatch(/call|dialled/i);
     // Codes the status context does not reword keep their one sentence.
-    expect(refusalCopy({ code: 'manual_call_live', status: 409, message: 'x' }, 'status')).toBe(SOFTPHONE_REFUSAL_COPY.manual_call_live);
-    expect(refusalCopy({ code: 'unknown', status: 500, message: 'The server’s words' }, 'status')).toBe('The server’s words');
+    expect(refusalCopy({ code: 'session_not_found', status: 404, message: 'x' }, 'status')).toBe(SOFTPHONE_REFUSAL_COPY.session_not_found);
+    expect(refusalCopy({ code: 'unknown', raw_code: 'boom', status: 500, message: 'The server’s words' }, 'status')).toBe('The server’s words');
   });
 
   it('has a sentence for every soft-phone code', () => {
