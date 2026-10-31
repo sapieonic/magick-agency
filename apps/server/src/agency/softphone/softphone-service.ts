@@ -99,6 +99,11 @@ export interface CallActionSuccess {
   onBehalf: boolean;
 }
 
+export interface HangupSuccess extends CallActionSuccess {
+  /** A hang-up was issued: false when the call had already ended (an idempotent no-op, not audited). */
+  hungUp: boolean;
+}
+
 /**
  * The `dnc_entries` row a soft-phone mark landed on, for the `dnc_entry.created` audit
  * row: `created` false when the number was already listed at that scope (nothing new
@@ -399,17 +404,19 @@ export class SoftphoneService {
    * phone ringing). Idempotent: a call that already ended answers its row. Answers
    * the row as read right after the hangup was issued — the `manual_call` frame is
    * the authority for "over". A live call this process does not hold (a crash's
-   * leftover) answers its row unchanged; the orphan sweep ends it.
+   * leftover) answers its row unchanged; the orphan sweep ends it. `hungUp` is false
+   * for a call that had already ended, so the caller audits only a real hang-up.
    */
-  async hangup(actor: SoftphoneActor, callId: string): Promise<SoftphoneResult<CallActionSuccess>> {
+  async hangup(actor: SoftphoneActor, callId: string): Promise<SoftphoneResult<HangupSuccess>> {
     const found = await this.visibleCall(callId, actor);
     if (!found) return refuse({ code: 'call_not_found' });
-    if (found.call.state !== 'ended') {
+    const hungUp = found.call.state !== 'ended';
+    if (hungUp) {
       await this.deps.manual.hangup(found.call.id, found.onBehalf ? 'supervisor' : 'agent');
       await this.deps.manual.settled(found.call.id);
     }
     const fresh = await agencyManualCallRepository.findById(found.call.id, { tenantId: actor.tenantId, accountId: actor.accountId });
-    return { ok: true, call: await this.wire(fresh ?? found.call), onBehalf: found.onBehalf };
+    return { ok: true, call: await this.wire(fresh ?? found.call), onBehalf: found.onBehalf, hungUp };
   }
 
   // ─── Details (PATCH /calls/:id) ───────────────────────────────────────────

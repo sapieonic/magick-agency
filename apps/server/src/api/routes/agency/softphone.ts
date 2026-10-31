@@ -50,7 +50,7 @@ import { SOFTPHONE_LIST_DEFAULT_LIMIT, softphoneListFilters, softphoneListQueryS
 import { requireOwnedSession, sendActionError, STATION_INTERVALS } from './helpers.js';
 import {
   sendSoftphoneRefusal,
-  type SoftphoneCallActAudit,
+  type SoftphoneHangupAudit,
   type SoftphoneCoreAnswer,
   type SoftphoneDispositionAudit,
   type SoftphoneDncAudit,
@@ -484,7 +484,9 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     if (!actor) return reply;
     const hung = await runtime.softphone.hangup(actor, request.params.id);
     if (!hung.ok) return sendSoftphoneRefusal(reply, hung.refusal);
-    const audit: SoftphoneCallActAudit = { on_behalf: hung.onBehalf, campaign_id: hung.call.tag?.campaign_id ?? null };
+    const audit: SoftphoneHangupAudit = {
+      on_behalf: hung.onBehalf, campaign_id: hung.call.tag?.campaign_id ?? null, hung_up: hung.hungUp,
+    };
     return answer(reply, 200, hung.call, audit);
   });
 

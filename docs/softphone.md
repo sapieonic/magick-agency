@@ -308,7 +308,8 @@ on a soft-phone session; `leave` is refused while a call is live. The campaign j
 Audit (`platform_audit_log`, resource types `agency_manual_call`, `agency_softphone_settings`, and
 `agency_session`), each with the real actor and `campaign_id` set to the tag:
 `agency_manual_call.placed` (session, `dnc_overridden` / `hours_overridden` flags),
-`.dnc_overridden` (the note and the `dnc_entries` id), `.hours_overridden` (the note), `.hung_up`,
+`.dnc_overridden` (the note and the `dnc_entries` id), `.hours_overridden` (the note), `.hung_up`
+(only when a hang-up was issued: none for a call that had already ended),
 `.dispositioned` (code, `replay`), `.dnc_marked` (scope, `dnc_recorded`; never the number), each
 with `on_behalf` when the call was another agent's; and, when Mark DNC or a `suppress` outcome
 recorded a NEW `dnc_entries` row (not on a replay, not for a number already listed at that

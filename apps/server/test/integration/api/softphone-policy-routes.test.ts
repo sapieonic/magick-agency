@@ -703,6 +703,20 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 
+  // ── A11: a hang-up that hung nothing up is not audited ──────────────────────────────
+  it('a hang-up on a call that has already ended answers its row and writes no hung_up row', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const { sessionId, station } = await openSoftphone(agent);
+    const callId = await placeOwingAnOutcome(agent, sessionId, station, '+919811300080');
+    expect(await auditRows('agency_manual_call.hung_up', callId)).toHaveLength(1);
+    const again = await post(`/proxy/agency/softphone/calls/${callId}/hangup`, agent);
+    expect(again.statusCode, again.body).toBe(200);
+    expect(again.json()).toMatchObject({ id: callId, state: 'ended' });
+    expect(await auditRows('agency_manual_call.hung_up', callId)).toHaveLength(1);
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'voicemail' })).statusCode).toBe(200);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
   it('a supervisor reads it on the DNC list as an account entry', async () => {
     const list = await get('/dnc?phone=%2B919811300010', supervisor);
     expect(list.statusCode, list.body).toBe(200);

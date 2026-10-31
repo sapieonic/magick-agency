@@ -564,6 +564,18 @@ describe('the audit rows', () => {
     ]);
   });
 
+  it('a hang-up on a call that had already ended writes no hung_up row', async () => {
+    const app = await appAs('agent');
+    mocks.callCore.mockResolvedValue(envelope(wireCall(), { on_behalf: false, campaign_id: CAMPAIGN, hung_up: false }));
+    const res = await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/hangup`, payload: {} });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ id: CALL });
+    expect(mocks.auditLog).not.toHaveBeenCalled();
+    mocks.callCore.mockResolvedValue(envelope(wireCall(), { on_behalf: false, campaign_id: CAMPAIGN, hung_up: true }));
+    await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/hangup`, payload: {} });
+    expect(mocks.auditLog.mock.calls.map((c) => c[0].action)).toEqual(['agency_manual_call.hung_up']);
+  });
+
   it('PATCH writes no audit row', async () => {
     mocks.callCore.mockResolvedValue(plain(wireCall()));
     const app = await appAs('agent');

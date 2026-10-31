@@ -184,9 +184,13 @@ describe('POST /softphone/calls', () => {
 
 describe('the call actions', () => {
   it('hangup / disposition / dnc wrap the result with on_behalf from the RESULT', async () => {
-    runtime.softphone.hangup.mockResolvedValue({ ok: true, call: { id: CALL, tag: null }, onBehalf: true });
+    runtime.softphone.hangup.mockResolvedValue({ ok: true, call: { id: CALL, tag: null }, onBehalf: true, hungUp: true });
     expect((await post(`/softphone/calls/${CALL}/hangup`, { agent_user_id: AGENT, on_behalf: true })).json())
-      .toEqual({ answer: { id: CALL, tag: null }, audit: { on_behalf: true, campaign_id: null } });
+      .toEqual({ answer: { id: CALL, tag: null }, audit: { on_behalf: true, campaign_id: null, hung_up: true } });
+    // Already ended: the audit facts say no hang-up was issued.
+    runtime.softphone.hangup.mockResolvedValue({ ok: true, call: { id: CALL, tag: null }, onBehalf: false, hungUp: false });
+    expect((await post(`/softphone/calls/${CALL}/hangup`, { agent_user_id: AGENT })).json().audit)
+      .toEqual({ on_behalf: false, campaign_id: null, hung_up: false });
 
     runtime.softphone.submitDisposition.mockResolvedValue({
       ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1', created: true },

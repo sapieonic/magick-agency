@@ -21,6 +21,7 @@ import type {
   SoftphoneDispositionAudit,
   SoftphoneDncAudit,
   SoftphoneDncEntryAudit,
+  SoftphoneHangupAudit,
   SoftphonePlaceAudit,
 } from '../agency/softphone-answer.js';
 import {
@@ -204,7 +205,7 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
     return reply.send(result.body);
   });
 
-  /** POST /proxy/agency/softphone/calls/:id/hangup — idempotent once the call has ended. */
+  /** POST /proxy/agency/softphone/calls/:id/hangup — idempotent once the call has ended (and then not audited). */
   app.post<{ Params: { id: string } }>('/softphone/calls/:id/hangup', { preHandler: finish }, async (request, reply) => {
     if (!parseOr400(emptyBody, request.body ?? {}, reply, 'agency')) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
@@ -212,7 +213,9 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
     const result = await forwardCall(request, actor, {
       method: 'POST', path: `/agency/softphone/calls/${request.params.id}/hangup`, body: {},
     });
-    return sendAudited<SoftphoneCallActAudit>(request, reply, result, 'POST /softphone/calls/:id/hangup', (audit) => {
+    return sendAudited<SoftphoneHangupAudit>(request, reply, result, 'POST /softphone/calls/:id/hangup', (audit) => {
+      // A call that had already ended was not hung up by this request: no row.
+      if (audit.hung_up === false) return;
       platformAuditLogger.log({
         ...softphoneAuditTenancy(request),
         ...resolvedUserAuditActor(request, actor.agent_user_id),
