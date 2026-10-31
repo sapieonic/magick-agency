@@ -769,6 +769,38 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 30_000);
 
+  it('a break with another reason queued over a queued switch withdraws the switch, audited with its reason', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const sessionId = joined.json().session_id as string;
+    await connect(joined.json().station_ws_url);
+    await runtime.agents.set(sessionId, 'wrapup', { leaseMs: AGENT_LEASE_MS.wrapup });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent)).json().pending_state).toBe('break');
+    expect(await auditRows('agency_session.softphone_started', sessionId)).toHaveLength(1);
+
+    const lunch = await post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'lunch' });
+    expect(lunch.statusCode, lunch.body).toBe(200);
+    expect(lunch.json()).toMatchObject({ state: 'wrapup', pending_state: 'break', break_reason: 'lunch' });
+    expect(lunch.json()).not.toHaveProperty('softphone_audit');
+    expect(runtime.breaks.peek(sessionId)?.code).toBe('lunch');
+    const [withdrawn, ...more] = await auditRows('agency_session.softphone_ended', sessionId);
+    expect(more).toEqual([]);
+    expect(withdrawn).toMatchObject({ user_id: agent.id, campaign_id: campaign.id });
+    expect(withdrawn.details).toEqual({
+      campaign_id: campaign.id, from_state: 'wrapup', withdrawn: true, via: 'break', break_reason: 'lunch',
+    });
+    // The same reason again, and a break queued over a break that is not a switch,
+    // are not soft-phone exits.
+    expect((await post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'lunch' })).statusCode).toBe(200);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'meeting' })).statusCode).toBe(200);
+    expect(await auditRows('agency_session.softphone_ended', sessionId)).toHaveLength(1);
+
+    runtime.breaks.cancel(sessionId);
+    await runtime.agents.set(sessionId, 'break');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
   it('PUT /settings: manage only, settings_invalid with the console\'s paths, a valid write audited', async () => {
     const agent = await user(tenant, account, 'agent');
     const valid = {

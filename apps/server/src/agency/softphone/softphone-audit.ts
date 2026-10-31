@@ -13,8 +13,9 @@
  * - **Ended**, with `via`: the return route (`return`), the campaign `available` route
  *   (`available`), a break with another reason (`break`, with `break_reason`), the
  *   supervisor's force-available (`force_available`); and a queued switch WITHDRAWN
- *   before it applied (`withdrawn: true`) by the return route (`return`) or by the
- *   station's ✕, `break/cancel` (`break_cancel`).
+ *   before it applied (`withdrawn: true`) by the return route (`return`), by the
+ *   station's ✕, `break/cancel` (`break_cancel`), or by a break with another reason
+ *   queued over it (`break`, with `break_reason`: the queue holds one break).
  *
  * The caller states the actor: the route's resolved user, or `SYSTEM_AUDIT_ACTOR`.
  */

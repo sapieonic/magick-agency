@@ -211,8 +211,10 @@ dashboard's capacity panel stacks them on the attempts.
   switch while already on the soft phone or already queued writes nothing. `ended` carries `via`,
   one for every way off the `soft_phone` break: `return`, `available`, `break` (another reason,
   with `break_reason`), `force_available` (the supervisor as actor); and `withdrawn: true` for a
-  queued switch taken back, by the return route (`via: return`) or the station's ✕ (`break/cancel`,
-  `via: break_cancel`, which then writes no `break_cancelled` row). The campaign session routes tell
+  queued switch taken back, by the return route (`via: return`), the station's ✕ (`break/cancel`,
+  `via: break_cancel`, which then writes no `break_cancelled` row), or a break with another reason
+  queued over it (`via: break`, with `break_reason`: the queue holds one break, so it replaces
+  the switch). The campaign session routes tell
   the public layer through a `softphone_audit` key on their internal answer, which never reaches
   the client.
 

@@ -490,6 +490,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // the pacing tick follows. A DB row reading `available` for an agent who is
     // actually bridged would apply a break mid-conversation.
     if (breakMustWait(live?.state)) {
+      // The queue holds one break: another reason queued over a queued switch to the
+      // soft phone REPLACES it, so the switch is withdrawn here and audited as such
+      // (SP7, `via: 'break'` with the reason that took its place), as the ✕ on the
+      // queued-switch pill is (`break/cancel`). Without it the trail would read
+      // `softphone_started` (`queued: true`) with no end.
+      const withdrawingSwitch = runtime.breaks.peek(session.id)?.code === SOFTPHONE_BREAK_REASON
+        && check.reason.code !== SOFTPHONE_BREAK_REASON;
       runtime.breaks.queue(session.id, check.reason);
       // Echoed on the frame too, not just this response: the queue outlives the
       // request, so an agent who reconnects must still be told a break is pending.
@@ -530,7 +537,12 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live!.state, since,
         pending_state: 'break', break_reason: check.reason.code,
       };
-      return reply.send(queued);
+      return reply.send({
+        ...queued,
+        ...exitAudit(withdrawingSwitch, {
+          campaign_id: session.campaign_id, from_state: live!.state, via: 'break', withdrawn: true, break_reason: check.reason.code,
+        }),
+      });
     }
 
     // From the soft phone's break to another one: that ends the soft phone (SP7).

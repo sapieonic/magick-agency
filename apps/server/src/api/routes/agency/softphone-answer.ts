@@ -200,7 +200,11 @@ export function isSoftphoneCoreAnswer(body: unknown): body is SoftphoneCoreAnswe
 export interface SoftphoneSessionExitAudit {
   campaign_id: string;
   from_state: AgencyAgentState | null;
-  /** `break_cancel` withdrew a queued switch; the others ended the break. */
+  /**
+   * `break_cancel` withdrew a queued switch; `break` ended the break, or (with
+   * `withdrawn`) replaced a queued switch with another queued reason; the others
+   * ended the break.
+   */
   via: 'available' | 'break' | 'force_available' | 'break_cancel';
   withdrawn: boolean;
   /** `via: 'break'`: the reason the session went on instead. */

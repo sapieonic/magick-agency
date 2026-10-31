@@ -411,7 +411,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 42 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 43 |
-| `apps/server/test/integration/api/softphone-routes.test.ts` | 10 |
+| `apps/server/test/integration/api/softphone-routes.test.ts` | 11 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 17 |
 
 ### `apps/server/src/api/validators/`
