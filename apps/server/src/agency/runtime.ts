@@ -139,6 +139,12 @@ export class AgencyRuntime {
     // The engine's "something may want to know a campaign finished" seam carries the
     // supervisors' completion notice. See `campaign-completion-notice.ts`.
     this.pacing.registerCompletionNotifier({ notifyCampaignFinished: notifyAgencyCampaignFinished });
+    // A break (or a switch to the soft phone) queued while pacing held the agent
+    // `reserved` is applied by the one release path when pacing hands them back.
+    this.pacing.registerQueuedBreakRelease({
+      hasQueuedBreak: (sessionId) => this.breaks.peek(sessionId) !== null,
+      release: (sessionId) => this.dialer.releaseAgent(sessionId),
+    });
   }
 
   // ─── Presence resilience ──────────────────────────────────────────────────

@@ -476,6 +476,55 @@ describe('PacingEngine reserve-before-dial', () => {
     expect(agents.set).toHaveBeenCalledWith('s2', 'available');
   });
 
+  it.each([
+    { code: 'lunch', label: 'Lunch' },
+    { code: 'soft_phone', label: 'Soft phone' },
+  ])('a $code break queued while the agent was reserved is applied when pacing hands them back, not lost', async (reason) => {
+    // The agent pressed Break (or Switch to soft phone) while the tick held them
+    // `reserved`, so the route queued it (`breakMustWait`). The roster then ran dry
+    // and the tick returned them as surplus: a plain `available` write would strand
+    // the queue until their next call ended. The real release path applies it.
+    const { BreakRegistry } = await import('@magick-agency/domain/break-manager');
+    const { AgencyDialer } = await import('../../../src/agency/agency-dialer.js');
+    const breaks = new BreakRegistry();
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    agents.reserve.mockImplementation(async (id: string) => {
+      if (id === 's2') breaks.queue('s2', reason);
+      return 'reserved';
+    });
+    const stations = { ...makeStations(['s1', 's2']), send: vi.fn(() => true) };
+    const dialer = new AgencyDialer({} as any, stations as any, agents as any, {} as any, breaks);
+    const { e } = engine(stations, agents, vi.fn());
+    e.registerQueuedBreakRelease({
+      hasQueuedBreak: (id) => breaks.peek(id) !== null,
+      release: (id) => dialer.releaseAgent(id),
+    });
+
+    await e.tickOnce('camp-1');
+
+    expect(agents.set).not.toHaveBeenCalledWith('s2', 'available');
+    expect(agents.set).toHaveBeenCalledWith('s2', 'break', expect.objectContaining({ leaseMs: expect.any(Number) }));
+    expect(repos.session.setState).toHaveBeenCalledWith('s2', 'break', reason.code);
+    expect(stations.send).toHaveBeenCalledWith('s2', expect.objectContaining({ event: 'agent_state', state: 'break', break_reason: reason.code }));
+    expect(breaks.peek('s2')).toBeNull(); // consumed exactly once
+  });
+
+  it('without a queued break the surplus return stays the one Redis write (no mirror, no frame)', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    const release = vi.fn();
+    const { e } = engine(makeStations(['s1', 's2']), agents, vi.fn());
+    e.registerQueuedBreakRelease({ hasQueuedBreak: () => false, release });
+
+    await e.tickOnce('camp-1');
+
+    expect(agents.set).toHaveBeenCalledWith('s2', 'available');
+    expect(release).not.toHaveBeenCalled();
+  });
+
   it('reserves the longest-idle agent first, and does not let the pool order decide', async () => {
     // `findLiveForCampaign` returns a database order — stable
     // across ticks and unrelated to who has been waiting — so taking it as-is

@@ -168,6 +168,43 @@ export class PacingEngine {
   }
 
   /**
+   * How a reserved agent with a QUEUED break is handed back: the dialer's
+   * `releaseAgent`, which is the single place a queued break is applied (and audited,
+   * for a queued switch to the soft phone). An agent who presses Break — or Switch to
+   * soft phone — while pacing holds them `reserved` has the break queued
+   * (`breakMustWait`); a tick that then returns them to the pool as surplus, or
+   * because the contact was deferred or suppressed, used to write `available` and
+   * strand the queue until their next call. A registration, as the completion
+   * notifier is; without one (the unit suites) every return is the plain write.
+   */
+  private queuedBreakRelease: {
+    hasQueuedBreak(sessionId: string): boolean;
+    release(sessionId: string): Promise<unknown>;
+  } | null = null;
+
+  registerQueuedBreakRelease(release: {
+    hasQueuedBreak(sessionId: string): boolean;
+    release(sessionId: string): Promise<unknown>;
+  }): void {
+    this.queuedBreakRelease = release;
+  }
+
+  /**
+   * Hand a reserved agent back: to the pool, unless a break was queued while they
+   * were reserved, in which case `releaseAgent` applies it (`break`, mirrored, with
+   * its `agent_state` frame). Only that rare case pays for a mirror write and a frame;
+   * the ordinary surplus return stays the one Redis write the tick has always made
+   * (see the note in {@link dialUpTo} on why reservations are not mirrored).
+   */
+  private async returnReserved(sessionId: string): Promise<void> {
+    if (this.queuedBreakRelease?.hasQueuedBreak(sessionId)) {
+      await this.queuedBreakRelease.release(sessionId);
+      return;
+    }
+    await this.agents.set(sessionId, 'available');
+  }
+
+  /**
    * Completion notices requested but not yet settled.
    *
    * The notice is fire-and-forget at the call site (see `maybeFinalize`), so a campaign
@@ -759,7 +796,9 @@ export class PacingEngine {
       // and the reason is worth keeping: a mirror here is
       // write-only. Every release path below — surplus, suppress, defer, no
       // station, the duplicate-dial backstop, dispatch failure, `abortRemainder`
-      // — returns the agent through `this.agents.set(...)`, i.e. Redis alone. So
+      // — returns the agent through `this.agents.set(...)`, i.e. Redis alone
+      // (`returnReserved`; only a break queued meanwhile goes through
+      // `releaseAgent`, which mirrors the `break` it applies). So
       // a reservation written here is never written back, and an idle agent on a
       // campaign with nothing dialable (all contacts in retry backoff, or DNC-
       // suppressed) would be reserved and released every 250ms tick while the
@@ -787,7 +826,7 @@ export class PacingEngine {
     // the pool — the roster ran out, which is not their fault and must not cost
     // them their place in the idle queue any longer than this tick.
     for (const surplus of reserved.slice(contacts.length)) {
-      await this.agents.set(surplus, 'available');
+      await this.returnReserved(surplus);
     }
     if (contacts.length === 0) {
       this.recordIdle(campaign.id, 'no_contacts');
@@ -826,7 +865,7 @@ export class PacingEngine {
         // charging a retry for a call we declined to make would exhaust a contact
         // who was never called.
         this.logSkip(campaign, contact, gate);
-        await this.agents.set(sessionId, 'available');
+        await this.returnReserved(sessionId);
         await agencyContactRepository.markState(contact.id, 'suppressed', {
           suppressed_reason: gate.suppressedReason,
         });
@@ -942,9 +981,9 @@ export class PacingEngine {
 
   /**
    * Hand back one reserved agent and the contact claimed for them: the agent to
-   * `agentState` (the pool, or `offline` when no replica owns their station) and
-   * the contact to `pending` at `nextAttemptAt`. `set`'s default lease is the
-   * `available` one.
+   * `agentState` (the pool — or their queued break, {@link returnReserved} — or
+   * `offline` when no replica owns their station) and the contact to `pending` at
+   * `nextAttemptAt`. `set`'s default lease is the `available` one.
    */
   private async returnPair(
     sessionId: string,
@@ -952,7 +991,8 @@ export class PacingEngine {
     nextAttemptAt: Date,
     agentState: 'available' | 'offline' = 'available',
   ): Promise<void> {
-    await this.agents.set(sessionId, agentState);
+    if (agentState === 'available') await this.returnReserved(sessionId);
+    else await this.agents.set(sessionId, agentState);
     await agencyContactRepository.unclaim(contactId, nextAttemptAt);
   }
 
@@ -968,7 +1008,7 @@ export class PacingEngine {
    */
   private async abortRemainder(contacts: AgencyContactRecord[], sessions: string[]): Promise<void> {
     for (const sessionId of sessions) {
-      await this.agents.set(sessionId, 'available');
+      await this.returnReserved(sessionId);
     }
     // One statement for the whole remainder, not one round trip per contact.
     await agencyContactRepository.unclaimMany(contacts.map((c) => c.id), new Date());
