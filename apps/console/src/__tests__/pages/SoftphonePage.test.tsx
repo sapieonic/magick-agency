@@ -84,7 +84,7 @@ beforeEach(() => {
   mocks.flags = new Set(['agency_softphone_enabled']);
   mocks.useTenant.mockReturnValue({ tenantId: 't-1', accountId: 'a-1', role: 'agent' });
   mocks.openSoftphoneSession.mockResolvedValue({ ok: true, value: SESSION });
-  mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, session: { session_id: 'sess-sp', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true } });
+  mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, session: { session_id: 'sess-sp', account_id: 'a-1', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true } });
   mocks.listManualCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 8 });
 });
 
@@ -129,7 +129,7 @@ describe('/dialer/phone', () => {
   });
 
   describe('a reload mid-call keeps the call details the agent typed', () => {
-    const SP_SESSION = { session_id: 'sess-sp', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
+    const SP_SESSION = { session_id: 'sess-sp', account_id: 'a-1', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
     const typed = { customer_name: 'Rahul Verma', reason: 'Rate query' };
     const live = step(manualCall({ fields: typed, notes: 'Asked about rates' }), 9, {
       state: 'bridged',
@@ -190,7 +190,7 @@ describe('/dialer/phone', () => {
   });
 
   describe('with the soft phone turned off', () => {
-    const SP_SESSION = { session_id: 'sess-sp', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
+    const SP_SESSION = { session_id: 'sess-sp', account_id: 'a-1', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
     beforeEach(() => {
       mocks.flags = new Set();
     });
@@ -220,18 +220,32 @@ describe('/dialer/phone', () => {
       expect(screen.queryByTestId('dial-number')).toBeNull();
     });
 
-    it('a session the server will not reopen can still be closed, and says who can save an owed outcome', async () => {
+    /** The agent's session is in a sibling account (a-2): this account's bootstrap names it, without its call. */
+    function sessionInSibling(owedThere: boolean) {
       const owed = manualCall({ state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' });
-      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, softphone_enabled: false, session: SP_SESSION, call: owed });
-      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
+      const session = { ...SP_SESSION, account_id: 'a-2' };
+      mocks.getSoftphoneBootstrap.mockImplementation(async (_tenant: string, account: string) =>
+        account === 'a-2'
+          ? { ...BOOTSTRAP, softphone_enabled: true, session, call: owedThere ? owed : null }
+          : { ...BOOTSTRAP, softphone_enabled: false, session, call: null });
+    }
+
+    it('a session in another account of the workspace can be closed there, and says who can save an owed outcome', async () => {
+      sessionInSibling(true);
       mocks.leaveAgencySession.mockResolvedValue(undefined);
       await mount();
+      // This account cannot rehydrate it, so it is not asked to.
+      expect(mocks.openSoftphoneSession).not.toHaveBeenCalled();
       const stranded = screen.getByTestId('softphone-stranded');
+      expect(stranded.textContent).toMatch(/open in another account of this workspace/);
+      // The call is read where the session lives.
+      expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
       expect(stranded.textContent).toMatch(/A supervisor can save it for you from Soft-phone calls\./);
       await act(async () => {
         fireEvent.click(screen.getByTestId('softphone-stranded-close'));
       });
-      expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-1');
+      // `leave` is scoped to the session's account: this account's would be a 404.
+      expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-2');
       expect(screen.getByTestId('where').textContent).toBe('/dialer?left=station');
     });
 
@@ -241,6 +255,11 @@ describe('/dialer/phone', () => {
       mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, softphone_enabled: false, session: null });
       await mount();
       expect(screen.getByText('Not available for your account')).toBeTruthy();
+      cleanup();
+      sessionInSibling(false);
+      await mount();
+      const stranded = screen.getByTestId('softphone-stranded');
+      expect(stranded.textContent).not.toMatch(/needs its outcome/);
     });
   });
 

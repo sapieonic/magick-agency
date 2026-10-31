@@ -39,10 +39,12 @@ export interface StationSoftphone {
  * is on the soft phone whatever the flag map says: the flag turned off mid-call
  * must leave the agent the call, its outcome and Return to campaign (finish
  * mode, `useSoftphone`), not an ordinary break whose End break the server
- * refuses. Only the switch itself (starting new soft-phone work) needs the flag.
- * An unknown break reason (a reload) asks the bootstrap with the flag off too —
- * a reload is exactly when a stranded call needs finding — at the cost of one
- * refused read on a reload during an ordinary break in an account without it.
+ * refuses while the call is live or owes its outcome (`manual_call_live`). Only
+ * the switch itself (starting new soft-phone work) needs the flag; the server
+ * answers the bootstrap, the call's routes and the return with the flag off
+ * (docs/softphone.md §6). An unknown break reason (a reload) asks the bootstrap
+ * with the flag off too — a reload is exactly when a call left to finish needs
+ * finding — at the cost of one extra read on a reload during an ordinary break.
  *
  * ── The same socket, the same microphone ─────────────────────────────────────
  * `useSoftphone` reads this station's `manual_call` frames and connection; the

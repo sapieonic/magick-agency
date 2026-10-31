@@ -23,11 +23,15 @@ export type SoftphoneSessionState =
   /** The soft phone is off for the account and the agent has nothing on it to finish. */
   | { status: 'off' }
   /**
-   * Off, and the agent still has a soft-phone session (and maybe a call) the
-   * server will not reopen: the page can only close it, and say who can save
-   * an outcome it still owes.
+   * Off here, and the agent's soft-phone session is in ANOTHER account of the
+   * tenant (`sessionAccountId`): one live session per agent per tenant, so this
+   * account cannot open one, and the server rehydrates only a session in the
+   * account it is asked for. The page can only close it — `leave` with the
+   * session's own account — and say who can save an outcome its call still owes
+   * (`call`, read from that account's bootstrap; null when there is none or the
+   * read failed).
    */
-  | { status: 'off_stranded'; sessionId: string; call: AgencyManualCall | null }
+  | { status: 'off_stranded'; sessionId: string; sessionAccountId: string; call: AgencyManualCall | null }
   /** 409 `session_on_campaign`: the agent is live on a campaign; the remedy is switching that session (§4.2). */
   | { status: 'on_campaign'; refusal: SoftphoneSessionOnCampaignRefusal }
   | { status: 'error'; message: string };
@@ -54,9 +58,13 @@ export function urlCarriesToken(url: string): boolean {
  * ── With the soft phone turned off (`startAllowed: false`, or a `softphone_disabled`
  *    answer from a flag map gone stale) ──────────────────────────────────────────
  * Nothing new is opened: the bootstrap is read first, and only a soft-phone
- * session that already exists is rehydrated, into finish mode, so a reload
- * mid-call still reaches the call. No session there is `off`; a session the
- * server will not rehydrate is `off_stranded`.
+ * session that already exists is asked for. The server rehydrates it with the
+ * flag off (`rehydrate_only`, docs/softphone.md §6) when it is in THIS account,
+ * into finish mode, so a reload mid-call still reaches the call. No session is
+ * `off`. The one session the server will not rehydrate is one in a sibling
+ * account of the tenant (the bootstrap names the agent's live session tenant-wide,
+ * with its `account_id`): that is `off_stranded`, and it is decided from the
+ * bootstrap without asking.
  */
 export function useSoftphoneSession({
   tenantId,
@@ -78,23 +86,47 @@ export function useSoftphoneSession({
     let cancelled = false;
     setState({ status: 'loading' });
     const key = `softphone:${tenantId}:${accountId}:${attempt}:${startAllowed ? 'open' : 'resume'}`;
-    /** What the soft phone holds for the caller, or null when even that is refused. */
-    const probe = (): Promise<AgencySoftphoneBootstrap | null> =>
-      getSoftphoneBootstrap(tenantId, accountId).catch(() => null);
+    /** What the soft phone holds for the caller in `account`, or null when even that is refused. */
+    const probe = (account: string): Promise<AgencySoftphoneBootstrap | null> =>
+      getSoftphoneBootstrap(tenantId, account).catch(() => null);
     const holdsSession = (phone: AgencySoftphoneBootstrap | null) =>
-      phone?.session?.kind === 'softphone' ? phone.session.session_id : null;
+      phone?.session?.kind === 'softphone' ? phone.session : null;
+    /**
+     * The flag is off here: the caller's soft-phone session in this account is
+     * rehydrated (`open`); one in a sibling account cannot be (`stranded`), and
+     * its call is read where it lives; none is `off`.
+     */
+    const offHere = async (): Promise<
+      | { kind: 'open' }
+      | { kind: 'off' }
+      | { kind: 'stranded'; sessionId: string; sessionAccountId: string; call: AgencyManualCall | null }
+    > => {
+      const held = holdsSession(await probe(accountId));
+      if (!held) return { kind: 'off' };
+      if (held.account_id === accountId) return { kind: 'open' };
+      const there = await probe(held.account_id);
+      return { kind: 'stranded', sessionId: held.session_id, sessionAccountId: held.account_id, call: there?.call ?? null };
+    };
 
     coalesceJoin(key, async () => {
       if (!startAllowed) {
-        const phone = await probe();
-        if (!holdsSession(phone)) return { off: true as const, phone };
+        const here = await offHere();
+        if (here.kind !== 'open') return { off: true as const, here };
       }
       return { off: false as const, result: await openSoftphoneSession(tenantId, accountId) };
     })
       .then(async (outcome) => {
         if (cancelled) return;
+        const settleOff = (here: Awaited<ReturnType<typeof offHere>>) => {
+          if (here.kind === 'stranded') {
+            setState({ status: 'off_stranded', sessionId: here.sessionId, sessionAccountId: here.sessionAccountId, call: here.call });
+          } else {
+            // `open` here means the session left between the read and the refusal.
+            setState({ status: 'off' });
+          }
+        };
         if (outcome.off) {
-          setState({ status: 'off' });
+          settleOff(outcome.here);
           return;
         }
         const result = outcome.result;
@@ -102,10 +134,10 @@ export function useSoftphoneSession({
           if (result.refusal.code === 'session_on_campaign') {
             setState({ status: 'on_campaign', refusal: result.refusal });
           } else if (result.refusal.code === 'softphone_disabled') {
-            const phone = await probe();
+            // A flag map gone stale (on here, off on the server).
+            const here = await offHere();
             if (cancelled) return;
-            const sessionId = holdsSession(phone);
-            setState(sessionId ? { status: 'off_stranded', sessionId, call: phone?.call ?? null } : { status: 'off' });
+            settleOff(here);
           } else {
             setState({ status: 'error', message: refusalCopy(result.refusal) });
           }

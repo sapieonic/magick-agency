@@ -341,7 +341,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     const boot = await get('/proxy/agency/softphone/bootstrap', agent);
     expect(boot.statusCode).toBe(200);
     expect(boot.json()).toMatchObject({
-      session: { session_id: sessionId, kind: 'softphone', state: 'break', on_softphone: true, campaign_id: null },
+      session: { session_id: sessionId, account_id: account, kind: 'softphone', state: 'break', on_softphone: true, campaign_id: null },
       call: null,
       default_country_code: '+91',
       untagged: { caller_ids: [accountNumber], default_caller_id: accountNumber },
@@ -798,6 +798,29 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
 
     runtime.breaks.cancel(sessionId);
     await runtime.agents.set(sessionId, 'break');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('a soft-phone session in a sibling account: named with its account where the flag is off, never rehydrated there, left only in its own', async () => {
+    const agent = await user(tenant, account, 'agent');
+    await insertMembership({ user_id: agent.id, tenant_id: tenant, account_id: dark, role: 'agent' });
+    const { sessionId } = await openSoftphone(agent);
+
+    // `dark` has the soft phone off. Its bootstrap names the agent's one live session in
+    // the tenant, with the account it is in, and reads no call for it.
+    const boot = await get('/proxy/agency/softphone/bootstrap', agent, dark);
+    expect(boot.statusCode, boot.body).toBe(200);
+    expect(boot.json()).toMatchObject({
+      softphone_enabled: false,
+      session: { session_id: sessionId, account_id: account, kind: 'softphone' },
+      call: null,
+    });
+    // Rehydrate-only serves this account's session only: the console's `off_stranded`.
+    const reopen = await post('/proxy/agency/softphone/sessions', agent, {}, dark);
+    expect(reopen.statusCode).toBe(403);
+    expect(reopen.json().code).toBe('softphone_disabled');
+    // `leave` is scoped to the session's account: from `dark` it does not exist.
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent, {}, dark)).statusCode).toBe(404);
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 30_000);
 

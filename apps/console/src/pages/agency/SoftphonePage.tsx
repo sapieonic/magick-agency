@@ -39,9 +39,10 @@ export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
  * Full-viewport and outside both shells, gated like `/station`; the page reads
  * `agency_softphone_enabled` itself rather than through `RequireFlag`, because
  * the flag turned off must not take a call away from the agent on it: with the
- * flag off it rehydrates only a soft-phone session that already exists, into
- * finish mode (`useSoftphone`), and is `CapabilityUnavailable` otherwise, as the
- * route gate was. It opens a soft-phone session (`break/soft_phone`
+ * flag off it rehydrates only a soft-phone session that already exists in this
+ * account (the server's `rehydrate_only`), into finish mode (`useSoftphone`); one
+ * in a sibling account can only be closed (`StrandedScreen`); and it is
+ * `CapabilityUnavailable` otherwise, as the route gate was. It opens a soft-phone session (`break/soft_phone`
  * from birth, never `available`, so pacing can never reserve it), connects the
  * station socket for it, and renders `SoftphoneView` on top of that socket, the
  * station's microphone and its playback.
@@ -70,7 +71,7 @@ export default function SoftphonePage() {
   if (state.status === 'off') return <CapabilityUnavailable />;
 
   if (state.status === 'off_stranded') {
-    return <StrandedScreen sessionId={state.sessionId} call={state.call} tenantId={tenantId} accountId={accountId} />;
+    return <StrandedScreen sessionId={state.sessionId} call={state.call} tenantId={tenantId} sessionAccountId={state.sessionAccountId} />;
   }
 
   if (state.status === 'on_campaign') {
@@ -292,31 +293,37 @@ function SoftphoneConsole({
   );
 }
 
-/** The soft phone is off and its session could not be reopened: what is true, and who can finish it. */
+/** The soft phone is off here and the agent's session is in another account: what is true, and who can finish it. */
 export const SOFTPHONE_STRANDED_COPY = {
-  title: 'The soft phone has been turned off',
-  detail: 'Your soft-phone session is still open, but it can’t be reopened here now that the soft phone is off for this account.',
-  owed: 'Your last call still needs its outcome. A supervisor can save it for you from Soft-phone calls.',
+  title: 'Your soft phone is open in another account',
+  detail: 'The soft phone is turned off for this account, and your soft-phone session is still open in another account of this workspace. Switch to that account to finish there, or close it here.',
+  owed: 'Your last call there still needs its outcome. A supervisor can save it for you from Soft-phone calls.',
   close: 'Close the soft phone so you can join a campaign.',
 } as const;
 
 /**
- * `off_stranded`: the soft phone turned off with the agent's soft-phone session
- * still open, and the server will not rehydrate it (no socket to put the call
- * on). The one thing this page can still do is close the session — so the agent
- * is not locked out of campaigns by it — and say who can save an outcome it
- * still owes (a supervisor, on the agent's behalf).
+ * `off_stranded`: the soft phone is off for this account and the agent's
+ * soft-phone session is in a SIBLING account of the tenant, which this account
+ * cannot rehydrate (the server rehydrates only a session in the account asked
+ * for, docs/softphone.md §6) and cannot open beside (one live session per agent
+ * per tenant). The one thing this page can still do is close the session — so
+ * the agent is not locked out of campaigns by it — and say who can save an
+ * outcome it still owes (a supervisor, on the agent's behalf).
+ *
+ * The close is sent with the SESSION's account: `leave` is scoped to the
+ * session's account, and this account's would be the 404 of a session that does
+ * not exist here.
  */
 function StrandedScreen({
   sessionId,
   call,
   tenantId,
-  accountId,
+  sessionAccountId,
 }: {
   sessionId: string;
   call: AgencyManualCall | null;
   tenantId: string | null;
-  accountId: string | null;
+  sessionAccountId: string;
 }) {
   const navigate = useNavigate();
   const [closing, setClosing] = useState(false);
@@ -325,7 +332,7 @@ function StrandedScreen({
     setClosing(true);
     setFailure(null);
     try {
-      await leaveAgencySession(sessionId, tenantId ?? undefined, accountId ?? undefined);
+      await leaveAgencySession(sessionId, tenantId ?? undefined, sessionAccountId);
       navigate(agentLandingPath('station'));
     } catch (err) {
       setFailure(err instanceof Error ? err.message : 'Try again in a moment.');

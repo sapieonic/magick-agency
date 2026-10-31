@@ -486,7 +486,7 @@ describe('GET /softphone/bootstrap', () => {
     const boot = (await get(`/softphone/bootstrap?actor_user_id=${AGENT}`)).json();
     expect(boot.untagged.default_caller_id).toBe('+919000000002');
     expect(boot.session).toEqual({
-      session_id: SESSION, kind: 'campaign', campaign_id: CAMPAIGN, campaign_name: 'Staffed', state: 'on_call',
+      session_id: SESSION, account_id: ACCOUNT, kind: 'campaign', campaign_id: CAMPAIGN, campaign_name: 'Staffed', state: 'on_call',
       break_reason: null, on_softphone: false, pending_state: 'break', pending_break_reason: 'soft_phone',
     });
     expect(runtime.softphone.getLiveForSession).toHaveBeenCalledWith(SESSION);

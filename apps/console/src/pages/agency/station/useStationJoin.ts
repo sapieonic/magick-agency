@@ -448,9 +448,17 @@ export function useStationJoin({
    * its outcome: that one would lapse to "no outcome" with the session. So the
    * soft phone's bootstrap is read first, and a call there — live or owed —
    * stops the close with `softphoneCallPending`, which the screen turns into
-   * "finish it on the soft phone". A bootstrap that cannot be read (the flag
-   * already off on a server that gates it) does not block: the server still
-   * guards the live call, and an owed outcome is the documented lapse.
+   * "finish it on the soft phone". A bootstrap that cannot be read (a network or
+   * server fault; the server answers it with the soft-phone flag off too) does
+   * not block: the server still guards the live call, and an owed outcome is the
+   * documented lapse.
+   *
+   * ── The session's own account ────────────────────────────────────────────────
+   * One live session per agent per TENANT, so the soft-phone session in the way
+   * may be in a sibling account. The bootstrap names it with its `account_id`
+   * but reads its call only in the account asked for, and `leave` is scoped to
+   * the session's account: both are sent with the session's account, or the
+   * call would go unseen and the leave would be a 404 taken for "already gone".
    *
    * A session that is already gone (`session_ended`, 404) is what the close
    * wanted, so the join goes ahead.
@@ -468,13 +476,23 @@ export function useStationJoin({
     };
 
     let sessionId = softphoneSessionIdRef.current;
+    let sessionAccountId = accountId;
     try {
       const phone = await getSoftphoneBootstrap(tenantId, accountId);
-      if (phone.call) {
+      const held = phone.session?.kind === 'softphone' && (!sessionId || phone.session.session_id === sessionId)
+        ? phone.session
+        : null;
+      if (held) {
+        sessionId = held.session_id;
+        sessionAccountId = held.account_id;
+      }
+      const call = sessionAccountId === accountId
+        ? phone.call
+        : (await getSoftphoneBootstrap(tenantId, sessionAccountId)).call;
+      if (call) {
         done(null, true);
         return;
       }
-      if (!sessionId && phone.session?.kind === 'softphone') sessionId = phone.session.session_id;
     } catch {
       // See above: unreadable is not a reason to keep the agent out.
     }
@@ -484,7 +502,7 @@ export function useStationJoin({
     }
 
     try {
-      await leaveAgencySession(sessionId, tenantId, accountId);
+      await leaveAgencySession(sessionId, tenantId, sessionAccountId);
     } catch (err: unknown) {
       const code = errorCode(err);
       if (code === 'agent_on_live_call' || code === 'manual_call_live') {

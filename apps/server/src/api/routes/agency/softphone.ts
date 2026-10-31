@@ -217,6 +217,7 @@ async function buildBootstrap(
     const pending = runtime.breaks.peek(live.id);
     session = {
       session_id: live.id,
+      account_id: live.account_id,
       kind: live.kind,
       campaign_id: live.campaign_id,
       // Tenant-scoped, like the campaign join's conflict: the live session may be in

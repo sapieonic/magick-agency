@@ -420,6 +420,45 @@ describe('joining a campaign while on the soft phone', () => {
     expect(screen.getByTestId('rail-label')).toBeTruthy();
   });
 
+  describe('a soft-phone session in another account of the workspace', () => {
+    const owed = manualCall({ state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' });
+    const SIBLING_SESSION = {
+      session_id: 'sess-sp', account_id: 'a-2', kind: 'softphone', campaign_id: null, campaign_name: null,
+      state: 'break', break_reason: 'soft_phone', on_softphone: true,
+    };
+    function sessionInSibling(owedThere: boolean) {
+      mocks.getSoftphoneBootstrap.mockImplementation(async (_tenant: string, account: string) => ({
+        ...SP_BOOTSTRAP, session: SIBLING_SESSION, call: account === 'a-2' && owedThere ? owed : null,
+      }));
+    }
+
+    it('is closed with its own account, then this campaign is joined', async () => {
+      sessionInSibling(false);
+      mocks.createAgencySession.mockRejectedValueOnce(onSoftphone()).mockResolvedValueOnce(BOOTSTRAP);
+      mocks.leaveAgencySession.mockResolvedValue(undefined);
+      await refused();
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      });
+      // `leave` is scoped to the session's account; this account's would be a 404 taken for "gone".
+      expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-2');
+      expect(mocks.createAgencySession.mock.calls[1]).toEqual(['camp-1', 't-1', 'a-1']);
+      expect(screen.queryByTestId('join-on-softphone')).toBeNull();
+    });
+
+    it('is not closed while its call owes an outcome, read in that account', async () => {
+      sessionInSibling(true);
+      mocks.createAgencySession.mockRejectedValueOnce(onSoftphone());
+      await refused();
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      });
+      expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
+      expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
+      expect(screen.getByTestId('join-softphone-call-pending')).toBeTruthy();
+    });
+  });
+
   it('does not close a soft phone whose call owes its outcome: it says to finish it there', async () => {
     mocks.createAgencySession.mockRejectedValueOnce(onSoftphone());
     mocks.getSoftphoneBootstrap.mockResolvedValue({

@@ -488,6 +488,13 @@ export interface AgencySoftphoneUntagged {
 /** The caller's live session as the soft phone sees it. */
 export interface AgencySoftphoneSessionSummary {
   session_id: string;
+  /**
+   * The account the session is in. The live session is the agent's one in the TENANT
+   * (`uq_agency_agent_live_tenant`), so it may be in a sibling account of the one the
+   * bootstrap was read for: then `call` is not read, and the session routes (`leave`,
+   * scoped to the session's account) must be sent with this account, not the caller's.
+   */
+  account_id: string;
   kind: AgencySessionKind;
   /** NULL for a `softphone` session. */
   campaign_id: string | null;

@@ -287,7 +287,7 @@ from `audit` (a success without the envelope is a 502).
 
 | Method and path (`/proxy/agency`) | Permission | What |
 |---|---|---|
-| `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
+| `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`account_id`, the account it is in; `on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
 | `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state`. With the flag off it only rehydrates an existing live soft-phone session in this account (the internal handler's `rehydrate_only`); else 403 `softphone_disabled` |
 | `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
@@ -381,9 +381,12 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   bootstrap's `softphone_enabled` is `false`, or when a dial is refused `softphone_disabled`.
   `/dialer/phone` therefore reads the flag itself rather than through a route `RequireFlag`:
   with it off the page rehydrates only an existing soft-phone session (reading the bootstrap
-  first, never opening a new one) and is "Not available for your account" otherwise; if the
-  server will not rehydrate the session, the page can still close it and says a supervisor can
-  save an owed outcome. The station shows the soft phone in place on `break/soft_phone`
+  first, never opening a new one; the server's `rehydrate_only` serves a session in this account)
+  and is "Not available for your account" otherwise. The one session it cannot rehydrate is one in
+  a sibling account of the tenant (one live session per agent per tenant; the bootstrap's
+  `session.account_id` names where it is): the page says the soft phone is open in another
+  account, reads that call in that account, says a supervisor can save an owed outcome, and can
+  close it, with the session's own account (`leave` is scoped to it). The station shows the soft phone in place on `break/soft_phone`
   whatever the flag map says; only the switch to it needs the flag on.
 - **Overrides (SP1, SP2).** A `dnc_listed` or `outside_calling_hours` refusal opens a dialog that
   shows what matched (the DNC entry's scope, reason and date; the window, timezone and next
@@ -408,7 +411,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   soft-phone bootstrap first and closes nothing while a call there is live or owes its outcome
   (`leave` refuses only a live one, and an owed outcome would lapse), saying to finish it on the
   soft phone; otherwise it leaves the refusal's `session_id` (`POST /sessions/:id/leave`; a session
-  already gone counts as closed) and joins. "Open the soft phone" stays as the second way. The soft
+  already gone counts as closed) and joins. A session in a sibling account is read and left with
+  its own account (the bootstrap's `session.account_id`). "Open the soft phone" stays as the second way. The soft
   phone is not closed when the agent navigates away (a reload, StrictMode's double mount and a
   second tab make an unmount a poor signal); the nav says it stays open instead.
 - **Live floor.** A campaign agent on `break/soft_phone` reads "Soft phone" on the floor and in its
