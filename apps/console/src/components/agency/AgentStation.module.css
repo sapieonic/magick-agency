@@ -760,6 +760,15 @@
   text-decoration: underline;
 }
 
+/* The same, as a button: an escape that also changes the account first. */
+button.fatalEscape {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .srOnly {
   position: absolute;
   width: 1px;

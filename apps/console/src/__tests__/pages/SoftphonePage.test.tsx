@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   markManualCallDnc: vi.fn(),
   mintStationToken: vi.fn(),
   leaveAgencySession: vi.fn(),
+  setActiveAccountId: vi.fn(),
   useTenant: vi.fn(),
   flags: new Set<string>(),
 }));
@@ -60,6 +61,12 @@ const SESSION = {
   intervals: { heartbeat_ms: 10_000, heartbeat_grace_ms: 30_000, reservation_lease_ms: 10_000, countdown_ms: 3000 },
 };
 
+/** The agent's two accounts in the workspace: this one, and a sibling. */
+const ACCOUNTS = [
+  { id: 'a-1', name: 'Head Office', tenant_id: 't-1' },
+  { id: 'a-2', name: 'North Region', tenant_id: 't-1' },
+];
+
 function Where() {
   const location = useLocation();
   return <span data-testid="where">{location.pathname + location.search}</span>;
@@ -82,7 +89,9 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket);
   Object.values(mocks).forEach((m) => (typeof m === 'function' && 'mockReset' in m ? m.mockReset() : undefined));
   mocks.flags = new Set(['agency_softphone_enabled']);
-  mocks.useTenant.mockReturnValue({ tenantId: 't-1', accountId: 'a-1', role: 'agent' });
+  mocks.useTenant.mockReturnValue({
+    tenantId: 't-1', accountId: 'a-1', role: 'agent', accounts: ACCOUNTS, setActiveAccountId: mocks.setActiveAccountId,
+  });
   mocks.openSoftphoneSession.mockResolvedValue({ ok: true, value: SESSION });
   mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, session: { session_id: 'sess-sp', account_id: 'a-1', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true } });
   mocks.listManualCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 8 });
@@ -289,6 +298,8 @@ describe('/dialer/phone', () => {
         campaign_id: 'camp-1',
         campaign_name: 'Home Loan Renewals',
         state: 'on_call',
+        account_id: 'a-1',
+        account_name: 'Head Office',
       },
     });
     mocks.switchToSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-camp', state: 'on_call', pending_state: 'break', break_reason: 'soft_phone' } });
@@ -303,12 +314,17 @@ describe('/dialer/phone', () => {
     });
     expect(mocks.switchToSoftphone).toHaveBeenCalledWith('sess-camp', 't-1', 'a-1');
     expect(screen.getByTestId('where').textContent).toBe('/station?campaign=camp-1');
+    // Its own account: the console stays where it is.
+    expect(mocks.setActiveAccountId).not.toHaveBeenCalled();
   });
 
   it('says why when the switch is refused, and stays', async () => {
     mocks.openSoftphoneSession.mockResolvedValue({
       ok: false,
-      refusal: { code: 'session_on_campaign', status: 409, message: 'x', session_id: 's', campaign_id: 'c', campaign_name: 'C', state: 'available' },
+      refusal: {
+        code: 'session_on_campaign', status: 409, message: 'x', session_id: 's', campaign_id: 'c', campaign_name: 'C',
+        state: 'available', account_id: 'a-1', account_name: 'Head Office',
+      },
     });
     mocks.switchToSoftphone.mockResolvedValue({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
     await mount();
@@ -316,6 +332,100 @@ describe('/dialer/phone', () => {
       fireEvent.click(screen.getByTestId('softphone-switch-from-campaign'));
     });
     expect(screen.getByTestId('softphone-switch-failure').textContent).toMatch(/turned off for this account/);
+  });
+
+  describe('a soft-phone session open in another account of the workspace (the flag on here)', () => {
+    const ELSEWHERE = {
+      code: 'session_on_softphone', status: 409, message: 'x', session_id: 'sess-b', account_id: 'a-2', account_name: 'North Region',
+    };
+    /** That account's bootstrap names the session; `owed` puts an unsettled call on it. */
+    function inSibling(owed: boolean) {
+      const session = { session_id: 'sess-b', account_id: 'a-2', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
+      mocks.getSoftphoneBootstrap.mockImplementation(async (_t: string, account: string) => ({
+        ...BOOTSTRAP,
+        session,
+        call: account === 'a-2' && owed
+          ? manualCall({ state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' })
+          : null,
+      }));
+    }
+
+    it('says so, closes it with its own account, and opens the soft phone here', async () => {
+      inSibling(false);
+      mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: false, refusal: ELSEWHERE }).mockResolvedValueOnce({ ok: true, value: SESSION });
+      mocks.leaveAgencySession.mockResolvedValue(undefined);
+      await mount();
+      const screenEl = screen.getByTestId('softphone-elsewhere');
+      expect(screenEl.textContent).toMatch(/Your soft phone is open in another account/);
+      expect(screenEl.textContent).toMatch(/open in North Region\./);
+      expect(FakeSocket.instances).toHaveLength(0);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Close it and open the soft phone here' }));
+      });
+      expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
+      expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-b', 't-1', 'a-2');
+      expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(2);
+      expect(mocks.openSoftphoneSession.mock.calls[1]).toEqual(['t-1', 'a-1']);
+      expect(screen.queryByTestId('softphone-elsewhere')).toBeNull();
+      expect(latestSocket().url).toContain('sess-sp');
+    });
+
+    it('closes nothing while its call is unfinished, says why, and offers that account', async () => {
+      inSibling(true);
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
+      await mount();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-elsewhere-close'));
+      });
+      expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
+      expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('softphone-elsewhere-call-pending').textContent).toBe(
+        'Your soft phone in North Region has a call that isn’t finished, so it’s still open. Hang up and save its outcome there first.',
+      );
+      expect(screen.queryByTestId('softphone-elsewhere-close')).toBeNull();
+      const goThere = screen.getByRole('button', { name: 'Use the soft phone in North Region' });
+      expect(document.activeElement).toBe(goThere);
+      fireEvent.click(goThere);
+      expect(mocks.setActiveAccountId).toHaveBeenCalledWith('a-2');
+    });
+
+    it('a call the server refuses to leave over (agent_on_live_call) says the same', async () => {
+      inSibling(false);
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
+      mocks.leaveAgencySession.mockRejectedValue(
+        Object.assign(new Error('Conflict'), { statusCode: 409, details: { code: 'agent_on_live_call', message: 'Hang up first.' } }),
+      );
+      await mount();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-elsewhere-close'));
+      });
+      expect(screen.getByTestId('softphone-elsewhere-call-pending')).toBeTruthy();
+      expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('any other failure to leave keeps the screen and says the soft phone is still open', async () => {
+      inSibling(false);
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: ELSEWHERE });
+      mocks.leaveAgencySession.mockRejectedValue(Object.assign(new Error('Service Unavailable'), { statusCode: 503 }));
+      await mount();
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-elsewhere-close'));
+      });
+      expect(screen.getByTestId('softphone-elsewhere-failure').textContent).toBe('Your soft phone is still open — Service Unavailable');
+      expect((screen.getByTestId('softphone-elsewhere-close') as HTMLButtonElement).disabled).toBe(false);
+      expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
+    });
+
+    it('without the account in the console\'s list: named from the refusal, closable, nowhere to switch to', async () => {
+      mocks.useTenant.mockReturnValue({
+        tenantId: 't-1', accountId: 'a-1', role: 'agent', accounts: [ACCOUNTS[0]], setActiveAccountId: mocks.setActiveAccountId,
+      });
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: { ...ELSEWHERE, account_name: null } });
+      await mount();
+      expect(screen.getByTestId('softphone-elsewhere').textContent).toMatch(/open in another account of this workspace/);
+      expect(screen.getByTestId('softphone-elsewhere-close')).toBeTruthy();
+      expect(screen.queryByTestId('softphone-elsewhere-go-there')).toBeNull();
+    });
   });
 
   it('any other refusal is a screen with a way to try again', async () => {

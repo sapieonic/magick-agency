@@ -5,7 +5,11 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { leaveAgencySession } from '../../api/agency';
-import { switchToSoftphone, type SoftphoneSessionOnCampaignRefusal } from '../../api/softphone';
+import {
+  switchToSoftphone,
+  type SoftphoneSessionOnCampaignRefusal,
+  type SoftphoneSessionOnSoftphoneRefusal,
+} from '../../api/softphone';
 import { trackAgencySoftphoneSwitch, trackFeatureGateUnavailable } from '../../analytics/events';
 import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useAgencyAudio } from '../../hooks/useAgencyAudio';
@@ -15,6 +19,7 @@ import { useSoftphone } from '../../hooks/useSoftphone';
 import { hasPermission } from '../../utils/permissions';
 import { audioTarget } from '../../utils/softphone/audioTarget';
 import { refusalCopy } from '../../utils/softphone/refusalCopy';
+import { closeSoftphoneSession } from './softphone/closeSoftphoneSession';
 import { agencyAudioNotice } from '../../utils/agencyAudioCopy';
 import { readCuePrefs } from '../../utils/agencyCuePrefs';
 import { agentLandingPath } from '../../utils/agencyStationExit';
@@ -26,6 +31,7 @@ import { CapabilityUnavailable } from '../../components/common/CapabilityUnavail
 import { useSoftphoneSession } from './softphone/useSoftphoneSession';
 import type { StationSocketBootstrap } from '../../hooks/agencyStation/types';
 import type { AgencyManualCall, AgencySoftphoneSessionResponse } from '../../types/softphone';
+import type { TenantAccount } from '../../types/auth';
 import station from '../../components/agency/AgentStation.module.css';
 
 /** The Close soft phone confirmation: where it lands, and how to come back. */
@@ -51,7 +57,9 @@ export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
  * session per agent per tenant, one pair of ears. The answer is not a second
  * session but the switch on that one (§4.2), which this page offers — the
  * station then shows the soft phone in place, on its own socket, and "Return to
- * campaign" takes them back.
+ * campaign" takes them back. A soft-phone session open in a sibling account is
+ * refused too (`session_on_softphone`, `ElsewhereScreen`): the page closes it
+ * there and opens one here.
  */
 export default function SoftphonePage() {
   const { tenantId, accountId, role } = useTenant();
@@ -76,6 +84,10 @@ export default function SoftphonePage() {
 
   if (state.status === 'on_campaign') {
     return <CampaignSessionScreen refusal={state.refusal} tenantId={tenantId} accountId={accountId} />;
+  }
+
+  if (state.status === 'softphone_elsewhere') {
+    return <ElsewhereScreen refusal={state.refusal} tenantId={tenantId} accountId={accountId} onClosed={retry} />;
   }
 
   if (state.status === 'error') {
@@ -359,6 +371,132 @@ function StrandedScreen({
           <p className="error-text" data-testid="softphone-stranded-failure">
             Your soft phone is still open — {failure}
           </p>
+        ) : null}
+        <StationEscape toCampaign={false} campaignId="" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The account a live-session refusal names, as the console can act on it: its name
+ * (the refusal's, else the account list's; null when neither has one) and whether
+ * the console can switch to it — the account is in the caller's list, so
+ * `setActiveAccountId` lands on an account the switcher shows and the server
+ * scopes every call to. Mocked contexts in tests may carry no list.
+ */
+function siblingAccount(
+  accounts: TenantAccount[] | undefined,
+  refusal: { account_id: string; account_name: string | null },
+): { name: string | null; switchable: boolean } {
+  const listed = (accounts ?? []).find((a) => a.id === refusal.account_id) ?? null;
+  return { name: refusal.account_name ?? listed?.name ?? null, switchable: listed !== null };
+}
+
+/** `softphone_elsewhere`: the soft phone is on here and open in a sibling account. */
+export const SOFTPHONE_ELSEWHERE_COPY = {
+  title: 'Your soft phone is open in another account',
+  detail: (account: string | null) =>
+    account
+      ? `Your soft-phone session is open in ${account}. You can only have one session at a time.`
+      : 'Your soft-phone session is open in another account of this workspace. You can only have one session at a time.',
+  close: 'Close it and open the soft phone here',
+  callPending: (account: string | null) =>
+    `Your soft phone ${account ? `in ${account}` : 'in the other account'} has a call that isn’t finished, so it’s still open. Hang up and save its outcome there first.`,
+  goThere: (account: string | null) => (account ? `Use the soft phone in ${account}` : 'Use the soft phone in that account'),
+} as const;
+
+/**
+ * `softphone_elsewhere`: the soft phone is on for this account, and the agent's
+ * soft-phone session is open in a SIBLING account of the tenant. The server never
+ * rehydrates it here — every route on it is scoped to its own account, so this
+ * console could dial nothing from it — and cannot open a second one beside it (one
+ * live session per agent per tenant).
+ *
+ * The remedy is one click: close that session and open the soft phone here
+ * (`closeSoftphoneSession`, the campaign join's close too). It reads and leaves the
+ * session with the refusal's `account_id`, and closes nothing while a call there is
+ * live or owes its outcome, saying so; then the open is retried. The second way is
+ * going to that account (when the console can switch to it), where the same page
+ * rehydrates the session — the way to finish a call it still holds.
+ */
+function ElsewhereScreen({
+  refusal,
+  tenantId,
+  accountId,
+  onClosed,
+}: {
+  refusal: SoftphoneSessionOnSoftphoneRefusal;
+  tenantId: string | null;
+  accountId: string | null;
+  onClosed: () => void;
+}) {
+  const { accounts, setActiveAccountId } = useTenant();
+  const there = siblingAccount(accounts, refusal);
+  const [closing, setClosing] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [callPending, setCallPending] = useState(false);
+  const goThereRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (callPending) goThereRef.current?.focus();
+  }, [callPending]);
+
+  const onClose = async () => {
+    if (closing || !tenantId || !accountId) return;
+    setClosing(true);
+    setFailure(null);
+    const closed = await closeSoftphoneSession({
+      tenantId,
+      accountId,
+      sessionId: refusal.session_id,
+      sessionAccountId: refusal.account_id,
+    });
+    if (closed.kind === 'closed') {
+      onClosed();
+      return;
+    }
+    setClosing(false);
+    if (closed.kind === 'call_pending') setCallPending(true);
+    else setFailure(closed.kind === 'failed' ? closed.message : 'Your soft phone is still open. Try again.');
+  };
+
+  return (
+    <div className={station.shell}>
+      <div className={station.fatal} role="alert" data-testid="softphone-elsewhere">
+        <h1>{SOFTPHONE_ELSEWHERE_COPY.title}</h1>
+        <p>{SOFTPHONE_ELSEWHERE_COPY.detail(there.name)}</p>
+        {callPending ? (
+          <p className="error-text" data-testid="softphone-elsewhere-call-pending">
+            {SOFTPHONE_ELSEWHERE_COPY.callPending(there.name)}
+          </p>
+        ) : (
+          <button
+            type="button"
+            className={station.fatalAction}
+            onClick={() => void onClose()}
+            disabled={closing}
+            aria-busy={closing || undefined}
+            data-testid="softphone-elsewhere-close"
+          >
+            {closing ? 'Closing…' : SOFTPHONE_ELSEWHERE_COPY.close}
+          </button>
+        )}
+        {failure ? (
+          <p className="error-text" data-testid="softphone-elsewhere-failure">
+            {failure}
+          </p>
+        ) : null}
+        {there.switchable ? (
+          <button
+            ref={goThereRef}
+            type="button"
+            className={callPending ? station.fatalAction : station.fatalEscape}
+            onClick={() => setActiveAccountId(refusal.account_id)}
+            disabled={closing}
+            data-testid="softphone-elsewhere-go-there"
+          >
+            {SOFTPHONE_ELSEWHERE_COPY.goThere(there.name)}
+          </button>
         ) : null}
         <StationEscape toCampaign={false} campaignId="" />
       </div>

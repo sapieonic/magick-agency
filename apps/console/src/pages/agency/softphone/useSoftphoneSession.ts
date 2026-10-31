@@ -4,6 +4,7 @@ import {
   getSoftphoneBootstrap,
   openSoftphoneSession,
   type SoftphoneSessionOnCampaignRefusal,
+  type SoftphoneSessionOnSoftphoneRefusal,
 } from '../../../api/softphone';
 import { coalesceJoin } from '../../../utils/agencyLiveSession';
 import { refusalCopy } from '../../../utils/softphone/refusalCopy';
@@ -32,8 +33,18 @@ export type SoftphoneSessionState =
    * read failed).
    */
   | { status: 'off_stranded'; sessionId: string; sessionAccountId: string; call: AgencyManualCall | null }
-  /** 409 `session_on_campaign`: the agent is live on a campaign; the remedy is switching that session (§4.2). */
+  /**
+   * 409 `session_on_campaign`: the agent is live on a campaign, in this account or
+   * a sibling one (`refusal.account_id`); the remedy is switching that session (§4.2).
+   */
   | { status: 'on_campaign'; refusal: SoftphoneSessionOnCampaignRefusal }
+  /**
+   * 409 `session_on_softphone`: the soft phone is on here, and the agent's
+   * soft-phone session is in ANOTHER account of the tenant (`refusal.account_id`),
+   * which the server never rehydrates into this one (every route on it is scoped to
+   * its account). The page closes it there, with that account, and opens one here.
+   */
+  | { status: 'softphone_elsewhere'; refusal: SoftphoneSessionOnSoftphoneRefusal }
   | { status: 'error'; message: string };
 
 /** Whether an upgrade URL already carries its single-use token. */
@@ -54,6 +65,11 @@ export function urlCarriesToken(url: string): boolean {
  *
  * Coalesced like the campaign join, so a StrictMode double-mount (or two tabs
  * racing in one page load) opens one session, not two.
+ *
+ * With the flag on, a soft-phone session in a sibling account of the tenant is
+ * not rehydrated either: the server refuses it `session_on_softphone`, naming its
+ * account (`softphone_elsewhere`), as it refuses a live campaign session
+ * `session_on_campaign` (`on_campaign`).
  *
  * ── With the soft phone turned off (`startAllowed: false`, or a `softphone_disabled`
  *    answer from a flag map gone stale) ──────────────────────────────────────────
@@ -133,6 +149,8 @@ export function useSoftphoneSession({
         if (!result.ok) {
           if (result.refusal.code === 'session_on_campaign') {
             setState({ status: 'on_campaign', refusal: result.refusal });
+          } else if (result.refusal.code === 'session_on_softphone') {
+            setState({ status: 'softphone_elsewhere', refusal: result.refusal });
           } else if (result.refusal.code === 'softphone_disabled') {
             // A flag map gone stale (on here, off on the server).
             const here = await offHere();

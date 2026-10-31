@@ -422,6 +422,16 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   closing the soft phone for something else decides alike. "Open the soft phone" stays as the second way. The soft
   phone is not closed when the agent navigates away (a reload, StrictMode's double mount and a
   second tab make an unmount a poor signal); the nav says it stays open instead.
+- **The soft phone open in a sibling account (the flag on here).** `POST /softphone/sessions`
+  refuses `session_on_softphone` with that session's account (§6), and `/dialer/phone` says "Your
+  soft phone is open in another account", naming it (the refusal's `account_name`, else the
+  account list's). **Close it and open the soft phone here** runs `closeSoftphoneSession` with the
+  refusal's `session_id` and `account_id`, as the campaign join does: while a call there is live
+  or owes its outcome it closes nothing and says to finish it there; otherwise it leaves that
+  session and opens the soft phone here. When the account is in the console's account list, **Use
+  the soft phone in <account>** moves the console to it (`setActiveAccountId`, what the account
+  switcher does), where the page rehydrates that session; it is the primary action while a call
+  there is unfinished.
 - **Live floor.** A campaign agent on `break/soft_phone` reads "Soft phone" on the floor and in its
   drawer (`floorStateLabel`), never "On break · soft_phone", and is exempt from the 30-minute
   long-break flag. Whether they are on a call right now is not in the floor's data
