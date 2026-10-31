@@ -438,12 +438,12 @@ describe('the switch routes', () => {
 
   it('start: the envelope with from-state and queued', async () => {
     runtime.softphone.switchToSoftphone.mockResolvedValue({
-      ok: true, fromState: 'wrapup', campaignId: CAMPAIGN, queued: true, response: { state: 'wrapup', pending_state: 'break' },
+      ok: true, fromState: 'wrapup', campaignId: CAMPAIGN, queued: true, unchanged: true, response: { state: 'wrapup', pending_state: 'break' },
     });
     const res = await post(`/sessions/${SESSION}/softphone`, { agent_user_id: AGENT });
     expect(res.json()).toEqual({
       answer: { state: 'wrapup', pending_state: 'break' },
-      audit: { campaign_id: CAMPAIGN, from_state: 'wrapup', queued: true, withdrawn: false },
+      audit: { campaign_id: CAMPAIGN, from_state: 'wrapup', queued: true, withdrawn: false, unchanged: true },
     });
     expect(runtime.softphone.switchToSoftphone).toHaveBeenCalledWith(SESSION, { tenantId: TENANT, accountId: ACCOUNT, userId: AGENT, supervise: false });
   });

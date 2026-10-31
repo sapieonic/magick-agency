@@ -487,20 +487,31 @@ describe('the audit rows', () => {
   it('the switch and the return: from-state, queued / withdrawn, the campaign', async () => {
     const app = await appAs('agent');
     mocks.callCore.mockResolvedValue(envelope({ session_id: SESSION, state: 'on_call', pending_state: 'break' }, {
-      campaign_id: CAMPAIGN, from_state: 'on_call', queued: true, withdrawn: false,
+      campaign_id: CAMPAIGN, from_state: 'on_call', queued: true, withdrawn: false, unchanged: false,
     }));
     const started = await app.inject({ method: 'POST', url: `${P}/sessions/${SESSION}/softphone`, payload: {} });
     expect(started.json()).toEqual({ session_id: SESSION, state: 'on_call', pending_state: 'break' });
     mocks.callCore.mockResolvedValue(envelope({ session_id: SESSION, state: 'on_call' }, {
-      campaign_id: CAMPAIGN, from_state: 'on_call', queued: false, withdrawn: true,
+      campaign_id: CAMPAIGN, from_state: 'on_call', queued: false, withdrawn: true, unchanged: false,
     }));
     await app.inject({ method: 'POST', url: `${P}/sessions/${SESSION}/softphone/return`, payload: {} });
     const about = { ...base, user_id: AGENT, resource_type: 'agency_session', resource_id: SESSION, campaign_id: CAMPAIGN };
     expect(mocks.auditLog.mock.calls.map((c) => c[0])).toEqual([
       { ...about, action: 'agency_session.softphone_started', details: { campaign_id: CAMPAIGN, from_state: 'on_call', queued: true } },
-      { ...about, action: 'agency_session.softphone_ended', details: { campaign_id: CAMPAIGN, from_state: 'on_call', withdrawn: true } },
+      { ...about, action: 'agency_session.softphone_ended', details: { campaign_id: CAMPAIGN, from_state: 'on_call', withdrawn: true, via: 'return' } },
     ]);
     expect(lastCore().body).toEqual({ agent_user_id: AGENT });
+  });
+
+  it('an idempotent re-switch (already on the soft phone, or already queued) writes no second softphone_started', async () => {
+    const app = await appAs('agent');
+    mocks.callCore.mockResolvedValue(envelope({ session_id: SESSION, state: 'break', break_reason: 'soft_phone' }, {
+      campaign_id: CAMPAIGN, from_state: 'break', queued: false, withdrawn: false, unchanged: true,
+    }));
+    const again = await app.inject({ method: 'POST', url: `${P}/sessions/${SESSION}/softphone`, payload: {} });
+    expect(again.statusCode).toBe(200);
+    expect(again.json()).toEqual({ session_id: SESSION, state: 'break', break_reason: 'soft_phone' });
+    expect(mocks.auditLog).not.toHaveBeenCalled();
   });
 
   it('the session open and the settings write', async () => {

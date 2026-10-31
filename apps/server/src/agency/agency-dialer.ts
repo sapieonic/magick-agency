@@ -18,8 +18,10 @@ import {
   releaseReasonFor,
   requiresDisposition,
 } from './outcome-classifier.js';
+import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
   AgencyActiveAttempt,
+  AgencyAgentState,
   AgencyAttemptOutcome,
   AgencyMissedRelease,
   AgencyPriorAttempt,
@@ -27,6 +29,9 @@ import type {
   AgencyAbandonReason,
 } from '@magick-agency/contracts/agency';
 import type { WrapupManager } from './wrapup-manager.js';
+import { isCampaignSession } from '../db/models/agency.model.js';
+import { SYSTEM_AUDIT_ACTOR } from '../audit/platform/audit-actor.js';
+import { auditSoftphoneStarted } from './softphone/softphone-audit.js';
 import type { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { DEFERRED_HANGUP_MS, elapsedSeconds } from '@magick-agency/domain/timers';
 import { resolveAbandonClip } from './abandon-clip.js';
@@ -1447,6 +1452,11 @@ export class AgencyDialer {
     const queuedBreak = this.breaks.take(sessionId);
     const state = queuedBreak ? 'break' : 'available';
     const since = new Date();
+    // A queued switch to the soft phone applying now is audited (SP7), with the state
+    // it applied from; read only for that rare case.
+    const switchFrom = queuedBreak?.code === SOFTPHONE_BREAK_REASON
+      ? (await Promise.resolve().then(() => this.agents.get(sessionId)).catch(() => null))?.state ?? null
+      : null;
 
     const set = await this.agents.set(sessionId, state, {
       leaseMs: queuedBreak ? AGENT_LEASE_MS.break : AGENT_LEASE_MS.available,
@@ -1473,7 +1483,35 @@ export class AgencyDialer {
     if (queuedBreak) {
       log.info({ sessionId, reason: queuedBreak.code }, 'Queued break applied after wrap-up');
     }
+    if (queuedBreak?.code === SOFTPHONE_BREAK_REASON && set === 'ok') {
+      await this.auditQueuedSwitchApplied(sessionId, switchFrom);
+    }
     return { state, result: set };
+  }
+
+  /**
+   * `agency_session.softphone_started` with `queued: true, applied: true` for a switch
+   * the agent queued and this release just applied: the request was audited when it
+   * was made; this is the instant they actually moved. The `system` actor, because
+   * nothing was pressed now. Best-effort: a session row that cannot be read costs the
+   * row, never the release.
+   */
+  private async auditQueuedSwitchApplied(sessionId: string, fromState: AgencyAgentState | null): Promise<void> {
+    const session = await Promise.resolve().then(() => agencyAgentSessionRepository.findById(sessionId)).catch((err) => {
+      log.warn({ err, sessionId }, 'Could not read the session to audit an applied soft-phone switch');
+      return null;
+    });
+    if (!session || !isCampaignSession(session)) return;
+    auditSoftphoneStarted({
+      tenantId: session.tenant_id,
+      accountId: session.account_id,
+      sessionId,
+      campaignId: session.campaign_id,
+      actor: SYSTEM_AUDIT_ACTOR,
+      fromState,
+      queued: true,
+      applied: true,
+    });
   }
 
   /**

@@ -532,6 +532,7 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     if (!switched.ok) return sendSoftphoneRefusal(reply, switched.refusal);
     const audit: SoftphoneSwitchAudit = {
       campaign_id: switched.campaignId, from_state: switched.fromState, queued: switched.queued, withdrawn: false,
+      unchanged: switched.unchanged,
     };
     return answer(reply, 200, switched.response, audit);
   });
@@ -549,6 +550,7 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       // `returnFromSoftphone` answers the session's unchanged state when it withdrew a
       // switch still queued behind a call; only an ended break lands on `available`.
       withdrawn: returned.response.state !== 'available',
+      unchanged: false,
     };
     log.debug({ sessionId: request.params.id, withdrawn: audit.withdrawn }, 'Soft-phone return');
     return answer(reply, 200, returned.response, audit);

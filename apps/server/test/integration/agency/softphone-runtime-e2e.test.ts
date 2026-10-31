@@ -706,6 +706,10 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     expect(switched.queued).toBe(true);
     expect(switched.response).toMatchObject({ state: 'on_call', pending_state: 'break', break_reason: 'soft_phone' });
     expect(switched.fromState).toBe('on_call');
+    expect(switched.unchanged).toBe(false);
+    // Pressed again while queued: an idempotent repeat, not a second switch to audit.
+    const again = await runtime.softphone.switchToSoftphone(session.id, actor(agent));
+    expect(again.ok && again.unchanged).toBe(true);
 
     await carrierEnded(campaignLeg);
     await waitFor('soft_phone break applied', () => station.frames.some((f) =>

@@ -570,11 +570,16 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(back.json()).toMatchObject({ state: 'available', campaign_id: campaign.id });
     await runtime.agents.set(sessionId, 'break');
 
-    const [started] = await auditRows('agency_session.softphone_started', sessionId);
-    expect(started).toMatchObject({ user_id: agent.id, campaign_id: campaign.id, resource_type: 'agency_session' });
+    // Two rows for the one switch: the agent queueing it, and the instant it applied
+    // (the end of wrap-up), which nobody pressed.
+    const [started, applied, ...more] = await auditRows('agency_session.softphone_started', sessionId);
+    expect(more).toEqual([]);
+    expect(started).toMatchObject({ user_id: agent.id, actor_type: 'human', campaign_id: campaign.id, resource_type: 'agency_session' });
     expect(started.details).toEqual({ campaign_id: campaign.id, from_state: 'wrapup', queued: true });
+    expect(applied).toMatchObject({ user_id: null, actor_type: 'system', campaign_id: campaign.id, resource_type: 'agency_session' });
+    expect(applied.details).toEqual({ campaign_id: campaign.id, from_state: 'wrapup', queued: true, applied: true });
     const [ended] = await auditRows('agency_session.softphone_ended', sessionId);
-    expect(ended.details).toEqual({ campaign_id: campaign.id, from_state: 'break', withdrawn: false });
+    expect(ended.details).toEqual({ campaign_id: campaign.id, from_state: 'break', withdrawn: false, via: 'return' });
 
     // The supervisor sees the switch and the return on the campaign's activity trail.
     const trail = await get(`/proxy/agency/campaigns/${campaign.id}/activity?limit=50`, supervisor);
@@ -672,7 +677,13 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     const cancelled = await post(`/proxy/agency/sessions/${sessionId}/break/cancel`, agent);
     expect(cancelled.statusCode, cancelled.body).toBe(200);
     expect(cancelled.json().pending_state).toBeUndefined();
+    expect(cancelled.json()).not.toHaveProperty('softphone_audit');
     expect(runtime.breaks.peek(sessionId)).toBeNull();
+    // Audited as a withdrawn switch (SP7), not as a plain break cancel.
+    const [withdrawn] = await auditRows('agency_session.softphone_ended', sessionId);
+    expect(withdrawn).toMatchObject({ user_id: agent.id, campaign_id: campaign.id });
+    expect(withdrawn.details).toEqual({ campaign_id: campaign.id, from_state: 'wrapup', withdrawn: true, via: 'break_cancel' });
+    expect(await auditRows('agency_session.break_cancelled', sessionId)).toEqual([]);
     await runtime.dialer.releaseAgent(sessionId);
     expect((await runtime.agents.get(sessionId))?.state).toBe('available');
     expect(station.frames.some((f) => f['event'] === 'agent_state' && f['break_reason'] === 'soft_phone')).toBe(false);
@@ -694,6 +705,54 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(join.statusCode).toBe(409);
     expect(join.json()).toMatchObject({ code: 'session_on_softphone', session_id: spSession });
     expect((await post(`/proxy/agency/sessions/${spSession}/leave`, agent)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('every way off the soft phone is audited once, with how; a repeated switch is not audited again', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const sessionId = joined.json().session_id as string;
+    await connect(joined.json().station_ws_url);
+    const switchNow = async () => {
+      const r = await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent);
+      expect(r.statusCode, r.body).toBe(200);
+      expect(r.json()).toMatchObject({ state: 'break', break_reason: 'soft_phone' });
+    };
+    const noAuditKey = (body: Record<string, unknown>) => expect(body).not.toHaveProperty('softphone_audit');
+
+    // Switched (applied at once), then pressed again: one row.
+    await switchNow();
+    await switchNow();
+    expect(await auditRows('agency_session.softphone_started', sessionId)).toHaveLength(1);
+
+    // 1. Available.
+    const available = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+    expect(available.statusCode, available.body).toBe(200);
+    noAuditKey(available.json());
+    // 2. A break with another reason.
+    await switchNow();
+    const lunch = await post(`/proxy/agency/sessions/${sessionId}/break`, agent, { reason: 'lunch' });
+    expect(lunch.statusCode, lunch.body).toBe(200);
+    noAuditKey(lunch.json());
+    // Available from lunch is not a soft-phone exit.
+    expect((await post(`/proxy/agency/sessions/${sessionId}/available`, agent)).statusCode).toBe(200);
+    // 3. The supervisor's force-available.
+    await switchNow();
+    const forced = await post(`/proxy/agency/sessions/${sessionId}/force-available`, supervisor);
+    expect(forced.statusCode, forced.body).toBe(200);
+    expect(forced.json().state).toBe('available');
+    noAuditKey(forced.json());
+
+    const ended = await auditRows('agency_session.softphone_ended', sessionId);
+    expect(ended.map((r) => [r.user_id, r.details])).toEqual([
+      [agent.id, { campaign_id: campaign.id, from_state: 'break', withdrawn: false, via: 'available' }],
+      [agent.id, { campaign_id: campaign.id, from_state: 'break', withdrawn: false, via: 'break', break_reason: 'lunch' }],
+      [supervisor.id, { campaign_id: campaign.id, from_state: 'break', withdrawn: false, via: 'force_available' }],
+    ]);
+    expect(await auditRows('agency_session.softphone_started', sessionId)).toHaveLength(3);
+
+    await runtime.agents.set(sessionId, 'break');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 30_000);
 
   it('PUT /settings: manage only, settings_invalid with the console\'s paths, a valid write audited', async () => {

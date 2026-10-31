@@ -147,6 +147,8 @@ export interface SoftphoneSwitchAudit {
   queued: boolean;
   /** `return` only: a still-queued switch was withdrawn rather than a break ended. */
   withdrawn: boolean;
+  /** The switch only: an idempotent repeat that changed nothing (already on, or already queued). Not audited. */
+  unchanged: boolean;
 }
 
 /** `PUT /softphone/settings`: which top-level settings changed. */
@@ -161,3 +163,39 @@ export function isSoftphoneCoreAnswer(body: unknown): body is SoftphoneCoreAnswe
   const audit = record['audit'];
   return 'answer' in record && audit !== null && typeof audit === 'object' && !Array.isArray(audit);
 }
+
+// ─── The campaign session routes leaving the soft phone ──────────────────────
+
+/**
+ * What a CAMPAIGN session route (`available`, `break`, `break/cancel`,
+ * `force-available`) adds to its answer when it took the session off the `soft_phone`
+ * break, or withdrew a switch to it still queued: the facts the public layer's
+ * `agency_session.softphone_ended` row needs (SP7, `softphone-audit.ts`).
+ *
+ * A key on the answer, under {@link SOFTPHONE_SESSION_AUDIT_KEY}, not the soft-phone
+ * routes' envelope: those four routes answer `AgencySessionStateResponse` to every
+ * caller, and the key is present only on the one answer that left the soft phone. The
+ * public layer always takes it off before sending ({@link takeSoftphoneSessionAudit}),
+ * and its tests assert the client never sees it.
+ */
+export interface SoftphoneSessionExitAudit {
+  campaign_id: string;
+  from_state: AgencyAgentState | null;
+  /** `break_cancel` withdrew a queued switch; the others ended the break. */
+  via: 'available' | 'break' | 'force_available' | 'break_cancel';
+  withdrawn: boolean;
+  /** `via: 'break'`: the reason the session went on instead. */
+  break_reason?: string;
+}
+
+export const SOFTPHONE_SESSION_AUDIT_KEY = 'softphone_audit';
+
+/** Remove the exit facts from an internal answer (mutating it) and return them, or null. */
+export function takeSoftphoneSessionAudit(body: unknown): SoftphoneSessionExitAudit | null {
+  if (!body || typeof body !== 'object' || !(SOFTPHONE_SESSION_AUDIT_KEY in body)) return null;
+  const record = body as Record<string, unknown>;
+  const audit = record[SOFTPHONE_SESSION_AUDIT_KEY] as SoftphoneSessionExitAudit;
+  delete record[SOFTPHONE_SESSION_AUDIT_KEY];
+  return audit && typeof audit === 'object' && typeof audit.campaign_id === 'string' ? audit : null;
+}
+

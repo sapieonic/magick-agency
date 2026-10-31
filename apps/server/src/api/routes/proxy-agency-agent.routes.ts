@@ -21,7 +21,9 @@ import { rejectPathEscapingParams } from './helpers/path-params.js';
 import { stringField } from './helpers/core-campaign.js';
 import { resolveAgencyActor, type AgencyActorFields } from '../../agency/agency-actor.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
-import { requestAuditActor, resolvedUserAuditActor } from '../../audit/platform/audit-actor.js';
+import { requestAuditActor, resolvedUserAuditActor, type AuditActorFields } from '../../audit/platform/audit-actor.js';
+import { auditSoftphoneEnded } from '../../agency/softphone/softphone-audit.js';
+import { takeSoftphoneSessionAudit } from './agency/softphone-answer.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent' });
@@ -162,6 +164,30 @@ function sessionActorOrRefuse(
   return actor.actor;
 }
 
+/**
+ * The campaign session routes that can take a session off the soft phone's break, or
+ * withdraw a queued switch to it, report it on the internal answer
+ * (`softphone_audit`, `takeSoftphoneSessionAudit`). Always taken off the body here, so
+ * the client never sees it; on a success it becomes the `agency_session.softphone_ended`
+ * row (`softphone-audit.ts`). Returns whether it did.
+ */
+function auditSoftphoneExit(request: FastifyRequest, result: { status: number; body: unknown }, actor: AuditActorFields): boolean {
+  const exit = takeSoftphoneSessionAudit(result.body);
+  if (!exit || result.status >= 400) return false;
+  auditSoftphoneEnded({
+    tenantId: request.tenantId!,
+    accountId: request.accountId ?? null,
+    sessionId: (request.params as { id: string }).id,
+    campaignId: exit.campaign_id,
+    actor,
+    fromState: exit.from_state,
+    via: exit.via,
+    withdrawn: exit.withdrawn,
+    ...(exit.break_reason ? { breakReason: exit.break_reason } : {}),
+  });
+  return true;
+}
+
 export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
@@ -269,11 +295,16 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
   }, async (request, reply) => {
     const actor = sessionActorOrRefuse(request, reply);
     if (!actor) return reply;
-    return forwardCore(request, reply, {
+    const result = await callCore({
       method: 'POST',
       path: `/agency/sessions/${request.params.id}/available`,
       body: { ...actor },
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
     });
+    // Going available from the soft phone's break ends it (SP7).
+    auditSoftphoneExit(request, result, resolvedUserAuditActor(request, actor.agent_user_id));
+    return reply.code(result.status).send(result.body);
   });
 
   app.post<{ Params: { id: string } }>('/sessions/:id/leave', {
@@ -349,6 +380,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
+    // A break with another reason, taken from the soft phone's, ends the soft phone too.
+    auditSoftphoneExit(request, result, resolvedUserAuditActor(request, actor.agent_user_id));
     if (result.status < 400) {
       const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
@@ -392,7 +425,10 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
-    if (result.status < 400) {
+    // The ✕ on a queued switch to the soft phone withdraws the switch (SP7): audited as
+    // that, `softphone_ended` with `withdrawn`, and not as a plain break cancel.
+    const withdrewSwitch = auditSoftphoneExit(request, result, resolvedUserAuditActor(request, actor.agent_user_id));
+    if (result.status < 400 && !withdrewSwitch) {
       const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),
@@ -440,6 +476,9 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
+    // The supervisor's release from the soft phone's break ends it (SP7); the actor is
+    // the supervisor, as on the force_available row.
+    auditSoftphoneExit(request, result, requestAuditActor(request));
 
     if (result.status < 400) {
       log.info(

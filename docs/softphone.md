@@ -184,11 +184,22 @@ live manual calls): `countLiveForAccount`.
 - `POST /proxy/agency/sessions/:id/softphone` → break with reason `soft_phone` on the campaign
   session. While the agent is reserved, on a call or in wrap-up the break is queued exactly like a
   normal break, and the console switches when the `agent_state` frame reports `break/soft_phone`.
+  The queue is applied by `releaseAgent`: at the end of the call or wrap-up, and also when pacing
+  hands a reserved agent back unused (surplus, a deferred or suppressed contact), so a switch or
+  break queued while reserved is never stranded.
 - `POST /proxy/agency/sessions/:id/softphone/return` → refuses `manual_call_live` while a manual
   call is live or awaiting an outcome; otherwise ends the break (`available`).
-- Audit: `agency_session.softphone_started` and `agency_session.softphone_ended` in
-  `platform_audit_log` (session, campaign, from-state, whether the start was queued), plus the
-  existing `audit_logs` session events.
+- Audit (`softphone-audit.ts`, the one writer): `agency_session.softphone_started` and
+  `agency_session.softphone_ended` in `platform_audit_log` (session, campaign, from-state), plus the
+  existing `audit_logs` session events. `started`: the switch route (`queued` when deferred), and
+  the queued switch actually applying (`queued: true, applied: true`, actor `system`); a repeated
+  switch while already on the soft phone or already queued writes nothing. `ended` carries `via`,
+  one for every way off the `soft_phone` break: `return`, `available`, `break` (another reason,
+  with `break_reason`), `force_available` (the supervisor as actor); and `withdrawn: true` for a
+  queued switch taken back, by the return route (`via: return`) or the station's ✕ (`break/cancel`,
+  `via: break_cancel`, which then writes no `break_cancelled` row). The campaign session routes tell
+  the public layer through a `softphone_audit` key on their internal answer, which never reaches
+  the client.
 
 ### 4.3 Bridge seam (§3.1 of `seams.md`)
 
@@ -281,8 +292,9 @@ Audit (`platform_audit_log`, resource types `agency_manual_call`, `agency_softph
 `.dnc_overridden` (the note and the `dnc_entries` id), `.hours_overridden` (the note), `.hung_up`,
 `.dispositioned` (code, `replay`), `.dnc_marked` (scope, `dnc_recorded`; never the number), each
 with `on_behalf` when the call was another agent's; `agency_softphone_settings.updated` (`changed`
-keys); `agency_session.softphone_started` (from-state, `queued`) and `.softphone_ended` (from-state,
-`withdrawn`); `agency_session.joined` (`kind: softphone`) for the soft-phone session. Notes and
+keys); `agency_session.softphone_started` (from-state, `queued`, `applied`) and `.softphone_ended`
+(from-state, `withdrawn`, `via`, §4.2); `agency_session.joined` (`kind: softphone`) for the
+soft-phone session. Notes and
 call-field values never go in `details`. The campaign activity trail offers the session and
 manual-call actions (not the account-wide settings one) and the reaper's `audit_logs` events
 `agency_manual_call.orphaned` / `.lapsed`, which carry the tag in `event_data.campaign_id`.

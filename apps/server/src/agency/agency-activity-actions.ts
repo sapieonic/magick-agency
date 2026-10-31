@@ -170,8 +170,8 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_session.break_started', label: 'Break started', group: 'Staffing' },
   { value: 'agency_session.break_cancelled', label: 'Break cancelled', group: 'Staffing' },
   { value: 'agency_session.force_available', label: 'Made available by supervisor', group: 'Staffing' },
-  { value: 'agency_session.softphone_started', label: 'Switched to soft phone', group: 'Staffing' },
-  { value: 'agency_session.softphone_ended', label: 'Returned from soft phone', group: 'Staffing' },
+  { value: 'agency_session.softphone_started', label: 'Switched (or queued a switch) to soft phone', group: 'Staffing' },
+  { value: 'agency_session.softphone_ended', label: 'Left soft phone (or withdrew the switch)', group: 'Staffing' },
 ] as const satisfies readonly ActivityActionOption[];
 
 type ServedAction = (typeof CAMPAIGN_ACTIVITY_ACTIONS)[number]['value'];

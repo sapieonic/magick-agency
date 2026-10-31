@@ -11,6 +11,7 @@ import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
+import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
   AgencyActionErrorResponse,
   AgencyAgentState,
@@ -26,8 +27,22 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
+import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
+
+/** The campaign session is on the soft phone's break right now (Redis state, the row's reason). */
+function onSoftphoneBreak(
+  live: { state: AgencyAgentState } | null,
+  session: { break_reason: string | null },
+): boolean {
+  return live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON;
+}
+
+/** The `softphone_audit` key for an answer that left the soft phone, else nothing. */
+function exitAudit(left: boolean, audit: SoftphoneSessionExitAudit): Record<string, SoftphoneSessionExitAudit> {
+  return left ? { [SOFTPHONE_SESSION_AUDIT_KEY]: audit } : {};
+}
 
 /**
  * Registered by `agencyRoutes` inside its authenticated scope (`sub`, the one carrying
@@ -337,6 +352,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // fastest wrap-ups would otherwise be missing from entirely.
     runtime.wrapup.cancel(session.id, 'agent_returned');
 
+    // On the soft phone's break before the write: going available ends it (SP7), and
+    // the public layer audits that (`softphone_audit`, `softphone-audit.ts`).
+    const leavingSoftphone = onSoftphoneBreak(await runtime.agents.get(session.id), session);
+
     // Refused, atomically in the same Lua write, while the session holds a soft-phone
     // call — live or awaiting its outcome (docs/softphone.md §4.1 step 1, §6).
     // `unavailable` (Redis did not answer) keeps this route's behaviour from before
@@ -359,7 +378,10 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     }
     await agencyAgentSessionRepository.setState(session.id, 'available');
     runtime.stations.send(session.id, { event: 'agent_state', state: 'available', since: new Date().toISOString() });
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'available', since: new Date().toISOString() });
+    return reply.send({
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'available', since: new Date().toISOString(),
+      ...exitAudit(leavingSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'available', withdrawn: false }),
+    });
   });
 
   // ── POST /sessions/:id/force-available — supervisor override ────────────
@@ -393,8 +415,11 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       };
       return reply.code(409).send(err);
     };
+    // A forced wrap-up never starts on the soft phone; a plain release from it ends it.
+    const leavingSoftphone = onSoftphoneBreak(await runtime.agents.get(session.id), session);
     const forced = await runtime.wrapup.force(session.id);
     let state: AgencyAgentState;
+    let endedSoftphone = false;
     if (forced) {
       // The forced wrap-up already released the agent (a queued break applies there).
       state = (await runtime.agents.get(session.id))?.state ?? 'offline';
@@ -416,8 +441,12 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       }
       // What was written: `break` for a queued break, `offline` when the station is gone.
       state = released.state;
+      endedSoftphone = leavingSoftphone && released.state === 'available' && released.result === 'ok';
     }
-    return reply.send({ session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString() });
+    return reply.send({
+      session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state, since: new Date().toISOString(),
+      ...exitAudit(endedSoftphone, { campaign_id: session.campaign_id, from_state: 'break', via: 'force_available', withdrawn: false }),
+    });
   });
 
   // ── POST /sessions/:id/break ───────────────────────────────────────────
@@ -504,6 +533,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       return reply.send(queued);
     }
 
+    // From the soft phone's break to another one: that ends the soft phone (SP7).
+    const leavingSoftphone = onSoftphoneBreak(live, session) && check.reason.code !== SOFTPHONE_BREAK_REASON;
     await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
     await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
     runtime.stations.send(session.id, {
@@ -512,7 +543,12 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     const applied: AgencySessionStateResponse = {
       session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: 'break', since, break_reason: check.reason.code,
     };
-    return reply.send(applied);
+    return reply.send({
+      ...applied,
+      ...exitAudit(leavingSoftphone, {
+        campaign_id: session.campaign_id, from_state: 'break', via: 'break', withdrawn: false, break_reason: check.reason.code,
+      }),
+    });
   });
 
   // ── POST /sessions/:id/break/cancel ────────────────────────────────────
@@ -536,6 +572,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       return reply.code(409).send(err);
     }
 
+    // A queued switch to the soft phone withdrawn by the ✕ is audited as that (SP7),
+    // not as a plain break cancel: the public layer reads `softphone_audit`.
+    const withdrawingSwitch = runtime.breaks.peek(session.id)?.code === SOFTPHONE_BREAK_REASON;
     const cancelled = runtime.breaks.cancel(session.id);
     const live = await runtime.agents.get(session.id);
     const since = new Date().toISOString();
@@ -590,7 +629,12 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     const body: AgencySessionStateResponse = {
       session_id: session.id, campaign_id: session.campaign_id, kind: session.kind, state: live?.state ?? session.state, since,
     };
-    return reply.send(body);
+    return reply.send({
+      ...body,
+      ...exitAudit(cancelled && withdrawingSwitch, {
+        campaign_id: session.campaign_id, from_state: live?.state ?? null, via: 'break_cancel', withdrawn: true,
+      }),
+    });
   });
 
   // ── POST /sessions/:id/leave ───────────────────────────────────────────

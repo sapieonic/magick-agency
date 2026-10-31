@@ -117,6 +117,11 @@ export interface SessionSwitchSuccess {
   campaignId: string;
   /** `switchToSoftphone` only: deferred behind a reservation, call or wrap-up. */
   queued: boolean;
+  /**
+   * `switchToSoftphone` only: the session was already on the soft phone, or the switch
+   * already queued — an idempotent repeat that changed nothing, and is not audited again.
+   */
+  unchanged: boolean;
 }
 
 export interface SoftphoneServiceDeps {
@@ -608,7 +613,8 @@ export class SoftphoneService {
    * `soft_phone`, QUEUED exactly like a break while the agent is reserved, on a call
    * or in wrap-up (`breakMustWait`), and applied by `releaseAgent` at its end. The
    * `agent_state` frame announces it (suppressed for an unannounced dial, as the
-   * break route does). Already on the soft phone: an idempotent success.
+   * break route does). Already on the soft phone, or the switch already queued: an
+   * idempotent success marked `unchanged` (not audited a second time).
    *
    * Refusals: `session_not_found`; `wrong_session_kind` (a soft-phone session).
    */
@@ -623,11 +629,12 @@ export class SoftphoneService {
 
     if (live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON) {
       return {
-        ok: true, fromState, campaignId: session.campaign_id, queued: false,
+        ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: true,
         response: { ...base, state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON },
       };
     }
     if (breakMustWait(live?.state)) {
+      const alreadyQueued = this.deps.breaks.peek(session.id)?.code === SOFTPHONE_BREAK_REASON;
       this.deps.breaks.queue(session.id, { code: SOFTPHONE_BREAK_REASON, label: SOFTPHONE_BREAK_REASON_LABEL });
       if (!this.deps.dialer.hasUnannouncedAttempt(session.id)) {
         this.deps.stations.send(session.id, {
@@ -636,7 +643,7 @@ export class SoftphoneService {
         });
       }
       return {
-        ok: true, fromState, campaignId: session.campaign_id, queued: true,
+        ok: true, fromState, campaignId: session.campaign_id, queued: true, unchanged: alreadyQueued,
         response: { ...base, state: live!.state, since, pending_state: 'break', break_reason: SOFTPHONE_BREAK_REASON },
       };
     }
@@ -644,7 +651,7 @@ export class SoftphoneService {
     await agencyAgentSessionRepository.setState(session.id, 'break', SOFTPHONE_BREAK_REASON);
     this.deps.stations.send(session.id, { event: 'agent_state', state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON });
     return {
-      ok: true, fromState, campaignId: session.campaign_id, queued: false,
+      ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: false,
       response: { ...base, state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON },
     };
   }
@@ -672,7 +679,7 @@ export class SoftphoneService {
       if (!this.deps.dialer.hasUnannouncedAttempt(session.id)) {
         this.deps.stations.send(session.id, { event: 'agent_state', state, since });
       }
-      return { ok: true, fromState, campaignId: session.campaign_id, queued: false, response: { ...base, state, since } };
+      return { ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: false, response: { ...base, state, since } };
     }
 
     const pending = await this.pendingRefusal(session.id);
@@ -687,7 +694,7 @@ export class SoftphoneService {
     if (!set.ok && set.refusal.code === 'wrong_session_kind') return refuse(set.refusal);
     await agencyAgentSessionRepository.setState(session.id, 'available');
     this.deps.stations.send(session.id, { event: 'agent_state', state: 'available', since });
-    return { ok: true, fromState, campaignId: session.campaign_id, queued: false, response: { ...base, state: 'available', since } };
+    return { ok: true, fromState, campaignId: session.campaign_id, queued: false, unchanged: false, response: { ...base, state: 'available', since } };
   }
 
   // ─── Station reconnect (§4.1 step 9) ──────────────────────────────────────

@@ -171,8 +171,11 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_session.break_started', label: 'Agent break started', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.break_cancelled', label: 'Agent break cancelled', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.force_available', label: 'Agent made available by supervisor', group: 'Staffing', product: 'agency' },
-  { value: 'agency_session.softphone_started', label: 'Agent switched to the soft phone', group: 'Staffing', product: 'agency' },
-  { value: 'agency_session.softphone_ended', label: 'Agent returned from the soft phone', group: 'Staffing', product: 'agency' },
+  // One action each way (softphone-audit.ts): `started` is a switch asked for (applied or
+  // queued) or a queued one applying (`applied`); `ended` is any way off the soft phone
+  // (`via`) or a queued switch withdrawn (`withdrawn`). The labels say both halves.
+  { value: 'agency_session.softphone_started', label: 'Agent switched (or queued a switch) to the soft phone', group: 'Staffing', product: 'agency' },
+  { value: 'agency_session.softphone_ended', label: 'Agent left the soft phone (or withdrew a queued switch)', group: 'Staffing', product: 'agency' },
 
   // Team, and the PLATFORM product — see {@link AuditProduct}. The labels say
   // "invitation" rather than "invite" because the noun is what the reader is

@@ -13,6 +13,7 @@ import { parseOr400 } from '../helpers/parse-or-400.js';
 import { stringField } from '../helpers/core-campaign.js';
 import { rewriteStationWsUrl } from '../proxy-agency-station.routes.js';
 import type { SoftphoneSwitchAudit } from '../agency/softphone-answer.js';
+import { auditSoftphoneEnded, auditSoftphoneStarted } from '../../../agency/softphone/softphone-audit.js';
 import {
   actorBody,
   requireSoftphoneEnabled,
@@ -84,15 +85,19 @@ export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Prom
     const unwrapped = unwrapCoreAnswer<SoftphoneSwitchAudit>(reply, result, 'POST /sessions/:id/softphone');
     if (!unwrapped) return reply;
     const { audit } = unwrapped;
-    platformAuditLogger.log({
-      ...softphoneAuditTenancy(request),
-      ...resolvedUserAuditActor(request, actor.agent_user_id),
-      action: 'agency_session.softphone_started',
-      resource_type: 'agency_session',
-      resource_id: request.params.id,
-      campaign_id: audit.campaign_id,
-      details: { campaign_id: audit.campaign_id, from_state: audit.from_state, queued: audit.queued },
-    });
+    // An idempotent repeat (already on the soft phone, or already queued) changed
+    // nothing: its first press is the row.
+    if (!audit.unchanged) {
+      auditSoftphoneStarted({
+        tenantId: request.tenantId!,
+        accountId: request.accountId ?? null,
+        sessionId: request.params.id,
+        campaignId: audit.campaign_id,
+        actor: resolvedUserAuditActor(request, actor.agent_user_id),
+        fromState: audit.from_state,
+        queued: audit.queued,
+      });
+    }
     return reply.send(unwrapped.answer);
   });
 
@@ -116,14 +121,15 @@ export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Prom
     const unwrapped = unwrapCoreAnswer<SoftphoneSwitchAudit>(reply, result, 'POST /sessions/:id/softphone/return');
     if (!unwrapped) return reply;
     const { audit } = unwrapped;
-    platformAuditLogger.log({
-      ...softphoneAuditTenancy(request),
-      ...resolvedUserAuditActor(request, actor.agent_user_id),
-      action: 'agency_session.softphone_ended',
-      resource_type: 'agency_session',
-      resource_id: request.params.id,
-      campaign_id: audit.campaign_id,
-      details: { campaign_id: audit.campaign_id, from_state: audit.from_state, withdrawn: audit.withdrawn },
+    auditSoftphoneEnded({
+      tenantId: request.tenantId!,
+      accountId: request.accountId ?? null,
+      sessionId: request.params.id,
+      campaignId: audit.campaign_id,
+      actor: resolvedUserAuditActor(request, actor.agent_user_id),
+      fromState: audit.from_state,
+      via: 'return',
+      withdrawn: audit.withdrawn,
     });
     return reply.send(unwrapped.answer);
   });
