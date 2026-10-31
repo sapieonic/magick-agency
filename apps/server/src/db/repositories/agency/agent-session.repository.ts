@@ -587,6 +587,52 @@ export class AgencyAgentSessionRepository {
     await this.recordTransitions(rows);
   }
 
+  /**
+   * Move a session from the soft phone's break to another break reason (SP7), unless
+   * it holds an unsettled soft-phone call: `{ ok: false }` then, and nothing written.
+   *
+   * Serialised with the dial on the session ROW LOCK. `SoftphoneService.placeCall`
+   * locks this row (`FOR UPDATE`) in the transaction that inserts the call, and
+   * refuses there unless the row's reason is still `soft_phone`. Here the lock is
+   * taken first, then the unsettled call is read in a LATER statement, so its snapshot
+   * includes a dial that committed while this waited, and the reason is written under
+   * the same lock. Either the dial commits first and this refuses, or this commits
+   * first and the dial refuses `not_on_softphone`: no session ends up on another break
+   * holding a live soft-phone call. (One statement with a `NOT EXISTS` would not do: a
+   * statement that waited on the lock re-checks its row, not its subquery's snapshot.)
+   */
+  async setBreakLeavingSoftphone(id: string, breakReason: string): Promise<{ ok: boolean }> {
+    const client = await getPool().connect();
+    let rows: AgencySessionTransitionRow[];
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT id FROM agency_agent_sessions WHERE id = $1 FOR UPDATE', [id]);
+      const owed = await client.query(
+        'SELECT 1 FROM agency_manual_calls WHERE session_id = $1 AND settled_at IS NULL LIMIT 1',
+        [id],
+      );
+      if (owed.rowCount) {
+        await client.query('ROLLBACK');
+        return { ok: false };
+      }
+      ({ rows } = await client.query<AgencySessionTransitionRow>(
+        sessionTransitionSql({
+          prevWhere: 'id = $1',
+          set: "state = 'break', break_reason = $2, state_since = now(), updated_at = now()",
+        }),
+        [id, breakReason],
+      ));
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+    await this.recordTransitions(rows);
+    return { ok: true };
+  }
+
   async heartbeat(id: string): Promise<void> {
     await getPool().query(
       'UPDATE agency_agent_sessions SET last_heartbeat = now(), updated_at = now() WHERE id = $1',

@@ -24,6 +24,7 @@ import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor, resolvedUserAuditActor, type AuditActorFields } from '../../audit/platform/audit-actor.js';
 import { auditSoftphoneEnded } from '../../agency/softphone/softphone-audit.js';
 import { takeSoftphoneSessionAudit } from './agency/softphone-answer.js';
+import { sendCoreRefusal } from './proxy-agency-softphone/shared.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent' });
@@ -304,7 +305,9 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     });
     // Going available from the soft phone's break ends it (SP7).
     auditSoftphoneExit(request, result, resolvedUserAuditActor(request, actor.agent_user_id));
-    return reply.code(result.status).send(result.body);
+    // `503 dial_failed` (the state store did not take the write; nothing changed) is a
+    // reviewed body the console reads by code, so it passes the 5xx mask.
+    return sendCoreRefusal(request, reply, result);
   });
 
   app.post<{ Params: { id: string } }>('/sessions/:id/leave', {
@@ -397,7 +400,8 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
         },
       });
     }
-    return reply.code(result.status).send(result.body);
+    // `503 dial_failed` (leaving the soft phone, nothing changed) passes the 5xx mask.
+    return sendCoreRefusal(request, reply, result);
   });
 
   /**

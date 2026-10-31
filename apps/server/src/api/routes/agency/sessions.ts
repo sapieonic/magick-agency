@@ -9,7 +9,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { agencyAgentSessionRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
-import { owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
+import { onSoftphoneBreak, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
 import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
@@ -30,14 +30,6 @@ import { accountNameInTenant, requireOwnedSession, resolveRetryContext, STATION_
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
-
-/** The campaign session is on the soft phone's break right now (Redis state, the row's reason). */
-function onSoftphoneBreak(
-  live: { state: AgencyAgentState } | null,
-  session: { break_reason: string | null },
-): boolean {
-  return live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON;
-}
 
 /** The `softphone_audit` key for an answer that left the soft phone, else nothing. */
 function exitAudit(left: boolean, audit: SoftphoneSessionExitAudit): Record<string, SoftphoneSessionExitAudit> {
@@ -365,7 +357,20 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // `unavailable` (Redis did not answer) keeps this route's behaviour from before
     // the guard: the write was logged and the mirror written; the lease is the
     // authority and pacing reads Redis, which then holds no `available`.
+    //
+    // Except when leaving the soft phone, and for a `manual` claim that would not
+    // clear: then Redis still says `break` (and may still hold the claim), so answering
+    // `available` would show the agent ready while pacing never reserves them, and
+    // audit a soft-phone exit that did not happen. Nothing is written; retry
+    // (`503 dial_failed`, as `POST /softphone/return` answers the same result).
     const set = await setAvailableGuarded(runtime.agents, session.id);
+    if (!set.ok && (set.refusal.code === 'claim_not_released' || (set.refusal.code === 'unavailable' && leavingSoftphone))) {
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Service Unavailable', code: 'dial_failed',
+        message: 'Could not change your status just now; nothing changed. Try again.',
+      };
+      return reply.code(503).send(err);
+    }
     if (!set.ok && set.refusal.code !== 'unavailable') {
       if (set.refusal.code === 'manual_call_live') {
         const err: AgencySoftphoneCallPendingRefusal = {
@@ -554,19 +559,37 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // …which it may not while a soft-phone call is live or owes its outcome: the call
     // belongs to the soft phone the agent would be leaving, and the console would stop
     // showing it. The same rule as `available` (`setAvailableGuarded`), read from the
-    // database, which a lapsed lease cannot have lost.
+    // database, which a lapsed lease cannot have lost — and checked and written under
+    // the session row's lock, which the dial takes too (`setBreakLeavingSoftphone`), so
+    // a Call pressed just before the break cannot slip in between the check and the
+    // write. Redis already says `break`, so the row is written first.
     if (leavingSoftphone) {
-      const owed = await owedSoftphoneCall(runtime.agents, session.id);
-      if (owed) {
-        const err: AgencySoftphoneCallPendingRefusal = {
-          error: 'Conflict', code: 'manual_call_live', call: owed,
-          message: 'Save the outcome of your soft-phone call before taking another break.',
-        };
-        return reply.code(409).send(err);
+      let left = false;
+      for (let pass = 0; pass < 2; pass++) {
+        left = (await agencyAgentSessionRepository.setBreakLeavingSoftphone(session.id, check.reason.code)).ok;
+        if (left) break;
+        const owed = await owedSoftphoneCall(runtime.agents, session.id);
+        if (owed) {
+          const err: AgencySoftphoneCallPendingRefusal = {
+            error: 'Conflict', code: 'manual_call_live', call: owed,
+            message: 'Save the outcome of your soft-phone call before taking another break.',
+          };
+          return reply.code(409).send(err);
+        }
+        // The call settled between the two reads: nothing is owed now, so write again.
       }
+      if (!left) {
+        const err: AgencySoftphoneErrorResponse = {
+          error: 'Service Unavailable', code: 'dial_failed',
+          message: 'Could not change your status just now; nothing changed. Try again.',
+        };
+        return reply.code(503).send(err);
+      }
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+    } else {
+      await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
+      await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
     }
-    await runtime.agents.set(session.id, 'break', { leaseMs: AGENT_LEASE_MS.break });
-    await agencyAgentSessionRepository.setState(session.id, 'break', check.reason.code);
     runtime.stations.send(session.id, {
       event: 'agent_state', state: 'break', since, break_reason: check.reason.code,
     });

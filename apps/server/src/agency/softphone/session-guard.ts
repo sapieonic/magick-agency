@@ -23,17 +23,36 @@
  * claim cannot keep an agent out of the pool forever.
  */
 import { createChildLogger } from '@magick-agency/observability';
-import type { AgencyManualCall } from '@magick-agency/contracts/agency';
+import { SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencyManualCall } from '@magick-agency/contracts/agency';
 import { agencyManualCallRepository } from '../../db/repositories/agency.repository.js';
 import { AGENT_LEASE_MS, type AgentStateMachine } from '../agent-state-machine.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
 
+/**
+ * The one rule for "this session is on the soft phone right now": Redis says `break`
+ * (the authority on the agent's state, as pacing reads it) and the session row's
+ * reason is the reserved {@link SOFTPHONE_BREAK_REASON}. Every route and the service
+ * ask this, so a change to the rule is made once.
+ */
+export function onSoftphoneBreak(
+  live: { state: AgencyAgentState } | null | undefined,
+  session: { break_reason: string | null },
+): boolean {
+  return live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON;
+}
+
 export type SetAvailableResult =
   | { ok: true }
   | { ok: false; refusal: { code: 'manual_call_live'; call: AgencyManualCall } | { code: 'wrong_session_kind' } }
   /** Redis could not answer; nothing was written. */
-  | { ok: false; refusal: { code: 'unavailable' } };
+  | { ok: false; refusal: { code: 'unavailable' } }
+  /**
+   * The Lua guard kept refusing on a `manual` claim that would not clear, and the
+   * session owes no call. Nothing was written: Redis still holds the session's state
+   * and the claim, so the caller must not report `available`.
+   */
+  | { ok: false; refusal: { code: 'claim_not_released' } };
 
 /**
  * The session's unsettled soft-phone call (live, or awaiting its outcome) as the wire
@@ -82,10 +101,12 @@ export async function setAvailableGuarded(
     await agents.releaseManual(sessionId, held);
   }
   // A claim that would not clear: answer as a live call would, with whatever the
-  // session holds. Unreachable unless the release itself keeps failing.
+  // session holds. Unreachable unless the release itself keeps failing — and then it is
+  // its own refusal, never `unavailable`, which a caller may treat as "Redis was down,
+  // carry on" while the claim still keeps the agent out of the pool.
   const unsettled = await agencyManualCallRepository.findUnsettledForSession(sessionId);
   const call = unsettled
     ? await agencyManualCallRepository.findWireById(unsettled.id, { tenantId: unsettled.tenant_id, accountId: unsettled.account_id })
     : null;
-  return call ? { ok: false, refusal: { code: 'manual_call_live', call } } : { ok: false, refusal: { code: 'unavailable' } };
+  return call ? { ok: false, refusal: { code: 'manual_call_live', call } } : { ok: false, refusal: { code: 'claim_not_released' } };
 }

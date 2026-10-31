@@ -111,6 +111,13 @@ export type ManualDialFailure = 'concurrency_limit' | 'station_unavailable' | 'd
 export class ManualDialer {
   /** manualCallId → the call, from the dial until its `ended` is handled. */
   private readonly live = new Map<string, LiveManualCall>();
+  /**
+   * sessionId → its call in {@link live}, so the per-session reads (the station sweep's
+   * once per station, every close and leave) are a lookup, not a scan. A session has at
+   * most one live call (`uq_agency_manual_call_unsettled`). Written only by
+   * {@link track} and {@link untrack}, beside `live`.
+   */
+  private readonly liveBySession = new Map<string, string>();
   /** manualCallId → the tail of its event chain (events applied in arrival order). */
   private readonly chains = new Map<string, Promise<void>>();
   private unsubscribe: (() => void) | null = null;
@@ -134,6 +141,7 @@ export class ManualDialer {
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.live.clear();
+    this.liveBySession.clear();
     this.chains.clear();
   }
 
@@ -144,13 +152,24 @@ export class ManualDialer {
 
   /** Whether this session has a call this process is driving (dialling through ended). */
   hasLiveCall(sessionId: string): boolean {
-    for (const entry of this.live.values()) if (entry.sessionId === sessionId) return true;
-    return false;
+    return this.liveFor(sessionId) !== undefined;
   }
 
   private liveFor(sessionId: string): LiveManualCall | undefined {
-    for (const entry of this.live.values()) if (entry.sessionId === sessionId) return entry;
-    return undefined;
+    const id = this.liveBySession.get(sessionId);
+    return id === undefined ? undefined : this.live.get(id);
+  }
+
+  private track(entry: LiveManualCall): void {
+    this.live.set(entry.id, entry);
+    this.liveBySession.set(entry.sessionId, entry.id);
+  }
+
+  private untrack(manualCallId: string): void {
+    const entry = this.live.get(manualCallId);
+    this.live.delete(manualCallId);
+    // Only while it still names this call, so a removal can never drop a newer one's.
+    if (entry && this.liveBySession.get(entry.sessionId) === manualCallId) this.liveBySession.delete(entry.sessionId);
   }
 
   /** Run `fn` after every earlier event of this call. Never rejects. */
@@ -242,7 +261,7 @@ export class ManualDialer {
       priors: [],
       endRequestedBy: null,
     };
-    this.live.set(call.id, entry);
+    this.track(entry);
     // ── Everything between the registration and the bridge is guarded ──────────
     // A throw here (a DB fault on the `dialing` write) would otherwise strand the
     // call until a restart: the row `queued`, the Redis claim held, the contact
@@ -365,7 +384,7 @@ export class ManualDialer {
     try {
       ended = await agencyManualCallRepository.end(manualCallId, { ...how, talkSeconds: null, unplaced: true });
     } finally {
-      this.live.delete(manualCallId);
+      this.untrack(manualCallId);
     }
     if (!ended) return;
     await this.closeWithoutOutcome(ended);
@@ -419,7 +438,7 @@ export class ManualDialer {
         unplaced: ev.outcome === 'telephony_init_failed' && !ev.answered && before.bridged_at === null,
       });
     } finally {
-      this.live.delete(entry.id);
+      this.untrack(entry.id);
     }
     // Already ended (the orphan sweep got there first): report what is there.
     const row = ended ?? before;

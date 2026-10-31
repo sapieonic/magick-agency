@@ -40,6 +40,8 @@ import type { AgencyCampaignRecord, AgencyManualCallRecord } from '../../../db/m
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type { SoftphoneActor } from '../../../agency/softphone/types.js';
 import { resolveManualCatalog } from '../../../agency/softphone/manual-disposition.js';
+import { manualAnalysisProfileId } from '../../../agency/softphone/manual-predial.js';
+import { onSoftphoneBreak } from '../../../agency/softphone/session-guard.js';
 import { usableCallerIds } from '../../../agency/pacing/caller-id-pool.js';
 import { dncEntryScope } from '../../../agency/dnc-registry.js';
 import { dncRepository } from '../../../dnc/dnc.repository.js';
@@ -155,8 +157,12 @@ async function profileSummaries(
 function taggableCampaign(
   campaign: AgencyCampaignRecord,
   profiles: Map<string, AgencySoftphoneProfileSummary>,
+  settings: { analysis_profile_id: string | null },
   now: Date,
 ): AgencySoftphoneCampaign {
+  // The profile a call tagged to this campaign is summarised with, by the dial's own
+  // rule (`manualAnalysisProfileId`): the campaign's, else the soft-phone settings'.
+  const profileId = manualAnalysisProfileId(campaign, settings);
   const window = {
     start: campaign.calling_window_start,
     end: campaign.calling_window_end,
@@ -172,7 +178,7 @@ function taggableCampaign(
     calling_window: window,
     calling_window_open: callingWindowState(window, now) === 'open',
     record_calls: campaign.record_calls,
-    analysis_profile: campaign.analysis_profile_id ? profiles.get(campaign.analysis_profile_id) ?? null : null,
+    analysis_profile: profileId ? profiles.get(profileId) ?? null : null,
     context_display: campaign.context_display ?? {},
   };
 }
@@ -225,7 +231,7 @@ async function buildBootstrap(
       campaign_name: campaign && campaign.tenant_id === live.tenant_id ? campaign.name : null,
       state: liveState,
       break_reason: live.break_reason,
-      on_softphone: liveState === 'break' && live.break_reason === SOFTPHONE_BREAK_REASON,
+      on_softphone: onSoftphoneBreak({ state: liveState }, live),
       ...(pending ? { pending_state: 'break' as const, pending_break_reason: pending.code } : {}),
     };
     // The call is read only for a session in THIS account: a session in a sibling
@@ -251,7 +257,7 @@ async function buildBootstrap(
   const now = new Date();
 
   return {
-    taggable_campaigns: taggable.map((c) => taggableCampaign(c, profiles, now)),
+    taggable_campaigns: taggable.map((c) => taggableCampaign(c, profiles, settings, now)),
     untagged: {
       caller_ids: callerIds,
       default_caller_id: defaultCallerId,
@@ -263,7 +269,7 @@ async function buildBootstrap(
     default_country_code: `+${defaultPhoneCountryCode()}`,
     session,
     call,
-    call_campaign: callCampaignRecord ? taggableCampaign(callCampaignRecord, profiles, now) : null,
+    call_campaign: callCampaignRecord ? taggableCampaign(callCampaignRecord, profiles, settings, now) : null,
   };
 }
 

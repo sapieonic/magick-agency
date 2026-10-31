@@ -55,7 +55,8 @@ import { submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import { runManualPredial } from './manual-predial.js';
 import { manualDispositionDecision, prepareManualDisposition, resolveManualCatalog } from './manual-disposition.js';
 import type { ManualDialer } from './manual-dialer.js';
-import { setAvailableGuarded } from './session-guard.js';
+import { onSoftphoneBreak, setAvailableGuarded } from './session-guard.js';
+import { UUID_RE } from '../../utils/uuid.js';
 import type { SoftphoneActor, SoftphoneRefusal, SoftphoneResult } from './types.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
@@ -251,7 +252,7 @@ export class SoftphoneService {
     if (pending) return refuse(pending);
 
     const live = await this.deps.agents.get(session.id);
-    if (live?.state !== 'break' || session.break_reason !== SOFTPHONE_BREAK_REASON) {
+    if (!onSoftphoneBreak(live, session)) {
       return refuse({ code: 'not_on_softphone' });
     }
     const socket = this.deps.stations.socketFor(session.id);
@@ -311,7 +312,16 @@ export class SoftphoneService {
     let call: AgencyManualCallRecord;
     try {
       await client.query('BEGIN');
-      await client.query('SELECT id FROM agency_agent_sessions WHERE id = $1 FOR UPDATE', [session.id]);
+      const locked = await client.query<{ break_reason: string | null }>(
+        'SELECT break_reason FROM agency_agent_sessions WHERE id = $1 FOR UPDATE', [session.id],
+      );
+      // Under the lock: a `/break` to another reason that committed after the read
+      // above has left the soft phone (`setBreakLeavingSoftphone`, the other side of
+      // this lock), and no call may start on the break it left.
+      if (locked.rows[0]?.break_reason !== SOFTPHONE_BREAK_REASON) {
+        await client.query('ROLLBACK');
+        return refuse({ code: 'not_on_softphone' });
+      }
       const existing = await agencyManualCallRepository.findUnsettledForSession(session.id, { client });
       if (existing) {
         await client.query('ROLLBACK');
@@ -558,6 +568,17 @@ export class SoftphoneService {
           contactState = settled.state;
           nextAt = settled.applied === 'settled' && settled.state === 'pending' ? settled.nextAttemptAt : null;
         }
+        // A suppress outcome on a tagged call takes the number off the tag's roster, as
+        // Mark DNC does (`markDnc` below): every other row of that campaign carrying it
+        // (a household landline listed twice) leaves too, in this transaction, rather
+        // than staying `pending` until pacing claims each one and its DNC gate
+        // suppresses it. After the settlement, so the call's own contact is settled by
+        // its decision first; a swept row keeps any reason it was already suppressed for.
+        if (entry.suppress === true && row.campaign_id) {
+          await agencyContactRepository.suppressByPhone(
+            row.campaign_id, row.destination_e164, decision.suppressedReason ?? 'dnc', {}, { client },
+          );
+        }
       } else if (callbackAt && nextAttemptAt && decision.contactState === 'pending') {
         // A replay that corrected the callback time: the call row took the new
         // `callback_at` above, and the contact this call settled moves with it, as the
@@ -690,7 +711,7 @@ export class SoftphoneService {
     const since = new Date().toISOString();
 
     for (let pass = 0; pass < 2; pass++) {
-      if (live?.state === 'break' && session.break_reason === SOFTPHONE_BREAK_REASON) {
+      if (onSoftphoneBreak(live, session)) {
         return {
           ok: true, fromState: fromState(), campaignId: session.campaign_id, queued: false, unchanged: true,
           response: { ...base, state: 'break', since, break_reason: SOFTPHONE_BREAK_REASON },
@@ -759,7 +780,7 @@ export class SoftphoneService {
 
     const pending = await this.pendingRefusal(session.id);
     if (pending) return refuse({ code: 'manual_call_live', call: (pending as { call: AgencyManualCall }).call });
-    if (live?.state !== 'break' || session.break_reason !== SOFTPHONE_BREAK_REASON) {
+    if (!onSoftphoneBreak(live, session)) {
       return refuse({ code: 'not_on_softphone' });
     }
     if (!this.deps.stations.isLocallyOwned(session.id)) return refuse({ code: 'station_unavailable' });
@@ -769,7 +790,8 @@ export class SoftphoneService {
       // Redis did not take the write: reporting `available` here would put the agent
       // in the DB and on the console as ready while pacing (which reads Redis) never
       // sees them. Nothing changed; retry.
-      if (set.refusal.code === 'unavailable') return refuse({ code: 'dial_failed' });
+      // So did a `manual` claim that would not clear (`claim_not_released`).
+      if (set.refusal.code === 'unavailable' || set.refusal.code === 'claim_not_released') return refuse({ code: 'dial_failed' });
       return refuse(set.refusal);
     }
     await agencyAgentSessionRepository.setState(session.id, 'available');
@@ -794,7 +816,6 @@ function dncMarkScope(row: AgencyManualCallRecord): { campaignId: string } | { a
   return row.campaign_id ? { campaignId: row.campaign_id } : { accountScope: row.account_id };
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_RE.test(value);
 }

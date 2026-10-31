@@ -276,9 +276,20 @@ export async function runManualPredial(
       dncOverride,
       hoursOverrideNote,
       recordingRequested: input.tag ? input.tag.record_calls === true : input.settings.record_calls === true,
-      analysisProfileId: input.tag
-        ? (input.tag.analysis_profile_id ?? input.settings.analysis_profile_id ?? null)
-        : (input.settings.analysis_profile_id ?? null),
+      analysisProfileId: manualAnalysisProfileId(input.tag, input.settings),
     },
   };
+}
+
+/**
+ * The analysis profile a soft-phone call is summarised with (docs/softphone.md §4.1
+ * step 4): the tag's, else the soft-phone settings', else null (the account default,
+ * the analysis hook's fallback). The dial stores it and the bootstrap shows it, by this
+ * one rule.
+ */
+export function manualAnalysisProfileId(
+  tag: { analysis_profile_id: string | null } | null,
+  settings: { analysis_profile_id: string | null },
+): string | null {
+  return tag?.analysis_profile_id ?? settings.analysis_profile_id ?? null;
 }
