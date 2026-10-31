@@ -35,7 +35,7 @@ export {
   agencyAbandonmentRepository,
   agencyLiveConcurrencyRepository,
 } from './agency/fleet-metrics.repository.js';
-export type { AgencyLiveAttemptStateRow } from './agency/fleet-metrics.repository.js';
+export type { AgencyLiveAttemptStateRow, AgencyLiveManualCallStateRow } from './agency/fleet-metrics.repository.js';
 export { AgencyAgentStatsRepository, agencyAgentStatsRepository } from './agency/agent-stats.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
 export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';

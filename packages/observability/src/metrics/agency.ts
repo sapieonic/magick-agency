@@ -368,6 +368,58 @@ observableGauge<'tenant_id' | 'campaign_id' | 'state'>(meter, 'agency_live_attem
   }
 });
 
+// ─── Live soft-phone calls ───────────────────────────────────
+//
+// The soft phone's calls (`agency_manual_calls`, docs/softphone.md) hold carrier slots
+// exactly like attempts — pacing's headroom subtracts them (`countLiveForAccount`) —
+// but they are no campaign's, so `agency_live_attempts_current` cannot see them, and a
+// capacity panel built on it alone showed headroom that pacing did not have. Their own
+// family rather than an `origin` label on that one, for the reason the top of this
+// block gives for `calls_active_current`: a label added to a live series terminates it.
+//
+// The same shape and the same rules as the attempts family: a fleet-wide SQL snapshot
+// (`AgencyLiveConcurrencyRepository.liveManualByState`, the `state <> 'ended'` predicate
+// pacing counts with), published whole by `live-concurrency-metrics.ts` on the same
+// timer, expired at collection after {@link AGENCY_LIVE_ATTEMPTS_TTL_MS}, and **reduced
+// with `max` across replicas, never `sum`**. Labelled by tenant and state only: a manual
+// call's campaign is a tag, not a campaign whose concurrency it consumes.
+
+/** One published sample: a tenant's live soft-phone calls in one state. `state` arrives narrowed. */
+export type AgencyLiveManualCallSample = {
+  tenant_id: string;
+  state: string;
+  live: number;
+};
+
+let _agencyLiveManualCalls: readonly AgencyLiveManualCallSample[] = [];
+let _agencyLiveManualCallsAt = 0;
+
+/** Replace the exported live soft-phone snapshot (a whole-array replace, copied, as the attempts'). */
+export function setAgencyLiveManualCalls(samples: readonly AgencyLiveManualCallSample[]): void {
+  _agencyLiveManualCalls = [...samples];
+  _agencyLiveManualCallsAt = Date.now();
+}
+
+/** Test seam — the module-level snapshot would otherwise leak between cases. */
+export function resetAgencyLiveManualCalls(): void {
+  _agencyLiveManualCalls = [];
+  _agencyLiveManualCallsAt = 0;
+}
+
+function liveAgencyManualCalls(): readonly AgencyLiveManualCallSample[] {
+  if (_agencyLiveManualCallsAt === 0) return [];
+  if (Date.now() - _agencyLiveManualCallsAt > AGENCY_LIVE_ATTEMPTS_TTL_MS) return [];
+  return _agencyLiveManualCalls;
+}
+
+observableGauge<'tenant_id' | 'state'>(meter, 'agency_live_manual_calls_current', {
+  description: 'Agency soft-phone calls that have not reached `ended`, by call state',
+}, (observe) => {
+  for (const s of liveAgencyManualCalls()) {
+    observe(s.live, { tenant_id: s.tenant_id, state: s.state });
+  }
+});
+
 // ─── Pre-dial compliance gates ─────────────────
 //
 // **These exist because a fail-closed gate makes "nothing dialed" ambiguous.** Once

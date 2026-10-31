@@ -8,11 +8,11 @@ vi.mock('@magick-agency/db', async (orig) => ({
 }));
 
 const {
-  agencyAgentSessionRepository, agencyAgentStatsRepository, agencyCampaignRepository,
+  agencyAgentSessionRepository, agencyAgentStatsRepository, agencyCampaignRepository, agencyLiveConcurrencyRepository,
 } = await import('../../../src/db/repositories/agency.repository.js');
 const {
   insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession, insertAgentShift,
-  insertSoftphoneSession,
+  insertManualCall, insertSoftphoneSession,
 } = await import('./agency-factories.js');
 
 /**
@@ -29,7 +29,9 @@ const {
  *   break seconds agree, with and without a campaign filter;
  * - the campaign's own stats, floor and health inputs see its sessions (a switched
  *   one as a `soft_phone` break) and never the account's soft-phone sessions;
- * - the pacing candidate read takes no soft-phone session.
+ * - the pacing candidate read takes no soft-phone session;
+ * - the fleet's live-concurrency reads: attempts per campaign, and the soft phone's
+ *   live calls in their own family (no campaign owns their carrier slots).
  */
 
 const T = DEFAULTS.tenantId;
@@ -146,5 +148,25 @@ describe('campaign reads beside soft-phone rows (integration)', () => {
     const candidates = await agencyAgentSessionRepository.findLiveForCampaign(campaign.id as string);
     expect(candidates).toHaveLength(2);
     expect(candidates.every((s) => s.campaign_id === campaign.id)).toBe(true);
+  });
+
+  it('fleet live concurrency: attempts by campaign, live soft-phone calls by tenant and state, ended ones in neither', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const contact = await insertAgencyContact(campaign.id as string, { state: 'in_flight' });
+    await insertAgencyAttempt(campaign.id as string, contact.id as string, { state: 'bridged' });
+    const shift = await insertAgentSession(campaign.id as string, { state: 'break', break_reason: 'soft_phone' });
+    await insertManualCall(shift as never, { campaign_id: campaign.id, state: 'ringing' });
+    await insertManualCall(await insertSoftphoneSession(), { state: 'bridged' });
+    await insertManualCall(await insertSoftphoneSession(), { state: 'bridged' });
+    await insertManualCall(await insertSoftphoneSession(), { state: 'ended', ended_at: new Date() });
+
+    expect(await agencyLiveConcurrencyRepository.liveByState()).toEqual([
+      { tenant_id: T, campaign_id: campaign.id, state: 'bridged', live: 1 },
+    ]);
+    const manual = await agencyLiveConcurrencyRepository.liveManualByState();
+    expect([...manual].sort((a, b) => a.state.localeCompare(b.state))).toEqual([
+      { tenant_id: T, state: 'bridged', live: 2 },
+      { tenant_id: T, state: 'ringing', live: 1 },
+    ]);
   });
 });

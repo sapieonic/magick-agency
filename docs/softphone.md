@@ -177,7 +177,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
     `system:agency-reaper`).
 
 Pacing headroom subtracts live calls on the **whole account** (attempts of every campaign plus
-live manual calls): `countLiveForAccount`.
+live manual calls): `countLiveForAccount`, over the attempts' account index
+(`idx_agency_attempts_account_live`) and `idx_agency_manual_calls_live`. Live manual calls are
+exported beside the attempts as `agency_live_manual_calls_current` (tenant, state), and the
+dashboard's capacity panel stacks them on the attempts.
 
 ### 4.2 Switching from a campaign (SP7)
 

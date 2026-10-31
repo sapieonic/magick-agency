@@ -1,13 +1,18 @@
 import { createChildLogger } from '@magick-agency/observability';
+import { AGENCY_MANUAL_CALL_STATES } from '@magick-agency/contracts/agency';
 import {
   agencyLiveConcurrencyRepository,
   type AgencyLiveAttemptStateRow,
+  type AgencyLiveManualCallStateRow,
 } from '../db/repositories/agency.repository.js';
 import { AGENCY_ATTEMPT_LIVE_STATES } from '../db/models/agency.model.js';
 import {
   setAgencyLiveAttempts,
   resetAgencyLiveAttempts,
+  setAgencyLiveManualCalls,
+  resetAgencyLiveManualCalls,
   type AgencyLiveAttemptSample,
+  type AgencyLiveManualCallSample,
 } from '@magick-agency/observability/metrics/agency';
 
 const log = createChildLogger({ component: 'agency-live-concurrency-metrics' });
@@ -16,8 +21,9 @@ const log = createChildLogger({ component: 'agency-live-concurrency-metrics' });
  * ─── THE DIALER'S LIVE-CONCURRENCY SIGNAL ───────────────────────────────────
  *
  * Publishes `agency_live_attempts_current`: the dialer's live calls per tenant,
- * campaign and attempt state. The gauge is declared in
- * `@magick-agency/observability/metrics/agency`.
+ * campaign and attempt state; and beside it `agency_live_manual_calls_current`, the
+ * soft phone's live calls per tenant and state, which hold carrier slots no campaign
+ * owns. Both gauges are declared in `@magick-agency/observability/metrics/agency`.
  *
  * The sibling of `abandonment-metrics.ts` and deliberately the same shape: read
  * `agency_call_attempts` on a timer, publish a whole snapshot, let the gauge
@@ -72,9 +78,51 @@ export const UNKNOWN_ATTEMPT_STATE = 'unknown';
  */
 const KNOWN_LIVE_STATES: ReadonlySet<string> = new Set<string>(AGENCY_ATTEMPT_LIVE_STATES);
 
-/** Read the live snapshot and publish it. */
+/**
+ * The blessed label values of `agency_live_manual_calls_current`: the contract's
+ * manual-call states less `ended` (the SQL's own predicate), folded as the attempts' are.
+ */
+const KNOWN_LIVE_MANUAL_STATES: ReadonlySet<string> = new Set<string>(
+  AGENCY_MANUAL_CALL_STATES.filter((state) => state !== 'ended'),
+);
+
+/**
+ * Read the live snapshots and publish them: the attempts, and the soft phone's
+ * live calls beside them (`agency_live_manual_calls_current`), which hold the same
+ * carrier slots and belong to no campaign. Each is read and published on its own, so
+ * one failing read leaves the other family fresh.
+ */
 export async function refreshLiveConcurrency(): Promise<void> {
-  publishLiveConcurrency(await agencyLiveConcurrencyRepository.liveByState());
+  const [attempts, manual] = await Promise.allSettled([
+    agencyLiveConcurrencyRepository.liveByState(),
+    agencyLiveConcurrencyRepository.liveManualByState(),
+  ]);
+  if (attempts.status === 'fulfilled') publishLiveConcurrency(attempts.value);
+  if (manual.status === 'fulfilled') publishLiveManualCalls(manual.value);
+  const failed = [attempts, manual].find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed) throw failed.reason;
+}
+
+/**
+ * The soft phone's half of {@link publishLiveConcurrency}: the same fold of an
+ * unrecognised state into {@link UNKNOWN_ATTEMPT_STATE}, the same summing on a collision.
+ */
+export function publishLiveManualCalls(rows: readonly AgencyLiveManualCallStateRow[]): void {
+  const byLabels = new Map<string, AgencyLiveManualCallSample>();
+  let unknownStates = 0;
+  for (const row of rows) {
+    const known = KNOWN_LIVE_MANUAL_STATES.has(row.state);
+    if (!known) unknownStates += row.live;
+    const state = known ? row.state : UNKNOWN_ATTEMPT_STATE;
+    const key = `${row.tenant_id}\u0000${state}`;
+    const existing = byLabels.get(key);
+    if (existing) existing.live += row.live;
+    else byLabels.set(key, { tenant_id: row.tenant_id, state, live: row.live });
+  }
+  setAgencyLiveManualCalls([...byLabels.values()]);
+  if (unknownStates > 0) {
+    log.warn({ unknownStates }, 'Soft-phone calls are in a state outside AGENCY_MANUAL_CALL_STATES — folded into the `unknown` label');
+  }
 }
 
 /**
@@ -127,6 +175,7 @@ export function publishLiveConcurrency(rows: readonly AgencyLiveAttemptStateRow[
 /** Test seam — the module-level snapshot in `metrics.ts` leaks between cases. */
 export function resetLiveConcurrencyMetricsState(): void {
   resetAgencyLiveAttempts();
+  resetAgencyLiveManualCalls();
 }
 
 /**

@@ -150,6 +150,15 @@
     ]
   },
   {
+    "name": "agency_live_manual_calls_current",
+    "kind": "ObservableGauge",
+    "description": "Agency soft-phone calls that have not reached `ended`, by call state",
+    "attributes": [
+      "state",
+      "tenant_id"
+    ]
+  },
+  {
     "name": "agency_our_fault_retirement_total",
     "kind": "Counter",
     "description": "Contacts permanently retired by exhausting the our-fault redial ledger",

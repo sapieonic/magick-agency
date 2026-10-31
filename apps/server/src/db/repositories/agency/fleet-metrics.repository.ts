@@ -167,6 +167,31 @@ export class AgencyLiveConcurrencyRepository {
       live: Number(r.live),
     }));
   }
+
+  /**
+   * Live soft-phone calls per `(tenant, state)` (`agency_live_manual_calls_current`):
+   * the other half of what holds the account's carrier slots, which no campaign owns
+   * (docs/softphone.md §2). `state <> 'ended'` as a literal, the predicate pacing's
+   * `countLiveForAccount` counts them with and `idx_agency_manual_calls_live`'s, so
+   * the read is bounded by live calls and the gauge reconciles with the tick.
+   * `state` is a string for the reason {@link AgencyLiveAttemptStateRow}'s is.
+   */
+  async liveManualByState(): Promise<AgencyLiveManualCallStateRow[]> {
+    const { rows } = await getPool().query<{ tenant_id: string; state: string; live: string }>(
+      `SELECT tenant_id, state, COUNT(*)::text AS live
+         FROM agency_manual_calls
+        WHERE state <> 'ended'
+        GROUP BY tenant_id, state`,
+    );
+    return rows.map((r) => ({ tenant_id: r.tenant_id, state: r.state, live: Number(r.live) }));
+  }
+}
+
+/** One row of {@link AgencyLiveConcurrencyRepository.liveManualByState}. */
+export interface AgencyLiveManualCallStateRow {
+  tenant_id: string;
+  state: string;
+  live: number;
 }
 
 export const agencyAbandonmentRepository = new AgencyAbandonmentRepository();
