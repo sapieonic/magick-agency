@@ -412,7 +412,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 48 |
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 12 |
-| `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 17 |
+| `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 
 ### `apps/server/src/api/validators/`
 

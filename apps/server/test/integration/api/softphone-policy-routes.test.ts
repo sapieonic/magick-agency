@@ -67,7 +67,7 @@ import {
   insertUser,
 } from '../../../../../packages/db/test/integration/setup/platform-factories.js';
 import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test-redis.js';
-import { insertAgencyCampaign, insertAgencyContact } from '../agency/agency-factories.js';
+import { insertAgencyCampaign, insertAgencyContact, insertManualCall } from '../agency/agency-factories.js';
 import { config } from '../../../src/config/index.js';
 import { buildApp } from '../../../src/app.js';
 import type { AppContext } from '../../../src/app-context.js';
@@ -747,6 +747,25 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect(again.json()).toMatchObject({ id: callId, state: 'ended' });
     expect(await auditRows('agency_manual_call.hung_up', callId)).toHaveLength(1);
     expect((await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'voicemail' })).statusCode).toBe(200);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  it('a hang-up on a live call this process does not hold hangs nothing up: its row unchanged, no hung_up row', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const { sessionId } = await openSoftphone(agent);
+    // A crash's leftover: live in the database, not in this process's dialer.
+    const leftover = await insertManualCall(
+      { id: sessionId, tenant_id: tenant, account_id: account, agent_user_id: agent.id },
+      { state: 'ringing', dialed_at: new Date() },
+    );
+    const callId = leftover.id as string;
+    const hung = await post(`/proxy/agency/softphone/calls/${callId}/hangup`, agent);
+    expect(hung.statusCode, hung.body).toBe(200);
+    expect(hung.json()).toMatchObject({ id: callId, state: 'ringing' });
+    expect(await auditRows('agency_manual_call.hung_up', callId)).toEqual([]);
+    await getTestPool().query(
+      `UPDATE agency_manual_calls SET state = 'ended', outcome = 'orphaned', end_reason = 'orphaned',
+              ended_at = now(), settled_at = now() WHERE id = $1`, [callId]);
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 

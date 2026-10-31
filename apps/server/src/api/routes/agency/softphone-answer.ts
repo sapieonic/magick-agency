@@ -138,7 +138,10 @@ export interface SoftphoneDncEntryAudit {
   scope: AgencyManualCallDncScope;
 }
 
-/** `hangup`: whether a hang-up was issued (false: the call had already ended, nothing to audit). */
+/**
+ * `hangup`: whether a hang-up was issued (false: the call had already ended, or is a
+ * live row this process does not hold; nothing to audit).
+ */
 export interface SoftphoneHangupAudit extends SoftphoneCallActAudit {
   hung_up: boolean;
 }
