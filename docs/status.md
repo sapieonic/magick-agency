@@ -181,7 +181,7 @@ audited. Design and rulings: [`softphone.md`](softphone.md); rulings in
 | Voice | The bridge seam takes a correlation, attempt or manual (`seams.md` §3.1); a manual leg has no browser-close grace before answer |
 | Runtime | `agency/softphone/`: `ManualDialer`, pre-dial (E.164, caller ID, roster match, calling window and DNC with overridable refusals), outcomes with the station's pure rules, roster settlement (SP6), lapse and orphan sweeps in the reaper, station reattach; a Lua-guarded `manual` claim so an agent owing a soft-phone outcome never becomes available, across a station drop, a lapsed lease, a reconnect and a restart; pacing headroom counts live calls account-wide |
 | API | `/proxy/agency/softphone/*` (bootstrap, sessions, calls, hang-up, outcome, DNC, list, detail, recording, settings) and `/sessions/:id/softphone` + `/softphone/return`; audit actions `agency_manual_call.*`, `agency_softphone_settings.updated`, `agency_session.softphone_started` / `_ended`, shown in the campaign activity trail |
-| Console | `/dialer/phone`, the soft phone in place on the station after "Switch to soft phone", override dialogs, My calls tab, Soft-phone calls list and detail, a campaign's Manual calls tab, Settings → Soft phone; the DNC page copy now says DNC applies to the soft phone |
+| Console | `/dialer/phone`, the soft phone in place on the station after "Switch to soft phone", override dialogs, My calls tab, Soft-phone calls list and detail, a campaign's Soft-phone calls tab, a roster contact's soft-phone history (supervisors), Settings → Soft phone; a finish-only mode when the flag is turned off mid-call; the live floor names the soft phone; the DNC page says what the soft phone checks |
 
 **Review.** An independent review of the server and of the console found 5 and 9 defects; all
 are fixed with tests that were watched failing first: chiefly a switched agent owing an outcome
@@ -189,6 +189,21 @@ who could come back `available` after a station drop and a lapsed lease, call de
 a call arrived before its field set, no audio on the first call of the day on `/dialer/phone`,
 and Mute while ringing muting the call. A visual pass on the real components fixed nine layout
 defects (frozen geometry between states, clipped labels, missing icons, light-theme contrast).
+
+A second round (2026-10-31): three independent reviews of the whole change (engineering, product,
+QA), then a re-review of their fixes, every fix with a test watched failing first. Chiefly: an
+untagged dial now meets the DNC entries of every campaign of its account and the account-wide
+in-flight guard; an untagged DNC mark is account-scoped (it wrote a tenant-wide row with no
+permission check) and on the DNC trail; a call closed without an outcome settles the contact by
+the campaign's retry policy (pacing could redial seconds later); recordings, transcripts and
+analysis are supervise-only; the flag turned off mid-call leaves a finish mode and only routes
+that start work are gated; every way off the soft phone is audited once with `via`; pacing's
+account-wide live count is an index-only read (it probed every campaign the account ever had,
+each tick); a break queued while pacing held the agent reserved is applied; another break is
+refused while a soft-phone call is owed; live sessions in a sibling account are refused, named,
+not mixed up; "Close the soft phone and join". Open for Manas: calling hours on untagged calls
+(none, as ruled), the in-flight guard on tagged dials (the tag's roster only), who may override a
+tenant-wide DNC entry, and soft-phone occupancy buckets (UTC).
 
 **Not verified:** a real VoiceLink call from the soft phone (needs the account, like every call
 path), and a browser session with real Firebase sign-in. `test/integration/load/agent-churn.test.ts`
@@ -201,25 +216,25 @@ transfer and conference. Seen and left: light-theme `<select>` elements show no 
 
 ## Test counts
 
-Latest run, 2026-10-31, after the soft phone, from inside each package (`pnpm lint` clean in
-8 packages; `pnpm build`, `pnpm test:grafana` 31 and `pnpm test:release` 10 pass):
+Latest run, 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
+test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
+`pnpm test:release` 10 pass):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7136 passed + 4 expected fail (340 files) | 1419 passed + 10 expected fail, 1 failed (151 files) |
-| `packages/db` | 427 | 493 (44 files) |
-| `apps/console` | 4730 (244 files) | — |
+| `apps/server` | 7169 passed + 4 expected fail (340 files) | 1470 passed + 10 expected fail (154 files) |
+| `packages/db` | 427 | 495 (44 files) |
+| `apps/console` | 4808 (245 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 94 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 53 | — |
 | `packages/observability` | 14 | — |
 
-The one integration failure is a timing flake in the load suite:
-`load/voicelink-media-ws-load.test.ts` ("start negotiation failures", seed 24301) ended one call
-`provider_start_timeout` instead of `unsupported_media_format` under the full run's load. Run alone
-it passed 8 of 8 on this branch and 8 of 8 on `c9fd548`; the branch does not touch media
-negotiation. `load/agent-churn.test.ts` passed in this run (pre-existing flake, see above).
+Two load-suite timing flakes predate the branch and passed in this run:
+`load/agent-churn.test.ts` (see above) and `load/voicelink-media-ws-load.test.ts` ("start
+negotiation failures", which once ended a call `provider_start_timeout` under a full run's load;
+8 of 8 alone on this branch and on `c9fd548`).
 The baseline before the soft phone, on `c9fd548`: server 6947 unit / 1301 integration, db 426 /
 469, console 4560.
 
