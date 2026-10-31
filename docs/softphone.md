@@ -155,7 +155,9 @@ Owned by `AgencyRuntime`. One call at a time per session.
    settings / built-in catalog (a tag whose catalog is empty falls back to the built-in, still
    source `campaign`: a bridged call always owes an outcome); call fields with `required`
    enforced; suppress codes write DNC in the same transaction (B8; campaign scope when tagged,
-   else tenant); then the contact settles (§5); then the Redis `manual` field is released.
+   else the call's ACCOUNT — never tenant-wide, which the station keeps behind
+   `agency.dnc.manage`; `markDnc`'s `accountScope`, used by this path only); then the contact
+   settles (§5); then the Redis `manual` field is released.
    **Mark DNC** on a tagged call also suppresses every roster row of the tag carrying the number,
    as the station's mark does.
 8. **Lapse.** An ended call with no outcome after `SOFTPHONE_OUTCOME_LAPSE_MS` (30 min), or
@@ -275,7 +277,7 @@ from `audit` (a success without the envelope is a 502).
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
 | `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf |
-| `POST /softphone/calls/:id/dnc` | `softphone.dial` | `{ reason? }`: campaign scope when tagged, else tenant |
+| `POST /softphone/calls/:id/dnc` | `softphone.dial` | `{ reason? }`: campaign scope when tagged, else the call's account (`scope: 'account'`); never tenant-wide |
 | `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `from`, `to` (exclusive). Rows carry `agent_name` and the media leg's `analysis_status` |
 | `GET /softphone/calls/:id` | `softphone.dial` | `AgencyManualCallDetail`: the call (contact context, prior attempts, `agent_name`), `dispositioned_by_name`, the override notes, the media leg with the attempt detail's entitlement strip (`allow_recording`, `analyze_calls` of the account), `call_availability` |
 | `GET /softphone/calls/:id/recording` | `softphone.dial` | the bytes through the authenticated proxy (no signed URL), range forwarded; 403 `capability_disabled` without `allow_recording`; 404 `call_never_placed` / `call_purged` / no recording; own calls, any with supervise |
@@ -299,10 +301,13 @@ Audit (`platform_audit_log`, resource types `agency_manual_call`, `agency_softph
 `agency_manual_call.placed` (session, `dnc_overridden` / `hours_overridden` flags),
 `.dnc_overridden` (the note and the `dnc_entries` id), `.hours_overridden` (the note), `.hung_up`,
 `.dispositioned` (code, `replay`), `.dnc_marked` (scope, `dnc_recorded`; never the number), each
-with `on_behalf` when the call was another agent's; `agency_softphone_settings.updated` (`changed`
-keys); `agency_session.softphone_started` (from-state, `queued`, `applied`) and `.softphone_ended`
-(from-state, `withdrawn`, `via`, §4.2); `agency_session.joined` (`kind: softphone`) for the
-soft-phone session. Notes and
+with `on_behalf` when the call was another agent's; and, when Mark DNC or a `suppress` outcome
+recorded a NEW `dnc_entries` row (not on a replay, not for a number already listed at that
+scope), the DNC trail's own `dnc_entry.created` (resource type `dnc_entry`, the entry id;
+`manual_call_id`, scope, `disposition_code` for an outcome), as the station's mark writes it;
+`agency_softphone_settings.updated` (`changed` keys); `agency_session.softphone_started`
+(from-state, `queued`, `applied`) and `.softphone_ended` (from-state, `withdrawn`, `via`, §4.2);
+`agency_session.joined` (`kind: softphone`) for the soft-phone session. Notes and
 call-field values never go in `details`. The campaign activity trail offers the session and
 manual-call actions (not the account-wide settings one) and the reaper's `audit_logs` events
 `agency_manual_call.orphaned` / `.lapsed`, which carry the tag in `event_data.campaign_id`.

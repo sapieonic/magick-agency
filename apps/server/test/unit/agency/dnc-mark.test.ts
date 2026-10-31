@@ -128,6 +128,29 @@ describe('the write', () => {
     expect(mocks.insertMany).not.toHaveBeenCalled();
   });
 
+  it('writes ACCOUNT scope through accountScope (the soft phone\'s untagged mark), and reads the row back', async () => {
+    mocks.insertMany.mockResolvedValue({
+      results: [{ phone_e164: '+15551230001', created: true, entry: { id: 'entry-2', tenant_id: TENANT, account_id: ACCOUNT, campaign_id: null, phone_e164: '+15551230001' } }],
+    });
+    const res = await markDnc({ tenantId: TENANT, phoneE164: '+15551230001', accountScope: ACCOUNT, addedBy: 'u1' });
+    expect(mocks.insertMany.mock.calls[0]![0]).toMatchObject({ tenant_id: TENANT, account_id: ACCOUNT, campaign_id: null, source: 'agent' });
+    expect(res).toEqual({
+      recorded: true, alreadyPresent: false, phoneE164: '+15551230001',
+      written: { id: 'entry-2', campaign_id: null, account_id: ACCOUNT },
+    });
+  });
+
+  it('refuses accountScope beside a campaign, and as the nil UUID — one scope per mark', async () => {
+    for (const req of [
+      { accountScope: ACCOUNT, campaignId: CAMPAIGN },
+      { accountScope: '00000000-0000-0000-0000-000000000000' },
+    ]) {
+      const res = await markDnc({ tenantId: TENANT, phoneE164: '+15551230001', ...req });
+      expect(res).toMatchObject({ recorded: false, refused: 'invalid_dnc_scope', written: null });
+    }
+    expect(mocks.insertMany).not.toHaveBeenCalled();
+  });
+
   it('tolerates an explicit account_id: null', async () => {
     const res = await markDnc({ tenantId: TENANT, phoneE164: '+15551230001', accountId: null });
     expect(res.recorded).toBe(true);
@@ -143,7 +166,7 @@ describe('the result the route populates `dnc_recorded` from', () => {
       recorded: true,
       alreadyPresent: false,
       phoneE164: '+15551230001',
-      written: { campaign_id: null },
+      written: { id: 'entry-1', campaign_id: null, account_id: null },
     });
   });
 
@@ -154,7 +177,7 @@ describe('the result the route populates `dnc_recorded` from', () => {
       recorded: true,
       alreadyPresent: false,
       phoneE164: '+15551230001',
-      written: { campaign_id: CAMPAIGN },
+      written: { id: 'entry-1', campaign_id: CAMPAIGN, account_id: null },
     });
   });
 
@@ -166,14 +189,14 @@ describe('the result the route populates `dnc_recorded` from', () => {
       alreadyPresent: true,
       phoneE164: '+15551230001',
       // null — the row is tenant-wide — and emphatically not CAMPAIGN.
-      written: { campaign_id: null },
+      written: { id: 'entry-1', campaign_id: null, account_id: null },
     });
   });
 
   it('reports a campaign scope the request did NOT ask for, when that is where the row is', async () => {
     mocks.insertMany.mockResolvedValue(insertResult(false, CAMPAIGN));
     const res = await markDnc({ tenantId: TENANT, phoneE164: '+15551230001' });
-    expect(res.written).toEqual({ campaign_id: CAMPAIGN });
+    expect(res.written).toEqual({ id: 'entry-1', campaign_id: CAMPAIGN, account_id: null });
   });
 
   it('reports recorded:TRUE for a redelivery, flagging alreadyPresent separately', async () => {

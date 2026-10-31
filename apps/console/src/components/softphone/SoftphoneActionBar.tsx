@@ -34,7 +34,8 @@ export function SoftphoneActionBar({ sp, clock }: { sp: SoftphoneState; clock: S
   const call = sp.call;
   const live = isCallLive(call);
   const number = call ? formatDialNumber(call.destination_e164) : '';
-  const dncScope = call?.tag ? `for ${call.tag.campaign_name}` : 'for the whole workspace';
+  // Untagged: the call's account (docs/softphone.md §6) — never the whole workspace.
+  const dncScope = call?.tag ? `for ${call.tag.campaign_name}` : 'from this account';
 
   return (
     <div className={styles.actionBar} data-testid="softphone-action-bar">

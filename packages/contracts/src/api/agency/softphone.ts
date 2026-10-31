@@ -27,6 +27,7 @@ export type {
   AgencyManualCallDispositionResponse,
   AgencyManualCallDispositionSource,
   AgencyManualCallDncResponse,
+  AgencyManualCallDncScope,
   AgencyManualCallEndReason,
   AgencyManualCallListQuery,
   AgencyManualCallOutcome,

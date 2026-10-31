@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { createChildLogger } from '@magick-agency/observability';
 import { normalizeE164 } from './dnc-registry.js';
-import { dncRepository, SCOPE_SENTINEL } from '../dnc/dnc.repository.js';
+import { dncRepository, dncScopeLabel, SCOPE_SENTINEL } from '../dnc/dnc.repository.js';
 
 const log = createChildLogger({ component: 'agency-dnc-mark' });
 
@@ -35,16 +35,29 @@ const log = createChildLogger({ component: 'agency-dnc-mark' });
  * to be the same thing. Which of the two happens is decided ONCE, at the route,
  * from the request's `scope` (absent ⇒ `campaign`, the narrower).
  *
- * ── There is no account scope on this path ───────────────────────────────────
+ * ── The account scope belongs to ONE caller: the soft phone's untagged call ───
  *
- * An agent's mark is a campaign or a tenant mark. A caller that supplies an
+ * A station mark is a campaign or a tenant mark, and a caller that supplies an
  * `accountId` is REFUSED (`refused: 'invalid_dnc_scope'`, which the route maps to
- * its 400 of the same name): an account-scoped row reaches no agent affordance and
- * writing one from here would look correct on the list while meaning something the
- * agent never said. The reserved nil UUID (`SCOPE_SENTINEL`) is refused as a
- * campaign id for the reason `dncScopeUuid` documents: it is the value
- * `uq_dnc_scope` COALESCEs a NULL scope to, so a row carrying it would collide with
- * the tenant-wide row and swallow a later escalation.
+ * its 400 of the same name): the station has no account affordance, and writing
+ * one from there would look correct on the list while meaning something the agent
+ * never said.
+ *
+ * The soft phone's mark on a call logged to NO campaign (Mark DNC, or a `suppress`
+ * outcome; docs/softphone.md §4.1 step 7, §6) has no campaign to scope to, and a
+ * tenant-wide row would be an escalation the station keeps behind
+ * `agency.dnc.manage` — which an agent does not hold. So that path, and only that
+ * path, passes {@link DncMarkRequest.accountScope}: the account the call belongs to,
+ * written `account_id = <id>, campaign_id IS NULL`. It is the scope the untagged
+ * pre-dial reads, and every campaign dial of that account reads it too
+ * (`findSuppressed` widens by account). A separate, explicitly named field rather
+ * than lifting the `accountId` refusal, so the station's guard stays exactly as it
+ * was. `accountScope` together with a `campaignId` is refused: one scope per mark.
+ *
+ * The reserved nil UUID (`SCOPE_SENTINEL`) is refused as a campaign or account id
+ * for the reason `dncScopeUuid` documents: it is the value `uq_dnc_scope`
+ * COALESCEs a NULL scope to, so a row carrying it would collide with the
+ * tenant-wide row and swallow a later escalation.
  *
  * ── The one thing that must not drift ────────────────────────────────────────
  *
@@ -88,8 +101,15 @@ export interface DncMarkRequest {
    * NOT SUPPORTED on this path — see the module header. Present only so a caller
    * that tries to pass one is refused with `invalid_dnc_scope` rather than having
    * the field silently dropped (the failure class this module exists to avoid).
+   * The soft phone's account-scoped mark is {@link accountScope}.
    */
   accountId?: string | null;
+  /**
+   * The soft phone's mark on an UNTAGGED call, and nothing else: the account the call
+   * belongs to (the module header). Writes `account_id = <id>, campaign_id IS NULL`.
+   * Refused with a `campaignId` beside it, or as the nil UUID.
+   */
+  accountScope?: string;
   /** As stored on the roster row; normalized here, never trusted as-is. */
   phoneE164: string;
   /** Free text, stored on the entry. */
@@ -119,13 +139,13 @@ export interface DncMarkResult {
    */
   phoneE164: string | null;
   /**
-   * The scope of the row that is actually ON the list, read back from the row —
-   * `campaign_id` is its campaign, or null for a tenant-wide entry. `null` for the
-   * whole field when nothing was written. It is the row itself, so it cannot be a
-   * mirror of the request. On the `alreadyPresent` path it is the PRE-EXISTING
-   * row's scope.
+   * The row that is actually ON the list, read back from it — its id, and its
+   * scope: `campaign_id` is its campaign and `account_id` its account (both null
+   * for a tenant-wide entry). `null` for the whole field when nothing was written.
+   * It is the row itself, so it cannot be a mirror of the request. On the
+   * `alreadyPresent` path it is the PRE-EXISTING row.
    */
-  written: { campaign_id: string | null } | null;
+  written: { id: string; campaign_id: string | null; account_id: string | null } | null;
   /**
    * Set when the request itself was refused before anything was written.
    *
@@ -147,9 +167,10 @@ export interface DncMarkDeps {
 }
 
 /**
- * Record a DNC entry, at the scope `req.campaignId` states — campaign-scoped when
- * it is present, tenant-wide when it is not. One transaction. See the module
- * header for what happens on failure.
+ * Record a DNC entry, at the scope the request states — campaign-scoped when
+ * `req.campaignId` is present, account-scoped when `req.accountScope` is (the soft
+ * phone's untagged call only), tenant-wide when neither is. One transaction. See
+ * the module header for what happens on failure.
  */
 export async function markDnc(
   req: DncMarkRequest,
@@ -157,11 +178,12 @@ export async function markDnc(
 ): Promise<DncMarkResult> {
   if (
     (req.accountId !== undefined && req.accountId !== null) ||
-    req.campaignId === SCOPE_SENTINEL
+    req.campaignId === SCOPE_SENTINEL ||
+    (req.accountScope !== undefined && (req.campaignId !== undefined || req.accountScope === SCOPE_SENTINEL))
   ) {
     log.warn(
-      { tenantId: req.tenantId, campaignId: req.campaignId, accountScoped: req.accountId != null },
-      'DNC mark refused: an agent mark is campaign-scoped or tenant-wide, never account-scoped',
+      { tenantId: req.tenantId, campaignId: req.campaignId, accountScoped: req.accountId != null || req.accountScope !== undefined },
+      'DNC mark refused: a station mark is campaign-scoped or tenant-wide, and only the soft phone\'s untagged mark is account-scoped',
     );
     return {
       recorded: false, alreadyPresent: false, phoneE164: null, written: null,
@@ -185,7 +207,8 @@ export async function markDnc(
     const { results } = await dncRepository.insertMany(
       {
         tenant_id: req.tenantId,
-        account_id: null,
+        // NULL unless this is the soft phone's untagged mark (`accountScope`).
+        account_id: req.accountScope ?? null,
         // `?? null` stores the SCOPE, it does not paper over a missing value: an
         // absent `campaignId` is a tenant-wide escalation, and NULL is how the row
         // says so.
@@ -201,7 +224,7 @@ export async function markDnc(
     log.info(
       {
         tenantId: req.tenantId, campaignId: row.entry.campaign_id, entryId: row.entry.id,
-        alreadyPresent: !row.created, scope: row.entry.campaign_id === null ? 'tenant' : 'campaign',
+        alreadyPresent: !row.created, scope: dncScopeLabel(row.entry),
       },
       // Inside a caller's transaction the row is not committed yet — the caller's COMMIT
       // (or ROLLBACK) decides — so the line says so.
@@ -211,7 +234,7 @@ export async function markDnc(
       recorded: true,
       alreadyPresent: !row.created,
       phoneE164: phone,
-      written: { campaign_id: row.entry.campaign_id },
+      written: { id: row.entry.id, campaign_id: row.entry.campaign_id, account_id: row.entry.account_id },
     };
   } catch (err) {
     if (deps.client) throw err;

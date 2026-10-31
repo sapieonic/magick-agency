@@ -1048,7 +1048,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (result.ok) {
       const where = result.value.scope === 'campaign' && target.tag
         ? `for ${target.tag.campaign_name}`
-        : 'for the whole workspace';
+        : 'for this account';
       const text = `${formatDialNumber(result.value.phone_e164)} is on the Do Not Call list ${where}.`;
       setDncOutcome(text);
       setAnnouncement(text);

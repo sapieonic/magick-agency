@@ -1,0 +1,379 @@
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+/**
+ * The soft phone's policy and compliance rules over HTTP (docs/softphone.md §4.1, §6): the
+ * REAL app on loopback, the real session → tenant-context → RBAC chain (Firebase's token
+ * check is the one stub), the public routes, `callCore`, the internal handlers and
+ * `runtime.softphone` over real Redis 6383 and Postgres 5436, with a fake carrier — the
+ * harness of `softphone-routes.test.ts`, in its own file so each runs its own app.
+ *
+ * What it pins:
+ *  1. an UNTAGGED dial meets the account's campaign-scoped DNC entries and its live
+ *     contacts (`dnc_listed` with the entry, `contact_in_flight` with the campaign);
+ *  2. an untagged Mark DNC / `suppress` outcome writes an ACCOUNT-scoped row (never a
+ *     tenant-wide one), read by the untagged pre-dial and by the account's campaign dials,
+ *     and lands on the DNC audit trail (`dnc_entry.created`) once.
+ */
+
+const mocks = vi.hoisted(() => {
+  process.env['SUPER_ADMIN_JWT_SECRET'] = 'softphone-policy-secret-0123456789';
+  process.env['FF_AGENCY_DIALER'] = 'true';
+  process.env['FF_AGENCY_SOFTPHONE'] = 'true';
+  process.env['MAX_CONCURRENT_CALLS'] = '20';
+  process.env['VOICELINK_WEBHOOK_BASE_URL'] = 'https://agency.test/api/v1/webhooks/voicelink';
+  return {
+    verifyIdToken: vi.fn(),
+    fakeAdapter: {
+      name: 'voicelink',
+      capabilities: { cancelRinging: false, queuesOutboundDials: true },
+      initiateCall: vi.fn(async (req: { callId: string }) => ({ providerCallId: `carrier-${req.callId}` })),
+      endCall: vi.fn(async () => undefined),
+    },
+  };
+});
+
+vi.mock('../../../src/auth/firebase.js', () => ({
+  initFirebase: vi.fn(),
+  verifyIdToken: mocks.verifyIdToken,
+}));
+vi.mock('../../../src/telephony/factory.js', () => ({
+  TelephonyProviderRegistry: class {
+    get() { return mocks.fakeAdapter; }
+  },
+}));
+
+import { EventEmitter } from 'node:events';
+import WebSocket from 'ws';
+import type { FastifyInstance } from 'fastify';
+import { closePool, getPool, initDbPool } from '@magick-agency/db';
+import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
+import {
+  insertAccount,
+  insertMembership,
+  insertPhoneAssignment,
+  insertPhoneNumber,
+  insertTelephonyProvider,
+  insertTenant,
+  insertUser,
+} from '../../../../../packages/db/test/integration/setup/platform-factories.js';
+import { closeTestRedis, flushTestRedis, getTestRedis } from '../../helpers/test-redis.js';
+import { insertAgencyCampaign, insertAgencyContact } from '../agency/agency-factories.js';
+import { config } from '../../../src/config/index.js';
+import { buildApp } from '../../../src/app.js';
+import type { AppContext } from '../../../src/app-context.js';
+import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../../../src/bootstrap/agency.js';
+import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
+import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
+import { DncRegistry } from '../../../src/agency/dnc-registry.js';
+import { markDnc } from '../../../src/agency/dnc-mark.js';
+import type { AgencyRuntime } from '../../../src/agency/runtime.js';
+
+class FakePstnSocket extends EventEmitter {
+  readyState = 1;
+  OPEN = 1;
+  send(): void { /* media */ }
+  close(): void { this.readyState = 3; this.emit('close'); }
+}
+
+async function waitFor<T>(what: string, probe: () => Promise<T | null | undefined | false> | T | null | undefined | false, timeoutMs = 10_000): Promise<T> {
+  const started = Date.now();
+  for (;;) {
+    const v = await probe();
+    if (v) return v as T;
+    if (Date.now() - started > timeoutMs) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
+interface Who { id: string; tok: string }
+interface Station { ws: WebSocket; frames: Array<Record<string, any>> }
+
+const NOTE = 'The customer rang in and asked us to call back.';
+
+describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (integration)', () => {
+  let app: FastifyInstance;
+  let port = 0;
+  let stopAgency: (() => Promise<void>) | null = null;
+  let stopVoice: (() => Promise<void>) | null = null;
+  let runtime: AgencyRuntime;
+  let ctx: AppContext;
+  const sockets: WebSocket[] = [];
+
+  let tenant: string;
+  let account: string;
+  let sibling: string;
+  let supervisor: Who;
+
+  async function user(t: string, a: string, role: string): Promise<Who> {
+    const u = await insertUser();
+    await insertMembership({ user_id: u.id, tenant_id: t, account_id: a, role });
+    return { id: u.id as string, tok: `tok:${u.firebase_uid as string}` };
+  }
+
+  function headers(who: Who, acct = account): Record<string, string> {
+    return { authorization: `Bearer ${who.tok}`, 'x-tenant-id': tenant, 'x-account-id': acct, 'content-type': 'application/json' };
+  }
+  const post = (url: string, who: Who, body: unknown = {}) =>
+    app.inject({ method: 'POST', url, headers: headers(who), payload: JSON.stringify(body) });
+  const get = (url: string, who: Who) => {
+    const { 'content-type': _ct, ...h } = headers(who);
+    return app.inject({ method: 'GET', url, headers: h });
+  };
+
+  async function connect(stationWsUrl: string): Promise<Station> {
+    const frames: Array<Record<string, any>> = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${stationWsUrl}`);
+    sockets.push(ws);
+    ws.on('message', (raw) => { try { frames.push(JSON.parse(raw.toString())); } catch { /* media */ } });
+    await waitFor('ready', () => frames.find((f) => f['event'] === 'ready'));
+    return { ws, frames };
+  }
+
+  async function openSoftphone(who: Who): Promise<{ sessionId: string; station: Station }> {
+    const res = await post('/proxy/agency/softphone/sessions', who);
+    expect(res.statusCode, res.body).toBe(201);
+    const body = res.json();
+    return { sessionId: body.session_id, station: await connect(body.station_ws_url) };
+  }
+
+  const lastCall = (s: Station) => [...s.frames].reverse().find((f) => f['event'] === 'manual_call')?.['call'];
+
+  async function legOf(manualCallId: string): Promise<string> {
+    return waitFor('media leg', async () => {
+      const { rows } = await getTestPool().query<{ webrtc_call_id: string | null }>(
+        'SELECT webrtc_call_id FROM agency_manual_calls WHERE id = $1', [manualCallId]);
+      return rows[0]?.webrtc_call_id ?? null;
+    });
+  }
+  function answer(callId: string): void {
+    const pstn = new FakePstnSocket();
+    expect(getVoiceEngine()!.bridge.attachPstnLeg(callId, pstn as never)).toBe(true);
+    pstn.emit('message', JSON.stringify({
+      event: 'start',
+      start: { call_sid: `carrier-${callId}`, stream_sid: 's1', media_format: { encoding: 'audio/alaw', sample_rate: '8000' } },
+    }));
+  }
+  async function carrierEnded(callId: string): Promise<void> {
+    await getVoiceEngine()!.bridge.handleVoicelinkStatus(callId, {
+      providerCallId: `carrier-${callId}`, callId, eventType: 'hangup', timestamp: new Date(),
+      metadata: { event: 'call.ended', call: { id: `carrier-${callId}`, status: 'ended' } },
+    } as never);
+  }
+  function ringOut(callId: string): void {
+    const pstn = new FakePstnSocket();
+    getVoiceEngine()!.bridge.attachPstnLeg(callId, pstn as never);
+    pstn.emit('message', JSON.stringify({
+      event: 'stop', sequenceNumber: '2', streamSid: 's1',
+      stop: { accountSid: '1', call_sid: `carrier-${callId}`, outboundQueueId: 1 },
+    }));
+  }
+  async function manualRow(id: string) {
+    const { rows } = await getTestPool().query('SELECT * FROM agency_manual_calls WHERE id = $1', [id]);
+    return rows[0];
+  }
+
+  /** Place an untagged call and let it ring out unanswered (it settles at once). */
+  async function placeAndRingOut(who: Who, sessionId: string, station: Station, to: string, body: Record<string, unknown> = {}) {
+    const placed = await post('/proxy/agency/softphone/calls', who, { session_id: sessionId, to, ...body });
+    expect(placed.statusCode, placed.body).toBe(201);
+    const callId = placed.json().id as string;
+    ringOut(await legOf(callId));
+    await waitFor('settled', async () => (await manualRow(callId)).settled_at);
+    await waitFor('settled frame', () => lastCall(station)?.id === callId && lastCall(station)?.settled_at);
+    return callId;
+  }
+
+  /** Place, answer, hang up and end a call, leaving it awaiting its outcome. */
+  async function placeOwingAnOutcome(who: Who, sessionId: string, station: Station, to: string, body: Record<string, unknown> = {}) {
+    const placed = await post('/proxy/agency/softphone/calls', who, { session_id: sessionId, to, ...body });
+    expect(placed.statusCode, placed.body).toBe(201);
+    const callId = placed.json().id as string;
+    const leg = await legOf(callId);
+    answer(leg);
+    await waitFor('bridged', () => lastCall(station)?.state === 'bridged');
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/hangup`, who)).statusCode).toBe(200);
+    await carrierEnded(leg);
+    await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+    return callId;
+  }
+
+  /** The buffered audit logger writes on flush. */
+  async function auditRows(action: string, resourceId?: string) {
+    await platformAuditLogger.shutdown();
+    const { rows } = await getTestPool().query(
+      `SELECT * FROM platform_audit_log WHERE action = $1 AND ($2::text IS NULL OR resource_id::text = $2)
+        ORDER BY created_at ASC`,
+      [action, resourceId ?? null],
+    );
+    return rows;
+  }
+
+  async function dncRows(phone: string) {
+    const { rows } = await getTestPool().query(
+      'SELECT id, account_id, campaign_id, source, added_by FROM dnc_entries WHERE tenant_id = $1 AND phone_e164 = $2 ORDER BY created_at',
+      [tenant, phone],
+    );
+    return rows;
+  }
+
+  beforeAll(async () => {
+    initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 8 });
+    mocks.verifyIdToken.mockImplementation(async (token: string) => {
+      if (!token.startsWith('tok:')) throw new Error('bad token');
+      return { uid: token.slice(4), email: 'sp@example.com', email_verified: true };
+    });
+    await truncateAll();
+    await flushTestRedis();
+    resetVoiceEngineForTests();
+    await resetAgencyRuntimeForTests();
+
+    tenant = (await insertTenant()).id as string;
+    account = (await insertAccount({ tenant_id: tenant })).id as string;
+    sibling = (await insertAccount({ tenant_id: tenant })).id as string;
+    await getTestPool().query(
+      `INSERT INTO account_settings (tenant_id, account_id, allow_recording, analyze_calls, max_concurrent_calls)
+       VALUES ($1, $2, true, true, 20), ($1, $3, true, true, 20)`,
+      [tenant, account, sibling],
+    );
+    const provider = await insertTelephonyProvider();
+    const number = await insertPhoneNumber({ provider_id: provider.id, phone_number: '+919000000098' });
+    await insertPhoneAssignment({ tenant_id: tenant, phone_number_id: number.id, is_default: true });
+    supervisor = await user(tenant, account, 'account_admin');
+
+    ctx = { config, pool: getPool(), redis: getTestRedis() };
+    app = await buildApp({ ctx });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    port = (app.server.address() as { port: number }).port;
+    stopVoice = await startVoice(ctx);
+    stopAgency = await startAgency(ctx);
+    runtime = getAgencyRuntime()!;
+  });
+
+  afterAll(async () => {
+    for (const ws of sockets) if (ws.readyState === WebSocket.OPEN) ws.close();
+    await new Promise((r) => setTimeout(r, 200));
+    if (stopAgency) await stopAgency();
+    if (stopVoice) await stopVoice();
+    await app?.close();
+    await platformAuditLogger.shutdown();
+    await resetAgencyRuntimeForTests();
+    resetVoiceEngineForTests();
+    await closePool();
+    await closeTestPool();
+    await closeTestRedis();
+  });
+
+  // ── 1. The untagged pre-dial (§4.1 step 2) ──────────────────────────────────────────
+  it('an untagged dial is refused by a campaign DNC entry of the account, and by a contact live on its campaigns', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
+    const elsewhere = await insertAgencyCampaign({ tenant_id: tenant, account_id: sibling });
+    const { sessionId, station } = await openSoftphone(agent);
+
+    // The row an agent's station mark writes by default: campaign scope, account_id NULL.
+    await markDnc({ tenantId: tenant, campaignId: campaign.id as string, phoneE164: '+919811300001', reason: 'asked on a campaign call' });
+    const refused = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811300001' });
+    expect(refused.statusCode, refused.body).toBe(409);
+    const [entry] = await dncRows('+919811300001');
+    expect(refused.json()).toMatchObject({ code: 'dnc_listed', entry: { id: entry.id, scope: 'campaign', reason: 'asked on a campaign call' } });
+    // SP1 holds: the agent may override it with a note, which is stored against that entry.
+    const overridden = await placeAndRingOut(agent, sessionId, station, '+919811300001', { overrides: { dnc_note: NOTE } });
+    expect(await manualRow(overridden)).toMatchObject({ dnc_override_note: NOTE, dnc_override_entry_id: entry.id });
+
+    // Another account's campaign entry does not reach this account's untagged dial.
+    await markDnc({ tenantId: tenant, campaignId: elsewhere.id as string, phoneE164: '+919811300002' });
+    await placeAndRingOut(agent, sessionId, station, '+919811300002');
+
+    // A contact live on one of the account's campaigns: contact_in_flight, naming it; not claimed.
+    const live = await insertAgencyContact(campaign.id as string, {
+      tenant_id: tenant, account_id: account, phone_e164: '+919811300003', state: 'in_flight',
+    });
+    const busy = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '9811300003' });
+    expect(busy.statusCode, busy.body).toBe(409);
+    expect(busy.json()).toMatchObject({ code: 'contact_in_flight', campaign_id: campaign.id, contact_id: live.id });
+    // On a sibling account's campaign it is not this account's customer call.
+    await getTestPool().query('UPDATE agency_contacts SET state = $2 WHERE id = $1', [live.id, 'pending']);
+    await insertAgencyContact(elsewhere.id as string, {
+      tenant_id: tenant, account_id: sibling, phone_e164: '+919811300003', state: 'in_flight',
+    });
+    const placed = await placeAndRingOut(agent, sessionId, station, '9811300003');
+    // Untagged: nothing claimed or linked.
+    expect(await manualRow(placed)).toMatchObject({ contact_id: null, contact_claimed: false });
+    const { rows: [after] } = await getTestPool().query('SELECT state FROM agency_contacts WHERE id = $1', [live.id]);
+    expect(after.state).toBe('pending');
+
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  // ── 2. The untagged mark is ACCOUNT-scoped, and audited on the DNC trail ─────────────
+  it('Mark DNC on an untagged call writes an account row the account\'s dials read; dnc_entry.created once', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
+    const { sessionId, station } = await openSoftphone(agent);
+    const phone = '+919811300010';
+
+    const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: phone });
+    expect(placed.statusCode, placed.body).toBe(201);
+    const callId = placed.json().id as string;
+    const marked = await post(`/proxy/agency/softphone/calls/${callId}/dnc`, agent, { reason: 'asked' });
+    expect(marked.statusCode, marked.body).toBe(200);
+    expect(marked.json()).toMatchObject({ call_id: callId, scope: 'account', dnc_recorded: true });
+    const rows = await dncRows(phone);
+    // Never tenant-wide (that is `agency.dnc.manage`'s): the call's account, no campaign.
+    expect(rows).toEqual([expect.objectContaining({ account_id: account, campaign_id: null, source: 'agent', added_by: agent.id })]);
+
+    // A second press finds it listed: recorded, but nothing new on the DNC trail.
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/dnc`, agent)).json()).toMatchObject({ scope: 'account', dnc_recorded: true });
+    const trail = await auditRows('dnc_entry.created', rows[0].id);
+    expect(trail).toHaveLength(1);
+    expect(trail[0]).toMatchObject({
+      tenant_id: tenant, account_id: account, user_id: agent.id, resource_type: 'dnc_entry', campaign_id: null,
+    });
+    expect(trail[0].details).toEqual({ manual_call_id: callId, scope: 'account' });
+    const marks = await auditRows('agency_manual_call.dnc_marked', callId);
+    expect(marks.map((r) => r.details)).toEqual([
+      { scope: 'account', dnc_recorded: true }, { scope: 'account', dnc_recorded: true },
+    ]);
+
+    ringOut(await legOf(callId));
+    await waitFor('settled frame', () => lastCall(station)?.settled_at);
+
+    // The untagged pre-dial reads it…
+    const again = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: phone });
+    expect(again.statusCode).toBe(409);
+    expect(again.json()).toMatchObject({ code: 'dnc_listed', entry: { id: rows[0].id, scope: 'account' } });
+    // …and so does every campaign dial of the account (`pre-dial-gates`' scope), never another account's.
+    const registry = new DncRegistry();
+    expect(await registry.check(tenant, phone, { accountId: account, campaignId: campaign.id as string })).toBe('suppressed');
+    expect(await registry.check(tenant, phone, { accountId: sibling, campaignId: null })).toBe('clear');
+
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  it('a suppress outcome on an untagged call writes the account row and its DNC-trail row once; a replay writes neither again', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const { sessionId, station } = await openSoftphone(agent);
+    const phone = '+919811300020';
+    const callId = await placeOwingAnOutcome(agent, sessionId, station, phone);
+
+    const saved = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'do_not_call' });
+    expect(saved.statusCode, saved.body).toBe(200);
+    const rows = await dncRows(phone);
+    expect(rows).toEqual([expect.objectContaining({ account_id: account, campaign_id: null, source: 'agent' })]);
+    const replay = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'do_not_call' });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(await dncRows(phone)).toHaveLength(1);
+
+    const trail = await auditRows('dnc_entry.created', rows[0].id);
+    expect(trail).toHaveLength(1);
+    expect(trail[0].details).toEqual({ manual_call_id: callId, scope: 'account', disposition_code: 'do_not_call' });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  it('a supervisor reads it on the DNC list as an account entry', async () => {
+    const list = await get('/dnc?phone=%2B919811300010', supervisor);
+    expect(list.statusCode, list.body).toBe(200);
+    const entries = list.json().entries as Array<{ account_id: string | null; campaign_id: string | null }>;
+    expect(entries).toEqual([expect.objectContaining({ account_id: account, campaign_id: null })]);
+  });
+});

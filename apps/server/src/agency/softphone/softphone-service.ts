@@ -98,16 +98,30 @@ export interface CallActionSuccess {
   onBehalf: boolean;
 }
 
+/**
+ * The `dnc_entries` row a soft-phone mark landed on, for the `dnc_entry.created` audit
+ * row: `created` false when the number was already listed at that scope (nothing new
+ * was recorded, so nothing is audited as created).
+ */
+export interface DncEntryWritten {
+  id: string;
+  created: boolean;
+}
+
 export interface DispositionSuccess {
   response: AgencyManualCallDispositionResponse;
   onBehalf: boolean;
   /** The same code again: notes/callback updated, nothing settled a second time. */
   replay: boolean;
+  /** A suppress code's DNC row; null when the code does not suppress, or on a replay. */
+  dncEntry: DncEntryWritten | null;
 }
 
 export interface DncSuccess {
   response: AgencyManualCallDncResponse;
   onBehalf: boolean;
+  /** Null when nothing was recorded (an unusable number). */
+  dncEntry: DncEntryWritten | null;
 }
 
 export interface SessionSwitchSuccess {
@@ -438,7 +452,8 @@ export class SoftphoneService {
    * Save the call's outcome and settle it: the code against the call's catalog (the
    * tag's, else the settings', else the built-in), its note / callback, the fields
    * with `required` enforced; then ONE transaction — `recordDisposition`, the DNC
-   * mark for a suppress code (campaign scope when tagged, else tenant; B8), the
+   * mark for a suppress code (campaign scope when tagged, else the call's account;
+   * B8, `dnc-mark.ts`), the
    * roster contact (`settleFromManual`, §5) — and after the commit the Redis claim
    * is released. The same code again is an idempotent replay (notes and callback
    * last-write-wins; nothing settles twice).
@@ -481,6 +496,7 @@ export class SoftphoneService {
 
     const client = await getPool().connect();
     let recorded: { call: AgencyManualCallRecord; replay: boolean };
+    let dncEntry: DncEntryWritten | null = null;
     let contactState: AgencyManualCallDispositionResponse['contact_state'] = contact?.state ?? null;
     let nextAt: Date | null = null;
     try {
@@ -504,13 +520,14 @@ export class SoftphoneService {
       }
       if (!result.replay) {
         if (entry.suppress === true) {
-          await markDnc({
+          const marked = await markDnc({
             tenantId: row.tenant_id,
-            ...(row.campaign_id ? { campaignId: row.campaign_id } : {}),
+            ...dncMarkScope(row),
             phoneE164: row.destination_e164,
             reason: `disposition:${entry.code}`,
             addedBy: actor.userId,
           }, { client });
+          if (marked.written) dncEntry = { id: marked.written.id, created: !marked.alreadyPresent };
         }
         const settled = await agencyContactRepository.settleFromManual({
           manualCallId: row.id,
@@ -542,6 +559,7 @@ export class SoftphoneService {
       ok: true,
       onBehalf: found.onBehalf,
       replay: recorded.replay,
+      dncEntry,
       response: {
         call,
         contact_state: contactState,
@@ -556,8 +574,9 @@ export class SoftphoneService {
   /**
    * Mark the dialled number Do Not Call: campaign scope when the call is tagged
    * (and every roster row of that campaign carrying the number leaves the roster,
-   * as the station's mark does), tenant scope when untagged — one transaction (B8).
-   * Allowed on any call the actor can see, live or settled.
+   * as the station's mark does), the call's ACCOUNT when untagged — never tenant-wide,
+   * which is the station's `agency.dnc.manage` escalation (`dnc-mark.ts`) — one
+   * transaction (B8). Allowed on any call the actor can see, live or settled.
    */
   async markDnc(
     actor: SoftphoneActor,
@@ -580,7 +599,7 @@ export class SoftphoneService {
       }
       recorded = await markDnc({
         tenantId: row.tenant_id,
-        ...(row.campaign_id ? { campaignId: row.campaign_id } : {}),
+        ...dncMarkScope(row),
         phoneE164: row.destination_e164,
         ...(req.reason !== undefined ? { reason: req.reason } : {}),
         addedBy: actor.userId,
@@ -597,10 +616,11 @@ export class SoftphoneService {
     return {
       ok: true,
       onBehalf: found.onBehalf,
+      dncEntry: recorded.written ? { id: recorded.written.id, created: !recorded.alreadyPresent } : null,
       response: {
         call_id: row.id,
         phone_e164: recorded.phoneE164 ?? row.destination_e164,
-        scope: row.campaign_id ? 'campaign' : 'tenant',
+        scope: row.campaign_id ? 'campaign' : 'account',
         dnc_recorded: recorded.recorded,
         contact_state: contact?.state ?? null,
       },
@@ -704,6 +724,15 @@ export class SoftphoneService {
   reattachStation(sessionId: string, ws: WebSocket): Promise<AgencyManualCall | null> {
     return this.deps.manual.reattachStation(sessionId, ws);
   }
+}
+
+/**
+ * The scope of a soft-phone DNC mark: the tag's campaign, else the account the call
+ * belongs to (`dnc-mark.ts`, `accountScope`), so an agent's untagged mark never
+ * writes a tenant-wide row.
+ */
+function dncMarkScope(row: AgencyManualCallRecord): { campaignId: string } | { accountScope: string } {
+  return row.campaign_id ? { campaignId: row.campaign_id } : { accountScope: row.account_id };
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

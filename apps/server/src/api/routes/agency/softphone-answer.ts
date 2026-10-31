@@ -7,7 +7,7 @@
 import type { FastifyReply } from 'fastify';
 import type {
   AgencyAgentState,
-  AgencyDncScope,
+  AgencyManualCallDncScope,
   AgencySoftphoneErrorCode,
   AgencySoftphoneErrorResponse,
 } from '@magick-agency/contracts/agency';
@@ -128,15 +128,29 @@ export interface SoftphoneCallActAudit {
   campaign_id: string | null;
 }
 
+/**
+ * The `dnc_entries` row a soft-phone mark landed on, for `dnc_entry.created` (written only
+ * when `created`: a number already listed at that scope recorded nothing new).
+ */
+export interface SoftphoneDncEntryAudit {
+  id: string;
+  created: boolean;
+  scope: AgencyManualCallDncScope;
+}
+
 export interface SoftphoneDispositionAudit extends SoftphoneCallActAudit {
   disposition_code: string;
   /** The same code again: nothing settled a second time. */
   replay: boolean;
+  /** A suppress code's DNC row; null when the code does not suppress, or on a replay. */
+  dnc_entry: SoftphoneDncEntryAudit | null;
 }
 
 export interface SoftphoneDncAudit extends SoftphoneCallActAudit {
-  scope: AgencyDncScope;
+  scope: AgencyManualCallDncScope;
   dnc_recorded: boolean;
+  /** Null when nothing was recorded. */
+  dnc_entry: SoftphoneDncEntryAudit | null;
 }
 
 /** `POST /sessions/:id/softphone` and `/softphone/return`. */

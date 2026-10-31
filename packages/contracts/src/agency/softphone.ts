@@ -19,7 +19,7 @@
 
 import type { AgencySoftphoneErrorCode } from '../errors';
 import type { AllListed } from '../primitives';
-import type { AgencyActorFields, AgencyDncScope } from './actions';
+import type { AgencyActorFields } from './actions';
 import type {
   AgencyAgentState,
   AgencyAttemptOutcome,
@@ -602,16 +602,21 @@ export interface AgencyManualCallDispositionResponse {
 
 /**
  * `POST /calls/:id/dnc`: mark the dialled number Do Not Call. Campaign scope when
- * the call is tagged, else tenant (§6); the client never asserts the scope.
+ * the call is tagged, else the call's ACCOUNT (§6); the client never asserts the
+ * scope. Never tenant-wide: that escalation is the station's, behind
+ * `agency.dnc.manage`.
  */
 export interface AgencyManualCallDncRequest extends AgencyActorFields {
   reason?: string;
 }
 
+/** How far a soft-phone DNC mark reaches: the tagged campaign, or (untagged) the call's account. */
+export type AgencyManualCallDncScope = Extract<AgencyDncEntryScope, 'campaign' | 'account'>;
+
 export interface AgencyManualCallDncResponse {
   call_id: string;
   phone_e164: string;
-  scope: AgencyDncScope;
+  scope: AgencyManualCallDncScope;
   /** False when the `dnc_entries` write is still in flight; the roster row is suppressed either way. */
   dnc_recorded: boolean;
   /** The matched contact's state after the mark (`suppressed`), or NULL when there is none. */

@@ -20,6 +20,7 @@ import type {
   SoftphoneCallActAudit,
   SoftphoneDispositionAudit,
   SoftphoneDncAudit,
+  SoftphoneDncEntryAudit,
   SoftphonePlaceAudit,
 } from '../agency/softphone-answer.js';
 import {
@@ -71,7 +72,7 @@ const dispositionSchema = z.object({
   fields: fieldsSchema.optional(),
 }).strip();
 
-/** The client never asserts the scope: campaign when tagged, else tenant (§6). */
+/** The client never asserts the scope: campaign when tagged, else the call's account (§6). */
 const dncSchema = z.object({ reason: z.string().max(1000).optional() }).strip();
 
 const emptyBody = z.object({}).strip();
@@ -97,6 +98,36 @@ function onBehalf(audit: SoftphoneCallActAudit): { on_behalf: true } | Record<st
 
 function campaignOf(campaignId: string | null): { campaign_id: string } | Record<string, never> {
   return campaignId ? { campaign_id: campaignId } : {};
+}
+
+/**
+ * The DNC trail's own row for a soft-phone mark (Mark DNC, or a `suppress` outcome), as
+ * the station's mark writes it (`proxy-agency-agent.routes.ts`): `dnc_entry.created` on
+ * the entry, so the DNC audit trail lists every suppression whatever surface made it.
+ * Only when a NEW row was recorded: a number already listed at that scope, or a replayed
+ * outcome, created nothing. No phone number in `details`.
+ */
+function logDncEntryCreated(
+  request: FastifyRequest,
+  actor: SoftphoneRequestActor,
+  facts: { entry: SoftphoneDncEntryAudit | null; campaignId: string | null; onBehalf: boolean; dispositionCode?: string },
+): void {
+  if (!facts.entry?.created) return;
+  platformAuditLogger.log({
+    ...softphoneAuditTenancy(request),
+    ...resolvedUserAuditActor(request, actor.agent_user_id),
+    action: 'dnc_entry.created',
+    resource_type: 'dnc_entry',
+    resource_id: facts.entry.id,
+    ...campaignOf(facts.campaignId),
+    details: {
+      manual_call_id: (request.params as { id: string }).id,
+      scope: facts.entry.scope,
+      ...campaignOf(facts.campaignId),
+      ...(facts.dispositionCode ? { disposition_code: facts.dispositionCode } : {}),
+      ...(facts.onBehalf ? { on_behalf: true } : {}),
+    },
+  });
 }
 
 export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise<void> {
@@ -215,10 +246,14 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
           ...(audit.replay ? { replay: true } : {}),
         },
       });
+      logDncEntryCreated(request, actor, {
+        entry: audit.dnc_entry, campaignId: audit.campaign_id, onBehalf: audit.on_behalf,
+        dispositionCode: audit.disposition_code,
+      });
     });
   });
 
-  /** POST /proxy/agency/softphone/calls/:id/dnc — campaign scope when tagged, else tenant. */
+  /** POST /proxy/agency/softphone/calls/:id/dnc — campaign scope when tagged, else the call's account. */
   app.post<{ Params: { id: string } }>('/softphone/calls/:id/dnc', { preHandler: dial }, async (request, reply) => {
     const parsed = parseOr400(dncSchema, request.body ?? {}, reply, 'agency');
     if (!parsed) return reply;
@@ -244,6 +279,7 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
           ...onBehalf(audit),
         },
       });
+      logDncEntryCreated(request, actor, { entry: audit.dnc_entry, campaignId: audit.campaign_id, onBehalf: audit.on_behalf });
     });
   });
 }

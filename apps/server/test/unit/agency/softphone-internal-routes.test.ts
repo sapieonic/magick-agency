@@ -189,18 +189,28 @@ describe('the call actions', () => {
       .toEqual({ answer: { id: CALL, tag: null }, audit: { on_behalf: true, campaign_id: null } });
 
     runtime.softphone.submitDisposition.mockResolvedValue({
-      ok: true, onBehalf: false, replay: false, response: { call: { id: CALL, tag: { campaign_id: CAMPAIGN }, disposition_code: 'sold' } },
+      ok: true, onBehalf: false, replay: false, dncEntry: { id: 'entry-1', created: true },
+      response: { call: { id: CALL, tag: { campaign_id: CAMPAIGN }, disposition_code: 'sold' } },
     });
     const disposed = await post(`/softphone/calls/${CALL}/disposition`, { agent_user_id: AGENT, code: 'sold', callback_at: 'x', notes: 'n' });
     expect(runtime.softphone.submitDisposition).toHaveBeenCalledWith(
       expect.objectContaining({ userId: AGENT, supervise: false }), CALL, { code: 'sold', notes: 'n', callbackAt: 'x' },
     );
-    expect(disposed.json().audit).toEqual({ on_behalf: false, campaign_id: CAMPAIGN, disposition_code: 'sold', replay: false });
+    expect(disposed.json().audit).toEqual({
+      on_behalf: false, campaign_id: CAMPAIGN, disposition_code: 'sold', replay: false,
+      dnc_entry: { id: 'entry-1', created: true, scope: 'campaign' },
+    });
 
-    runtime.softphone.markDnc.mockResolvedValue({ ok: true, onBehalf: false, response: { call_id: CALL, scope: 'campaign', dnc_recorded: true } });
+    runtime.softphone.markDnc.mockResolvedValue({
+      ok: true, onBehalf: false, dncEntry: { id: 'entry-2', created: false },
+      response: { call_id: CALL, scope: 'campaign', dnc_recorded: true },
+    });
     repos.manual.findById.mockResolvedValue(row());
     const marked = await post(`/softphone/calls/${CALL}/dnc`, { agent_user_id: AGENT });
-    expect(marked.json().audit).toEqual({ on_behalf: false, campaign_id: CAMPAIGN, scope: 'campaign', dnc_recorded: true });
+    expect(marked.json().audit).toEqual({
+      on_behalf: false, campaign_id: CAMPAIGN, scope: 'campaign', dnc_recorded: true,
+      dnc_entry: { id: 'entry-2', created: false, scope: 'campaign' },
+    });
   });
 
   it.each([

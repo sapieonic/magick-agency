@@ -546,18 +546,20 @@ describe('the call, driven by manual_call frames', () => {
   });
 
   it('marks DNC after a confirmation that says how far it reaches', async () => {
-    api.markManualCallDnc.mockResolvedValue({ ok: true, value: { call_id: 'mc-1', phone_e164: '+919820461733', scope: 'tenant', dnc_recorded: true, contact_state: null } });
+    // An untagged call's mark is account-scoped (docs/softphone.md §6), never workspace-wide.
+    api.markManualCallDnc.mockResolvedValue({ ok: true, value: { call_id: 'mc-1', phone_e164: '+919820461733', scope: 'account', dnc_recorded: true, contact_state: null } });
     const view = await mount();
     await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:05Z' }));
     fireEvent.click(screen.getByTestId('softphone-dnc'));
     const confirm = screen.getByRole('dialog');
-    expect(confirm.textContent).toMatch(/won’t be called again for the whole workspace/);
+    expect(confirm.textContent).toMatch(/won’t be called again from this account/);
+    expect(confirm.textContent).not.toMatch(/workspace/);
     await act(async () => {
       fireEvent.click(within(confirm).getByRole('button', { name: 'Add to Do Not Call' }));
     });
     expect(api.markManualCallDnc).toHaveBeenCalledWith('mc-1', undefined, 't-1', 'a-1');
     expect(screen.getByTestId('softphone-dnc-outcome').textContent).toBe(
-      '+91 98204 61733 is on the Do Not Call list for the whole workspace.',
+      '+91 98204 61733 is on the Do Not Call list for this account.',
     );
   });
 

@@ -464,17 +464,50 @@ describe('the audit rows', () => {
       on_behalf: true, campaign_id: CAMPAIGN, disposition_code: 'interested', replay: true,
     }));
     await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/disposition`, payload: { code: 'interested', notes: 'private' } });
-    mocks.callCore.mockResolvedValue(envelope({ call_id: CALL }, { on_behalf: false, campaign_id: null, scope: 'tenant', dnc_recorded: true }));
+    mocks.callCore.mockResolvedValue(envelope({ call_id: CALL }, { on_behalf: false, campaign_id: null, scope: 'account', dnc_recorded: true, dnc_entry: null }));
     await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/dnc`, payload: { reason: 'r' } });
     const about = { ...base, user_id: SUPERVISOR, resource_type: 'agency_manual_call', resource_id: CALL };
     expect(mocks.auditLog.mock.calls.map((c) => c[0])).toEqual([
       { ...about, campaign_id: CAMPAIGN, action: 'agency_manual_call.hung_up', details: { campaign_id: CAMPAIGN, on_behalf: true } },
       { ...about, campaign_id: CAMPAIGN, action: 'agency_manual_call.dispositioned',
         details: { disposition_code: 'interested', campaign_id: CAMPAIGN, on_behalf: true, replay: true } },
-      { ...about, action: 'agency_manual_call.dnc_marked', details: { scope: 'tenant', dnc_recorded: true } },
+      { ...about, action: 'agency_manual_call.dnc_marked', details: { scope: 'account', dnc_recorded: true } },
     ]);
     // Free text an agent typed is never on the row.
     expect(JSON.stringify(mocks.auditLog.mock.calls)).not.toContain('private');
+  });
+
+  it('a soft-phone DNC write is on the DNC trail too (dnc_entry.created), only when a new row was recorded', async () => {
+    const app = await appAs('account_admin');
+    const entry = { id: ENTRY, created: true, scope: 'campaign' };
+    // Mark DNC on a tagged call, on behalf.
+    mocks.callCore.mockResolvedValue(envelope({ call_id: CALL }, {
+      on_behalf: true, campaign_id: CAMPAIGN, scope: 'campaign', dnc_recorded: true, dnc_entry: entry,
+    }));
+    await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/dnc`, payload: {} });
+    // A suppress outcome on an untagged call: account scope.
+    mocks.callCore.mockResolvedValue(envelope({ call: wireCall({ tag: null }) }, {
+      on_behalf: false, campaign_id: null, disposition_code: 'do_not_call', replay: false,
+      dnc_entry: { id: ENTRY, created: true, scope: 'account' },
+    }));
+    await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/disposition`, payload: { code: 'do_not_call' } });
+    // Already listed, and a replay: nothing new was recorded, so no DNC-trail row.
+    mocks.callCore.mockResolvedValue(envelope({ call_id: CALL }, {
+      on_behalf: false, campaign_id: null, scope: 'account', dnc_recorded: true, dnc_entry: { ...entry, created: false },
+    }));
+    await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/dnc`, payload: {} });
+    mocks.callCore.mockResolvedValue(envelope({ call: wireCall() }, {
+      on_behalf: false, campaign_id: CAMPAIGN, disposition_code: 'do_not_call', replay: true, dnc_entry: null,
+    }));
+    await app.inject({ method: 'POST', url: `${P}/softphone/calls/${CALL}/disposition`, payload: { code: 'do_not_call' } });
+
+    const created = mocks.auditLog.mock.calls.map((c) => c[0]).filter((r) => r.action === 'dnc_entry.created');
+    expect(created).toEqual([
+      { ...base, user_id: SUPERVISOR, action: 'dnc_entry.created', resource_type: 'dnc_entry', resource_id: ENTRY,
+        campaign_id: CAMPAIGN, details: { manual_call_id: CALL, scope: 'campaign', campaign_id: CAMPAIGN, on_behalf: true } },
+      { ...base, user_id: SUPERVISOR, action: 'dnc_entry.created', resource_type: 'dnc_entry', resource_id: ENTRY,
+        details: { manual_call_id: CALL, scope: 'account', disposition_code: 'do_not_call' } },
+    ]);
   });
 
   it('PATCH writes no audit row', async () => {

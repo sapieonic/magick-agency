@@ -469,11 +469,13 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       ...(body.fields !== undefined ? { fields: body.fields } : {}),
     });
     if (!saved.ok) return sendSoftphoneRefusal(reply, saved.refusal);
+    const campaignId = saved.response.call.tag?.campaign_id ?? null;
     const audit: SoftphoneDispositionAudit = {
       on_behalf: saved.onBehalf,
-      campaign_id: saved.response.call.tag?.campaign_id ?? null,
+      campaign_id: campaignId,
       disposition_code: saved.response.call.disposition_code ?? body.code,
       replay: saved.replay,
+      dnc_entry: saved.dncEntry ? { ...saved.dncEntry, scope: campaignId ? 'campaign' : 'account' } : null,
     };
     return answer(reply, 200, saved.response, audit);
   });
@@ -493,6 +495,7 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       campaign_id: row?.campaign_id ?? null,
       scope: marked.response.scope,
       dnc_recorded: marked.response.dnc_recorded,
+      dnc_entry: marked.dncEntry ? { ...marked.dncEntry, scope: marked.response.scope } : null,
     };
     return answer(reply, 200, marked.response, audit);
   });
