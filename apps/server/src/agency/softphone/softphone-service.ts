@@ -462,7 +462,9 @@ export class SoftphoneService {
    * B8, `dnc-mark.ts`), the
    * roster contact (`settleFromManual`, §5) — and after the commit the Redis claim
    * is released. The same code again is an idempotent replay (notes and callback
-   * last-write-wins; nothing settles twice).
+   * last-write-wins; nothing settles twice): a corrected callback time also moves the
+   * contact this call settled (`rescheduleFromManualReplay`), and nothing else repeats
+   * — no DNC mark, no settlement, no claim release.
    *
    * Refusals: `call_not_found`; `manual_call_live` (not ended yet);
    * `disposition_invalid`; `fields_invalid`; `call_settled` (another code saved,
@@ -546,6 +548,18 @@ export class SoftphoneService {
           contactState = settled.state;
           nextAt = settled.applied === 'settled' && settled.state === 'pending' ? settled.nextAttemptAt : null;
         }
+      } else if (callbackAt && nextAttemptAt && decision.contactState === 'pending') {
+        // A replay that corrected the callback time: the call row took the new
+        // `callback_at` above, and the contact this call settled moves with it, as the
+        // station's replay re-runs `markState`. Nothing else runs twice — no DNC mark,
+        // no settlement, no attempt charged, no claim released.
+        const moved = await agencyContactRepository.rescheduleFromManualReplay({
+          manualCallId: row.id, dispositionCode: entry.code, nextAttemptAt,
+        }, { client });
+        if (moved) {
+          contactState = moved.state;
+          nextAt = moved.nextAttemptAt;
+        }
       }
       await client.query('COMMIT');
       recorded = { call: result.call, replay: result.replay };
@@ -557,7 +571,7 @@ export class SoftphoneService {
     }
 
     if (!recorded.replay) await this.deps.agents.releaseManual(row.session_id, row.id);
-    else if (contact) {
+    else if (contact && nextAt === null) {
       contactState = (await agencyContactRepository.findById(contact.id).catch(() => null))?.state ?? contactState;
     }
     const call = await this.deps.manual.sendFrame(recorded.call) ?? await this.wire(recorded.call);

@@ -17,7 +17,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *     (details, hang up, outcome, return) and bootstrap says `softphone_enabled: false`;
  *     dialling, opening a session and switching are refused;
  *  4. only `running` / `paused` campaigns can be tagged, staffing is filtered before the
- *     cap, and a call whose campaign completes mid-call keeps its catalog (`call_campaign`).
+ *     cap, and a call whose campaign completes mid-call keeps its catalog (`call_campaign`);
+ *  5. a same-code outcome replay propagates a corrected callback time to the contact and
+ *     repeats nothing else (no DNC mark, no claim release, no second settling audit).
  */
 
 const mocks = vi.hoisted(() => {
@@ -576,6 +578,58 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect(res.statusCode, res.body).toBe(400);
     expect(res.json()).toMatchObject({ code: 'settings_invalid', details: [{ path: 'call_fields[0].key' }] });
   });
+
+  // ── 5. The outcome replay (A9) ─────────────────────────────────────────────────────
+  it('a replay with a corrected callback moves the contact\'s next attempt; nothing else runs twice', async () => {
+    const acct = await freshAccount();
+    const agent = await user(tenant, acct, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: acct, status: 'running', disposition_catalog: CATALOG });
+    await staff(campaign.id as string, agent.id, acct);
+    const contact = await insertAgencyContact(campaign.id as string, { tenant_id: tenant, account_id: acct, phone_e164: '+919811300070' });
+    const { sessionId, station } = await openSoftphone(agent);
+    const callId = await placeOwingAnOutcome(agent, sessionId, station, '+919811300070', { campaign_id: campaign.id });
+
+    const first = new Date(Date.now() + 2 * 3600_000).toISOString();
+    const saved = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'call_back', callback_at: first });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json()).toMatchObject({ contact_state: 'pending', next_attempt_at: first });
+    const contactRow = async () => (await getTestPool().query(
+      'SELECT state, next_attempt_at, attempt_count, last_disposition FROM agency_contacts WHERE id = $1', [contact.id])).rows[0];
+    const afterFirst = await contactRow();
+    expect(afterFirst).toMatchObject({ state: 'pending', attempt_count: 1, last_disposition: 'call_back' });
+    expect(afterFirst.next_attempt_at.toISOString()).toBe(first);
+
+    const release = vi.spyOn(runtime.agents, 'releaseManual');
+    const corrected = new Date(Date.now() + 26 * 3600_000).toISOString();
+    const replay = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'call_back', callback_at: corrected, notes: 'Tomorrow instead' });
+    expect(replay.statusCode, replay.body).toBe(200);
+    expect(replay.json()).toMatchObject({
+      contact_state: 'pending', next_attempt_at: corrected, callback_requested_at: corrected,
+      call: { callback_at: corrected, notes: 'Tomorrow instead', disposition_code: 'call_back' },
+    });
+    // The callback time reached the roster contact; the attempt was not charged again.
+    const afterReplay = await contactRow();
+    expect(afterReplay).toMatchObject({ state: 'pending', attempt_count: 1 });
+    expect(afterReplay.next_attempt_at.toISOString()).toBe(corrected);
+    expect((await manualRow(callId)).callback_at.toISOString()).toBe(corrected);
+    // No second claim release, and the settling audit row is written once (the replay's
+    // own row says it is one).
+    expect(release.mock.calls.filter(([, id]) => id === callId)).toHaveLength(0);
+    release.mockRestore();
+    const rows = await auditRows('agency_manual_call.dispositioned', callId);
+    expect(rows.map((r) => r.details.replay ?? false)).toEqual([false, true]);
+    expect(await auditRows('dnc_entry.created')).toEqual(expect.not.arrayContaining([
+      expect.objectContaining({ details: expect.objectContaining({ manual_call_id: callId }) }),
+    ]));
+
+    // A contact pacing has claimed since is left alone by a later correction.
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = $1`, [contact.id]);
+    const late = new Date(Date.now() + 50 * 3600_000).toISOString();
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'call_back', callback_at: late })).statusCode).toBe(200);
+    expect((await contactRow()).next_attempt_at.toISOString()).toBe(corrected);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'pending' WHERE id = $1`, [contact.id]);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
 
   it('a supervisor reads it on the DNC list as an account entry', async () => {
     const list = await get('/dnc?phone=%2B919811300010', supervisor);

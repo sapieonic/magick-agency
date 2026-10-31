@@ -516,6 +516,35 @@ export class AgencyContactRepository {
   }
 
   /**
+   * A same-code REPLAY of a soft-phone outcome that corrected its callback time: move
+   * the contact's `next_attempt_at` to the new instant, as the station's disposition
+   * route re-runs `markState` on its replays. Only the contact THIS call settled
+   * (`contact_claimed`), only while it is still `pending` on that code — pacing has not
+   * claimed it since and nothing else has written it up — and never a DNC-suppressed
+   * one. Nothing else changes: the first save already counted the attempt. Null when
+   * no row qualifies.
+   */
+  async rescheduleFromManualReplay(
+    input: { manualCallId: string; dispositionCode: string; nextAttemptAt: Date },
+    deps: { client?: Pick<PoolClient, 'query'> } = {},
+  ): Promise<{ contactId: string; state: AgencyContactState; nextAttemptAt: Date | null } | null> {
+    const db = deps.client ?? getPool();
+    const { rows } = await db.query<{ id: string; state: AgencyContactState; next_attempt_at: Date | null }>(
+      `UPDATE agency_contacts c
+          SET next_attempt_at = $3::timestamptz, updated_at = now()
+         FROM agency_manual_calls m
+        WHERE m.id = $1 AND m.contact_claimed
+          AND c.id = m.contact_id AND c.campaign_id = m.campaign_id
+          AND c.state = 'pending' AND c.last_disposition = $2::varchar
+          AND c.suppressed_reason IS DISTINCT FROM 'dnc'
+        RETURNING c.id, c.state, c.next_attempt_at`,
+      [input.manualCallId, input.dispositionCode, input.nextAttemptAt],
+    );
+    const row = rows[0];
+    return row ? { contactId: row.id, state: row.state, nextAttemptAt: row.next_attempt_at } : null;
+  }
+
+  /**
    * Contacts stranded `in_flight`: claimed, with no live attempt, and nothing
    * written to the contact or to any of its attempts since `olderThan`.
    *
