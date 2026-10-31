@@ -470,6 +470,14 @@ export interface AgencySoftphoneSessionSummary {
 
 /** `GET /bootstrap`. */
 export interface AgencySoftphoneBootstrap {
+  /**
+   * `agency_softphone_enabled` for the account, as the server reads it now. False
+   * while the caller still has a session or a call: the console then shows only
+   * what finishes it (hang up, the outcome, Return to campaign or Close), never
+   * the dial pad. Absent from a server that predates it; the console reads only
+   * `=== false`.
+   */
+  softphone_enabled?: boolean;
   taggable_campaigns: AgencySoftphoneCampaign[];
   untagged: AgencySoftphoneUntagged;
   /** Applies to every call, tagged or not. */

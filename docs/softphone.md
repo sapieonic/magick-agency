@@ -267,7 +267,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
 ## 7. Console
 
 - **`/dialer/phone`** (`SoftphonePage`): the soft phone, a fourth agent nav item ("Soft phone",
-  shown when the flag is on and the caller has `agency.softphone.dial`). Same frozen geometry as
+  shown when the flag is on and the caller has `agency.softphone.dial`). The route is gated like
+  `/station`; the page reads the soft-phone flag itself (finish mode, below). Same frozen geometry as
   the station: header, state rail (Ready, Dialing, Ringing, On call, Outcome needed), three
   columns (dial pad with caller ID and "Log to" campaign | call details fields and the roster
   contact | outcome pad, notes, callback; recent calls when idle, each with its day: Today,
@@ -303,6 +304,19 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   the field set has loaded (for example a reload where the `manual_call` frame beats the
   bootstrap) the console sends no `fields`, so stored values are never wiped; on the server an
   omitted `fields` is "unchanged", and `{}` clears only when the account has call fields.
+- **Finish mode (the flag turned off).** With `agency_softphone_enabled` off, an agent with a
+  soft-phone session or an unsettled call keeps what finishes it: the live call, hang-up, the
+  outcome pad and notes, and Return to campaign or Close soft phone; the dial column shows "The
+  soft phone has been turned off for this account. Finish this call; you can't start new ones."
+  instead of the pad (and, with nothing left, that no new calls can start), and typing, paste,
+  redial and Enter start nothing. The console enters it when its flag map says off, when the
+  bootstrap's `softphone_enabled` is `false`, or when a dial is refused `softphone_disabled`.
+  `/dialer/phone` therefore reads the flag itself rather than through a route `RequireFlag`:
+  with it off the page rehydrates only an existing soft-phone session (reading the bootstrap
+  first, never opening a new one) and is "Not available for your account" otherwise; if the
+  server will not rehydrate the session, the page can still close it and says a supervisor can
+  save an owed outcome. The station shows the soft phone in place on `break/soft_phone`
+  whatever the flag map says; only the switch to it needs the flag on.
 - **Overrides (SP1, SP2).** A `dnc_listed` or `outside_calling_hours` refusal opens a dialog that
   shows what matched (the DNC entry's scope, reason and date; the window, timezone and next
   opening), says the call is logged with the agent's name and note, and requires a note of 10–500

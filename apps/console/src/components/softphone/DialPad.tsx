@@ -77,6 +77,7 @@ export function DialPad({
             </span>
           </div>
         </div>
+        {sp.finishNotice ? <FinishNotice text={sp.finishNotice} /> : null}
         {phase === 'ringing' ? (
           <p className={styles.ringWarning} data-testid="ringing-warning">
             {RINGING_HANGUP_WARNING}
@@ -88,6 +89,22 @@ export function DialPad({
             {call.outcome_due_at ? <OutcomeCloses dueAt={call.outcome_due_at} clock={clock} /> : null}
           </p>
         ) : null}
+      </div>
+    );
+  }
+
+  /*
+    Finish mode with nothing on screen to finish: no number field, no keypad, no
+    Call — the column says why instead, in the same place, so the columns beside
+    it do not move.
+  */
+  if (sp.finishNotice) {
+    return (
+      <div className={styles.column}>
+        <div className={styles.cardHead}>
+          <h2 className={styles.cardTitle}>Dial</h2>
+        </div>
+        <FinishNotice text={sp.finishNotice} />
       </div>
     );
   }
@@ -212,7 +229,19 @@ export function DialPad({
   );
 }
 
-/** Live from `bridged_at` while the call is up; the stored total once it has ended. */
+/**
+ * The soft phone turned off for the account (finish mode). `role="status"`: it
+ * appears when the server says so, mid-call, and the agent should hear it once
+ * without being interrupted; the call itself is the rail's.
+ */
+function FinishNotice({ text }: { text: string }) {
+  return (
+    <p className={styles.finishNotice} role="status" data-testid="softphone-finish-notice">
+      {text}
+    </p>
+  );
+}
+
 /**
  * When an unsaved outcome lapses: the reaper closes the call with no outcome at
  * `outcome_due_at` (`docs/softphone.md` §4.1 step 8). Outside the rail, which is
@@ -237,6 +266,7 @@ function OutcomeCloses({ dueAt, clock }: { dueAt: string; clock: ServerClock }) 
   );
 }
 
+/** Live from `bridged_at` while the call is up; the stored total once it has ended. */
 function TalkTime({
   bridgedAt,
   endedSeconds,

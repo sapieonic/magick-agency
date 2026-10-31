@@ -87,6 +87,15 @@ import type {
  * It reads the host's `manual_call` frames and connection, calls the soft-phone
  * routes, and hands the host's audio the one thing it cannot know: the call.
  *
+ * ── Finish mode ───────────────────────────────────────────────────────────────
+ * With `agency_softphone_enabled` turned off, an agent mid-call (or owing an
+ * outcome) must still be able to end it: the server keeps the routes that
+ * FINISH work open and refuses the ones that start it. So `finishOnly` — the
+ * host says the flag is off (`startAllowed: false`), the bootstrap says so
+ * (`softphone_enabled: false`), or a dial was refused `softphone_disabled` —
+ * removes the dial pad and every way to start a call (typing, paste, redial,
+ * Enter) and leaves the call, hang-up, the outcome and the notes as they are.
+ *
  * ── Frames are the authority ─────────────────────────────────────────────────
  * The call on screen is the newest copy from three sources — the `manual_call`
  * frame, the HTTP answers (`POST /calls`, the hang-up, the outcome, the PATCH),
@@ -124,6 +133,11 @@ export interface UseSoftphoneOptions {
   cueVolume?: number;
   /** False holds every request (a host still opening its session). */
   enabled?: boolean;
+  /**
+   * False when the host knows the soft phone is turned off for the account (its
+   * flag map): finish mode from the start. See the module note.
+   */
+  startAllowed?: boolean;
   /** Injectable for tests. */
   ringback?: RingbackTone;
 }
@@ -148,6 +162,15 @@ export const SAVE_BLOCK_COPY: Record<SaveBlock, string> = {
 export const SOFTPHONE_MUTED_AT_ANSWER_COPY = 'You are muted. The customer can’t hear you — press M to unmute.';
 
 export const SOFTPHONE_NOTES_DISABLED_COPY = 'Notes open when a call starts.';
+
+/** Finish mode with a call on screen: what still works, and what does not. */
+export const SOFTPHONE_FINISH_CALL_COPY =
+  'The soft phone has been turned off for this account. Finish this call; you can’t start new ones.';
+/** Finish mode with nothing left to finish, by host: the way out is theirs. */
+export const SOFTPHONE_FINISH_IDLE_COPY: Record<UseSoftphoneOptions['surface'], string> = {
+  softphone_page: 'The soft phone has been turned off for this account, so you can’t start new calls. Close the soft phone when you’re done.',
+  station: 'The soft phone has been turned off for this account, so you can’t start new calls. Return to your campaign when you’re ready.',
+};
 export const SOFTPHONE_PAD_DISABLED_COPY = 'Outcomes open when the customer answers.';
 
 export interface SoftphoneState {
@@ -160,6 +183,13 @@ export interface SoftphoneState {
   phase: SoftphonePhase;
   /** The last call that finished, for the Ready rail. */
   lastCall: AgencyManualCall | null;
+
+  /**
+   * The soft phone is turned off for the account: only what finishes a call
+   * works (see the module note). `finishNotice` says so, for the dial column.
+   */
+  finishOnly: boolean;
+  finishNotice: string | null;
 
   // ── Dial pad ──
   number: string;
@@ -283,6 +313,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     surface,
     cueVolume = 70,
     enabled = true,
+    startAllowed = true,
   } = options;
 
   const ringbackRef = useRef<RingbackTone | null>(options.ringback ?? null);
@@ -404,7 +435,12 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     if (bootstrap.taggable_campaigns.some((c) => c.campaign_id === presetCampaignId)) setTagDraft(presetCampaignId);
   }, [bootstrap, presetCampaignId]);
 
-  const setupEditable = call === null && !placing;
+  /** A dial refused `softphone_disabled`: the flag went off under an open page. */
+  const [disabledSeen, setDisabledSeen] = useState(false);
+  const finishOnly = !startAllowed || bootstrap?.softphone_enabled === false || disabledSeen;
+  const finishNotice = finishOnly ? (call ? SOFTPHONE_FINISH_CALL_COPY : SOFTPHONE_FINISH_IDLE_COPY[surface]) : null;
+
+  const setupEditable = call === null && !placing && !finishOnly;
   const tagCampaignId = call ? (call.tag?.campaign_id ?? null) : tagDraft;
   const campaign = tagCampaignId ? (taggableCampaigns.find((c) => c.campaign_id === tagCampaignId) ?? null) : null;
   const callerIdOptions = useMemo(
@@ -553,12 +589,15 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   }, [phase]);
 
   // ── Dial ──────────────────────────────────────────────────────────────────
+  const finishOnlyRef = useLatestRef(finishOnly);
   const setNumber = useCallback((raw: string) => {
+    if (finishOnlyRef.current) return;
     entryRef.current = 'typed';
     setNumberState(normaliseTypedNumber(sanitiseDialInput(raw)));
     setDialError(null);
   }, []);
   const pressKey = useCallback((key: string) => {
+    if (finishOnlyRef.current) return;
     entryRef.current = 'typed';
     setNumberState((current) => appendDialKey(current, key));
     setDialError(null);
@@ -567,6 +606,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   const countryCode = bootstrap?.default_country_code ?? '+91';
   const pasteNumber = useCallback(
     (raw: string) => {
+      if (finishOnlyRef.current) return;
       entryRef.current = 'pasted';
       setNumberState(normalisePastedNumber(raw, countryCode));
       setDialError(null);
@@ -575,7 +615,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   );
 
   const dialBlock = dialBlockReason(number);
-  const dialUnavailableReason =
+  const dialUnavailableReason = finishNotice ?? (
     connection !== 'open'
       ? 'Wait until your phone is connected.'
       : !bootstrap || !sessionId
@@ -586,7 +626,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
             : 'A call is in progress.'
           : callerIdOptions.length === 0
             ? 'There’s no caller ID to call from. Ask your supervisor to assign a number.'
-            : null;
+            : null);
   const canDial = dialUnavailableReason === null && dialBlock === null && !placing;
 
   /**
@@ -692,6 +732,13 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
         setOverridePrompt(null);
         if (refusal.details?.length) setFieldErrors(fieldErrorsFromDetails(refusal.details));
         setDialError(SOFTPHONE_REFUSAL_COPY.fields_invalid);
+        return;
+      case 'softphone_disabled':
+        // Turned off under an open page: finish mode, and the bootstrap says the rest.
+        setOverridePrompt(null);
+        setDisabledSeen(true);
+        setAnnouncement(SOFTPHONE_FINISH_IDLE_COPY[surface]);
+        loadBootstrap();
         return;
       case 'caller_id_not_allowed':
       case 'campaign_not_taggable':
@@ -1015,7 +1062,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
   // ── Redial ────────────────────────────────────────────────────────────────
   const redial = useCallback(
     (from: AgencyManualCall) => {
-      if (call !== null || placing) return;
+      if (call !== null || placing || finishOnly) return;
       entryRef.current = 'redial';
       setNumberState(sanitiseDialInput(from.destination_e164));
       const tagId = from.tag?.campaign_id ?? null;
@@ -1025,7 +1072,7 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setDialError(null);
       setFocusCallToken((n) => n + 1);
     },
-    [call, placing, taggableCampaigns],
+    [call, placing, finishOnly, taggableCampaigns],
   );
 
   return {
@@ -1035,6 +1082,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
     call,
     phase,
     lastCall,
+    finishOnly,
+    finishNotice,
     number,
     numberDisplay: formatDialNumber(number),
     setNumber,

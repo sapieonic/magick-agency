@@ -3,13 +3,17 @@ import { returnFromSoftphone } from '../../../api/softphone';
 import { trackAgencySoftphoneSwitch } from '../../../analytics/events';
 import { useSoftphone, type SoftphoneState } from '../../../hooks/useSoftphone';
 import { useSoftphoneAvailable } from '../../../components/agency/AgentNav';
+import { usePermission } from '../../../hooks/usePermission';
 import { refusalCopy, SOFTPHONE_REFUSAL_COPY } from '../../../utils/softphone/refusalCopy';
 import { SOFTPHONE_BREAK_REASON } from '../../../types/softphone';
 import type { AgencyConsoleState } from '../useAgencyConsole';
 import type { AgencySessionBootstrap } from '../../../types/agency';
 
 export interface StationSoftphone {
-  /** The flag is on for the account and the caller holds `agency.softphone.dial`. */
+  /**
+   * The flag is on for the account and the caller holds `agency.softphone.dial`:
+   * the station may offer the switch. Not what decides `active` — see below.
+   */
   available: boolean;
   /** The session is on the soft phone (`break/soft_phone`): the station shows `SoftphoneView`. */
   active: boolean;
@@ -30,6 +34,15 @@ export interface StationSoftphone {
  * and no break reason, so `break` with an unknown reason asks the soft phone's
  * bootstrap, whose `session.on_softphone` is the server's answer for this
  * session. An ordinary break keeps the ordinary rail and its End break.
+ *
+ * **Not gated on the flag.** A session the server has put on `break/soft_phone`
+ * is on the soft phone whatever the flag map says: the flag turned off mid-call
+ * must leave the agent the call, its outcome and Return to campaign (finish
+ * mode, `useSoftphone`), not an ordinary break whose End break the server
+ * refuses. Only the switch itself (starting new soft-phone work) needs the flag.
+ * An unknown break reason (a reload) asks the bootstrap with the flag off too —
+ * a reload is exactly when a stranded call needs finding — at the cost of one
+ * refused read on a reload during an ordinary break in an account without it.
  *
  * ── The same socket, the same microphone ─────────────────────────────────────
  * `useSoftphone` reads this station's `manual_call` frames and connection; the
@@ -55,10 +68,11 @@ export function useStationSoftphone({
   userId: string | null;
 }): StationSoftphone {
   const available = useSoftphoneAvailable();
+  const mayDial = usePermission('agency.softphone.dial');
   const { station, clock, audio } = cons;
   const reason = station.breakReasonCode;
   const onBreak = station.agentState === 'break';
-  const candidate = available && onBreak && (reason === SOFTPHONE_BREAK_REASON || reason === null);
+  const candidate = mayDial && onBreak && (reason === SOFTPHONE_BREAK_REASON || reason === null);
 
   const sp = useSoftphone({
     tenantId,
@@ -73,6 +87,7 @@ export function useStationSoftphone({
     surface: 'station',
     cueVolume: cons.cuePrefs.volume,
     enabled: candidate,
+    startAllowed: available,
   });
 
   const serverSays =

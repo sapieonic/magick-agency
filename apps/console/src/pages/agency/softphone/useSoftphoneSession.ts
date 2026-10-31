@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { mintStationToken } from '../../../api/agency';
 import {
+  getSoftphoneBootstrap,
   openSoftphoneSession,
   type SoftphoneSessionOnCampaignRefusal,
 } from '../../../api/softphone';
@@ -8,11 +9,25 @@ import { coalesceJoin } from '../../../utils/agencyLiveSession';
 import { refusalCopy } from '../../../utils/softphone/refusalCopy';
 import type { StationSocketBootstrap } from '../../../hooks/agencyStation/types';
 import type { AgencySessionBootstrap } from '../../../types/agency';
-import type { AgencySoftphoneSessionResponse } from '../../../types/softphone';
+import type { AgencyManualCall, AgencySoftphoneBootstrap, AgencySoftphoneSessionResponse } from '../../../types/softphone';
 
 export type SoftphoneSessionState =
   | { status: 'loading' }
-  | { status: 'ready'; session: AgencySoftphoneSessionResponse; socket: StationSocketBootstrap }
+  | {
+      status: 'ready';
+      session: AgencySoftphoneSessionResponse;
+      socket: StationSocketBootstrap;
+      /** False when the soft phone is off for the account: the page is in finish mode. */
+      startAllowed: boolean;
+    }
+  /** The soft phone is off for the account and the agent has nothing on it to finish. */
+  | { status: 'off' }
+  /**
+   * Off, and the agent still has a soft-phone session (and maybe a call) the
+   * server will not reopen: the page can only close it, and say who can save
+   * an outcome it still owes.
+   */
+  | { status: 'off_stranded'; sessionId: string; call: AgencyManualCall | null }
   /** 409 `session_on_campaign`: the agent is live on a campaign; the remedy is switching that session (§4.2). */
   | { status: 'on_campaign'; refusal: SoftphoneSessionOnCampaignRefusal }
   | { status: 'error'; message: string };
@@ -35,15 +50,25 @@ export function urlCarriesToken(url: string): boolean {
  *
  * Coalesced like the campaign join, so a StrictMode double-mount (or two tabs
  * racing in one page load) opens one session, not two.
+ *
+ * ── With the soft phone turned off (`startAllowed: false`, or a `softphone_disabled`
+ *    answer from a flag map gone stale) ──────────────────────────────────────────
+ * Nothing new is opened: the bootstrap is read first, and only a soft-phone
+ * session that already exists is rehydrated, into finish mode, so a reload
+ * mid-call still reaches the call. No session there is `off`; a session the
+ * server will not rehydrate is `off_stranded`.
  */
 export function useSoftphoneSession({
   tenantId,
   accountId,
   enabled,
+  startAllowed = true,
 }: {
   tenantId: string | null;
   accountId: string | null;
   enabled: boolean;
+  /** The flag map says the soft phone is on for the account. */
+  startAllowed?: boolean;
 }): { state: SoftphoneSessionState; retry: () => void } {
   const [state, setState] = useState<SoftphoneSessionState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -52,13 +77,35 @@ export function useSoftphoneSession({
     if (!enabled || !tenantId || !accountId) return undefined;
     let cancelled = false;
     setState({ status: 'loading' });
-    const key = `softphone:${tenantId}:${accountId}:${attempt}`;
-    coalesceJoin(key, () => openSoftphoneSession(tenantId, accountId))
-      .then(async (result) => {
+    const key = `softphone:${tenantId}:${accountId}:${attempt}:${startAllowed ? 'open' : 'resume'}`;
+    /** What the soft phone holds for the caller, or null when even that is refused. */
+    const probe = (): Promise<AgencySoftphoneBootstrap | null> =>
+      getSoftphoneBootstrap(tenantId, accountId).catch(() => null);
+    const holdsSession = (phone: AgencySoftphoneBootstrap | null) =>
+      phone?.session?.kind === 'softphone' ? phone.session.session_id : null;
+
+    coalesceJoin(key, async () => {
+      if (!startAllowed) {
+        const phone = await probe();
+        if (!holdsSession(phone)) return { off: true as const, phone };
+      }
+      return { off: false as const, result: await openSoftphoneSession(tenantId, accountId) };
+    })
+      .then(async (outcome) => {
         if (cancelled) return;
+        if (outcome.off) {
+          setState({ status: 'off' });
+          return;
+        }
+        const result = outcome.result;
         if (!result.ok) {
           if (result.refusal.code === 'session_on_campaign') {
             setState({ status: 'on_campaign', refusal: result.refusal });
+          } else if (result.refusal.code === 'softphone_disabled') {
+            const phone = await probe();
+            if (cancelled) return;
+            const sessionId = holdsSession(phone);
+            setState(sessionId ? { status: 'off_stranded', sessionId, call: phone?.call ?? null } : { status: 'off' });
           } else {
             setState({ status: 'error', message: refusalCopy(result.refusal) });
           }
@@ -84,6 +131,7 @@ export function useSoftphoneSession({
             intervals: session.intervals as AgencySessionBootstrap['intervals'],
             campaign_id: null,
           },
+          startAllowed,
         });
       })
       .catch((err: unknown) => {
@@ -93,7 +141,7 @@ export function useSoftphoneSession({
     return () => {
       cancelled = true;
     };
-  }, [enabled, tenantId, accountId, attempt]);
+  }, [enabled, tenantId, accountId, attempt, startAllowed]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
   return { state, retry };

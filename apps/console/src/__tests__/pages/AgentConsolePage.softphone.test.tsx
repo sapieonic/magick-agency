@@ -258,6 +258,21 @@ describe('on the soft phone, in the station', () => {
     expect(mocks.getSoftphoneBootstrap.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('with the flag turned off it is still the soft phone, in finish mode: the call, Return to campaign, no dial pad', async () => {
+    mocks.flags = new Set();
+    mocks.returnFromSoftphone.mockResolvedValue({ ok: true, value: { session_id: 'sess-1', state: 'available' } });
+    await onSoftphone();
+    expect(screen.getByTestId('station-softphone')).toBeTruthy();
+    // No ordinary break (whose End break would skip the soft phone's return).
+    expect(screen.queryByRole('button', { name: /End break/ })).toBeNull();
+    expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/Return to your campaign when you’re ready\./);
+    expect(screen.queryByTestId('dial-call')).toBeNull();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('return-to-campaign'));
+    });
+    expect(mocks.returnFromSoftphone).toHaveBeenCalledWith('sess-1', 't-1', 'a-1');
+  });
+
   it('places calls from the campaign session, on the same socket', async () => {
     mocks.placeManualCall.mockResolvedValue({ ok: true, value: manualCall({ session_id: 'sess-1' }) });
     await onSoftphone();

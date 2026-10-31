@@ -51,12 +51,14 @@ function Harness({
   ringback,
   presetCampaignId = null,
   audioState = audio,
+  startAllowed = true,
 }: {
   frameCall: AgencyManualCall | null;
   connection?: StationConnection;
   ringback: RingbackTone;
   presetCampaignId?: string | null;
   audioState?: SoftphoneAudio;
+  startAllowed?: boolean;
 }) {
   const sp = useSoftphone({
     tenantId: 't-1',
@@ -70,6 +72,7 @@ function Harness({
     surface: 'softphone_page',
     ringback,
     presetCampaignId,
+    startAllowed,
   });
   return (
     <MemoryRouter>
@@ -585,6 +588,84 @@ describe('the call, driven by manual_call frames', () => {
     fireEvent.change(screen.getByLabelText(/Notes/), { target: { value: 'Wants it in writing' } });
     await waitFor(() => expect(api.updateManualCall).toHaveBeenCalled(), { timeout: 2000 });
     expect(api.updateManualCall.mock.calls[0]![1]).toEqual({ fields: {}, notes: 'Wants it in writing' });
+  });
+});
+
+describe('finish mode: the soft phone turned off for the account', () => {
+  const OFF = { ...BOOTSTRAP, softphone_enabled: false };
+  const ended = manualCall({
+    state: 'ended',
+    outcome: 'connected',
+    end_reason: 'remote_hangup',
+    requires_disposition: true,
+    bridged_at: '2026-10-30T10:00:08Z',
+    ended_at: '2026-10-30T10:01:00Z',
+    talk_seconds: 52,
+    fields: { customer_name: 'Rahul Verma', reason: 'Rate query' },
+  });
+
+  it('keeps the live call, its hang-up and its outcome, and says no new calls can start', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(OFF);
+    api.hangupManualCall.mockResolvedValue({ ok: true, value: manualCall({ state: 'bridged' }) });
+    api.dispositionManualCall.mockResolvedValue({
+      ok: true,
+      value: { call: { ...ended, disposition_code: 'resolved', settled_at: '2026-10-30T10:01:10Z' }, contact_state: null, next_attempt_at: null, callback_requested_at: null },
+    });
+    const view = await mount();
+    await view.frame(manualCall({ state: 'bridged', bridged_at: '2026-10-30T10:00:08Z', fields: ended.fields }));
+    expect(screen.getByTestId('softphone-finish-notice').textContent).toBe(
+      'The soft phone has been turned off for this account. Finish this call; you can’t start new ones.',
+    );
+    act(() => press('e'));
+    await act(async () => {
+      press('e');
+    });
+    expect(api.hangupManualCall).toHaveBeenCalledWith('mc-1', 't-1', 'a-1');
+
+    await view.frame(ended);
+    press('1');
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('softphone-save'));
+    });
+    expect(api.dispositionManualCall).toHaveBeenCalled();
+  });
+
+  it('once nothing is left to finish there is no dial pad: no number field, keypad, Call or redial', async () => {
+    api.getSoftphoneBootstrap.mockResolvedValue(OFF);
+    await mount();
+    expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/so you can’t start new calls\. Close the soft phone when you’re done\./);
+    expect(screen.queryByTestId('dial-number')).toBeNull();
+    expect(screen.queryByTestId('dial-key-1')).toBeNull();
+    expect(screen.queryByTestId('dial-call')).toBeNull();
+    for (const key of '9820461733') press(key);
+    press('Enter');
+    expect(api.placeManualCall).not.toHaveBeenCalled();
+    expect((screen.getByRole('button', { name: 'Redial +91 98204 61733' }) as HTMLButtonElement).disabled).toBe(true);
+    // The columns beside it keep their places.
+    expect(screen.getByTestId('log-to')).toBeTruthy();
+    expect(screen.getByTestId('softphone-action-bar')).toBeTruthy();
+  });
+
+  it('a host that knows the flag is off starts in finish mode before any bootstrap says so', async () => {
+    let answer: (b: unknown) => void = () => {};
+    api.getSoftphoneBootstrap.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    render(<Harness frameCall={null} ringback={ringback} startAllowed={false} />);
+    expect(screen.getByTestId('softphone-finish-notice')).toBeTruthy();
+    await act(async () => answer(BOOTSTRAP));
+    expect(screen.getByTestId('softphone-finish-notice')).toBeTruthy();
+  });
+
+  it('a dial refused softphone_disabled (turned off under an open page) switches to finish mode and re-reads', async () => {
+    api.placeManualCall.mockResolvedValue({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
+    await mount();
+    fireEvent.change(screen.getByTestId('dial-number'), { target: { value: '9820461733' } });
+    api.getSoftphoneBootstrap.mockResolvedValue(OFF);
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('dial-call'));
+    });
+    expect(screen.getByTestId('softphone-finish-notice')).toBeTruthy();
+    expect(screen.queryByTestId('dial-call')).toBeNull();
+    expect(api.getSoftphoneBootstrap).toHaveBeenCalledTimes(2);
   });
 });
 

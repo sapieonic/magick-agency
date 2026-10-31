@@ -92,7 +92,7 @@ export function CallDetailsColumn({ sp }: { sp: SoftphoneState }) {
             </span>
           ) : null}
         </div>
-        {sp.setupEditable ? null : <span className={styles.hint}>Fixed for this call</span>}
+        {sp.setupEditable || (sp.finishOnly && !sp.call) ? null : <span className={styles.hint}>Fixed for this call</span>}
       </div>
 
       {sp.call?.contact ? (
@@ -109,7 +109,7 @@ export function CallDetailsColumn({ sp }: { sp: SoftphoneState }) {
         fields={sp.fields}
         values={sp.fieldValues}
         errors={sp.fieldErrors}
-        disabled={sp.placing}
+        disabled={sp.placing || (sp.finishOnly && !sp.call)}
         loading={sp.bootstrap === null}
         onChange={sp.setFieldValue}
       />

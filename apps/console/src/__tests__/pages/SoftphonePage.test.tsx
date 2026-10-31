@@ -189,6 +189,61 @@ describe('/dialer/phone', () => {
     expect(link.getAttribute('title')).toBe(hint.textContent);
   });
 
+  describe('with the soft phone turned off', () => {
+    const SP_SESSION = { session_id: 'sess-sp', kind: 'softphone', campaign_id: null, campaign_name: null, state: 'break', break_reason: 'soft_phone', on_softphone: true };
+    beforeEach(() => {
+      mocks.flags = new Set();
+    });
+
+    it('with nothing to finish it is unavailable, as the route gate was, and opens no session', async () => {
+      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, softphone_enabled: false, session: null });
+      await mount();
+      expect(screen.getByText('Not available for your account')).toBeTruthy();
+      expect(mocks.openSoftphoneSession).not.toHaveBeenCalled();
+    });
+
+    it('a server that refuses even the read is unavailable too', async () => {
+      mocks.getSoftphoneBootstrap.mockRejectedValue(Object.assign(new Error('Forbidden'), { statusCode: 403 }));
+      await mount();
+      expect(screen.getByText('Not available for your account')).toBeTruthy();
+      expect(mocks.openSoftphoneSession).not.toHaveBeenCalled();
+    });
+
+    it('reopens the session the agent still has, in finish mode: the call, no dial pad', async () => {
+      const owed = manualCall({ state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' });
+      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, softphone_enabled: false, session: SP_SESSION, call: owed });
+      await mount();
+      expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(1);
+      await act(async () => latestSocket().open());
+      expect(screen.getByTestId('rail-label').textContent).toBe('Outcome needed');
+      expect(screen.getByTestId('softphone-finish-notice').textContent).toMatch(/Finish this call; you can’t start new ones\./);
+      expect(screen.queryByTestId('dial-number')).toBeNull();
+    });
+
+    it('a session the server will not reopen can still be closed, and says who can save an owed outcome', async () => {
+      const owed = manualCall({ state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' });
+      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, softphone_enabled: false, session: SP_SESSION, call: owed });
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
+      mocks.leaveAgencySession.mockResolvedValue(undefined);
+      await mount();
+      const stranded = screen.getByTestId('softphone-stranded');
+      expect(stranded.textContent).toMatch(/A supervisor can save it for you from Soft-phone calls\./);
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('softphone-stranded-close'));
+      });
+      expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-1');
+      expect(screen.getByTestId('where').textContent).toBe('/dialer?left=station');
+    });
+
+    it('a flag map gone stale (on here, off on the server) lands the same way', async () => {
+      mocks.flags = new Set(['agency_softphone_enabled']);
+      mocks.openSoftphoneSession.mockResolvedValue({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
+      mocks.getSoftphoneBootstrap.mockResolvedValue({ ...BOOTSTRAP, softphone_enabled: false, session: null });
+      await mount();
+      expect(screen.getByText('Not available for your account')).toBeTruthy();
+    });
+  });
+
   it('closes the soft phone: leaves the session and goes home', async () => {
     mocks.leaveAgencySession.mockResolvedValue(undefined);
     await mount();
@@ -245,7 +300,8 @@ describe('/dialer/phone', () => {
   });
 
   it('any other refusal is a screen with a way to try again', async () => {
-    mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: false, refusal: { code: 'softphone_disabled', status: 403, message: 'x' } });
+    // (`softphone_disabled` is not one: that is the turned-off path above.)
+    mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: false, refusal: { code: 'unknown', raw_code: null, status: 503, message: 'Service Unavailable' } });
     await mount();
     expect(screen.getByRole('alert').textContent).toMatch(/Can’t open the soft phone/);
     mocks.openSoftphoneSession.mockResolvedValueOnce({ ok: true, value: SESSION });

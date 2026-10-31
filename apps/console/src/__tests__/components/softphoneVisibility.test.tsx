@@ -110,12 +110,17 @@ describe('the routes', () => {
     return app.slice(start, app.indexOf('/>', start));
   };
 
-  it('gates /dialer/phone like /station, plus the soft-phone flag, outside both shells', () => {
+  it('gates /dialer/phone like /station, outside both shells; the page reads the soft-phone flag itself', () => {
     const block = routeBlock('/dialer/phone');
     expect(block).toContain('<RequireAuth>');
     expect(block).toContain('capability="agency"');
     expect(block).toContain('flag="agency_dialer_enabled"');
-    expect(block).toContain('flag="agency_softphone_enabled"');
+    // Not a route gate: turned off mid-call it would take the call off the
+    // agent's screen. The page gates itself (finish mode, else unavailable) —
+    // pinned in `SoftphonePage.test.tsx` "with the soft phone turned off".
+    expect(block).not.toContain('flag="agency_softphone_enabled"');
+    const page = readFileSync(resolve(process.cwd(), 'src/pages/agency/SoftphonePage.tsx'), 'utf8');
+    expect(page).toContain('useFeatureFlagEnabled(SOFTPHONE_FLAG)');
     const appBlock = app.slice(app.indexOf('<Route path="/app"'), app.indexOf('<Route path="*"'));
     expect(appBlock).not.toContain('dialer/phone');
   });

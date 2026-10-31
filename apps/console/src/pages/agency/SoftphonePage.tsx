@@ -6,7 +6,8 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { leaveAgencySession } from '../../api/agency';
 import { switchToSoftphone, type SoftphoneSessionOnCampaignRefusal } from '../../api/softphone';
-import { trackAgencySoftphoneSwitch } from '../../analytics/events';
+import { trackAgencySoftphoneSwitch, trackFeatureGateUnavailable } from '../../analytics/events';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { useAgencyAudio } from '../../hooks/useAgencyAudio';
 import { useAgencyStation } from '../../hooks/useAgencyStation';
 import { useServerClock } from '../../hooks/useServerClock';
@@ -24,7 +25,7 @@ import { SoftphoneHeader, SOFTPHONE_LEAVE_BLOCKED_COPY } from '../../components/
 import { CapabilityUnavailable } from '../../components/common/CapabilityUnavailable';
 import { useSoftphoneSession } from './softphone/useSoftphoneSession';
 import type { StationSocketBootstrap } from '../../hooks/agencyStation/types';
-import type { AgencySoftphoneSessionResponse } from '../../types/softphone';
+import type { AgencyManualCall, AgencySoftphoneSessionResponse } from '../../types/softphone';
 import station from '../../components/agency/AgentStation.module.css';
 
 /** The Close soft phone confirmation: where it lands, and how to come back. */
@@ -35,8 +36,12 @@ export const SOFTPHONE_CLOSE_CONFIRM_MESSAGE =
  * `/dialer/phone` — the soft phone for an agent who is not on a campaign
  * (`docs/softphone.md` §2, §7).
  *
- * Full-viewport and outside both shells, gated like `/station` plus
- * `agency_softphone_enabled`. It opens a soft-phone session (`break/soft_phone`
+ * Full-viewport and outside both shells, gated like `/station`; the page reads
+ * `agency_softphone_enabled` itself rather than through `RequireFlag`, because
+ * the flag turned off must not take a call away from the agent on it: with the
+ * flag off it rehydrates only a soft-phone session that already exists, into
+ * finish mode (`useSoftphone`), and is `CapabilityUnavailable` otherwise, as the
+ * route gate was. It opens a soft-phone session (`break/soft_phone`
  * from birth, never `available`, so pacing can never reserve it), connects the
  * station socket for it, and renders `SoftphoneView` on top of that socket, the
  * station's microphone and its playback.
@@ -51,9 +56,22 @@ export default function SoftphonePage() {
   const { tenantId, accountId, role } = useTenant();
   const { user } = useAuth();
   const mayDial = hasPermission(role, 'agency.softphone.dial');
-  const { state, retry } = useSoftphoneSession({ tenantId, accountId, enabled: mayDial });
+  const flagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
+  const { state, retry } = useSoftphoneSession({ tenantId, accountId, enabled: mayDial, startAllowed: flagOn });
+  const off = state.status === 'off';
+
+  // What `RequireFlag` reported when it gated this route.
+  useEffect(() => {
+    if (off) trackFeatureGateUnavailable({ gate_type: 'feature_flag', gate: SOFTPHONE_FLAG });
+  }, [off]);
 
   if (role !== undefined && !mayDial) return <CapabilityUnavailable />;
+
+  if (state.status === 'off') return <CapabilityUnavailable />;
+
+  if (state.status === 'off_stranded') {
+    return <StrandedScreen sessionId={state.sessionId} call={state.call} tenantId={tenantId} accountId={accountId} />;
+  }
 
   if (state.status === 'on_campaign') {
     return <CampaignSessionScreen refusal={state.refusal} tenantId={tenantId} accountId={accountId} />;
@@ -89,6 +107,7 @@ export default function SoftphonePage() {
     <SoftphoneConsole
       session={state.session}
       socket={state.socket}
+      startAllowed={state.startAllowed}
       tenantId={tenantId}
       accountId={accountId}
       user={user}
@@ -99,12 +118,14 @@ export default function SoftphonePage() {
 function SoftphoneConsole({
   session,
   socket,
+  startAllowed,
   tenantId,
   accountId,
   user,
 }: {
   session: AgencySoftphoneSessionResponse;
   socket: StationSocketBootstrap;
+  startAllowed: boolean;
   tenantId: string | null;
   accountId: string | null;
   user: ReturnType<typeof useAuth>['user'];
@@ -191,6 +212,7 @@ function SoftphoneConsole({
     audio: softphoneAudio,
     surface: 'softphone_page',
     cueVolume,
+    startAllowed,
   });
 
   const [closeOpen, setCloseOpen] = useState(false);
@@ -266,6 +288,73 @@ function SoftphoneConsole({
           if (!closing) setCloseOpen(false);
         }}
       />
+    </div>
+  );
+}
+
+/** The soft phone is off and its session could not be reopened: what is true, and who can finish it. */
+export const SOFTPHONE_STRANDED_COPY = {
+  title: 'The soft phone has been turned off',
+  detail: 'Your soft-phone session is still open, but it can’t be reopened here now that the soft phone is off for this account.',
+  owed: 'Your last call still needs its outcome. A supervisor can save it for you from Soft-phone calls.',
+  close: 'Close the soft phone so you can join a campaign.',
+} as const;
+
+/**
+ * `off_stranded`: the soft phone turned off with the agent's soft-phone session
+ * still open, and the server will not rehydrate it (no socket to put the call
+ * on). The one thing this page can still do is close the session — so the agent
+ * is not locked out of campaigns by it — and say who can save an outcome it
+ * still owes (a supervisor, on the agent's behalf).
+ */
+function StrandedScreen({
+  sessionId,
+  call,
+  tenantId,
+  accountId,
+}: {
+  sessionId: string;
+  call: AgencyManualCall | null;
+  tenantId: string | null;
+  accountId: string | null;
+}) {
+  const navigate = useNavigate();
+  const [closing, setClosing] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const onClose = async () => {
+    setClosing(true);
+    setFailure(null);
+    try {
+      await leaveAgencySession(sessionId, tenantId ?? undefined, accountId ?? undefined);
+      navigate(agentLandingPath('station'));
+    } catch (err) {
+      setFailure(err instanceof Error ? err.message : 'Try again in a moment.');
+      setClosing(false);
+    }
+  };
+  return (
+    <div className={station.shell}>
+      <div className={station.fatal} role="alert" data-testid="softphone-stranded">
+        <h1>{SOFTPHONE_STRANDED_COPY.title}</h1>
+        <p>{SOFTPHONE_STRANDED_COPY.detail}</p>
+        {call && call.requires_disposition ? <p>{SOFTPHONE_STRANDED_COPY.owed}</p> : null}
+        <p>{SOFTPHONE_STRANDED_COPY.close}</p>
+        <button
+          type="button"
+          className={station.fatalAction}
+          onClick={() => void onClose()}
+          disabled={closing}
+          data-testid="softphone-stranded-close"
+        >
+          {closing ? 'Closing…' : 'Close soft phone'}
+        </button>
+        {failure ? (
+          <p className="error-text" data-testid="softphone-stranded-failure">
+            Your soft phone is still open — {failure}
+          </p>
+        ) : null}
+        <StationEscape toCampaign={false} campaignId="" />
+      </div>
     </div>
   );
 }

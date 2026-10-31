@@ -379,10 +379,14 @@ export default function App() {
 
                 Full-viewport and OUTSIDE both shells for the reason `/station` is —
                 navigating away mid-call drops the socket and cuts the customer off —
-                and gated identically, plus `agency_softphone_enabled` (default off,
-                SP4). The permission, `agency.softphone.dial`, floors at `agent`, so
-                the page checks it itself rather than through a capability: the
-                route is for every agent once the flag is on.
+                and gated identically. `agency_softphone_enabled` (default off, SP4)
+                is the PAGE's to read, not a `RequireFlag` here: turned off while an
+                agent is on a call, a route gate would take the call (and the outcome
+                it owes) off their screen, so the page rehydrates an existing
+                soft-phone session into finish mode and is `CapabilityUnavailable`
+                otherwise, exactly as the gate was. The permission,
+                `agency.softphone.dial`, floors at `agent`, so the page checks it
+                itself rather than through a capability.
               */}
               <Route
                 path="/dialer/phone"
@@ -390,15 +394,13 @@ export default function App() {
                   <RequireAuth>
                     <RequireCapability capability="agency">
                       <RequireFlag flag="agency_dialer_enabled">
-                        <RequireFlag flag="agency_softphone_enabled">
-                          {/* Full-viewport and outside both shells, so the product
-                              dimension has no layout to come from — see
-                              `analytics/ProductSurface`. Inside the gates, so a
-                              refused reader never registers a surface. */}
-                          <ProductSurface product="agency">
-                            <SoftphonePage />
-                          </ProductSurface>
-                        </RequireFlag>
+                        {/* Full-viewport and outside both shells, so the product
+                            dimension has no layout to come from — see
+                            `analytics/ProductSurface`. Inside the gates, so a
+                            refused reader never registers a surface. */}
+                        <ProductSurface product="agency">
+                          <SoftphonePage />
+                        </ProductSurface>
                       </RequireFlag>
                     </RequireCapability>
                   </RequireAuth>

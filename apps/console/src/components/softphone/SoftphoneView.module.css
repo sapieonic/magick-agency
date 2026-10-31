@@ -69,6 +69,19 @@
 
 /* ── Column 1: the dial pad ─────────────────────────────────────────────── */
 
+/* Finish mode: the soft phone turned off for the account. A notice, not an
+   alarm — nothing failed, and what still works is on screen. */
+.finishNotice {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--warning-subtle);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .numberBox {
   display: flex;
   align-items: center;
