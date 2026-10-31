@@ -171,7 +171,11 @@ function taggableCampaign(
   };
 }
 
-async function buildBootstrap(runtime: AgencyRuntime, actor: SoftphoneActor): Promise<AgencySoftphoneBootstrap> {
+/** Everything but `softphone_enabled`, which the public layer reads and adds (it owns the flag). */
+async function buildBootstrap(
+  runtime: AgencyRuntime,
+  actor: SoftphoneActor,
+): Promise<Omit<AgencySoftphoneBootstrap, 'softphone_enabled'>> {
   const { tenantId, accountId } = actor;
   const [settings, numbers, campaigns, staffed, live] = await Promise.all([
     agencySoftphoneSettingsRepository.get(tenantId, accountId),

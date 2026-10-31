@@ -147,16 +147,64 @@ describe('floors and the flag', () => {
     }
   });
 
-  it('every route answers 403 softphone_disabled when the flag is off, without reaching the internal handler', async () => {
+  /**
+   * The routes that FINISH work already started stay open with the flag off, so an agent
+   * it is switched off under mid-call can end, write up and leave the call; the ones that
+   * START work are refused (docs/softphone.md §6).
+   */
+  const FINISH = new Set([
+    `GET ${P}/softphone/bootstrap`,
+    `GET ${P}/softphone/calls`,
+    `GET ${P}/softphone/calls/${CALL}`,
+    `PATCH ${P}/softphone/calls/${CALL}`,
+    `POST ${P}/softphone/calls/${CALL}/hangup`,
+    `POST ${P}/softphone/calls/${CALL}/disposition`,
+    `POST ${P}/softphone/calls/${CALL}/dnc`,
+    `POST ${P}/sessions/${SESSION}/softphone/return`,
+  ]);
+
+  it('with the flag off, the routes that start work answer 403 softphone_disabled without reaching the internal handler', async () => {
     mocks.flagEnabled.mockResolvedValue(false);
     const admin = await appAs('account_admin');
-    for (const r of ROUTES) {
+    const starts = ROUTES.filter((r) => !FINISH.has(`${r.method} ${r.url}`));
+    expect(starts.map((r) => `${r.method} ${r.url.slice(P.length)}`).sort()).toEqual([
+      'GET /softphone/calls/77777777-7777-4777-8777-777777777777/recording',
+      'GET /softphone/settings',
+      'POST /sessions/66666666-6666-4666-8666-666666666666/softphone',
+      'POST /softphone/calls',
+      'POST /softphone/sessions',
+      'PUT /softphone/settings',
+    ]);
+    for (const r of starts) {
       const res = await call(admin, r);
       expect(res.statusCode, `${r.method} ${r.url}`).toBe(403);
       expect(res.json(), `${r.method} ${r.url}`).toMatchObject({ error: 'Forbidden', code: 'softphone_disabled', message: expect.any(String) });
     }
     expect(mocks.callCore).not.toHaveBeenCalled();
     expect(mocks.flagEnabled).toHaveBeenCalledWith({ key: 'agency_softphone_enabled' }, { tenantId: TENANT, accountId: ACCOUNT });
+  });
+
+  it('with the flag off, the routes that finish work still reach the internal handler', async () => {
+    mocks.flagEnabled.mockResolvedValue(false);
+    const agent = await appAs('agent');
+    for (const r of ROUTES.filter((x) => FINISH.has(`${x.method} ${x.url}`))) {
+      mocks.callCore.mockClear();
+      const res = await call(agent, r);
+      expect(res.json()?.code, `${r.method} ${r.url}`).not.toBe('softphone_disabled');
+      expect(mocks.callCore, `${r.method} ${r.url}`).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('bootstrap reports the flag as softphone_enabled (a failed read reports it off)', async () => {
+    mocks.callCore.mockResolvedValue(plain({ taggable_campaigns: [], call: null, session: null }));
+    const agent = await appAs('agent');
+    expect((await agent.inject({ method: 'GET', url: `${P}/softphone/bootstrap` })).json().softphone_enabled).toBe(true);
+    mocks.flagEnabled.mockResolvedValue(false);
+    expect((await agent.inject({ method: 'GET', url: `${P}/softphone/bootstrap` })).json().softphone_enabled).toBe(false);
+    mocks.flagEnabled.mockRejectedValue(new Error('flags down'));
+    const failed = await agent.inject({ method: 'GET', url: `${P}/softphone/bootstrap` });
+    expect(failed.statusCode).toBe(200);
+    expect(failed.json().softphone_enabled).toBe(false);
   });
 
   it('the RBAC refusal comes before the flag read (an agent on PUT /settings is told about the permission)', async () => {

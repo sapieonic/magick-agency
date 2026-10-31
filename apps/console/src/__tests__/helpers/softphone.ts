@@ -28,6 +28,7 @@ export const CAMPAIGN: AgencySoftphoneCampaign = {
 };
 
 export const BOOTSTRAP: AgencySoftphoneBootstrap = {
+  softphone_enabled: true,
   taggable_campaigns: [CAMPAIGN],
   untagged: {
     caller_ids: ['+912248909999', '+912248908888'],

@@ -841,11 +841,15 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(noRecording.statusCode).toBe(403);
     expect(noRecording.json()).toEqual({ error: 'capability_disabled', capability: 'agency.recording' });
 
-    // The flag, off for one account: every soft-phone route answers softphone_disabled.
+    // The flag, off for one account: starting work answers softphone_disabled; bootstrap
+    // answers, saying so (the routes that finish a call are not gated, §6).
     const off = await get('/proxy/agency/softphone/bootstrap', darkAgent, dark);
-    expect(off.statusCode).toBe(403);
-    expect(off.json()).toMatchObject({ code: 'softphone_disabled' });
-    expect((await post('/proxy/agency/softphone/sessions', darkAgent, {}, dark)).json().code).toBe('softphone_disabled');
+    expect(off.statusCode).toBe(200);
+    expect(off.json()).toMatchObject({ softphone_enabled: false, session: null, call: null });
+    const dial = await post('/proxy/agency/softphone/sessions', darkAgent, {}, dark);
+    expect(dial.statusCode).toBe(403);
+    expect(dial.json().code).toBe('softphone_disabled');
+    expect((await get('/proxy/agency/softphone/bootstrap', agent)).json().softphone_enabled).toBe(true);
 
     ringOut(leg);
     await waitFor('settled frame', () => lastCall(station)?.settled_at);

@@ -64,17 +64,31 @@ export function actorQuery(actor: SoftphoneRequestActor): Record<string, string>
 
 // ─── The flag ───────────────────────────────────────────────────────────────
 
+/** `agency_softphone_enabled` for the request's tenant and account. Throws when the read fails. */
+export function softphoneEnabled(request: FastifyRequest): Promise<boolean> {
+  return getFeatureFlagService().isEnabled(FLAGS.agency_softphone_enabled, {
+    tenantId: request.tenantId!,
+    ...(request.accountId ? { accountId: request.accountId } : {}),
+  });
+}
+
 /**
  * `agency_softphone_enabled` for the request's tenant and account, else 403
  * `softphone_disabled` (SP4). A route preHandler AFTER its `requirePermission`, so a caller
  * without the permission is told that, and the RBAC refusal stays the one the agent-reach
  * sweep reads. A flag read that throws is a 500: fail closed.
+ *
+ * **Only on the routes that START work**: opening a soft-phone session, placing a call,
+ * switching a campaign session to the soft phone, plus the recording and the settings.
+ * The routes that FINISH work already started — hang up, details, the outcome, Mark DNC,
+ * the call reads, the return to the campaign, and bootstrap (which reports the flag as
+ * `softphone_enabled`) — stay open while it is off, so an agent the flag is switched off
+ * under mid-call is never stranded holding a call they cannot end, write up or leave
+ * (docs/softphone.md §6). Each of those acts only on the caller's existing session or
+ * calls, so the flag gates nothing new by being absent there.
  */
 export async function requireSoftphoneEnabled(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const enabled = await getFeatureFlagService().isEnabled(FLAGS.agency_softphone_enabled, {
-    tenantId: request.tenantId!,
-    ...(request.accountId ? { accountId: request.accountId } : {}),
-  });
+  const enabled = await softphoneEnabled(request);
   if (!enabled) {
     const { status, body } = softphoneRefusalBody({ code: 'softphone_disabled' });
     return reply.code(status).send(body) as unknown as void;

@@ -28,6 +28,8 @@ const emptyBody = z.object({}).strip();
 
 export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Promise<void> {
   const dial = [requirePermission('agency.softphone.dial'), requireSoftphoneEnabled];
+  // The return to the campaign finishes work, so the flag never refuses it (`shared.ts`).
+  const finish = [requirePermission('agency.softphone.dial')];
 
   /**
    * POST /proxy/agency/softphone/sessions — open (201) or rehydrate (200) the caller's
@@ -106,7 +108,7 @@ export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Prom
    * or withdraw a switch still queued. 409 `manual_call_live` (with the call) while a
    * manual call is live or awaiting its outcome; `not_on_softphone`; `wrong_session_kind`.
    */
-  app.post<{ Params: { id: string } }>('/sessions/:id/softphone/return', { preHandler: dial }, async (request, reply) => {
+  app.post<{ Params: { id: string } }>('/sessions/:id/softphone/return', { preHandler: finish }, async (request, reply) => {
     if (!parseOr400(emptyBody, request.body ?? {}, reply, 'agency')) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
     if (!actor) return reply;

@@ -290,7 +290,7 @@ void _allLifecycleCodesListed;
 
 /** Why a soft-phone route refused. */
 export type AgencySoftphoneErrorCode =
-  /** 403. `agency_softphone_enabled` is off for this tenant/account (SP4). */
+  /** 403. `agency_softphone_enabled` is off for this tenant/account (SP4), on a route that starts work (open a session, dial, switch) or the recording / settings. Finishing a call is never refused by it. */
   | 'softphone_disabled'
   /** 400. `to` does not normalise to a dialable E.164 number. */
   | 'invalid_number'

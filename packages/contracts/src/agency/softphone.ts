@@ -471,13 +471,14 @@ export interface AgencySoftphoneSessionSummary {
 /** `GET /bootstrap`. */
 export interface AgencySoftphoneBootstrap {
   /**
-   * `agency_softphone_enabled` for the account, as the server reads it now. False
-   * while the caller still has a session or a call: the console then shows only
-   * what finishes it (hang up, the outcome, Return to campaign or Close), never
-   * the dial pad. Absent from a server that predates it; the console reads only
-   * `=== false`.
+   * `agency_softphone_enabled` for the caller's tenant and account, read by the public
+   * API layer. Bootstrap answers while it is off, as do the routes that FINISH work
+   * already started (hang up, details, outcome, Mark DNC, the call reads, the return
+   * to the campaign; docs/softphone.md §6), so an agent the flag was switched off
+   * under can finish their call: with `false` the console offers only that. Starting
+   * work (open a session, dial, switch) is refused `softphone_disabled`.
    */
-  softphone_enabled?: boolean;
+  softphone_enabled: boolean;
   taggable_campaigns: AgencySoftphoneCampaign[];
   untagged: AgencySoftphoneUntagged;
   /** Applies to every call, tagged or not. */

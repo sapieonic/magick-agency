@@ -18,6 +18,7 @@ import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { softphoneListQuerySchema, softphoneListQueryString } from '../helpers/softphone-list-query.js';
 import { decodeRawErrorBody, shapeMediaCall } from '../proxy-agency-calls.routes.js';
+import { createChildLogger } from '@magick-agency/observability';
 import {
   accountMediaGrants,
   actorQuery,
@@ -25,8 +26,11 @@ import {
   namesInTenant,
   requireSoftphoneEnabled,
   softphoneActorOrRefuse,
+  softphoneEnabled,
   withAgentName,
 } from './shared.js';
+
+const log = createChildLogger({ component: 'proxy-agency-softphone' });
 
 /** Where the console fetches a manual call's recording bytes (this plugin's route). */
 export function publicRecordingPath(callId: string): string {
@@ -62,16 +66,26 @@ function isDetailEnvelope(body: unknown): body is DetailEnvelope {
 
 export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise<void> {
   const dial = [requirePermission('agency.softphone.dial'), requireSoftphoneEnabled];
+  // Not flag-gated (`shared.ts`, `requireSoftphoneEnabled`): bootstrap and the call reads
+  // are what an agent finishing a call after the flag went off needs.
+  const finish = [requirePermission('agency.softphone.dial')];
 
   /**
    * GET /proxy/agency/softphone/bootstrap — taggable campaigns (an agent's active
    * staffing; every campaign of the account for a supervisor), the untagged caller IDs
    * and catalog, the call fields, the default country code, the caller's live session
-   * (`on_softphone`, a queued switch) and its live or unsettled call.
+   * (`on_softphone`, a queued switch) and its live or unsettled call, and
+   * `softphone_enabled` (the flag, read here). Answers while the flag is off, so the
+   * console can render the finish view for a call already placed; a flag read that
+   * fails reads as off (the narrower console).
    */
-  app.get('/softphone/bootstrap', { preHandler: dial }, async (request, reply) => {
+  app.get('/softphone/bootstrap', { preHandler: finish }, async (request, reply) => {
     const actor = softphoneActorOrRefuse(request, reply);
     if (!actor) return reply;
+    const enabled = await softphoneEnabled(request).catch((err: unknown) => {
+      log.error({ err, tenantId: request.tenantId }, 'soft-phone: the flag read failed — bootstrap reports it off');
+      return false;
+    });
     const result = await callCore({
       method: 'GET',
       path: '/agency/softphone/bootstrap',
@@ -80,11 +94,12 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
       accountId: request.accountId,
     });
     if (result.status >= 400) return reply.code(result.status).send(result.body);
-    const body = result.body as { call?: unknown };
+    const body = result.body as { call?: unknown; softphone_enabled?: boolean };
     if (isManualCallRow(body.call)) {
       const names = await namesInTenant([body.call.agent_user_id], request.tenantId!);
       body.call = withAgentName(body.call, names);
     }
+    body.softphone_enabled = enabled;
     return reply.send(body);
   });
 
@@ -94,7 +109,7 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
    * phone (digits), from, to (exclusive)`, plus the contract's `status` and
    * `disposition_code`. An agent naming another agent is refused (403).
    */
-  app.get('/softphone/calls', { preHandler: dial }, async (request, reply) => {
+  app.get('/softphone/calls', { preHandler: finish }, async (request, reply) => {
     const parsed = parseOr400(softphoneListQuerySchema, request.query ?? {}, reply, 'agency');
     if (!parsed) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
@@ -124,7 +139,7 @@ export async function registerSoftphoneReadRoutes(app: FastifyInstance): Promise
    * record only). 404 `call_not_found` for another agent's call (unless supervising),
    * another account's or tenant's, or none.
    */
-  app.get<{ Params: { id: string } }>('/softphone/calls/:id', { preHandler: dial }, async (request, reply) => {
+  app.get<{ Params: { id: string } }>('/softphone/calls/:id', { preHandler: finish }, async (request, reply) => {
     const actor = softphoneActorOrRefuse(request, reply);
     if (!actor) return reply;
     const result = await callCore({

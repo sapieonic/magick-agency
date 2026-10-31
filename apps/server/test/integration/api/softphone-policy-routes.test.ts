@@ -12,7 +12,10 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *     contacts (`dnc_listed` with the entry, `contact_in_flight` with the campaign);
  *  2. an untagged Mark DNC / `suppress` outcome writes an ACCOUNT-scoped row (never a
  *     tenant-wide one), read by the untagged pre-dial and by the account's campaign dials,
- *     and lands on the DNC audit trail (`dnc_entry.created`) once.
+ *     and lands on the DNC audit trail (`dnc_entry.created`) once;
+ *  3. `agency_softphone_enabled` switched off mid-call: the agent can still finish
+ *     (details, hang up, outcome, return) and bootstrap says `softphone_enabled: false`;
+ *     dialling, opening a session and switching are refused.
  */
 
 const mocks = vi.hoisted(() => {
@@ -64,6 +67,7 @@ import type { AppContext } from '../../../src/app-context.js';
 import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../../../src/bootstrap/agency.js';
 import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
+import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
 import { DncRegistry } from '../../../src/agency/dnc-registry.js';
 import { markDnc } from '../../../src/agency/dnc-mark.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
@@ -107,14 +111,20 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
   async function user(t: string, a: string, role: string): Promise<Who> {
     const u = await insertUser();
     await insertMembership({ user_id: u.id, tenant_id: t, account_id: a, role });
+    homeOf.set(u.id as string, a);
     return { id: u.id as string, tok: `tok:${u.firebase_uid as string}` };
   }
 
-  function headers(who: Who, acct = account): Record<string, string> {
+  /** The account a user's requests name (their membership's). */
+  const homeOf = new Map<string, string>();
+  function headers(who: Who): Record<string, string> {
+    const acct = homeOf.get(who.id) ?? account;
     return { authorization: `Bearer ${who.tok}`, 'x-tenant-id': tenant, 'x-account-id': acct, 'content-type': 'application/json' };
   }
   const post = (url: string, who: Who, body: unknown = {}) =>
     app.inject({ method: 'POST', url, headers: headers(who), payload: JSON.stringify(body) });
+  const patch = (url: string, who: Who, body: unknown) =>
+    app.inject({ method: 'PATCH', url, headers: headers(who), payload: JSON.stringify(body) });
   const get = (url: string, who: Who) => {
     const { 'content-type': _ct, ...h } = headers(who);
     return app.inject({ method: 'GET', url, headers: h });
@@ -367,6 +377,60 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     const trail = await auditRows('dnc_entry.created', rows[0].id);
     expect(trail).toHaveLength(1);
     expect(trail[0].details).toEqual({ manual_call_id: callId, scope: 'account', disposition_code: 'do_not_call' });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
+  // ── 3. The flag switched off under an agent mid-call (§6) ──────────────────────────
+  it('the flag off mid-call: details, hang-up, outcome and return still work; dial, open and switch are refused', async () => {
+    const dimmed = (await insertAccount({ tenant_id: tenant })).id as string;
+    await getTestPool().query(
+      `INSERT INTO account_settings (tenant_id, account_id, allow_recording, analyze_calls, max_concurrent_calls)
+       VALUES ($1, $2, true, true, 20)`, [tenant, dimmed]);
+    const agent = await user(tenant, dimmed, 'agent');
+    const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: dimmed });
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    expect(joined.statusCode, joined.body).toBe(201);
+    const sessionId = joined.json().session_id as string;
+    const station = await connect(joined.json().station_ws_url);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent)).statusCode).toBe(200);
+    const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811300030' });
+    expect(placed.statusCode, placed.body).toBe(201);
+    const callId = placed.json().id as string;
+    const leg = await legOf(callId);
+    answer(leg);
+    await waitFor('bridged', () => lastCall(station)?.state === 'bridged');
+
+    // Mid-call, the flag goes off for the account.
+    await getTestPool().query(
+      `INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, account_id, value)
+       VALUES ('agency_softphone_enabled', 'account', $1, $2, 'false'::jsonb)`, [tenant, dimmed]);
+    await getFeatureFlagService().invalidate({ tenantId: tenant });
+
+    // Starting anything new is refused…
+    const dial = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811300031' });
+    expect(dial.statusCode).toBe(403);
+    expect(dial.json().code).toBe('softphone_disabled');
+    expect((await post('/proxy/agency/softphone/sessions', agent)).json().code).toBe('softphone_disabled');
+    expect((await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent)).json().code).toBe('softphone_disabled');
+    // …and the console learns why, with the call it still has to finish.
+    const boot = await get('/proxy/agency/softphone/bootstrap', agent);
+    expect(boot.statusCode, boot.body).toBe(200);
+    expect(boot.json()).toMatchObject({ softphone_enabled: false, session: { session_id: sessionId, on_softphone: true }, call: { id: callId } });
+
+    // Finishing the call: details, hang-up, the reads, the outcome, Mark DNC, the return.
+    expect((await patch(`/proxy/agency/softphone/calls/${callId}`, agent, { notes: 'Wrapping up' })).statusCode).toBe(200);
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/hangup`, agent)).statusCode).toBe(200);
+    await carrierEnded(leg);
+    await waitFor('awaiting outcome', () => lastCall(station)?.requires_disposition);
+    expect((await get(`/proxy/agency/softphone/calls/${callId}`, agent)).statusCode).toBe(200);
+    expect((await get('/proxy/agency/softphone/calls', agent)).json().rows.map((r: { id: string }) => r.id)).toEqual([callId]);
+    const outcome = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, agent, { code: 'voicemail' });
+    expect(outcome.statusCode, outcome.body).toBe(200);
+    expect((await post(`/proxy/agency/softphone/calls/${callId}/dnc`, agent)).statusCode).toBe(200);
+    const back = await post(`/proxy/agency/sessions/${sessionId}/softphone/return`, agent);
+    expect(back.statusCode, back.body).toBe(200);
+    expect(back.json()).toMatchObject({ state: 'available', campaign_id: campaign.id });
+    await runtime.agents.set(sessionId, 'break');
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 

@@ -132,6 +132,9 @@ function logDncEntryCreated(
 
 export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise<void> {
   const dial = [requirePermission('agency.softphone.dial'), requireSoftphoneEnabled];
+  // Finishing a call already placed is never refused by the flag (`shared.ts`,
+  // `requireSoftphoneEnabled`): details, hang-up, the outcome and Mark DNC.
+  const finish = [requirePermission('agency.softphone.dial')];
 
   /**
    * POST /proxy/agency/softphone/calls → 201 the call. The pre-dial refusals (§4.1 step 2)
@@ -189,7 +192,7 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
   });
 
   /** PATCH /proxy/agency/softphone/calls/:id — call details and notes (not audited: no outcome is saved). */
-  app.patch<{ Params: { id: string } }>('/softphone/calls/:id', { preHandler: dial }, async (request, reply) => {
+  app.patch<{ Params: { id: string } }>('/softphone/calls/:id', { preHandler: finish }, async (request, reply) => {
     const parsed = parseOr400(detailsSchema, request.body ?? {}, reply, 'agency');
     if (!parsed) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
@@ -202,7 +205,7 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
   });
 
   /** POST /proxy/agency/softphone/calls/:id/hangup — idempotent once the call has ended. */
-  app.post<{ Params: { id: string } }>('/softphone/calls/:id/hangup', { preHandler: dial }, async (request, reply) => {
+  app.post<{ Params: { id: string } }>('/softphone/calls/:id/hangup', { preHandler: finish }, async (request, reply) => {
     if (!parseOr400(emptyBody, request.body ?? {}, reply, 'agency')) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
     if (!actor) return reply;
@@ -223,7 +226,7 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
   });
 
   /** POST /proxy/agency/softphone/calls/:id/disposition — the outcome; a supervisor may act on behalf. */
-  app.post<{ Params: { id: string } }>('/softphone/calls/:id/disposition', { preHandler: dial }, async (request, reply) => {
+  app.post<{ Params: { id: string } }>('/softphone/calls/:id/disposition', { preHandler: finish }, async (request, reply) => {
     const parsed = parseOr400(dispositionSchema, request.body, reply, 'agency');
     if (!parsed) return reply;
     const actor = softphoneActorOrRefuse(request, reply);
@@ -254,7 +257,7 @@ export async function registerSoftphoneCallRoutes(app: FastifyInstance): Promise
   });
 
   /** POST /proxy/agency/softphone/calls/:id/dnc — campaign scope when tagged, else the call's account. */
-  app.post<{ Params: { id: string } }>('/softphone/calls/:id/dnc', { preHandler: dial }, async (request, reply) => {
+  app.post<{ Params: { id: string } }>('/softphone/calls/:id/dnc', { preHandler: finish }, async (request, reply) => {
     const parsed = parseOr400(dncSchema, request.body ?? {}, reply, 'agency');
     if (!parsed) return reply;
     const actor = softphoneActorOrRefuse(request, reply);

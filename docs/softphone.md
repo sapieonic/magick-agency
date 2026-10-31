@@ -255,8 +255,14 @@ placed in the window, at the outcome.
 Public routes in `api/routes/proxy-agency-softphone.routes.ts` (with `proxy-agency-softphone/`),
 registered by the agency plugin under `/proxy/agency`; each runs an internal handler
 (`api/routes/agency/softphone.ts`, under `/api/v1/agency`) through `callCore` (B16). Every route
-authenticates, applies its RBAC floor, then requires `agency_softphone_enabled` (403
-`softphone_disabled`; after RBAC, so a caller without the permission is told that), validates its
+authenticates and applies its RBAC floor. The routes that START work — open a soft-phone session,
+place a call, switch a campaign session to the soft phone — and the recording and settings then
+require `agency_softphone_enabled` (403 `softphone_disabled`; after RBAC, so a caller without the
+permission is told that). The routes that FINISH work already started are not gated, so an agent
+the flag is switched off under mid-call is never stranded: details, hang-up, the outcome, Mark
+DNC, `GET /softphone/calls` and `/calls/:id`, `/sessions/:id/softphone/return`, and bootstrap,
+which reports the flag as `softphone_enabled` (the console shows only the finish view when it is
+`false`; a failed flag read reports `false`). Each route then validates its
 body or query (ids are UUIDs at the edge; a malformed `:id` is the family's not-found), and answers a
 runtime refusal as `{ error, code, message, ...fields }` with the status `errors.ts` names beside the
 code (`SOFTPHONE_REFUSAL_STATUS`, pinned against those comments). `503 dnc_unavailable` and `503 dial_failed`
