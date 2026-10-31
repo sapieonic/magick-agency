@@ -36,6 +36,7 @@ const { agencyContactRepository: contacts, agencyManualCallRepository: calls } =
   '../../../src/db/repositories/agency.repository.js'
 );
 const { resolveDispositionDecision } = await import('../../../src/agency/disposition-policy.js');
+const { applyNoOutcomeSettlement, noOutcomeSettlementFor } = await import('../../../src/agency/softphone/manual-settlement.js');
 const { withTransaction } = await import('@magick-agency/db/utils/transaction');
 const { CONTACT_PHONE_DIGITS_SQL } = await import('../../../src/db/repositories/agency/sql-fragments.js');
 
@@ -67,7 +68,7 @@ async function callOn(campaignId: string, contactId: string, claimed: boolean) {
 
 const settle = (manualCallId: string, decision: typeof SUPPRESS | null, placed = true) =>
   contacts.settleFromManual({
-    manualCallId, decision, placed, lastOutcome: 'connected', lastDisposition: decision ? 'code' : null,
+    manualCallId, decision, charge: placed ? 'attempt' : 'none', lastOutcome: 'connected', lastDisposition: decision ? 'code' : null,
   });
 
 describe('soft-phone roster contact (integration)', () => {
@@ -334,6 +335,77 @@ describe('soft-phone roster contact (integration)', () => {
     });
   });
 
+  // ── no outcome saved: the campaign path's retry rules (§5, "no outcome") ──────
+
+  describe('a call closed with no outcome (noOutcomeSettlementFor → applyNoOutcomeSettlement)', () => {
+    /** A claimed contact behind an ended, settled call with `call` overrides, on a campaign with `policy`. */
+    async function closed(call: Record<string, unknown>, policy: Record<string, unknown> = {}, contactOver: Record<string, unknown> = {}) {
+      const campaign = await insertAgencyCampaign({ retry_policy: JSON.stringify(policy) });
+      const contact = await insertAgencyContact(campaign.id, { state: 'in_flight', attempt_count: 1, ...contactOver });
+      const session = await insertSoftphoneSession();
+      const row = await insertManualCall(session, {
+        campaign_id: campaign.id, contact_id: contact.id, contact_claimed: true, contact_prior_state: 'pending',
+        state: 'ended', ended_at: new Date(), settled_at: new Date(), ...call,
+      });
+      const settlement = await noOutcomeSettlementFor(row as never, NOW);
+      return { contact, row, settlement, applied: settlement ? await applyNoOutcomeSettlement(row as never, settlement) : null };
+    }
+
+    it('never placed: released to the prior state, nothing charged, next_attempt_at kept', async () => {
+      const next = new Date('2026-11-01T00:00:00Z');
+      const { contact, settlement, applied } = await closed({ outcome: 'failed', dialed_at: null }, {}, { next_attempt_at: next });
+      expect(settlement).toEqual({ kind: 'release' });
+      expect(applied).toEqual({ contactId: contact.id, state: 'pending', charge: 'none' });
+      expect(await contactRow(contact.id)).toMatchObject({ state: 'pending', attempt_count: 1, our_fault_attempts: 0, next_attempt_at: next });
+    });
+
+    it('placed, unanswered: charged, pending after the tag policy\'s delay — not dialable at once', async () => {
+      const { contact, applied } = await closed(
+        { outcome: 'no_answer', dialed_at: new Date() }, { no_answer: { delay_minutes: 90, max_attempts: 5 } },
+      );
+      expect(applied).toMatchObject({ state: 'pending', charge: 'attempt' });
+      const c = await contactRow(contact.id);
+      expect(c).toMatchObject({ state: 'pending', attempt_count: 2, last_outcome: 'no_answer' });
+      expect(c.next_attempt_at.getTime()).toBe(NOW.getTime() + 90 * 60_000);
+    });
+
+    it('placed, the ring hung up by the agent: the our-fault ledger, the allowance untouched', async () => {
+      const { contact, applied } = await closed({ outcome: 'canceled', dialed_at: new Date() });
+      expect(applied).toMatchObject({ state: 'pending', charge: 'our_fault' });
+      const c = await contactRow(contact.id);
+      expect(c).toMatchObject({ attempt_count: 1, our_fault_attempts: 1 });
+      expect(c.next_attempt_at.getTime()).toBe(NOW.getTime() + 5 * 60_000);
+    });
+
+    it('a lapsed bridged call: charged, connected → completed by default, no_disposition recorded', async () => {
+      const { contact, applied } = await closed({
+        outcome: 'connected', dialed_at: new Date(), bridged_at: new Date(), disposition_code: 'no_disposition',
+        disposition_source: 'campaign',
+      });
+      expect(applied).toMatchObject({ state: 'completed', charge: 'attempt' });
+      expect(await contactRow(contact.id)).toMatchObject({
+        state: 'completed', attempt_count: 2, last_outcome: 'connected', last_disposition: 'no_disposition',
+      });
+    });
+
+    it('a DNC mark mid-call still wins: the claim lands suppressed, never pending', async () => {
+      const { contact } = await closed({ outcome: 'no_answer', dialed_at: new Date() }, {}, { suppressed_reason: 'dnc' });
+      expect((await contactRow(contact.id)).state).toBe('suppressed');
+    });
+
+    it('settleFromManual charge: our_fault bumps our_fault_attempts, none bumps nothing', async () => {
+      const campaign = await insertAgencyCampaign();
+      const a = await insertAgencyContact(campaign.id, { state: 'in_flight', attempt_count: 1 });
+      const callA = await callOn(campaign.id, a.id, true);
+      await contacts.settleFromManual({ manualCallId: callA.id, decision: RETRY, charge: 'our_fault', lastOutcome: 'canceled', lastDisposition: null });
+      expect(await contactRow(a.id)).toMatchObject({ attempt_count: 1, our_fault_attempts: 1 });
+      const b = await insertAgencyContact(campaign.id, { state: 'in_flight', attempt_count: 1 });
+      const callB = await callOn(campaign.id, b.id, true);
+      await contacts.settleFromManual({ manualCallId: callB.id, decision: RETRY, charge: 'none', lastOutcome: 'failed', lastDisposition: null });
+      expect(await contactRow(b.id)).toMatchObject({ attempt_count: 1, our_fault_attempts: 0 });
+    });
+  });
+
   it('the outcome and the contact settle in ONE transaction: a failure rolls back both', async () => {
     const campaign = await insertAgencyCampaign();
     const contact = await insertAgencyContact(campaign.id, { state: 'in_flight' });
@@ -346,7 +418,7 @@ describe('soft-phone roster contact (integration)', () => {
       }, { client });
       expect(saved.ok).toBe(true);
       await contacts.settleFromManual({
-        manualCallId: call.id, decision: TERMINAL, placed: true, lastOutcome: 'connected', lastDisposition: 'sold',
+        manualCallId: call.id, decision: TERMINAL, charge: 'attempt', lastOutcome: 'connected', lastDisposition: 'sold',
       }, { client });
       throw new Error('DNC write failed');
     }, { pool: getTestPool() })).rejects.toThrow('DNC write failed');

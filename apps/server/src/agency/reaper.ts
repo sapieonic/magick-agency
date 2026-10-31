@@ -11,6 +11,11 @@ import { AUTO_DISPOSITION_CODE } from './disposition.js';
 import { requiresDisposition } from './outcome-classifier.js';
 import { resolveOurFaultRedial, resolveRetryDecision } from './retry-policy.js';
 import {
+  applyNoOutcomeSettlement,
+  noOutcomeSettlementFor,
+  type NoOutcomeSettled,
+} from './softphone/manual-settlement.js';
+import {
   agencyOurFaultRetirementTotal,
 } from '@magick-agency/observability/metrics/agency';
 
@@ -442,11 +447,16 @@ export class AgencyReaper {
    *   can still write it up after reconnecting), its contact claim KEPT.
    * - **Lapses** (`lapseUnsettled`): an ended call with no outcome after
    *   `SOFTPHONE_OUTCOME_LAPSE_MS`, or whose session left, is closed (a bridged one
-   *   `no_disposition`).
+   *   `no_disposition`); one that never bridged, after only
+   *   `MANUAL_UNANSWERED_SETTLE_GRACE_MS` (the dialer's own settle failed).
    *
    * Both return rows and release nothing; here, for every row that is now settled,
-   * its contact claim goes back to the recorded prior state (`releaseManualClaim`:
-   * no attempt charged), and `manual.onClosed` clears the Redis claim. Each closed
+   * its claimed contact is settled as any call closed without an outcome is
+   * (`manual-settlement.ts`): a dial the carrier never saw gives the claim back
+   * uncharged; a placed one is charged and the tag's retry policy decides — a lapsed
+   * `connected` call `completed` by the default policy, an unbridged orphan back on
+   * the roster on the our-fault ledger, as {@link requeueOrphanedContact} does for an
+   * attempt. `manual.onClosed` clears the Redis claim. Each closed
    * row gets an `audit_logs` system event (`agency_manual_call.orphaned` /
    * `.lapsed`, actor `system:agency-reaper`): nobody pressed anything, and the
    * record of why a call ended or a contact was given back is the audit question.
@@ -484,12 +494,14 @@ export class AgencyReaper {
   private async closeManualRows(rows: readonly AgencyManualCallRecord[], why: 'orphaned' | 'lapsed'): Promise<void> {
     if (rows.length === 0) return;
     for (const row of rows) {
-      let released: { contactId: string; state: string } | null = null;
+      let settled: NoOutcomeSettled | null = null;
       if (row.settled_at !== null && row.contact_claimed) {
-        released = await agencyContactRepository.releaseManualClaim(row.id).catch((err) => {
-          log.error({ err, manualCallId: row.id }, 'Failed to release a soft-phone contact claim — the stranded-contact sweep requeues it');
-          return null;
-        });
+        settled = await noOutcomeSettlementFor(row)
+          .then((settlement) => (settlement ? applyNoOutcomeSettlement(row, settlement) : null))
+          .catch((err) => {
+            log.error({ err, manualCallId: row.id }, 'Failed to settle a soft-phone contact claim — the stranded-contact sweep requeues it');
+            return null;
+          });
       }
       auditLogger.log({
         ...(row.webrtc_call_id ? { callId: row.webrtc_call_id } : {}),
@@ -508,7 +520,10 @@ export class AgencyReaper {
           settled: row.settled_at !== null,
           bridged: row.bridged_at !== null,
           disposition_code: row.disposition_code,
-          contact_released_to: released?.state ?? null,
+          // Where the claimed contact went, and which ledger paid: `none` for a dial
+          // the carrier never saw (claim given back), else the retry policy's answer.
+          contact_state: settled?.state ?? null,
+          contact_charged: settled?.charge ?? null,
         },
       });
     }

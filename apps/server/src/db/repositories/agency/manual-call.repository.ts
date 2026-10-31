@@ -52,6 +52,14 @@ const MANUAL_CALL_STATE_ORDER: readonly AgencyManualCallState[] = [
 ];
 const STATE_ORDER_SQL = `ARRAY[${MANUAL_CALL_STATE_ORDER.map((st) => `'${st}'`).join(', ')}]::varchar[]`;
 
+/**
+ * How long after it ended the lapse sweep leaves an unsettled call that never
+ * bridged for the dialer's own settle (§4.1 step 6) before closing it itself. The
+ * dialer's settle takes milliseconds; this is the margin that keeps the sweep from
+ * racing it, and it is short because such a call owes nothing and holds the session.
+ */
+export const MANUAL_UNANSWERED_SETTLE_GRACE_MS = 30_000;
+
 /** UUID shape, so a malformed id from a path never reaches a `uuid` comparison (22P02). */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (value: string): boolean => UUID_RE.test(value);
@@ -269,6 +277,13 @@ export class AgencyManualCallRepository {
    * a second terminal event writes nothing and gets null, so the caller re-reads
    * rather than double-settling.
    *
+   * `unplaced` says the carrier never accepted the dial (the bridge refused it
+   * before the carrier, the carrier refused it, or it was abandoned before either):
+   * `dialed_at` is cleared, so it keeps exactly one meaning for every reader — the
+   * usage counts' dials (SP5), the contact settlement's "placed" — "the carrier took
+   * this dial". It is stamped by the `dialing` write just before the bridge is asked,
+   * and only the dialer knows when that ask failed.
+   *
    * Does NOT settle. An unanswered call with no outcome owed is then closed with
    * {@link settleWithoutDisposition} (and its contact with `settleFromManual`); a
    * bridged one waits for its outcome or the lapse.
@@ -280,6 +295,7 @@ export class AgencyManualCallRepository {
       endReason: AgencyManualCallEndReason;
       talkSeconds: number | null;
       endedAt?: Date;
+      unplaced?: boolean;
     },
     deps: { client?: Db } = {},
   ): Promise<AgencyManualCallRecord | null> {
@@ -290,10 +306,11 @@ export class AgencyManualCallRepository {
               outcome = COALESCE($3, outcome),
               end_reason = $4,
               talk_seconds = $5,
+              dialed_at = CASE WHEN $6::boolean THEN NULL ELSE dialed_at END,
               updated_at = now()
         WHERE id = $1 AND state <> 'ended'
       RETURNING *`,
-      [id, input.endedAt ?? null, input.outcome, input.endReason, input.talkSeconds],
+      [id, input.endedAt ?? null, input.outcome, input.endReason, input.talkSeconds, input.unplaced === true],
     );
     return rows[0] ?? null;
   }
@@ -438,9 +455,16 @@ export class AgencyManualCallRepository {
    * its tag implies and no `dispositioned_by_user_id` (nobody recorded it — the
    * attempt's `recordAutoDisposition` rule); one that never bridged just settles.
    *
-   * **Releases nothing.** It returns the rows it closed; the caller releases each
-   * one's contact claim (`releaseManualClaim`, for `contact_claimed` rows) and its
-   * Redis `manual` field. A crash between the two leaves the contact `in_flight`
+   * A call that never bridged owes NO outcome, so it is not given the 30 minutes: it
+   * is closed once `unansweredGraceMs` has passed since it ended. The dialer settles
+   * it the instant it ends (§4.1 step 6); this is the backstop for a settle that
+   * failed, which otherwise left the session refusing every dial `outcome_pending`
+   * for half an hour with no outcome pad to clear it. The grace only keeps this
+   * sweep from racing the dialer's own settle on a call that ended a moment ago.
+   *
+   * **Releases nothing.** It returns the rows it closed; the caller settles each
+   * one's contact claim (`contact_claimed` rows; `manual-settlement.ts`) and clears
+   * its Redis `manual` field. A crash between the two leaves the contact `in_flight`
    * behind a settled call, which the stranded-contact sweep then requeues.
    *
    * The pick is a MATERIALIZED `FOR UPDATE SKIP LOCKED` CTE, run once, so two
@@ -449,7 +473,7 @@ export class AgencyManualCallRepository {
    * re-check) or waits for the row.
    */
   async lapseUnsettled(
-    opts: { lapseMs?: number; limit?: number } = {},
+    opts: { lapseMs?: number; unansweredGraceMs?: number; limit?: number } = {},
   ): Promise<AgencyManualCallRecord[]> {
     const { rows } = await getPool().query<AgencyManualCallRecord>(
       `WITH picked AS MATERIALIZED (
@@ -459,6 +483,8 @@ export class AgencyManualCallRepository {
           WHERE m.settled_at IS NULL
             AND m.state = 'ended'
             AND (m.ended_at < now() - make_interval(secs => $1::double precision / 1000)
+                 OR (m.bridged_at IS NULL
+                     AND m.ended_at < now() - make_interval(secs => $3::double precision / 1000))
                  OR s.left_at IS NOT NULL)
           ORDER BY m.ended_at
             FOR UPDATE OF m SKIP LOCKED
@@ -476,7 +502,7 @@ export class AgencyManualCallRepository {
          FROM picked
         WHERE m.id = picked.id AND m.settled_at IS NULL AND m.state = 'ended'
       RETURNING m.*`,
-      [opts.lapseMs ?? SOFTPHONE_OUTCOME_LAPSE_MS, opts.limit ?? 500],
+      [opts.lapseMs ?? SOFTPHONE_OUTCOME_LAPSE_MS, opts.limit ?? 500, opts.unansweredGraceMs ?? MANUAL_UNANSWERED_SETTLE_GRACE_MS],
     );
     return rows;
   }

@@ -297,7 +297,7 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     expect(different.ok ? null : different.refusal.code).toBe('call_settled');
   });
 
-  it('an unanswered call settles at once: contact back to pending with one attempt charged, claim released', async () => {
+  it('an unanswered call settles at once: one attempt charged, the retry policy\'s delay before pacing redials, claim released', async () => {
     const agent = randomUUID();
     const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT, disposition_catalog: CATALOG });
     const contact = await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100002' });
@@ -315,6 +315,9 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     const c = await contactRow(contact.id);
     expect(c.state).toBe('pending');
     expect(c.attempt_count).toBe(1);
+    // The default policy's `no_answer` delay (60 min), not "dialable now": pacing must
+    // not ring the customer the agent just rang.
+    expect(Math.abs(c.next_attempt_at.getTime() - (Date.now() + 60 * 60_000))).toBeLessThan(60_000);
     expect(await runtime.agents.manualCallOf(session.id)).toBeNull();
     // An unanswered call owes nothing: no outcome can be saved for it.
     const refused = await runtime.softphone.submitDisposition(actor(agent), placed.call.id, { code: 'interested' });
@@ -386,8 +389,9 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
     expect(refusedByCarrier.call).toMatchObject({ state: 'ended', outcome: 'failed', requires_disposition: false });
     expect(refusedByCarrier.call.settled_at).not.toBeNull();
     expect(await runtime.agents.manualCallOf(session.id)).toBeNull();
-    // Not a placed dial: no attempt charged.
+    // Not a placed dial: no attempt charged, and no dial in the usage counts (SP5).
     expect(await contactRow(contact.id)).toMatchObject({ state: 'pending', attempt_count: 0 });
+    expect((await manualRow(refusedByCarrier.call.id)).dialed_at).toBeNull();
 
     // Redis cannot answer the session claim: dial_failed (retry), not "not on the soft phone".
     const claim = vi.spyOn(runtime.agents, 'claimManual').mockResolvedValueOnce({ ok: false, reason: 'unavailable' });

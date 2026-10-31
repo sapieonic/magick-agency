@@ -509,7 +509,7 @@ export class SoftphoneService {
         const settled = await agencyContactRepository.settleFromManual({
           manualCallId: row.id,
           decision: { contactState: decision.contactState, nextAttemptAt, suppressedReason: decision.suppressedReason },
-          placed: row.dialed_at !== null,
+          charge: row.dialed_at !== null ? 'attempt' : 'none',
           lastOutcome: row.outcome,
           lastDisposition: entry.code,
         }, { client });

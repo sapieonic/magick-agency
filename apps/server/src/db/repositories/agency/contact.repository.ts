@@ -365,13 +365,16 @@ export class AgencyContactRepository {
    * `suppressed` (+ `suppressed_reason`), terminal / success → `completed`, callback
    * or retry → `pending` at `nextAttemptAt`, attempts spent → `exhausted` — through
    * the same DNC freeze {@link markState} has. `null` → back to `pending` unchanged
-   * (`next_attempt_at` kept). Either way `attempt_count + 1` when the call was
-   * placed (`placed`: the manual call has a `dialed_at`), and `last_outcome` /
-   * `last_disposition` land.
+   * (`next_attempt_at` kept). Either way the call is charged to the ledger `charge`
+   * names — `attempt` (`attempt_count + 1`, the customer's allowance: a placed call),
+   * `our_fault` (`our_fault_attempts + 1`: a placed call OUR side ended before it
+   * bridged, the campaign path's rule in `contact-settlement.ts`) or `none` — and
+   * `last_outcome` / `last_disposition` land.
    *
-   * ⚠️ `attemptsUsed` for `resolveDispositionDecision` is therefore the contact's
-   * stored `attempt_count` PLUS this call when placed — this method does the bump,
-   * the decision is computed before it (the claim keeps anything else off the row).
+   * ⚠️ `attemptsUsed` for `resolveDispositionDecision` / `resolveRetryDecision` (and
+   * `ourFaultAttemptsUsed` for `resolveOurFaultRedial`) is therefore the contact's
+   * stored count PLUS this call — this method does the bump, the decision is computed
+   * before it (the claim keeps anything else off the row).
    *
    * **Linked only** (not claimed, or the claim is gone): only `suppressed` applies,
    * from any state but an already DNC-suppressed one, which keeps its reason; every
@@ -396,8 +399,12 @@ export class AgencyContactRepository {
         nextAttemptAt: Date | null;
         suppressedReason: string | null;
       } | null;
-      /** The dial reached the carrier (`dialed_at` set): counts against the retry budget. */
-      placed: boolean;
+      /**
+       * Which ledger this call is charged to: `attempt` for a placed call (`dialed_at`
+       * set), `our_fault` for a placed call our side ended before it bridged, `none`
+       * for a dial the carrier never saw. Only the claimed arm charges.
+       */
+      charge: 'attempt' | 'our_fault' | 'none';
       lastOutcome: string | null;
       lastDisposition: string | null;
     },
@@ -433,7 +440,9 @@ export class AgencyContactRepository {
                           WHEN cur.held THEN COALESCE($2::varchar, 'pending')
                           ELSE 'suppressed'
                         END,
-                attempt_count = c.attempt_count + CASE WHEN cur.held AND $3::boolean THEN 1 ELSE 0 END,
+                attempt_count = c.attempt_count + CASE WHEN cur.held AND $3::varchar = 'attempt' THEN 1 ELSE 0 END,
+                our_fault_attempts = c.our_fault_attempts
+                                     + CASE WHEN cur.held AND $3::varchar = 'our_fault' THEN 1 ELSE 0 END,
                 last_outcome = CASE WHEN cur.held THEN COALESCE($4::varchar, c.last_outcome) ELSE c.last_outcome END,
                 last_disposition = COALESCE($5::varchar, c.last_disposition),
                 next_attempt_at = CASE
@@ -458,7 +467,7 @@ export class AgencyContactRepository {
       [
         input.manualCallId,
         d?.contactState ?? null,
-        input.placed,
+        input.charge,
         input.lastOutcome,
         input.lastDisposition,
         d?.nextAttemptAt ?? null,

@@ -17,12 +17,15 @@
  *   wire row (contact `context` and `prior_attempts` included).
  * - **Ended.** The classified outcome (`classifyAttemptOutcome`, the attempt's
  *   classifier) and why; a call that never bridged owes no outcome and settles at
- *   once — the row, the roster contact (`settleFromManual` with no decision: back
- *   to `pending`, one attempt charged when the dial was placed) and then the
- *   Redis claim. A bridged call waits for its outcome; its claim is kept.
- * - **A dial the bridge refused before the carrier** (concurrency, a dead socket)
- *   is ended `failed`, its contact claim RELEASED (no attempt charged: nothing was
- *   dialled) and the Redis claim cleared; the caller answers the refusal.
+ *   once — the row, the roster contact (`manual-settlement.ts`: the tag's retry
+ *   policy on the charged attempt, as a campaign call's no-answer gets, so pacing
+ *   does not ring the customer straight back) and then the Redis claim. A bridged
+ *   call waits for its outcome; its claim is kept.
+ * - **A dial the bridge refused before the carrier** (concurrency, a dead socket),
+ *   or the carrier refused outright, is ended `failed` and UNPLACED (`dialed_at`
+ *   cleared: it is no dial in the usage counts), its contact claim RELEASED (no
+ *   attempt charged: nothing was dialled) and the Redis claim cleared; the caller
+ *   answers the refusal.
  */
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
@@ -45,6 +48,7 @@ import { DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
 import type { StationRegistry } from '../station-registry.js';
 import type { AgentStateMachine } from '../agent-state-machine.js';
 import { classifyAttemptOutcome } from '../outcome-classifier.js';
+import { applyNoOutcomeSettlement, noOutcomeSettlementFor } from './manual-settlement.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
 
@@ -58,6 +62,11 @@ const CONCURRENCY_REFUSALS = new Set([
 
 /** Bridge outcomes that are not a hang-up by either party: the call was ended FOR them. */
 const SYSTEM_ENDS = new Set(['service_shutdown', 'system_rebooted', 'stuck_active_call', 'max_duration_reached']);
+
+/** Tries at settling a call that owes no outcome before leaving it to the lapse sweep. */
+const SETTLE_ATTEMPTS = 3;
+/** The pause before the second try; the third waits twice as long. */
+const SETTLE_RETRY_MS = 250;
 
 /** Who asked for the end, when someone did (`hangup`). */
 type EndRequester = 'agent' | 'supervisor';
@@ -340,27 +349,26 @@ export class ManualDialer {
     await this.serial(manualCallId, () => this.abandonUnplaced(manualCallId, { outcome: 'canceled', endReason: 'failed' }));
   }
 
-  /** End, release and settle a call the carrier never saw (on its chain). */
+  /**
+   * End, release and settle a call the carrier never saw (on its chain): `unplaced`,
+   * so `dialed_at` is cleared and the contact's claim is given back uncharged.
+   *
+   * The call stays in {@link live} until its `ended` row is written (the `finally`),
+   * so the periodic orphan sweep, which spares this process's live calls, cannot end
+   * it `orphaned` in between.
+   */
   private async abandonUnplaced(
     manualCallId: string,
     how: { outcome: AgencyManualCallOutcome; endReason: AgencyManualCallEndReason } = { outcome: 'failed', endReason: 'failed' },
   ): Promise<void> {
-    this.live.delete(manualCallId);
-    const ended = await agencyManualCallRepository.end(manualCallId, { ...how, talkSeconds: null });
-    if (!ended) return;
-    const client = await getPool().connect();
+    let ended: AgencyManualCallRecord | null;
     try {
-      await client.query('BEGIN');
-      if (ended.contact_claimed) await agencyContactRepository.releaseManualClaim(ended.id, { client });
-      await agencyManualCallRepository.settleWithoutDisposition(ended.id, { client });
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      log.error({ err, manualCallId }, 'Could not settle an unplaced soft-phone call — the lapse sweep closes it');
+      ended = await agencyManualCallRepository.end(manualCallId, { ...how, talkSeconds: null, unplaced: true });
     } finally {
-      client.release();
+      this.live.delete(manualCallId);
     }
-    await this.agents.releaseManual(ended.session_id, ended.id);
+    if (!ended) return;
+    await this.closeWithoutOutcome(ended);
     const fresh = await agencyManualCallRepository.findById(manualCallId, { tenantId: ended.tenant_id, accountId: ended.account_id });
     if (fresh) await this.sendFrame(fresh);
   }
@@ -382,59 +390,85 @@ export class ManualDialer {
   }
 
   private async onEnded(entry: LiveManualCall, ev: WebRtcLifecycleEvent): Promise<void> {
-    this.live.delete(entry.id);
     const scope = { tenantId: entry.tenantId, accountId: entry.accountId };
-    const before = await agencyManualCallRepository.findById(entry.id, scope);
-    if (!before) return;
-    const bridged = before.bridged_at !== null;
-    const outcome = classifyAttemptOutcome({
-      status: ev.status ?? 'failed',
-      outcome: ev.outcome,
-      errorCode: ev.errorCode,
-      errorMessage: ev.errorMessage,
-      answered: ev.answered,
-      bridged,
-    });
-    const ended = await agencyManualCallRepository.end(entry.id, {
-      outcome,
-      endReason: manualEndReasonFor(outcome, ev.outcome, entry.endRequestedBy),
-      talkSeconds: typeof ev.talkTimeSeconds === 'number' ? Math.max(0, Math.round(ev.talkTimeSeconds)) : null,
-    });
+    let before: AgencyManualCallRecord | null = null;
+    let ended: AgencyManualCallRecord | null = null;
+    let outcome: AgencyManualCallOutcome | null = null;
+    // The call leaves `live` only once its `ended` row is written. Until then it is
+    // this process's live call, and the periodic orphan sweep (which spares those)
+    // cannot end a long call `orphaned` mid-teardown and lose its real outcome and
+    // talk time. `finally`, so a read or write that throws does not keep it there
+    // forever: the orphan sweep then closes the row.
+    try {
+      before = await agencyManualCallRepository.findById(entry.id, scope);
+      if (!before) return;
+      outcome = classifyAttemptOutcome({
+        status: ev.status ?? 'failed',
+        outcome: ev.outcome,
+        errorCode: ev.errorCode,
+        errorMessage: ev.errorMessage,
+        answered: ev.answered,
+        bridged: before.bridged_at !== null,
+      });
+      ended = await agencyManualCallRepository.end(entry.id, {
+        outcome,
+        endReason: manualEndReasonFor(outcome, ev.outcome, entry.endRequestedBy),
+        talkSeconds: typeof ev.talkTimeSeconds === 'number' ? Math.max(0, Math.round(ev.talkTimeSeconds)) : null,
+        // The carrier refused the dial outright: it was never placed (SP5 meters
+        // nothing for it, and no attempt is charged).
+        unplaced: ev.outcome === 'telephony_init_failed' && !ev.answered && before.bridged_at === null,
+      });
+    } finally {
+      this.live.delete(entry.id);
+    }
     // Already ended (the orphan sweep got there first): report what is there.
     const row = ended ?? before;
-    if (ended && ended.bridged_at === null) {
-      // The carrier's own refusal is not a placed dial: no attempt is charged.
-      await this.settleUnanswered(ended, ended.dialed_at !== null && ev.outcome !== 'telephony_init_failed');
-    }
-    log.info({ manualCallId: entry.id, outcome, bridged, owesOutcome: ended?.bridged_at != null }, 'Soft-phone call ended');
+    if (ended && ended.bridged_at === null) await this.closeWithoutOutcome(ended);
+    log.info({ manualCallId: entry.id, outcome, bridged: before.bridged_at !== null, owesOutcome: ended?.bridged_at != null }, 'Soft-phone call ended');
     const fresh = await agencyManualCallRepository.findById(entry.id, scope);
     await this.sendFrame(fresh ?? row);
   }
 
   /**
-   * Close an ended call that owes no outcome (§4.1 step 6): the row, its contact
-   * (the "none" row of §5), in one transaction; then the Redis claim.
+   * Close an ended call that owes no outcome (§4.1 steps 4 and 6): settle the row and
+   * its claimed contact in one transaction — the claim given back for a dial that was
+   * never placed, the tag's retry policy for one that was (`manual-settlement.ts`) —
+   * then clear the Redis claim.
+   *
+   * Tried {@link SETTLE_ATTEMPTS} times: until it lands the session refuses every
+   * dial `outcome_pending` with no outcome pad to clear it. If every try fails the
+   * lapse sweep closes it within `MANUAL_UNANSWERED_SETTLE_GRACE_MS` plus a sweep.
    */
-  private async settleUnanswered(row: AgencyManualCallRecord, placed: boolean): Promise<void> {
-    const client = await getPool().connect();
-    let settled = false;
-    try {
-      await client.query('BEGIN');
-      const done = await agencyManualCallRepository.settleWithoutDisposition(row.id, { client });
-      if (done && done.contact_claimed) {
-        await agencyContactRepository.settleFromManual({
-          manualCallId: row.id, decision: null, placed, lastOutcome: row.outcome, lastDisposition: null,
-        }, { client });
+  private async closeWithoutOutcome(row: AgencyManualCallRecord): Promise<void> {
+    for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt++) {
+      const client = await getPool().connect().catch((err: unknown) => {
+        log.warn({ err, manualCallId: row.id, attempt }, 'Could not reach the database to settle a soft-phone call');
+        return null;
+      });
+      if (client) {
+        let settled: boolean | null = null;
+        try {
+          const settlement = await noOutcomeSettlementFor(row);
+          await client.query('BEGIN');
+          const done = await agencyManualCallRepository.settleWithoutDisposition(row.id, { client });
+          if (done && settlement) await applyNoOutcomeSettlement(done, settlement, { client });
+          await client.query('COMMIT');
+          settled = done !== null;
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => undefined);
+          log.warn({ err, manualCallId: row.id, attempt }, 'Could not settle a soft-phone call that owes no outcome');
+        } finally {
+          client.release();
+        }
+        // Settled here, or by someone else (the lapse sweep): either way it is done.
+        if (settled !== null) {
+          if (settled) await this.agents.releaseManual(row.session_id, row.id);
+          return;
+        }
       }
-      await client.query('COMMIT');
-      settled = done !== null;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      log.error({ err, manualCallId: row.id }, 'Could not settle an unanswered soft-phone call — the lapse sweep closes it');
-    } finally {
-      client.release();
+      if (attempt < SETTLE_ATTEMPTS) await new Promise((r) => setTimeout(r, SETTLE_RETRY_MS * attempt));
     }
-    if (settled) await this.agents.releaseManual(row.session_id, row.id);
+    log.error({ manualCallId: row.id }, 'Could not settle a soft-phone call that owes no outcome — the lapse sweep closes it');
   }
 
   // ─── Reconnect and sweeps ─────────────────────────────────────────────────

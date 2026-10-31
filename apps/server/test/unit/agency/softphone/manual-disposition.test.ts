@@ -5,6 +5,7 @@ import {
 } from '../../../../src/agency/softphone/call-fields.js';
 import {
   manualDispositionDecision,
+  manualNoOutcomeSettlement,
   prepareManualDisposition,
   resolveManualCatalog,
 } from '../../../../src/agency/softphone/manual-disposition.js';
@@ -168,6 +169,50 @@ describe('the roster decision', () => {
       callbackAt: new Date('2026-10-31T10:00:00Z'), placed: true, contact: null, tag: null,
     });
     expect(u.nextAttemptAt?.toISOString()).toBe('2026-10-31T10:00:00.000Z');
+  });
+});
+
+describe('a call that settles with no outcome (§5: the campaign path\'s retry rules)', () => {
+  const contact = { attempt_count: 1, our_fault_attempts: 0 };
+  const base = { placed: true, bridged: false, policy: {}, contact, now: NOW } as const;
+
+  it('never placed: the claim is given back, nothing charged, whatever the outcome', () => {
+    expect(manualNoOutcomeSettlement({ ...base, placed: false, outcome: 'failed' })).toEqual({ kind: 'release' });
+    expect(manualNoOutcomeSettlement({ ...base, placed: false, outcome: 'no_answer' })).toEqual({ kind: 'release' });
+  });
+
+  it('placed and unanswered: the customer\'s allowance, the policy\'s delay on stored + 1', () => {
+    const r = manualNoOutcomeSettlement({ ...base, outcome: 'no_answer' });
+    expect(r).toMatchObject({ kind: 'settle', charge: 'attempt', decision: { contactState: 'pending', reason: 'retry_scheduled' } });
+    expect(r.kind === 'settle' && r.decision.nextAttemptAt?.toISOString()).toBe('2026-10-30T11:00:00.000Z'); // default 60 min
+    const configured = manualNoOutcomeSettlement({ ...base, outcome: 'busy', policy: { busy: { delay_minutes: 15, max_attempts: 2 } } });
+    expect(configured).toMatchObject({ charge: 'attempt', decision: { contactState: 'exhausted' } }); // 1 + 1 >= 2
+    expect(manualNoOutcomeSettlement({ ...base, outcome: 'invalid' }))
+      .toMatchObject({ charge: 'attempt', decision: { contactState: 'suppressed', suppressedReason: 'invalid' } });
+  });
+
+  it('placed and ended by our side before the bridge: the our-fault ledger, never the allowance', () => {
+    for (const outcome of ['canceled', 'agent_disconnected'] as const) {
+      const r = manualNoOutcomeSettlement({ ...base, outcome });
+      expect(r).toMatchObject({ kind: 'settle', charge: 'our_fault', decision: { contactState: 'pending' } });
+      expect(r.kind === 'settle' && r.decision.nextAttemptAt?.toISOString()).toBe('2026-10-30T10:05:00.000Z');
+    }
+    expect(manualNoOutcomeSettlement({ ...base, outcome: 'canceled', contact: { attempt_count: 0, our_fault_attempts: 2 } }))
+      .toMatchObject({ charge: 'our_fault', decision: { contactState: 'exhausted', reason: 'our_fault_bound_reached' } });
+  });
+
+  it('an unbridged orphan is the reaper\'s rule: our fault, back on the roster at once', () => {
+    const r = manualNoOutcomeSettlement({ ...base, outcome: 'orphaned' });
+    expect(r).toMatchObject({ charge: 'our_fault', decision: { contactState: 'pending' } });
+    expect(r.kind === 'settle' && r.decision.nextAttemptAt?.getTime()).toBe(NOW.getTime());
+  });
+
+  it('a lapsed bridged call: the allowance, and connected is never retried by default', () => {
+    expect(manualNoOutcomeSettlement({ ...base, bridged: true, outcome: 'connected' }))
+      .toMatchObject({ charge: 'attempt', decision: { contactState: 'completed', reason: 'outcome_not_retryable' } });
+    // A bridged agent drop is a conversation, not our-fault-before-bridge.
+    expect(manualNoOutcomeSettlement({ ...base, bridged: true, outcome: 'agent_disconnected' }))
+      .toMatchObject({ charge: 'attempt' });
   });
 });
 

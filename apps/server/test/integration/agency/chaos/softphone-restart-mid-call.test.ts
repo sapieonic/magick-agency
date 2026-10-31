@@ -11,13 +11,13 @@ import { randomUUID } from 'node:crypto';
  * startup reaper must reconstruct a truthful picture from exactly that:
  *
  *  - a call that never bridged is ended `orphaned` AND settled; its contact goes
- *    back to the state it was claimed from with NO attempt charged, and its Redis
- *    claim is cleared — so the agent can dial again;
+ *    back on the roster with NO attempt charged (our restart: the our-fault ledger),
+ *    and its Redis claim is cleared — so the agent can dial again;
  *  - a call that BRIDGED is ended `orphaned` and left awaiting its outcome (the
  *    agent talked to the customer): its contact claim and Redis claim are KEPT, the
  *    agent writes it up after reconnecting and the outcome settles the contact;
  *  - if nobody writes it up, the lapse sweep closes it `no_disposition` after
- *    `SOFTPHONE_OUTCOME_LAPSE_MS` and gives the contact back.
+ *    `SOFTPHONE_OUTCOME_LAPSE_MS` and the tag's retry policy settles the contact.
  *
  * Real Postgres (the repositories' SQL) and real Redis (the Lua claims); the
  * bridge is a stub — a dead process has no live legs, which is the point.
@@ -113,13 +113,14 @@ describe('restart mid soft-phone call (chaos)', () => {
     await proc.reaper.reapOnStartup();
 
     // Unbridged: ended orphaned, settled, contact back to `pending` with no attempt
-    // charged, Redis claim cleared.
+    // charged (a restart is our fault: the our-fault ledger), Redis claim cleared.
     const r1 = await row(ringing.row.id);
     expect(r1).toMatchObject({ state: 'ended', outcome: 'orphaned', end_reason: 'orphaned' });
     expect(r1.settled_at).not.toBeNull();
     const c1 = await contactOf(ringing.contact.id);
     expect(c1.state).toBe('pending');
     expect(c1.attempt_count).toBe(2);
+    expect(c1.our_fault_attempts).toBe(1);
     expect(await proc.agents.manualCallOf(ringing.session.id)).toBeNull();
 
     // Bridged: ended orphaned, NOT settled, contact still claimed, Redis claim kept.
@@ -157,7 +158,7 @@ describe('restart mid soft-phone call (chaos)', () => {
     proc.manual.stop();
   });
 
-  it('an outcome nobody saves lapses no_disposition and gives the contact back, uncharged', async () => {
+  it('an outcome nobody saves lapses no_disposition and the retry policy settles the contact, charged', async () => {
     const campaign = await insertAgencyCampaign({ tenant_id: TENANT, account_id: ACCOUNT });
     const longAgo = new Date(Date.now() - 31 * 60_000);
     const owed = await claimedCall(campaign.id, '+919811200003', {
@@ -173,9 +174,13 @@ describe('restart mid soft-phone call (chaos)', () => {
     expect(r.settled_at).not.toBeNull();
     expect(r.disposition_code).toBe('no_disposition');
     expect(r.dispositioned_by_user_id).toBeNull();
+    // The customer was spoken to: the call is charged (2 → 3), and the tag's policy
+    // decides as it does for a campaign call's lapsed wrap-up — `connected` is never
+    // retried by the defaults, so the contact is `completed`, not handed back to pacing.
     const c = await contactOf(owed.contact.id);
-    expect(c.state).toBe('pending');
-    expect(c.attempt_count).toBe(2);
+    expect(c.state).toBe('completed');
+    expect(c.attempt_count).toBe(3);
+    expect(c.last_disposition).toBe('no_disposition');
     expect(await proc.agents.manualCallOf(owed.session.id)).toBeNull();
     expect(audit.mock.calls.some(([e]) => e.eventType === 'agency_manual_call.lapsed'
       && e.eventData['manual_call_id'] === owed.row.id)).toBe(true);

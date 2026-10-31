@@ -127,8 +127,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
    deferred-hangup window applies, so a wifi blip mid-conversation survives). `ringing` is
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
    (`concurrency_limit`, a dead socket, or `dial_failed` for a refusal the soft phone does not
-   name) or the carrier refuses outright is ended `failed`, its contact claim released and no
-   attempt charged; the carrier's refusal answers 201 with the row as it ended and settled. So is a dial that throws before the bridge is asked (a
+   name) or the carrier refuses outright is ended `failed` and **unplaced**: `dialed_at` (stamped by
+   the `dialing` write just before the bridge is asked) is cleared, so it is no dial in the usage
+   counts (SP5), its contact claim is released and no attempt is charged; the carrier's refusal
+   answers 201 with the row as it ended and settled. So is a dial that throws before the bridge is asked (a
    database fault on the `dialing` write): it is abandoned unplaced and the error reaches the
    caller, so nothing is left `queued` holding the session.
    Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
@@ -136,9 +138,13 @@ Owned by `AgencyRuntime`. One call at a time per session.
    settings', else the account default (the analysis hook's fallback).
 5. **Lifecycle → station frames.** Every state change sends `manual_call` (the full
    `AgencyManualCall` wire row). `bridged` starts audio both ways. The browser plays ringback.
-6. **Ended** → write `ended`, outcome, talk seconds; if the call was never answered and there is
-   no disposition owed, settle immediately with outcome only. Otherwise the call waits for an
-   outcome.
+6. **Ended** → write `ended`, outcome, talk seconds; if the call never bridged there is no
+   outcome owed: settle it immediately, its claimed contact by the tag's retry policy (§5, "no
+   outcome"), then clear the Redis claim. The settle is tried three times; if it still fails, the
+   lapse sweep closes the call within `MANUAL_UNANSWERED_SETTLE_GRACE_MS` (30 s) plus one sweep,
+   not after 30 minutes. Otherwise the call waits for an outcome. The call stays in the dialer's
+   live set until its `ended` row is written, so the orphan sweep (step 10) cannot end it
+   `orphaned` mid-teardown.
 7. **Outcome** (`manual-disposition.ts`): the existing pure functions (`resolveDisposition`,
    `validateDispositionFields`, `resolveDispositionDecision`) against the tag's catalog or the
    settings / built-in catalog (a tag whose catalog is empty falls back to the built-in, still
@@ -148,19 +154,22 @@ Owned by `AgencyRuntime`. One call at a time per session.
    **Mark DNC** on a tagged call also suppresses every roster row of the tag carrying the number,
    as the station's mark does.
 8. **Lapse.** An ended call with no outcome after `SOFTPHONE_OUTCOME_LAPSE_MS` (30 min), or
-   whose session left, is closed `no_disposition` (`settled_at` set) by the reaper sweep, and its contact claim is
-   released to its prior state. Only a call that bridged (so owed an outcome) gets the `no_disposition` code; one
-   that never bridged is just settled. The sweep (`lapseUnsettled`) returns the rows and releases nothing; the
-   caller releases each claim (`releaseManualClaim`) and the Redis `manual` field.
+   whose session left, is closed `no_disposition` (`settled_at` set) by the reaper sweep, and its
+   claimed contact is settled by the tag's retry policy (§5, "no outcome"). Only a call that bridged
+   (so owed an outcome) gets the `no_disposition` code; one that never bridged is just settled, and
+   is closed once `MANUAL_UNANSWERED_SETTLE_GRACE_MS` has passed (step 6's backstop). The sweep
+   (`lapseUnsettled`) returns the rows and settles nothing else; the caller settles each claim
+   (`manual-settlement.ts`) and clears the Redis `manual` field.
 9. **Reconnect.** A station reconnect reattaches a live manual call's browser leg
    (`reattachBorrowedBrowserLeg(manualCallId, ws)`) and resends `manual_call` right after `ready`
    (the ready frame has no field for it) with the session's unsettled call — live or awaiting
    its outcome — so a reloaded console restores the call. A socket close mid-call does not write
    the agent `offline` (the call's media leg owns the outcome), and `leave` is refused while a
    call is live.
-10. **Restart.** The startup reaper ends non-terminal manual rows `orphaned` and releases their
+10. **Restart.** The startup reaper ends non-terminal manual rows `orphaned` and settles their
     contact claims; the periodic sweep does the same for rows not owned by this process. A reaped row that
-    never bridged is settled in the same statement and its claim released; one that bridged is ended and left
+    never bridged is settled in the same statement and its claim settled (§5, "no outcome": a placed
+    one on the our-fault ledger, back on the roster at once, as a reaped attempt's contact is); one that bridged is ended and left
     awaiting its outcome (the agent talked to the customer and can still write it up after reconnecting), so
     its claim is kept until the outcome or the lapse (`reapOrphaned`). The periodic sweep spares
     this process's live calls and any row younger than 5 minutes. Both sweeps write an
@@ -195,16 +204,30 @@ Only when the call is tagged and the number matched a contact of that campaign.
 
 | Contact at dial | At dial | Outcome saved |
 |---|---|---|
-| `pending` | claimed → `in_flight` | the disposition decision applies as on the station: suppress → `suppressed` (+ DNC), terminal / success → `completed`, callback → `pending` at the callback time (inside the window), retry → `pending` after the delay (or `exhausted` past max attempts), none → back to `pending` unchanged. `attempt_count` + 1 when the call was placed |
+| `pending` | claimed → `in_flight` | the disposition decision applies as on the station: suppress → `suppressed` (+ DNC), terminal / success → `completed`, callback → `pending` at the callback time (inside the window), retry → `pending` after the delay (or `exhausted` past max attempts), none → back to `pending` unchanged. `attempt_count` + 1 when the call was placed. With **no outcome** (below) the tag's retry policy decides |
 | `in_flight` (live campaign attempt) | refused `contact_in_flight` | — |
 | `connected` (campaign call awaiting its own disposition) | linked only | only suppress applies |
 | `completed`, `exhausted`, `suppressed` | linked only | only suppress applies; a terminal contact is never reopened |
 
-The stranded-contact sweep ignores a contact with a live or unsettled manual call. Lapse and
-restart release a claim to the recorded prior state, changing nothing else (no attempt is charged);
-an unanswered call that settles with no outcome (§4.1 step 6) is the "none" row above.
-`AgencyContactRepository.settleFromManual` applies this table; `claimForManual`,
-`releaseManualClaim` and `findForManualMatch` are the claim and the match.
+The stranded-contact sweep ignores a contact with a live or unsettled manual call.
+
+A claimed contact whose call settles with **no outcome saved** (an unanswered call, §4.1 step 6;
+a refused dial, step 4; a lapsed outcome, step 8; an unbridged orphan, step 10) gets the campaign
+path's rules (`manualNoOutcomeSettlement`, `manual-settlement.ts`), so pacing never rings the
+customer straight back:
+
+| The call | The contact |
+|---|---|
+| never placed (`dialed_at` NULL: refused before the carrier, or by it) | the claim released to its prior state; nothing charged |
+| placed, ended by our side before it bridged (`canceled`: the agent hung up the ring; `agent_disconnected`) | `our_fault_attempts` + 1 and `resolveOurFaultRedial`: `pending` after the our-fault delay, `exhausted` at the bound; the customer's allowance untouched |
+| placed, `orphaned` before it bridged (a restart) | the same ledger and bound, `pending` at once (the reaper's rule for an attempt) |
+| any other placed call (`no_answer`, `busy`, `failed`, `invalid`; a lapsed bridged call) | `attempt_count` + 1 and the tag's `retry_policy` (`resolveRetryDecision`): `pending` after the outcome's delay, `exhausted` past its max, `completed` when never retried (a lapsed `connected` call under the defaults), `suppressed` for `invalid`; `last_disposition` is `no_disposition` for a lapse |
+
+A retry's `next_attempt_at` is not moved into the calling window, as a campaign retry's is not:
+pacing's pre-dial gate defers a contact it claims while the window is closed. Only a callback is
+placed in the window, at the outcome.
+`AgencyContactRepository.settleFromManual` applies both tables (its `charge` names the ledger);
+`claimForManual`, `releaseManualClaim` and `findForManualMatch` are the claim and the match.
 
 ## 6. API
 
