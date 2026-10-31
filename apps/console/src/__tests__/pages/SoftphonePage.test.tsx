@@ -426,7 +426,8 @@ describe('/dialer/phone', () => {
       await act(async () => {
         fireEvent.click(screen.getByRole('button', { name: 'Close it and open the soft phone here' }));
       });
-      expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
+      // Read straight in the session's account, the refusal's, not inferred from this one.
+      expect(mocks.getSoftphoneBootstrap.mock.calls[0]).toEqual(['t-1', 'a-2']);
       expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-b', 't-1', 'a-2');
       expect(mocks.openSoftphoneSession).toHaveBeenCalledTimes(2);
       expect(mocks.openSoftphoneSession.mock.calls[1]).toEqual(['t-1', 'a-1']);
