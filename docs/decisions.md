@@ -197,7 +197,7 @@ Rulings of 2026-10-30 (soft phone, [`softphone.md`](softphone.md)):
 
 | # | Topic | Ruling | Status |
 |---|---|---|---|
-| SP1 | DNC on soft-phone dials | Checked on every dial (tenant, account, tagged campaign; an untagged dial also meets a campaign entry of any campaign of its account). A hit refuses `dnc_listed`; the agent may call anyway with an override note (10–500 characters), stored on the call with the DNC entry id and audited as `agency_manual_call.dnc_overridden`. A lookup failure refuses `dnc_unavailable` and cannot be overridden | **Decided** |
+| SP1 | DNC on soft-phone dials | Checked on every dial (tenant, account, tagged campaign). A hit refuses `dnc_listed`; the agent may call anyway with an override note (10–500 characters), stored on the call with the DNC entry id and audited as `agency_manual_call.dnc_overridden`. A lookup failure refuses `dnc_unavailable` and cannot be overridden | **Decided** |
 | SP2 | Calling hours | A call logged to a campaign whose window is closed (contact timezone, else the campaign default) refuses `outside_calling_hours`; override with a note, audited as `agency_manual_call.hours_overridden`. An untagged call has no window | **Decided** |
 | SP3 | VoiceLink cannot cancel a ringing call | Accepted. Hang-up while ringing is hold-to-confirm and the console warns that the phone may keep ringing | **Decided — accept** |
 | SP4 | Who gets the soft phone | Every agent in an account where `agency_softphone_enabled` is on (`agency.softphone.dial` at the agent floor); settings need `agency.softphone.manage` (account admin) | **Decided** |
