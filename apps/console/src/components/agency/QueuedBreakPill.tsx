@@ -101,8 +101,20 @@ export function QueuedBreakPill({
         trying to read mid-call.
       */}
       <span className={styles.chip} data-testid="queued-break-chip">
+        {/*
+          The soft-phone switch's own button already reads "Switching after this
+          call", so the chip shows only a short label beside it; the full sentence
+          stays for screen readers and as the tooltip.
+        */}
         <span className={styles.chipText} title={sentence}>
-          {sentence}
+          {softphone ? (
+            <>
+              <span aria-hidden="true">Soft phone next</span>
+              <span className="sr-only">{sentence}</span>
+            </>
+          ) : (
+            sentence
+          )}
         </span>
         <button
           type="button"
