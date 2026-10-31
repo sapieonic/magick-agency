@@ -145,6 +145,21 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
   const lastCall = (s: Station) => [...s.frames].reverse().find((f) => f['event'] === 'manual_call')?.['call'];
 
+  /**
+   * Count the pacing engine's idle decisions of `reason` for one campaign from now on
+   * (`PacingEngine.recordIdle`, which a tick reaches only while it holds the campaign's
+   * lease and has planned): the positive control a "nothing was reserved" assertion
+   * needs, so it cannot pass because pacing was not running at all.
+   */
+  function idleTicks(campaignId: string, reason: string) {
+    const spy = vi.spyOn(runtime.pacing as unknown as { recordIdle: (id: string, r: string) => void }, 'recordIdle');
+    const count = () => spy.mock.calls.filter(([id, r]) => id === campaignId && r === reason).length;
+    return {
+      atLeast: (n: number) => waitFor(`${n} '${reason}' ticks on ${campaignId}`, () => count() >= n, 15_000),
+      restore: () => spy.mockRestore(),
+    };
+  }
+
   async function webrtcCallIdOf(manualCallId: string): Promise<string> {
     return waitFor('media leg', async () => {
       const { rows } = await getTestPool().query<{ webrtc_call_id: string | null }>(
@@ -716,10 +731,16 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
       f['event'] === 'agent_state' && f['state'] === 'break' && f['break_reason'] === 'soft_phone'));
     expect((await runtime.agents.get(session.id))?.state).toBe('break');
 
-    // On the soft phone now: pacing must never reserve this agent.
+    // On the soft phone now: pacing must never reserve this agent. Not "nothing
+    // happened for a while": the engine is shown leading and ticking this campaign
+    // with a dialable contact on the roster, and deciding each time that it has no
+    // agent — and only then is the absence of a reservation evidence.
+    const ticks = idleTicks(campaign.id, 'no_agents');
     await insertAgencyContact(campaign.id, { tenant_id: TENANT, account_id: ACCOUNT, phone_e164: '+919811100071' });
-    await sleep(1_200);
+    await ticks.atLeast(3);
+    ticks.restore();
     expect(station.frames.filter((f) => f['event'] === 'reserved')).toHaveLength(1);
+    expect((await runtime.agents.get(session.id))?.state).toBe('break');
 
     const placed = await runtime.softphone.placeCall(actor(agent), { sessionId: session.id, to: '+919811100072', campaignId: campaign.id });
     if (!placed.ok) throw new Error(placed.refusal.code);
@@ -770,9 +791,14 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
     const session = await campaignSession(campaign.id, campaignAgent, NARROW_ACCOUNT);
     const station = await openStation(session.id);
+    // The engine leads and ticks this campaign with an available agent and a dialable
+    // contact, and decides each time that the account has no slot: the manual call took
+    // it. That, not a quiet interval, is what makes "no reservation" mean something.
+    const ticks = idleTicks(campaign.id, 'no_slots');
     await runtime.agents.set(session.id, 'available', { leaseMs: AGENT_LEASE_MS.available });
     await agencyAgentSessionRepository.setState(session.id, 'available');
-    await sleep(2_500);
+    await ticks.atLeast(3);
+    ticks.restore();
     expect(station.frames.some((f) => f['event'] === 'reserved')).toBe(false);
 
     // The manual call ends unanswered: the slot frees and pacing dials.

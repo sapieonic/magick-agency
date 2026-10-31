@@ -184,6 +184,30 @@ describe('soft-phone roster contact (integration)', () => {
       expect(await contacts.claimForManual(campaign.id, randomUUID())).toEqual({ outcome: 'not_found' });
     });
 
+    it('pacing\'s claimDialable racing a soft-phone claimForManual for one contact: exactly one holds it, every round', async () => {
+      // Two real connections, started together: the tick's batch claim (`FOR UPDATE
+      // SKIP LOCKED` in a CTE) and the soft phone's (row lock, then the guarded
+      // UPDATE, in the dial's transaction). Whichever locks first wins; the other must
+      // skip it (`[]` / `busy`) or see it `in_flight` (`linked`), which the dial path
+      // refuses as `contact_in_flight`. Never both.
+      const campaign = await insertAgencyCampaign();
+      for (let round = 0; round < 25; round++) {
+        const contact = await insertAgencyContact(campaign.id, { next_attempt_at: new Date(Date.now() - 1000) });
+        const [paced, manual] = await Promise.all([
+          contacts.claimDialable(campaign.id, 1),
+          withTransaction((client) => contacts.claimForManual(campaign.id, contact.id, { client }), { pool: getTestPool() }),
+        ]);
+        const pacingWon = paced.some((c) => c.id === contact.id);
+        const manualWon = manual.outcome === 'claimed';
+        expect(Number(pacingWon) + Number(manualWon), `round ${round}: ${paced.length} / ${manual.outcome}`).toBe(1);
+        if (pacingWon) expect(['busy', 'linked']).toContain(manual.outcome);
+        if (manual.outcome === 'linked') expect(manual.state).toBe('in_flight');
+        expect((await contactRow(contact.id)).state).toBe('in_flight');
+        // Out of the next round's way.
+        await getTestPool().query("UPDATE agency_contacts SET state = 'completed' WHERE id = $1", [contact.id]);
+      }
+    });
+
     it('a claim rolled back with its refused insert leaves the contact pending', async () => {
       const campaign = await insertAgencyCampaign();
       const contact = await insertAgencyContact(campaign.id);
