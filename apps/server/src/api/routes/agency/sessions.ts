@@ -26,7 +26,7 @@ import type {
   AgencyStationTokenResponse,
 } from '@magick-agency/contracts/agency';
 import { isCampaignSession } from '../../../db/models/agency.model.js';
-import { requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
+import { accountNameInTenant, requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
@@ -89,6 +89,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // The agent's live session is a soft-phone session (docs/softphone.md): there
       // is no campaign to name in `session_on_other_campaign`, so it gets its own
       // 409, whose remedy is leaving the soft phone.
+      // Named with the account it is in, which may be a sibling of this one: `leave`
+      // is scoped to the session's account, so the console closes it with that one.
       const liveSession = join.session;
       if (!isCampaignSession(liveSession)) {
         const refusal: AgencySoftphoneSessionOnSoftphoneRefusal = {
@@ -96,6 +98,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
           code: 'session_on_softphone',
           message: 'You are on the soft phone. Leave the soft phone before joining a campaign — an agent can hold only one live station at a time.',
           session_id: liveSession.id,
+          account_id: liveSession.account_id,
+          account_name: await accountNameInTenant(liveSession.account_id, liveSession.tenant_id),
         };
         return reply.code(409).send(refusal);
       }

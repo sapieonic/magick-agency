@@ -176,13 +176,38 @@ describe('refusals become typed results', () => {
     expect(result.refusal.call.id).toBe('mc-1');
   });
 
-  it('session_on_campaign names the campaign session to switch', async () => {
+  it('session_on_campaign names the campaign session to switch, and the account it is in', async () => {
     mocks.fetch.mockResolvedValue(
-      respond(409, { code: 'session_on_campaign', message: 'On campaign', session_id: 's-c', campaign_id: 'camp-1', campaign_name: 'Renewals', state: 'available' }),
+      respond(409, {
+        code: 'session_on_campaign', message: 'On campaign', session_id: 's-c', campaign_id: 'camp-1', campaign_name: 'Renewals',
+        state: 'available', account_id: 'a-2', account_name: 'North Region',
+      }),
     );
     const result = await openSoftphoneSession('t', 'a');
     if (result.ok || result.refusal.code !== 'session_on_campaign') throw new Error('expected session_on_campaign');
-    expect(result.refusal).toMatchObject({ session_id: 's-c', campaign_id: 'camp-1', campaign_name: 'Renewals', state: 'available' });
+    expect(result.refusal).toMatchObject({
+      session_id: 's-c', campaign_id: 'camp-1', campaign_name: 'Renewals', state: 'available', account_id: 'a-2', account_name: 'North Region',
+    });
+    // Without its account the console cannot act on the session: not a half-typed refusal.
+    mocks.fetch.mockResolvedValue(
+      respond(409, { code: 'session_on_campaign', message: 'On campaign', session_id: 's-c', campaign_id: 'camp-1', state: 'available' }),
+    );
+    const noAccount = await openSoftphoneSession('t', 'a');
+    expect(!noAccount.ok && noAccount.refusal).toMatchObject({ code: 'unknown', raw_code: 'session_on_campaign' });
+  });
+
+  it('session_on_softphone names the soft-phone session and its account; a name the server lacked is null', async () => {
+    mocks.fetch.mockResolvedValue(
+      respond(409, { code: 'session_on_softphone', message: 'Elsewhere', session_id: 's-b', account_id: 'a-2', account_name: null }),
+    );
+    const result = await openSoftphoneSession('t', 'a');
+    if (result.ok || result.refusal.code !== 'session_on_softphone') throw new Error('expected session_on_softphone');
+    expect(result.refusal).toEqual({
+      code: 'session_on_softphone', status: 409, message: 'Elsewhere', session_id: 's-b', account_id: 'a-2', account_name: null,
+    });
+    mocks.fetch.mockResolvedValue(respond(409, { code: 'session_on_softphone', message: 'Elsewhere', session_id: 's-b' }));
+    const noAccount = await openSoftphoneSession('t', 'a');
+    expect(!noAccount.ok && noAccount.refusal).toMatchObject({ code: 'unknown', raw_code: 'session_on_softphone' });
   });
 
   it('keeps allowed_codes and details on the generic refusals', async () => {

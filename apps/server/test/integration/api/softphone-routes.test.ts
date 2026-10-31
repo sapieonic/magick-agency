@@ -824,6 +824,87 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 30_000);
 
+  it('the soft phone on in two accounts: a soft-phone session in the sibling is refused by name, never rehydrated here, and left with its own account', async () => {
+    const agent = await user(tenant, account, 'agent');
+    await insertMembership({ user_id: agent.id, tenant_id: tenant, account_id: sibling, role: 'agent' });
+    const { sessionId } = await openSoftphone(agent);
+    const { rows: [owner] } = await getTestPool().query('SELECT name FROM accounts WHERE id = $1', [account]);
+
+    // The flag is on in `sibling` too, so this is the open path, not `rehydrate_only`:
+    // the session is the agent's one live one in the tenant, and it is `account`'s.
+    const here = await post('/proxy/agency/softphone/sessions', agent, {}, sibling);
+    expect(here.statusCode, here.body).toBe(409);
+    expect(here.json()).toEqual({
+      error: 'Conflict',
+      code: 'session_on_softphone',
+      message: expect.stringMatching(/another account/i),
+      session_id: sessionId,
+      account_id: account,
+      account_name: owner.name,
+    });
+    // Nothing was stamped on it, and nothing was opened beside it.
+    const { rows } = await getTestPool().query(
+      'SELECT id, account_id FROM agency_agent_sessions WHERE agent_user_id = $1 AND left_at IS NULL', [agent.id],
+    );
+    expect(rows).toEqual([{ id: sessionId, account_id: account }]);
+    const joined = await auditRows('agency_session.joined', sessionId);
+    expect(joined).toHaveLength(1);
+
+    // The campaign join in the sibling names the same session and account.
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: sibling });
+    const join = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id }, sibling);
+    expect(join.statusCode, join.body).toBe(409);
+    expect(join.json()).toMatchObject({
+      code: 'session_on_softphone', session_id: sessionId, account_id: account, account_name: owner.name,
+    });
+
+    // In its own account it rehydrates (200), and it is left there: the console's
+    // "Close it and open the soft phone here", then the open in the sibling succeeds.
+    expect((await post('/proxy/agency/softphone/sessions', agent)).statusCode).toBe(200);
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+    const reopened = await post('/proxy/agency/softphone/sessions', agent, {}, sibling);
+    expect(reopened.statusCode, reopened.body).toBe(201);
+    const reopenedId = reopened.json().session_id as string;
+    expect(reopenedId).not.toBe(sessionId);
+    expect((await post(`/proxy/agency/sessions/${reopenedId}/leave`, agent, {}, sibling)).statusCode).toBe(200);
+  }, 30_000);
+
+  it('a campaign session in a sibling account: session_on_campaign names its account, and the switch works only with it', async () => {
+    const agent = await user(tenant, account, 'agent');
+    await insertMembership({ user_id: agent.id, tenant_id: tenant, account_id: sibling, role: 'agent' });
+    const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: sibling });
+    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id }, sibling);
+    expect(joined.statusCode, joined.body).toBe(201);
+    const sessionId = joined.json().session_id as string;
+    const { rows: [siblingAccount] } = await getTestPool().query('SELECT name FROM accounts WHERE id = $1', [sibling]);
+
+    const conflict = await post('/proxy/agency/softphone/sessions', agent);
+    expect(conflict.statusCode, conflict.body).toBe(409);
+    expect(conflict.json()).toEqual({
+      error: 'Conflict',
+      code: 'session_on_campaign',
+      message: expect.any(String),
+      session_id: sessionId,
+      campaign_id: campaign.id,
+      campaign_name: campaign.name,
+      state: 'break',
+      account_id: sibling,
+      account_name: siblingAccount.name,
+    });
+    // The same campaign session from its own account names that account too.
+    const there = await post('/proxy/agency/softphone/sessions', agent, {}, sibling);
+    expect(there.statusCode).toBe(409);
+    expect(there.json()).toMatchObject({ code: 'session_on_campaign', session_id: sessionId, account_id: sibling });
+
+    // The switch is scoped to the session's account: from this one the session does
+    // not exist, which is why the console switches with the refusal's `account_id`.
+    expect((await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent)).statusCode).toBe(404);
+    const switched = await post(`/proxy/agency/sessions/${sessionId}/softphone`, agent, {}, sibling);
+    expect(switched.statusCode, switched.body).toBe(200);
+    expect(switched.json()).toMatchObject({ state: 'break', break_reason: 'soft_phone' });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent, {}, sibling)).statusCode).toBe(200);
+  }, 30_000);
+
   it('PUT /settings: manage only, settings_invalid with the console\'s paths, a valid write audited', async () => {
     const agent = await user(tenant, account, 'agent');
     const valid = {

@@ -23,6 +23,7 @@ import {
   type AgencySoftphoneErrorCode,
   type AgencySoftphoneOutsideHoursRefusal,
   type AgencySoftphoneSessionOnCampaignRefusal,
+  type AgencySoftphoneSessionOnSoftphoneRefusal,
   type AgencySoftphoneSessionResponse,
   type AgencySoftphoneSettings,
   type AgencySoftphoneSettingsResponse,
@@ -59,6 +60,7 @@ type NarrowedCode =
   | 'outside_calling_hours'
   | 'contact_in_flight'
   | 'session_on_campaign'
+  | 'session_on_softphone'
   | 'outcome_pending'
   | 'manual_call_live';
 
@@ -73,6 +75,7 @@ export type SoftphoneDncListedRefusal = RefusalBase & Omit<AgencySoftphoneDncLis
 export type SoftphoneOutsideHoursRefusal = RefusalBase & Omit<AgencySoftphoneOutsideHoursRefusal, 'error' | 'message'>;
 export type SoftphoneContactInFlightRefusal = RefusalBase & Omit<AgencySoftphoneContactInFlightRefusal, 'error' | 'message'>;
 export type SoftphoneSessionOnCampaignRefusal = RefusalBase & Omit<AgencySoftphoneSessionOnCampaignRefusal, 'error' | 'message'>;
+export type SoftphoneSessionOnSoftphoneRefusal = RefusalBase & Omit<AgencySoftphoneSessionOnSoftphoneRefusal, 'error' | 'message'>;
 export type SoftphoneCallPendingRefusal = RefusalBase & Omit<AgencySoftphoneCallPendingRefusal, 'error' | 'message'>;
 
 export interface SoftphoneGenericRefusal extends RefusalBase {
@@ -97,6 +100,7 @@ export type SoftphoneRefusal =
   | SoftphoneOutsideHoursRefusal
   | SoftphoneContactInFlightRefusal
   | SoftphoneSessionOnCampaignRefusal
+  | SoftphoneSessionOnSoftphoneRefusal
   | SoftphoneCallPendingRefusal
   | SoftphoneGenericRefusal
   | SoftphoneUnknownRefusal;
@@ -182,8 +186,14 @@ export function parseSoftphoneRefusal(err: unknown): SoftphoneRefusal {
         campaign_id: typeof details['campaign_id'] === 'string' ? details['campaign_id'] : '',
         contact_id: typeof details['contact_id'] === 'string' ? details['contact_id'] : '',
       };
+    // Both live-session refusals name the session's account: every route on that
+    // session is scoped to it, so without it the console would act in the wrong one.
     case 'session_on_campaign': {
-      if (typeof details['session_id'] !== 'string' || typeof details['campaign_id'] !== 'string') return unknown();
+      if (
+        typeof details['session_id'] !== 'string'
+        || typeof details['campaign_id'] !== 'string'
+        || typeof details['account_id'] !== 'string'
+      ) return unknown();
       return {
         code: 'session_on_campaign',
         status,
@@ -192,6 +202,19 @@ export function parseSoftphoneRefusal(err: unknown): SoftphoneRefusal {
         campaign_id: details['campaign_id'],
         campaign_name: typeof details['campaign_name'] === 'string' ? details['campaign_name'] : 'your campaign',
         state: (typeof details['state'] === 'string' ? details['state'] : 'offline') as SoftphoneSessionOnCampaignRefusal['state'],
+        account_id: details['account_id'],
+        account_name: typeof details['account_name'] === 'string' ? details['account_name'] : null,
+      };
+    }
+    case 'session_on_softphone': {
+      if (typeof details['session_id'] !== 'string' || typeof details['account_id'] !== 'string') return unknown();
+      return {
+        code: 'session_on_softphone',
+        status,
+        message,
+        session_id: details['session_id'],
+        account_id: details['account_id'],
+        account_name: typeof details['account_name'] === 'string' ? details['account_name'] : null,
       };
     }
     case 'outcome_pending':
@@ -317,7 +340,9 @@ export async function fetchManualCallRecordingBlobUrl(
 /**
  * `POST /sessions`: open (or rehydrate) a soft-phone session. 409
  * `session_on_campaign` when the agent is live on a campaign — the remedy is the
- * switch on that session, which the refusal names.
+ * switch on that session, which the refusal names with its account; 409
+ * `session_on_softphone` when their soft-phone session is in another account of
+ * the tenant — the remedy is closing it there, with that account.
  */
 export function openSoftphoneSession(
   tenantId?: string,

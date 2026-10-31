@@ -1,12 +1,14 @@
 /*
  * Shared by the session and attempt handlers: the retry banner, the advertised station
- * intervals, the action-error reply, the session and attempt ownership checks, and the
- * callback dial time. Part of `agency.routes.ts`.
+ * intervals, the action-error reply, the session and attempt ownership checks, the
+ * callback dial time, and the account name a live-session refusal carries. Part of
+ * `agency.routes.ts`.
  */
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { createChildLogger } from '@magick-agency/observability';
+import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import {
   agencyAgentSessionRepository,
   agencyAttemptRepository,
@@ -287,4 +289,21 @@ export async function resolveCallbackDialTime(
   const contact = await agencyContactRepository.findById(contactId).catch(() => null);
   const window = resolveCallingWindow(campaign, { timezone: contact?.timezone ?? null });
   return scheduleCallbackInWindow(window, requestedAt);
+}
+
+/**
+ * The name of an account of this tenant, for a refusal that names where the agent's
+ * live session is (`session_on_softphone`, `session_on_campaign`: one live session per
+ * agent per tenant, so it may be in a sibling account). Best-effort, as the
+ * conflicting campaign's name is: a failed read is NULL and the refusal still carries
+ * `account_id`, never a 500 in place of an actionable 409. Tenant-scoped
+ * (`findByIdInTenant`), so a corrupt row can never name another tenant's account.
+ */
+export async function accountNameInTenant(accountId: string, tenantId: string): Promise<string | null> {
+  try {
+    return (await accountRepository.findByIdInTenant(accountId, tenantId))?.name ?? null;
+  } catch (err) {
+    log.warn({ err, accountId }, 'Could not resolve the live session\'s account name');
+    return null;
+  }
 }

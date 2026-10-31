@@ -764,6 +764,11 @@ export interface AgencySoftphoneContactInFlightRefusal extends AgencySoftphoneEr
 /**
  * 409 `session_on_campaign` from `POST /sessions`: the agent is live on a
  * campaign. The remedy is the switch on that session (§4.2), not a second session.
+ *
+ * `account_id` is the account the campaign session is in, which may be a sibling of
+ * the one asked (one live session per agent per TENANT): the switch and every other
+ * session route are scoped to it. `account_name` is best-effort (NULL when the read
+ * failed), like `campaign_name`'s fallback.
  */
 export interface AgencySoftphoneSessionOnCampaignRefusal extends AgencySoftphoneErrorResponse {
   code: 'session_on_campaign';
@@ -771,16 +776,24 @@ export interface AgencySoftphoneSessionOnCampaignRefusal extends AgencySoftphone
   campaign_id: string;
   campaign_name: string;
   state: AgencyAgentState;
+  account_id: string;
+  account_name: string | null;
 }
 
 /**
- * 409 `session_on_softphone` from the campaign join (`POST /proxy/agency/sessions`):
- * the agent's live session is a soft-phone session, which has no campaign to name
- * in `session_on_other_campaign`. The remedy is leaving the soft phone.
+ * 409 `session_on_softphone`: the agent's live session is a soft-phone session, and
+ * it is in the way. From the campaign join (`POST /proxy/agency/sessions`), where it
+ * has no campaign to name in `session_on_other_campaign`; and from `POST
+ * /softphone/sessions` when that session is in ANOTHER account of the tenant, which
+ * is never rehydrated into this one. The remedy is leaving it, with its own account
+ * (`leave` is scoped to the session's account). `account_name` is best-effort (NULL
+ * when the read failed).
  */
 export interface AgencySoftphoneSessionOnSoftphoneRefusal extends AgencySoftphoneErrorResponse {
   code: 'session_on_softphone';
   session_id: string;
+  account_id: string;
+  account_name: string | null;
 }
 
 /**

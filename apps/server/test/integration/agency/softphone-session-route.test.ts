@@ -84,6 +84,9 @@ describe('POST /sessions on the soft phone — real repository (integration)', (
         code: 'session_on_softphone',
         message: expect.stringMatching(/soft phone/i),
         session_id: sp.id,
+        // Its account, where `leave` finds it; no account row here, so no name.
+        account_id: DEFAULTS.accountId,
+        account_name: null,
       });
       expect(mint).not.toHaveBeenCalled();
       const { rows } = await getTestPool().query(

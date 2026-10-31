@@ -14,6 +14,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
 const ACCOUNT = '22222222-2222-4222-8222-222222222222';
+const SIBLING = '23232323-2323-4232-8232-232323232323';
 const AGENT = '33333333-3333-4333-8333-333333333333';
 const COLLEAGUE = '44444444-4444-4444-8444-444444444444';
 const SESSION = '66666666-6666-4666-8666-666666666666';
@@ -32,6 +33,7 @@ const repos = vi.hoisted(() => ({
   staffing: { listActiveForUser: vi.fn() },
   profiles: { findByIdScoped: vi.fn() },
   calls: { findByIdScoped: vi.fn() },
+  accounts: { findByIdInTenant: vi.fn() },
 }));
 
 vi.mock('../../../src/db/repositories/agency.repository.js', async (importOriginal) => {
@@ -50,6 +52,7 @@ vi.mock('@magick-agency/db/repositories/tenant-phone-assignment.repository', () 
 vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () => ({ agencyCampaignAgentRepository: repos.staffing }));
 vi.mock('@magick-agency/db/repositories/call-analysis-profile.repository', () => ({ callAnalysisProfileRepository: repos.profiles }));
 vi.mock('@magick-agency/db/repositories/agency-call.repository', () => ({ webrtcCallRepository: repos.calls }));
+vi.mock('@magick-agency/db/repositories/account.repository', () => ({ accountRepository: repos.accounts }));
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@magick-agency/observability')>()),
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -387,22 +390,42 @@ describe('POST /softphone/sessions', () => {
     expect((await post('/softphone/sessions', { agent_user_id: AGENT })).statusCode).toBe(200);
   });
 
-  it('409 session_on_campaign names the campaign (tenant-scoped) and the live state', async () => {
-    const blocker = { id: SESSION, tenant_id: TENANT, campaign_id: CAMPAIGN, state: 'available' };
+  it('409 session_on_campaign names the campaign (tenant-scoped), the live state and the account', async () => {
+    const blocker = { id: SESSION, tenant_id: TENANT, account_id: SIBLING, campaign_id: CAMPAIGN, state: 'available' };
     repos.session.joinSoftphone.mockResolvedValue({ ok: false, reason: 'on_campaign', session: blocker });
     repos.campaign.findById.mockResolvedValue({ id: CAMPAIGN, tenant_id: TENANT, name: 'Renewals' });
+    repos.accounts.findByIdInTenant.mockResolvedValue({ id: SIBLING, tenant_id: TENANT, name: 'North Region' });
     runtime.agents.get.mockResolvedValue({ state: 'on_call' });
     const res = await post('/softphone/sessions', { agent_user_id: AGENT });
     expect(res.statusCode).toBe(409);
     expect(res.json()).toEqual({
       error: 'Conflict', code: 'session_on_campaign', message: expect.any(String),
       session_id: SESSION, campaign_id: CAMPAIGN, campaign_name: 'Renewals', state: 'on_call',
+      account_id: SIBLING, account_name: 'North Region',
     });
+    expect(repos.accounts.findByIdInTenant).toHaveBeenCalledWith(SIBLING, TENANT);
     // Another tenant's name never crosses; a failed lookup still answers the 409.
     repos.campaign.findById.mockResolvedValue({ id: CAMPAIGN, tenant_id: 'other', name: 'Secret' });
     expect((await post('/softphone/sessions', { agent_user_id: AGENT })).json().campaign_name).toBe('another campaign');
     repos.campaign.findById.mockRejectedValue(new Error('down'));
-    expect((await post('/softphone/sessions', { agent_user_id: AGENT })).statusCode).toBe(409);
+    repos.accounts.findByIdInTenant.mockRejectedValue(new Error('down'));
+    const degraded = await post('/softphone/sessions', { agent_user_id: AGENT });
+    expect(degraded.statusCode).toBe(409);
+    expect(degraded.json()).toMatchObject({ account_id: SIBLING, account_name: null });
+    expect(runtime.tokens.mint).not.toHaveBeenCalled();
+  });
+
+  it('409 session_on_softphone for a soft-phone session in another account: named, never rehydrated', async () => {
+    const blocker = { id: SESSION, tenant_id: TENANT, account_id: SIBLING, kind: 'softphone', campaign_id: null, state: 'break' };
+    repos.session.joinSoftphone.mockResolvedValue({ ok: false, reason: 'softphone_elsewhere', session: blocker });
+    repos.accounts.findByIdInTenant.mockResolvedValue({ id: SIBLING, tenant_id: TENANT, name: 'North Region' });
+    const res = await post('/softphone/sessions', { agent_user_id: AGENT });
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict', code: 'session_on_softphone', message: expect.stringMatching(/another account/i),
+      session_id: SESSION, account_id: SIBLING, account_name: 'North Region',
+    });
+    expect(runtime.rehydrateAgent).not.toHaveBeenCalled();
     expect(runtime.tokens.mint).not.toHaveBeenCalled();
   });
 });

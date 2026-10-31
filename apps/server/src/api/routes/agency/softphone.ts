@@ -49,7 +49,7 @@ import { formatWebRtcCallResponse } from '../../responses/webrtc-call.response.j
 import { UUID_RE } from '../../../utils/uuid.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { SOFTPHONE_LIST_DEFAULT_LIMIT, softphoneListFilters, softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
-import { requireOwnedSession, sendActionError, STATION_INTERVALS } from './helpers.js';
+import { accountNameInTenant, requireOwnedSession, sendActionError, STATION_INTERVALS } from './helpers.js';
 import {
   sendSoftphoneRefusal,
   type SoftphoneHangupAudit,
@@ -316,14 +316,28 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     const join = await agencyAgentSessionRepository.joinSoftphone({
       tenantId: actor.tenantId, accountId: actor.accountId, agentUserId: actor.userId, replicaId: runtime.replicaId,
     });
-    if (!join.ok) {
-      // Live on a campaign: the remedy is the switch on THAT session (§4.2), named here.
-      // Name and state are best-effort, as on the campaign join's conflict: a failed
-      // lookup must not turn an actionable 409 into a 500.
+    if (!join.ok && join.reason === 'softphone_elsewhere') {
+      // The agent's soft-phone session is in a sibling account: never rehydrated here
+      // (every route on it is scoped to its account, so this console could dial nothing
+      // from it). Named with its account, where the console closes it (`leave`).
       const blocker = join.session;
-      const [campaign, liveState] = await Promise.all([
+      return sendSoftphoneRefusal(reply, {
+        code: 'session_on_softphone',
+        session_id: blocker.id,
+        account_id: blocker.account_id,
+        account_name: await accountNameInTenant(blocker.account_id, blocker.tenant_id),
+      });
+    }
+    if (!join.ok) {
+      // Live on a campaign: the remedy is the switch on THAT session (§4.2), named here
+      // with its account, which may be a sibling of this one: the switch is scoped to
+      // it. Names and state are best-effort, as on the campaign join's conflict: a
+      // failed lookup must not turn an actionable 409 into a 500.
+      const blocker = join.session;
+      const [campaign, liveState, accountName] = await Promise.all([
         agencyCampaignRepository.findById(blocker.campaign_id).catch(() => null),
         runtime.agents.get(blocker.id).catch(() => null),
+        accountNameInTenant(blocker.account_id, blocker.tenant_id),
       ]);
       return sendSoftphoneRefusal(reply, {
         code: 'session_on_campaign',
@@ -331,6 +345,8 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
         campaign_id: blocker.campaign_id,
         campaign_name: campaign && campaign.tenant_id === blocker.tenant_id ? campaign.name : 'another campaign',
         state: liveState?.state ?? blocker.state,
+        account_id: blocker.account_id,
+        account_name: accountName,
       });
     }
     const session = join.session;

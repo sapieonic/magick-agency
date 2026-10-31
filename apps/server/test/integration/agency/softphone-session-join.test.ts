@@ -18,6 +18,8 @@ import { DEFAULTS, uuidFor } from '../setup/factories.js';
  *     EXCLUDED.campaign_id` arm never matched NULL, so the retry loop threw: a 500
  *     on every soft-phone reconnect);
  *   * soft phone vs campaign is refused both ways, leaving the blocker untouched;
+ *   * a soft-phone session in a sibling account is refused `softphone_elsewhere`,
+ *     never rehydrated into this account (the arm matches the account too);
  *   * concurrent joins settle to exactly one live session.
  */
 
@@ -139,6 +141,34 @@ describe('soft-phone sessions (integration)', () => {
     expect(row.owner_replica).toBe('replica-old');
     expect(row.state).toBe('on_call');
     expect(row.updated_at.getTime()).toBe(live.updated_at.getTime());
+  });
+
+  it('refuses joinSoftphone `softphone_elsewhere` for a soft-phone session in a sibling account, untouched', async () => {
+    // Another account of the same tenant (the session row needs no account row).
+    const sibling = { id: uuidFor('sp-sibling-account') };
+    const agent = uuidFor('sp-agent-sibling');
+    const live = await insertSoftphoneSession({
+      agent_user_id: agent, account_id: sibling.id, owner_replica: 'replica-old',
+    });
+
+    const joined = await joinSoftphone(agent, 'replica-new');
+
+    expect(joined.ok).toBe(false);
+    if (joined.ok) throw new Error('unreachable — narrowing');
+    expect(joined.reason).toBe('softphone_elsewhere');
+    expect(joined.session.id).toBe(live.id);
+    expect(joined.session.account_id).toBe(sibling.id);
+    // Not rehydrated into this account: the row is as it was, and nothing was logged.
+    const rows = await liveRows(agent);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].owner_replica).toBe('replica-old');
+    expect(rows[0].updated_at.getTime()).toBe(live.updated_at.getTime());
+    expect(await events(live.id)).toEqual([]);
+    // From its own account it is the ordinary rehydrate.
+    const there = await agencyAgentSessionRepository.joinSoftphone({
+      tenantId: TENANT, accountId: sibling.id, agentUserId: agent, replicaId: 'replica-new',
+    });
+    expect(there).toMatchObject({ ok: true, created: false, session: { id: live.id, owner_replica: 'replica-new' } });
   });
 
   it('refuses a campaign join `on_softphone` while on a soft-phone session, untouched', async () => {

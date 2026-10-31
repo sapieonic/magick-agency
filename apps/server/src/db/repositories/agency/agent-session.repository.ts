@@ -45,7 +45,14 @@ type AgencyAgentJoinResult =
 export type AgencySoftphoneJoinResult =
   /** `created`: a fresh row (201); false when the live soft-phone session was rehydrated (200). */
   | { ok: true; session: AgencyAgentSessionRecord & { kind: 'softphone'; campaign_id: null }; created: boolean }
-  | { ok: false; reason: 'on_campaign'; session: AgencyCampaignSessionRecord };
+  | { ok: false; reason: 'on_campaign'; session: AgencyCampaignSessionRecord }
+  /**
+   * The agent's live soft-phone session is in ANOTHER account of the tenant (the
+   * route answers `session_on_softphone` with its account). Never rehydrated from
+   * here: every soft-phone route is scoped to the session's account, so a console in
+   * this account handed that session could dial nothing from it.
+   */
+  | { ok: false; reason: 'softphone_elsewhere'; session: AgencyAgentSessionRecord & { kind: 'softphone'; campaign_id: null } };
 
 /** The upsert's own answer, before either public method names the conflict. */
 type LiveSessionUpsertResult =
@@ -259,10 +266,10 @@ export class AgencyAgentSessionRepository {
    * "nothing live" and both insert. The arbiter index does the checking, inside
    * the same statement as the write.
    *
-   * ── Why `DO UPDATE … WHERE kind = … AND campaign_id IS NOT DISTINCT FROM …` ─
+   * ── Why `DO UPDATE … WHERE kind = … AND campaign_id IS NOT DISTINCT FROM … AND account_id = …` ─
    * The conflict has two meanings and they must not be collapsed:
-   *   * same session (same kind, same campaign) ⇒ this is a REHYDRATE. Update and
-   *     return the row.
+   *   * same session (same kind, same campaign, same account) ⇒ this is a
+   *     REHYDRATE. Update and return the row.
    *   * anything else ⇒ this is the refusal. The `WHERE` makes the DO UPDATE
    *     match nothing, so `RETURNING` yields zero rows — **and, critically, the
    *     other session's row is left exactly as it was.** An unconditional DO
@@ -276,6 +283,13 @@ export class AgencyAgentSessionRepository {
    * requested one", retried, and threw after three passes (a 500 on every
    * soft-phone reconnect). The JS comparison in the retry loop is `!==` on two
    * `string | null` values, which is already NULL-safe.
+   *
+   * `account_id` because a soft-phone session names no campaign, and so nothing else
+   * ties it to an account: without it a soft-phone open in account A rehydrated the
+   * agent's soft-phone session in sibling account B, and A's console was handed a
+   * session every account-scoped route then refused (`session_not_found`). For a
+   * campaign session it changes nothing (a campaign is one account's, and the join
+   * route checks the campaign against the request's account).
    *
    * A campaign join while the agent is on a soft-phone session is refused
    * `on_softphone` (the route answers `session_on_softphone`).
@@ -309,6 +323,9 @@ export class AgencyAgentSessionRepository {
    *
    * Refused `on_campaign`, with the live campaign session, when the agent is live on
    * a campaign: the soft phone for that agent is the switch on that session (§4.2).
+   * Refused `softphone_elsewhere`, with the session, when the agent's soft-phone
+   * session is in another account of the tenant: it is closed there (`leave`, with
+   * its account) before one opens here.
    */
   async joinSoftphone(input: {
     tenantId: string;
@@ -324,9 +341,17 @@ export class AgencyAgentSessionRepository {
         created: result.created,
       };
     }
-    // The upsert's blocker is never a soft-phone session: that would have been the
-    // rehydrate arm. `campaign_id` non-null is what the refusal carries.
-    return { ok: false, reason: 'on_campaign', session: result.blocker as AgencyCampaignSessionRecord };
+    // A soft-phone blocker is one in another account (in this account it would have
+    // been the rehydrate arm); any other is a campaign session, whose non-null
+    // `campaign_id` is what the refusal carries.
+    const blocker = result.blocker;
+    return blocker.campaign_id === null
+      ? {
+        ok: false,
+        reason: 'softphone_elsewhere',
+        session: blocker as AgencyAgentSessionRecord & { kind: 'softphone'; campaign_id: null },
+      }
+      : { ok: false, reason: 'on_campaign', session: blocker as AgencyCampaignSessionRecord };
   }
 
   /**
@@ -400,6 +425,7 @@ export class AgencyAgentSessionRepository {
                          updated_at = now()
              WHERE agency_agent_sessions.kind = EXCLUDED.kind
                AND agency_agent_sessions.campaign_id IS NOT DISTINCT FROM EXCLUDED.campaign_id
+               AND agency_agent_sessions.account_id = EXCLUDED.account_id
            RETURNING *, (xmax = 0) AS inserted
          )
          SELECT upserted.*,
@@ -448,10 +474,12 @@ export class AgencyAgentSessionRepository {
       // exist because of that gap rather than in spite of it.
       const blocker = await this.findLiveForAgent(input.tenantId, input.agentUserId);
 
-      // `campaign_id` alone decides "the same session": the CHECK ties `kind` to
-      // it, and `!==` on `string | null` is NULL-safe (a soft-phone blocker of a
-      // soft-phone join is the rehydrate race below, not a conflict).
-      if (blocker && blocker.campaign_id !== input.campaignId) {
+      // `campaign_id` and `account_id` decide "the same session", as the DO UPDATE's
+      // WHERE does: the CHECK ties `kind` to the campaign, and `!==` on
+      // `string | null` is NULL-safe (a soft-phone blocker of a soft-phone join in
+      // the same account is the rehydrate race below, not a conflict; one in another
+      // account is a conflict, and retrying it would only throw after three passes).
+      if (blocker && (blocker.campaign_id !== input.campaignId || blocker.account_id !== input.accountId)) {
         return { ok: false, blocker };
       }
 

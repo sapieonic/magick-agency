@@ -308,9 +308,9 @@ export type AgencySoftphoneErrorCode =
   | 'override_note_invalid'
   /** 409. A campaign attempt is live on the matched roster contact. No override (§4.1 step 2). */
   | 'contact_in_flight'
-  /** 409. `POST /sessions` while the agent is live on a campaign; switch that session instead (§4.2). */
+  /** 409. `POST /sessions` while the agent is live on a campaign (in this account or a sibling one: `account_id`); switch that session instead (§4.2). */
   | 'session_on_campaign'
-  /** 409. The campaign join while the agent's live session is a soft-phone session. */
+  /** 409. The campaign join while the agent's live session is a soft-phone session; and `POST /sessions` while it is one in another account (`account_id`). */
   | 'session_on_softphone'
   /** 404. `session_id` is not the caller's live session in this tenant. */
   | 'session_not_found'

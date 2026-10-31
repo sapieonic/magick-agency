@@ -34,7 +34,9 @@ Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-1
     (queued like any break while they are on a call or in wrap-up), and they dial from the same
     session and socket. **Return to campaign** ends that break.
   - Either way `uq_agency_agent_live_tenant` still allows one live session per agent per tenant:
-    one pair of ears.
+    one pair of ears. That session may be in a sibling account of the one the console is in, so
+    the refusals that name it carry its `account_id` (§6), and a soft-phone open never rehydrates
+    a session from another account.
 - **Calls live in `agency_manual_calls`**, never in `agency_contacts` / `agency_call_attempts`.
   Retries, roster completion, pacing headroom per campaign, the abandonment predicate and its 24 h
   guardrail never read it. The media leg is an ordinary `agency_calls` row with
@@ -288,7 +290,7 @@ from `audit` (a success without the envelope is a 502).
 | Method and path (`/proxy/agency`) | Permission | What |
 |---|---|---|
 | `GET /softphone/bootstrap` | `softphone.dial` | `softphone_enabled` (the flag; bootstrap answers while it is off); taggable campaigns — `running` or `paused` only (`SOFTPHONE_TAGGABLE_CAMPAIGN_STATUSES`, the rule `placeCall`'s `campaign_not_taggable` applies too); agent: active staffing, filtered in the query before the 500 cap; supervise: every such campaign of the account — each with status, caller IDs, catalog (the built-in when empty), calling window and whether it is open now, recording and summary profile, context display; untagged caller IDs (`findAvailableForAccount`), default caller ID, catalog and recording/profile; call fields; `default_country_code` (`+<digits>`); the caller's live session in the tenant (`account_id`, the account it is in; `on_softphone`, a queued switch as `pending_state` / `pending_break_reason`) and, in this account, its live or unsettled call (`agent_name` filled) with `call_campaign`, that call's campaign described as a taggable one whatever its status now (completed, or the agent unstaffed, since the dial), so the outcome pad keeps the catalog the server saves against |
-| `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state`. With the flag off it only rehydrates an existing live soft-phone session in this account (the internal handler's `rehydrate_only`); else 403 `softphone_disabled` |
+| `POST /softphone/sessions` | `softphone.dial` | open (201) or rehydrate (200) the soft-phone session in THIS account: `rehydrateAgent`, a station token, `station_ws_url` on `/proxy/agency/station`; 409 `session_on_campaign` with `session_id`, `campaign_id`, `campaign_name`, `state`, `account_id` and `account_name` (the account the campaign session is in, which may be a sibling one: the switch is scoped to it); 409 `session_on_softphone` with `session_id`, `account_id` and `account_name` when the agent's soft-phone session is in another account of the tenant, which is never rehydrated here (the join upsert's rehydrate arm matches the account as well as the kind and campaign: `joinSoftphone`'s `softphone_elsewhere`), since every route on it is scoped to its account. `account_name` is best-effort (NULL when the read failed). With the flag off it only rehydrates an existing live soft-phone session in this account (the internal handler's `rehydrate_only`); else 403 `softphone_disabled` |
 | `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
@@ -311,7 +313,9 @@ phone's break, which would leave the call behind; `force-available` answers the 
 `available`, `break` for a queued break, `offline` when the station is gone). `break/cancel` on a CAMPAIGN session
 cancels a queued switch to the soft phone like any queued break. `leave` and `station-token` work
 on a soft-phone session; `leave` is refused while a call is live. The campaign join answers 409
-`session_on_softphone`. New station frame: `manual_call { call: AgencyManualCall }`.
+`session_on_softphone` with the session's `session_id`, `account_id` and `account_name`, the same
+shape as the soft-phone open's (`leave` is scoped to the session's account, so the console closes
+it with that one). New station frame: `manual_call { call: AgencyManualCall }`.
 
 Audit (`platform_audit_log`, resource types `agency_manual_call`, `agency_softphone_settings`, and
 `agency_session`), each with the real actor and `campaign_id` set to the tag:

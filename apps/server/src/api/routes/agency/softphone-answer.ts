@@ -60,25 +60,39 @@ const ERROR_BY_STATUS: Readonly<Record<number, string>> = {
  */
 export type SoftphoneApiRefusal =
   | { code: 'softphone_disabled' }
-  | { code: 'session_on_campaign'; session_id: string; campaign_id: string; campaign_name: string; state: AgencyAgentState }
+  | {
+    code: 'session_on_campaign';
+    session_id: string;
+    campaign_id: string;
+    campaign_name: string;
+    state: AgencyAgentState;
+    account_id: string;
+    account_name: string | null;
+  }
+  | { code: 'session_on_softphone'; session_id: string; account_id: string; account_name: string | null }
   | { code: 'settings_invalid'; details: Array<{ path: string; message: string }> };
 
 const API_MESSAGES: Record<SoftphoneApiRefusal['code'], string> = {
   softphone_disabled: 'The soft phone is not enabled for this account.',
   session_on_campaign:
     'You are live on a campaign. Switch that station to the soft phone instead of opening a second one.',
+  session_on_softphone:
+    'Your soft phone is open in another account. Close it there before opening the soft phone here.',
   settings_invalid: 'Some soft-phone settings are invalid.',
 };
+
+const API_REFUSAL_CODES: ReadonlySet<string> = new Set(Object.keys(API_MESSAGES));
+
+function isApiRefusal(refusal: SoftphoneRefusal | SoftphoneApiRefusal): refusal is SoftphoneApiRefusal {
+  return API_REFUSAL_CODES.has(refusal.code);
+}
 
 /** `{ error, code, message, ...refusal }` with the contract status. */
 export function softphoneRefusalBody(
   refusal: SoftphoneRefusal | SoftphoneApiRefusal,
 ): { status: number; body: AgencySoftphoneErrorResponse & Record<string, unknown> } {
   const status = SOFTPHONE_REFUSAL_STATUS[refusal.code];
-  const message = refusal.code === 'softphone_disabled' || refusal.code === 'session_on_campaign'
-    || refusal.code === 'settings_invalid'
-    ? API_MESSAGES[refusal.code]
-    : softphoneRefusalMessage(refusal);
+  const message = isApiRefusal(refusal) ? API_MESSAGES[refusal.code] : softphoneRefusalMessage(refusal);
   return {
     status,
     // `error` and `message` first, the refusal's own fields after: a refusal field can

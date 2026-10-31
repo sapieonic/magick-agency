@@ -111,7 +111,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/softphone-contact-settlement.test.ts` | ~42 |
 | `apps/server/test/integration/agency/softphone-manual-call-repository.test.ts` | ~32 |
 | `apps/server/test/integration/agency/softphone-mixed-data-reads.test.ts` | 5 |
-| `apps/server/test/integration/agency/softphone-session-join.test.ts` | ~9 |
+| `apps/server/test/integration/agency/softphone-session-join.test.ts` | 10 |
 | `apps/server/test/integration/agency/softphone-session-route.test.ts` | 1 |
 | `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~7 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
@@ -221,7 +221,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
 | `apps/server/test/unit/agency/runtime-collapses.test.ts` | 7 |
-| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 14 |
+| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 16 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
@@ -410,8 +410,8 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
-| `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 48 |
-| `apps/server/test/integration/api/softphone-routes.test.ts` | 12 |
+| `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 49 |
+| `apps/server/test/integration/api/softphone-routes.test.ts` | 14 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 
 ### `apps/server/src/api/validators/`
@@ -1271,7 +1271,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyCampaignSeries.ts
 | `apps/console/src/__tests__/api/exportCsv.test.ts` | 3 |
 | `apps/console/src/__tests__/api/invites.test.ts` | 21 |
 | `apps/console/src/__tests__/api/originator-header.test.ts` | 4 |
-| `apps/console/src/__tests__/api/softphone.test.ts` | 13 |
+| `apps/console/src/__tests__/api/softphone.test.ts` | 14 |
 | `apps/console/src/__tests__/api/tenants.test.ts` | 6 |
 
 ### `apps/console/src/brand/`
