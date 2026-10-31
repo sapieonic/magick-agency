@@ -213,9 +213,11 @@ describe('DncRegistry + markDnc over real dnc_entries', () => {
       );
       const plan = rows.map((r: Record<string, string>) => r['QUERY PLAN']).join('\n');
       // One statement; `dnc_entries` by a tenant index, the account's campaigns by
-      // `idx_agency_campaigns_tenant` or the primary key (the planner's choice).
-      expect(plan).toMatch(/Index Scan using idx_dnc_entries_tenant_\w+ on dnc_entries/);
-      expect(plan).toMatch(/Index (Only )?Scan using (idx_agency_campaigns_tenant|agency_campaigns_pkey) on agency_campaigns/);
+      // `idx_agency_campaigns_tenant` or the primary key. Plain or bitmap is the
+      // planner's choice (CI's planner took a bitmap scan of the key); both are
+      // index reads, and no seq scan is.
+      expect(plan).toMatch(/(Index (Only )?Scan using|Bitmap Index Scan on) idx_dnc_entries_tenant_\w+/);
+      expect(plan).toMatch(/(Index (Only )?Scan using|Bitmap Index Scan on) (idx_agency_campaigns_tenant|agency_campaigns_pkey)/);
       expect(plan).not.toMatch(/Seq Scan/);
     } finally {
       await client.query('ROLLBACK');

@@ -126,7 +126,9 @@ describe('agency repository — the methods no other real-Postgres suite reaches
   it('reaper reads and writes: findNonTerminalOlderThan, reapByIds, reapNonTerminal', async () => {
     const { campaign, attempt } = await world();
     const a = repo.agencyAttemptRepository;
-    const old = await a.findNonTerminalOlderThan(new Date());
+    // A cutoff a minute ahead: `created_at` is the database's `now()` and this the
+    // test process's clock, and the two may differ by more than the row's age.
+    const old = await a.findNonTerminalOlderThan(new Date(Date.now() + 60_000));
     expect(old.map((r) => r.id)).toContain(attempt.id);
     const reaped = await a.reapByIds([attempt.id]);
     expect(reaped.map((r) => r.id)).toEqual([attempt.id]);
