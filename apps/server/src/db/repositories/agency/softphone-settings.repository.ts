@@ -17,6 +17,7 @@ import {
   AGENCY_CALL_FIELD_TYPES,
   SOFTPHONE_CALL_FIELD_KEY_MAX,
   SOFTPHONE_CALL_FIELD_KEY_PATTERN,
+  SOFTPHONE_CALL_FIELD_RESERVED_KEYS,
   SOFTPHONE_CALL_FIELDS_MAX,
   type AgencyCallField,
   type AgencyDisposition,
@@ -145,6 +146,11 @@ export function validateSoftphoneSettings(body: unknown): SoftphoneSettingsIssue
       const key = isRecord(raw) ? raw['key'] : undefined;
       if (typeof key === 'string') {
         if (keys.has(key)) issues.push({ path: `${at}.key`, message: `Duplicate call field key '${key}'.` });
+        // Refused at write only: `toSettings` still reads a stored one, and the
+        // validator's own-property reads (`call-fields.ts`) keep it harmless.
+        if (SOFTPHONE_CALL_FIELD_RESERVED_KEYS.has(key)) {
+          issues.push({ path: `${at}.key`, message: `'${key}' is reserved; choose another key.` });
+        }
         keys.add(key);
       }
     });

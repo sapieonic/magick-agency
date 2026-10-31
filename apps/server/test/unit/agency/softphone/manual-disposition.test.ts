@@ -67,6 +67,14 @@ describe('call fields', () => {
     const r = validateCallFieldValues(FIELDS, { amount: 1, policy_no: '   ' }, { requireFilled: true });
     expect(r.ok ? null : r.details).toEqual([{ path: 'fields.policy_no', message: 'Policy number is required' }]);
   });
+
+  it('reads own properties only: a required field keyed like a prototype member is still enforced', () => {
+    // A stored set from before the reserved-key refusal (`PUT /settings`).
+    const proto = [{ key: 'constructor', label: 'Constructor', type: 'text' as const, required: true }];
+    const r = validateCallFieldValues(proto, {}, { requireFilled: true });
+    expect(r.ok ? null : r.details).toEqual([{ path: 'fields.constructor', message: 'Constructor is required' }]);
+    expect(validateCallFieldValues(proto, { constructor: 'filled' }, { requireFilled: true }).ok).toBe(true);
+  });
 });
 
 describe('the catalog', () => {

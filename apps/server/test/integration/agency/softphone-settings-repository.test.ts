@@ -114,6 +114,17 @@ describe('AgencySoftphoneSettingsRepository (integration)', () => {
     expect(validateSoftphoneSettings(null)).toHaveLength(1);
   });
 
+  it('validateSoftphoneSettings refuses a key a plain object answers through its prototype', () => {
+    for (const key of ['constructor', 'prototype']) {
+      const issues = validateSoftphoneSettings({
+        ...VALID, call_fields: [{ key: 'policy_no', label: 'P', type: 'text' }, { key, label: 'X', type: 'text' }],
+      });
+      expect(issues, key).toEqual([{ path: 'call_fields[1].key', message: `'${key}' is reserved; choose another key.` }]);
+    }
+    // A key merely containing one is fine.
+    expect(validateSoftphoneSettings({ ...VALID, call_fields: [{ key: 'constructor_name', label: 'X', type: 'text' }] })).toEqual([]);
+  });
+
   it('sanitises malformed stored elements on read rather than failing', async () => {
     await getTestPool().query(
       `INSERT INTO agency_softphone_settings (tenant_id, account_id, disposition_catalog, call_fields)

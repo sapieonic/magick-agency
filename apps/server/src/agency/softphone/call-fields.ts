@@ -93,8 +93,12 @@ export function validateCallFieldValues(
     else out[key] = value as string | number | boolean;
   }
   if (opts.requireFilled) {
+    const submitted = values as Record<string, unknown>;
     for (const field of fields) {
-      if (field.required && isEmpty((values as Record<string, unknown>)[field.key])) {
+      // Own properties only: a field keyed `constructor` must not read `{}.constructor`
+      // (a function, so "filled") and skip its `required` check.
+      const value = Object.hasOwn(submitted, field.key) ? submitted[field.key] : undefined;
+      if (field.required && isEmpty(value)) {
         details.push({ path: `fields.${field.key}`, message: `${field.label} is required` });
       }
     }

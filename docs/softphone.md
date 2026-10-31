@@ -70,7 +70,10 @@ Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-1
   `record_calls`, `default_caller_id`. Used for untagged calls; call fields apply to every call.
 
 `call_fields` entries: `{ key, label, type: 'text'|'number'|'choice'|'boolean'|'date', options?,
-required? }`, at most 20, snake_case keys up to 50 chars, unique. Values on a call are validated
+required? }`, at most 20, snake_case keys up to 50 chars, unique, and none of the names a plain
+object answers through its prototype (`constructor`, `prototype`, …;
+`SOFTPHONE_CALL_FIELD_RESERVED_KEYS`, refused `settings_invalid` at `PUT /settings`; values are
+read as own properties only). Values on a call are validated
 against the set in force when they are saved; unknown keys are refused. A request's `fields`
 (`PATCH /calls/:id`, the outcome) replaces the stored values wholesale; omitted, it leaves them
 unchanged, and so does `{}` while the account has NO call fields in force (that client could not

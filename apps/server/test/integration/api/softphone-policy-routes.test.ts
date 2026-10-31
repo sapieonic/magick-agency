@@ -565,6 +565,18 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 
+  it('PUT /settings refuses a reserved call-field key with settings_invalid on its path', async () => {
+    const res = await app.inject({
+      method: 'PUT', url: '/proxy/agency/softphone/settings', headers: headers(supervisor),
+      payload: JSON.stringify({
+        disposition_catalog: [], analysis_profile_id: null, record_calls: false, default_caller_id: null,
+        call_fields: [{ key: 'constructor', label: 'Constructor', type: 'text', required: true }],
+      }),
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json()).toMatchObject({ code: 'settings_invalid', details: [{ path: 'call_fields[0].key' }] });
+  });
+
   it('a supervisor reads it on the DNC list as an account entry', async () => {
     const list = await get('/dnc?phone=%2B919811300010', supervisor);
     expect(list.statusCode, list.body).toBe(200);

@@ -101,6 +101,20 @@ export const SOFTPHONE_CALL_FIELD_KEY_MAX = 50;
 export const SOFTPHONE_CALL_FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 /**
+ * Keys a call field may not take: every name a plain object answers through
+ * `Object.prototype` (`constructor`, `__proto__`, `toString`, …) and `prototype`. A
+ * field keyed `constructor` reads as filled on an empty value object
+ * (`{}.constructor` is a function), so a required one would never be enforced, and
+ * the values travel as a plain object end to end. `PUT /settings` refuses them
+ * (`settings_invalid` on `call_fields[i].key`); under the key pattern only
+ * `constructor` and `prototype` can be typed, the rest are listed for completeness.
+ */
+export const SOFTPHONE_CALL_FIELD_RESERVED_KEYS: ReadonlySet<string> = new Set([
+  ...Object.getOwnPropertyNames(Object.prototype),
+  'prototype',
+]);
+
+/**
  * How long an ended call may wait for its outcome before the reaper closes it
  * `no_disposition` and releases its contact claim (§4.1 step 8). Until then the
  * agent cannot dial again from that session: one unsettled call per session.
