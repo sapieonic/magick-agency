@@ -108,8 +108,9 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
-| `apps/server/test/integration/agency/softphone-contact-settlement.test.ts` | ~35 |
+| `apps/server/test/integration/agency/softphone-contact-settlement.test.ts` | ~42 |
 | `apps/server/test/integration/agency/softphone-manual-call-repository.test.ts` | ~32 |
+| `apps/server/test/integration/agency/softphone-mixed-data-reads.test.ts` | 5 |
 | `apps/server/test/integration/agency/softphone-session-join.test.ts` | ~9 |
 | `apps/server/test/integration/agency/softphone-session-route.test.ts` | 1 |
 | `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~6 |
@@ -186,13 +187,13 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/hangup-route.test.ts` | 10 |
 | `apps/server/test/unit/agency/late-binding.test.ts` | 31 |
 | `apps/server/test/unit/agency/left-session-guards.test.ts` | 38 |
-| `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 18 |
+| `apps/server/test/unit/agency/live-concurrency-metrics.test.ts` | 21 |
 | `apps/server/test/unit/agency/live-concurrency-repository.test.ts` | 8 |
 | `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 4 |
 | `apps/server/test/unit/agency/our-fault-redial.test.ts` | 20 |
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
-| `apps/server/test/unit/agency/pacing-engine.test.ts` | 76 |
+| `apps/server/test/unit/agency/pacing-engine.test.ts` | 81 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
 | `apps/server/test/unit/agency/profile-in-use-reference-check.test.ts` | 23 |
@@ -219,7 +220,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
-| `apps/server/test/unit/agency/runtime-collapses.test.ts` | 6 |
+| `apps/server/test/unit/agency/runtime-collapses.test.ts` | 7 |
 | `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 14 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
@@ -245,17 +246,18 @@ Files: `contact-settlement.ts`, `live-attempt.ts`
 
 ### `apps/server/src/agency/softphone/`
 
-The soft phone's runtime (docs/softphone.md §4, §5): `softphone-service.ts` (`SoftphoneService`, `AgencyRuntime.softphone`: place, hang up, details, outcome, DNC, switch and return, reads; typed refusals, no HTTP), `manual-dialer.ts` (`ManualDialer`: dials a committed row agent-first through the bridge with a `manual` correlation, applies lifecycle events in order, settles unanswered calls, re-attaches on reconnect, takes the sweeps' closed rows), `manual-predial.ts` (number, caller ID, roster match, calling window, DNC, overrides), `manual-disposition.ts` (catalog, outcome and roster decision), `call-fields.ts` (call-field values against the set in force), `session-guard.ts` (`setAvailableGuarded`: the `available` write and its `manual_call_live` refusal), `types.ts` (the refusal union and actor).
+The soft phone's runtime (docs/softphone.md §4, §5): `softphone-service.ts` (`SoftphoneService`, `AgencyRuntime.softphone`: place, hang up, details, outcome, DNC, switch and return, reads; typed refusals, no HTTP), `manual-dialer.ts` (`ManualDialer`: dials a committed row agent-first through the bridge with a `manual` correlation, applies lifecycle events in order, settles unanswered calls, re-attaches on reconnect, takes the sweeps' closed rows), `manual-predial.ts` (number, caller ID, roster match, calling window, DNC, overrides), `manual-disposition.ts` (catalog, outcome and roster decision, and the retry-policy decision for a call closed with no outcome), `manual-settlement.ts` (that decision read and written for the dialer and the reaper), `softphone-audit.ts` (the one writer of `agency_session.softphone_started` / `.softphone_ended`), `call-fields.ts` (call-field values against the set in force), `session-guard.ts` (`setAvailableGuarded`: the `available` write and its `manual_call_live` refusal), `types.ts` (the refusal union and actor).
 
-Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-predial.ts`, `session-guard.ts`, `softphone-service.ts`, `types.ts`
+Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-predial.ts`, `manual-settlement.ts`, `session-guard.ts`, `softphone-audit.ts`, `softphone-service.ts`, `types.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/agency/chaos/softphone-restart-mid-call.test.ts` | 3 |
 | `apps/server/test/integration/agency/softphone-agent-claim.test.ts` | 8 |
-| `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 10 |
+| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 10 |
+| `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 14 |
 | `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
-| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 11 |
+| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 19 |
 | `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | 21 |
 
 ### `apps/server/src/agency/pacing/`
@@ -407,9 +409,9 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/user.routes.test.ts` | 47 |
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
-| `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 41 |
+| `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 42 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 43 |
-| `apps/server/test/integration/api/softphone-routes.test.ts` | 7 |
+| `apps/server/test/integration/api/softphone-routes.test.ts` | 10 |
 
 ### `apps/server/src/api/validators/`
 
@@ -1083,7 +1085,7 @@ Scenario, flow, guard and setup tests that span several modules.
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~14 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
-| `packages/db/test/integration/baseline-down-up.test.ts` | ~3 |
+| `packages/db/test/integration/baseline-down-up.test.ts` | ~5 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
 | `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
