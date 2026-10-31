@@ -8,6 +8,13 @@ import type { SoftphoneState } from '../../hooks/useSoftphone';
 import station from '../agency/AgentStation.module.css';
 import styles from './SoftphoneView.module.css';
 
+/**
+ * What leaving for another screen does with no call: nothing ends. The session
+ * stays open (and a campaign join will offer to close it), so the nav says so
+ * rather than let the agent find out at the join.
+ */
+export const SOFTPHONE_STAYS_OPEN_COPY = 'Your soft phone stays open on other screens. Close it here when you’re done.';
+
 /** What leaving would do while a call is unsettled — the nav and the close both say it. */
 export const SOFTPHONE_LEAVE_BLOCKED_COPY = 'Finish this call and save its outcome first — leaving now would cut the customer off.';
 
@@ -41,7 +48,12 @@ export function SoftphoneHeader({
     <header className={station.header}>
       <div className={station.identity}>
         <StationIdentity user={user} subline="Soft phone" />
-        <AgentNav current="phone" variant="header" lockedReason={sp.call ? SOFTPHONE_LEAVE_BLOCKED_COPY : null} />
+        <AgentNav
+          current="phone"
+          variant="header"
+          lockedReason={sp.call ? SOFTPHONE_LEAVE_BLOCKED_COPY : null}
+          leaveHint={SOFTPHONE_STAYS_OPEN_COPY}
+        />
       </div>
       <div className={station.headerRight}>
         <SoftphoneDisclosures sp={sp} />

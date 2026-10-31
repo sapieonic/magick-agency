@@ -317,6 +317,14 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   with the reason, while a manual call is live or awaiting its outcome). The ordinary End break
   and the station's own shortcuts are suspended. After a reload during a soft-phone break the
   station reads `session.on_softphone` from the bootstrap.
+- **Joining a campaign with the soft phone open.** The join's 409 `session_on_softphone` screen
+  offers **Close the soft phone and join** (`useStationJoin.closeSoftphoneAndJoin`): it reads the
+  soft-phone bootstrap first and closes nothing while a call there is live or owes its outcome
+  (`leave` refuses only a live one, and an owed outcome would lapse), saying to finish it on the
+  soft phone; otherwise it leaves the refusal's `session_id` (`POST /sessions/:id/leave`; a session
+  already gone counts as closed) and joins. "Open the soft phone" stays as the second way. The soft
+  phone is not closed when the agent navigates away (a reload, StrictMode's double mount and a
+  second tab make an unmount a poor signal); the nav says it stays open instead.
 - **Live floor.** A campaign agent on `break/soft_phone` reads "Soft phone" on the floor and in its
   drawer (`floorStateLabel`), never "On break · soft_phone", and is exempt from the 30-minute
   long-break flag. Whether they are on a call right now is not in the floor's data

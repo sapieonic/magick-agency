@@ -179,6 +179,16 @@ describe('/dialer/phone', () => {
     });
   });
 
+  it('says, on the way to another screen, that the soft phone stays open', async () => {
+    await mount();
+    await act(async () => latestSocket().open());
+    const link = screen.getByTestId('agent-nav-attempts');
+    expect(link.closest('a')).not.toBeNull();
+    const hint = document.getElementById(link.getAttribute('aria-describedby')!)!;
+    expect(hint.textContent).toBe('Your soft phone stays open on other screens. Close it here when you’re done.');
+    expect(link.getAttribute('title')).toBe(hint.textContent);
+  });
+
   it('closes the soft phone: leaves the session and goes home', async () => {
     mocks.leaveAgencySession.mockResolvedValue(undefined);
     await mount();
@@ -186,6 +196,7 @@ describe('/dialer/phone', () => {
     fireEvent.click(screen.getByTestId('softphone-close'));
     const dialog = screen.getByRole('dialog');
     expect(dialog.textContent).toMatch(/Close the soft phone\?/);
+    expect(dialog.textContent).toMatch(/takes you to My campaigns\. To call again, choose Soft phone at the top of the page\./);
     await act(async () => {
       fireEvent.click(within(dialog).getByRole('button', { name: 'Close soft phone' }));
     });

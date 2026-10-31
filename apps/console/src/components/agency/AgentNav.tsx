@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { Link } from 'react-router-dom';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { ChartNoAxesCombined, ListChecks, Phone, PhoneOutgoing } from 'lucide-react';
@@ -58,6 +59,7 @@ export function AgentNav({
   current,
   variant = 'pills',
   lockedReason = null,
+  leaveHint = null,
 }: {
   current: AgentSurfaceId;
   /** `header`: the compact row in the soft phone's header bar, with no version label. */
@@ -68,8 +70,16 @@ export function AgentNav({
    * reason instead of as links, so the page cannot be navigated away under a call.
    */
   lockedReason?: string | null;
+  /**
+   * What following a link leaves behind (the soft phone, still open): read as
+   * each link's description, so it is heard before the agent goes, and shown as
+   * its tooltip. Ignored while `lockedReason` is set.
+   */
+  leaveHint?: string | null;
 }) {
   const softphone = useSoftphoneAvailable();
+  const hintId = useId();
+  const hint = lockedReason ? null : leaveHint;
   const surfaces = agentSurfacesFor({ softphone });
   return (
     <nav className={variant === 'header' ? styles.headerNav : styles.nav} aria-label="Your screens">
@@ -114,6 +124,8 @@ export function AgentNav({
             key={surface.id}
             className={styles.item}
             to={surface.to}
+            title={hint ?? undefined}
+            aria-describedby={hint ? hintId : undefined}
             data-testid={`agent-nav-${surface.id}`}
             data-current="false"
           >
@@ -126,6 +138,11 @@ export function AgentNav({
           field. Not a link, so it adds nothing to the tab order. The soft phone's header
           carries its own. */}
       {variant === 'pills' ? <AppVersion version={__APP_VERSION__} variant="inline" /> : null}
+      {hint ? (
+        <span id={hintId} hidden>
+          {hint}
+        </span>
+      ) : null}
     </nav>
   );
 }

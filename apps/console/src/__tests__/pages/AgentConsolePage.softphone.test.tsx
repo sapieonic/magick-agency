@@ -358,6 +358,101 @@ describe('on the soft phone, in the station', () => {
 });
 
 describe('joining a campaign while on the soft phone', () => {
+  const onSoftphone = () =>
+    Object.assign(new Error('On the soft phone'), { statusCode: 409, details: { code: 'session_on_softphone', session_id: 'sess-sp' } });
+  async function refused() {
+    render(
+      <MemoryRouter initialEntries={['/station?campaign=camp-1']}>
+        <AgentConsolePage />
+      </MemoryRouter>,
+    );
+    await act(async () => {});
+  }
+
+  it('closes the soft phone and joins in one click: leave that session, then join this campaign', async () => {
+    mocks.createAgencySession.mockRejectedValueOnce(onSoftphone()).mockResolvedValueOnce(BOOTSTRAP);
+    mocks.leaveAgencySession.mockResolvedValue(undefined);
+    await refused();
+    expect(within(screen.getByTestId('join-on-softphone')).getByRole('link', { name: 'Open the soft phone' })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+    });
+    expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-1');
+    expect(mocks.createAgencySession).toHaveBeenCalledTimes(2);
+    expect(mocks.createAgencySession.mock.calls[1]).toEqual(['camp-1', 't-1', 'a-1']);
+    expect(screen.queryByTestId('join-on-softphone')).toBeNull();
+    await act(async () => {
+      latestSocket().open();
+    });
+    expect(screen.getByTestId('rail-label')).toBeTruthy();
+  });
+
+  it('does not close a soft phone whose call owes its outcome: it says to finish it there', async () => {
+    mocks.createAgencySession.mockRejectedValueOnce(onSoftphone());
+    mocks.getSoftphoneBootstrap.mockResolvedValue({
+      ...SP_BOOTSTRAP,
+      call: manualCall({ state: 'ended', outcome: 'connected', requires_disposition: true, bridged_at: '2026-10-30T10:00:05Z' }),
+    });
+    await refused();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+    });
+    expect(mocks.leaveAgencySession).not.toHaveBeenCalled();
+    expect(screen.getByTestId('join-softphone-call-pending').textContent).toMatch(/call that isn’t finished/);
+    // The way to finish it is the one action left.
+    expect(screen.queryByRole('button', { name: 'Close the soft phone and join' })).toBeNull();
+    expect(screen.getByTestId('join-open-softphone').getAttribute('href')).toBe('/dialer/phone');
+  });
+
+  it('a live call the server refuses to leave (agent_on_live_call) says the same, and joins nothing', async () => {
+    mocks.createAgencySession.mockRejectedValueOnce(onSoftphone());
+    mocks.leaveAgencySession.mockRejectedValue(
+      Object.assign(new Error('Conflict'), { statusCode: 409, details: { code: 'agent_on_live_call', message: 'Hang up your soft-phone call before leaving the station.' } }),
+    );
+    await refused();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+    });
+    expect(screen.getByTestId('join-softphone-call-pending')).toBeTruthy();
+    expect(mocks.createAgencySession).toHaveBeenCalledTimes(1);
+  });
+
+  it('a soft-phone session already gone is closed enough: it joins', async () => {
+    mocks.createAgencySession.mockRejectedValueOnce(onSoftphone()).mockResolvedValueOnce(BOOTSTRAP);
+    mocks.leaveAgencySession.mockRejectedValue(
+      Object.assign(new Error('Session Ended'), { statusCode: 409, details: { code: 'session_ended' } }),
+    );
+    await refused();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+    });
+    expect(screen.queryByTestId('join-on-softphone')).toBeNull();
+  });
+
+  it('any other failure to leave keeps the screen and says the soft phone is still open', async () => {
+    mocks.createAgencySession.mockRejectedValueOnce(onSoftphone());
+    mocks.leaveAgencySession.mockRejectedValue(Object.assign(new Error('Service Unavailable'), { statusCode: 503 }));
+    await refused();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+    });
+    expect(screen.getByTestId('join-close-softphone-failure').textContent).toBe('Your soft phone is still open — Service Unavailable');
+    expect((screen.getByRole('button', { name: 'Close the soft phone and join' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('closed, but the join then fails: the ordinary join error, naming that the soft phone is closed', async () => {
+    mocks.createAgencySession
+      .mockRejectedValueOnce(onSoftphone())
+      .mockRejectedValueOnce(Object.assign(new Error('Campaign is stopped'), { statusCode: 409, details: { code: 'campaign_not_running' } }));
+    mocks.leaveAgencySession.mockResolvedValue(undefined);
+    await refused();
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+    });
+    expect(screen.queryByTestId('join-on-softphone')).toBeNull();
+    expect(document.body.textContent).toMatch(/Closed the soft phone, but couldn’t join this campaign — Campaign is stopped/);
+  });
+
   it('says so and links to the soft phone (session_on_softphone)', async () => {
     mocks.createAgencySession.mockRejectedValue(
       Object.assign(new Error('On the soft phone'), { statusCode: 409, details: { code: 'session_on_softphone', session_id: 'sess-sp' } }),

@@ -12,8 +12,6 @@ import { useDncAction } from './station/useDncAction';
 import { useStationSoftphone } from './station/useStationSoftphone';
 import { SoftphoneView } from '../../components/softphone/SoftphoneView';
 import { SoftphoneDisclosures } from '../../components/softphone/SoftphoneHeader';
-import { agentLandingPath } from '../../utils/agencyStationExit';
-import { Link } from 'react-router-dom';
 import { StateRail } from '../../components/agency/StateRail';
 import {
   DispositionPad,
@@ -24,6 +22,7 @@ import { NotesField } from '../../components/agency/NotesField';
 import type { BreakMenuHandle } from '../../components/agency/BreakMenu';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
+import { SoftphoneJoinScreen } from '../../components/agency/SoftphoneJoinScreen';
 import { StationFatal } from '../../components/agency/StationFatal';
 import { StationHeader } from '../../components/agency/StationHeader';
 import { ContactPanel } from '../../components/agency/ContactPanel';
@@ -194,23 +193,17 @@ export default function AgentConsolePage() {
   /*
     The agent's live session is a SOFT-PHONE session (`session_on_softphone`):
     one session per agent per tenant, and that one has no campaign to name, so the
-    remedy is the soft phone itself — close it there, then come back.
+    remedy is closing the soft phone — one click here, unless a call there is not
+    finished.
   */
   if (join.onSoftphoneElsewhere) {
     return (
-      <div className={styles.shell}>
-        <div className={styles.fatal} role="alert" data-testid="join-on-softphone">
-          <h1>You’re on the soft phone</h1>
-          <p>You can only have one session at a time, and yours is the soft phone.</p>
-          <p>Close the soft phone first, then come back here to join this campaign.</p>
-          <Link className={styles.fatalAction} to="/dialer/phone">
-            Open the soft phone
-          </Link>
-          <Link className={styles.fatalEscape} to={agentLandingPath('refused')}>
-            Back to your home screen
-          </Link>
-        </div>
-      </div>
+      <SoftphoneJoinScreen
+        closing={join.closingSoftphone}
+        failure={join.closeSoftphoneFailure}
+        callPending={join.softphoneCallPending}
+        onCloseAndJoin={join.closeSoftphoneAndJoin}
+      />
     );
   }
 
