@@ -304,7 +304,8 @@ The two switch routes take the session routes' guard (`requireOwnedSession`: the
 session, else 404; a left session 409 `session_ended`). The campaign session routes answer 409
 `wrong_session_kind` on a soft-phone session: `available`, `break`, `break/cancel` and
 `force-available` (`available` and `force-available` also 409 `manual_call_live` with the call
-while one is live or awaiting its outcome; `force-available` answers the state it actually wrote:
+while one is live or awaiting its outcome, and so does `break` with another reason from the soft
+phone's break, which would leave the call behind; `force-available` answers the state it actually wrote:
 `available`, `break` for a queued break, `offline` when the station is gone). `break/cancel` on a CAMPAIGN session
 cancels a queued switch to the soft phone like any queued break. `leave` and `station-token` work
 on a soft-phone session; `leave` is refused while a call is live. The campaign join answers 409
