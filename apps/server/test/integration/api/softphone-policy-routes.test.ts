@@ -778,6 +778,47 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
   }, 40_000);
 
+  // ── QA: another agent's call over HTTP ───────────────────────────────────────────────
+  it('a colleague cannot PATCH, write up or mark DNC another agent\'s call; a supervisor can, on behalf', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const colleague = await user(tenant, account, 'agent');
+    const { sessionId, station } = await openSoftphone(agent);
+    const phone = '+919811300100';
+    const callId = await placeOwingAnOutcome(agent, sessionId, station, phone);
+
+    for (const [url, body] of [
+      [`/proxy/agency/softphone/calls/${callId}`, { notes: 'not mine' }],
+      [`/proxy/agency/softphone/calls/${callId}/disposition`, { code: 'voicemail' }],
+      [`/proxy/agency/softphone/calls/${callId}/dnc`, {}],
+    ] as const) {
+      const res = url.endsWith(callId) ? await patch(url, colleague, body) : await post(url, colleague, body);
+      expect(res.statusCode, url).toBe(404);
+      expect(res.json().code, url).toBe('call_not_found');
+    }
+    // Nothing changed.
+    expect(await manualRow(callId)).toMatchObject({ notes: null, disposition_code: null, settled_at: null });
+    expect(await dncRows(phone)).toHaveLength(0);
+
+    // The supervisor: details, Mark DNC and the outcome, each on behalf.
+    const details = await patch(`/proxy/agency/softphone/calls/${callId}`, supervisor, { notes: 'Supervisor note' });
+    expect(details.statusCode, details.body).toBe(200);
+    expect(details.json().notes).toBe('Supervisor note');
+    const marked = await post(`/proxy/agency/softphone/calls/${callId}/dnc`, supervisor);
+    expect(marked.statusCode, marked.body).toBe(200);
+    expect(marked.json()).toMatchObject({ scope: 'account', dnc_recorded: true });
+    expect(await dncRows(phone)).toEqual([expect.objectContaining({ added_by: supervisor.id, account_id: account })]);
+    const saved = await post(`/proxy/agency/softphone/calls/${callId}/disposition`, supervisor, { code: 'voicemail' });
+    expect(saved.statusCode, saved.body).toBe(200);
+    expect(saved.json().call).toMatchObject({ dispositioned_on_behalf: true, dispositioned_by_user_id: supervisor.id });
+    const [dncAudit] = await auditRows('agency_manual_call.dnc_marked', callId);
+    expect(dncAudit).toMatchObject({ user_id: supervisor.id });
+    expect(dncAudit.details).toMatchObject({ on_behalf: true });
+    const [entryAudit] = (await auditRows('dnc_entry.created')).filter((r) => r.details.manual_call_id === callId);
+    expect(entryAudit).toMatchObject({ user_id: supervisor.id });
+    expect(entryAudit.details).toMatchObject({ on_behalf: true, scope: 'account' });
+    expect((await post(`/proxy/agency/sessions/${sessionId}/leave`, agent)).statusCode).toBe(200);
+  }, 40_000);
+
   it('a supervisor reads it on the DNC list as an account entry', async () => {
     const list = await get('/dnc?phone=%2B919811300010', supervisor);
     expect(list.statusCode, list.body).toBe(200);
