@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { Info, MessageSquare, PhoneMissed, PhoneOff, SearchX } from 'lucide-react';
+import { Info, Lock, MessageSquare, PhoneMissed, PhoneOff, SearchX } from 'lucide-react';
 import { Breadcrumbs } from '@magick-agency/web-ui/components/Breadcrumbs';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -168,6 +168,25 @@ function recordCard(call: AgencyManualCall): CallFactCard {
   return { title: 'Call record', facts };
 }
 
+/** Why a detail has no media sections, by `call_availability` (see the page's comment). */
+const NO_MEDIA_COPY: Record<AgencyManualCallDetail['call_availability'], { icon: ReactNode; title: string; description: string }> = {
+  never_placed: {
+    icon: <PhoneMissed size={28} />,
+    title: 'No call was placed',
+    description: 'This dial ended before a call was placed, so there is no recording or transcript. The record below is all there is.',
+  },
+  purged: {
+    icon: <PhoneOff size={28} />,
+    title: 'This call’s recording and transcript are no longer available',
+    description: 'They passed their retention window and were deleted. The call record and the agent’s notes below are kept.',
+  },
+  available: {
+    icon: <Lock size={28} />,
+    title: 'The recording and analysis are available to supervisors',
+    description: 'This call was placed. Its recording, transcript and AI summary can be opened by a supervisor; the call record and the agent’s notes are below.',
+  },
+};
+
 /**
  * `/agency/softphone/calls/:callId` — one soft-phone call, for a supervisor.
  *
@@ -175,8 +194,12 @@ function recordCard(call: AgencyManualCall): CallFactCard {
  * custom dimensions, transcript — plus what only a manual call has: the agent's
  * call details and outcome, each labelled **Agent**, beside the analysis labelled
  * **AI**, and the agent's override notes when a DNC entry or a closed calling
- * window was dialled through. A call that never got a media leg (refused, or
- * failed before dialling) shows its record without the media sections.
+ * window was dialled through. Without the media the page shows the record alone,
+ * and says why from `call_availability`, never from `media` alone: `never_placed`
+ * (refused, or failed before dialling), `purged` (past retention), or `available`
+ * with no media, which is a caller without `agency.supervise` — a call's
+ * recording, transcript and analysis are supervise-only (docs/softphone.md §6), so
+ * the call WAS placed and the page must not say otherwise.
  */
 export default function SoftphoneCallDetailPage() {
   const { callId } = useParams<{ callId: string }>();
@@ -270,19 +293,11 @@ export default function SoftphoneCallDetailPage() {
   const leaf = formatSpineTimestamp(call.created_at);
 
   if (!media) {
-    const purged = availability === 'purged';
+    const absent = NO_MEDIA_COPY[availability];
     return (
       <div>
         <Breadcrumbs items={[...breadcrumbs, { label: leaf }]} />
-        <EmptyState
-          icon={purged ? <PhoneOff size={28} /> : <PhoneMissed size={28} />}
-          title={purged ? 'This call’s recording and transcript are no longer available' : 'No call was placed'}
-          description={
-            purged
-              ? 'They passed their retention window and were deleted. The call record and the agent’s notes below are kept.'
-              : 'This dial ended before a call was placed, so there is no recording or transcript. The record below is all there is.'
-          }
-        />
+        <EmptyState icon={absent.icon} title={absent.title} description={absent.description} />
         <div className={styles.attemptRecord}>
           <FactCard card={recordCard(call)} icon={<Info size={16} />} />
           {cards.map((card) => (

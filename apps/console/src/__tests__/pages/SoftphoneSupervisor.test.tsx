@@ -374,6 +374,20 @@ describe('a soft-phone call’s detail', () => {
     expect(document.body.textContent).toMatch(/Call record/);
   });
 
+  it('says a placed call’s media is a supervisor’s when it is withheld, never that no call was placed', async () => {
+    mocks.getManualCall.mockResolvedValue({
+      call: TAGGED,
+      overrides: { dnc_note: null, dnc_entry_id: null, dnc_entry: null, hours_note: null },
+      media: null,
+      call_availability: 'available',
+    });
+    await renderDetail();
+    expect(screen.getByText('The recording and analysis are available to supervisors')).toBeTruthy();
+    expect(screen.queryByText('No call was placed')).toBeNull();
+    expect(screen.queryByText(/no longer available/)).toBeNull();
+    expect(document.body.textContent).toMatch(/Call record/);
+  });
+
   it('cannot show a call the caller may not see, and says how to go back', async () => {
     mocks.getManualCall.mockRejectedValue(Object.assign(new Error('Not found'), { statusCode: 404, details: { code: 'call_not_found' } }));
     await renderDetail();

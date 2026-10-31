@@ -419,7 +419,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   transcript) plus the outcome, who saved it (with the on-behalf marker) and the agent's call
   details, each labelled with its source (Agent / AI), and any override note with the DNC entry it
   overrode as the agent saw it (reach, reason, date: the detail's `overrides.dnc_entry`), never as
-  an id. Each campaign has a **Soft-phone calls** tab (the sidebar's name for the same calls; the
+  an id. Without the media it shows the record alone and says why from `call_availability`: never
+  placed, purged, or (`available` with `media: null`, a caller without `agency.supervise`) that the
+  recording and analysis are available to supervisors. Each campaign has a **Soft-phone calls** tab (the sidebar's name for the same calls; the
   path stays `/manual-calls`). **Settings → Soft phone** (`agency.softphone.manage` to edit, read-only
   otherwise): the untagged outcome list, the call fields editor (keys locked once saved), summary
   profile, recording, default caller ID.
