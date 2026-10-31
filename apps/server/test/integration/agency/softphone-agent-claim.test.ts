@@ -46,7 +46,6 @@ describe('soft-phone session claim and the available guard (integration, real Lu
     expect(ttlAfter).toBeGreaterThan(0);
     expect(ttlAfter).toBeLessThanOrEqual(ttlBefore);
     expect(await sm.manualCallOf(s)).toBe('m1');
-    expect(await sm.hasManual(s)).toBe(true);
     expect((await sm.get(s))?.manualCallId).toBe('m1');
   });
 

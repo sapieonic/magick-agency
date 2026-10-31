@@ -239,7 +239,6 @@ export class SoftphoneService {
    * now (usually `dialing` or `ringing`); the `manual_call` frames carry the rest. A
    * dial the carrier refused outright is a success too, answered as the row it
    * ended and settled as (`failed`).
-   * A dial the carrier itself refused comes back `ok` with an ended, settled row.
    */
   async placeCall(actor: SoftphoneActor, req: PlaceCallRequest): Promise<SoftphoneResult<PlaceCallSuccess>> {
     const session = await this.ownSession(req.sessionId, actor);

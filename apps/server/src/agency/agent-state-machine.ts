@@ -374,11 +374,6 @@ export class AgentStateMachine {
     }
   }
 
-  /** Whether the session holds a soft-phone call. */
-  async hasManual(sessionId: string): Promise<boolean> {
-    return (await this.manualCallOf(sessionId)) !== null;
-  }
-
   /**
    * Rehydrate a soft-phone-flavoured session into `break` (see
    * {@link REHYDRATE_SOFTPHONE_SCRIPT}). Null when Redis cannot answer.
