@@ -446,6 +446,24 @@ describe('joining a campaign while on the soft phone', () => {
       expect(screen.queryByTestId('join-on-softphone')).toBeNull();
     });
 
+    it('is read and left with the account the refusal names, even when no bootstrap can be read', async () => {
+      mocks.getSoftphoneBootstrap.mockRejectedValue(new Error('Bad Gateway'));
+      mocks.createAgencySession
+        .mockRejectedValueOnce(Object.assign(new Error('On the soft phone'), {
+          statusCode: 409, details: { code: 'session_on_softphone', session_id: 'sess-sp', account_id: 'a-2', account_name: 'North Region' },
+        }))
+        .mockResolvedValueOnce(BOOTSTRAP);
+      mocks.leaveAgencySession.mockResolvedValue(undefined);
+      await refused();
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Close the soft phone and join' }));
+      });
+      expect(mocks.getSoftphoneBootstrap).toHaveBeenCalledWith('t-1', 'a-2');
+      expect(mocks.getSoftphoneBootstrap).not.toHaveBeenCalledWith('t-1', 'a-1');
+      expect(mocks.leaveAgencySession).toHaveBeenCalledWith('sess-sp', 't-1', 'a-2');
+      expect(mocks.createAgencySession.mock.calls[1]).toEqual(['camp-1', 't-1', 'a-1']);
+    });
+
     it('is not closed while its call owes an outcome, read in that account', async () => {
       sessionInSibling(true);
       mocks.createAgencySession.mockRejectedValueOnce(onSoftphone());

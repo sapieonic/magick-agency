@@ -417,7 +417,9 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   (`leave` refuses only a live one, and an owed outcome would lapse), saying to finish it on the
   soft phone; otherwise it leaves the refusal's `session_id` (`POST /sessions/:id/leave`; a session
   already gone counts as closed) and joins. A session in a sibling account is read and left with
-  its own account (the bootstrap's `session.account_id`). "Open the soft phone" stays as the second way. The soft
+  its own account: the refusal's `account_id` (the bootstrap's `session.account_id` when a refusal
+  names none). The close is `closeSoftphoneSession` (`pages/agency/softphone/`), so every way of
+  closing the soft phone for something else decides alike. "Open the soft phone" stays as the second way. The soft
   phone is not closed when the agent navigates away (a reload, StrictMode's double mount and a
   second tab make an unmount a poor signal); the nav says it stays open instead.
 - **Live floor.** A campaign agent on `break/soft_phone` reads "Soft phone" on the floor and in its
