@@ -207,7 +207,10 @@ tenant-wide DNC entry, and soft-phone occupancy buckets (UTC).
 
 **Not verified:** a real VoiceLink call from the soft phone (needs the account, like every call
 path), and a browser session with real Firebase sign-in. `test/integration/load/agent-churn.test.ts`
-is a pre-existing timing flake (2 of 8 runs failed on `c9fd548`; 1 of 13 on this branch).
+failed intermittently before this branch (2 of 8 runs on `c9fd548`). One cause is found and fixed
+in the suite: a ring-dropped agent whose return landed while the call still rang was re-attached
+onto it (the re-attach window, never lapsed for a ring drop), so its answer connected where the
+suite demanded `abandoned`; forcing an early return reproduces CI's failure every run.
 
 **Not built** (`softphone.md` §8): call details in the analysis prompt, a callbacks list, DTMF,
 per-campaign call fields, "every call must be logged to a campaign", cancel while ringing (Plivo),
@@ -231,7 +234,7 @@ test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana
 | `packages/domain` | 53 | — |
 | `packages/observability` | 14 | — |
 
-Two load-suite timing flakes predate the branch and passed in this run:
+Two load-suite files failed intermittently before the branch and passed in this run:
 `load/agent-churn.test.ts` (see above) and `load/voicelink-media-ws-load.test.ts` ("start
 negotiation failures", which once ended a call `provider_start_timeout` under a full run's load;
 8 of 8 alone on this branch and on `c9fd548`).
