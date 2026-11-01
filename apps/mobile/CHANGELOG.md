@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/sapieonic/magick-agency/compare/mobile-v0.2.0...mobile-v0.2.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **mobile:** hold Firebase on the iOS SDK 12 line so the iOS Swift packages resolve ([#25](https://github.com/sapieonic/magick-agency/issues/25)) ([ea69e37](https://github.com/sapieonic/magick-agency/commit/ea69e37590892b1863a1beb0d3192124893ee88a))
+
 ## [0.2.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.1.0...mobile-v0.2.0) (2026-11-01)
 
 
