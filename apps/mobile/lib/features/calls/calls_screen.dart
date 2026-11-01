@@ -11,6 +11,8 @@ import '../performance/agent_workspace.dart';
 import '../performance/campaign_names.dart';
 import 'calls_controller.dart';
 import 'logic/attempt_copy.dart';
+import 'softphone/softphone_calls_controller.dart';
+import 'softphone/softphone_calls_list.dart';
 import 'widgets/attempt_detail_sheet.dart';
 import 'widgets/attempt_tile.dart';
 import 'widgets/filter_bar.dart';
@@ -19,6 +21,11 @@ import 'widgets/filter_bar.dart';
 /// campaign, filterable by day, outcome, campaign and number. Keyset-paged:
 /// the next page is fetched while the agent is still a screenful away from
 /// the end, so scrolling never waits on the network.
+///
+/// Soft-phone calls are a second segment, not rows merged into this list (a
+/// manual call is not an attempt: no try number, its own outcome catalog and
+/// call details), shown where the Phone tab shows or where the agent has
+/// soft-phone calls to look back on ([softphoneCallsVisibleProvider]).
 class CallsScreen extends ConsumerStatefulWidget {
   const CallsScreen({super.key});
 
@@ -30,7 +37,14 @@ class CallsScreen extends ConsumerStatefulWidget {
   ConsumerState<CallsScreen> createState() => _CallsScreenState();
 }
 
+/// Which list My calls shows.
+enum CallsView { campaign, softphone }
+
 class _CallsScreenState extends ConsumerState<CallsScreen> {
+  /// The segment the agent picked; reads as [CallsView.campaign] whenever the
+  /// soft-phone segment is not shown.
+  CallsView _picked = CallsView.campaign;
+
   @override
   void initState() {
     super.initState();
@@ -50,6 +64,8 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
         if (mounted) unawaited(ref.read(attemptsControllerProvider.notifier).ensureLoaded());
       });
     });
+    final softphone = ref.watch(softphoneCallsVisibleProvider);
+    final view = softphone ? _picked : CallsView.campaign;
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 64,
@@ -58,35 +74,70 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Semantics(header: true, child: const Text('My calls')),
-            const _CountLine(),
+            _CountLine(view: view),
           ],
         ),
       ),
-      body: const Column(
+      body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          AttemptsFilterBar(),
-          SizedBox(height: Space.sm),
-          Expanded(child: _CallsList()),
+          if (softphone)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.sm),
+              child: SegmentedButton<CallsView>(
+                key: const Key('calls-view'),
+                segments: const [
+                  ButtonSegment(
+                    value: CallsView.campaign,
+                    label: Text('Campaign calls', key: Key('calls-view-campaign'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                  ButtonSegment(
+                    value: CallsView.softphone,
+                    label: Text('Soft-phone calls', key: Key('calls-view-softphone'), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
+                ],
+                selected: {view},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) => setState(() => _picked = s.first),
+              ),
+            ),
+          if (view == CallsView.softphone) ...const [
+            SoftphoneCallsFilterBar(),
+            SizedBox(height: Space.sm),
+            Expanded(child: SoftphoneCallsList()),
+          ] else ...const [
+            AttemptsFilterBar(),
+            SizedBox(height: Space.sm),
+            Expanded(child: _CallsList()),
+          ],
         ],
       ),
     );
   }
 }
 
-/// "Showing 50 calls — there are more", announced when it changes.
+/// "Showing 50 calls — there are more", for the list on screen, announced
+/// when it changes.
 class _CountLine extends ConsumerWidget {
-  const _CountLine();
+  const _CountLine({required this.view});
+
+  final CallsView view;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final (count, more, ready) = ref.watch(
-      attemptsControllerProvider.select((s) => (s.rows.length, s.hasMore, s.status == AttemptsStatus.ready)),
-    );
+    final String line;
+    if (view == CallsView.softphone) {
+      line = ref.watch(softphoneCallsControllerProvider.select(softphoneCallsCountLine));
+    } else {
+      final (count, more, ready) = ref.watch(
+        attemptsControllerProvider.select((s) => (s.rows.length, s.hasMore, s.status == AttemptsStatus.ready)),
+      );
+      line = ready && count > 0 ? attemptsCountLine(count, more: more) : '';
+    }
     return Semantics(
       liveRegion: true,
       child: Text(
-        ready && count > 0 ? attemptsCountLine(count, more: more) : '',
+        line,
         key: const Key('attempts-count'),
         style: Theme.of(context).textTheme.labelMedium,
       ),
