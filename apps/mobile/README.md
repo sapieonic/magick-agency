@@ -33,35 +33,35 @@ apps/mobile/
     agent_audio/        the native voice engine: capture, playback, echo cancellation, routes,
                         CallKit (iOS) and the on-duty foreground service (Android)
   android/  ios/        the platform hosts
-  env/                  dev.json, staging.json, prod.json: build-time config (no secrets)
+  env/                  dev.json, staging.json, prod.json: build-time config (no secrets);
+                        your own copies go in *.local.json (git-ignored)
   assets/               bundled fonts and the brand mark
   brands/magick-agency/ source artwork for icons
+  dev-setup.md          setting up a Linux or macOS machine to build and run the app
 ```
 
-## Toolchain
+## Setting up and running
 
-- Flutter **3.47.7** (Dart 3.13), pinned in `.github/workflows/mobile.yml`.
-- Android: JDK 17 and the Android SDK (platform 36). iOS: Xcode on a Mac.
+**[`dev-setup.md`](dev-setup.md)** takes a Linux or macOS machine from nothing to the app running
+against your local server: Flutter, JDK, the Android SDK and an emulator, Xcode, the server, the
+Firebase keys, the right `API_ORIGIN` for each kind of device, and the usual failures.
 
-## Running against a local server
-
-1. Start the server as the root `README.md` describes (`pnpm infra:up`, migrate, `pnpm --filter @magick-agency/server dev`, port 3021).
-2. Fill `env/dev.json` with the Firebase web config of the dev project (`FIREBASE_*`), and
-   `GOOGLE_SERVER_CLIENT_ID` / `GOOGLE_IOS_CLIENT_ID` for Google sign-in.
-3. Run:
+In short, once set up:
 
 ```bash
 cd apps/mobile
 flutter pub get
-# Android emulator: the server on the host is http://10.0.2.2:3021 (the default in env/dev.json).
-flutter run --flavor dev --dart-define-from-file=env/dev.json
-# A physical Android phone over USB: adb reverse tcp:3021 tcp:3021 and set API_ORIGIN to http://localhost:3021.
-# iOS (no flavours on iOS yet):
-flutter run --dart-define-from-file=env/dev.json
+cp env/dev.json env/dev.local.json            # once; fill in your Firebase values (git-ignored)
+flutter run --flavor dev --dart-define-from-file=env/dev.local.json   # Android
+flutter run --dart-define-from-file=env/dev.local.json                # iOS (no flavours yet)
 ```
 
-Plain HTTP is allowed only in Android debug builds and only to `10.0.2.2` and `localhost`
-(`android/app/src/debug/res/xml/network_security_config.xml`); release builds are HTTPS/WSS only.
+- Toolchain: Flutter **3.47.7** (Dart 3.13), pinned in `.github/workflows/mobile.yml`; JDK 17; the
+  Android SDK with platform 37; Xcode on a Mac for iOS.
+- `API_ORIGIN`: `http://10.0.2.2:3021` on the Android emulator (the default), `http://localhost:3021`
+  on the iOS simulator or on a USB Android phone with `adb reverse tcp:3021 tcp:3021`.
+- Plain HTTP is allowed only in Android debug builds and only to `10.0.2.2` and `localhost`
+  (`android/app/src/debug/res/xml/network_security_config.xml`); release builds are HTTPS/WSS only.
 
 ## Tests
 

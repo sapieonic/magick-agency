@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Personal build-time config (dev-setup.md, step 7): copies of env/*.json with your own values.
+/env/*.local.json
