@@ -121,6 +121,17 @@ class AgentAudio {
   /// call the system's mute button follows.
   Future<void> setMuted(bool muted) => _invoke<void>('setMuted', {'muted': muted});
 
+  /// Plays (or stops) the ringback tone while the customer's phone rings on a soft-phone
+  /// call: 400 + 450 Hz, 0.4 s on, 0.2 s off, 0.4 s on, 2 s off, generated on the device and
+  /// mixed into the call's playout (so any early media is still heard). See
+  /// `lib/src/tone/ringback.dart` for the exact tone.
+  ///
+  /// The native side keeps the request: asked for before [armMicrophone], it starts with the
+  /// engine; it survives an engine restart; [stop] clears it. It does not change the phase,
+  /// but it is queued behind pending lifecycle calls, so a [stop] still in flight cannot
+  /// clear a request made after it. Turning it on again starts a fresh ring.
+  Future<void> setRingback(bool on) => _queued(() => _invoke<void>('setRingback', {'on': on}));
+
   /// Routes available now. Earpiece is absent on devices without one.
   Future<List<AudioRoute>> routes() async {
     final raw = await _invoke<List<Object?>>('routes');
@@ -249,13 +260,16 @@ class AgentAudio {
 
   /// Runs a lifecycle call after the previous ones, validating and then recording the phase
   /// transition.
-  Future<T> _lifecycle<T>(AudioOp op, Future<T> Function() body) {
-    final next = _tail.then((_) async {
-      final to = _phase.after(op);
-      final result = await body();
-      _phase = to;
-      return result;
-    });
+  Future<T> _lifecycle<T>(AudioOp op, Future<T> Function() body) => _queued(() async {
+        final to = _phase.after(op);
+        final result = await body();
+        _phase = to;
+        return result;
+      });
+
+  /// Runs [body] after every call queued before it; a failure does not block later calls.
+  Future<T> _queued<T>(Future<T> Function() body) {
+    final next = _tail.then((_) => body());
     _tail = next.then<void>((_) {}, onError: (Object _) {});
     return next;
   }

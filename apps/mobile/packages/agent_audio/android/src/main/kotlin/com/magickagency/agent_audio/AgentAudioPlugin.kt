@@ -105,6 +105,7 @@ class AgentAudioPlugin :
     private var format: WireFormat? = null
     private var muted = false
     private var metering = false
+    private val ringback = RingbackRequest()
     private var pendingLoopback: Result? = null
     private var pendingServiceStart: Result? = null
 
@@ -155,6 +156,7 @@ class AgentAudioPlugin :
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         cancelLoopback("The app is closing")
         stopEngine()
+        ringback.clear()
         session?.release()
         session = null
         phase = Phase.IDLE
@@ -272,6 +274,7 @@ class AgentAudioPlugin :
                 cancelLoopback("Stopped")
                 stopEngine()
                 muted = false
+                ringback.clear()
                 if (!keepWarm) {
                     session?.release()
                     format = null
@@ -294,6 +297,12 @@ class AgentAudioPlugin :
                 val s = session?.takeIf { it.prepared } ?: throw EngineException("not_prepared", "Prepare first")
                 val id = call.argument<String>("id") ?: ""
                 if (!s.setRoute(id)) throw EngineException("unsupported", "Route $id is not available")
+                result.success(null)
+            }
+            // Kept until stop, so it also applies to an engine started (or restarted) later.
+            "setRingback" -> {
+                ringback.set(call.argument<Boolean>("on") ?: false)
+                engine?.ringback = ringback.forEngine(loopback = pendingLoopback != null)
                 result.success(null)
             }
             "setInputLevelMetering" -> {
@@ -356,6 +365,7 @@ class AgentAudioPlugin :
         val e = VoiceEngine(fmt, engineListener)
         e.muted = muted
         e.metering = metering
+        e.ringback = ringback.forEngine(loopback = loopback != null)
         uplink = sender
         try {
             e.start(loopback)

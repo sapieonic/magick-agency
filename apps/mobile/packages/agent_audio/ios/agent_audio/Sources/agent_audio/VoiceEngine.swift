@@ -66,6 +66,10 @@ final class VoiceEngine {
   private let flagsLock = UnfairLock()
   private var flags = UplinkFlags()
 
+  /// The ringback request (main thread): asked for before the engine runs, it starts with the
+  /// engine; it outlives an engine restart; `stop` clears it. A loopback test never rings.
+  private var ringbackWanted = false
+
   /// Uplink frames posted to main and not yet handed to Flutter, and frames dropped because
   /// main fell `maxUplinkInFlight` frames (160 ms) behind. Guarded by `uplinkLock`.
   private let uplinkLock = UnfairLock()
@@ -176,6 +180,7 @@ final class VoiceEngine {
     activationWatchdog = nil
     wantsRunning = false
     stopEngine()
+    ringbackWanted = false
     flagsLock.withLock {
       flags.open = false
       flags.muted = false
@@ -212,6 +217,12 @@ final class VoiceEngine {
   }
 
   var isMuted: Bool { flagsLock.withLock { flags.muted } }
+
+  /// Kept until `stop`, so it also applies to an engine started (or restarted) later.
+  func setRingback(_ on: Bool) {
+    ringbackWanted = on
+    if running { playout.setRingback(on && loopback == nil) }
+  }
 
   func setMetering(_ enabled: Bool) {
     flagsLock.withLock { flags.metering = enabled }
@@ -535,6 +546,7 @@ final class VoiceEngine {
     running = true
     let acceptDownlink = loopback == nil
     flagsLock.withLock { flags.acceptDownlink = acceptDownlink }
+    playout.setRingback(ringbackWanted && loopback == nil)
     if speakerOverride { try? session.overrideOutputAudioPort(.speaker) }
     startIoTimer()
     scheduleCaptureWatchdog()
@@ -543,6 +555,7 @@ final class VoiceEngine {
 
   private func stopEngine() {
     flagsLock.withLock { flags.acceptDownlink = false }
+    playout.setRingback(false)
     captureWatchdog?.cancel()
     captureWatchdog = nil
     stopIoTimer()

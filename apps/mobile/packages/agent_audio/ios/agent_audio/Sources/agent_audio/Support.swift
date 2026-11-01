@@ -138,11 +138,14 @@ final class FloatRing {
 }
 
 /// The downlink side shared by three threads: the downlink task queue pushes frames, the
-/// playback render thread pulls samples, the I/O queue reads stats. One lock, held for at
-/// most one frame's copy.
+/// playback render thread pulls samples (with the ringback tone mixed into each popped frame
+/// while `ringback` is set), the I/O queue reads stats. One lock, held for at most one
+/// frame's copy.
 final class Playout {
   private let lock = UnfairLock()
   private var jitter: JitterBuffer
+  private var tone: Ringback
+  private var ringback = false
   private let current: UnsafeMutablePointer<Int16>
   private var cursor: Int
   private var frameSamples: Int
@@ -150,6 +153,7 @@ final class Playout {
   init(format: WireFormat) {
     frameSamples = format.frameSamples
     jitter = JitterBuffer(config: JitterBufferConfig(frameSamples: format.frameSamples))
+    tone = Ringback(sampleRate: Int(format.sampleRate))
     current = .allocate(capacity: 320)
     current.initialize(repeating: 0, count: 320)
     cursor = format.frameSamples
@@ -163,8 +167,10 @@ final class Playout {
   /// Main thread, engine stopped.
   func reconfigure(_ format: WireFormat) {
     let fresh = JitterBuffer(config: JitterBufferConfig(frameSamples: format.frameSamples))
+    let freshTone = Ringback(sampleRate: Int(format.sampleRate))
     lock.withLock {
       jitter = fresh
+      tone = freshTone
       frameSamples = format.frameSamples
       cursor = format.frameSamples
     }
@@ -173,8 +179,14 @@ final class Playout {
   func reset() {
     lock.withLock {
       jitter.reset()
+      tone.reset()
       cursor = frameSamples
     }
+  }
+
+  /// Main thread. Mix the ringback tone into playout (a soft-phone call that is ringing).
+  func setRingback(_ on: Bool) {
+    lock.withLock { ringback = on }
   }
 
   func push(_ frame: UnsafePointer<Int16>) {
@@ -194,6 +206,8 @@ final class Playout {
     while written < frames {
       if cursor >= frameSamples {
         _ = jitter.pop(into: current)
+        // At the wire rate, after the jitter buffer: the same frame-level mix as Android.
+        tone.process(current, count: frameSamples, on: ringback)
         cursor = 0
       }
       let n = min(frames - written, frameSamples - cursor)

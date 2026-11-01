@@ -173,6 +173,48 @@ void main() {
     });
   });
 
+  group('ringback', () {
+    test('sends the flag; a request made before arm reaches the platform before it', () async {
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      await audio.setRingback(true);
+      await audio.armMicrophone();
+      await audio.setRingback(false);
+      await audio.stop();
+      expect(calls.map((c) => [c.method, c.arguments]), [
+        ['prepare', {'format': 'alaw8'}],
+        ['setRingback', {'on': true}],
+        ['armMicrophone', null],
+        ['setRingback', {'on': false}],
+        ['stop', {'keepWarm': true}],
+      ]);
+      expect(audio.phase, AgentAudioPhase.prepared, reason: 'not a lifecycle call');
+    });
+
+    test('waits for a pending stop, so the stop (which clears it natively) cannot undo it', () async {
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      await audio.armMicrophone();
+      final gate = Completer<void>();
+      replies['stop'] = (_) => gate.future;
+      final stopped = audio.stop();
+      final rearmed = audio.armMicrophone();
+      final ring = audio.setRingback(true);
+      await pumpEventQueue();
+      expect(calls.map((c) => c.method), ['prepare', 'armMicrophone', 'stop'], reason: 'queued behind the stop');
+      gate.complete();
+      await Future.wait([stopped, rearmed, ring]);
+      expect(calls.map((c) => c.method), ['prepare', 'armMicrophone', 'stop', 'armMicrophone', 'setRingback']);
+    });
+
+    test('works in any phase and a refusal does not block later calls', () async {
+      await audio.setRingback(true);
+      expect(audio.phase, AgentAudioPhase.idle);
+      replies['setRingback'] = (_) => throw PlatformException(code: 'unknown', message: 'boom');
+      await expectLater(audio.setRingback(false), throwsA(isA<AgentAudioException>()));
+      await audio.prepare(format: AgentAudioFormat.pcm16);
+      expect(audio.phase, AgentAudioPhase.prepared);
+    });
+  });
+
   group('events', () {
     test('decodes the event channel and drops what it does not understand', () async {
       messenger.setMockStreamHandler(

@@ -39,9 +39,10 @@ internal class Loopback(format: WireFormat, durationMs: Int, val playBack: Boole
  * * **capture**: blocking `AudioRecord.read` of 20 ms at 16 kHz (VOICE_COMMUNICATION source,
  *   so the platform's echo canceller runs), level metering, encoding, and handing each
  *   uplink frame to [Listener.onUplinkFrame], which re-posts it to the main thread.
- * * **playback**: pops 20 ms from the jitter buffer and does a blocking `AudioTrack.write` at
- *   the wire rate (8 or 16 kHz; AudioFlinger resamples to the device rate). The blocking
- *   write paces the loop on the output clock.
+ * * **playback**: pops 20 ms from the jitter buffer, mixes in the ringback tone while
+ *   [ringback] is set, and does a blocking `AudioTrack.write` at the wire rate (8 or 16 kHz;
+ *   AudioFlinger resamples to the device rate). The blocking write paces the loop on the
+ *   output clock.
  *
  * Downlink bytes arrive on the plugin's background task queue ([pushDownlink]). The jitter
  * buffer is the only state shared between threads and is guarded by one lock held for a
@@ -68,6 +69,9 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
     @Volatile var uplinkOpen = false
     @Volatile var muted = false
     @Volatile var metering = false
+
+    /** Mix the ringback tone into playout (a soft-phone call that is ringing). */
+    @Volatile var ringback = false
 
     private val jitter = JitterBuffer(JitterBufferConfig(frameSamples = format.frameSamples))
     private val jitterLock = Any()
@@ -153,6 +157,7 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
         loopback = null
         uplinkOpen = false
         muted = false
+        ringback = false
     }
 
     /** Downlink task-queue thread. Copies the message out before returning (the buffer is
@@ -244,10 +249,13 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
     private fun playbackLoop(trk: AudioTrack) {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
         val out = ShortArray(format.frameSamples)
+        val tone = Ringback(format.sampleRate)
         var pops = 0
         try {
             while (running) {
                 synchronized(jitterLock) { jitter.pop(out) }
+                // At the wire rate, after the jitter buffer: the same frame-level mix as iOS.
+                tone.process(out, ringback)
                 val w = trk.write(out, 0, out.size)
                 if (w < 0) {
                     fail("lost", "Playback write failed ($w)")

@@ -106,6 +106,9 @@ public final class AgentAudioPlugin: NSObject, FlutterPlugin, FlutterStreamHandl
       case "setRoute":
         try engine.setRoute(id: args["id"] as? String ?? "", kind: args["kind"] as? String ?? "")
         result(nil)
+      case "setRingback":
+        engine.setRingback(args["on"] as? Bool ?? false)
+        result(nil)
       case "setInputLevelMetering":
         engine.setMetering(args["enabled"] as? Bool ?? false)
         result(nil)
