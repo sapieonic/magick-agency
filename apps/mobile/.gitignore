@@ -49,3 +49,14 @@ app.*.map.json
 
 # Personal build-time config (dev-setup.md, step 7): copies of env/*.json with your own values.
 /env/*.local.json
+
+# Firebase's native config files. The app reads its Firebase settings from env/*.local.json at
+# build time and never these, so a downloaded copy stays on your machine.
+google-services.json
+GoogleService-Info.plist
+
+# iOS signing material: certificates, provisioning profiles and App Store Connect API keys.
+*.p12
+*.cer
+*.mobileprovision
+*.p8
