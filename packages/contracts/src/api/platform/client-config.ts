@@ -29,3 +29,18 @@ export interface MobileClientConfig {
    */
   store_urls?: { ios?: string; android?: string };
 }
+
+/**
+ * `POST /client-config/uplink-probe`: the mobile pre-flight's upload-speed check before
+ * "Go on duty" (the app blocks below 64 kbps). The app uploads 32 KB of
+ * `application/octet-stream` and times the round trip; the server only counts the bytes.
+ *
+ * Authenticated (a Firebase bearer; no tenant headers needed), because a public endpoint
+ * that reads bodies would be a free upload sink. Body at most 65536 bytes (413 above), any
+ * other content type 415, and at most 6 probes per user per rate-limit window (429), on top
+ * of the per-user bucket every authenticated request is charged to.
+ */
+export interface UplinkProbeResponse {
+  /** Bytes of the request body the server read. */
+  received_bytes: number;
+}

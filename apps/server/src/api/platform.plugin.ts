@@ -77,7 +77,12 @@ export const platformPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = as
   await app.register(inviteRoutes, { prefix: P.invites });
   await app.register(notificationRoutes, { prefix: P.notifications });
   await app.register(featureFlagsRoutes, { prefix: P.featureFlags });
-  await app.register(clientConfigRoutes, { prefix: P.clientConfig, mobile: config.mobile });
+  await app.register(clientConfigRoutes, {
+    prefix: P.clientConfig,
+    mobile: config.mobile,
+    // The uplink probe's per-user cap counts in the rate limiter's window.
+    timeWindow: config.rateLimit.timeWindow,
+  });
 
   // The super-admin tree exists only with its JWT secret.
   if (config.superAdmin) {

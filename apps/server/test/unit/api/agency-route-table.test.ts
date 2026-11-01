@@ -90,6 +90,7 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   // Public, called by the mobile app before sign-in (`client-config.routes.ts`); the console
   // does not call it.
   ['GET /client-config', 'mobile app version gate (public, platform config)'],
+  ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */

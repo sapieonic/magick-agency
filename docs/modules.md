@@ -396,7 +396,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/phone-numbers-byoc-merge.test.ts` | 6 |
-| `apps/server/test/unit/api/routes/client-config.routes.test.ts` | 22 |
+| `apps/server/test/unit/api/routes/client-config.routes.test.ts` | 28 |
 | `apps/server/test/unit/api/routes/proxy-feature-flags.routes.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 38 |

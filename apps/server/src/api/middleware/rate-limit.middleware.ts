@@ -553,16 +553,36 @@ export interface UserRateLimitOptions {
 export function registerUserRateLimit(app: FastifyInstance, opts?: UserRateLimitOptions): void {
   const max = opts?.max ?? DEFAULT_USER_MAX;
   const timeWindow = opts?.timeWindow ?? DEFAULT_WINDOW;
-  const limit = app.createRateLimit({
-    max,
-    timeWindow,
-    // `request.user` is set by the only caller before this runs; a missing one (unreachable)
-    // lands in one shared bucket rather than throwing inside the request path.
-    keyGenerator: (request) => `u:${request.user?.id ?? ''}`,
-  });
+  app.decorate('chargeUserRateLimit', createUserRateLimit(app, { namespace: 'u', max, timeWindow }));
   log.info({ max, timeWindow }, 'Per-user rate limit registered');
+}
 
-  const charge: ChargeUserRateLimit = async (request, reply) => {
+/**
+ * A per-USER bucket keyed `<namespace>:<user id>`: the mechanism behind
+ * {@link registerUserRateLimit}, and a route's own tighter per-user cap (the uplink probe's
+ * `up:`), charged after `request.user` is set. The namespace keeps each cap its own counter,
+ * so a route cap never spends, or is spent by, the general per-user budget. A 429 is the
+ * same body and headers as every other bucket's, counted as `bucket_kind="user"`.
+ *
+ * Needs `createRateLimit`, which {@link registerRateLimit} provides; throws without it, so
+ * a cap cannot silently be missing.
+ */
+export function createUserRateLimit(
+  app: FastifyInstance,
+  opts: { namespace: string; max: number; timeWindow?: string | number },
+): ChargeUserRateLimit {
+  if (!app.hasDecorator('createRateLimit')) {
+    throw new Error('createUserRateLimit needs @fastify/rate-limit registered first (registerRateLimit)');
+  }
+  const limit = app.createRateLimit({
+    max: opts.max,
+    timeWindow: opts.timeWindow ?? DEFAULT_WINDOW,
+    // `request.user` is set by every caller before this runs; a missing one (unreachable)
+    // lands in one shared bucket rather than throwing inside the request path.
+    keyGenerator: (request) => `${opts.namespace}:${request.user?.id ?? ''}`,
+  });
+
+  return async (request, reply) => {
     const result = await limit(request);
     if (result.isAllowed || !result.isExceeded) return;
     try {
@@ -576,5 +596,4 @@ export function registerUserRateLimit(app: FastifyInstance, opts?: UserRateLimit
     void reply.header('retry-after', result.ttlInSeconds);
     throw rateLimitErrorBody(result.ttl);
   };
-  app.decorate('chargeUserRateLimit', charge);
 }

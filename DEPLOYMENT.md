@@ -478,7 +478,9 @@ Skip this until the agent app is published. Two things on the server side, both 
    `MOBILE_LATEST_VERSION` the newest released; both `MAJOR.MINOR.PATCH`, the minimum never newer
    than the latest (the server refuses to boot otherwise). `MOBILE_IOS_STORE_URL` and
    `MOBILE_ANDROID_STORE_URL` are the https store pages the update screen opens. Restart `server`
-   after a change.
+   after a change. Beside it, `POST /client-config/uplink-probe` is the app's pre-flight
+   upload-speed check (signed in, 64 KiB at most, 6 a minute per agent); it needs no setting, but
+   the TLS terminator must not buffer or cap request bodies below 64 KiB on that path.
 2. **Invite links that open the app** (served by nginx at `/.well-known/…`, written when `web`
    starts). Without them an agent's invite link still works, in the browser.
    - iOS: `MOBILE_IOS_APP_IDS=<TEAMID>.com.magickagency.agent` (the Apple Developer team ID, 10

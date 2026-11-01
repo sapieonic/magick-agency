@@ -164,7 +164,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   hierarchy `agent 5 < viewer 10 < operator 20 < account_admin 30 < tenant_admin 40 <
   tenant_owner 50`, and a permission matrix of minimum roles. `agent` sits below `viewer` on
   purpose: it reaches only the agent surfaces, `/auth/session`, `/accounts/mine`, notification
-  preferences and the flag map. Enforced by `rbac/rbac.middleware.ts`.
+  preferences, the flag map and the uplink probe (`POST /client-config/uplink-probe`, any verified
+  user). Enforced by `rbac/rbac.middleware.ts`.
 - **Settings.** `settings/agency-account-settings.ts` resolves the per-account row to effective
   values (`allow_recording` and `analyze_calls` default `false`, `max_concurrent_calls` 5,
   `webrtc_max_duration_seconds` 1800).
@@ -344,7 +345,7 @@ counter never holds two ceilings:
 | `carrier_media` | `cm:<ip>` | 600 (`RATE_LIMIT_CARRIER_MEDIA_MAX`) | media sockets, TTS clips, both WebRTC legs |
 | `internal` | `int:<ip>` | 1000 (`RATE_LIMIT_INTERNAL_MAX`) | `/internal/*` (none served) |
 | `ip_auth` | `ipa:<ip>` | 3000 (`RATE_LIMIT_IP_AUTH_MAX`) | any other request carrying `Authorization: Bearer` |
-| `ip` | `<ip>` | 200 (`RATE_LIMIT_MAX`) | everything else: sign-in, invites, `/client-config`, the station socket upgrade (a query token, not a bearer) |
+| `ip` | `<ip>` | 200 (`RATE_LIMIT_MAX`) | everything else: sign-in, invites, `GET /client-config`, the station socket upgrade (a query token, not a bearer) |
 | `exempt` | none | unlimited | `/healthz`, `/readyz` (exact paths) |
 
 Then, inside every authenticated route, `sessionMiddleware` charges the **per-user** bucket once it
@@ -353,7 +354,10 @@ block), same window and store. That one binds authenticated traffic: agents behi
 NAT (Jio, Airtel) share an IP but never a user bucket, and the IP bucket for bearer traffic is
 deliberately coarse. Only the PRESENCE of a bearer picks `ip_auth`; it is not verified there and its
 value is never a key, so a forged bearer buys the larger coarse bucket and is then refused 401 (Q9,
-amended 2026-11-01). Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
+amended 2026-11-01). A route may add its own tighter per-user cap in its own namespace
+(`createUserRateLimit`): `POST /client-config/uplink-probe` allows 6 per user per window (`up:<id>`),
+charged with its authentication in `preParsing`, so no body is read for a caller who fails either.
+Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
 Per-route limits (super-admin login 5/min, public invite routes 20/min) are honoured. A 429 from any
 bucket has the same body and `retry-after`, and counts `rate_limit_rejected_total{bucket_kind}`
 (`user` for the per-user bucket). No bucket is keyed on a client-supplied header. The IP buckets

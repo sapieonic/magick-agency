@@ -51,8 +51,12 @@ The two UIs can't share an origin, because both own `/` and call the API on thei
   media WebSocket and recording playback. That makes `CONSOLE_BASE_URL` this block's public https
   origin, and `VOICELINK_WEBHOOK_BASE_URL` that origin plus `/api/v1/webhooks/voicelink` (a bare
   origin makes every status webhook 404). `/healthz` and `/readyz` are proxied for
-  the TLS terminator's health check, and `/client-config` (public, the mobile app's version gate)
-  is proxied with the API prefixes.
+  the TLS terminator's health check, and `/client-config` is proxied with the API prefixes: `GET
+  /client-config` (public, the mobile app's version gate) and `POST /client-config/uplink-probe`
+  (the app's pre-flight upload-speed check: a Firebase bearer required, checked before the body is
+  read; `application/octet-stream` up to 65536 bytes, else 413 / 415; 6 per user per rate-limit
+  window, else 429; answers `{ "received_bytes": n }` and touches neither Postgres nor Redis beyond
+  its rate-limit counters. The app times a 32 KB upload and blocks "Go on duty" below 64 kbps).
   WebSocket upgrades pass through with a 1 h read timeout (station socket, media socket).
   Request bodies up to 513 MB are streamed, not buffered, for the 512 MiB roster CSV.
   `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` are served by nginx
