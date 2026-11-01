@@ -209,7 +209,7 @@ Rulings of 2026-11-01 (agent mobile app, [`mobile.md`](mobile.md)):
 
 | # | Topic | Ruling | Status |
 |---|---|---|---|
-| M1 | A phone silent during a call | A mobile station silent past its 10 s grace on a call the agent can see is dropped by the sweep (`terminate`, not `close`, which waits 30 s on a dead transport), and the bridge's 8 s deferred hangup decides: the phone back in time resumes the call, otherwise it ends. Before this, no station was closed mid-call and the customer waited on silence until TCP gave up. A pre-bind dial keeps its own grace; the web console is unchanged. A silent phone NOT on a call is terminated too: a `close` would hold the agent dialable for those 30 s, and every pacing tick would write an orphaned attempt against it | **Decided** |
+| M1 | A phone silent during a call | A mobile station silent past its 10 s grace on a call the agent can see is dropped by the sweep (`terminate`, not `close`, which waits 30 s on a dead transport), and the bridge's 8 s deferred hangup decides: the phone back in time resumes the call, otherwise it ends. Before this, no station was closed mid-call and the customer waited on silence until TCP gave up. A pre-bind dial keeps its own grace; the web console is unchanged. A silent phone NOT on a call is terminated too: a `close` would hold the agent dialable for those 30 s, and every pacing tick would write an orphaned attempt against it. **Amended 2026-11-01:** it covers a live soft-phone call too (a phone only; the web console is still never closed), where the terminate meets the bridge's rule for a manual leg: an immediate hangup before the answer, the 8 s deferred hangup after it | **Decided** |
 
 ## 5. Still open
 

@@ -19,7 +19,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //  * the probe's timer and listeners go with the socket — detach, supersede or close —
 //    so nothing leaks;
 //  * the mid-attempt rule holds for a phone with one exception (decision M1): silent past
-//    its grace on a call the agent can see, it is dropped and the deferred hangup decides.
+//    its grace on a call the agent can see, campaign or soft phone, it is dropped and the
+//    bridge's close rule decides the call.
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', () => ({
@@ -367,6 +368,36 @@ describe('the sweep, per station (AgencyRuntime)', () => {
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS * 10)).toBe(0);
     expect(browser.terminated).toBe(0);
     expect(browser.closeArgs).toEqual([]);
+  });
+
+  // The soft phone binds the agent's leg to this socket before the dial, so there is no
+  // pre-bind case: once the close lands, the bridge hangs up at once before the answer and
+  // its 8 s deferred hangup decides after it.
+  it('drops a phone silent past its 10s grace on a live soft-phone call (M1), and only then', async () => {
+    const phone = new FakeWs();
+    phone.autoPong = false;
+    await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile' });
+    vi.spyOn(runtime.manualDialer, 'hasLiveCall').mockReturnValue(true);
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS)).toBe(0);
+    expect(phone.terminated).toBe(0);
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS + 1)).toBe(1);
+    // terminate, not close: a dead transport would hold `close` (and so the bridge's
+    // hangup) behind ws's 30 s closing timeout.
+    expect(phone.terminated).toBe(1);
+    expect(phone.closeArgs).toEqual([]);
+  });
+
+  it('a silent web console on a live soft-phone call is never acted on (rule 1 unchanged for the web)', async () => {
+    const browser = new FakeWs();
+    await runtime.stations.attach({ sessionId: 'web', ws: browser as never, ...ENTRY });
+    vi.spyOn(runtime.manualDialer, 'hasLiveCall').mockReturnValue(true);
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS * 10)).toBe(0);
+    expect(browser.terminated).toBe(0);
+    expect(browser.closeArgs).toEqual([]);
+    expect(runtime.stations.isLocallyOwned('web')).toBe(true);
   });
 
   it('on its own timers: a phone that stops answering is dropped within 15s; one that answers never is', async () => {

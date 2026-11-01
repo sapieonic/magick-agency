@@ -415,6 +415,13 @@ export class AgencyRuntime {
    * here, exactly as on the web: that is the case that otherwise becomes an abandoned
    * call.
    *
+   * The same holds on a live soft-phone call (`manualDialer.hasLiveCall`), whose leg is
+   * bound to this socket before the dial, so there is no pre-bind case. The close the
+   * terminate produces meets the bridge's rule for a manual leg: before the answer it
+   * hangs up at once, after it the 8 s deferred hangup decides and a phone back in time
+   * re-adopts the leg. A web console on a live soft-phone call is never closed, as on a
+   * campaign call.
+   *
    * ── A silent phone is always dropped with `terminate`, never `close` ──────────
    *
    * On a call and off one alike ({@link dropSilentPhone}). A phone silent past 10 s is
@@ -473,9 +480,20 @@ export class AgencyRuntime {
         this.dialer.noteStationClosed(entry.sessionId);
         continue;
       }
-      // A live soft-phone call: this socket IS its media leg (bound before the
-      // dial), so rule 1 holds as written.
-      if (this.manualDialer.hasLiveCall(entry.sessionId)) continue;
+      // A live soft-phone call: this socket IS its media leg (bound before the dial,
+      // so there is no pre-bind case), and rule 1 holds as written for the web. A
+      // phone gets the same M1 exception as a campaign call: dropped with `terminate`,
+      // so the station's close handler runs now and the bridge's own close rule
+      // decides the call — an immediate hangup before the answer, the 8 s deferred
+      // hangup after it. `releaseStationOnClose` leaves presence alone while the call
+      // is live, and a phone back in time re-adopts the leg (`reattachStation`).
+      if (this.manualDialer.hasLiveCall(entry.sessionId)) {
+        if (entry.clientKind === 'mobile' && entry.ws.readyState !== 3 /* CLOSED */) {
+          this.dropSilentPhone(entry, now, 'on_manual_call');
+          acted++;
+        }
+        continue;
+      }
 
       if (entry.ws.readyState === 3 /* CLOSED */) {
         log.warn({
@@ -520,12 +538,16 @@ export class AgencyRuntime {
   /**
    * Drop a mobile station silent past its grace: `terminate`, which destroys the
    * transport, so `ws` emits `close` at once and the station's close handler detaches
-   * the entry and resolves presence (or, on a call, the bridge's deferred hangup starts).
+   * the entry and resolves presence (or, on a call, the bridge's close rule decides it).
    * Never `close()`: on a dead transport its `close` event waits out ws's 30 s closing
-   * timeout. One place for both arms (on a call, decision M1; and idle), so they cannot
-   * drift apart.
+   * timeout. One place for every arm (on a campaign call or a soft-phone call, decision
+   * M1; and idle), so they cannot drift apart.
    */
-  private dropSilentPhone(entry: StationEntry, now: number, during: 'on_call' | 'idle'): void {
+  private dropSilentPhone(
+    entry: StationEntry,
+    now: number,
+    during: 'on_call' | 'on_manual_call' | 'idle',
+  ): void {
     log.warn({
       sessionId: entry.sessionId,
       campaignId: entry.campaignId,
@@ -534,7 +556,9 @@ export class AgencyRuntime {
       during,
     }, during === 'on_call'
       ? 'Mobile station silent past its grace on a live call — terminating it; the deferred hangup now decides the call'
-      : 'Mobile station silent past its grace — terminating it');
+      : during === 'on_manual_call'
+        ? 'Mobile station silent past its grace on a live soft-phone call — terminating it; the bridge now ends the call, or after the answer its deferred hangup decides'
+        : 'Mobile station silent past its grace — terminating it');
     try { entry.ws.terminate(); } catch { /* already gone */ }
   }
 
