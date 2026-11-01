@@ -39,6 +39,7 @@ dependencies:
   intl: ^0.20.3
   collection: ^1.19.1
   meta: ^1.19.0
+  posthog_flutter: ^5.58.3
 
 dev_dependencies:
   flutter_test:

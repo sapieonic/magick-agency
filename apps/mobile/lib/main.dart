@@ -17,6 +17,8 @@ import 'core/softphone/softphone_controller.dart';
 import 'core/station/station_controller.dart';
 import 'core/station/station_deps.dart';
 import 'core/telemetry/log.dart';
+import 'core/telemetry/posthog_sink.dart';
+import 'core/telemetry/telemetry.dart';
 import 'features/preflight/device_preflight_checks.dart';
 import 'features/preflight/preflight_checks.dart';
 
@@ -38,6 +40,11 @@ Future<void> main() async {
   // Both reads hit platform channels; run them together. Neither may keep
   // the app on the native launch screen: a failure is logged and the app
   // starts anyway (a generic client header, or signed out without Firebase).
+  // Telemetry never holds the launch screen: it starts alongside, and reports
+  // from the moment it is up (the handlers above then send every error, masked).
+  unawaited(startPosthog(env).then((sink) {
+    if (sink != null) Telemetry.install(sink);
+  }));
   final identityFuture = loadIdentity(ClientIdentity.load);
   final firebaseReady = env.hasFirebase ? startFirebase(() => _initFirebase(env)) : Future.value(false);
   final identity = await identityFuture;

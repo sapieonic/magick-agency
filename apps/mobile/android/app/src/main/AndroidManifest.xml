@@ -63,6 +63,8 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- PostHog starts from Dart with the build's key (posthog_sink.dart), never on its own. -->
+        <meta-data android:name="com.posthog.posthog.AUTO_INIT" android:value="false" />
     </application>
     <queries>
         <intent>

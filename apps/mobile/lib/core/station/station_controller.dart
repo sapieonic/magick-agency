@@ -19,6 +19,7 @@ import '../softphone/softphone_api.dart';
 import '../softphone/softphone_copy.dart' show softphoneHangupFailedCopy;
 import '../softphone/softphone_host.dart';
 import '../softphone/softphone_view.dart' show SoftphonePhase;
+import '../telemetry/call_telemetry.dart';
 import '../telemetry/log.dart';
 import 'close_softphone.dart';
 import 'contact_context.dart';
@@ -348,7 +349,10 @@ class StationController extends Notifier<StationView?>
       clientHeader: ref.read(clientIdentityProvider).header,
       onFrame: _onFrame,
       onPong: _onPong,
-      onBinary: s.audio.playFrame,
+      onBinary: (bytes) {
+        _calls.media.binaryIn++;
+        s.audio.playFrame(bytes);
+      },
       onConnection: _onConnection,
       onMissedPings: (n) => _dispatch(MissedPingsAction(n)),
       // A soft-phone call on the line holds the socket as a campaign call does.
@@ -490,8 +494,10 @@ class StationController extends Notifier<StationView?>
     switch (frame) {
       case MediaFrame():
         // `media=pcm16` fallback only; `alaw8` media arrives as binary frames.
+        _calls.media.jsonIn++;
         _s?.audio.playFrame(frame.decodePayload());
       case BinaryMediaFrame(:final bytes):
+        _calls.media.binaryIn++;
         _s?.audio.playFrame(bytes);
       case ReadyFrame(:final activeWrapup):
         _reconnectDeadline = null;
@@ -523,6 +529,7 @@ class StationController extends Notifier<StationView?>
         _dispatch(WrapupAction(openWrapup(wrapup, _station.clockOffsetMs, _now())));
       case ReservedFrame(:final attempt):
         _countdown = null;
+        _calls.campaignReserved(attempt.attemptId);
         _dispatch(ReservedAction(attempt));
       case CountdownFrame(:final attemptId, :final secondsRemaining):
         if (_station.live?.attemptId == attemptId) {
@@ -531,11 +538,13 @@ class StationController extends Notifier<StationView?>
         }
       case BridgedFrame(:final attemptId, :final bridgedAt):
         _countdown = null;
+        _calls.campaignBridged(attemptId);
         _dispatch(BridgedAction(attemptId, bridgedAt));
       case ReleasedFrame():
         _countdown = null;
         _lastRelease = frame;
         if (!isKnownReleaseReason(frame.reason)) _log.warn('unknown release reason', {'reason': frame.reasonRaw});
+        _calls.campaignReleased(frame);
         _dispatch(ReleasedAction(frame, at: _now(), retain: _station.live?.attempt));
       case CampaignStateFrame(:final dialing, :final message):
         _dispatch(CampaignStateAction(dialing: dialing, message: message));
@@ -628,14 +637,25 @@ class StationController extends Notifier<StationView?>
     unawaited(s.notes.persistNow().then((_) => s.notes.flushNow(timeout: notesFlushTimeout)));
   }
 
-  void _sendUplink(Uint8List frame) => _s?.socket.sendBinary(frame);
+  void _sendUplink(Uint8List frame) {
+    if (_s?.socket.sendBinary(frame) ?? false) {
+      _calls.media.sent++;
+    } else {
+      _calls.media.unsent++;
+    }
+  }
+
+  /// The call events and their audio counts (`call_telemetry.dart`).
+  CallTelemetry get _calls => CallTelemetry.instance;
 
   // ─── State plumbing ─────────────────────────────────────────────────────
 
   void _dispatch(StationAction action) {
     final next = stationReducer(_station, action);
     if (identical(next, _station)) return;
+    final manualBefore = _station.manualCall;
     _station = next;
+    if (!identical(next.manualCall, manualBefore)) _calls.manualChanged(next.manualCall);
     _afterChange();
   }
 

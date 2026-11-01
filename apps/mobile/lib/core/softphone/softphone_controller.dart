@@ -17,7 +17,9 @@ import '../station/server_clock.dart';
 import '../station/station_copy.dart' show agentStateLabel, catalogChangedCopy;
 import '../station/station_deps.dart' show notesStoreProvider, stationNowProvider;
 import '../station/station_view.dart';
+import '../telemetry/call_telemetry.dart';
 import '../telemetry/log.dart';
+import '../telemetry/telemetry.dart';
 import 'call_fields.dart';
 import 'call_labels.dart';
 import 'call_state.dart';
@@ -1285,6 +1287,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     );
     try {
       final call = await _api.placeCall(request, accountId: host.accountId);
+      CallTelemetry.instance.manualPlaced(call);
       if (epoch != _epoch) return;
       _placing = false;
       _override = null;
@@ -1293,6 +1296,12 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       if (epoch != _epoch) return;
       _placing = false;
       final body = refusalBodyOf(e);
+      Telemetry.event(body != null && body.softphoneCode != SoftphoneErrorCode.unknown ? 'dial_refused' : 'dial_failed', {
+        'code': body?.codeRaw ?? (e is ApiHttpError ? e.code : null),
+        'status': e is ApiHttpError ? e.status : null,
+        'error': e.runtimeType.toString(),
+        'overrides': !overrides.isEmpty,
+      });
       if (body != null && body.softphoneCode != SoftphoneErrorCode.unknown) {
         _onDialRefused(body, overrides, number);
       } else if (e is ApiUnauthorized || (e is ApiHttpError && !e.isServerError)) {
