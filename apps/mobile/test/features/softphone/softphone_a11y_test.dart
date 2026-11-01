@@ -93,8 +93,11 @@ void main() {
       await expectNoOverflow(tester);
       await h.setView(callView(SoftphonePhase.onCall));
       await settle(tester);
+      await tester.ensureVisible(find.byKey(const Key('softphone-dnc')));
+      await tester.pump();
       await tester.tap(find.byKey(const Key('softphone-dnc')));
       await settle(tester);
+      expect(find.byKey(const Key('dnc-sheet')), findsOneWidget);
       await expectNoOverflow(tester);
     });
 
@@ -133,6 +136,32 @@ void main() {
       }
       expectOnScreen(tester, find.byKey(const Key('softphone-retry')));
     });
+  });
+
+  // The panel as the Phone tab really shows it on a 360×640 phone: a 24 dp
+  // status bar, the shell's Scaffold and NavigationBar around the branch
+  // navigator, and the soft keyboard up (300 dp) or down. The pinned rail and
+  // action must leave the column room at every text scale, not only at 1.0.
+  group('a real phone: status bar, the shell’s bar, 1.0–2.0 text, the keyboard', () {
+    for (final keyboard in [0.0, 300.0]) {
+      for (final scale in sweepTextScales) {
+        testWidgets('${scale}x text, keyboard ${keyboard.round()} dp: every phase fits, the caret and the action stay visible', (
+          tester,
+        ) async {
+          final h = await pumpSoftphone(
+            tester,
+            readyView(),
+            phoneScreen: true,
+            shell: true,
+            statusBar: 24,
+            keyboard: keyboard,
+            textScale: scale,
+            size: small,
+          );
+          await expectEveryPanelPhaseFits(tester, h.setView, size: small, statusBar: 24, keyboard: keyboard);
+        });
+      }
+    }
   });
 
   group('touch targets', () {

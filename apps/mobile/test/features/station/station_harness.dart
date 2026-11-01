@@ -13,7 +13,7 @@ import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/station_providers.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
-import '../softphone/softphone_harness.dart' show FakeSoftphoneActions;
+import '../softphone/softphone_harness.dart' show FakeSoftphoneActions, ShellScaffold, setPhoneInsets;
 
 /// Test doubles and a pump helper for the station screen.
 
@@ -254,12 +254,17 @@ Future<void> settle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 500));
 }
 
+/// [statusBar], [keyboard] and [shell] put the phone's own chrome around the
+/// station: see `setPhoneInsets` and `ShellScaffold` in the soft-phone harness.
 Future<StationHarness> pumpStation(
   WidgetTester tester,
   StationView? view, {
   DateTime? now,
   double textScale = 1,
   Size size = const Size(390, 844),
+  double statusBar = 0,
+  double keyboard = 0,
+  bool shell = false,
   bool disableAnimations = false,
   bool supportsAnnounce = false,
   String campaignId = 'c1',
@@ -269,6 +274,7 @@ Future<StationHarness> pumpStation(
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
+  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard);
   addTearDown(tester.view.reset);
 
   final platformCalls = <MethodCall>[];
@@ -315,20 +321,21 @@ Future<StationHarness> pumpStation(
     return actions.leaveOutcome;
   };
 
+  final routes = <RouteBase>[
+    GoRoute(
+      path: Routes.home,
+      builder: (_, _) => const Scaffold(body: Text('campaigns-home')),
+      routes: [
+        GoRoute(
+          path: 'station/:campaignId',
+          builder: (_, s) => StationScreen(campaignId: s.pathParameters['campaignId']!),
+        ),
+      ],
+    ),
+  ];
   final router = GoRouter(
     initialLocation: Routes.station(campaignId),
-    routes: [
-      GoRoute(
-        path: Routes.home,
-        builder: (_, _) => const Scaffold(body: Text('campaigns-home')),
-        routes: [
-          GoRoute(
-            path: 'station/:campaignId',
-            builder: (_, s) => StationScreen(campaignId: s.pathParameters['campaignId']!),
-          ),
-        ],
-      ),
-    ],
+    routes: shell ? [ShellRoute(builder: (_, _, child) => ShellScaffold(selected: 0, child: child), routes: routes)] : routes,
   );
   addTearDown(router.dispose);
 

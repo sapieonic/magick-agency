@@ -35,9 +35,10 @@ import 'softphone_copy.dart';
 /// switched to the soft phone (SP7). Only the way out differs: Close soft phone
 /// on the Phone tab, Return to campaign on the station.
 ///
-/// One scrolling column built for a phone at 360×640 and 200% text: the rail
-/// pinned above, the phase's one action pinned below (Call; Hold to hang up;
-/// Save outcome), everything else in between, in reading order:
+/// One scrolling column built for a phone at 360×640 and 200% text, with the
+/// keyboard up: the rail pinned above, the phase's one action pinned below
+/// (Call; Hold to hang up; Save outcome), everything else in between, in
+/// reading order:
 ///
 /// * **Ready**: the number, the pad, Log to and Call from, the call details,
 ///   recent calls. In finish mode the notice replaces the number and the pad.
@@ -46,6 +47,12 @@ import 'softphone_copy.dart';
 ///   notes, the call details.
 /// * **Outcome needed**: the same, with the countdown to the call closing
 ///   without one, and Save pinned.
+///
+/// Under the rail the action takes what it needs, up to half the height left,
+/// so the column (and the field being typed in) always keeps the other half
+/// however large the text and whatever the keyboard takes; past that the
+/// action area scrolls inside itself, its button kept in view and the words
+/// above it (a refusal, a warning) scrolling.
 ///
 /// It reads only [softphoneViewProvider] and calls [softphoneActionsProvider].
 /// It owns three things the view cannot: the double-tap guard on Call (one
@@ -162,14 +169,25 @@ class _SoftphonePanelState extends ConsumerState<SoftphonePanel> {
         const SizedBox(width: 1, height: 1, child: _Announcer()),
         const SoftphoneStatusBand(),
         Expanded(
-          child: SingleChildScrollView(
-            key: const Key('softphone-scroll'),
-            controller: _scroll,
-            padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: body),
+          // The panel's own height, not the screen's: the status bar, the
+          // shell's bar and the keyboard have already been taken from it.
+          child: LayoutBuilder(
+            builder: (context, box) => Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    key: const Key('softphone-scroll'),
+                    controller: _scroll,
+                    padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: body),
+                  ),
+                ),
+                _ActionArea(maxHeight: box.maxHeight / 2, child: bottom),
+              ],
+            ),
           ),
         ),
-        _ActionArea(child: bottom),
       ],
     );
   }
@@ -553,25 +571,29 @@ class _CallArea extends ConsumerWidget {
   }
 }
 
-/// The pinned area under the scrolling column. Bounded, so a long refusal at
-/// 200% text scrolls inside itself instead of pushing the action off screen.
+/// The pinned area under the scrolling column, at most [maxHeight] tall
+/// (padding included). Past that it scrolls inside itself, anchored at the
+/// bottom: the button stays in view while a long refusal or warning above it
+/// scrolls, instead of the action pushing the column (or itself) off screen.
 class _ActionArea extends StatelessWidget {
-  const _ActionArea({required this.child});
+  const _ActionArea({required this.maxHeight, required this.child});
 
+  final double maxHeight;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border(top: BorderSide(color: t.border)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.md),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.4),
-          child: SingleChildScrollView(reverse: true, child: child),
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: t.border)),
+        ),
+        child: SingleChildScrollView(
+          reverse: true,
+          padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.md),
+          child: child,
         ),
       ),
     );

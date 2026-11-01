@@ -208,6 +208,9 @@ Future<void> settle(WidgetTester tester) async {
 }
 
 /// Pumps the Phone screen ([phoneScreen]) or the panel alone on [surface].
+///
+/// [statusBar], [keyboard] and [shell] put the phone's own chrome around it:
+/// see [setPhoneInsets] and [ShellScaffold].
 Future<SoftphoneHarness> pumpSoftphone(
   WidgetTester tester,
   SoftphoneView view, {
@@ -216,12 +219,16 @@ Future<SoftphoneHarness> pumpSoftphone(
   DateTime? now,
   double textScale = 1,
   Size size = const Size(390, 844),
+  double statusBar = 0,
+  double keyboard = 0,
+  bool shell = false,
   bool disableAnimations = false,
   bool supportsAnnounce = false,
   Brightness brightness = Brightness.dark,
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
+  setPhoneInsets(tester, statusBar: statusBar, keyboard: keyboard);
   addTearDown(tester.view.reset);
 
   final platformCalls = <MethodCall>[];
@@ -254,19 +261,20 @@ Future<SoftphoneHarness> pumpSoftphone(
   addTearDown(container.dispose);
   h = SoftphoneHarness(tester, container, holder, actions, permissions, clock, platformCalls, announcements);
 
+  final routes = <RouteBase>[
+    GoRoute(
+      path: '/phone',
+      builder: (_, _) => phoneScreen
+          ? const PhoneScreen()
+          : Scaffold(
+              body: SafeArea(child: SoftphonePanel(surface: surface)),
+            ),
+    ),
+    GoRoute(path: '/home/station/:campaignId', builder: (_, s) => Text('station-${s.pathParameters['campaignId']}')),
+  ];
   final router = GoRouter(
     initialLocation: '/phone',
-    routes: [
-      GoRoute(
-        path: '/phone',
-        builder: (_, _) => phoneScreen
-            ? const PhoneScreen()
-            : Scaffold(
-                body: SafeArea(child: SoftphonePanel(surface: surface)),
-              ),
-      ),
-      GoRoute(path: '/home/station/:campaignId', builder: (_, s) => Text('station-${s.pathParameters['campaignId']}')),
-    ],
+    routes: shell ? [ShellRoute(builder: (_, _, child) => ShellScaffold(selected: 1, child: child), routes: routes)] : routes,
   );
   addTearDown(router.dispose);
   h.router = router;
@@ -288,6 +296,131 @@ Future<SoftphoneHarness> pumpSoftphone(
   );
   await tester.pump();
   return h;
+}
+
+// ── A real phone ──────────────────────────────────────────────────────
+
+/// A status bar of [statusBar] dp (the top inset SafeArea takes away) and a
+/// soft keyboard of [keyboard] dp over the bottom of the screen.
+void setPhoneInsets(WidgetTester tester, {double statusBar = 0, double keyboard = 0}) {
+  final ratio = tester.view.devicePixelRatio;
+  tester.view.padding = FakeViewPadding(top: statusBar * ratio);
+  tester.view.viewInsets = FakeViewPadding(bottom: keyboard * ratio);
+}
+
+/// The app shell as it nests a tab: a Scaffold with the five-tab
+/// NavigationBar, around the branch's own navigator ([child]). The real shell
+/// hides the bar during a live call; this one always shows it, the tighter case.
+class ShellScaffold extends StatelessWidget {
+  const ShellScaffold({super.key, required this.selected, required this.child});
+
+  final int selected;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: child,
+    bottomNavigationBar: NavigationBar(
+      selectedIndex: selected,
+      destinations: const [
+        NavigationDestination(icon: Icon(Icons.call_outlined), label: 'Station'),
+        NavigationDestination(icon: Icon(Icons.dialpad_outlined), label: 'Phone'),
+        NavigationDestination(icon: Icon(Icons.bar_chart_outlined), label: 'Performance'),
+        NavigationDestination(icon: Icon(Icons.list_alt_outlined), label: 'My calls'),
+        NavigationDestination(icon: Icon(Icons.person_outline), label: 'Me'),
+      ],
+    ),
+  );
+}
+
+/// The text scales the real-phone sweep runs at.
+const sweepTextScales = [1.0, 1.15, 1.3, 1.5, 1.75, 2.0];
+
+/// Every phase of the panel: its view, its one action, and the field an agent
+/// types into in it.
+List<({String name, SoftphoneView view, String action, String field})> everyPanelPhase() => [
+  (name: 'ready', view: readyView(), action: 'dial-call', field: 'dial-number'),
+  (
+    name: 'ready, the dial refused',
+    view: readyView(dialError: 'Q4 Renewals is calling this customer right now. Try again once that call has ended.'),
+    action: 'dial-call',
+    field: 'dial-number',
+  ),
+  (name: 'dialing', view: callView(SoftphonePhase.dialing), action: 'softphone-hang-up', field: 'softphone-notes-field'),
+  (name: 'ringing', view: callView(SoftphonePhase.ringing), action: 'softphone-hang-up', field: 'softphone-notes-field'),
+  (
+    name: 'on call',
+    view: callView(SoftphonePhase.onCall, outcomeCode: 'callback', callbackAt: t0.add(const Duration(hours: 1))),
+    action: 'softphone-hang-up',
+    field: 'softphone-notes-field',
+  ),
+  (
+    name: 'outcome',
+    view: callView(
+      SoftphonePhase.outcome,
+      outcomeCode: 'wrong',
+      outcomeDueAt: t0.add(const Duration(minutes: 2)),
+      requiredFieldsMissing: true,
+    ),
+    action: 'softphone-save',
+    field: 'softphone-notes-field',
+  ),
+];
+
+/// Runs [everyPanelPhase] through [setView] on the panel as it is mounted on a
+/// [size] screen with [statusBar] and [keyboard] (see [setPhoneInsets]). In
+/// each phase: nothing overflows; with the phase's field focused, its caret is
+/// inside the part of the scrolling column the agent can see; and the phase's
+/// action is wholly on screen, between the status bar and the keyboard (or
+/// the shell's bar).
+Future<void> expectEveryPanelPhaseFits(
+  WidgetTester tester,
+  Future<void> Function(SoftphoneView view) setView, {
+  required Size size,
+  required double statusBar,
+  required double keyboard,
+}) async {
+  for (final c in everyPanelPhase()) {
+    await setView(c.view);
+    await expectNoOverflow(tester);
+
+    final bar = find.byType(NavigationBar);
+    final bottom = keyboard > 0 ? size.height - keyboard : (bar.evaluate().isEmpty ? size.height : tester.getRect(bar).top);
+    final visible = Rect.fromLTRB(0, statusBar, size.width, bottom);
+
+    final field = find.byKey(Key(c.field));
+    // As a tap does (tester.showKeyboard skips a field it focused before).
+    tester.state<EditableTextState>(find.descendant(of: field, matching: find.byType(EditableText))).requestKeyboard();
+    // The caret is revealed in a post-frame callback, then animated there.
+    await settle(tester);
+    await settle(tester);
+    await expectNoOverflow(tester);
+    final viewport = tester.getRect(find.byKey(const Key('softphone-scroll'))).intersect(visible);
+    final caret = caretRect(tester, field);
+    expect(
+      viewport.height > 0 && caret.top >= viewport.top - 0.5 && caret.bottom <= viewport.bottom + 0.5,
+      isTrue,
+      reason: '${c.name}: the caret at $caret is outside the visible column $viewport',
+    );
+
+    final action = tester.getRect(find.byKey(Key(c.action)));
+    expect(
+      action.top >= visible.top - 0.5 && action.bottom <= visible.bottom + 0.5,
+      isTrue,
+      reason: '${c.name}: ${c.action} at $action is not wholly inside $visible',
+    );
+
+    FocusManager.instance.primaryFocus?.unfocus();
+    await settle(tester);
+  }
+}
+
+/// Where the caret of the text field under [field] is drawn, in screen coordinates.
+Rect caretRect(WidgetTester tester, Finder field) {
+  final editable = tester.state<EditableTextState>(find.descendant(of: field, matching: find.byType(EditableText)));
+  final box = editable.renderEditable;
+  final local = box.getLocalRectForCaret(box.selection!.extent);
+  return MatrixUtils.transformRect(box.getTransformTo(null), local);
 }
 
 // ── Fixtures ──────────────────────────────────────────────────────────

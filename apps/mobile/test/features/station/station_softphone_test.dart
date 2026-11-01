@@ -7,7 +7,7 @@ import 'package:magick_agency_agent/features/softphone/softphone_panel.dart';
 import 'package:magick_agency_agent/features/station/station_copy.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
-import '../softphone/softphone_harness.dart' show callView, readyView;
+import '../softphone/softphone_harness.dart' show callView, expectEveryPanelPhaseFits, readyView, sweepTextScales;
 import 'station_harness.dart';
 
 /// The station switched to the soft phone (SP7), and the ways onto it.
@@ -86,6 +86,31 @@ void main() {
       await settle(tester);
       expect(find.byType(SoftphonePanel), findsOneWidget);
     });
+
+    // The same panel inside the station's own Scaffold, on a 360×640 phone
+    // with a status bar, the shell's bar and the keyboard up or down.
+    for (final keyboard in [0.0, 300.0]) {
+      for (final scale in sweepTextScales) {
+        testWidgets('${scale}x text, keyboard ${keyboard.round()} dp on 360×640: every phase fits, the caret and the action stay visible', (
+          tester,
+        ) async {
+          const size = Size(360, 640);
+          final h = await pumpStation(
+            tester,
+            onSoftphone(),
+            softphone: readyView(),
+            availability: softphoneOn,
+            shell: true,
+            statusBar: 24,
+            keyboard: keyboard,
+            textScale: scale,
+            size: size,
+          );
+          await settle(tester);
+          await expectEveryPanelPhaseFits(tester, h.setSoftphone, size: size, statusBar: 24, keyboard: keyboard);
+        });
+      }
+    }
   });
 
   group('Switch to soft phone', () {
