@@ -17,6 +17,7 @@ import 'package:meta/meta.dart';
 import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
+import 'softphone.dart';
 
 /// The `event` discriminant of a server frame.
 ///
@@ -686,18 +687,26 @@ final class BinaryMediaFrame extends StationFrame {
   String toString() => 'BinaryMediaFrame(${bytes.length} bytes)';
 }
 
-/// A soft-phone call's state change. **Opaque in v1** (the app has no soft
-/// phone yet): the whole row is kept in [call] and only the fields a station
-/// needs to recognise the call are typed, leniently.
+/// A soft-phone call's state change: the whole `AgencyManualCall` row, sent on
+/// every change and once more after a reconnect re-attaches an unsettled call.
+///
+/// The row is kept raw in [call] and decoded once, **tolerantly**, into
+/// [manualCall]: a row this build cannot read gives a frame with a null
+/// [manualCall] (which the station ignores), never an [UnknownFrame], so one
+/// server-side field change cannot silence the soft phone's frames. The
+/// lenient getters below read [call] directly for logs.
 ///
 /// Contract: `AgencyStationManualCallFrame` (`agency/softphone.ts`).
 final class ManualCallFrame extends StationFrame {
-  ManualCallFrame(Map<String, Object?> call) : call = frozenMap(call);
+  ManualCallFrame(Map<String, Object?> call) : call = frozenMap(call), manualCall = ManualCall.tryFromJson(call);
 
   factory ManualCallFrame.fromJson(Map<String, Object?> j) => ManualCallFrame(j.obj('call'));
 
   /// The `AgencyManualCall` row, unchanged and unmodifiable.
   final Map<String, Object?> call;
+
+  /// [call] decoded, or null when it does not read as a manual call.
+  final ManualCall? manualCall;
 
   String? get id => _string('id');
   String? get sessionId => _string('session_id');

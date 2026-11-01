@@ -1,0 +1,607 @@
+{
+  "bootstrap_enabled": {
+    "softphone_enabled": true,
+    "taggable_campaigns": [
+      {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "status": "running",
+        "caller_ids": ["+912071234567", "+912071234568"],
+        "disposition_catalog": [
+          { "code": "interested", "label": "Interested", "is_success": true },
+          { "code": "callback", "label": "Call back later", "requires_datetime": true },
+          { "code": "documents", "label": "Needs documents", "requires_note": true },
+          { "code": "do_not_call", "label": "Do not call", "suppress": true, "terminal": true }
+        ],
+        "calling_window": { "start": "09:00:00", "end": "20:00:00", "days": [1, 2, 3, 4, 5, 6], "timezone": "Asia/Kolkata" },
+        "calling_window_open": true,
+        "record_calls": true,
+        "analysis_profile": { "id": "a7b6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d", "name": "Renewals v3" },
+        "context_display": { "hero": ["Customer name", "Policy number"], "hidden": ["internal_ref"] }
+      }
+    ],
+    "untagged": {
+      "caller_ids": ["+912071239999", "+912071238888"],
+      "default_caller_id": "+912071238888",
+      "disposition_catalog": [
+        { "code": "resolved", "label": "Query resolved", "is_success": true },
+        { "code": "wrong_number", "label": "Wrong number" },
+        { "code": "callback", "label": "Callback requested", "requires_datetime": true },
+        { "code": "do_not_call", "label": "Do not call", "suppress": true }
+      ],
+      "record_calls": false,
+      "analysis_profile": null
+    },
+    "call_fields": [
+      { "key": "customer_name", "label": "Customer name", "type": "text", "required": true },
+      { "key": "loan_amount", "label": "Loan amount", "type": "number" },
+      { "key": "reason", "label": "Reason for call", "type": "choice", "options": ["Rate query", "Documents", "Renewal"] },
+      { "key": "follow_up", "label": "Follow-up needed", "type": "boolean" },
+      { "key": "visit_on", "label": "Branch visit on", "type": "date" }
+    ],
+    "default_country_code": "+91",
+    "session": {
+      "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "kind": "softphone",
+      "campaign_id": null,
+      "campaign_name": null,
+      "state": "break",
+      "break_reason": "soft_phone",
+      "on_softphone": true
+    },
+    "call": {
+      "id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "agent_name": "Meera Krishnan",
+      "destination_e164": "+919812345678",
+      "caller_id": "+912071234567",
+      "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+      "contact": {
+        "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
+        "state": "in_flight",
+        "claimed": true,
+        "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931", "City": "Pune", "internal_ref": "X-9" },
+        "prior_attempts": [
+          {
+            "attempt_number": 1,
+            "outcome": "no_answer",
+            "disposition_code": null,
+            "notes": null,
+            "ended_at": "2026-10-30T05:12:44.120Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-30T05:12:13.004Z"
+          }
+        ]
+      },
+      "state": "ringing",
+      "outcome": null,
+      "end_reason": null,
+      "recording_requested": true,
+      "dnc_overridden": false,
+      "hours_overridden": false,
+      "requires_disposition": false,
+      "outcome_due_at": null,
+      "disposition_code": null,
+      "disposition_source": null,
+      "notes": null,
+      "callback_at": null,
+      "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "follow_up": false, "visit_on": null },
+      "dispositioned_by_user_id": null,
+      "dispositioned_at": null,
+      "dispositioned_on_behalf": false,
+      "webrtc_call_id": "7f8e9d0c-1b2a-4c3d-8e4f-5a6b7c8d9e0f",
+      "dialed_at": "2026-11-01T08:02:11.000Z",
+      "answered_at": null,
+      "bridged_at": null,
+      "ended_at": null,
+      "talk_seconds": null,
+      "settled_at": null,
+      "created_at": "2026-11-01T08:02:10.880Z",
+      "updated_at": "2026-11-01T08:02:11.004Z"
+    },
+    "call_campaign": {
+      "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "campaign_name": "Q4 Renewals — Pune",
+      "status": "running",
+      "caller_ids": ["+912071234567", "+912071234568"],
+      "disposition_catalog": [
+        { "code": "interested", "label": "Interested", "is_success": true },
+        { "code": "callback", "label": "Call back later", "requires_datetime": true },
+        { "code": "documents", "label": "Needs documents", "requires_note": true },
+        { "code": "do_not_call", "label": "Do not call", "suppress": true, "terminal": true }
+      ],
+      "calling_window": { "start": "09:00:00", "end": "20:00:00", "days": [1, 2, 3, 4, 5, 6], "timezone": "Asia/Kolkata" },
+      "calling_window_open": true,
+      "record_calls": true,
+      "analysis_profile": { "id": "a7b6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d", "name": "Renewals v3" },
+      "context_display": { "hero": ["Customer name", "Policy number"], "hidden": ["internal_ref"] }
+    }
+  },
+  "bootstrap_finish_mode": {
+    "softphone_enabled": false,
+    "taggable_campaigns": [],
+    "untagged": {
+      "caller_ids": ["+912071239999"],
+      "default_caller_id": "+912071239999",
+      "disposition_catalog": [
+        { "code": "resolved", "label": "Query resolved", "is_success": true },
+        { "code": "callback", "label": "Callback requested", "requires_datetime": true }
+      ],
+      "record_calls": false,
+      "analysis_profile": null
+    },
+    "call_fields": [{ "key": "customer_name", "label": "Customer name", "type": "text", "required": true }],
+    "default_country_code": "+91",
+    "session": {
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+      "kind": "campaign",
+      "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "campaign_name": "Q4 Renewals — Pune",
+      "state": "break",
+      "break_reason": "soft_phone",
+      "on_softphone": true
+    },
+    "call": {
+      "id": "2e3d4c5b-6f70-4b8c-9dae-1f2a3b4c5d6e",
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "agent_name": "Meera Krishnan",
+      "destination_e164": "+919876501234",
+      "caller_id": "+912071239999",
+      "tag": null,
+      "contact": null,
+      "state": "ended",
+      "outcome": "connected",
+      "end_reason": "remote_hangup",
+      "recording_requested": false,
+      "dnc_overridden": true,
+      "hours_overridden": false,
+      "requires_disposition": true,
+      "outcome_due_at": "2026-11-01T09:14:20.000Z",
+      "disposition_code": null,
+      "disposition_source": null,
+      "notes": "Asked about the renewal rate",
+      "callback_at": null,
+      "fields": { "customer_name": "Anita Desai" },
+      "dispositioned_by_user_id": null,
+      "dispositioned_at": null,
+      "dispositioned_on_behalf": false,
+      "webrtc_call_id": "8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d",
+      "dialed_at": "2026-11-01T08:40:02.000Z",
+      "answered_at": "2026-11-01T08:40:09.500Z",
+      "bridged_at": "2026-11-01T08:40:09.620Z",
+      "ended_at": "2026-11-01T08:44:20.000Z",
+      "talk_seconds": 250,
+      "settled_at": null,
+      "created_at": "2026-11-01T08:40:01.700Z",
+      "updated_at": "2026-11-01T08:44:20.050Z"
+    },
+    "call_campaign": null
+  },
+  "bootstrap_idle": {
+    "softphone_enabled": true,
+    "taggable_campaigns": [
+      {
+        "campaign_id": "d00dfeed-2222-4333-8444-555566667777",
+        "campaign_name": "Collections — Mumbai",
+        "status": "paused",
+        "caller_ids": ["+912261234567"],
+        "disposition_catalog": [
+          { "code": "promised", "label": "Promised to pay", "is_success": true },
+          { "code": "callback", "label": "Call back later", "requires_datetime": true },
+          { "code": "do_not_call", "label": "Do not call", "suppress": true }
+        ],
+        "calling_window": { "start": "10:00", "end": "18:00", "days": [1, 2, 3, 4, 5], "timezone": "Asia/Kolkata" },
+        "calling_window_open": false,
+        "record_calls": false,
+        "analysis_profile": null,
+        "context_display": {}
+      }
+    ],
+    "untagged": {
+      "caller_ids": [],
+      "default_caller_id": null,
+      "disposition_catalog": [
+        { "code": "resolved", "label": "Query resolved", "is_success": true },
+        { "code": "callback", "label": "Callback requested", "requires_datetime": true }
+      ],
+      "record_calls": false,
+      "analysis_profile": null
+    },
+    "call_fields": [],
+    "default_country_code": "+91",
+    "session": null,
+    "call": null,
+    "call_campaign": null
+  },
+  "session_response": {
+    "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+    "kind": "softphone",
+    "state": "break",
+    "break_reason": "soft_phone",
+    "station_ws_url": "/proxy/agency/station/9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a?token=st_9f2c1a7e4b3d",
+    "station_token_expires_at": "2026-11-01T08:03:00.000Z",
+    "intervals": {
+      "heartbeat_ms": 10000,
+      "heartbeat_grace_ms": 10000,
+      "reservation_lease_ms": 10000,
+      "countdown_ms": 3000,
+      "deferred_hangup_ms": 8000
+    }
+  },
+  "call_create_request": {
+    "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+    "to": "98123 45678",
+    "caller_id": "+912071234567",
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "reason": "Renewal", "follow_up": true, "visit_on": "2026-11-05" },
+    "overrides": {
+      "dnc_note": "Customer asked us to call back about the renewal",
+      "hours_note": "Customer is only free after work today"
+    }
+  },
+  "call_update_request": {
+    "fields": {},
+    "notes": ""
+  },
+  "call_disposition_request": {
+    "code": "callback",
+    "notes": "Call after salary day",
+    "callback_at": "2026-11-02T04:30:00.000Z",
+    "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "reason": "Renewal", "follow_up": true, "visit_on": null }
+  },
+  "call_disposition_response": {
+    "call": {
+      "id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+      "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "agent_name": null,
+      "destination_e164": "+919812345678",
+      "caller_id": "+912071234567",
+      "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+      "contact": {
+        "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
+        "state": "pending",
+        "claimed": true,
+        "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931" },
+        "prior_attempts": []
+      },
+      "state": "ended",
+      "outcome": "connected",
+      "end_reason": "agent_hangup",
+      "recording_requested": true,
+      "dnc_overridden": false,
+      "hours_overridden": false,
+      "requires_disposition": false,
+      "outcome_due_at": null,
+      "disposition_code": "callback",
+      "disposition_source": "campaign",
+      "notes": "Call after salary day",
+      "callback_at": "2026-11-02T04:30:00.000Z",
+      "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "reason": "Renewal", "follow_up": true, "visit_on": null },
+      "dispositioned_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "dispositioned_at": "2026-11-01T08:09:40.000Z",
+      "dispositioned_on_behalf": false,
+      "webrtc_call_id": "7f8e9d0c-1b2a-4c3d-8e4f-5a6b7c8d9e0f",
+      "dialed_at": "2026-11-01T08:02:11.000Z",
+      "answered_at": "2026-11-01T08:02:19.400Z",
+      "bridged_at": "2026-11-01T08:02:19.520Z",
+      "ended_at": "2026-11-01T08:08:02.000Z",
+      "talk_seconds": 342,
+      "settled_at": "2026-11-01T08:09:40.000Z",
+      "created_at": "2026-11-01T08:02:10.880Z",
+      "updated_at": "2026-11-01T08:09:40.010Z"
+    },
+    "contact_state": "pending",
+    "next_attempt_at": "2026-11-02T04:30:00.000Z",
+    "callback_requested_at": "2026-11-02T04:30:00.000Z"
+  },
+  "call_hangup_response": {
+    "id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+    "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+    "agent_name": null,
+    "destination_e164": "+919812345678",
+    "caller_id": "+912071234567",
+    "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+    "contact": {
+      "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
+      "state": "in_flight",
+      "claimed": true,
+      "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931" },
+      "prior_attempts": []
+    },
+    "state": "bridged",
+    "outcome": null,
+    "end_reason": null,
+    "recording_requested": true,
+    "dnc_overridden": false,
+    "hours_overridden": false,
+    "requires_disposition": false,
+    "outcome_due_at": null,
+    "disposition_code": null,
+    "disposition_source": null,
+    "notes": null,
+    "callback_at": null,
+    "fields": {},
+    "dispositioned_by_user_id": null,
+    "dispositioned_at": null,
+    "dispositioned_on_behalf": false,
+    "webrtc_call_id": "7f8e9d0c-1b2a-4c3d-8e4f-5a6b7c8d9e0f",
+    "dialed_at": "2026-11-01T08:02:11.000Z",
+    "answered_at": "2026-11-01T08:02:19.400Z",
+    "bridged_at": "2026-11-01T08:02:19.520Z",
+    "ended_at": null,
+    "talk_seconds": null,
+    "settled_at": null,
+    "created_at": "2026-11-01T08:02:10.880Z",
+    "updated_at": "2026-11-01T08:02:19.530Z"
+  },
+  "call_dnc_request": {
+    "reason": "Customer asked not to be called again"
+  },
+  "call_dnc_response": {
+    "call_id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+    "phone_e164": "+919812345678",
+    "scope": "campaign",
+    "dnc_recorded": true,
+    "contact_state": "suppressed"
+  },
+  "calls_page": {
+    "rows": [
+      {
+        "id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+        "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "agent_name": "Meera Krishnan",
+        "destination_e164": "+919812345678",
+        "caller_id": "+912071234567",
+        "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+        "contact": { "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b", "state": "pending", "claimed": true },
+        "state": "ended",
+        "outcome": "connected",
+        "end_reason": "agent_hangup",
+        "recording_requested": true,
+        "dnc_overridden": false,
+        "hours_overridden": false,
+        "requires_disposition": false,
+        "outcome_due_at": null,
+        "disposition_code": "callback",
+        "disposition_source": "campaign",
+        "notes": "Call after salary day",
+        "callback_at": "2026-11-02T04:30:00.000Z",
+        "fields": { "customer_name": "Rahul Verma" },
+        "dispositioned_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "dispositioned_at": "2026-11-01T08:09:40.000Z",
+        "dispositioned_on_behalf": false,
+        "webrtc_call_id": "7f8e9d0c-1b2a-4c3d-8e4f-5a6b7c8d9e0f",
+        "dialed_at": "2026-11-01T08:02:11.000Z",
+        "answered_at": "2026-11-01T08:02:19.400Z",
+        "bridged_at": "2026-11-01T08:02:19.520Z",
+        "ended_at": "2026-11-01T08:08:02.000Z",
+        "talk_seconds": 342,
+        "settled_at": "2026-11-01T08:09:40.000Z",
+        "created_at": "2026-11-01T08:02:10.880Z",
+        "updated_at": "2026-11-01T08:09:40.010Z",
+        "analysis_status": "completed"
+      },
+      {
+        "id": "3f4e5d6c-7a8b-4c9d-8eaf-2b3c4d5e6f70",
+        "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+        "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "agent_name": "Meera Krishnan",
+        "destination_e164": "+919700012345",
+        "caller_id": "+912071238888",
+        "tag": null,
+        "contact": null,
+        "state": "ended",
+        "outcome": "no_answer",
+        "end_reason": "no_answer",
+        "recording_requested": false,
+        "dnc_overridden": false,
+        "hours_overridden": false,
+        "requires_disposition": false,
+        "outcome_due_at": null,
+        "disposition_code": null,
+        "disposition_source": null,
+        "notes": null,
+        "callback_at": null,
+        "fields": { "customer_name": null },
+        "dispositioned_by_user_id": null,
+        "dispositioned_at": null,
+        "dispositioned_on_behalf": false,
+        "webrtc_call_id": null,
+        "dialed_at": "2026-11-01T07:50:00.000Z",
+        "answered_at": null,
+        "bridged_at": null,
+        "ended_at": "2026-11-01T07:50:31.000Z",
+        "talk_seconds": null,
+        "settled_at": "2026-11-01T07:50:31.000Z",
+        "created_at": "2026-11-01T07:49:59.600Z",
+        "updated_at": "2026-11-01T07:50:31.020Z",
+        "analysis_status": null
+      }
+    ],
+    "next_cursor": "eyJjIjoiMjAyNi0xMS0wMVQwNzo0OTo1OS42MDBaIn0",
+    "limit": 2
+  },
+  "call_detail_agent": {
+    "call": {
+      "id": "2e3d4c5b-6f70-4b8c-9dae-1f2a3b4c5d6e",
+      "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+      "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "agent_name": "Meera Krishnan",
+      "destination_e164": "+919876501234",
+      "caller_id": "+912071234567",
+      "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+      "contact": {
+        "contact_id": "a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d",
+        "state": "completed",
+        "claimed": true,
+        "context": { "Customer name": "Anita Desai", "Policy number": "HL-31877" },
+        "prior_attempts": [
+          {
+            "attempt_number": 2,
+            "outcome": "connected",
+            "disposition_code": "callback",
+            "notes": "Asked for a call next week",
+            "ended_at": "2026-10-28T06:20:10.000Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-28T06:15:02.000Z"
+          }
+        ]
+      },
+      "state": "ended",
+      "outcome": "connected",
+      "end_reason": "remote_hangup",
+      "recording_requested": true,
+      "dnc_overridden": true,
+      "hours_overridden": true,
+      "requires_disposition": false,
+      "outcome_due_at": null,
+      "disposition_code": "interested",
+      "disposition_source": "campaign",
+      "notes": "Renewing this month",
+      "callback_at": null,
+      "fields": { "customer_name": "Anita Desai", "loan_amount": 180000, "reason": "Renewal", "follow_up": false, "visit_on": "2026-11-04" },
+      "dispositioned_by_user_id": "u-5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+      "dispositioned_at": "2026-11-01T09:20:00.000Z",
+      "dispositioned_on_behalf": true,
+      "webrtc_call_id": "8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d",
+      "dialed_at": "2026-11-01T08:40:02.000Z",
+      "answered_at": "2026-11-01T08:40:09.500Z",
+      "bridged_at": "2026-11-01T08:40:09.620Z",
+      "ended_at": "2026-11-01T08:44:20.000Z",
+      "talk_seconds": 250,
+      "settled_at": "2026-11-01T09:20:00.000Z",
+      "created_at": "2026-11-01T08:40:01.700Z",
+      "updated_at": "2026-11-01T09:20:00.010Z"
+    },
+    "dispositioned_by_name": "Sunil Rao",
+    "overrides": {
+      "dnc_note": "Customer asked us to call back about the renewal",
+      "dnc_entry_id": "e5d4c3b2-a1f0-4e9d-8c7b-6a5f4e3d2c1b",
+      "dnc_entry": {
+        "id": "e5d4c3b2-a1f0-4e9d-8c7b-6a5f4e3d2c1b",
+        "scope": "campaign",
+        "reason": "Asked not to be called",
+        "created_at": "2026-10-20T11:00:00.000Z",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666"
+      },
+      "hours_note": "Customer is only free after work today"
+    },
+    "media": null,
+    "call_availability": "available"
+  },
+  "session_state_switch_queued": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "wrapup",
+    "since": "2026-11-01T08:30:12.000Z",
+    "pending_state": "break",
+    "break_reason": "soft_phone"
+  },
+  "refusal_dnc_listed": {
+    "error": "Conflict",
+    "message": "This number is on the Do Not Call list.",
+    "code": "dnc_listed",
+    "entry": {
+      "id": "e5d4c3b2-a1f0-4e9d-8c7b-6a5f4e3d2c1b",
+      "scope": "account",
+      "reason": "Asked not to be called",
+      "created_at": "2026-10-20T11:00:00.000Z"
+    }
+  },
+  "refusal_outside_hours": {
+    "error": "Conflict",
+    "message": "The campaign's calling hours are closed for this number.",
+    "code": "outside_calling_hours",
+    "window": { "start": "09:00:00", "end": "20:00:00", "days": [1, 2, 3, 4, 5, 6], "timezone": "Asia/Kolkata" },
+    "timezone_source": "contact",
+    "next_open_at": "2026-11-02T03:30:00.000Z"
+  },
+  "refusal_contact_in_flight": {
+    "error": "Conflict",
+    "message": "A campaign call to this contact is in progress.",
+    "code": "contact_in_flight",
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b"
+  },
+  "refusal_session_on_campaign": {
+    "error": "Conflict",
+    "message": "You are live on a campaign. Switch that station to the soft phone instead of opening a second one.",
+    "code": "session_on_campaign",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "campaign_name": "Q4 Renewals — Pune",
+    "state": "available",
+    "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+    "account_name": "Pune Branch"
+  },
+  "refusal_outcome_pending": {
+    "error": "Conflict",
+    "message": "Save the outcome of your last call before dialling again.",
+    "code": "outcome_pending",
+    "call": {
+      "id": "2e3d4c5b-6f70-4b8c-9dae-1f2a3b4c5d6e",
+      "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+      "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "agent_name": null,
+      "destination_e164": "+919876501234",
+      "caller_id": "+912071239999",
+      "tag": null,
+      "contact": null,
+      "state": "ended",
+      "outcome": "connected",
+      "end_reason": "remote_hangup",
+      "recording_requested": false,
+      "dnc_overridden": false,
+      "hours_overridden": false,
+      "requires_disposition": true,
+      "outcome_due_at": "2026-11-01T09:14:20.000Z",
+      "disposition_code": null,
+      "disposition_source": null,
+      "notes": null,
+      "callback_at": null,
+      "fields": {},
+      "dispositioned_by_user_id": null,
+      "dispositioned_at": null,
+      "dispositioned_on_behalf": false,
+      "webrtc_call_id": "8a9b0c1d-2e3f-4a5b-8c6d-7e8f9a0b1c2d",
+      "dialed_at": "2026-11-01T08:40:02.000Z",
+      "answered_at": "2026-11-01T08:40:09.500Z",
+      "bridged_at": "2026-11-01T08:40:09.620Z",
+      "ended_at": "2026-11-01T08:44:20.000Z",
+      "talk_seconds": 250,
+      "settled_at": null,
+      "created_at": "2026-11-01T08:40:01.700Z",
+      "updated_at": "2026-11-01T08:44:20.050Z"
+    }
+  },
+  "refusal_fields_invalid": {
+    "error": "Bad Request",
+    "message": "Some call details are invalid.",
+    "code": "fields_invalid",
+    "details": [
+      { "path": "fields.customer_name", "message": "Customer name is required" },
+      { "path": "fields.loan_amount", "message": "Loan amount must be a number" }
+    ]
+  },
+  "refusal_disposition_invalid": {
+    "error": "Bad Request",
+    "message": "That outcome cannot be saved as submitted.",
+    "code": "disposition_invalid",
+    "allowed_codes": ["interested", "callback", "documents", "do_not_call"]
+  },
+  "refusal_softphone_disabled": {
+    "error": "Forbidden",
+    "message": "The soft phone is not enabled for this account.",
+    "code": "softphone_disabled"
+  }
+}

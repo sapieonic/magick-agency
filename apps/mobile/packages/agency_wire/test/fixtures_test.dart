@@ -4,6 +4,7 @@
 // contract change that moves a fixture fails here until the Dart type follows.
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:agency_wire/agency_wire.dart';
 import 'package:test/test.dart';
@@ -40,6 +41,10 @@ final Map<String, Map<String, Decoder>> decoders = {
       'bridge_ended',
       'media',
       'manual_call',
+      'manual_call_owed',
+      'ready_softphone_session',
+      'agent_state_soft_phone',
+      'agent_state_switch_queued',
     ])
       name: (j) => StationFrame.decode(jsonEncode(j)),
   },
@@ -60,6 +65,53 @@ final Map<String, Map<String, Decoder>> decoders = {
     'session_state_device_away': SessionStateResponse.fromJson,
     'conflict_other_campaign': (j) => ErrorBody.fromJson(j).campaignConflict ?? (throw StateError('no conflict')),
     'conflict_softphone': (j) => ErrorBody.fromJson(j).softphoneConflict ?? (throw StateError('no conflict')),
+  },
+  'softphone.json': {
+    'bootstrap_enabled': SoftphoneBootstrap.fromJson,
+    'bootstrap_finish_mode': SoftphoneBootstrap.fromJson,
+    'bootstrap_idle': SoftphoneBootstrap.fromJson,
+    'session_response': SoftphoneSessionResponse.fromJson,
+    'call_create_request': (j) {
+      final overrides = j['overrides'] as Map<String, Object?>?;
+      return ManualCallCreateRequest(
+        sessionId: j['session_id']! as String,
+        to: j['to']! as String,
+        callerId: j['caller_id'] as String?,
+        campaignId: j['campaign_id'] as String?,
+        fields: j['fields'] as Map<String, Object?>?,
+        overrides: overrides == null
+            ? null
+            : ManualCallOverridesRequest(
+                dncNote: overrides['dnc_note'] as String?,
+                hoursNote: overrides['hours_note'] as String?,
+              ),
+      );
+    },
+    'call_update_request': (j) =>
+        ManualCallUpdateRequest(fields: j['fields'] as Map<String, Object?>?, notes: j['notes'] as String?),
+    'call_disposition_request': (j) => ManualCallDispositionRequest(
+      code: j['code']! as String,
+      notes: j['notes'] as String?,
+      callbackAt: DateTime.parse(j['callback_at']! as String),
+      fields: j['fields'] as Map<String, Object?>?,
+    ),
+    'call_disposition_response': ManualCallDispositionResponse.fromJson,
+    'call_hangup_response': ManualCall.fromJson,
+    'call_dnc_request': (j) => ManualCallDncRequest(reason: j['reason'] as String?),
+    'call_dnc_response': ManualCallDncResponse.fromJson,
+    'calls_page': decodeManualCallsPage,
+    'call_detail_agent': ManualCallDetail.fromJson,
+    'session_state_switch_queued': SessionStateResponse.fromJson,
+    'refusal_dnc_listed': (j) => ErrorBody.fromJson(j).dncListed ?? (throw StateError('not dnc_listed')),
+    'refusal_outside_hours': (j) => ErrorBody.fromJson(j).outsideHours ?? (throw StateError('not outside hours')),
+    'refusal_contact_in_flight': (j) =>
+        ErrorBody.fromJson(j).contactInFlight ?? (throw StateError('not contact_in_flight')),
+    'refusal_session_on_campaign': (j) =>
+        ErrorBody.fromJson(j).sessionOnCampaign ?? (throw StateError('not session_on_campaign')),
+    'refusal_outcome_pending': (j) => ErrorBody.fromJson(j).callPending ?? (throw StateError('not outcome_pending')),
+    'refusal_fields_invalid': ErrorBody.fromJson,
+    'refusal_disposition_invalid': ErrorBody.fromJson,
+    'refusal_softphone_disabled': ErrorBody.fromJson,
   },
   'actions.json': {
     'hangup_response': HangupResponse.fromJson,
@@ -123,6 +175,10 @@ Map<String, Object?>? encoded(Object o) => switch (o) {
   final ClaimInviteRequest r => r.toJson(),
   final NotificationPreferenceUpdate r => r.toJson(),
   final StationClientFrame f => f.toJson(),
+  final ManualCallCreateRequest r => r.toJson(),
+  final ManualCallUpdateRequest r => r.toJson(),
+  final ManualCallDispositionRequest r => r.toJson(),
+  final ManualCallDncRequest r => r.toJson(),
   _ => null,
 };
 
@@ -144,7 +200,7 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   final CampaignStateFrame f => [f.status, f.reason],
   final StationErrorFrame f => [f.code],
   final BridgeStatusFrame f => [f.status],
-  final ManualCallFrame f => [f.state],
+  final ManualCallFrame f => [f.state, ...manualCallEnums(f.manualCall ?? (throw StateError('manual_call did not decode')))],
   final SessionBootstrap b => [b.state, b.campaignStatus],
   final SessionStateResponse s => [s.kind, s.state, s.pendingState],
   final SessionCampaignConflict c => [c.state],
@@ -155,7 +211,33 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   // `session_refusal` is a sign-in code, not an agency one.
   final ErrorBody e when e.codeRaw == null || SessionRefusalCode.fromWire(e.codeRaw) != SessionRefusalCode.unknown =>
     const [],
+  // A soft-phone refusal is read through `softphoneCode` (its `code` is an action code
+  // only for `session_on_softphone`).
+  final ErrorBody e when e.softphoneCode != SoftphoneErrorCode.unknown => [e.softphoneCode],
   final ErrorBody e => [e.code],
+  final SoftphoneBootstrap b => [
+    ...b.taggableCampaigns.map((c) => c.status),
+    ?b.callCampaign?.status,
+    ...b.callFields.map((f) => f.type),
+    ?b.session?.kind,
+    ?b.session?.state,
+    ?b.session?.pendingState,
+    ...?(b.call == null ? null : manualCallEnums(b.call!)),
+  ],
+  final SoftphoneSessionResponse r => [r.kind, r.state],
+  final ManualCallDispositionResponse r => [r.contactState, ...manualCallEnums(r.call)],
+  final ManualCallDncResponse r => [r.scope, r.contactState],
+  final KeysetPage<ManualCallListRow> p => p.rows.expand(manualCallEnums),
+  final ManualCallDetail d => [
+    d.callAvailability,
+    d.overrides.dncEntry?.scope,
+    ...manualCallEnums(d.call),
+  ],
+  final SoftphoneDncListedRefusal r => [r.entry.scope],
+  final SoftphoneOutsideHoursRefusal r => [r.timezoneSource],
+  final SoftphoneSessionOnCampaignRefusal r => [r.state],
+  final SoftphoneCallPendingRefusal r => [r.code, ...manualCallEnums(r.call)],
+  final ManualCall c => manualCallEnums(c),
   final AgentStats s => [s.bucket],
   final KeysetPage<AttemptRow> p => p.rows.expand((r) => [r.state, r.outcome]),
   final SessionResponse s => [
@@ -171,9 +253,27 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   _ => const [],
 };
 
+/// A manual call's closed-vocabulary fields, its contact and priors included.
+Iterable<WireEnum?> manualCallEnums(ManualCall c) => [
+  c.state,
+  c.outcome,
+  c.endReason,
+  c.dispositionSource,
+  c.contact?.state,
+  ...?c.contact?.priorAttempts?.map((p) => p.outcome),
+];
+
 void main() {
   test('the fixture directory is found from the package', () {
     expect(agentFixturesDir().existsSync(), isTrue);
+  });
+
+  test('every fixture file in the directory is registered here (literals.json has its own suite)', () {
+    final files = {
+      for (final f in agentFixturesDir().listSync().whereType<File>())
+        if (f.path.endsWith('.json')) f.uri.pathSegments.last,
+    };
+    expect(files, {...decoders.keys, 'literals.json'});
   });
 
   for (final MapEntry(key: file, value: byName) in decoders.entries) {

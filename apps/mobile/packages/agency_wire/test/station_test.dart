@@ -156,6 +156,57 @@ void main() {
       expect(partial.state, AttemptState.bridged);
     });
 
+    test('manual_call is decoded once into a typed ManualCall', () {
+      final f = sample<ManualCallFrame>('manual_call');
+      final call = f.manualCall!;
+      expect(call.id, f.id);
+      expect(call.state, AttemptState.ringing);
+      expect(call.tag, const ManualCallTag(
+        campaignId: 'c0ffee00-1111-4222-8333-444455556666',
+        campaignName: 'Q4 Renewals — Pune',
+      ));
+      expect(call.isLive, isTrue);
+      expect(call.isUnsettled, isTrue);
+      expect(identical(f.manualCall, f.manualCall), isTrue, reason: 'decoded at construction, not per read');
+
+      final owed = sample<ManualCallFrame>('manual_call_owed').manualCall!;
+      expect(owed.state, AttemptState.ended);
+      expect(owed.owesOutcome, isTrue);
+      expect(owed.isLive, isFalse);
+      expect(owed.outcomeDueAt, DateTime.utc(2026, 11, 1, 9, 14, 20));
+      expect(owed.endReason, ManualCallEndReason.remoteHangup);
+    });
+
+    test('a manual_call row that does not read stays a ManualCallFrame with a null manualCall', () {
+      // A partial row, a mistyped field and a call that is not an object: never an
+      // UnknownFrame, so the station keeps reading frames and ignores this one.
+      for (final text in [
+        '{"event":"manual_call","call":{"state":"bridged"}}',
+        jsonEncode({
+          'event': 'manual_call',
+          'call': {...fixture('station.json', 'manual_call')['call']! as Map<String, Object?>, 'updated_at': 42},
+        }),
+        jsonEncode({
+          'event': 'manual_call',
+          'call': {...fixture('station.json', 'manual_call')['call']! as Map<String, Object?>, 'tag': 'oops'},
+        }),
+      ]) {
+        final f = decodeAs<ManualCallFrame>(text);
+        expect(f.manualCall, isNull, reason: text);
+      }
+      // A call that is not an object at all is still unreadable as a frame.
+      expect(StationFrame.decode('{"event":"manual_call","call":7}'), isA<UnknownFrame>());
+    });
+
+    test('a manual_call with an unknown state or a new key still decodes, as unknown', () {
+      final row = {...fixture('station.json', 'manual_call')['call']! as Map<String, Object?>};
+      row['state'] = 'transferring';
+      row['brand_new_field'] = true;
+      final call = decodeAs<ManualCallFrame>(jsonEncode({'event': 'manual_call', 'call': row})).manualCall!;
+      expect(call.state, AttemptState.unknown);
+      expect(call.stateRaw, 'transferring');
+    });
+
     test('value equality across separate decodes', () {
       final text = fixtureText('station.json', 'ready_reconnect_live');
       final a = StationFrame.decode(text);

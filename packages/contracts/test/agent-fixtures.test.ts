@@ -8,6 +8,7 @@ import literals from '../fixtures/agent/literals.json';
 import platform from '../fixtures/agent/platform.json';
 import reads from '../fixtures/agent/reads.json';
 import session from '../fixtures/agent/session.json';
+import softphone from '../fixtures/agent/softphone.json';
 import stationClient from '../fixtures/agent/station-client.json';
 import station from '../fixtures/agent/station.json';
 
@@ -123,6 +124,10 @@ const STATION = {
   bridge_ended: fits<Core.AgencyStationBridgeEndedFrame>()(station.bridge_ended),
   media: fits<Core.AgencyStationMediaFrame>()(station.media),
   manual_call: fits<Core.AgencyStationManualCallFrame>()(station.manual_call),
+  manual_call_owed: fits<Core.AgencyStationManualCallFrame>()(station.manual_call_owed),
+  ready_softphone_session: fits<Core.AgencyStationReadyFrame>()(station.ready_softphone_session),
+  agent_state_soft_phone: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_soft_phone),
+  agent_state_switch_queued: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_switch_queued),
 };
 
 const STATION_CLIENT = {
@@ -161,6 +166,37 @@ const ACTIONS = {
   error_unknown_disposition_code: fits<Core.AgencyActionErrorResponse>()(actions.error_unknown_disposition_code),
   error_break_already_applied: fits<Core.AgencyActionErrorResponse>()(actions.error_break_already_applied),
   error_session_ended: fits<Core.AgencyActionErrorResponse>()(actions.error_session_ended),
+};
+
+// The soft phone's routes (`/proxy/agency/softphone/*` and the SP7 switch). Bodies the
+// app sends are the console's (`AgencyApi`, no actor fields); answers and refusals are
+// the dialer contract's, which the public API layer passes through (the list and the
+// detail are `AgencyApi` shapes: `agent_name` filled, `analysis_status`, the media leg).
+const SOFTPHONE = {
+  bootstrap_enabled: fits<Core.AgencySoftphoneBootstrap>()(softphone.bootstrap_enabled),
+  bootstrap_finish_mode: fits<Core.AgencySoftphoneBootstrap>()(softphone.bootstrap_finish_mode),
+  bootstrap_idle: fits<Core.AgencySoftphoneBootstrap>()(softphone.bootstrap_idle),
+  session_response: fits<Core.AgencySoftphoneSessionResponse>()(softphone.session_response),
+  call_create_request: fits<AgencyApi.AgencyManualCallCreateRequest>()(softphone.call_create_request),
+  call_update_request: fits<AgencyApi.AgencyManualCallUpdateRequest>()(softphone.call_update_request),
+  call_disposition_request: fits<AgencyApi.AgencyManualCallDispositionRequest>()(softphone.call_disposition_request),
+  call_disposition_response: fits<Core.AgencyManualCallDispositionResponse>()(softphone.call_disposition_response),
+  call_hangup_response: fits<Core.AgencyManualCall>()(softphone.call_hangup_response),
+  call_dnc_request: fits<AgencyApi.AgencyManualCallDncRequest>()(softphone.call_dnc_request),
+  call_dnc_response: fits<Core.AgencyManualCallDncResponse>()(softphone.call_dnc_response),
+  calls_page: fits<AgencyApi.AgencyManualCallsPage>()(softphone.calls_page),
+  call_detail_agent: fits<AgencyApi.AgencyManualCallDetail>()(softphone.call_detail_agent),
+  session_state_switch_queued: fits<Core.AgencySessionStateResponse>()(softphone.session_state_switch_queued),
+  refusal_dnc_listed: fits<Core.AgencySoftphoneDncListedRefusal>()(softphone.refusal_dnc_listed),
+  refusal_outside_hours: fits<Core.AgencySoftphoneOutsideHoursRefusal>()(softphone.refusal_outside_hours),
+  refusal_contact_in_flight: fits<Core.AgencySoftphoneContactInFlightRefusal>()(softphone.refusal_contact_in_flight),
+  refusal_session_on_campaign: fits<Core.AgencySoftphoneSessionOnCampaignRefusal>()(
+    softphone.refusal_session_on_campaign,
+  ),
+  refusal_outcome_pending: fits<Core.AgencySoftphoneCallPendingRefusal>()(softphone.refusal_outcome_pending),
+  refusal_fields_invalid: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_fields_invalid),
+  refusal_disposition_invalid: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_disposition_invalid),
+  refusal_softphone_disabled: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_softphone_disabled),
 };
 
 // The agent's reads are public-API-layer shapes, so they are checked against `AgencyApi`.
@@ -260,9 +296,76 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['platform', 'invite_lookup_pending', 'invite.role', 'roles'],
   ['platform', 'invite_lookup_expired', 'status', 'invite_unavailable_statuses'],
   ['platform', 'invite_claim_refusal', 'status', 'invite_claim_refusal_statuses'],
+  // The soft phone.
+  ['station', 'ready_softphone_session', 'state', 'agent_states'],
+  ['station', 'ready_softphone_session', 'break_reason', 'reserved_break_codes'],
+  ['station', 'agent_state_soft_phone', 'state', 'agent_states'],
+  ['station', 'agent_state_soft_phone', 'break_reason', 'reserved_break_codes'],
+  ['station', 'agent_state_switch_queued', 'state', 'agent_states'],
+  ['station', 'agent_state_switch_queued', 'pending_state', 'agent_states'],
+  ['station', 'agent_state_switch_queued', 'pending_break_reason', 'reserved_break_codes'],
+  ['station', 'manual_call', 'call.state', 'manual_call_states'],
+  ['station', 'manual_call_owed', 'call.state', 'manual_call_states'],
+  ['station', 'manual_call_owed', 'call.outcome', 'manual_call_outcomes'],
+  ['station', 'manual_call_owed', 'call.end_reason', 'manual_call_end_reasons'],
+  ['softphone', 'bootstrap_enabled', 'session.kind', 'session_kinds'],
+  ['softphone', 'bootstrap_enabled', 'session.state', 'agent_states'],
+  ['softphone', 'bootstrap_enabled', 'session.break_reason', 'reserved_break_codes'],
+  ['softphone', 'bootstrap_enabled', 'call.state', 'manual_call_states'],
+  ['softphone', 'bootstrap_enabled', 'call.contact.state', 'contact_states'],
+  ['softphone', 'bootstrap_enabled', 'call.contact.prior_attempts.0.outcome', 'attempt_outcomes'],
+  ['softphone', 'bootstrap_enabled', 'taggable_campaigns.0.status', 'campaign_statuses'],
+  ['softphone', 'bootstrap_enabled', 'call_campaign.status', 'campaign_statuses'],
+  ...[0, 1, 2, 3, 4].map((i): [string, string, string, string] => [
+    'softphone', 'bootstrap_enabled', `call_fields.${i}.type`, 'call_field_types',
+  ]),
+  ['softphone', 'bootstrap_finish_mode', 'session.kind', 'session_kinds'],
+  ['softphone', 'bootstrap_finish_mode', 'session.state', 'agent_states'],
+  ['softphone', 'bootstrap_finish_mode', 'call.state', 'manual_call_states'],
+  ['softphone', 'bootstrap_finish_mode', 'call.outcome', 'manual_call_outcomes'],
+  ['softphone', 'bootstrap_finish_mode', 'call.end_reason', 'manual_call_end_reasons'],
+  ['softphone', 'bootstrap_finish_mode', 'call_fields.0.type', 'call_field_types'],
+  ['softphone', 'bootstrap_idle', 'taggable_campaigns.0.status', 'campaign_statuses'],
+  ['softphone', 'session_response', 'kind', 'session_kinds'],
+  ['softphone', 'session_response', 'state', 'agent_states'],
+  ['softphone', 'session_response', 'break_reason', 'reserved_break_codes'],
+  ['softphone', 'call_disposition_response', 'call.state', 'manual_call_states'],
+  ['softphone', 'call_disposition_response', 'call.outcome', 'manual_call_outcomes'],
+  ['softphone', 'call_disposition_response', 'call.end_reason', 'manual_call_end_reasons'],
+  ['softphone', 'call_disposition_response', 'call.disposition_source', 'manual_call_disposition_sources'],
+  ['softphone', 'call_disposition_response', 'contact_state', 'contact_states'],
+  ['softphone', 'call_hangup_response', 'state', 'manual_call_states'],
+  ['softphone', 'call_dnc_response', 'scope', 'dnc_entry_scopes'],
+  ['softphone', 'call_dnc_response', 'contact_state', 'contact_states'],
+  ['softphone', 'calls_page', 'rows.0.state', 'manual_call_states'],
+  ['softphone', 'calls_page', 'rows.0.outcome', 'manual_call_outcomes'],
+  ['softphone', 'calls_page', 'rows.0.end_reason', 'manual_call_end_reasons'],
+  ['softphone', 'calls_page', 'rows.0.disposition_source', 'manual_call_disposition_sources'],
+  ['softphone', 'calls_page', 'rows.0.contact.state', 'contact_states'],
+  ['softphone', 'calls_page', 'rows.1.outcome', 'manual_call_outcomes'],
+  ['softphone', 'calls_page', 'rows.1.end_reason', 'manual_call_end_reasons'],
+  ['softphone', 'call_detail_agent', 'call.state', 'manual_call_states'],
+  ['softphone', 'call_detail_agent', 'call.outcome', 'manual_call_outcomes'],
+  ['softphone', 'call_detail_agent', 'call.end_reason', 'manual_call_end_reasons'],
+  ['softphone', 'call_detail_agent', 'call.disposition_source', 'manual_call_disposition_sources'],
+  ['softphone', 'call_detail_agent', 'call.contact.state', 'contact_states'],
+  ['softphone', 'call_detail_agent', 'call.contact.prior_attempts.0.outcome', 'attempt_outcomes'],
+  ['softphone', 'call_detail_agent', 'overrides.dnc_entry.scope', 'dnc_entry_scopes'],
+  ['softphone', 'call_detail_agent', 'call_availability', 'call_availabilities'],
+  ['softphone', 'session_state_switch_queued', 'kind', 'session_kinds'],
+  ['softphone', 'session_state_switch_queued', 'state', 'agent_states'],
+  ['softphone', 'session_state_switch_queued', 'pending_state', 'agent_states'],
+  ['softphone', 'session_state_switch_queued', 'break_reason', 'reserved_break_codes'],
+  ['softphone', 'refusal_dnc_listed', 'entry.scope', 'dnc_entry_scopes'],
+  ['softphone', 'refusal_outside_hours', 'timezone_source', 'hours_timezone_sources'],
+  ['softphone', 'refusal_session_on_campaign', 'state', 'agent_states'],
+  ['softphone', 'refusal_outcome_pending', 'call.state', 'manual_call_states'],
+  ...Object.keys(softphone)
+    .filter((s) => s.startsWith('refusal_'))
+    .map((s): [string, string, string, string] => ['softphone', s, 'code', 'softphone_error_codes']),
 ];
 
-const FILES: Record<string, Record<string, unknown>> = { station, session, actions, reads, platform };
+const FILES: Record<string, Record<string, unknown>> = { station, session, softphone, actions, reads, platform };
 
 function at(value: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((v, k) => (v == null ? v : (v as Record<string, unknown>)[k]), value);
@@ -274,6 +377,7 @@ describe('agent fixtures (fixtures/agent/*.json)', () => {
       ['station', station, STATION],
       ['station-client', stationClient, STATION_CLIENT],
       ['session', session, SESSION],
+      ['softphone', softphone, SOFTPHONE],
       ['actions', actions, ACTIONS],
       ['reads', reads, READS],
       ['platform', platform, PLATFORM],

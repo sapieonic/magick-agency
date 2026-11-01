@@ -276,6 +276,95 @@
       "settings_invalid"
     ]
   },
+  "manual_call_states": {
+    "source": "packages/contracts/src/agency/softphone.ts#AGENCY_MANUAL_CALL_STATES",
+    "values": [
+      "queued",
+      "dialing",
+      "ringing",
+      "answered",
+      "bridged",
+      "ended"
+    ]
+  },
+  "manual_call_outcomes": {
+    "source": "packages/contracts/src/agency/softphone.ts#AGENCY_MANUAL_CALL_OUTCOMES",
+    "values": [
+      "connected",
+      "no_answer",
+      "busy",
+      "failed",
+      "machine",
+      "invalid",
+      "abandoned",
+      "agent_disconnected",
+      "orphaned",
+      "canceled"
+    ]
+  },
+  "manual_call_end_reasons": {
+    "source": "packages/contracts/src/agency/softphone.ts#AGENCY_MANUAL_CALL_END_REASONS",
+    "values": [
+      "completed",
+      "no_answer",
+      "busy",
+      "failed",
+      "invalid",
+      "agent_disconnected",
+      "agent_hangup",
+      "remote_hangup",
+      "supervisor_released",
+      "orphaned"
+    ]
+  },
+  "manual_call_disposition_sources": {
+    "source": "packages/contracts/src/agency/softphone.ts#AGENCY_MANUAL_CALL_DISPOSITION_SOURCES",
+    "values": [
+      "campaign",
+      "softphone"
+    ]
+  },
+  "call_field_types": {
+    "source": "packages/contracts/src/agency/softphone.ts#AGENCY_CALL_FIELD_TYPES",
+    "values": [
+      "text",
+      "number",
+      "choice",
+      "boolean",
+      "date"
+    ]
+  },
+  "dnc_entry_scopes": {
+    "source": "packages/contracts/src/agency/softphone.ts#AgencyDncEntryScope",
+    "values": [
+      "tenant",
+      "account",
+      "campaign"
+    ]
+  },
+  "manual_call_list_statuses": {
+    "source": "packages/contracts/src/agency/softphone.ts#AgencyManualCallListQuery.status",
+    "values": [
+      "live",
+      "awaiting_outcome",
+      "settled"
+    ]
+  },
+  "hours_timezone_sources": {
+    "source": "packages/contracts/src/agency/softphone.ts#AgencySoftphoneOutsideHoursRefusal.timezone_source",
+    "values": [
+      "contact",
+      "campaign_default"
+    ]
+  },
+  "call_availabilities": {
+    "source": "packages/contracts/src/api/agency/attempt-call.ts#AgencyCallAvailability",
+    "values": [
+      "available",
+      "purged",
+      "never_placed"
+    ]
+  },
   "session_refusal_codes": {
     "source": "packages/contracts/src/api/platform/auth.ts#SESSION_REFUSAL_CODES",
     "values": [

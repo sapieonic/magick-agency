@@ -6,8 +6,8 @@
 /// (`stateRaw`, `reasonRaw`, ...) for logs and fallback copy.
 ///
 /// `test/literals_test.dart` checks every wire enum of this package (these, plus
-/// `StationEvent`, `AgencyErrorCode`, `SessionRefusalCode` and the station close
-/// codes) against `packages/contracts/fixtures/agent/literals.json`, which is
+/// `StationEvent`, `AgencyErrorCode`, `SoftphoneErrorCode`, `SessionRefusalCode`
+/// and the station close codes) against `packages/contracts/fixtures/agent/literals.json`, which is
 /// extracted from the TypeScript sources: each TypeScript literal must be a
 /// value here, and, where the enum mirrors its vocabulary one to one or the app
 /// sends the value, each value here must still be a TypeScript literal.
@@ -448,4 +448,148 @@ enum NotificationFrequency implements WireEnum {
 
   static final _byWire = wireIndex(values);
   static NotificationFrequency fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+// ─── The soft phone (`agency/softphone.ts`) ─────────────────────────────────
+//
+// A manual call's `state` and `outcome` are the attempt vocabularies unchanged
+// (`AgencyManualCallState = AgencyAttemptState`), so they decode as
+// [AttemptState] and [AttemptOutcome].
+
+/// Why a manual call ended: the members of the station's release vocabulary a
+/// call outside pacing can reach.
+///
+/// Contract: `AgencyManualCallEndReason` / `AGENCY_MANUAL_CALL_END_REASONS`.
+enum ManualCallEndReason implements WireEnum {
+  completed('completed'),
+  noAnswer('no_answer'),
+  busy('busy'),
+  failed('failed'),
+  invalid('invalid'),
+  agentDisconnected('agent_disconnected'),
+  agentHangup('agent_hangup'),
+  remoteHangup('remote_hangup'),
+  supervisorReleased('supervisor_released'),
+  orphaned('orphaned'),
+  unknown('');
+
+  const ManualCallEndReason(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static ManualCallEndReason fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Which catalog a manual call's outcome was saved against: the tagged
+/// campaign's, or the soft phone's own (an untagged call).
+///
+/// Contract: `AgencyManualCallDispositionSource` / `AGENCY_MANUAL_CALL_DISPOSITION_SOURCES`.
+enum DispositionSource implements WireEnum {
+  campaign('campaign'),
+  softphone('softphone'),
+  unknown('');
+
+  const DispositionSource(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static DispositionSource fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// The value type of a call field. A field of a type this build does not
+/// know is shown read-only, never dropped (its value still travels).
+///
+/// Contract: `AgencyCallFieldType` / `AGENCY_CALL_FIELD_TYPES`.
+enum CallFieldType implements WireEnum {
+  text('text'),
+  number('number'),
+  choice('choice'),
+  boolean('boolean'),
+
+  /// An ISO calendar date, `YYYY-MM-DD`.
+  date('date'),
+  unknown('');
+
+  const CallFieldType(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CallFieldType fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// How far a DNC entry reaches: the whole tenant, one account, or one campaign.
+/// Not [DncScope], which is what the STATION's mark accepts (`campaign|tenant`).
+///
+/// Contract: `AgencyDncEntryScope`.
+enum DncEntryScope implements WireEnum {
+  tenant('tenant'),
+  account('account'),
+  campaign('campaign'),
+  unknown('');
+
+  const DncEntryScope(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static DncEntryScope fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// The soft-phone call list's `status=` filter. The app sends these.
+///
+/// Contract: `AgencyManualCallListQuery['status']`.
+enum ManualCallListStatus implements WireEnum {
+  /// Not ended.
+  live('live'),
+
+  /// Ended, and its outcome is still owed.
+  awaitingOutcome('awaiting_outcome'),
+  settled('settled'),
+  unknown('');
+
+  const ManualCallListStatus(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static ManualCallListStatus fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Whose timezone a calling-hours refusal was judged in: the matched
+/// contact's, or the campaign's default.
+///
+/// Contract: `AgencySoftphoneOutsideHoursRefusal['timezone_source']`.
+enum HoursTimezoneSource implements WireEnum {
+  contact('contact'),
+  campaignDefault('campaign_default'),
+  unknown('');
+
+  const HoursTimezoneSource(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static HoursTimezoneSource fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Whether a call's media leg still exists, on a call detail.
+///
+/// Contract: `AgencyCallAvailability` (`api/agency/attempt-call.ts`).
+enum CallAvailability implements WireEnum {
+  available('available'),
+  purged('purged'),
+
+  /// Refused or failed before the media leg was created.
+  neverPlaced('never_placed'),
+  unknown('');
+
+  const CallAvailability(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static CallAvailability fromWire(String? raw) => _byWire[raw] ?? unknown;
 }

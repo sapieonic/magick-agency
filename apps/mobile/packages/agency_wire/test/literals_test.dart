@@ -45,6 +45,17 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'membership_statuses': MembershipStatus.values,
   'notification_cadences': NotificationCadence.values,
   'notification_frequencies': NotificationFrequency.values,
+  // The soft phone. A manual call's state and outcome ARE the attempt unions.
+  'softphone_error_codes': SoftphoneErrorCode.values,
+  'manual_call_states': AttemptState.values,
+  'manual_call_outcomes': AttemptOutcome.values,
+  'manual_call_end_reasons': ManualCallEndReason.values,
+  'manual_call_disposition_sources': DispositionSource.values,
+  'call_field_types': CallFieldType.values,
+  'dnc_entry_scopes': DncEntryScope.values,
+  'manual_call_list_statuses': ManualCallListStatus.values,
+  'hours_timezone_sources': HoursTimezoneSource.values,
+  'call_availabilities': CallAvailability.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
@@ -74,6 +85,16 @@ final Map<String, List<WireEnum>> appSends = {
       if (!o.isUnknown) o,
   ],
   'reserved_break_codes': [ReservedBreakCode.deviceAway],
+  // `ManualCallsQuery.status` can filter on any of them.
+  'manual_call_list_statuses': [
+    for (final s in ManualCallListStatus.values)
+      if (!s.isUnknown) s,
+  ],
+  // `ManualCallsQuery.outcome` too.
+  'manual_call_outcomes': [
+    for (final o in AttemptOutcome.values)
+      if (!o.isUnknown) o,
+  ],
 };
 
 String _camel(String screaming) {
@@ -93,7 +114,6 @@ void main() {
     expect(vocabularies.keys.toSet(), {
       ...dartVocabularies.keys,
       'station_close_codes',
-      'softphone_error_codes',
     }, reason: 'a vocabulary was added to tooling/contracts-literals.mjs: map it to a Dart enum here');
   });
 
@@ -188,5 +208,20 @@ void main() {
     for (final v in (vocabularies['reserved_break_codes']!['values']! as List<Object?>).cast<String>()) {
       expect(ReservedBreakCode.tryFromWire(v)?.wire, v);
     }
+    for (final v in ts('softphone_error_codes')) {
+      expect(SoftphoneErrorCode.fromWire(v).wire, v);
+    }
+    for (final v in ts('manual_call_end_reasons')) {
+      expect(ManualCallEndReason.fromWire(v).wire, v);
+    }
+  });
+
+  test('a manual call\'s state and outcome are the attempt vocabularies, member for member', () {
+    expect(ts('manual_call_states'), ts('attempt_states'));
+    expect(ts('manual_call_outcomes').toSet(), ts('attempt_outcomes').toSet());
+  });
+
+  test('every manual-call end reason is a release reason', () {
+    expect(ts('release_reasons'), containsAll(ts('manual_call_end_reasons')));
   });
 }

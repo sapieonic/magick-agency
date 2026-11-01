@@ -1,9 +1,10 @@
 /// Error bodies: the generic `{error, code?, message, ...}` shape, the agency
-/// action codes, and the two structured join refusals.
+/// action codes, the two structured join refusals, and the soft phone's
+/// refusals (typed accessors over the same body).
 ///
 /// Contract: `packages/contracts/src/errors.ts`, `AgencyActionErrorResponse`
 /// and `AgencySessionCampaignConflict` (`agency/`), and
-/// `AgencySoftphoneSessionOnSoftphoneRefusal` (`agency/softphone.ts`).
+/// `AgencySoftphoneErrorResponse` with its narrowed refusals (`agency/softphone.ts`).
 library;
 
 import 'package:meta/meta.dart';
@@ -11,6 +12,7 @@ import 'package:meta/meta.dart';
 import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
+import 'softphone.dart';
 
 /// Why an agency route refused the agent. Key copy off this; show the body's
 /// `message` for [unknown].
@@ -98,19 +100,32 @@ final class ErrorBody {
     this.codeRaw,
     required this.message,
     List<String>? allowedCodes,
+    List<FieldIssue>? details,
     Map<String, Object?> raw = const <String, Object?>{},
   }) : code = AgencyErrorCode.fromWire(codeRaw),
+       softphoneCode = SoftphoneErrorCode.fromWire(codeRaw),
        allowedCodes = allowedCodes == null ? null : List.unmodifiable(allowedCodes),
+       details = details == null ? null : List.unmodifiable(details),
        raw = frozenMap(raw);
 
   factory ErrorBody.fromJson(Map<String, Object?> j) {
     String text(String k) => j[k] is String ? j[k]! as String : '';
     final allowed = j['allowed_codes'];
+    // `details` is a list of `{path, message}` on the soft phone's refusals; a
+    // generic validation 400 sends an object there, which is not read.
+    final details = j['details'];
     return ErrorBody(
       error: text('error'),
       codeRaw: j['code'] is String ? j['code']! as String : null,
       message: text('message'),
       allowedCodes: allowed is List<Object?> ? allowed.whereType<String>().toList() : null,
+      details: details is List<Object?>
+          ? [
+              for (final d in details)
+                if (d is Map<String, Object?> && d['path'] is String)
+                  FieldIssue(path: d['path']! as String, message: d['message'] is String ? d['message']! as String : ''),
+            ]
+          : null,
       raw: j,
     );
   }
@@ -125,8 +140,17 @@ final class ErrorBody {
   /// A sentence for people. Empty when the body had none.
   final String message;
 
+  /// [codeRaw] as a soft-phone refusal code; [SoftphoneErrorCode.unknown]
+  /// when absent or not a soft-phone code. Read this on the soft phone's
+  /// routes (and the SP7 switch), [code] on the station's.
+  final SoftphoneErrorCode softphoneCode;
+
   /// The values that ARE accepted; read against [code], never generically.
   final List<String>? allowedCodes;
+
+  /// `fields_invalid` / `override_note_invalid` / `settings_invalid`: one entry
+  /// per offending path. Null when the body had no such list.
+  final List<FieldIssue>? details;
 
   /// The whole body, for code-specific fields.
   final Map<String, Object?> raw;
@@ -151,6 +175,41 @@ final class ErrorBody {
     } on FormatException {
       return null;
     }
+  }
+
+  T? _read<T>(SoftphoneErrorCode want, T Function(Map<String, Object?>) decode) {
+    if (softphoneCode != want) return null;
+    try {
+      return decode(raw);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// `dnc_listed` (SP1), when this is one and its entry reads.
+  SoftphoneDncListedRefusal? get dncListed => _read(SoftphoneErrorCode.dncListed, SoftphoneDncListedRefusal.fromJson);
+
+  /// `outside_calling_hours` (SP2), when this is one and its window reads.
+  SoftphoneOutsideHoursRefusal? get outsideHours =>
+      _read(SoftphoneErrorCode.outsideCallingHours, SoftphoneOutsideHoursRefusal.fromJson);
+
+  /// `contact_in_flight`, when this is one and its fields read.
+  SoftphoneContactInFlightRefusal? get contactInFlight =>
+      _read(SoftphoneErrorCode.contactInFlight, SoftphoneContactInFlightRefusal.fromJson);
+
+  /// `session_on_campaign` from the soft-phone open, when this is one and its fields read.
+  SoftphoneSessionOnCampaignRefusal? get sessionOnCampaign =>
+      _read(SoftphoneErrorCode.sessionOnCampaign, SoftphoneSessionOnCampaignRefusal.fromJson);
+
+  /// `outcome_pending` or `manual_call_live` with the session's unsettled
+  /// call, when this is one and the call reads. A body without a readable
+  /// call is null here, and the code alone still says what happened.
+  SoftphoneCallPendingRefusal? get callPending {
+    if (softphoneCode != SoftphoneErrorCode.outcomePending && softphoneCode != SoftphoneErrorCode.manualCallLive) {
+      return null;
+    }
+    final call = ManualCall.tryFromJson(raw['call']);
+    return call == null ? null : SoftphoneCallPendingRefusal(code: softphoneCode, call: call, message: message);
   }
 
   @override

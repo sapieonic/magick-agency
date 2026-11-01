@@ -126,11 +126,14 @@ function interfaceBody(file, name) {
   return text.slice(start, i - 1);
 }
 
-/** An interface field typed as an inline literal union: `status: | 'a' | 'b';` */
+/**
+ * An interface field typed as an inline literal union: `status: | 'a' | 'b';`, or an
+ * optional one (`status?: 'a' | 'b';`, the list query's filter).
+ */
 function fieldUnion(file, iface, field) {
   const body = interfaceBody(file, iface);
   if (body === null) throw new Error(`interface ${iface} not found in ${file}`);
-  const m = new RegExp(`\\b${field}\\s*:([^;]*);`).exec(body);
+  const m = new RegExp(`\\b${field}\\??\\s*:([^;]*);`).exec(body);
   if (!m) throw new Error(`${iface}.${field} not found`);
   return literalsIn(m[1], `${iface}.${field}`);
 }
@@ -219,11 +222,44 @@ const VOCABULARIES = {
     () => constList('agency/station.ts', 'AGENCY_STATION_MEDIA_FORMATS'),
   ],
   stats_bucket_units: ['primitives.ts#STATS_BUCKET_UNITS', () => constList('primitives.ts', 'STATS_BUCKET_UNITS')],
-  // The soft phone's refusals: the app models only the ones its routes can answer
-  // (`session_on_softphone` on the join), so the Dart suite checks those are still here.
+  // The soft phone's refusals: the Dart `SoftphoneErrorCode` mirrors them one to one.
   softphone_error_codes: [
     'errors.ts#AGENCY_SOFTPHONE_ERROR_CODES',
     () => constList('errors.ts', 'AGENCY_SOFTPHONE_ERROR_CODES'),
+  ],
+  // The soft phone's call row, settings and refusals (`agency/softphone.ts`). The manual
+  // call's state and outcome are aliases of the attempt unions, so they are read from their
+  // own runtime lists: the Dart suite checks them one to one against the attempt enums.
+  manual_call_states: [
+    'agency/softphone.ts#AGENCY_MANUAL_CALL_STATES',
+    () => constList('agency/softphone.ts', 'AGENCY_MANUAL_CALL_STATES'),
+  ],
+  manual_call_outcomes: [
+    'agency/softphone.ts#AGENCY_MANUAL_CALL_OUTCOMES',
+    () => constList('agency/softphone.ts', 'AGENCY_MANUAL_CALL_OUTCOMES'),
+  ],
+  manual_call_end_reasons: [
+    'agency/softphone.ts#AGENCY_MANUAL_CALL_END_REASONS',
+    () => constList('agency/softphone.ts', 'AGENCY_MANUAL_CALL_END_REASONS'),
+  ],
+  manual_call_disposition_sources: [
+    'agency/softphone.ts#AGENCY_MANUAL_CALL_DISPOSITION_SOURCES',
+    () => constList('agency/softphone.ts', 'AGENCY_MANUAL_CALL_DISPOSITION_SOURCES'),
+  ],
+  call_field_types: ['agency/softphone.ts#AGENCY_CALL_FIELD_TYPES', () => constList('agency/softphone.ts', 'AGENCY_CALL_FIELD_TYPES')],
+  dnc_entry_scopes: ['agency/softphone.ts#AgencyDncEntryScope', () => typeUnion('agency/softphone.ts', 'AgencyDncEntryScope')],
+  // The app SENDS these as the list's `status=` filter.
+  manual_call_list_statuses: [
+    'agency/softphone.ts#AgencyManualCallListQuery.status',
+    () => fieldUnion('agency/softphone.ts', 'AgencyManualCallListQuery', 'status'),
+  ],
+  hours_timezone_sources: [
+    'agency/softphone.ts#AgencySoftphoneOutsideHoursRefusal.timezone_source',
+    () => fieldUnion('agency/softphone.ts', 'AgencySoftphoneOutsideHoursRefusal', 'timezone_source'),
+  ],
+  call_availabilities: [
+    'api/agency/attempt-call.ts#AgencyCallAvailability',
+    () => typeUnion('api/agency/attempt-call.ts', 'AgencyCallAvailability'),
   ],
   session_refusal_codes: [
     'api/platform/auth.ts#SESSION_REFUSAL_CODES',
