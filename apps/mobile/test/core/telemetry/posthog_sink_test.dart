@@ -41,7 +41,7 @@ void main() {
   });
 
   test('every event carries the console’s product and environment, the client, and the server it talks to', () {
-    final e = Env(
+    const e = Env(
       flavor: 'dev',
       apiOrigin: 'https://staging.agency.example.invalid',
       firebaseApiKey: '',
