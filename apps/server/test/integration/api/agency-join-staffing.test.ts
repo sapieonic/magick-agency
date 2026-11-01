@@ -58,7 +58,8 @@ afterAll(async () => {
 });
 
 const supervisor = () => floor.supervisors[0]!;
-const [CAMPAIGN_A, CAMPAIGN_B] = [0, 1].map((i) => () => floor.campaigns[i]!);
+const CAMPAIGN_A = () => floor.campaigns[0]!;
+const CAMPAIGN_B = () => floor.campaigns[1]!;
 
 async function staff(agent: Actor, campaignId: string): Promise<void> {
   const res = await call(app(), 'POST', `/proxy/agency/campaigns/${campaignId}/agents`, supervisor(), floor, { user_id: agent.id });
