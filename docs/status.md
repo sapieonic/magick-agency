@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-10-31.
+"is it done". As of 2026-11-01.
 
 ## Summary
 
@@ -217,6 +217,41 @@ per-campaign call fields, "every call must be logged to a campaign", cancel whil
 transfer and conference. Seen and left: light-theme `<select>` elements show no arrow app-wide
 (`packages/web-ui/src/global.css`), and the station shows campaign numbers unformatted.
 
+### Agent mobile app 2026-11-01 (V1)
+
+Manas asked on 2026-11-01 for an agent-only mobile app (Flutter, Android and iOS in this repo).
+The design is in [`mobile.md`](mobile.md). It is built as V1. Nothing has run on a real phone,
+a real carrier or a real Firebase or Google sign-in, and the iOS app has not been compiled yet
+(no Xcode in the build environment).
+
+| Area | What changed |
+|---|---|
+| App | `apps/mobile`:<br>• sign-in and invites, account choice, the campaign list, pre-flight checks, the station (calls, notes, outcomes, DNC, breaks), My performance, My calls, the Me tab<br>• `packages/agency_wire`: hand-written wire types<br>• `packages/agent_audio`: native voice engine, CallKit, the Android on-duty service<br>• release-please component `mobile` (`release-type: dart`) |
+| Server: presence | `device_away`, a reserved break code the app takes when it leaves the foreground (applied at once when available, queued behind a call).<br>Migration `0006_agent_session_client_kind.sql` and `client=web\|mobile` on the station upgrade.<br>Mobile liveness: protocol ping every 3 s, 10 s grace; the sweep now runs every 5 s.<br>`X-Client` on log lines. The floor marks agents on the mobile app. |
+| Server: media | `media=alaw8` on the station socket: binary G.711 A-law, relayed byte for byte to VoiceLink, transcoded for other carriers. `parseStationUpgradeQuery` refuses an unknown `client=` or `media=` before the token is spent |
+| Server: platform | A per-user rate-limit bucket and a bearer IP bucket (Q9 amended, pending ratification).<br>A staffing check on join (`403 not_staffed`, supervisors exempt, a live session is never stranded).<br>`GET /client-config` (version gate) and `POST /client-config/uplink-probe` (pre-flight upload speed).<br>App Links / Universal Links files served by the web image (`docker/mobile-app-links.sh`) |
+| Drift guards | `packages/contracts/fixtures/agent` samples are type-checked in TS and decoded in Dart. `tooling/contracts-literals.mjs --check` (in CI and in the contracts tests) catches a literal union the app does not know.<br>The external-references guard now scans the mobile sources and skips build output |
+| CI | `.github/workflows/mobile.yml`: drift check, analyze and tests, a debug Android build on pull requests, an unsigned iOS build on `main` |
+
+Two independent code reviews found 16 defects; all are fixed, each with a mutation-checked
+regression test. The worst were:
+
+- a forced sign-out that left the agent in the dialing pool;
+- pre-flight's sound check able to switch off the first call's audio;
+- notes typed while saving, or in the last 2 s before leaving, being dropped;
+- the previous agent's call history surviving an account switch.
+
+Counts on 2026-11-01:
+
+- lint clean in every package;
+- server: 7305 unit + 4 expected fail; 1492 integration + 10 expected fail, with the 8 failures of that run (one suite predating the staffing check) fixed and re-run green;
+- db: 502 integration;
+- contracts: 167;
+- console: 4818;
+- `test:release` 10, `test:grafana` 31;
+- the mobile app: 598, `agency_wire` 196, `agent_audio` 105 Dart and 18 Kotlin tests;
+- `flutter analyze` clean; the dev debug APK builds.
+
 ## Test counts
 
 Latest run, 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
@@ -368,6 +403,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | B15 roster supersede | Build it, or leave replace and clear refused |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
+| Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a mobile station silent for 10 s **during a call** is closed (starting the 8 s deferred hangup) rather than kept until TCP gives up; today no station is closed mid-call. First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox; store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 
 ## Deployment invariants
