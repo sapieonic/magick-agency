@@ -11,7 +11,7 @@ import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { onSoftphoneBreak, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
-import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
   AgencyActionErrorResponse,
   AgencyAgentState,
@@ -26,14 +26,40 @@ import type {
   AgencyStationTokenResponse,
 } from '@magick-agency/contracts/agency';
 import { isCampaignSession } from '../../../db/models/agency.model.js';
-import { accountNameInTenant, requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
+import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
+import { accountNameInTenant, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
+import { runDeviceAway } from './device-away.js';
+import { breakReasonFor } from '../../../agency/station-socket.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
 
 /** The `softphone_audit` key for an answer that left the soft phone, else nothing. */
 function exitAudit(left: boolean, audit: SoftphoneSessionExitAudit): Record<string, SoftphoneSessionExitAudit> {
   return left ? { [SOFTPHONE_SESSION_AUDIT_KEY]: audit } : {};
+}
+
+/**
+ * May this non-supervising agent join `campaignId`? Yes when they are actively staffed on
+ * it (`isActiveOnCampaign`, the rows `/my-assignments` lists), or when their one live
+ * session in the tenant is already a campaign session on it: that join is a REHYDRATE
+ * (a reload, an app resume), not a new session.
+ *
+ * The rehydrate is allowed on purpose. Unassigning closes the staffing row and touches no
+ * live session (`proxy-agency-staffing/campaign-agents.ts`; an offboarding also revokes
+ * the membership, and RBAC then refuses before this runs). Refusing the rehydrate would
+ * not end that session: it would strand it, possibly mid-call, on a station the agent can
+ * no longer open, while their lease keeps them dialable. So an agent unassigned
+ * mid-shift keeps working until they leave, and the next join is refused.
+ *
+ * The live-session read runs only for an unstaffed caller, so a staffed join costs one
+ * indexed probe. The check and the join are two statements: a staffing change landing
+ * between them decides only whether this one join started, as it would a moment earlier.
+ */
+async function mayStartOrResume(tenantId: string, campaignId: string, agentUserId: string): Promise<boolean> {
+  if (await agencyCampaignAgentRepository.isActiveOnCampaign(tenantId, campaignId, agentUserId)) return true;
+  const live = await agencyAgentSessionRepository.findLiveForAgent(tenantId, agentUserId);
+  return live !== null && isCampaignSession(live) && live.campaign_id === campaignId;
 }
 
 /**
@@ -62,6 +88,18 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     const campaign = await agencyCampaignRepository.findById(body.campaign_id);
     if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) {
       return reply.code(404).send({ error: 'Not Found', message: 'Campaign not found' });
+    }
+
+    // Staffing gates a NEW session (`not_staffed`), after the flag and the campaign so an
+    // unknown campaign is still the 404. `supervise` is the public API layer's reading of
+    // the caller's role; absent is `false`, so a caller that forgets it gets the check.
+    if (body.supervise !== true && !(await mayStartOrResume(tenantId, campaign.id, body.agent_user_id))) {
+      const refusal: AgencyActionErrorResponse = {
+        error: 'Forbidden',
+        code: 'not_staffed',
+        message: 'You\'re not assigned to this campaign. Ask your supervisor to add you.',
+      };
+      return reply.code(403).send(refusal);
     }
 
     const join = await agencyAgentSessionRepository.joinOrRehydrate({
@@ -130,6 +168,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       const otherName = other && other.tenant_id === liveSession.tenant_id
         ? other.name
         : 'another campaign';
+      // The session's own id and account, so the client can leave it from here: `leave`
+      // is scoped to the session's account, which is often a sibling of this one (see
+      // above). Only the caller's own session is ever named: `joinOrRehydrate` found it
+      // by (tenant, the authenticated agent), the same lookup that refused the join. The
+      // account name is best effort, read in this tenant (null when the read failed), as
+      // on `session_on_softphone` above.
+      const accountName = await accountNameInTenant(liveSession.account_id, liveSession.tenant_id);
       const conflict: AgencySessionCampaignConflict = {
         error: 'Conflict',
         code: 'session_on_other_campaign',
@@ -145,6 +190,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         campaign_id: liveSession.campaign_id,
         campaign_name: otherName,
         state: live?.state ?? liveSession.state,
+        session_id: liveSession.id,
+        account_id: liveSession.account_id,
+        account_name: accountName,
       };
       log.warn({
         agentUserId: body.agent_user_id, requestedCampaignId: campaign.id,
@@ -181,6 +229,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // live `on_call` lease and the next tick would reserve them for a second
     // call. Nothing may derive availability from the durable mirror.
     const state = await runtime.rehydrateAgent(session.id, session);
+    // From the row as joined, as `ready` does (`breakReasonFor`): the reason a client that
+    // was killed while paused needs to say why on its way back.
+    const breakReason = breakReasonFor(state, session);
 
     const minted = await runtime.tokens.mint(session.id);
 
@@ -200,6 +251,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // `available` while Redis held `on_call` would have the console render a
       // ready agent over a live conversation.
       state,
+      ...(breakReason ? { break_reason: breakReason } : {}),
       campaign_status: campaign.status,
       station_ws_url: `/api/v1/agency/station/${session.id}?token=${minted.token}`,
       station_token_expires_at: minted.expiresAt.toISOString(),
@@ -209,7 +261,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       record_calls: campaign.record_calls,
       break_reasons: resolveBreakReasons(campaign.break_reasons),
       context_display: campaign.context_display ?? {},
-      intervals: STATION_INTERVALS,
+      // By the joining app (`client_kind`, from `X-Client` on the public layer): a mobile
+      // station is held to the shorter grace the sweep enforces on it.
+      intervals: stationIntervalsFor(body.client_kind),
       // Spread rather than always present: the field is optional on the
       // contract and absent for every non-retry campaign, so an older console
       // that has never seen it gets a byte-identical payload.
@@ -464,6 +518,20 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/break', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // The mobile app's device-away break: no catalog lists it, and it has its own rules
+    // (it never replaces a break the agent chose, and answers 200 with the current state
+    // when there is nothing to protect, a soft-phone session included). `device-away.ts`.
+    if ((request.body as { reason?: unknown } | undefined)?.reason === DEVICE_AWAY_BREAK_REASON) {
+      const result = await runDeviceAway(runtime, session);
+      if (result.ok) return reply.send(result.body);
+      // Every pass lost its compare-and-swap to a reservation or a release: a conflict
+      // with the state, not a fault, so a 409 the error mask passes unchanged.
+      const err: AgencyActionErrorResponse = {
+        error: 'Conflict', code: 'state_changing',
+        message: 'Your status changed while pausing you; nothing changed. Try again.',
+      };
+      return reply.code(409).send(err);
+    }
     // A soft-phone session has no campaign and so no break catalog; it is always on
     // the reserved `soft_phone` break (docs/softphone.md §6).
     if (!isCampaignSession(session)) {

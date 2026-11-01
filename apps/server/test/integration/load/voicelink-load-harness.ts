@@ -32,6 +32,7 @@ import { buildApp } from '../../../src/app.js';
 import { ensureVoiceEngine, getVoiceEngine, resetVoiceEngineForTests } from '../../../src/bootstrap/voice.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../../../src/core/webrtc-bridge-manager.js';
 import type { WebRtcBridgeSession } from '../../../src/core/webrtc-bridge-session.js';
+import { setBrowserLegMediaFormat, type BrowserLegMediaFormat } from '../../../src/core/bridge/browser-leg-media.js';
 import { MockVoicelinkCarrier } from '../../mocks/voicelink/index.js';
 
 export const LOAD_ENV: Record<string, string> = {
@@ -55,10 +56,26 @@ export class LoadStationSocket extends EventEmitter {
   readonly sent: Array<Record<string, unknown>> = [];
   /** PCM16 payloads of the bridge's `media` frames, decoded, in order. */
   readonly media: Buffer[] = [];
+  /** An `alaw8` station's binary audio messages from the bridge, in order. */
+  readonly binary: Buffer[] = [];
   private readonly sentHooks: Array<(frame: Record<string, unknown>) => void> = [];
 
-  send(raw: string): void {
-    const frame = JSON.parse(raw) as Record<string, unknown>;
+  /**
+   * `format` is what the station upgrade's `media=` would have chosen; the real station
+   * handler tags its socket the same way (`handleStationSocket`).
+   */
+  constructor(readonly format: BrowserLegMediaFormat = 'pcm16') {
+    super();
+    if (format !== 'pcm16') setBrowserLegMediaFormat(this as never, format);
+  }
+
+  send(raw: string | Buffer, opts?: { binary?: boolean }): void {
+    if (opts?.binary) {
+      // Copied: the bridge may hand `ws` a view of a buffer it does not own.
+      this.binary.push(Buffer.from(raw as Buffer));
+      return;
+    }
+    const frame = JSON.parse(raw as string) as Record<string, unknown>;
     this.sent.push(frame);
     if (frame['event'] === 'media') {
       this.media.push(Buffer.from((frame['media'] as { payload: string }).payload, 'base64'));
@@ -79,10 +96,17 @@ export class LoadStationSocket extends EventEmitter {
   /** Media frames the browser has sent up to the bridge. */
   mediaSentCount = 0;
 
-  /** The browser sends a media frame (PCM16 16 kHz) up to the bridge. */
-  sendMedia(pcm: Buffer): void {
+  /**
+   * The browser sends a media frame up to the bridge: PCM16 16 kHz as a JSON text frame,
+   * or on an `alaw8` station raw A-law as a binary one — as `ws` emits each (`isBinary`).
+   */
+  sendMedia(audio: Buffer): void {
     this.mediaSentCount += 1;
-    this.emit('message', Buffer.from(JSON.stringify({ event: 'media', media: { payload: pcm.toString('base64') } })));
+    if (this.format === 'alaw8') {
+      this.emit('message', audio, true);
+      return;
+    }
+    this.emit('message', Buffer.from(JSON.stringify({ event: 'media', media: { payload: audio.toString('base64') } })), false);
   }
 
   /** Listeners the bridge registered and has not removed. */

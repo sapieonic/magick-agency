@@ -27,9 +27,11 @@ import Fastify from 'fastify';
 //     the ceiling and this sentence is the floor;
 //   * the state comes from REDIS, not the durable mirror, because it is what
 //     tells the agent whether leaving that station is safe right now;
+//   * the body names the session that blocks the join and its account (often a
+//     sibling), so the app can leave it — only ever the caller's own session;
 //   * no station token is minted and no bootstrap is built on the refusal path —
-//     a console that received a session id here would open a socket for a
-//     session it does not hold;
+//     a client handed a station URL here would open a socket for a session it
+//     was just refused;
 //   * the mismatch assertion: a bootstrap must never echo the requested campaign
 //     while the row points at another.
 //
@@ -67,8 +69,12 @@ const { repos } = vi.hoisted(() => ({
     attempt: { findById: vi.fn(), findPriorForContactLineage: vi.fn().mockResolvedValue([]) },
     campaign: { findById: vi.fn() },
     contact: { findById: vi.fn() },
-    session: { findById: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn() },
+    session: { findById: vi.fn(), findLiveForAgent: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn() },
+    staffing: { isActiveOnCampaign: vi.fn() },
   },
+}));
+vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () => ({
+  agencyCampaignAgentRepository: repos.staffing,
 }));
 const { accounts } = vi.hoisted(() => ({ accounts: { findByIdInTenant: vi.fn() } }));
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({ accountRepository: accounts }));
@@ -79,7 +85,14 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAgentSessionRepository: repos.session,
 }));
 
+import { readFileSync } from 'node:fs';
 import { agencyRoutes } from '../../../src/api/routes/agency.routes.js';
+import { rewriteStationWsUrl } from '../../../src/api/routes/proxy-agency-station.routes.js';
+
+/** The mobile app's golden samples (`packages/contracts/fixtures/agent/session.json`). */
+const AGENT_FIXTURES = JSON.parse(
+  readFileSync(new URL('../../../../../packages/contracts/fixtures/agent/session.json', import.meta.url), 'utf8'),
+) as Record<string, Record<string, any>>;
 
 const REQUESTED = {
   id: 'camp-new', tenant_id: 't1', account_id: 'a1', name: 'Winback',
@@ -103,19 +116,24 @@ function liveSession(patch: Record<string, unknown> = {}) {
 
 const mint = vi.fn();
 const agentsGet = vi.fn();
+const rehydrate = vi.fn();
+const agentsTransition = vi.fn();
 
 function makeRuntime() {
   return {
     replicaId: 'r1',
-    agents: { get: agentsGet, set: vi.fn(), clear: vi.fn() },
+    agents: { get: agentsGet, set: vi.fn(), clear: vi.fn(), transition: agentsTransition },
     wrapup: { stateFor: vi.fn(() => null) },
     stations: { send: vi.fn(() => true), attach: vi.fn(), detach: vi.fn(), isLocallyOwned: vi.fn(() => true) },
     // The soft phone's runtime surface (docs/softphone.md): nothing live in these tests.
     softphone: { hasLiveCall: vi.fn(() => false), reattachStation: vi.fn(async () => null) },
-    dialer: { hasLiveAttempt: vi.fn(() => false), noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null) },
-    breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false) },
+    dialer: {
+      hasLiveAttempt: vi.fn(() => false), hasUnannouncedAttempt: vi.fn(() => false),
+      noteStationClosed: vi.fn(), reattachStation: vi.fn(() => null),
+    },
+    breaks: { queue: vi.fn(), take: vi.fn(() => null), cancel: vi.fn(() => false), peek: vi.fn(() => null) },
     tokens: { mint, verifyAndConsume: vi.fn() },
-    rehydrateAgent: vi.fn().mockResolvedValue('break'),
+    rehydrateAgent: rehydrate,
     releaseStationOnClose: vi.fn().mockResolvedValue(true),
   };
 }
@@ -144,6 +162,12 @@ beforeEach(async () => {
     id === 'camp-new' ? REQUESTED : id === 'camp-old' ? OTHER : null);
   mint.mockResolvedValue({ token: 'tok', expiresAt: new Date('2026-08-16T12:02:00.000Z') });
   agentsGet.mockResolvedValue(null);
+  rehydrate.mockResolvedValue('break');
+  agentsTransition.mockResolvedValue(true);
+  // Staffed by default: the conflict cases below are about the live-session index, not
+  // staffing (`not_staffed` has its own describe at the end).
+  repos.staffing.isActiveOnCampaign.mockResolvedValue(true);
+  repos.session.findLiveForAgent.mockResolvedValue(null);
   accounts.findByIdInTenant.mockImplementation(async (id: string, tenantId: string) =>
     id === 'a2' && tenantId === 't1' ? { id: 'a2', tenant_id: 't1', name: 'North Region' } : null);
   app = await buildApp();
@@ -222,6 +246,43 @@ describe('POST /sessions — agent already live on another campaign', () => {
       campaign_id: 'camp-old',
       campaign_name: 'Q3 Renewals',
       state: 'break',
+      session_id: 'sess-old',
+      account_id: 'a1',
+      account_name: null,
+    });
+  });
+
+  it('names the session to leave and the SIBLING account it is in', async () => {
+    // The mobile app leaves that session from the join screen (`POST /sessions/:id/leave`,
+    // scoped to the session's account), so the body names the session and its account.
+    // A sibling account is the common case: the one-live-session index spans the tenant.
+    repos.campaign.findById.mockImplementation(async (id: string) =>
+      (id === 'camp-new' ? REQUESTED : { ...OTHER, account_id: 'a2' }));
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_campaign', session: liveSession({ account_id: 'a2' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      code: 'session_on_other_campaign', session_id: 'sess-old', account_id: 'a2', account_name: 'North Region',
+    });
+    // The account name is read in the session's own tenant, never unscoped.
+    expect(accounts.findByIdInTenant).toHaveBeenCalledWith('a2', 't1');
+  });
+
+  it('a failed account-name read still answers the 409, with the session and account ids', async () => {
+    accounts.findByIdInTenant.mockRejectedValue(new Error('db down'));
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_campaign', session: liveSession({ account_id: 'a2' }),
+    });
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({
+      code: 'session_on_other_campaign', session_id: 'sess-old', account_id: 'a2', account_name: null,
     });
   });
 
@@ -290,17 +351,19 @@ describe('POST /sessions — agent already live on another campaign', () => {
     expect((await join()).json().state).toBe('available');
   });
 
-  it('mints no station token and returns no session id on the refusal', async () => {
+  it('mints no station token on the refusal, and names only the session that blocks it', async () => {
     repos.session.joinOrRehydrate.mockResolvedValue({
       ok: false, reason: 'other_campaign', session: liveSession(),
     });
 
     const res = await join();
 
-    // A console handed a session id here would open a station socket against a
-    // session it was just refused.
-    expect(res.json().session_id).toBeUndefined();
+    // The only session id on the body is the agent's OTHER live session, the one to
+    // leave: no new session was created, and no credential is handed out for either.
+    // Opening that station still needs a token minted by its own authenticated route.
+    expect(res.json().session_id).toBe('sess-old');
     expect(res.json().station_ws_url).toBeUndefined();
+    expect(res.json().station_token_expires_at).toBeUndefined();
     expect(mint).not.toHaveBeenCalled();
   });
 
@@ -427,6 +490,36 @@ describe('POST /sessions — the happy path stays intact', () => {
     // The rehydrated state, never the row's.
     expect(body.state).toBe('break');
     expect(body.station_ws_url).toBe('/api/v1/agency/station/sess-new?token=tok');
+    // On a break with no recorded reason (a rehydrate after a restart), none is named.
+    expect(body).not.toHaveProperty('break_reason');
+  });
+
+  it('names the break reason the row holds when the agent is on break (the app paused while away)', async () => {
+    // The mobile app is paused with `device_away` when it leaves the foreground, and is
+    // often killed by the OS while paused. On relaunch the bootstrap is what it renders
+    // first, so it says why: "you left the app", not a generic break.
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new', state: 'break', break_reason: 'device_away' }),
+    });
+
+    const body = (await join()).json();
+
+    expect(body.state).toBe('break');
+    expect(body.break_reason).toBe('device_away');
+  });
+
+  it('names no break reason when the rehydrated state is not break, whatever the row kept', async () => {
+    // `offline` keeps the last break's reason on the row; it must not leak onto a
+    // session that the rehydrate found `available` (or anything else).
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new', state: 'offline', break_reason: 'lunch' }),
+    });
+    rehydrate.mockResolvedValueOnce('available');
+
+    const body = (await join()).json();
+
+    expect(body.state).toBe('available');
+    expect(body).not.toHaveProperty('break_reason');
   });
 
   it('refuses to bootstrap a session whose row points at another campaign', async () => {
@@ -447,5 +540,163 @@ describe('POST /sessions — the happy path stays intact', () => {
     expect(res.json().error).toBe('Internal Server Error');
     // Loudly, and without handing out a credential for the mismatched session.
     expect(mint).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `not_staffed`: a NEW session needs an active staffing row on the campaign, unless the
+// caller's role supervises (`supervise`, set by the public API layer from the membership).
+// A rehydrate of the agent's own live session on the campaign is allowed (see
+// `mayStartOrResume` in `sessions.ts`).
+// ---------------------------------------------------------------------------
+describe('POST /sessions — the staffing check', () => {
+  const NOT_STAFFED = {
+    error: 'Forbidden',
+    code: 'not_staffed',
+    message: "You're not assigned to this campaign. Ask your supervisor to add you.",
+  };
+
+  beforeEach(() => {
+    repos.staffing.isActiveOnCampaign.mockResolvedValue(false);
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new' }),
+    });
+  });
+
+  it('refuses an unstaffed agent 403 not_staffed, and starts nothing', async () => {
+    const res = await join();
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual(NOT_STAFFED);
+    expect(repos.staffing.isActiveOnCampaign).toHaveBeenCalledWith('t1', 'camp-new', 'u-agent');
+    expect(repos.session.joinOrRehydrate).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it('joins a staffed agent without reading their live session', async () => {
+    repos.staffing.isActiveOnCampaign.mockResolvedValue(true);
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(repos.session.findLiveForAgent).not.toHaveBeenCalled();
+  });
+
+  it('lets a supervising caller join unstaffed, without consulting staffing', async () => {
+    const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', supervise: true });
+
+    expect(res.statusCode).toBe(201);
+    expect(repos.staffing.isActiveOnCampaign).not.toHaveBeenCalled();
+  });
+
+  it.each([['false', false], ['the string "true"', 'true'], ['1', 1]])(
+    'treats supervise=%s as not supervising',
+    async (_label, supervise) => {
+      const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', supervise });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('not_staffed');
+    },
+  );
+
+  it('rehydrates the agent\'s own live session on this campaign, though they were unassigned mid-shift', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(liveSession({ id: 'sess-new', campaign_id: 'camp-new', state: 'on_call' }));
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().session_id).toBe('sess-new');
+    expect(repos.session.findLiveForAgent).toHaveBeenCalledWith('t1', 'u-agent');
+  });
+
+  it('a live session on ANOTHER campaign does not make this one a rehydrate', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(liveSession());
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe('not_staffed');
+    expect(repos.session.joinOrRehydrate).not.toHaveBeenCalled();
+  });
+
+  it('a live soft-phone session does not make this one a rehydrate', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(
+      liveSession({ kind: 'softphone', campaign_id: null, break_reason: 'soft_phone' }),
+    );
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe('not_staffed');
+  });
+
+  it('answers an unknown campaign 404 before staffing, and a disabled flag 403 before both', async () => {
+    const unknown = await join({ campaign_id: 'camp-missing', agent_user_id: 'u-agent' });
+    expect(unknown.statusCode).toBe(404);
+
+    flags.isEnabled.mockResolvedValue(false);
+    const disabled = await join();
+    expect(disabled.statusCode).toBe(403);
+    expect(disabled.json().error).toBe('Feature Not Enabled');
+    expect(repos.staffing.isActiveOnCampaign).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The device-away break that cannot land: every compare-and-swap lost to a state that
+// kept moving. A conflict, answered in the action-error vocabulary (409 `state_changing`),
+// never the soft phone's `dial_failed`: the app must not show dial-failure copy for it.
+// ---------------------------------------------------------------------------
+describe('POST /sessions/:id/break — device_away that keeps losing its CAS', () => {
+  it('409s state_changing and writes nothing', async () => {
+    repos.session.findById.mockResolvedValue(liveSession({ id: 'sess-1', campaign_id: 'camp-new', state: 'available' }));
+    agentsGet.mockResolvedValue({ state: 'available', since: 1 });
+    agentsTransition.mockResolvedValue(false);
+
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agency/sessions/sess-1/break', headers: HEADERS,
+      payload: { reason: 'device_away', agent_user_id: 'u-agent' },
+    });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toEqual({
+      error: 'Conflict',
+      code: 'state_changing',
+      message: expect.stringMatching(/nothing changed/i),
+    });
+    expect(agentsTransition).toHaveBeenCalledTimes(3);
+    expect(repos.session.setState).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The agent app's fixtures are decoded by its Dart suite as the real wire. They are
+// checked here against what this handler actually sends, so a fixture cannot keep a
+// shape or a value the server stopped producing (a station URL without the session id,
+// a 30 s grace served to a phone, a conflict missing the fields the app leaves by).
+// ---------------------------------------------------------------------------
+describe('the agent fixtures are what this handler sends', () => {
+  it('bootstrap_first_join: a mobile join\'s intervals and station URL (after the public rewrite)', async () => {
+    const fixture = AGENT_FIXTURES['bootstrap_first_join']!;
+    const token = /[?&]token=([^&]+)/.exec(fixture['station_ws_url'])![1]!;
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: fixture['session_id'], campaign_id: 'camp-new' }),
+    });
+    mint.mockResolvedValue({ token, expiresAt: new Date(fixture['station_token_expires_at']) });
+
+    const body = (await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', client_kind: 'mobile' })).json();
+
+    expect(body.intervals).toEqual(fixture['intervals']);
+    expect(rewriteStationWsUrl(body.station_ws_url)).toBe(fixture['station_ws_url']);
+    expect(AGENT_FIXTURES['bootstrap_retry_rehydrated']!['intervals']).toEqual(body.intervals);
+  });
+
+  it('conflict_other_campaign: the same fields the handler sends', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: false, reason: 'other_campaign', session: liveSession({ account_id: 'a2' }),
+    });
+
+    const body = (await join()).json();
+
+    expect(Object.keys(body).sort()).toEqual(Object.keys(AGENT_FIXTURES['conflict_other_campaign']!).sort());
   });
 });

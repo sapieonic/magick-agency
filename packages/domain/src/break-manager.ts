@@ -1,4 +1,9 @@
-import { SOFTPHONE_BREAK_REASON, type AgencyBreakReason } from '@magick-agency/contracts/agency';
+import {
+  DEVICE_AWAY_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON_LABEL,
+  RESERVED_BREAK_REASONS,
+  type AgencyBreakReason,
+} from '@magick-agency/contracts/agency';
 
 /**
  * Break / not-ready with reason codes.
@@ -50,17 +55,20 @@ export function resolveBreakReasons(
   // array, but nothing constrains its ELEMENTS, so a malformed catalog must degrade
   // to the built-ins rather than 500 every break request on this campaign.
   //
-  // The soft phone's reserved reason is never one of them, whatever the column holds:
-  // it is entered only through the soft-phone switch, which checks the flag and audits
-  // the switch (SP7). Listed here, `POST /sessions/:id/break` would put the agent on
-  // the soft phone with neither; dropped, it refuses it as `unknown_break_reason`.
+  // The reserved reasons (`RESERVED_BREAK_REASONS`) are never among them, whatever the
+  // column holds. The soft phone's is entered only through the soft-phone switch, which
+  // checks the flag and audits the switch (SP7): listed here, `POST /sessions/:id/break`
+  // would put the agent on the soft phone with neither, and dropped it is refused as
+  // `unknown_break_reason`. The device-away break is accepted by that route on its own
+  // rules (`api/routes/agency/device-away.ts`), never from the menu: listed here, an
+  // agent could pick "app in background" from a browser.
   if (!Array.isArray(configured)) return [...DEFAULT_BREAK_REASONS];
   const valid = configured.filter(
     (r): r is AgencyBreakReason =>
       !!r && typeof r === 'object'
       && typeof (r as AgencyBreakReason).code === 'string'
       && (r as AgencyBreakReason).code.length > 0
-      && (r as AgencyBreakReason).code !== SOFTPHONE_BREAK_REASON,
+      && !isReservedBreakReason((r as AgencyBreakReason).code),
   );
   return valid.length > 0 ? valid : [...DEFAULT_BREAK_REASONS];
 }
@@ -74,6 +82,20 @@ export function validateBreakReason(
   const match = typeof code === 'string' ? reasons.find((r) => r.code === code) : undefined;
   return match ? { ok: true, reason: match } : { ok: false, allowed: reasons.map((r) => r.code) };
 }
+
+/** Whether `code` is one of the dialer's reserved break codes (`RESERVED_BREAK_REASONS`). */
+export function isReservedBreakReason(code: unknown): boolean {
+  return typeof code === 'string' && (RESERVED_BREAK_REASONS as readonly string[]).includes(code);
+}
+
+/**
+ * The device-away break as a reason entry (what the break queue holds for it): no
+ * catalog carries it, so its label is the contract's.
+ */
+export const DEVICE_AWAY_BREAK: Readonly<AgencyBreakReason> = Object.freeze({
+  code: DEVICE_AWAY_BREAK_REASON,
+  label: DEVICE_AWAY_BREAK_REASON_LABEL,
+});
 
 /** Agent states from which a break must be QUEUED rather than applied now. */
 const DEFERRING_STATES = new Set(['on_call', 'reserved', 'wrapup']);

@@ -9,7 +9,7 @@ import { closeTestPool } from '../setup/test-utils.js';
  * (`setErrorHandler(agencyErrorHandler)` + `onSend` `errorMaskHook`).
  *
  * Every 4xx from the internal handler passes through unchanged; only 5xx is masked. So:
- *  - the six-field forward cases (5), the leave sentence, "an internal 5xx is masked on the
+ *  - the nine-field forward cases (5), the leave sentence, "an internal 5xx is masked on the
  *    same route", the public layer's own 400, and a 200 untouched;
  *  - the "unrecognised code" controls (join, leave, bare 409, the "Conflict" label) assert
  *    the body passes through unchanged: there is no allow-list, and the 5xx case is the control
@@ -50,7 +50,7 @@ const CAMPAIGN = '3f1b9c22-6d4e-4a11-9f23-9c1a77b0e401';
 const AGENT = '55555555-5555-4555-8555-555555555555';
 const SESSION = '77777777-7777-4777-8777-777777777777';
 
-/** The `AgencySessionCampaignConflict` body — all six fields. */
+/** The `AgencySessionCampaignConflict` body — all nine fields. */
 const SESSION_CONFLICT = {
   error: 'Conflict',
   code: 'session_on_other_campaign',
@@ -60,6 +60,9 @@ const SESSION_CONFLICT = {
   campaign_id: CAMPAIGN,
   campaign_name: 'Q3 Renewals',
   state: 'on_call',
+  session_id: SESSION,
+  account_id: '22222222-2222-4222-8222-222222222222',
+  account_name: 'North Region',
 };
 
 /** The refusal of a leave while the agent still has a live attempt. */
@@ -163,7 +166,7 @@ describe('an internal-handler 409 reaches the agent intact, through the real rou
   // ══ session_on_other_campaign ══════════════════════════════════════════════
 
   describe('POST /sessions → session_on_other_campaign', () => {
-    it('forwards the 409 with all six fields, byte-identically', async () => {
+    it('forwards the 409 with all nine fields, byte-identically', async () => {
       const res = await join();
 
       expect(res.statusCode).toBe(409);
@@ -175,7 +178,7 @@ describe('an internal-handler 409 reaches the agent intact, through the real rou
       expect(isMasked(res.json())).toBe(false);
     });
 
-    it('every one of the six fields arrives, asserted by name', async () => {
+    it('every one of the nine fields arrives, asserted by name', async () => {
       const body = (await join()).json();
 
       expect(body.error).toBe('Conflict');
@@ -188,13 +191,19 @@ describe('an internal-handler 409 reaches the agent intact, through the real rou
       expect(body.campaign_id).toBe(CAMPAIGN);
       expect(body.campaign_name).toBe('Q3 Renewals');
       expect(body.state).toBe('on_call');
+      // And the session to leave, in the account it is in.
+      expect(body.session_id).toBe(SESSION);
+      expect(body.account_id).toBe(SESSION_CONFLICT.account_id);
+      expect(body.account_name).toBe('North Region');
     });
 
     it('adds nothing of its own — no statusCode, no requestId', async () => {
       // The canonical masked body carries both. Their ABSENCE is how a reader
       // tells a forwarded body from a rebuilt one that copied the right fields.
       const keys = Object.keys((await join()).json()).sort();
-      expect(keys).toEqual(['campaign_id', 'campaign_name', 'code', 'error', 'message', 'state']);
+      expect(keys).toEqual([
+        'account_id', 'account_name', 'campaign_id', 'campaign_name', 'code', 'error', 'message', 'session_id', 'state',
+      ]);
     });
 
     it('an unknown field added later survives the hop', async () => {

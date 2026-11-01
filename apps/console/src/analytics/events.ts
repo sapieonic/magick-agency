@@ -270,6 +270,8 @@ export function trackApiErrorEvent(props: EventCatalog['api_error']): void {
 type AgencyStationJoinFailedReason =
   | 'session_on_other_campaign'
   | 'conflict_unreadable'
+  /** 403 `not_staffed`: not assigned to the campaign, and the role cannot supervise. */
+  | 'not_staffed'
   | 'no_campaign'
   | 'api_error';
 

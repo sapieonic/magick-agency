@@ -14,15 +14,28 @@ import { insertCall, insertCampaign, insertManualCall, insertSession, insertSoft
  * is safe to run before or after any other integration file.
  */
 
-const migrate = (direction: 'up' | 'down') =>
+const migrate = (direction: 'up' | 'down', count = Infinity) =>
   runner({
     databaseUrl: TEST_DB_URL,
     dir: MIGRATIONS_DIR,
     direction,
     migrationsTable: 'pgmigrations',
-    count: Infinity,
+    count,
     log: () => {},
   });
+
+/**
+ * Roll back every migration after 0005, so 0005's Down is the next one to run: a later
+ * migration's Down commits on its own (one transaction per file) before 0005's refuses, so
+ * "the refusal changes nothing" is asserted from 0005 being the top. Returns the restore.
+ */
+async function downTo0005(): Promise<() => Promise<void>> {
+  const after = ALL_MIGRATIONS.length - ALL_MIGRATIONS.indexOf('0005_softphone') - 1;
+  if (after > 0) await migrate('down', after);
+  return async () => { if (after > 0) await migrate('up'); };
+}
+
+const UP_TO_0005 = ['0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index', '0005_softphone'];
 
 /** Every user-visible object in `public` except the migrations ledger. */
 async function inventory(): Promise<string[]> {
@@ -46,7 +59,7 @@ async function inventory(): Promise<string[]> {
 
 const ALL_MIGRATIONS = [
   '0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index',
-  '0005_softphone',
+  '0005_softphone', '0006_agent_session_client_kind',
 ];
 
 describe('migrations down → up', () => {
@@ -59,12 +72,17 @@ describe('migrations down → up', () => {
     await truncateAll();
     const session = await insertSoftphoneSession();
     await insertManualCall(session.id);
-    const before = await inventory();
+    const restore = await downTo0005();
+    try {
+      const before = await inventory();
 
-    await expect(migrate('down')).rejects.toThrow(/soft-phone sessions exist/);
-    expect(await inventory()).toEqual(before);
-    const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
-    expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
+      await expect(migrate('down')).rejects.toThrow(/soft-phone sessions exist/);
+      expect(await inventory()).toEqual(before);
+      const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
+      expect(ledger.rows.map((r) => r.name)).toEqual(UP_TO_0005);
+    } finally {
+      await restore();
+    }
     await truncateAll();
   });
 
@@ -76,22 +94,32 @@ describe('migrations down → up', () => {
     const campaign = await insertCampaign();
     const session = await insertSession(campaign.id, { state: 'break', break_reason: 'soft_phone' });
     await insertManualCall(session.id, { campaign_id: campaign.id });
-    const before = await inventory();
+    const restore = await downTo0005();
+    try {
+      const before = await inventory();
 
-    await expect(migrate('down')).rejects.toThrow(/soft-phone calls exist/);
-    expect(await inventory()).toEqual(before);
-    expect((await getTestPool().query('SELECT count(*)::int AS n FROM agency_manual_calls')).rows[0].n).toBe(1);
-    const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
-    expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS);
+      await expect(migrate('down')).rejects.toThrow(/soft-phone calls exist/);
+      expect(await inventory()).toEqual(before);
+      expect((await getTestPool().query('SELECT count(*)::int AS n FROM agency_manual_calls')).rows[0].n).toBe(1);
+      const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
+      expect(ledger.rows.map((r) => r.name)).toEqual(UP_TO_0005);
+    } finally {
+      await restore();
+    }
     await truncateAll();
   });
 
   it('0005 down refuses while a manual media leg exists, its manual call already purged', async () => {
     await truncateAll();
     await insertCall({ origin: 'manual', manual_call_id: randomUUID() });
-    const before = await inventory();
-    await expect(migrate('down')).rejects.toThrow(/soft-phone calls exist/);
-    expect(await inventory()).toEqual(before);
+    const restore = await downTo0005();
+    try {
+      const before = await inventory();
+      await expect(migrate('down')).rejects.toThrow(/soft-phone calls exist/);
+      expect(await inventory()).toEqual(before);
+    } finally {
+      await restore();
+    }
     await truncateAll();
   });
 

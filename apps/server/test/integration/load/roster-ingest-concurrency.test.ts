@@ -65,7 +65,7 @@ const app = () => loaded.app;
 beforeAll(async () => {
   console.log(`[roster-ingest-concurrency] seed=${rng.seed} rows=${ROWS} copies=${COPIES}`);
   mocks.verifyIdToken.mockImplementation(verifyTestToken);
-  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000 } }) });
+  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000, ipAuthMax: 1_000_000 }, userRateLimit: { max: 1_000_000 } }) });
 });
 
 beforeEach(async () => {

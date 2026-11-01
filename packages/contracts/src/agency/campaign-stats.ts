@@ -7,6 +7,7 @@
  */
 
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
+import type { AgencyClientKind } from './station';
 
 /**
  * The dials-placed floor under which the console withholds a CAMPAIGN rate
@@ -127,6 +128,12 @@ export interface AgencySupervisorAgent {
   break_reason: string | null;
   /** Attempts this agent has handled on this campaign this session. */
   calls_handled: number;
+  /**
+   * The app the session's station last attached from (`agency_agent_sessions.client_kind`,
+   * written by every station attach, so a "continue on this phone" moves it). `web`
+   * until a station has attached. The floor marks `mobile` with a phone glyph.
+   */
+  client_kind: AgencyClientKind;
 }
 
 /**

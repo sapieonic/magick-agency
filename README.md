@@ -12,6 +12,8 @@ apps/server/         one Fastify process: identity, tenancy, super-admin auth, A
                      pacing, analysis worker, sweeps, retention
 apps/console/        Vite + React: agent, supervisor, team, invites, settings
 apps/super-admin/    Vite + React: tenants, users, numbers, limits, settings, flags, usage
+apps/mobile/         Flutter: the agent-only app for Android and iOS (sign in, take calls,
+                     outcomes, own performance); its dev setup is apps/mobile/dev-setup.md
 packages/contracts/  wire contract shared by server and UIs (lead-owned)
 packages/domain/     pure agency rules
 packages/db/         pg pool, repositories, the squashed baseline migration
@@ -110,6 +112,14 @@ pnpm --filter @magick-agency/super-admin dev   # http://localhost:5176
 Check the server with `curl localhost:3021/healthz` (process up) and `curl localhost:3021/readyz`
 (Postgres and Redis reachable).
 
+### 8. The agent mobile app (optional)
+
+The Flutter app in `apps/mobile` talks to the same local server. It needs its own toolchain
+(Flutter 3.47.7, JDK 17, the Android SDK, and Xcode on a Mac for iOS):
+[`apps/mobile/dev-setup.md`](apps/mobile/dev-setup.md) walks through it on Linux and macOS, from
+installing the SDKs to running on an emulator, a simulator or a phone. What the app does and how it
+is built: [`docs/mobile.md`](docs/mobile.md).
+
 ### Resetting and stopping
 
 ```bash
@@ -141,6 +151,9 @@ pnpm lint               # tsc --noEmit over src and tests, every package
 pnpm test               # unit
 pnpm test:integration   # real Postgres/Redis; needs pnpm infra:up
 ```
+
+The mobile app's checks (`flutter analyze`, `flutter test`, the contract drift check) are listed in
+[`apps/mobile/dev-setup.md`](apps/mobile/dev-setup.md), "Before you push".
 
 Run a single package's tests from inside its directory (dotenv resolves from
 cwd). Never point anything at 5432/5433/5434/6379/6380/6381: other local stacks use

@@ -128,20 +128,69 @@ export const DNC_OUTBOX_STALE_CLAIM_MS = 120_000;
 export const STATION_HEARTBEAT_GRACE_MS = 30_000;
 
 /**
+ * The heartbeat grace of a station attached from the agent MOBILE app (`client=mobile`
+ * on the upgrade) — the `heartbeat_grace_ms` a mobile session is served.
+ *
+ * 10s rather than {@link STATION_HEARTBEAT_GRACE_MS}'s 30s, because on a phone the
+ * cost of a late answer is a customer. An `available` agent whose app the OS has
+ * suspended still holds a live lease, and under early binding a customer can be
+ * bridged to a sleeping phone and recorded as connected, which the abandonment
+ * guardrail never sees. The app sends the device-away break the moment it is
+ * backgrounded. This grace is the backstop for a SUSPENDED or unreachable phone (its
+ * WebSocket stack stops answering); a phone that is alive but whose break did not land
+ * keeps answering pongs, so the app itself retries the break and, after 10 s, closes
+ * its station socket.
+ *
+ * Affordable because a mobile station's liveness does not wait on the app's own
+ * 10s `ping`: the server sends it an RFC 6455 ping every {@link MOBILE_STATION_PROBE_MS}
+ * and any protocol pong (or protocol ping from the client) renews it, so 10s is three
+ * missed probes, the same three-misses budget the web grace spends on app pings. The
+ * protocol frames are answered by the client's WebSocket stack, not its app code, so
+ * they stop exactly when the transport or the process does.
+ *
+ * In-process, like everything in this file: the Redis ownership key is still renewed
+ * only by the app-level `ping` (`OWNERSHIP_TTL_MS`, unchanged).
+ */
+export const MOBILE_STATION_HEARTBEAT_GRACE_MS = 10_000;
+
+/**
+ * How often the server sends a mobile station an RFC 6455 ping. 3s: three probes
+ * inside {@link MOBILE_STATION_HEARTBEAT_GRACE_MS}, so one lost or late pong never
+ * closes a healthy phone. The mobile app sends its own protocol pings at the same
+ * cadence, and those count too.
+ *
+ * Each probe is a 2-byte control frame and its answer renews an in-memory instant;
+ * no probe or pong ever touches Postgres or Redis.
+ */
+export const MOBILE_STATION_PROBE_MS = 3_000;
+
+/** The heartbeat grace a station of this client kind is held to (and is served). */
+export function stationHeartbeatGraceMs(clientKind: 'web' | 'mobile'): number {
+  return clientKind === 'mobile' ? MOBILE_STATION_HEARTBEAT_GRACE_MS : STATION_HEARTBEAT_GRACE_MS;
+}
+
+/**
  * How often the silent-station sweep runs.
  *
- * A **poll cadence, not the grace.** Matching the ping cadence, so a socket that
- * has blown its grace is closed within one heartbeat of doing so rather than up to
- * a whole grace period later. The pass is a walk over an in-process map with no
- * I/O, and it is demand-driven and self-dormant — armed on attach, disarmed after
- * two consecutive passes that both closed nothing *and* found no stations at all —
- * so a replica holding no stations ticks nothing.
+ * A **poll cadence, not the grace.** A silent station is closed between its grace and
+ * its grace plus one cadence after its last sign of life: with 5s that is 30–35s on
+ * the web (the grace, unchanged) and 10–15s on the mobile app. It was 10s, matching
+ * the web ping cadence; halved when the mobile grace landed, because at 10s a silent
+ * phone could keep its lease for up to 20s, twice its grace. The web's grace and
+ * close code are unchanged; it can only be closed sooner after blowing it, never
+ * before.
+ *
+ * Cheap enough to run twice as often: the pass is a walk over an in-process map with
+ * no I/O (a few microseconds for a full floor), and it is demand-driven and
+ * self-dormant — armed on attach, disarmed after two consecutive passes that both
+ * closed nothing *and* found no stations at all — so a replica holding no stations
+ * ticks nothing.
  *
  * The dormancy condition requires an empty registry, not merely an idle pass, and
  * that is load-bearing: a healthy station can fall silent at any moment and
  * nothing would re-arm the timer, because its attach has already happened.
  */
-export const STATION_HEARTBEAT_SWEEP_MS = 10_000;
+export const STATION_HEARTBEAT_SWEEP_MS = 5_000;
 
 /** Consecutive fully-idle station sweeps before the timer disarms itself. */
 export const STATION_SWEEP_IDLE_PASSES_BEFORE_DORMANT = 2;

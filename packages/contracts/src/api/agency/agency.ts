@@ -133,6 +133,15 @@ export interface AgencySessionConflict {
   /** Their state on that other campaign, so the copy can say whether they are mid-call. */
   state: AgencyAgentState;
   /**
+   * The live session to leave, the account it is in (often a sibling of this one;
+   * `leave` is scoped to the session's account) and that account's name (NULL when the
+   * read failed). Optional here only because a server older than these fields omits
+   * them.
+   */
+  session_id?: string;
+  account_id?: string;
+  account_name?: string | null;
+  /**
    * The dialer runtime's own sentence.
    *
    * The console does **not** render it on the ordinary path: it composes better
@@ -337,3 +346,16 @@ export type AgencyStationServerFrame =
  * once in the dialer contract.
  */
 export { AGENCY_STATION_CLOSE } from '../../agency';
+
+/**
+ * The reserved break codes (the soft phone's, the mobile app's device-away) and their
+ * labels, declared once in the dialer contract: a console renders a reserved code
+ * from these, never from a campaign catalog, which lists none of them.
+ */
+export {
+  DEVICE_AWAY_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON_LABEL,
+  RESERVED_BREAK_REASONS,
+  RESERVED_BREAK_REASON_LABELS,
+} from '../../agency';
+export type { AgencyClientKind, AgencyReservedBreakReason } from '../../agency';

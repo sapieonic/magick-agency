@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-10-31.
+"is it done". As of 2026-11-01.
 
 ## Summary
 
@@ -217,6 +217,111 @@ per-campaign call fields, "every call must be logged to a campaign", cancel whil
 transfer and conference. Seen and left: light-theme `<select>` elements show no arrow app-wide
 (`packages/web-ui/src/global.css`), and the station shows campaign numbers unformatted.
 
+### Agent mobile app 2026-11-01 (V1)
+
+Manas asked on 2026-11-01 for an agent-only mobile app (Flutter, Android and iOS in this repo).
+The design is in [`mobile.md`](mobile.md). It is built as V1. Nothing has run on a real phone,
+a real carrier or a real Firebase or Google sign-in, and the iOS app has not been compiled yet
+(no Xcode in the build environment).
+
+| Area | What changed |
+|---|---|
+| App | `apps/mobile`:<br>• sign-in and invites, account choice, the campaign list, pre-flight checks, the station (calls, notes, outcomes, DNC, breaks), My performance, My calls, the Me tab<br>• `packages/agency_wire`: hand-written wire types<br>• `packages/agent_audio`: native voice engine, CallKit, the Android on-duty service<br>• release-please component `mobile` (`release-type: dart`) |
+| Server: presence | `device_away`, a reserved break code the app takes when it leaves the foreground (applied at once when available, queued behind a call).<br>Migration `0006_agent_session_client_kind.sql` and `client=web\|mobile` on the station upgrade.<br>Mobile liveness: protocol ping every 3 s, 10 s grace; the sweep now runs every 5 s. A phone silent past it on a call the agent can see is dropped and the 8 s deferred hangup decides (M1).<br>`X-Client` on log lines. The floor marks agents on the mobile app. |
+| Server: media | `media=alaw8` on the station socket: binary G.711 A-law, relayed byte for byte to VoiceLink, transcoded for other carriers. `parseStationUpgradeQuery` refuses an unknown `client=` or `media=` before the token is spent |
+| Server: platform | A per-user rate-limit bucket and a bearer IP bucket (Q9 amended, pending ratification).<br>A staffing check on join (`403 not_staffed`, supervisors exempt, a live session is never stranded).<br>`GET /client-config` (version gate) and `POST /client-config/uplink-probe` (pre-flight upload speed).<br>App Links / Universal Links files served by the web image (`docker/mobile-app-links.sh`) |
+| Drift guards | `packages/contracts/fixtures/agent` samples are type-checked in TS and decoded in Dart. `tooling/contracts-literals.mjs --check` (in CI and in the contracts tests) catches a literal union the app does not know.<br>The external-references guard now scans the mobile sources and skips build output |
+| CI | `.github/workflows/mobile.yml`: drift check, analyze and tests, a debug Android build on pull requests, an unsigned iOS build on `main` |
+
+Two independent code reviews found 16 defects; all are fixed, each with a mutation-checked
+regression test. The worst were:
+
+- a forced sign-out that left the agent in the dialing pool;
+- pre-flight's sound check able to switch off the first call's audio;
+- notes typed while saving, or in the last 2 s before leaving, being dropped;
+- the previous agent's call history surviving an account switch.
+
+A second review of the whole branch (six reviewers, one per area) then found and fixed, each with
+a test that fails without it: a silent phone left dialable for 30 s (closed with `terminate` now,
+idle as well as on a call), routes outside the tab shell escaping the station rules (an invite
+link mid-call), an offline cold start signing the agent out, another account's or agent's data
+on screen after a switch, a failed device-away never retried, saved notes coming back blank, the
+`session_on_other_campaign` 409 missing the ids the app needs, `ready` and the bootstrap missing
+the break reason, close codes 1008/1011 retried forever, a stale notification hang-up after
+4409, the station socket upgrade on the shared IP bucket, the super-admin login limit doubled by
+a bogus bearer, iOS engine restarts disabled by an unmatched interruption, and light-theme
+contrast below AA.
+
+Counts on 2026-11-01, after that pass:
+
+- lint clean in every package;
+- server: 7330 unit + 4 expected fail; 1500 integration + 10 expected fail;
+- db: 427 unit, 502 integration;
+- contracts: 171;
+- console: 4818;
+- `test:release` 10, `test:grafana` 31;
+- the mobile app: 733, `agency_wire` 243, `agent_audio` 106 Dart and 22 Kotlin tests;
+- `flutter analyze` clean; the dev debug APK builds; a release build fails without `key.properties`.
+
+### Soft phone on the agent app 2026-11-01 (M2–M6)
+
+Manas asked on 2026-11-01 for the soft phone in the agent app. The design is in
+[`mobile.md`](mobile.md), "The soft phone", and [`softphone.md`](softphone.md) §7, "The agent
+app"; rulings M2–M6 in [`decisions.md`](decisions.md), and M1 amended. The server's soft phone is
+unchanged apart from M1: the app uses the console's routes and the `manual_call` frame.
+
+| Area | What changed |
+|---|---|
+| App: session host | The station core hosts a campaign station or a soft-phone session on one socket, audio engine and on-duty service (`HostedSession`, `stationHostProvider`), and implements the soft phone's host actions (open, close, switch, cancel, return, adopt and retire a call, ring mute, system hang-up). "Close the soft phone and join" reads the soft-phone bootstrap in the session's own account first and closes nothing over a live or owed call (`close_softphone.dart`). A soft-phone call counts as a call for pings, reconnects, audio, CallKit, the notification and a held sign-out; never a `device_away` on a soft-phone session; the wake lock only while a call is live or owed |
+| App: soft phone | `lib/core/softphone/`: the API client, `SoftphoneController` (a port of the console's `useSoftphone`, per workspace), the console's call rules and copy, the 700 ms autosave with unsent notes kept on the phone, the overrides, finish mode, auto-resume and the Phone tab's availability. `lib/features/softphone/`: the Phone screen's states and `SoftphonePanel`, one panel for the Phone tab and the station in place (SP7) |
+| App: navigation | The Phone tab at index 1 (Station, Phone, Performance, My calls, Me); the tab rule extended to a live or owed soft-phone call (M4); "Switch to soft phone" on the station, queued behind a call |
+| App: My calls | A "Soft-phone calls" segment with keyset pages, filters and the detail sheet (`lib/features/calls/softphone/`); `media` never rendered |
+| `agent_audio` | `setRingback`: the console's ringback made in the native engine and mixed into the playout frames (M5); a Dart reference and golden vectors shared by the Dart and Kotlin tests |
+| Wire and drift guards | `agency_wire` models the soft phone (rows, bootstrap, requests, answers, refusals as typed `ErrorBody` accessors; a `manual_call` frame whose row does not read stays a frame with no call). `softphone.json` (22 samples) and four station samples, type-checked in TS and decoded in Dart. `literals.json` 29 → 38 vocabularies, and `fieldUnion` reads optional fields. `AgencySoftphoneDispositionInvalidRefusal` declares the `reason` the server already sent |
+| Server: M1 | A phone silent past its grace on a live soft-phone call is dropped with `terminate` (log label `on_manual_call`); the bridge's rule for a manual leg then decides. The web console is unchanged |
+
+**Review.** Five independent reviews (server and wire, the session host, the soft-phone
+controller, the UI and navigation, ringback and docs) found no critical or high defects; every
+medium and low finding was fixed with a regression test that failed first and a mutation check:
+
+- a ringing call the server ended while the socket was down could keep ringback, CallKit and the
+  hold: the station core now checks a held call against the server itself after a reconnect;
+- a failed CallKit or notification hang-up was silent: it shows on the soft phone, and CallKit is
+  told the call goes on;
+- a resume put off in the background acted on an old answer, and could take a session live on
+  another device: only this phone's own session resumes (M6);
+- the bootstrap was not re-read when a session started (a stale "Log to" list, a new required
+  field the agent could not see), and the station's tag carried into a later Phone-tab session;
+- the number could be edited while a dial was in flight, so an override could redial a different
+  number; the override prompt survived finish mode;
+- at 200% text with the keyboard up the panel's column collapsed: the action area now takes at
+  most half the panel and scrolls inside itself past that, checked at 1.0–2.0 text with and
+  without a keyboard, on both surfaces;
+- smaller: a 1008 left a session owing an outcome, CallKit never showed the contact's name, the
+  number field showed characters it would not dial, an unanswered yes/no read "No" (also on the
+  console), the station announced the switch as a break, fixtures that were not the server's
+  output, and a Kotlin test that did not guard the plugin's wiring.
+
+Counts on 2026-11-01, from inside each package, after the review fixes:
+
+- server unit: 7333 passed + 4 expected fail + 42 skipped (352 files), the one failure the
+  branding guard on an uncommitted local `apps/mobile/env/staging.json`; `station-mobile-liveness` 20;
+- contracts: 248 (8 files; `agent-fixtures.test.ts` 152);
+- console: 4822 (247 files);
+- the mobile app: 1232; `agency_wire` 325; `agent_audio` 124 Dart and 33 Kotlin tests;
+- `pnpm lint` clean; `flutter analyze` clean; `contracts-literals.mjs --check` up to date (38
+  vocabularies); the debug APK builds.
+
+**On the emulator against staging** (2026-11-01): the Phone tab shows, the soft phone opens
+(`POST /softphone/sessions` 201, the socket ready, the account's caller ID), and closes (the
+bootstrap read first, then `leave`). No number was dialled.
+
+**Not verified:** nothing has run on a phone. iOS is not compiled: the Swift ringback (written to
+the shared vectors) and CallKit for soft-phone calls are reviewed only. Without a carrier a dial
+ends `failed` and unplaced; ringing, the answer, A-law both ways and the ringback need the
+VoiceLink sandbox. A network change while a call rings ends it (no grace before the answer, SP3);
+accepted.
+
 ## Test counts
 
 Latest run, 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
@@ -368,6 +473,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | B15 roster supersede | Build it, or leave replace and clear refused |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
+| Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 
 ## Deployment invariants

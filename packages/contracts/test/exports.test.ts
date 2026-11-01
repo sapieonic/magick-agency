@@ -10,7 +10,15 @@ import {
   AGENCY_OUR_FAULT_REDIAL_BOUND,
   AGENCY_OUR_FAULT_RETRY_DEFAULT,
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+  AGENCY_STATION_ALAW8_FRAME_BYTES,
+  AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
   AGENCY_STATION_CLOSE,
+  AGENCY_CLIENT_KINDS,
+  AGENCY_STATION_MEDIA_FORMATS,
+  DEVICE_AWAY_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON_LABEL,
+  RESERVED_BREAK_REASONS,
+  RESERVED_BREAK_REASON_LABELS,
   AGENCY_CAMPAIGN_STATS_FIELDS,
   AGENCY_STATS_ROUTE_FIELDS,
 } from '../src/agency';
@@ -34,6 +42,7 @@ import {
   type AgencyManualCallOutcome,
   type AgencyManualCallState,
   type AgencySessionStateResponse,
+  type AgencyStationMediaFormat,
   type AgencyStationManualCallFrame,
   type AgencyStationServerFrame,
 } from '../src/agency';
@@ -87,15 +96,28 @@ describe('package surface', () => {
     expect([...Root.STATS_BUCKET_UNITS]).toEqual(['day', 'week', 'month']);
   });
 
-  it('declares the four station close codes once (SNAPSHOT, written out by hand)', () => {
+  it('declares the six station close codes once (SNAPSHOT, written out by hand)', () => {
     expect(AGENCY_STATION_CLOSE).toEqual({
       TOKEN_REJECTED: 4401,
       SESSION_GONE: 4404,
       HEARTBEAT_TIMEOUT: 4408,
       SUPERSEDED: 4409,
+      INVALID_UPGRADE: 1008,
+      INTERNAL_ERROR: 1011,
     });
     // The console layer re-exports the same object rather than a copy that could drop a code.
     expect(AgencyApi.AGENCY_STATION_CLOSE).toBe(AGENCY_STATION_CLOSE);
+  });
+
+  it('declares the station media formats and the alaw8 framing once (SNAPSHOT, written out by hand)', () => {
+    // The list is exactly the union, default first.
+    const exact: Equals<(typeof AGENCY_STATION_MEDIA_FORMATS)[number], AgencyStationMediaFormat> = true;
+    void exact;
+    expect([...AGENCY_STATION_MEDIA_FORMATS]).toEqual(['pcm16', 'alaw8']);
+    // 20 ms of A-law at 8 kHz, and a 1 s ceiling that is a whole number of frames.
+    expect(AGENCY_STATION_ALAW8_FRAME_BYTES).toBe(160);
+    expect(AGENCY_STATION_ALAW8_MAX_FRAME_BYTES).toBe(8000);
+    expect(AGENCY_STATION_ALAW8_MAX_FRAME_BYTES % AGENCY_STATION_ALAW8_FRAME_BYTES).toBe(0);
   });
 
   it('declares the session refusals agency answers with', () => {
@@ -168,6 +190,18 @@ describe('package surface', () => {
     expect(AgencyApi.SOFTPHONE_BREAK_REASON).toBe(SOFTPHONE_BREAK_REASON);
     expect(AgencyApi.AGENCY_MANUAL_CALL_STATES).toBe(AGENCY_MANUAL_CALL_STATES);
     expect(AgencyApi.SOFTPHONE_CALL_FIELD_KEY_PATTERN).toBe(SOFTPHONE_CALL_FIELD_KEY_PATTERN);
+  });
+
+  it('declares the reserved break codes and the client kinds once (SNAPSHOT)', () => {
+    expect(DEVICE_AWAY_BREAK_REASON).toBe('device_away');
+    expect(DEVICE_AWAY_BREAK_REASON_LABEL).toBe('Away (app in background)');
+    expect([...RESERVED_BREAK_REASONS]).toEqual(['soft_phone', 'device_away']);
+    expect(RESERVED_BREAK_REASON_LABELS).toEqual({ soft_phone: 'Soft phone', device_away: 'Away (app in background)' });
+    expect(Object.isFrozen(RESERVED_BREAK_REASON_LABELS)).toBe(true);
+    expect([...AGENCY_CLIENT_KINDS]).toEqual(['web', 'mobile']);
+    // The console wire layer re-exports the same values rather than copies.
+    expect(AgencyApi.DEVICE_AWAY_BREAK_REASON).toBe(DEVICE_AWAY_BREAK_REASON);
+    expect(AgencyApi.RESERVED_BREAK_REASON_LABELS).toBe(RESERVED_BREAK_REASON_LABELS);
   });
 
   it('declares both rate floors, side by side and different on purpose', () => {

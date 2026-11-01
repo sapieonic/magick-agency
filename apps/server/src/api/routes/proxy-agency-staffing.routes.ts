@@ -37,14 +37,15 @@ export { replyMissingActor, resolveMyAgentId } from './proxy-agency-staffing/my.
  * likewise NOT `roster`: that word already means CONTACTS throughout this
  * codebase (`src/agency/agency-roster.client.ts`, the whole ingest pipeline).
  *
- * ── Staffing is NOT authorization, and nothing here should ever make it so ──
- * An assignment decides where an agent is *sent by default*. It does not gate a
- * join: that is `agency.station.connect`, on the sibling file's `POST /sessions`,
- * and it stays the only gate — a supervisor covering a shift must be able to join
- * a campaign nobody assigned them to, which the RBAC comments in
- * `packages/contracts/src/rbac.ts` protect explicitly. If a future change makes
- * the join consult `agency_campaign_agents` before allowing it, that is a
- * behaviour change to argue for on its merits, not a tidy-up.
+ * ── Staffing is NOT authorization: it narrows, it never grants ─────────────
+ * An assignment decides where an agent is *sent by default*, and since 2026-11-01
+ * it also NARROWS the join: the sibling file's `POST /sessions` refuses a caller
+ * whose role cannot supervise on a campaign they are not actively staffed on
+ * (`403 not_staffed`, the rule in `agency/sessions.ts`). It grants nothing: the
+ * gate on joining at all is still `agency.station.connect`, and a supervisor
+ * covering a shift still joins a campaign nobody assigned them to, which the RBAC
+ * comments in `packages/contracts/src/rbac.ts` protect explicitly. Closing a row
+ * ends no live session either (the rehydrate exception in `agency/sessions.ts`).
  *
  * ── The floors, and the one that is load-bearing ────────────────────────────
  * Three supervisory routes at `agency.supervise` (`account_admin`, 30) and three

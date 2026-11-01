@@ -8,7 +8,8 @@ import { useAgencyCues, type CueFlash } from '../../hooks/useAgencyCues';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import { useServerClock, type ServerClock } from '../../hooks/useServerClock';
 import { audioTarget } from '../../utils/softphone/audioTarget';
-import { SOFTPHONE_BREAK_REASON, SOFTPHONE_BREAK_REASON_LABEL } from '../../types/softphone';
+import { SOFTPHONE_BREAK_REASON } from '../../types/softphone';
+import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason';
 import { useAgencyNotes } from '../../hooks/useAgencyNotes';
 import { useBreakQueue } from '../../hooks/useBreakQueue';
 import { useDispositionSubmit } from '../../hooks/useDispositionSubmit';
@@ -379,10 +380,9 @@ export function useAgencyConsole(
   const labelFor = (code: string | null) =>
     code === null
       ? null
-      : code === SOFTPHONE_BREAK_REASON
-        // Reserved: never in a campaign's `break_reasons`, so it has no catalog label.
-        ? SOFTPHONE_BREAK_REASON_LABEL
-        : (breaks.breakReasons.find((r) => r.code === code)?.label ?? code);
+      // Reserved (the soft phone, the mobile app's device-away): never in a campaign's
+      // `break_reasons`, so they have no catalog label.
+      : (reservedBreakReasonLabel(code) ?? breaks.breakReasons.find((r) => r.code === code)?.label ?? code);
 
   return {
     station,

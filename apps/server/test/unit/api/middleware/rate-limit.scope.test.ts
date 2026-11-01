@@ -19,6 +19,8 @@ import { registerRateLimit } from '../../../../src/api/middleware/rate-limit.mid
 
 const WEBHOOK_MAX = 2;
 const CARRIER_MEDIA_MAX = 3;
+const PLAIN_MAX = 100;
+const STATION_MAX = 4;
 const CARRIER_IP = '9.9.9.9';
 
 async function buildApp(): Promise<FastifyInstance> {
@@ -26,14 +28,19 @@ async function buildApp(): Promise<FastifyInstance> {
   // Child plugin, encapsulated (NOT fastify-plugin wrapped), as voice.plugin.ts is.
   await app.register(async (child) => {
     await registerRateLimit(child, null, {
-      max: 100,
+      max: PLAIN_MAX,
       webhookMax: WEBHOOK_MAX,
       carrierMediaMax: CARRIER_MEDIA_MAX,
+      stationMax: STATION_MAX,
       internalMax: 100,
       timeWindow: '1 minute',
     });
     child.post('/api/v1/webhooks/voicelink/webrtc-status/:callId', async () => ({ ok: true }));
     child.get('/api/v1/webrtc-call/:id/pstn-stream', async () => ({ ok: true }));
+    // A plain route for the plain `<ip>` bucket, and the station upgrade's path (a plain GET
+    // here: the bucket is decided in `onRequest`, before any upgrade handling).
+    child.post('/auth/session', async () => ({ ok: true }));
+    child.get('/proxy/agency/station/:sessionId', async () => ({ ok: true }));
   });
   // Sibling OUTSIDE the child plugin, deliberately on a webhook-bucket path: if the limiter
   // leaked to the root it would share the exhausted `wh:<ip>` counter.
@@ -90,6 +97,29 @@ describe('registerRateLimit inside an encapsulated plugin (in-memory store)', ()
     // And it is a real ceiling of its own, not unlimited.
     expect((await getPstnStream(app, 'call-over')).statusCode).toBe(429);
     expect(trackRateLimitRejected).toHaveBeenLastCalledWith('carrier_media', 'media_stream');
+  });
+
+  it('(d) the station upgrade has its own budget: an exhausted plain ip bucket does not 429 it', async () => {
+    const NAT = '100.64.9.9';
+    for (let i = 0; i < PLAIN_MAX; i++) {
+      await app.inject({ method: 'POST', url: '/auth/session', remoteAddress: NAT, payload: {} });
+    }
+    expect((await app.inject({ method: 'POST', url: '/auth/session', remoteAddress: NAT, payload: {} })).statusCode).toBe(429);
+
+    // Same IP: the station upgrade still has its whole `st:<ip>` budget …
+    const upgrade = (i: number) => app.inject({
+      method: 'GET', url: `/proxy/agency/station/s${i}?token=t${i}&client=mobile`, remoteAddress: NAT,
+    });
+    for (let i = 0; i < STATION_MAX; i++) {
+      const res = await upgrade(i);
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['x-ratelimit-limit']).toBe(String(STATION_MAX));
+    }
+    // … and it is a real ceiling of its own, not unlimited.
+    expect((await upgrade(99)).statusCode).toBe(429);
+    expect(trackRateLimitRejected).toHaveBeenLastCalledWith('station', 'agency');
+    // Spending it does not spend the plain bucket of another IP, nor the other way round.
+    expect((await app.inject({ method: 'GET', url: '/proxy/agency/station/s0', remoteAddress: '100.64.9.10' })).statusCode).toBe(200);
   });
 
   it('(c) does not limit a sibling route registered outside the child plugin', async () => {

@@ -1,12 +1,15 @@
 # Soft phone
 
-The soft phone lets an agent type a number and call it from the browser, outside campaign pacing.
-The call can be logged to one of the agent's campaigns, so it uses that campaign's outcome list,
-caller IDs, recording setting and summary profile, and its outcome updates the roster contact when
-the number is on that campaign's roster. This page is the design the code implements: the data
-model, the runtime, the API, the console and the rules. Read it before changing anything under
-`apps/server/src/agency/softphone/`, the `softphone` routes, or the console's soft-phone screens.
-Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"). Written 2026-10-30; §4.1, §6 and §7 updated to the code as built the same day.
+The soft phone lets an agent type a number and call it from the browser or the agent app,
+outside campaign pacing. The call can be logged to one of the agent's campaigns, so it uses that
+campaign's outcome list, caller IDs, recording setting and summary profile, and its outcome
+updates the roster contact when the number is on that campaign's roster. This page is the design
+the code implements: the data model, the runtime, the API, the console, the agent app and the
+rules. Read it before changing anything under `apps/server/src/agency/softphone/`, the
+`softphone` routes, the console's soft-phone screens or the app's (`apps/mobile`).
+Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"); the app's are M2–M6 of
+2026-11-01. Written 2026-10-30; §4.1, §6 and §7 updated to the code as built the same day; §4.1,
+§7 and §8 updated 2026-11-01 for the agent app.
 
 ## 1. Rulings it rests on (Manas, 2026-10-30)
 
@@ -153,7 +156,8 @@ Owned by `AgencyRuntime`. One call at a time per session.
    `allow_recording` in the bridge as today). Profile: tag's `analysis_profile_id`, else
    settings', else the account default (the analysis hook's fallback).
 5. **Lifecycle → station frames.** Every state change sends `manual_call` (the full
-   `AgencyManualCall` wire row). `bridged` starts audio both ways. The browser plays ringback.
+   `AgencyManualCall` wire row). `bridged` starts audio both ways. The client plays ringback: the console
+   in the browser, the agent app in its voice engine (§7, "The agent app").
 6. **Ended** → write `ended`, outcome, talk seconds; if the call never bridged there is no
    outcome owed: settle it immediately, its claimed contact by the tag's retry policy (§5, "no
    outcome"), then clear the Redis claim. The settle is tried three times; if it still fails, the
@@ -184,7 +188,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
    (the ready frame has no field for it) with the session's unsettled call — live or awaiting
    its outcome — so a reloaded console restores the call. A socket close mid-call does not write
    the agent `offline` (the call's media leg owns the outcome), and `leave` is refused while a
-   call is live.
+   call is live. A console's socket is never closed mid-call by the silent-station sweep; the
+   agent app's is, once silent past its 10 s grace (decision M1, amended for the soft phone), with
+   `terminate`. The drop then meets step 4's rule: an immediate hangup before the answer, the
+   8 s deferred hangup after it, and a phone back in time re-adopts the leg.
 10. **Restart.** The startup reaper ends non-terminal manual rows `orphaned` and settles their
     contact claims; the periodic sweep does the same for rows not owned by this process. A reaped row that
     never bridged is settled in the same statement and its claim settled (§5, "no outcome": a placed
@@ -385,7 +392,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   are left out. An
   unsettled call blocks the next dial; the dial-pad column shows "Without one, it closes in m:ss" from
   `outcome_due_at` before the call lapses to `no_disposition`.
-- **Call details.** The fields form is hydrated from the call and saved debounced (700 ms). Until
+- **Call details.** A yes/no field nobody has answered reads "Not answered", never "No". The
+  fields form is hydrated from the call and saved debounced (700 ms). Until
   the field set has loaded (for example a reload where the `manual_call` frame beats the
   bootstrap) the console sends no `fields`, so stored values are never wiped; on the server an
   omitted `fields` is "unchanged", and `{}` clears only when the account has call fields.
@@ -485,8 +493,42 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   the account's campaigns'), with an audited override (SP1), and the account and campaign scope
   tooltips say the soft phone honours them; where it is off, the page does not mention the soft phone.
 
+### The agent app
+
+The agent mobile app (`apps/mobile`, [`mobile.md`](mobile.md), "The soft phone") has the agent's
+soft phone, on the same routes and the same `manual_call` frame; the server has nothing of its own
+for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
+
+- **The Phone tab** shows when the bootstrap answers 200 and `softphone_enabled` is on, or there is
+  a session or call to finish there, or the phone hosts a soft-phone session or a campaign on the
+  soft phone. A 403 hides it. "Open the soft phone" is an explicit tap that asks for the microphone
+  and notifications first; the session this phone hosts, or its campaign on the soft phone with
+  an unsettled call, is resumed without one. A session open on another device (the console, or
+  another phone) is never taken silently: the app offers "Use it on this phone", since taking it
+  moves the station socket, and any live call's audio, to the phone. The open is the same `POST /softphone/sessions`; the app's
+  `X-Client` gets the mobile station intervals and its socket `client=mobile&media=alaw8`.
+- **Parity with the console.** Everything above that an agent uses: the rail, the pad, paste
+  cleaning, one dial in flight, redial that fills, "Log to" and "Call from" locked once placed,
+  call details (never sent before the field set has loaded; 700 ms autosave), notes `''` versus
+  omitted, the outcome pad with the catalog rules and the countdown, finish mode, the DNC and
+  hours overrides that keep the first note, every refusal's copy, Mark DNC, recent calls,
+  hold-to-confirm hang-up with the SP3 warning, Mute ring versus the microphone's mute, the
+  station in place (SP7) with the queued switch, its pill and Return to campaign, "Close the soft
+  phone and join" (`closeSoftphoneSession`, read in the session's own account first), and My
+  calls' "Soft-phone calls" (the agent's own; `media` never rendered).
+- **Ringback** is made in the app's voice engine (`packages/agent_audio`, `setRingback`), to the
+  console's tone and cadence, mixed into the playout frames so any early media is still heard.
+- **What differs.** No keyboard shortcuts. The calling-hours prompt shows the window as the server
+  states it and the next opening as time from now plus the phone's clock (no IANA time-zone
+  database on the phone). A session in a sibling account is reached by switching account, never
+  switched in place. While a soft-phone call is live the app holds the agent on its screen; an
+  owed outcome keeps the other tabs closed and a sign-out waiting.
+- **Liveness.** A phone silent mid-call is dropped (M1, §4.1 step 9). A ringing call whose phone
+  changes network therefore ends, and with SP3 the customer's phone may keep ringing; accepted.
+
 ## 8. Not built (yet)
 
 Call details in the analysis prompt (needs a `context_pending` job hold), a callbacks list, DTMF,
 per-campaign call fields, a "every call must be tagged" setting, cancel-while-ringing (Plivo),
-transfer and conference.
+transfer and conference. The agent app has no DTMF and no recordings either; the supervisor's
+lists and Settings → Soft phone stay on the console.

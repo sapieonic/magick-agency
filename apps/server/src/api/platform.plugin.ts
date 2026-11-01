@@ -10,6 +10,7 @@ import { userRoutes } from './routes/user.routes.js';
 import { inviteRoutes } from './routes/invites.routes.js';
 import { notificationRoutes } from './routes/notification.routes.js';
 import { featureFlagsRoutes } from './routes/feature-flags.routes.js';
+import { clientConfigRoutes } from './routes/client-config.routes.js';
 import { superAdminRoutes } from './routes/super-admin.routes.js';
 import { superAdminPhoneRoutes } from './routes/super-admin-phone.routes.js';
 import { superAdminFeatureFlagsRoutes } from './routes/super-admin-feature-flags.routes.js';
@@ -30,12 +31,15 @@ export const PLATFORM_ROUTE_PREFIXES = {
   invites: '/invites',
   notifications: '/notifications',
   featureFlags: '/feature-flags',
+  /** Public: the mobile app's version gate (`client-config.routes.ts`). */
+  clientConfig: '/client-config',
   superAdmin: '/super-admin',
 } as const;
 
 /**
  * The platform HTTP surface: identity, tenancy, team, invites, notification
- * preferences, the client flag map (`GET /feature-flags`), and the super-admin tree.
+ * preferences, the client flag map (`GET /feature-flags`), the public client config
+ * (`GET /client-config`), and the super-admin tree.
  *
  * With `ctx` (a real process), the Redis cache and Firebase are initialised here,
  * before any route can run.
@@ -73,6 +77,12 @@ export const platformPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = as
   await app.register(inviteRoutes, { prefix: P.invites });
   await app.register(notificationRoutes, { prefix: P.notifications });
   await app.register(featureFlagsRoutes, { prefix: P.featureFlags });
+  await app.register(clientConfigRoutes, {
+    prefix: P.clientConfig,
+    mobile: config.mobile,
+    // The uplink probe's per-user cap counts in the rate limiter's window.
+    timeWindow: config.rateLimit.timeWindow,
+  });
 
   // The super-admin tree exists only with its JWT secret.
   if (config.superAdmin) {

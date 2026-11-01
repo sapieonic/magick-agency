@@ -92,13 +92,13 @@ beforeAll(async () => {
   loaded = await startLoadApp({
     poolMax: POOL_MAX,
     redis,
-    configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000 } }),
+    configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000, ipAuthMax: 1_000_000 }, userRateLimit: { max: 1_000_000 } }),
   });
 }, 60_000);
 
 beforeEach(async () => {
   await truncateAll();
-  floor = (await seedFloor({ tenants: 1, agentsPerTenant: AGENTS, supervisorsPerTenant: 2, campaignStatus: 'running' }))[0]!;
+  floor = (await seedFloor({ tenants: 1, agentsPerTenant: AGENTS, supervisorsPerTenant: 2, campaignStatus: 'running', staffAgents: true }))[0]!;
 });
 
 afterAll(async () => {

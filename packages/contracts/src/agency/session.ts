@@ -8,6 +8,7 @@
 
 import type { AgencyActionErrorResponse } from './actions';
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
+import type { AgencyClientKind } from './station';
 
 // ─── Campaign-derived config the agent console needs ────────────────────────
 
@@ -124,11 +125,26 @@ export interface AgencyCreateSessionRequest {
    */
   agent_user_id: string;
   /**
+   * Whether the joining user's ROLE holds `agency.supervise`, derived by the public API
+   * layer from the authenticated membership (never from the browser, whose schema
+   * strips it). `true` skips the staffing check: a supervisor covering a shift joins a
+   * campaign nobody staffed them on. Absent means `false`, so an internal caller that
+   * forgets it gets the check, not a bypass (`not_staffed`).
+   */
+  supervise?: boolean;
+  /**
    * Optional resume hint. The dialer runtime rehydrates from `agency_agent_sessions` regardless
    * (a restart drops every socket, and sessions are rehydrated rather than
    * recreated), so this only lets the client assert which session it thinks it had.
    */
   session_id?: string;
+  /**
+   * Which app is joining, parsed by the public API layer from the request's
+   * `X-Client` header (absent: `web`). It picks the `intervals` served, nothing else:
+   * a `mobile` join is told `heartbeat_grace_ms` = `MOBILE_STATION_HEARTBEAT_GRACE_MS`.
+   * Client-declared, so never an input to anything security-relevant.
+   */
+  client_kind?: AgencyClientKind;
 }
 
 /**
@@ -157,9 +173,23 @@ export interface AgencySessionBootstrap {
    * request, but it IS the state a rehydrated session lands in.
    */
   state: AgencyAgentState;
+  /**
+   * The break's code when `state` is `break`, as on {@link AgencyStationAgentStateFrame}:
+   * a campaign's `break_reasons` code or a reserved one (`device_away`, `soft_phone`).
+   * Absent when not on break, or on a break that has no recorded reason (a rehydrate
+   * after a restart). It is what lets a client that was killed while paused (the mobile
+   * app, backgrounded: `device_away`) say why when it comes back.
+   */
+  break_reason?: string;
   campaign_status: AgencyCampaignStatus;
 
-  /** Absolute wss:// URL for the station socket, token already appended. */
+  /**
+   * The station socket's path, RELATIVE to the API origin, token already appended:
+   * `/proxy/agency/station/<session id>?token=<token>`. A client builds the `wss://` URL
+   * from the origin it called (the console uses its own page origin; the mobile app its
+   * configured API origin). Never absolute: the server does not know which public origin
+   * the client reached it through.
+   */
   station_ws_url: string;
   /**
    * ISO-8601 expiry of the token embedded in `station_ws_url`.
@@ -313,6 +343,22 @@ export interface AgencySessionCampaignConflict extends AgencyActionErrorResponse
    * safe right now: `on_call` means finish the call, `break` means one click.
    */
   state: AgencyAgentState;
+  /**
+   * The live session itself, so the client can leave it (`POST /sessions/:id/leave`)
+   * without a second read. Always the CALLER's own session: the join names the agent
+   * from the authenticated user, and the session that refused it is that agent's one live
+   * session in the tenant.
+   */
+  session_id: string;
+  /**
+   * The account that session is in. Often a SIBLING of the one the join was made in
+   * (the one-live-session rule spans the tenant), and `leave` is scoped to the session's
+   * account, so the client sends this as its account scope to leave it. As on
+   * `session_on_softphone`.
+   */
+  account_id: string;
+  /** That account's name, for copy. Best effort: NULL when the read failed. */
+  account_name: string | null;
 }
 
 export interface AgencyStationIntervals {
@@ -325,6 +371,13 @@ export interface AgencyStationIntervals {
    * Enforced by the silent-station sweep, which closes such a socket with `4408`.
    * `STATION_HEARTBEAT_GRACE_MS` in `agency/timers.ts` is the single source of the
    * value served here, so the advertised number and the enforced one cannot drift.
+   *
+   * **Per client kind.** A `mobile` session is served
+   * `MOBILE_STATION_HEARTBEAT_GRACE_MS` (10s): the server probes a mobile station with
+   * RFC 6455 pings every `MOBILE_STATION_PROBE_MS` (3s), and any protocol pong or
+   * ping counts as liveness, so a suspended phone is closed within about 10–15s
+   * rather than holding a live lease for 30–40s. The app-level `ping` at
+   * `heartbeat_ms` is still owed: it alone renews the Redis ownership key and the lease.
    */
   heartbeat_grace_ms: number;
   /** The `reserved`→dial lease. Design: 10s. Informational; the dialer runtime enforces it. */

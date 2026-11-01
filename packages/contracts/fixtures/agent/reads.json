@@ -1,0 +1,219 @@
+{
+  "my_assignments": {
+    "assignments": [
+      {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "campaign_status": "running",
+        "assigned_at": "2026-10-20T04:00:00.000Z"
+      },
+      {
+        "campaign_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "campaign_name": null,
+        "campaign_status": null,
+        "assigned_at": "2026-10-28T04:00:00.000Z"
+      },
+      {
+        "campaign_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
+        "campaign_name": "Festive Offers",
+        "campaign_status": "archived_by_ops",
+        "assigned_at": "2026-10-29T04:00:00.000Z"
+      }
+    ]
+  },
+  "my_assignments_empty": {
+    "assignments": []
+  },
+  "my_campaigns": {
+    "assignments": [
+      {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune",
+        "campaign_status": "running",
+        "assigned_at": "2026-10-20T04:00:00.000Z",
+        "unassigned_at": null,
+        "active": true
+      },
+      {
+        "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
+        "campaign_name": "Q3 Winback",
+        "campaign_status": "completed",
+        "assigned_at": "2026-08-01T04:00:00.000Z",
+        "unassigned_at": "2026-09-30T12:00:00.000Z",
+        "active": false
+      }
+    ]
+  },
+  "my_stats": {
+    "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+    "bucket": "day",
+    "from": "2026-10-26T18:30:00.000Z",
+    "to": "2026-11-01T18:30:00.000Z",
+    "totals": {
+      "attempts": 212,
+      "connected": 87,
+      "connect_rate_pct": 41.0377,
+      "successes": 19,
+      "success_rate_pct": 21.8391,
+      "talk_seconds": 15672.4,
+      "wrapup_seconds": 2610,
+      "aht_seconds": 210.1425,
+      "campaigns": 2,
+      "occupancy": {
+        "shift_seconds": 100800,
+        "by_state": {
+          "offline": 0,
+          "available": 61200,
+          "reserved": 0,
+          "on_call": 15672,
+          "wrapup": 2610,
+          "break": 21318
+        }
+      }
+    },
+    "buckets": [
+      {
+        "bucket_start": "2026-10-27",
+        "attempts": 108,
+        "connected": 44,
+        "successes": 11,
+        "talk_seconds": 8011.2,
+        "wrapup_seconds": 1320,
+        "occupancy": {
+          "shift_seconds": 50400,
+          "by_state": {
+            "offline": 0,
+            "available": 30600,
+            "reserved": 0,
+            "on_call": 8011,
+            "wrapup": 1320,
+            "break": 10469
+          }
+        }
+      },
+      {
+        "bucket_start": "2026-10-28",
+        "attempts": 104,
+        "connected": 43,
+        "successes": 8,
+        "talk_seconds": 7661.2,
+        "wrapup_seconds": 1290,
+        "occupancy": {
+          "shift_seconds": 50400,
+          "by_state": {
+            "offline": 0,
+            "available": 30600,
+            "reserved": 0,
+            "on_call": 7661,
+            "wrapup": 1290,
+            "break": 10849
+          }
+        }
+      }
+    ],
+    "by_campaign": [
+      {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "attempts": 180,
+        "connected": 75,
+        "successes": 17,
+        "talk_seconds": 13502.4,
+        "wrapup_seconds": 2250
+      },
+      {
+        "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
+        "attempts": 32,
+        "connected": 12,
+        "successes": 2,
+        "talk_seconds": 2170,
+        "wrapup_seconds": 360
+      }
+    ]
+  },
+  "my_stats_unmeasured": {
+    "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+    "bucket": "week",
+    "from": "2026-11-01T18:30:00.000Z",
+    "to": "2026-11-08T18:30:00.000Z",
+    "totals": {
+      "attempts": 0,
+      "connected": 0,
+      "connect_rate_pct": null,
+      "successes": 0,
+      "success_rate_pct": null,
+      "talk_seconds": 0,
+      "wrapup_seconds": 0,
+      "aht_seconds": null,
+      "campaigns": 0,
+      "occupancy": {
+        "shift_seconds": 0,
+        "by_state": { "offline": 0, "available": 0, "reserved": 0, "on_call": 0, "wrapup": 0, "break": 0 }
+      }
+    },
+    "buckets": [],
+    "by_campaign": []
+  },
+  "my_attempts": {
+    "rows": [
+      {
+        "id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+        "attempt_number": 3,
+        "phone_e164": "+918765432109",
+        "caller_id": "+912071234567",
+        "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "reserved_agent_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+        "state": "ended",
+        "outcome": "connected",
+        "disposition_code": "callback",
+        "notes": "Wants a call on Tuesday after 6pm, prefers Marathi.",
+        "callback_at": "2026-11-03T12:30:00.000Z",
+        "dispositioned_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "dispositioned_at": "2026-11-01T06:43:40.000Z",
+        "dispositioned_on_behalf": false,
+        "webrtc_call_id": "7f8e9d0c-1b2a-4c3d-8e4f-5a6b7c8d9e0f",
+        "dialed_at": "2026-11-01T06:41:09.000Z",
+        "answered_at": "2026-11-01T06:41:14.900Z",
+        "bridged_at": "2026-11-01T06:41:15.250Z",
+        "ended_at": "2026-11-01T06:43:31.700Z",
+        "talk_seconds": 136.45,
+        "wrapup_seconds": 9,
+        "created_at": "2026-11-01T06:41:08.950Z"
+      },
+      {
+        "id": "f9a5e4d3-7f6b-4a8c-8d1e-2f3a4b5c6d7e",
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "contact_id": "a0b1c2d3-e4f5-4a6b-9c7d-8e9f0a1b2c3d",
+        "attempt_number": 1,
+        "phone_e164": "+917654321098",
+        "caller_id": "+912071234567",
+        "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "reserved_agent_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+        "state": "ended",
+        "outcome": "no_answer",
+        "disposition_code": null,
+        "notes": null,
+        "callback_at": null,
+        "dispositioned_by_user_id": null,
+        "dispositioned_at": null,
+        "dispositioned_on_behalf": false,
+        "webrtc_call_id": null,
+        "dialed_at": "2026-11-01T06:38:02.000Z",
+        "answered_at": null,
+        "bridged_at": null,
+        "ended_at": "2026-11-01T06:38:32.000Z",
+        "talk_seconds": null,
+        "wrapup_seconds": null,
+        "created_at": "2026-11-01T06:38:01.900Z"
+      }
+    ],
+    "next_cursor": "eyJkIjoiMjAyNi0xMS0wMVQwNjozODowMS45MDBaIiwiaSI6ImY5YTUifQ",
+    "limit": 50
+  },
+  "my_attempts_last_page": {
+    "rows": [],
+    "next_cursor": null,
+    "limit": 50
+  }
+}

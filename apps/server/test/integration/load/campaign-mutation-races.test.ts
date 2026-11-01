@@ -57,7 +57,7 @@ const app = () => loaded.app;
 beforeAll(async () => {
   console.log(`[campaign-mutation-races] seed=${rng.seed} campaigns=${CAMPAIGNS} rounds=${ROUNDS}`);
   mocks.verifyIdToken.mockImplementation(verifyTestToken);
-  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000 } }) });
+  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000, ipAuthMax: 1_000_000 }, userRateLimit: { max: 1_000_000 } }) });
 });
 
 beforeEach(async () => {

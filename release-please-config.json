@@ -28,6 +28,7 @@
     "packages/db": { "component": "db", "exclude-paths": ["packages/db/test"] },
     "packages/domain": { "component": "domain", "exclude-paths": ["packages/domain/test"] },
     "packages/observability": { "component": "observability", "exclude-paths": ["packages/observability/test"] },
-    "packages/web-ui": { "component": "web-ui", "exclude-paths": ["packages/web-ui/test"] }
+    "packages/web-ui": { "component": "web-ui", "exclude-paths": ["packages/web-ui/test"] },
+    "apps/mobile": { "component": "mobile", "release-type": "dart", "exclude-paths": ["apps/mobile/test"] }
   }
 }

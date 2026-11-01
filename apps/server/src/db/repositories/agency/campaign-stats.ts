@@ -20,6 +20,7 @@ import { AGENCY_STATS_ROUTE_FIELDS } from '@magick-agency/contracts/agency';
 import type {
   AgencyAgentLiveState,
   AgencyAgentsByState,
+  AgencyClientKind,
   AgencyCampaignStats,
   AgencyCampaignStatsBucket,
   AgencyCampaignStatsSeries,
@@ -475,6 +476,7 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     state_since: Date | string;
     break_reason: string | null;
     calls_handled: string;
+    client_kind: AgencyClientKind;
   }>(
     // `calls_handled` counts by `reserved_agent_id`, which is a SESSION id,
     // so this is the attempts handled in THIS session — what
@@ -492,14 +494,15 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
               -- reason after they return, and a stale "Lunch" beside an available
               -- agent reads as a live fact.
               CASE WHEN s.state = 'break' THEN s.break_reason END AS break_reason,
-              COUNT(a.id)::text AS calls_handled
+              COUNT(a.id)::text AS calls_handled,
+              s.client_kind
          FROM agency_agent_sessions s
          LEFT JOIN agency_call_attempts a
                 ON a.reserved_agent_id = s.id
                AND a.bridged_at IS NOT NULL
         WHERE s.campaign_id = $1
           AND s.left_at IS NULL
-        GROUP BY s.id, s.agent_user_id, s.state, s.state_since, s.break_reason`,
+        GROUP BY s.id, s.agent_user_id, s.state, s.state_since, s.break_reason, s.client_kind`,
     [campaignId],
   );
 
@@ -513,6 +516,8 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     state_since: isoOrEpoch(r.state_since),
     break_reason: r.break_reason ?? null,
     calls_handled: Number(r.calls_handled ?? 0),
+    // The app the station last attached from (0006); the floor's phone marker.
+    client_kind: r.client_kind === 'mobile' ? 'mobile' : 'web',
   }));
 }
 

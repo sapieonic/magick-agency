@@ -1,7 +1,10 @@
-// The app-wide rate limiter, registered once, globally, in `app.ts`.
+// The app-wide rate limiter, registered once, globally, in `app.ts`, and the per-user bucket
+// the session middleware charges once it has verified the caller (`registerUserRateLimit`).
 //
 // There are no API keys, so no bucket is keyed on a client-supplied header: unauthenticated
-// traffic keys on the IP. A header that authenticates nothing would be an unauthenticated
+// traffic keys on the IP. (Whether `Authorization: Bearer` is PRESENT picks the `ip_auth`
+// ceiling, but the key is still the IP and the header's value is never read: see
+// `hasBearer`.) A header that authenticates nothing would be an unauthenticated
 // bucket-rotation knob — a fresh value per request would reset every IP budget (including
 // `POST /super-admin/login`'s 5/minute, since per-route configs inherit this `keyGenerator`),
 // a client-chosen value would grow the Redis key space without bound, and a duplicated header
@@ -11,8 +14,9 @@
 // app does not serve (AI media-stream, static/IVR calls, tts-audio, messaging, `/internal/*`):
 // the predicate is the contract, so a route added later lands in the right bucket without
 // re-deciding it here.
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Redis } from 'ioredis';
+import type { UserRecord } from '@magick-agency/db/models/user.model';
 import rateLimit from '@fastify/rate-limit';
 import { createChildLogger } from '@magick-agency/observability';
 import { trackRateLimitRejected } from '@magick-agency/observability/metrics/voice';
@@ -20,8 +24,20 @@ import { trackRateLimitRejected } from '@magick-agency/observability/metrics/voi
 const log = createChildLogger({ component: 'rate-limit' });
 
 const DEFAULT_MAX = 200;
+const DEFAULT_IP_AUTH_MAX = 3000;
+const DEFAULT_USER_MAX = 300;
 const DEFAULT_WEBHOOK_MAX = 1000;
 const DEFAULT_CARRIER_MEDIA_MAX = 600;
+/**
+ * The station socket upgrade's ceiling per IP. Sized for a reconnect storm behind one NAT
+ * (Q9): a Wi-Fi blip on a floor sends every agent down the reconnect ladder at once, 6
+ * upgrades in ~33 s each, so 1200/min holds a 200-agent floor all walking the whole ladder
+ * inside one window. Generous because a refused upgrade is the expensive failure here (a
+ * mid-call agent who cannot reconnect misses the 8 s deferred hangup), and safe because the
+ * upgrade is gated by a single-use token minted over authenticated, per-user-limited HTTP:
+ * an upgrade without one costs a Redis lookup and a 4401 close, and buys nothing.
+ */
+const DEFAULT_STATION_MAX = 1200;
 const DEFAULT_INTERNAL_MAX = 1000;
 const DEFAULT_WINDOW = '1 minute';
 
@@ -80,6 +96,15 @@ const CARRIER_MEDIA_PATH_PREFIXES = [
 const WEBRTC_MEDIA_PARENT_PREFIX = '/api/v1/webrtc-call';
 const WEBRTC_MEDIA_LEG_SUFFIXES = ['/pstn-stream', '/browser-stream'] as const;
 
+/**
+ * The agent station socket upgrade, `/proxy/agency/station/:sessionId` (`agency.plugin.ts`).
+ * Its credential is a single-use query token, not a bearer, so without its own bucket it
+ * shared the plain 200/min `<ip>` counter with every unauthenticated request from that IP —
+ * sign-in, invites, `/client-config` — and a floor behind one NAT reconnecting at once could
+ * spend it. See {@link DEFAULT_STATION_MAX}.
+ */
+const STATION_PATH_PREFIX = '/proxy/agency/station';
+
 /** Control-plane prefix (bearer-authenticated callers). No route is served there today. */
 const INTERNAL_PATH_PREFIX = '/internal';
 
@@ -102,11 +127,17 @@ export type RateLimitBucketKind =
   | 'exempt'
   | 'webhook'
   | 'carrier_media'
+  | 'station'
   | 'internal'
+  | 'ip_auth'
   | 'ip';
 
-/** `exempt` requests are never counted, never limited, and so never rejected. */
-export type RateLimitRejectedBucketKind = Exclude<RateLimitBucketKind, 'exempt'>;
+/**
+ * The `bucket_kind` of a 429: every app-scope bucket but `exempt` (never counted, never
+ * limited, so never rejected), plus `user`, the per-user bucket the session middleware
+ * charges ({@link registerUserRateLimit}).
+ */
+export type RateLimitRejectedBucketKind = Exclude<RateLimitBucketKind, 'exempt'> | 'user';
 
 /**
  * Route classes for the 429 counter's `route_class` label.
@@ -214,6 +245,23 @@ function isCarrierMediaPath(path: string): boolean {
 }
 
 /**
+ * Whether the request carries `Authorization: Bearer …`, the one credential the session
+ * middleware accepts, spelled exactly as it tests it (`startsWith('Bearer ')`).
+ *
+ * PRESENCE only: the token is not verified here (the limiter runs in `onRequest`, before
+ * any auth), and its value never reaches a key. So a forged bearer buys exactly one thing,
+ * the larger `ip_auth` ceiling for its IP, and is then refused 401 by `sessionMiddleware`
+ * on every route that reads it. That is the accepted cost of letting a call floor behind
+ * one carrier-grade NAT share an IP (decision Q9, amended 2026-11-01): the per-IP ceiling
+ * stops being the binding one for verified traffic, and the per-USER bucket
+ * (`registerUserRateLimit`) becomes it. An array (a duplicated header) is not a bearer.
+ */
+function hasBearer(headers: Record<string, unknown>): boolean {
+  const auth = headers['authorization'];
+  return typeof auth === 'string' && auth.startsWith('Bearer ');
+}
+
+/**
  * Which bucket this request belongs to — the SINGLE decision that `keyGenerator`,
  * `max` and `allowList` must all agree on.
  *
@@ -235,7 +283,12 @@ function isCarrierMediaPath(path: string): boolean {
  *  - `/internal/*` is checked on the path and NOT on `Authorization: Bearer`,
  *    which is what it actually authenticates with: a request that forgot the
  *    header would otherwise silently land in a different bucket than the one
- *    the route serves.
+ *    the route serves;
+ *  - `station` on the path, ahead of `ip_auth`, so the upgrade lands in its own bucket
+ *    whatever headers it carries;
+ *  - `ip_auth` (a bearer is present, {@link hasBearer}) last, so a bearer moves
+ *    only what would otherwise be `ip`: webhook, carrier-media, station and internal
+ *    traffic keep their own buckets whatever headers they carry.
  *
  * ⚠️ **Classification is pre-authentication, so the raised ceilings are
  * claimable by anyone who can reach the path.** The limiter runs in `onRequest`,
@@ -264,7 +317,9 @@ export function budgetFor(
   if (EXEMPT_PATHS.some((p) => path === p)) return 'exempt';
   if (isWebhookPath(path)) return 'webhook';
   if (isCarrierMediaPath(path)) return 'carrier_media';
+  if (hasPrefix(path, STATION_PATH_PREFIX)) return 'station';
   if (hasPrefix(path, INTERNAL_PATH_PREFIX)) return 'internal';
+  if (hasBearer(request.headers)) return 'ip_auth';
   return 'ip';
 }
 
@@ -284,12 +339,20 @@ export function routeClassFor(url: string | undefined): RateLimitRouteClass {
 export interface RateLimitOptions {
   /** Max requests per window per key. Default 200. */
   max?: number;
+  /** Max requests per window per IP for requests carrying `Authorization: Bearer`. Default 3000. */
+  ipAuthMax?: number;
   /** Max requests per window for `/api/v1/webhooks/*`. Default 1000 (`DEFAULT_WEBHOOK_MAX`). */
   webhookMax?: number;
   /** Max requests per window for carrier-facing media/clip paths. Default 600. */
   carrierMediaMax?: number;
   /** Max requests per window for `/internal/*` traffic. Default 1000. */
   internalMax?: number;
+  /**
+   * Max station socket upgrades per window per IP. Default 1200 (`DEFAULT_STATION_MAX`).
+   * No env key: the ceilings above come from the voice config block, and this one is fixed
+   * until an operator needs to move it.
+   */
+  stationMax?: number;
   /** Window size (fastify-rate-limit duration string or ms). Default '1 minute'. */
   timeWindow?: string | number;
 }
@@ -325,9 +388,16 @@ export interface RateLimitOptions {
  * |-----------------|----------------|--------------------|
  * | `webhook`       | `wh:<ip>`      | Volume scales with DIAL RATE, not tenant API usage — several lifecycle callbacks per call, all from a handful of carrier IPs. |
  * | `carrier_media` | `cm:<ip>`      | Same IPs, but a 429 on a WS upgrade is dead air on a live call, not a retryable failure. Must not be exhaustible by a webhook storm. Covers the AI + WS-static media streams, the pre-generated TTS clip, and both WebRTC bridge legs. |
+ * | `station`       | `st:<ip>`      | The agent station socket upgrade (its credential is a single-use query token, not a bearer). A NAT'd floor reconnecting at once must not 429 a mid-call agent's reconnect, nor spend the plain bucket. |
  * | `internal`      | `int:<ip>`     | Control-plane callers authenticate with `Authorization: Bearer` from a few egress IPs and retry, so at the `ip` ceiling a breach would amplify exactly as the incident did. |
- * | `ip`            | `<ip>`         | Everything else, including the authenticated API. |
+ * | `ip_auth`       | `ipa:<ip>`     | Any other request carrying `Authorization: Bearer`: a call floor behind one NAT shares an IP (Q9, amended 2026-11-01). Coarse; the per-user bucket below binds verified traffic. |
+ * | `ip`            | `<ip>`         | Everything else: unauthenticated traffic. |
  * | `exempt`        | (not limited)  | `/healthz`, `/readyz` (exact paths only) — a 429 here fails the readiness gate. |
+ *
+ * Behind those, inside the authenticated scopes, every request whose bearer verified is
+ * charged once more, to `u:<user id>` ({@link registerUserRateLimit}, default 300). That
+ * one is keyed on WHO is calling, so two agents behind one IP never share it, and one agent
+ * cannot spend a colleague's budget.
  *
  * One consequence of exempting the probes: the plugin's store errors are not
  * swallowed (`skipOnError` is left at its default `false`), so during a Redis
@@ -348,12 +418,14 @@ export async function registerRateLimit(
   opts?: RateLimitOptions,
 ): Promise<void> {
   const max = opts?.max ?? DEFAULT_MAX;
+  const ipAuthMax = opts?.ipAuthMax ?? DEFAULT_IP_AUTH_MAX;
   const webhookMax = opts?.webhookMax ?? DEFAULT_WEBHOOK_MAX;
   const carrierMediaMax = opts?.carrierMediaMax ?? DEFAULT_CARRIER_MEDIA_MAX;
   const internalMax = opts?.internalMax ?? DEFAULT_INTERNAL_MAX;
+  const stationMax = opts?.stationMax ?? DEFAULT_STATION_MAX;
   const timeWindow = opts?.timeWindow ?? DEFAULT_WINDOW;
 
-  const ceilings = { max, webhookMax, carrierMediaMax, internalMax, timeWindow };
+  const ceilings = { max, ipAuthMax, webhookMax, carrierMediaMax, stationMax, internalMax, timeWindow };
   if (redis) {
     log.info(ceilings, 'Rate limiter using Redis store (cluster-wide limits)');
   } else {
@@ -365,7 +437,9 @@ export async function registerRateLimit(
     switch (kind) {
       case 'webhook': return webhookMax;
       case 'carrier_media': return carrierMediaMax;
+      case 'station': return stationMax;
       case 'internal': return internalMax;
+      case 'ip_auth': return ipAuthMax;
       case 'ip': return max;
       // `exempt` is never limited, so its ceiling is unreachable — but it is
       // enumerated rather than swallowed by a `default`, because a `default`
@@ -404,7 +478,11 @@ export async function registerRateLimit(
       switch (kind) {
         case 'webhook': return `wh:${request.ip}`;
         case 'carrier_media': return `cm:${request.ip}`;
+        case 'station': return `st:${request.ip}`;
         case 'internal': return `int:${request.ip}`;
+        // Its own namespace, never the plain `<ip>` counter: one counter under two ceilings
+        // would let a NAT's bearer traffic 429 every unauthenticated request from that IP.
+        case 'ip_auth': return `ipa:${request.ip}`;
         // `exempt` is not limited, but the plugin still computes a key for it
         // before consulting `allowList`, so it needs a value. The plain IP is
         // the honest one — nothing is ever counted against it.
@@ -444,13 +522,111 @@ export async function registerRateLimit(
         // rejection into a server error.
       }
     },
-    errorResponseBuilder: (_request, context) => {
-      return {
-        error: 'Too Many Requests',
-        message: `Rate limit exceeded. Try again in ${Math.round(context.ttl / 1000)} seconds.`,
-        statusCode: 429,
-        retryAfter: Math.round(context.ttl / 1000),
-      };
-    },
+    errorResponseBuilder: (_request, context) => rateLimitErrorBody(context.ttl),
   });
+}
+
+/**
+ * The authored 429 body, THROWN as a plain object (as `@fastify/rate-limit` throws it);
+ * `error-handler.middleware.ts` keeps its label and `retryAfter`. One builder for both
+ * limiters, so a client reads one shape whichever bucket refused it.
+ */
+function rateLimitErrorBody(ttlMs: number): {
+  error: string; message: string; statusCode: 429; retryAfter: number;
+} {
+  return {
+    error: 'Too Many Requests',
+    message: `Rate limit exceeded. Try again in ${Math.round(ttlMs / 1000)} seconds.`,
+    statusCode: 429,
+    retryAfter: Math.round(ttlMs / 1000),
+  };
+}
+
+/** Charges the per-user bucket for a verified caller; throws the 429 when it is spent. */
+export type ChargeUserRateLimit = (request: FastifyRequest & { user: UserRecord }, reply: FastifyReply) => Promise<void>;
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    /**
+     * Set on the root app by {@link registerUserRateLimit} (`app.ts`), so every scope
+     * inherits it. Optional because an app built from route plugins alone (unit tests)
+     * has none, and the session middleware then charges nothing.
+     */
+    chargeUserRateLimit?: ChargeUserRateLimit;
+  }
+}
+
+export interface UserRateLimitOptions {
+  /** Max requests per window per verified user. Default 300 (`RATE_LIMIT_USER_MAX`). */
+  max?: number;
+  /** The IP buckets' window (`RATE_LIMIT_WINDOW`). Default '1 minute'. */
+  timeWindow?: string | number;
+}
+
+/**
+ * The per-USER bucket (decision Q9, amended 2026-11-01), keyed `u:<user id>` on the user
+ * the session middleware verified, never on anything a client sent. `sessionMiddleware`
+ * charges it once `request.user` is set, so it covers every route that authenticates a
+ * person and no route can forget it. Super-admin routes (their own JWT, no `request.user`)
+ * are not charged; they stay on the IP buckets.
+ *
+ * Built on `createRateLimit`, not `app.rateLimit()`: the latter's handler returns at once
+ * on a request the app-scope limiter already ran on (both share the plugin's one
+ * per-request latch), so a second limiter built that way would count nothing.
+ * `createRateLimit` only counts, so the 429 is raised here, with the plugin's body and
+ * headers and the same `rate_limit_rejected_total` series (`bucket_kind="user"`).
+ *
+ * Same store as the IP buckets (Redis in production) and the same `skipOnError: false`:
+ * during a Redis outage an authenticated request is a masked 5xx, never a 401 (which the
+ * console reads as a signed-out session). On success it sets no `x-ratelimit-*` header;
+ * those stay the IP bucket's.
+ *
+ * Register after {@link registerRateLimit}, which provides `createRateLimit`.
+ */
+export function registerUserRateLimit(app: FastifyInstance, opts?: UserRateLimitOptions): void {
+  const max = opts?.max ?? DEFAULT_USER_MAX;
+  const timeWindow = opts?.timeWindow ?? DEFAULT_WINDOW;
+  app.decorate('chargeUserRateLimit', createUserRateLimit(app, { namespace: 'u', max, timeWindow }));
+  log.info({ max, timeWindow }, 'Per-user rate limit registered');
+}
+
+/**
+ * A per-USER bucket keyed `<namespace>:<user id>`: the mechanism behind
+ * {@link registerUserRateLimit}, and a route's own tighter per-user cap (the uplink probe's
+ * `up:`), charged after `request.user` is set. The namespace keeps each cap its own counter,
+ * so a route cap never spends, or is spent by, the general per-user budget. A 429 is the
+ * same body and headers as every other bucket's, counted as `bucket_kind="user"`.
+ *
+ * Needs `createRateLimit`, which {@link registerRateLimit} provides; throws without it, so
+ * a cap cannot silently be missing.
+ */
+export function createUserRateLimit(
+  app: FastifyInstance,
+  opts: { namespace: string; max: number; timeWindow?: string | number },
+): ChargeUserRateLimit {
+  if (!app.hasDecorator('createRateLimit')) {
+    throw new Error('createUserRateLimit needs @fastify/rate-limit registered first (registerRateLimit)');
+  }
+  const limit = app.createRateLimit({
+    max: opts.max,
+    timeWindow: opts.timeWindow ?? DEFAULT_WINDOW,
+    // `request.user` is set by every caller before this runs; a missing one (unreachable)
+    // lands in one shared bucket rather than throwing inside the request path.
+    keyGenerator: (request) => `${opts.namespace}:${request.user?.id ?? ''}`,
+  });
+
+  return async (request, reply) => {
+    const result = await limit(request);
+    if (result.isAllowed || !result.isExceeded) return;
+    try {
+      trackRateLimitRejected('user', routeClassFor(request.url));
+    } catch {
+      // As in `onExceeded`: losing one sample beats turning the 429 into a 500.
+    }
+    void reply.header('x-ratelimit-limit', result.max);
+    void reply.header('x-ratelimit-remaining', 0);
+    void reply.header('x-ratelimit-reset', result.ttlInSeconds);
+    void reply.header('retry-after', result.ttlInSeconds);
+    throw rateLimitErrorBody(result.ttl);
+  };
 }

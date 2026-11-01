@@ -1,0 +1,29 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Merged into the app. Normal permissions are granted at install; RECORD_AUDIO,
+         POST_NOTIFICATIONS (33+) and BLUETOOTH_CONNECT (31+) are runtime permissions the app
+         requests (see the plugin README). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- startBluetoothSco below Android 12. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <!-- Android 12+: not needed for routing through AudioManager; declared so the app can ask
+         for it if a device withholds headset names without it. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <application>
+        <!-- The on-duty service: keeps the process, the station socket and the microphone
+             available while the app is briefly in the background. Started at "Go on duty"
+             while the app is on screen (Android 14 refuses a microphone service otherwise).
+             stopWithTask: swiping the app away ends the shift's audio with it. -->
+        <service
+            android:name="com.magickagency.agent_audio.OnDutyService"
+            android:exported="false"
+            android:foregroundServiceType="microphone"
+            android:stopWithTask="true" />
+    </application>
+</manifest>

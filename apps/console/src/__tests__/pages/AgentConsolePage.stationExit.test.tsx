@@ -29,8 +29,13 @@ const mocks = vi.hoisted(() => ({
   hangupAttempt: vi.fn(),
   leaveAgencySession: vi.fn(),
   useTenant: vi.fn(),
+  trackAgencyStationJoinFailed: vi.fn(),
 }));
 vi.mock('../../api/agency', () => mocks);
+vi.mock('../../analytics/events', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../analytics/events')>()),
+  trackAgencyStationJoinFailed: mocks.trackAgencyStationJoinFailed,
+}));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -41,7 +46,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { ApiError } from '../../api/client';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
-import { rememberLiveSessionFromBootstrap, rememberLiveSessionFromConflict, readLiveSession } from '../../utils/agencyLiveSession';
+import { clearAllLiveSessions, rememberLiveSessionFromBootstrap, rememberLiveSessionFromConflict, readLiveSession } from '../../utils/agencyLiveSession';
 
 const ATTEMPT: AgencyReservedAttempt = {
   attempt_id: 'att-1',
@@ -754,6 +759,52 @@ describe('AgentConsolePage — the join conflict', () => {
  * resume the existing session there and learn its id, `leaveAgencySession` on
  * it, then `createAgencySession('camp-1')` to join here for real.
  */
+/**
+ * 403 `not_staffed`: the API refuses a join on a campaign the agent is not staffed on (a
+ * supervisor's role is exempt, server-side). The screen is `StationFatal` with the API's
+ * own sentence, never the conflict screen (there is no station to leave) and never a bare
+ * "Forbidden", and its escape is the landing screen that will not bounce them back.
+ */
+describe('AgentConsolePage — not staffed on the campaign', () => {
+  const SENTENCE = "You're not assigned to this campaign. Ask your supervisor to add you.";
+  const notStaffed = (body: Record<string, unknown> = { message: SENTENCE }) =>
+    new ApiError(403, { error: 'Forbidden', code: 'not_staffed', ...body });
+
+  // A live session another case remembered would refuse the join locally, before any POST.
+  beforeEach(() => clearAllLiveSessions());
+
+  it('says so in the API’s words, with the way home', async () => {
+    mocks.createAgencySession.mockRejectedValue(notStaffed());
+
+    await mounted();
+
+    const fatal = await screen.findByRole('alert');
+    expect(fatal.textContent).toContain('Can’t open the station');
+    expect(fatal.textContent).toContain(SENTENCE);
+    expect(screen.queryByTestId('join-conflict')).toBeNull();
+    expect(screen.getByTestId('station-escape').getAttribute('href')).toBe('/dialer?left=refused');
+    expect(mocks.trackAgencyStationJoinFailed).toHaveBeenCalledWith({ reason: 'not_staffed', conflict_state: null });
+  });
+
+  it('falls back to its own sentence when the refusal carries none', async () => {
+    mocks.createAgencySession.mockRejectedValue(notStaffed({ message: '   ' }));
+
+    await mounted();
+
+    const fatal = await screen.findByRole('alert');
+    expect(fatal.textContent).toContain('You’re not assigned to this campaign. Ask your supervisor to add you.');
+  });
+
+  it('does not remember a live session, so the next campaign still POSTs', async () => {
+    mocks.createAgencySession.mockRejectedValue(notStaffed());
+
+    await mounted();
+    await screen.findByRole('alert');
+
+    expect(readLiveSession('tenant-1')).toBeNull();
+  });
+});
+
 describe('AgentConsolePage — the join conflict’s one-click switch', () => {
   const conflict = (state: string) =>
     new ApiError(409, {

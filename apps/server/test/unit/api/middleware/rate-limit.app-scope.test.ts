@@ -6,7 +6,8 @@ import type { FastifyInstance } from 'fastify';
  * bucket — and the per-route `config.rateLimit` blocks are still honoured by that one
  * registration (the platform plugin registers no limiter of its own, see `platform.plugin.ts`).
  * Through the REAL app (`buildApp`, in-memory store):
- *  - `POST /super-admin/login`: 5/minute (`super-admin.routes.ts`) — the 6th is a 429;
+ *  - `POST /super-admin/login`: 5/minute per IP (`super-admin/login.ts`) — the 6th is a 429,
+ *    with or without a bearer (the route pins its own key);
  *  - `GET /invites/:token` and `POST /invites/:token/claim`: `PUBLIC_INVITE_RATE_LIMIT`,
  *    20/minute per IP — the 21st is a 429, each route its own counter;
  *  - `POST /auth/session` (no per-route limit; the voice plugin's limiter is plugin-scoped)
@@ -97,6 +98,24 @@ describe('client headers cannot rotate the bucket (the deleted API-key bucket)',
         method: 'POST',
         url: '/super-admin/login',
         headers: { 'x-api-key': `guess-${i}-${Math.random()}`, 'x-mgkvc-tenant': `tenant-${i}` },
+        payload: {},
+      });
+      statuses.push(res.statusCode);
+    }
+    expect(statuses.slice(0, 5).every((s) => s !== 429)).toBe(true);
+    expect(statuses[5]).toBe(429);
+  });
+
+  // A per-route limit inherits the app-scope `keyGenerator`, which keys a bearer request
+  // `ipa:<ip>` and one without `<ip>`: two counters, 10 guesses a minute. `login.ts` pins
+  // its own key. Mutation-checked: dropping that `keyGenerator` reds this case.
+  it('POST /super-admin/login: alternating a bogus bearer with none still hits the 5/minute wall', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 6; i += 1) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/super-admin/login',
+        headers: i % 2 === 0 ? { authorization: `Bearer forged-${i}` } : {},
         payload: {},
       });
       statuses.push(res.statusCode);

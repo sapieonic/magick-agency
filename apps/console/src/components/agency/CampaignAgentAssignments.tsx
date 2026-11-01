@@ -29,10 +29,10 @@ import styles from './CampaignAgentAssignments.module.css';
  *
  * ── Staffing, never authorization ──────────────────────────────────────────
  * An assignment decides where an `agent` is *sent by default* when they open
- * the app — nothing more. Joining a station is gated on
- * `agency.station.connect` alone, so a supervisor covering a shift can still
- * join a campaign nobody assigned them to, which is the case the API's RBAC
- * comments protect explicitly.
+ * the app, and which campaigns they may start a station on: the API refuses an
+ * agent's join elsewhere (`not_staffed`). It grants nothing: joining is gated on
+ * `agency.station.connect`, and a supervisor covering a shift can still join a
+ * campaign nobody assigned them to (their role is exempt from the check).
  *
  * ── Several campaigns per person, one at a time, and no live session touched ──
  * The API enforces one active assignment per user per CAMPAIGN (the `uq_agency_campaign_agent_active_campaign` index),

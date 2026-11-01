@@ -131,6 +131,35 @@ describe('agency session and attempt audits', () => {
     await app.close();
   });
 
+  it('a device_away break that took effect is audited like any break', async () => {
+    mocks.proxyToCore.mockResolvedValue({
+      status: 200,
+      body: { session_id: SESSION, campaign_id: CAMPAIGN, kind: 'campaign', state: 'break', since: 'x', break_reason: 'device_away' },
+    });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/break`, payload: { reason: 'device_away' } });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'agency_session.break_started',
+      resource_id: SESSION,
+      details: { reason: 'device_away', campaign_id: CAMPAIGN },
+    }));
+    await app.close();
+  });
+
+  it('a device_away that changed nothing writes no row, and the client never sees the marker', async () => {
+    mocks.proxyToCore.mockResolvedValue({
+      status: 200,
+      body: { session_id: SESSION, campaign_id: CAMPAIGN, kind: 'campaign', state: 'break', since: 'x', break_reason: 'lunch', break_unchanged: true },
+    });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/break`, payload: { reason: 'device_away' } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ session_id: SESSION, campaign_id: CAMPAIGN, kind: 'campaign', state: 'break', since: 'x', break_reason: 'lunch' });
+    expect(mocks.auditLog).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('break-cancel audits the session', async () => {
     const app = await buildApp();
     await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/break/cancel` });

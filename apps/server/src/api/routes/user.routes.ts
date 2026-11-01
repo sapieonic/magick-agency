@@ -92,10 +92,11 @@ function primaryMembership(memberships: MembershipRecord[]): MembershipRecord | 
  * ── Closing a staffing row REVOKES NOTHING, which is what makes this safe to do
  *    automatically ─────────────────────────────────────────────────────────
  * Staffing is not authorization. The module header of
- * `proxy-agency-staffing.routes.ts` says so at length: nothing consults this
- * table to decide whether a station join is allowed — `agency.station.connect`
- * does, and the membership change is what takes that away. A row here only decides
- * where an agent is SENT by default. So this is tidying a navigation list on a
+ * `proxy-agency-staffing.routes.ts` says so at length: whether a station join is
+ * allowed at all is `agency.station.connect`'s, and the membership change is what
+ * takes that away. A row here decides where an agent is SENT by default and narrows
+ * which campaigns they may START a session on (`not_staffed`); it grants nothing, so
+ * closing it takes nothing away. So this is tidying a staffing list on a
  * decision somebody already made, not an access change of its own, and it needs no
  * confirmation and no separate permission.
  *

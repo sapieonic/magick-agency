@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Invite links (https://<console host>/agency/join/<token>) open the app. iOS has no
+	     flavours here: every build uses this one list, which holds the production console's host.
+	     Nothing adds another host at build time; edit this list when the console domain is
+	     decided, and add the staging host here by hand for a staging build. The server serves
+	     the matching /.well-known/apple-app-site-association (docker/nginx.conf). -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:agency.example.invalid</string>
+	</array>
+</dict>
+</plist>

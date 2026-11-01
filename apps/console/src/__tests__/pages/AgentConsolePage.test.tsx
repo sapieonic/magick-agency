@@ -375,6 +375,14 @@ describe('criterion (d) — reachable and operable from the keyboard', () => {
     expect(mocks.setAgentAvailable).toHaveBeenCalledTimes(1);
   });
 
+  it('names the mobile app\'s device-away break by its label if this station ever sees it (no catalog lists it)', async () => {
+    await mounted();
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'break', break_reason: 'device_away', since: '2026-08-11T10:00:00.000Z' });
+    });
+    expect(screen.getByTestId('rail-label').textContent).toBe('On break — Away (app in background)');
+  });
+
   it('B opens the break menu and lands focus inside it', async () => {
     await mounted();
 

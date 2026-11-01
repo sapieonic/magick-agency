@@ -123,7 +123,31 @@ describe('session create — who is joining', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: AGENT_USER });
+    // `client_kind` is from `X-Client` (none here: `web`); it picks the intervals served.
+    // `supervise: false`: an agent's role cannot supervise, so the internal handler
+    // applies the staffing check (`not_staffed`).
+    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: AGENT_USER, client_kind: 'web', supervise: false });
+    await app.close();
+  });
+
+  it('sends client_kind mobile for the mobile app\'s X-Client, and web for anything else', async () => {
+    const app = await buildApp({ role: 'agent' });
+    const cases: Array<[string | undefined, 'web' | 'mobile']> = [
+      ['magick-agency-mobile/1.4.0+212 (android 14; Pixel 8)', 'mobile'],
+      ['magick-agency-mobile/0.9.1+7 (ios 17.5; iPhone15,2)', 'mobile'],
+      ['Mozilla/5.0 (X11; Linux x86_64)', 'web'],
+      ['magick-agency-mobil/1.0.0', 'web'],
+      [undefined, 'web'],
+    ];
+    for (const [header, kind] of cases) {
+      mocks.proxyToCore.mockClear();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/sessions`, payload: { campaign_id: CAMPAIGN },
+        headers: header === undefined ? {} : { 'x-client': header },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(sentBody()['client_kind'], String(header)).toBe(kind);
+    }
     await app.close();
   });
 
@@ -152,7 +176,21 @@ describe('session create — who is joining', () => {
       method: 'POST', url: `${PREFIX}/sessions`, payload: { campaign_id: CAMPAIGN },
     });
 
-    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: 'user-supervisor' });
+    // `supervise: true` (the role's, for the staffing exemption) is not `on_behalf`.
+    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: 'user-supervisor', client_kind: 'web', supervise: true });
+    await app.close();
+  });
+
+  it('derives supervise from the role, never from the browser', async () => {
+    // An agent asserting `supervise: true` would skip the staffing check and join any
+    // campaign. Zod strips the key and the route sets it after, from the membership.
+    const app = await buildApp({ role: 'agent' });
+    await app.inject({
+      method: 'POST', url: `${PREFIX}/sessions`,
+      payload: { campaign_id: CAMPAIGN, supervise: true },
+    });
+
+    expect(sentBody()['supervise']).toBe(false);
     await app.close();
   });
 

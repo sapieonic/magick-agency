@@ -8,6 +8,29 @@
 import type { AgencyStationWrapupFrame, AgencyWrapupState } from './actions';
 import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, AgencyCampaignStatus } from './enums';
 import type { AgencyStationManualCallFrame } from './softphone';
+import type { AllListed } from '../primitives';
+
+// ─── Which client is on the other end ───────────────────────────────────────
+
+/**
+ * Which app an agent is working from: the browser console (`web`) or the agent
+ * mobile app (`mobile`).
+ *
+ * Declared by the client, never verified, so it is NEVER an auth input or a
+ * rate-limit key. It tunes liveness only (a mobile station is probed with protocol
+ * pings and given `MOBILE_STATION_HEARTBEAT_GRACE_MS`), labels logs and marks the
+ * supervisor's floor. Over HTTP it is read from `X-Client`
+ * (`magick-agency-mobile/<semver>+<build> (<ios|android> <osver>; <model>)`; anything
+ * else, or no header, is `web`); on the station socket from the upgrade query
+ * (`client=web|mobile`). Stored on `agency_agent_sessions.client_kind`, written by
+ * every station attach (0006).
+ */
+export type AgencyClientKind = 'web' | 'mobile';
+
+export const AGENCY_CLIENT_KINDS = ['web', 'mobile'] as const satisfies readonly AgencyClientKind[];
+
+const _allClientKindsListed: AllListed<AgencyClientKind, typeof AGENCY_CLIENT_KINDS> = true;
+void _allClientKindsListed;
 
 // ─── The station socket envelope ────────────────────────────────────────────
 //
@@ -21,7 +44,11 @@ import type { AgencyStationManualCallFrame } from './softphone';
 // found while implementing Phase 0 and is the single most likely thing to break a
 // client written from the design alone, which does not mention it.
 //
-// Every frame is JSON with an `event` discriminant. Non-JSON frames are ignored.
+// Every **text** frame is JSON with an `event` discriminant; non-JSON text frames are
+// ignored. **Binary** frames carry nothing but audio, and only on a socket that chose
+// the compact media format at upgrade (`media=alaw8`, see
+// {@link AgencyStationMediaFormat}); on the default `pcm16` socket a binary frame is
+// ignored.
 
 /**
  * Frames the agent console sends to the station handler.
@@ -48,11 +75,51 @@ export interface AgencyStationPingFrame {
  * Outbound audio: base64 PCM16 @ 16kHz, matching the existing browser dialer's
  * frame exactly. The bridge transcodes per provider; the console does not.
  * Frames sent while no attempt is bridged are dropped by the dialer runtime, not an error.
+ *
+ * **`pcm16` sockets only** (the default {@link AgencyStationMediaFormat}). On an
+ * `alaw8` socket the server neither sends this frame nor reads it: a JSON `media`
+ * frame there is ignored, and audio travels as binary frames instead.
  */
 export interface AgencyStationMediaFrame {
   event: 'media';
   media: { payload: string };
 }
+
+/**
+ * The agent leg's audio format on one station socket, chosen by the upgrade query
+ * `media=pcm16|alaw8` (absent ⇒ `pcm16`). Any other value, an empty one or a repeated
+ * parameter is refused with close code 1008 before the socket is attached, and before
+ * the single-use token is consumed.
+ *
+ *  - `pcm16` — {@link AgencyStationMediaFrame} JSON text frames both ways: base64
+ *    PCM16, 16 kHz mono (~340 kbit/s each way on the wire). The browser console.
+ *  - `alaw8` — **binary** WebSocket frames both ways carrying raw G.711 A-law, 8 kHz
+ *    mono, one byte per sample, no header (64 kbit/s plus framing). The mobile app.
+ *    - client → server: any whole number of 20 ms frames, i.e. a length that is a
+ *      non-zero multiple of {@link AGENCY_STATION_ALAW8_FRAME_BYTES} and at most
+ *      {@link AGENCY_STATION_ALAW8_MAX_FRAME_BYTES}; anything else is dropped.
+ *    - server → client: exactly one 20 ms frame
+ *      ({@link AGENCY_STATION_ALAW8_FRAME_BYTES} bytes) per binary message.
+ *    - text frames stay JSON control frames (`ping`, and every server frame in
+ *      {@link AgencyStationServerFrame} except `media`).
+ *
+ * In both formats audio sent while no attempt is bridged is dropped, not an error.
+ * The format belongs to the socket: a reconnect may choose another, and the call it
+ * resumes switches with it.
+ */
+export type AgencyStationMediaFormat = 'pcm16' | 'alaw8';
+
+/** Every {@link AgencyStationMediaFormat}, default first. */
+export const AGENCY_STATION_MEDIA_FORMATS = ['pcm16', 'alaw8'] as const satisfies readonly AgencyStationMediaFormat[];
+
+const _allMediaFormatsListed: AllListed<AgencyStationMediaFormat, typeof AGENCY_STATION_MEDIA_FORMATS> = true;
+void _allMediaFormatsListed;
+
+/** One 20 ms frame of `alaw8` audio: 8000 samples/s × 0.02 s × 1 byte. */
+export const AGENCY_STATION_ALAW8_FRAME_BYTES = 160;
+
+/** Largest `alaw8` binary message the server accepts from a client: 1 s of audio. */
+export const AGENCY_STATION_ALAW8_MAX_FRAME_BYTES = 8000;
 
 /**
  * **WITHDRAWN. Do not send this frame; nothing reads it.**
@@ -125,6 +192,18 @@ export interface AgencyStationReadyFrame {
   event: 'ready';
   session_id: string;
   state: AgencyAgentState;
+  /**
+   * The break's code when `state` is `break`, with the same meaning as
+   * {@link AgencyStationAgentStateFrame.break_reason}. Absent when not on break, or on a
+   * break with no recorded reason (a rehydrate after a restart).
+   *
+   * Without it a reconnect could say only "on break": the `agent_state` frame that named
+   * the reason is gone by then. That matters most for the mobile app, which is paused
+   * with `device_away` when it leaves the foreground and is often killed by the OS while
+   * paused: on relaunch this is how it knows to say "you left the app" rather than show
+   * a generic break.
+   */
+  break_reason?: string;
   /** Set when the socket reconnected onto an attempt that is still live. */
   active_attempt?: AgencyActiveAttempt;
   /**
@@ -499,19 +578,24 @@ export interface AgencyStationBridgeEndedFrame {
  */
 export interface AgencyStationTokenResponse {
   session_id: string;
+  /** RELATIVE path with the token appended, as on `AgencySessionBootstrap.station_ws_url`. */
   station_ws_url: string;
   /** ISO-8601. Single-use, and short — see `station_token_expires_at`. */
   expires_at: string;
 }
 
 /**
- * Close codes the dialer runtime uses on the station socket, in the private-use range.
- * The one declaration: the server closes with these names and the console
- * switches on them.
+ * Close codes the dialer runtime uses on the station socket: its own in the private-use
+ * range, and the two standard ones it also sends. The one declaration: the server
+ * closes with these names and the clients switch on them.
  *
  * The distinction that matters to the console is **re-mint and retry** versus
  * **re-bootstrap**: retrying a dead session forever looks identical to a network
  * problem from the agent's side, and gives them nothing to act on.
+ *
+ * The two RFC 6455 codes the station also closes with (1008, 1011) are listed too, so a
+ * client can tell them from an ordinary drop. Any code not listed here is an ordinary
+ * drop: re-mint and retry.
  */
 export const AGENCY_STATION_CLOSE = {
   /** Token missing, expired, already used, or wrong. Re-mint and retry. */
@@ -533,6 +617,20 @@ export const AGENCY_STATION_CLOSE = {
   HEARTBEAT_TIMEOUT: 4408,
   /** Superseded by a newer socket for the same session. Do not retry. */
   SUPERSEDED: 4409,
+  /**
+   * RFC 6455 policy violation: the upgrade itself was refused before the station
+   * handler ran. A `client=` or `media=` this server does not speak (the close reason
+   * says which: `invalid_client` / `invalid_media`), or a session id that would escape
+   * the station path. **Do not retry**: the same upgrade is refused again, and a fresh
+   * token does not change it (the token is not consumed).
+   */
+  INVALID_UPGRADE: 1008,
+  /**
+   * RFC 6455 internal error: the server could not run the station handler (no agency
+   * runtime). Retryable, but a client should BOUND its retries on this code: unlike a
+   * network drop it says the server is up and broken, and retrying forever hides that.
+   */
+  INTERNAL_ERROR: 1011,
 } as const;
 
 /** One of {@link AGENCY_STATION_CLOSE}'s codes. */

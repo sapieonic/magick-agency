@@ -1,0 +1,72 @@
+{
+  "hangup_response": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+    "state": "bridged",
+    "outcome": null
+  },
+  "disposition_request_callback": {
+    "disposition_code": "callback",
+    "notes": "Wants a call on Tuesday after 6pm, prefers Marathi.",
+    "callback_at": "2026-11-03T12:30:00.000Z"
+  },
+  "disposition_request_plain": {
+    "disposition_code": "interested"
+  },
+  "disposition_response_callback": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+    "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+    "disposition_code": "callback",
+    "contact_state": "pending",
+    "next_attempt_at": "2026-11-04T03:30:00.000Z",
+    "callback_requested_at": "2026-11-03T12:30:00.000Z",
+    "agent_state": "available"
+  },
+  "disposition_response_completed": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+    "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+    "disposition_code": "interested",
+    "contact_state": "completed",
+    "next_attempt_at": null,
+    "callback_requested_at": null,
+    "agent_state": "available"
+  },
+  "notes_request": {
+    "notes": "Customer asked about the no-claim bonus."
+  },
+  "notes_response": {
+    "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+    "notes": "Customer asked about the no-claim bonus.",
+    "updated_at": "2026-11-01T06:42:30.118Z"
+  },
+  "dnc_request": {
+    "scope": "campaign",
+    "reason": "Customer asked not to be called about renewals."
+  },
+  "dnc_response": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+    "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+    "phone_e164": "+918765432109",
+    "contact_state": "suppressed",
+    "dnc_recorded": false
+  },
+  "error_unknown_disposition_code": {
+    "error": "Validation failed",
+    "code": "unknown_disposition_code",
+    "message": "That outcome is not on this campaign's list.",
+    "allowed_codes": ["interested", "not_interested", "wrong_number", "voicemail", "callback", "do_not_call"]
+  },
+  "error_break_already_applied": {
+    "error": "Conflict",
+    "code": "break_already_applied",
+    "message": "Your break already started."
+  },
+  "error_session_ended": {
+    "error": "Conflict",
+    "code": "session_ended",
+    "message": "This station session has ended."
+  }
+}

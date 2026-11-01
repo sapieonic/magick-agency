@@ -556,4 +556,50 @@ describe('AgencyCampaignAgentRepository (integration)', () => {
       expect(await repo.listActiveForCampaign(randomUUID(), tenant.id)).toEqual([]);
     });
   });
+
+  // The join's staffing check (`POST /proxy/agency/sessions`, `not_staffed`). "Active" must
+  // mean exactly what `listActiveForUser` (`/my-assignments`) lists, or the picker offers
+  // a campaign the join refuses.
+  describe('isActiveOnCampaign', () => {
+    it('is true for an open row, on that campaign only', async () => {
+      await repo.assign(assignInput({ campaign_id: CAMPAIGN_A }));
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_A, user.id)).toBe(true);
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_B, user.id)).toBe(false);
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_A, supervisor.id)).toBe(false);
+    });
+
+    it('is false once the row is closed, by an unassign or an offboarding', async () => {
+      await repo.assign(assignInput({ campaign_id: CAMPAIGN_A }));
+      await repo.assign(assignInput({ campaign_id: CAMPAIGN_B }));
+      await repo.unassign(tenant.id, CAMPAIGN_A, user.id);
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_A, user.id)).toBe(false);
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_B, user.id)).toBe(true);
+
+      await repo.closeAllForUser(tenant.id, user.id);
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_B, user.id)).toBe(false);
+    });
+
+    it('is true again after a re-assign, which opens a new row beside the closed one', async () => {
+      await repo.assign(assignInput({ campaign_id: CAMPAIGN_A }));
+      await repo.unassign(tenant.id, CAMPAIGN_A, user.id);
+      await repo.assign(assignInput({ campaign_id: CAMPAIGN_A }));
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_A, user.id)).toBe(true);
+    });
+
+    it('agrees with listActiveForUser, the /my-assignments read', async () => {
+      await repo.assign(assignInput({ campaign_id: CAMPAIGN_A }));
+      await repo.assign(assignInput({ campaign_id: CAMPAIGN_B }));
+      await repo.unassign(tenant.id, CAMPAIGN_B, user.id);
+      const listed = new Set((await repo.listActiveForUser(tenant.id, user.id)).map((r) => r.campaign_id));
+      for (const campaign of [CAMPAIGN_A, CAMPAIGN_B, CAMPAIGN_C]) {
+        expect(await repo.isActiveOnCampaign(tenant.id, campaign, user.id), campaign).toBe(listed.has(campaign));
+      }
+    });
+
+    it('is tenant-scoped: a row in another tenant on the same campaign id does not count', async () => {
+      await repo.assign(assignInput({ tenant_id: otherTenant.id, account_id: null, campaign_id: CAMPAIGN_A }));
+      expect(await repo.isActiveOnCampaign(tenant.id, CAMPAIGN_A, user.id)).toBe(false);
+      expect(await repo.isActiveOnCampaign(otherTenant.id, CAMPAIGN_A, user.id)).toBe(true);
+    });
+  });
 });

@@ -18,7 +18,7 @@ import {
 import { dispositionErrorMessage } from '../../../agency/disposition.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
-import { DEFERRED_HANGUP_MS, STATION_HEARTBEAT_GRACE_MS } from '@magick-agency/domain/timers';
+import { DEFERRED_HANGUP_MS, STATION_HEARTBEAT_GRACE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { resolveCallingWindow, scheduleCallbackInWindow } from '../../../agency/calling-hours.js';
 import type {
   AgencyActionErrorCode,
@@ -131,6 +131,23 @@ export const STATION_INTERVALS: AgencyStationIntervals = {
   countdown_ms: 3_000,
   deferred_hangup_ms: DEFERRED_HANGUP_MS,
 };
+
+/** The mobile app's intervals: {@link STATION_INTERVALS} with the mobile heartbeat grace. */
+const MOBILE_STATION_INTERVALS: AgencyStationIntervals = Object.freeze({
+  ...STATION_INTERVALS,
+  heartbeat_grace_ms: stationHeartbeatGraceMs('mobile'),
+});
+
+/**
+ * The intervals a session is served, by the client kind its join named
+ * (`client_kind` on the internal body, which the public API layer parses from
+ * `X-Client`). Only `heartbeat_grace_ms` differs: a mobile station is held to the grace
+ * the sweep enforces on it (`stationGraceFor`), from the same source. Anything that is
+ * not exactly `mobile` is the web's, so a body without the field is unchanged.
+ */
+export function stationIntervalsFor(clientKind: unknown): AgencyStationIntervals {
+  return clientKind === 'mobile' ? MOBILE_STATION_INTERVALS : STATION_INTERVALS;
+}
 
 /** A 4xx in the closed `AgencyActionErrorResponse` shape the public API layer passes through. */
 export function sendActionError(

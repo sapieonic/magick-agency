@@ -94,8 +94,8 @@ export type AgencyActionErrorCode =
    * bridged into one headset.
    *
    * The only member of this union that sets `campaign_id` / `campaign_name` /
-   * `state`; see {@link AgencySessionCampaignConflict}, which narrows this shape
-   * for it. Those fields are read against this code exactly as `allowed_codes` is
+   * `state` / `session_id` / `account_id` / `account_name`; see
+   * {@link AgencySessionCampaignConflict}, which narrows this shape for it. Those fields are read against this code exactly as `allowed_codes` is
    * read against its three producers — nothing else sets them.
    */
   | 'session_on_other_campaign'
@@ -138,15 +138,35 @@ export type AgencyActionErrorCode =
   | 'attempt_not_live'
   | 'campaign_not_running'
   /** The agency dialer flag is off for this tenant/account. */
-  | 'feature_disabled';
+  | 'feature_disabled'
+  /**
+   * `POST /sessions` refused (403): the caller is not actively staffed on this campaign
+   * (`agency_campaign_agents`, the rows `/my-assignments` lists) and their ROLE does not
+   * hold `agency.supervise`. Staffing narrows where an agent may START a session; it
+   * grants nothing, and a supervisor covering a shift still joins any campaign.
+   *
+   * Only a NEW session is refused. Re-bootstrapping the agent's own live session on
+   * this campaign (a page reload, an app resume) is not: an agent unassigned mid-shift
+   * keeps that session until they leave it, because refusing the rehydrate would strand
+   * a live call on a station they can no longer open. Leaving ends it; the next join is
+   * refused.
+   */
+  | 'not_staffed'
+  /**
+   * `POST /sessions/:id/break` with the mobile app's `device_away` reason refused (409):
+   * the agent's state kept changing under the request (every compare-and-swap lost to a
+   * reservation or a release, re-decided and lost again). Nothing changed; retry. A
+   * concurrency refusal, not a fault, so it is a 4xx the error mask passes unchanged.
+   */
+  | 'state_changing';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **18 members, not 16** — any older note saying 16 predates
- * `session_on_other_campaign` and `agent_on_live_call`. `test/errors.test.ts`
- * snapshots the list.
+ * ⚠️ **20 members** — 16 before `session_on_other_campaign` and
+ * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`.
+ * `test/errors.test.ts` snapshots the list.
  *
  * Order is the declaration order of the union.
  */
@@ -169,6 +189,8 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'attempt_not_live',
   'campaign_not_running',
   'feature_disabled',
+  'not_staffed',
+  'state_changing',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**

@@ -42,7 +42,7 @@ by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 | Block | Top-level keys |
 |---|---|
 | `base.ts` | `server`, `db`, `redis` |
-| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions` |
+| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile` |
 | `agency.ts` | `agency` |
 | `voice.ts` | `concurrency`, `telephony`, `telephonyCredentials`, `rateLimit`, `s3`, `staticCallTts`, `audio`, `analytics` |
 | `analysis.ts` | `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `recordingUrlSigningSecret`, `retention` |
@@ -92,6 +92,12 @@ export type WebRtcLifecycleListener = (event: WebRtcLifecycleEvent) => void;
 The session's `correlationId`, which lifecycle events carry and every correlation-keyed member above
 takes, is the attempt id or the manual call id. A `manual` leg honours `browserCloseGraceMs` only once
 the carrier has answered: a station close while the phone still rings hangs up at once.
+
+The browser leg's media format (`pcm16` or `alaw8`, contracts `AgencyStationMediaFormat`) is not a
+parameter of these members: it travels on the socket. The station handler calls
+`setBrowserLegMediaFormat(ws, format)` (`apps/server/src/core/bridge/browser-leg-media.ts`) at the
+upgrade, and every member that attaches a socket reads it with `browserLegMediaFormatOf(ws)`
+(untagged ⇒ `pcm16`). The two functions are pinned in the seam contract test below.
 
 The exported types and `WebRtcCallError` are defined in `apps/server/src/core/bridge/bridge-types.ts`
 and re-exported unchanged from `webrtc-bridge-manager.ts`, which stays the seam's module path (import

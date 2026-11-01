@@ -93,7 +93,7 @@ Every expression selects `${local.agency}` and nothing else.
 | `agy-telephony-lease-release-failure` | `telephony_lease_release_total{outcome=~"failure\|partial"}` |
 | `agy-telephony-lease-release-fallback` | `telephony_lease_release_total`, `fallback` share |
 | `agy-rate-limit-infra-rejected` | `rate_limit_rejected_total{bucket_kind=~"webhook\|carrier_media\|internal"}` |
-| `agy-rate-limit-ip-rejected` | `rate_limit_rejected_total{bucket_kind="ip"}` (no `tenant` bucket: no API keys, decision #5) |
+| `agy-rate-limit-ip-rejected` | `rate_limit_rejected_total{bucket_kind=~"ip\|ip_auth\|user\|station"}`, the client buckets (no `tenant` bucket: no API keys, decision #5; `ip_auth` and `user`: Q9, amended 2026-11-01; `station`: the station socket upgrade) |
 | `agy-firebase-auth-rejected` | `auth_attempts_total{method="firebase"}` |
 | `agy-invite-email-failures` | `invite_emails_total{result="failed"}` |
 | `agy-campaign-mail-failures` | `agency_campaign_notifications_total{result=~"failed\|threw\|claim_unavailable"}` |

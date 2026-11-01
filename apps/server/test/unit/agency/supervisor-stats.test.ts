@@ -128,6 +128,7 @@ const ROSTER = [
     state_since: new Date('2026-08-14T10:07:00.000Z'),
     break_reason: null,
     calls_handled: '12',
+    client_kind: 'mobile',
   },
 ];
 
@@ -371,10 +372,13 @@ describe('the floor, and the breakdown drawn from it', () => {
       state_since: '2026-08-14T10:00:00.000Z',
       break_reason: null,
       calls_handled: 7,
+      // 0006: the app the station last attached from; a row without one reads `web`.
+      client_kind: 'web',
     });
     expect(s.agents[2]).toMatchObject({ state: 'break', break_reason: 'lunch', calls_handled: 0 });
     // Distinct per agent, so a mapper reading one agent's count onto another fails.
     expect(s.agents.map((a) => a.calls_handled)).toEqual([7, 3, 0, 12]);
+    expect(s.agents.map((a) => a.client_kind)).toEqual(['web', 'web', 'web', 'mobile']);
   });
 
   it('reports all six states, zeros included', async () => {

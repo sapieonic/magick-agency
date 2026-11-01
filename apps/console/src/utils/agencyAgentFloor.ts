@@ -5,6 +5,7 @@ import type {
 import { SOFTPHONE_BREAK_REASON, SOFTPHONE_BREAK_REASON_LABEL } from '../types/softphone';
 import { formatCount } from './format/number';
 import { ON_SHIFT_STATES, stateShares } from './agency/metrics';
+import { reservedBreakReasonLabel } from './agency/reservedBreakReason';
 
 /**
  * The agent floor — as pure functions, because the ordering IS the
@@ -188,7 +189,9 @@ export function floorRisk(
 
   // 3. On break beyond half an hour. Not the soft phone: that "break" is the
   //    agent working calls by hand (`docs/softphone.md` §2), and half an hour of
-  //    it is a shift, not an agent who walked away.
+  //    it is a shift, not an agent who walked away. The mobile app's device-away
+  //    break IS flagged: half an hour with the app in the background is exactly
+  //    an agent worth a supervisor's look.
   if (agent.state === 'break' && !isOnSoftphone(agent) && elapsedMs !== null) {
     if (elapsedMs > LONG_BREAK_SECONDS * 1000) return 'long_break';
   }
@@ -307,8 +310,9 @@ export function isOnSoftphone(agent: Pick<AgencySupervisorAgent, 'state' | 'brea
 
 /**
  * The agent's state as the floor and the drawer write it: the state, and a
- * break's reason code beside it — except the soft phone, which is named for
- * what it is rather than read as an idle "On break · soft_phone".
+ * break's reason code beside it — except the reserved breaks, which are named for
+ * what they are: the soft phone rather than an idle "On break · soft_phone", and the
+ * mobile app's device-away break as "Away (app in background)".
  *
  * Whether a soft-phone agent is on a call right now is not on the wire
  * (`AgencySupervisorAgent` carries the session's state and reason only), so the
@@ -317,7 +321,10 @@ export function isOnSoftphone(agent: Pick<AgencySupervisorAgent, 'state' | 'brea
 export function floorStateLabel(agent: Pick<AgencySupervisorAgent, 'state' | 'break_reason'>): string {
   if (isOnSoftphone(agent)) return SOFTPHONE_BREAK_REASON_LABEL;
   const label = AGENCY_FLOOR_STATE_LABELS[agent.state];
-  return agent.state === 'break' && agent.break_reason ? `${label} · ${agent.break_reason}` : label;
+  if (agent.state !== 'break' || !agent.break_reason) return label;
+  // A reserved break is named for what it is: the mobile app's `device_away` reads
+  // "Away (app in background)", never "On break · device_away".
+  return reservedBreakReasonLabel(agent.break_reason) ?? `${label} · ${agent.break_reason}`;
 }
 
 /**

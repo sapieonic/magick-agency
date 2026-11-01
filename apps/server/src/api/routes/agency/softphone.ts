@@ -51,7 +51,7 @@ import { formatWebRtcCallResponse } from '../../responses/webrtc-call.response.j
 import { UUID_RE } from '../../../utils/uuid.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { SOFTPHONE_LIST_DEFAULT_LIMIT, softphoneListFilters, softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
-import { accountNameInTenant, requireOwnedSession, sendActionError, STATION_INTERVALS } from './helpers.js';
+import { accountNameInTenant, requireOwnedSession, sendActionError, stationIntervalsFor } from './helpers.js';
 import {
   sendSoftphoneRefusal,
   type SoftphoneHangupAudit,
@@ -367,7 +367,8 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
       break_reason: SOFTPHONE_BREAK_REASON,
       station_ws_url: `/api/v1/agency/station/${session.id}?token=${minted.token}`,
       station_token_expires_at: minted.expiresAt.toISOString(),
-      intervals: STATION_INTERVALS,
+      // By the opening app, as on the campaign join.
+      intervals: stationIntervalsFor((request.body as { client_kind?: unknown } | undefined)?.client_kind),
     };
     return reply.code(join.created ? 201 : 200).send(body);
   });

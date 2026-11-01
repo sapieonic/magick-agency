@@ -62,7 +62,11 @@ const { repos } = vi.hoisted(() => ({
     attempt: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     campaign: { findById: vi.fn() },
     contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn() },
-    session: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn() },
+    session: {
+      findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn(),
+      // The station attach's session read (it also records `client_kind`): the row `findById` gives.
+      readForStationAttach: vi.fn((id: string) => repos.session.findById(id)),
+    },
   },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -94,6 +98,8 @@ interface Harness {
   sent: any[];
   wrapupState: { value: typeof WRAPUP_STATE | null };
   activeAttempt: { value: unknown };
+  /** The state the rehydrate answers (default `wrapup`). */
+  rehydrateAgent: ReturnType<typeof vi.fn>;
 }
 
 async function harness(): Promise<Harness> {
@@ -169,7 +175,7 @@ async function harness(): Promise<Harness> {
   await app.register(websocket);
   await app.register(async (a) => registerStationSocket(a as never, runtime as never), { prefix: '/api/v1/agency' });
   await app.ready();
-  return { app, breaks, sent, wrapupState, activeAttempt };
+  return { app, breaks, sent, wrapupState, activeAttempt, rehydrateAgent: runtime.rehydrateAgent };
 }
 
 /** Open the station socket and return the `ready` frame it produced. */
@@ -243,5 +249,49 @@ describe('a reconnect is told about the break it queued before the drop', () => 
 
     expect('pending_state' in frame).toBe(false);
     expect('pending_break_reason' in frame).toBe(false);
+  });
+});
+
+describe('a reconnect onto a break is told the break\'s reason', () => {
+  // FALSIFIED: with `break_reason` dropped from the frame the first case reds. Without
+  // it the mobile app, killed by the OS while paused with `device_away` and relaunched,
+  // can only show a generic "Break" (the `agent_state` frame that named it is gone).
+  it('carries the row\'s break_reason when the rehydrated state is break', async () => {
+    repos.session.findById.mockResolvedValue({ ...SESSION, kind: 'campaign', state: 'break', break_reason: 'device_away' });
+    h.rehydrateAgent.mockResolvedValue('break');
+
+    const frame = await ready(h);
+
+    expect(frame.state).toBe('break');
+    expect(frame.break_reason).toBe('device_away');
+  });
+
+  it('names a campaign break by its code too', async () => {
+    repos.session.findById.mockResolvedValue({ ...SESSION, kind: 'campaign', state: 'break', break_reason: 'lunch' });
+    h.rehydrateAgent.mockResolvedValue('break');
+
+    expect((await ready(h)).break_reason).toBe('lunch');
+  });
+
+  it('a soft-phone session\'s break is soft_phone', async () => {
+    repos.session.findById.mockResolvedValue({ ...SESSION, kind: 'softphone', campaign_id: null, state: 'break', break_reason: null });
+    h.rehydrateAgent.mockResolvedValue('break');
+
+    expect((await ready(h)).break_reason).toBe('soft_phone');
+  });
+
+  it('omits it on a break with no recorded reason, and whenever the state is not break', async () => {
+    repos.session.findById.mockResolvedValue({ ...SESSION, kind: 'campaign', state: 'break', break_reason: null });
+    h.rehydrateAgent.mockResolvedValue('break');
+    expect('break_reason' in (await ready(h))).toBe(false);
+
+    // `offline` keeps the last break's reason on the row; a reconnect that is not on
+    // break must not be told it.
+    h.sent.length = 0;
+    repos.session.findById.mockResolvedValue({ ...SESSION, kind: 'campaign', state: 'offline', break_reason: 'lunch' });
+    h.rehydrateAgent.mockResolvedValue('available');
+    const frame = await ready(h);
+    expect(frame.state).toBe('available');
+    expect('break_reason' in frame).toBe(false);
   });
 });

@@ -1,0 +1,201 @@
+{
+  "create_session_request": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666"
+  },
+  "bootstrap_first_join": {
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "campaign_name": "Q4 Renewals — Pune",
+    "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+    "state": "offline",
+    "campaign_status": "running",
+    "station_ws_url": "/proxy/agency/station/6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12?token=9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a",
+    "station_token_expires_at": "2026-11-01T06:02:00.000Z",
+    "disposition_catalog": [
+      {
+        "code": "interested",
+        "label": "Interested",
+        "is_success": true
+      },
+      {
+        "code": "not_interested",
+        "label": "Not interested"
+      },
+      {
+        "code": "wrong_number",
+        "label": "Wrong number",
+        "terminal": true
+      },
+      {
+        "code": "voicemail",
+        "label": "Voicemail",
+        "retry": {
+          "delay_minutes": 120,
+          "max_attempts": 3
+        }
+      },
+      {
+        "code": "callback",
+        "label": "Call back later",
+        "requires_datetime": true,
+        "requires_note": false
+      },
+      {
+        "code": "do_not_call",
+        "label": "Do not call",
+        "requires_note": true,
+        "suppress": true,
+        "terminal": true
+      }
+    ],
+    "wrapup_seconds": 30,
+    "wrapup_auto_return": true,
+    "record_calls": true,
+    "break_reasons": [
+      {
+        "code": "tea",
+        "label": "Tea break",
+        "is_paid": true
+      },
+      {
+        "code": "lunch",
+        "label": "Lunch",
+        "is_paid": false
+      },
+      {
+        "code": "training",
+        "label": "Training"
+      }
+    ],
+    "context_display": {
+      "hero": [
+        "Name",
+        "Policy No",
+        "Renewal Due"
+      ],
+      "order": [
+        "Premium (INR)"
+      ],
+      "hidden": [
+        "Internal ID"
+      ]
+    },
+    "intervals": {
+      "heartbeat_ms": 10000,
+      "heartbeat_grace_ms": 10000,
+      "reservation_lease_ms": 10000,
+      "countdown_ms": 3000,
+      "deferred_hangup_ms": 8000
+    }
+  },
+  "bootstrap_retry_rehydrated": {
+    "session_id": "2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182",
+    "campaign_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "campaign_name": "Q3 Winback — Retry 1",
+    "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+    "state": "break",
+    "break_reason": "device_away",
+    "campaign_status": "paused",
+    "station_ws_url": "/proxy/agency/station/2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182?token=0a1b2c3d-4e5f-4607-8293-a4b5c6d7e8f9",
+    "station_token_expires_at": "2026-11-01T09:12:00.000Z",
+    "disposition_catalog": [
+      {
+        "code": "voicemail",
+        "label": "Voicemail"
+      },
+      {
+        "code": "callback",
+        "label": "Callback",
+        "requires_datetime": true
+      },
+      {
+        "code": "do_not_call",
+        "label": "Do not call",
+        "suppress": true
+      }
+    ],
+    "wrapup_seconds": 0,
+    "wrapup_auto_return": false,
+    "record_calls": false,
+    "break_reasons": [
+      {
+        "code": "break",
+        "label": "Break"
+      }
+    ],
+    "context_display": {},
+    "intervals": {
+      "heartbeat_ms": 10000,
+      "heartbeat_grace_ms": 10000,
+      "reservation_lease_ms": 10000,
+      "countdown_ms": 3000,
+      "deferred_hangup_ms": 8000
+    },
+    "retry_context": {
+      "generation": 1,
+      "parent_campaign_name": "Q3 Winback",
+      "selection_summary": "Voicemail, Call back later, no answer, never attempted"
+    }
+  },
+  "station_token": {
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "station_ws_url": "/proxy/agency/station/6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12?token=1f2e3d4c-5b6a-4798-8172-6354a5b6c7d8",
+    "expires_at": "2026-11-01T06:14:00.000Z"
+  },
+  "break_request": {
+    "reason": "lunch"
+  },
+  "session_state_available": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "available",
+    "since": "2026-11-01T06:05:10.441Z"
+  },
+  "session_state_break_queued": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "on_call",
+    "since": "2026-11-01T06:41:15.250Z",
+    "pending_state": "break",
+    "break_reason": "lunch"
+  },
+  "session_state_left": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "offline",
+    "since": "2026-11-01T13:30:00.000Z"
+  },
+  "conflict_other_campaign": {
+    "error": "Conflict",
+    "code": "session_on_other_campaign",
+    "message": "You are still joined to \"Q3 Winback\". Leave that station before joining another campaign — an agent can hold only one live station at a time.",
+    "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
+    "campaign_name": "Q3 Winback",
+    "state": "on_call",
+    "session_id": "5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f",
+    "account_id": "acc-4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a",
+    "account_name": "Nashik Branch"
+  },
+  "conflict_softphone": {
+    "error": "Conflict",
+    "code": "session_on_softphone",
+    "message": "You are on the soft phone. Leave the soft phone before joining a campaign — an agent can hold only one live station at a time.",
+    "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
+    "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+    "account_name": "Pune Branch"
+  },
+  "break_request_device_away": {
+    "reason": "device_away"
+  },
+  "session_state_device_away": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "break",
+    "since": "2026-11-01T06:52:03.100Z",
+    "break_reason": "device_away"
+  }
+}

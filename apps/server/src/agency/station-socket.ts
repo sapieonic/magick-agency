@@ -5,10 +5,15 @@ import { agencyAgentSessionRepository } from '../db/repositories/agency.reposito
 import type { AgencyRuntime } from './runtime.js';
 import { AGENT_LEASE_MS } from './agent-state-machine.js';
 import type {
+  AgencyAgentState,
   AgencyStationClientFrame,
+  AgencyStationMediaFormat,
   AgencyStationPingFrame,
 } from '@magick-agency/contracts/agency';
-import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
+import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
+import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -16,15 +21,36 @@ import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
  *
  * The console's station socket is served at `/proxy/agency/station/:sessionId` by
  * `proxyAgencyStationRoutes` (`api/routes/proxy-agency-station.routes.ts`), which makes
- * its two refusals — a tokenless upgrade (4401) and a path-escaping session id (1008)
- * — and then calls `handleStationSocket` from this module.
+ * its refusals — a tokenless upgrade (4401), a path-escaping session id and an unknown
+ * `client=` / `media=` (1008, `INVALID_UPGRADE`) — and then calls `handleStationSocket`
+ * from this module.
  *
  * `runtime` may be `null` when the app is built without a context (the routing-only
- * test builds `buildApp({ ctx: null })`); such a socket is closed with 1011 rather
- * than dereferencing a missing runtime.
+ * test builds `buildApp({ ctx: null })`); such a socket is closed with 1011
+ * (`INTERNAL_ERROR`) rather than dereferencing a missing runtime.
  */
 
 const log = createChildLogger({ component: 'agency-routes' });
+
+/**
+ * The break's code to tell a client beside `state` (`ready.break_reason`, the bootstrap's
+ * `break_reason`): the session row's reason when `state` is `break`, else nothing.
+ *
+ * `row` is the session as it was read for this attach or join, BEFORE the rehydrate that
+ * produced `state`. Redis holds no reason, so the row is the only record of it, and every
+ * write of a `break` with a reason (`setState(…, 'break', code)`: the break route, the
+ * device-away pause, a queued break applied at the end of wrap-up) puts it there. A
+ * soft-phone session's only break is `soft_phone`. A row with no reason (a rehydrate
+ * after a restart) gives none: the client then shows a plain break.
+ */
+export function breakReasonFor(
+  state: AgencyAgentState,
+  row: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'>,
+): string | undefined {
+  if (state !== 'break') return undefined;
+  if (row.kind === 'softphone') return SOFTPHONE_BREAK_REASON;
+  return row.break_reason ?? undefined;
+}
 
 /**
  * Register `GET /station/:sessionId` (`websocket: true`) on `app`, handing each
@@ -40,13 +66,19 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
   // token on the upgrade (minted over authenticated HTTP) is what authenticates it.
   app.get('/station/:sessionId', { websocket: true }, (socket: WebSocket, request: FastifyRequest<{
     Params: { sessionId: string };
-    Querystring: { token?: string };
+    Querystring: { token?: string; media?: string };
   }>) => {
     if (!runtime) {
-      try { socket.close(1011, 'agency_runtime_unavailable'); } catch { /* ignore */ }
+      try { socket.close(AGENCY_STATION_CLOSE.INTERNAL_ERROR, 'agency_runtime_unavailable'); } catch { /* ignore */ }
       return;
     }
-    void handleStationSocket(socket, request.params.sessionId, request.query?.token, runtime);
+    // The same refusal as the served path (`proxyAgencyStationRoutes`): 1008 before attach.
+    const upgrade = parseStationUpgradeQuery(request.query);
+    if (!upgrade.ok) {
+      try { socket.close(AGENCY_STATION_CLOSE.INVALID_UPGRADE, upgrade.reason); } catch { /* ignore */ }
+      return;
+    }
+    void handleStationSocket(socket, request.params.sessionId, request.query?.token, runtime, upgrade.query);
   });
 }
 
@@ -56,13 +88,24 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
  * (the dialer depends on the bridge, never the reverse). The bridge attaches its
  * own listeners per attempt and removes them at
  * detach, so both handler sets coexist without interfering.
+ *
+ * `upgrade.media` is the agent leg's audio format (the route parsed and validated it). It
+ * is recorded on the socket for the bridge, which reads it at every attach of this socket
+ * to a call (`core/bridge/browser-leg-media.ts`). `upgrade.client` tunes liveness and is
+ * written to the session at attach.
  */
 export async function handleStationSocket(
   socket: WebSocket,
   sessionId: string,
   token: string | undefined,
   runtime: AgencyRuntime,
+  /** The upgrade's `client=` / `media=`, already validated (`parseStationUpgradeQuery`). */
+  upgrade: StationUpgradeQuery = DEFAULT_STATION_UPGRADE,
 ): Promise<void> {
+  const mediaFormat: AgencyStationMediaFormat = upgrade.media;
+  // Before anything can attach this socket to a call, so no attach can read it untagged.
+  setBrowserLegMediaFormat(socket, mediaFormat);
+
   // Verify FIRST, before any DB work — an unauthenticated upgrade must not be
   // able to probe which session ids exist.
   if (!(await runtime.tokens.verifyAndConsume(sessionId, token))) {
@@ -115,6 +158,17 @@ export async function handleStationSocket(
     return held;
   }
   let closeSeen = false;
+  /**
+   * Media frames in the other format than this socket's (a binary frame on `pcm16`, a JSON
+   * `media` frame on `alaw8`). Ignored here — media is the bridge's — and counted, with
+   * the first one logged at debug and the total on the close line.
+   */
+  let ignoredMediaFrames = 0;
+  const noteIgnoredMedia = (why: string): void => {
+    if (ignoredMediaFrames++ === 0) {
+      log.debug({ sessionId, mediaFormat, why }, 'Station socket: ignoring a media frame not in this socket\'s format');
+    }
+  };
 
   /**
    * "Is this socket still the one holding this session, and still open?"
@@ -224,7 +278,14 @@ export async function handleStationSocket(
     });
   }
 
-  socket.on('message', (data: Buffer | string) => {
+  socket.on('message', (data: Buffer | string, isBinary?: boolean) => {
+    // Binary frames are `alaw8` audio, the bridge's to relay — never parsed here. Routed
+    // on `isBinary` rather than a failed `JSON.parse`, which would throw per audio frame
+    // (50/s) and could, by chance, parse.
+    if (isBinary === true) {
+      if (mediaFormat !== 'alaw8') noteIgnoredMedia('binary frame on a pcm16 socket');
+      return;
+    }
     // Taken before the parse, so a ping's `server_ts` is the arrival instant and
     // owes nothing to how long anything downstream takes.
     const receivedAt = Date.now();
@@ -232,7 +293,7 @@ export async function handleStationSocket(
     try {
       parsed = JSON.parse(typeof data === 'string' ? data : data.toString());
     } catch {
-      return; // media/binary or malformed — the bridge's own listener handles media
+      return; // malformed text — ignored like any other non-frame
     }
     // ── A PARSE THAT SUCCEEDS IS NOT YET A FRAME ─────────────────────────
     //
@@ -250,7 +311,9 @@ export async function handleStationSocket(
       if (!stationLive) { deferredPing = { frame, receivedAt }; return; }
       handlePing(frame, receivedAt);
     }
-    // `media` is consumed by the bridge's borrowed-socket listener, not here.
+    // `media` is consumed by the bridge's borrowed-socket listener, not here — on a
+    // `pcm16` socket. On `alaw8` it is not this socket's format, and the bridge drops it.
+    else if (frame.event === 'media' && mediaFormat !== 'pcm16') noteIgnoredMedia('json media frame on an alaw8 socket');
     //
     // Nothing else is read. A `hangup` frame is handled neither here nor by the
     // bridge's listener: the agent's hang-up is `POST /agency/attempts/:id/hangup`,
@@ -352,7 +415,7 @@ export async function handleStationSocket(
       const wentOffline = superseded
         ? false
         : await runtime.releaseStationOnClose(sessionId, socket);
-      log.info({ sessionId, superseded, wentOffline }, 'Station socket closed');
+      log.info({ sessionId, superseded, wentOffline, mediaFormat, ignoredMediaFrames }, 'Station socket closed');
     })();
   });
 
@@ -361,7 +424,11 @@ export async function handleStationSocket(
   // worth having a log line for was the one class that produced none.
   socket.on('error', (err) => log.warn({ err, sessionId }, 'Station socket error'));
 
-  const session = await agencyAgentSessionRepository.findById(sessionId);
+  // The session read, which also records which app is attaching (`client_kind`, written
+  // only when it changes): every attach states its client, and a "continue on this
+  // phone" attaches the same session from another device. One round trip, as the plain
+  // read was.
+  const session = await agencyAgentSessionRepository.readForStationAttach(sessionId, upgrade.client);
   if (!session || session.left_at) {
     try { socket.close(AGENCY_STATION_CLOSE.SESSION_GONE, 'session_not_found'); } catch { /* ignore */ }
     return;
@@ -394,6 +461,8 @@ export async function handleStationSocket(
     accountId: session.account_id,
     agentUserId: session.agent_user_id,
     ws: socket,
+    // Picks the heartbeat grace and, for `mobile`, arms the protocol-ping probe.
+    clientKind: upgrade.client,
   });
 
   // And the same question again, because `attach` has its own await (the ownership
@@ -453,10 +522,14 @@ export async function handleStationSocket(
   // `bridged` handler plays the audible connect cue, and a page reload starts with
   // an empty dedupe set, so it would fire mid-conversation. `active_attempt`
   // carries `bridged_at`, which is the authority for a resumed panel.
+  // The break's code beside the state, so a client that lost the `agent_state` frame
+  // naming it (the mobile app relaunched after the OS killed it while paused) can say why.
+  const breakReason = breakReasonFor(resumedState, session);
   runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,
     state: resumedState,
+    ...(breakReason ? { break_reason: breakReason } : {}),
     ...(activeAttempt ? { active_attempt: activeAttempt } : {}),
     ...(activeWrapup ? { active_wrapup: activeWrapup } : {}),
     // Only meaningful when nothing was resumed: an attempt that ended while the

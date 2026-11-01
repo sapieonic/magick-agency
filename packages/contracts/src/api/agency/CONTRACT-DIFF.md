@@ -74,7 +74,7 @@ package root.
 
 - `api/agency/agency.ts`: `AgencyAgentState`, `AgencyAttemptState`, `AgencyAttemptOutcome`,
   `AgencyCampaignStatus`, `AgencyReleaseReason`, `AgencyCampaignChangeReason`,
-  `AgencyStationErrorCode`, `AgencyActionErrorCode` (18 members) and `AGENCY_ACTION_ERROR_CODES`,
+  `AgencyStationErrorCode`, `AgencyActionErrorCode` (20 members) and `AGENCY_ACTION_ERROR_CODES`,
   `AgencyActionErrorResponse`, `AgencyNotesResponse`, `AgencyStationTokenResponse`,
   `AgencyDisposition`, `AgencyContextDisplay`, `AgencyBreakReason`, `AgencyRetryContext`,
   `AgencyActiveAttempt`, `AgencyMissedRelease`, `AgencyReservedAttempt`, `AgencyPriorAttempt`, and

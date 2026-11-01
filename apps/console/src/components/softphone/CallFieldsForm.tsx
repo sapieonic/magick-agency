@@ -86,7 +86,12 @@ export function CallFieldsForm({
               </select>
             );
             break;
-          case 'boolean':
+          case 'boolean': {
+            // Unset is not No: a required yes/no nobody has answered blocks Save,
+            // and reading "No" the agent would not see why. The answer is the
+            // switch's description, so a screen reader hears it too.
+            const answer = value === undefined || value === null ? 'Not answered' : value === true ? 'Yes' : 'No';
+            const answerId = `${id}-answer`;
             return (
               <div key={field.key} className={`${styles.field} ${styles.fieldFull}`}>
                 <span className={styles.fieldLabel} id={`${id}-label`}>
@@ -103,10 +108,11 @@ export function CallFieldsForm({
                     type="checkbox"
                     role="switch"
                     aria-labelledby={`${id}-label`}
+                    aria-describedby={error ? `${answerId} ${errorId}` : answerId}
                     checked={value === true}
                     onChange={(event) => onChange(field.key, event.target.checked)}
                   />
-                  {value === true ? 'Yes' : 'No'}
+                  <span id={answerId}>{answer}</span>
                 </label>
                 {error ? (
                   <p id={errorId} className={styles.fieldError}>
@@ -115,6 +121,7 @@ export function CallFieldsForm({
                 ) : null}
               </div>
             );
+          }
           case 'number':
             control = (
               <input

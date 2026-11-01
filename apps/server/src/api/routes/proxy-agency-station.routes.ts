@@ -4,14 +4,16 @@ import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 import { disableNagle } from '../../utils/ws-nodelay.js';
 import { isUnsafeCorePath } from '../../proxy/safe-core-path.js';
 import { handleStationSocket } from '../../agency/station-socket.js';
+import { parseStationUpgradeQuery } from '../../agency/station-upgrade.js';
 import type { AgencyRuntime } from '../../agency/runtime.js';
 
 /*
  * The console's station WebSocket, served at `/proxy/agency/station/:sessionId`
  * (decision B16: one process, one socket).
  *
- * This route makes two refusals, in this order: a tokenless upgrade (4401) and a
- * path-escaping session id (1008). Past those, the console's socket IS the station
+ * This route makes three refusals, in this order: a tokenless upgrade (4401), a
+ * path-escaping session id (1008), and an unknown `client=` or `media=` on the upgrade
+ * query (1008, `parseStationUpgradeQuery`). Past those, the console's socket IS the station
  * socket: it is handed to `handleStationSocket` (`agency/station-socket.ts`), which
  * verifies and consumes the single-use token before anything else. The WebRTC bridge
  * borrows this same socket for media. With no runtime (an app built without a context)
@@ -39,10 +41,11 @@ const log = createChildLogger({ component: 'agency-station-proxy' });
  * single-use and lives ~2 minutes, so re-mint-and-retry is the common path,
  * not an edge case.
  *
- * `INVALID_SESSION_ID` is the plain RFC 6455 policy-violation code rather than
- * one of the station's 44xx codes: nothing about it maps onto a station state,
- * because the upgrade is refused before the station handler runs, and
- * re-minting a token would not help.
+ * `INVALID_SESSION_ID` and `INVALID_UPGRADE_QUERY` are the plain RFC 6455
+ * policy-violation code (the contract's `INVALID_UPGRADE`, 1008) rather than one of
+ * the station's 44xx codes: nothing about them maps onto a station state, because
+ * the upgrade is refused before the station handler runs, and re-minting a token
+ * would not help. `RUNTIME_UNAVAILABLE` is the contract's `INTERNAL_ERROR` (1011).
  *
  * `handleStationSocket` also uses 4404 (re-bootstrap, do not retry) and 4409
  * (superseded). This route never originates those; the handler sends them on
@@ -52,9 +55,15 @@ export const STATION_CLOSE_CODES = {
   /** No token on the upgrade — never reached the station handler. Re-mint and retry. */
   MISSING_TOKEN: AGENCY_STATION_CLOSE.TOKEN_REJECTED,
   /** The session id would escape `/api/v1/agency/station`. Do not retry. */
-  INVALID_SESSION_ID: 1008,
-  /** The close for an app built without a runtime. */
-  RUNTIME_UNAVAILABLE: 1011,
+  INVALID_SESSION_ID: AGENCY_STATION_CLOSE.INVALID_UPGRADE,
+  /**
+   * `client=` or `media=` names something this server does not speak. Do not retry: the
+   * same upgrade would be refused again. The close reason says which
+   * (`invalid_client` / `invalid_media`).
+   */
+  INVALID_UPGRADE_QUERY: AGENCY_STATION_CLOSE.INVALID_UPGRADE,
+  /** The close for an app built without a runtime. Retryable, but a client bounds it. */
+  RUNTIME_UNAVAILABLE: AGENCY_STATION_CLOSE.INTERNAL_ERROR,
 } as const;
 
 /**
@@ -89,7 +98,7 @@ export async function proxyAgencyStationRoutes(
   app: FastifyInstance,
   opts: ProxyAgencyStationRouteOptions,
 ): Promise<void> {
-  app.get<{ Params: { sessionId: string }; Querystring: { token?: string } }>(
+  app.get<{ Params: { sessionId: string }; Querystring: { token?: string; client?: string; media?: string } }>(
     '/:sessionId',
     { websocket: true },
     (clientSocket, request) => {
@@ -112,16 +121,25 @@ export async function proxyAgencyStationRoutes(
         return;
       }
 
+      // Before the token is consumed: a refused upgrade leaves the token for a corrected retry.
+      const upgrade = parseStationUpgradeQuery(request.query);
+      if (!upgrade.ok) {
+        log.warn({ sessionId, reason: upgrade.reason }, 'Station proxy: upgrade refused, unknown client or media');
+        clientSocket.close(STATION_CLOSE_CODES.INVALID_UPGRADE_QUERY, upgrade.reason);
+        return;
+      }
+
       const runtime = opts.getRuntime();
       if (!runtime) {
         try { clientSocket.close(STATION_CLOSE_CODES.RUNTIME_UNAVAILABLE, 'agency_runtime_unavailable'); } catch { /* ignore */ }
         return;
       }
 
-      log.info({ sessionId }, 'Station proxy: handing the socket to the station handler');
+      log.info({ sessionId, client: upgrade.query.client, media: upgrade.query.media },
+        'Station proxy: handing the socket to the station handler');
       disableNagle(clientSocket, log, { sessionId, leg: 'agent' });
 
-      void handleStationSocket(clientSocket, sessionId, token, runtime);
+      void handleStationSocket(clientSocket, sessionId, token, runtime, upgrade.query);
     },
   );
 }

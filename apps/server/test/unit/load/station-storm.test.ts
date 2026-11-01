@@ -63,6 +63,12 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
       if (d > 0) await new Promise((r) => setTimeout(r, d));
       return sessions.get(id) ?? null;
     }),
+    // The station attach's session read (it also records `client_kind`), held open the same way.
+    readForStationAttach: vi.fn(async (id: string) => {
+      const d = hooks.sessionReadDelay?.() ?? 0;
+      if (d > 0) await new Promise((r) => setTimeout(r, d));
+      return sessions.get(id) ?? null;
+    }),
     setState: vi.fn(async (id: string, state: string) => {
       const row = sessions.get(id);
       if (row) row['state'] = state;

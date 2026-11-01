@@ -29,7 +29,7 @@ import type {
 } from './enums';
 import type { AgencyContextDisplay, AgencyDisposition, AgencyStationIntervals } from './session';
 import type { AgencyKeysetPage } from './spine';
-import type { AgencyPriorAttempt, AgencyReleaseReason } from './station';
+import type { AgencyClientKind, AgencyPriorAttempt, AgencyReleaseReason } from './station';
 
 // ─── The break, and the session kind ────────────────────────────────────────
 
@@ -545,6 +545,8 @@ export interface AgencySoftphoneBootstrap {
 export interface AgencySoftphoneCreateSessionRequest {
   /** Filled by the public API layer from the authenticated session, never by the browser. */
   agent_user_id: string;
+  /** As on the campaign join (`AgencyCreateSessionRequest.client_kind`): picks the `intervals` served. */
+  client_kind?: AgencyClientKind;
 }
 
 /**
@@ -752,6 +754,16 @@ export interface AgencySoftphoneOutsideHoursRefusal extends AgencySoftphoneError
   timezone_source: 'contact' | 'campaign_default';
   /** ISO-8601: when the window next opens; NULL when it never does (no calling days). */
   next_open_at: string | null;
+}
+
+/**
+ * 400 `disposition_invalid` from the outcome route: `reason` names the rule that refused
+ * (the code is not in the call's catalog, or its note / callback is missing or invalid);
+ * `allowed_codes` comes with `unknown_code`.
+ */
+export interface AgencySoftphoneDispositionInvalidRefusal extends AgencySoftphoneErrorResponse {
+  code: 'disposition_invalid';
+  reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
 }
 
 /** 409 `contact_in_flight`: a campaign attempt is live on the matched contact. No override. */

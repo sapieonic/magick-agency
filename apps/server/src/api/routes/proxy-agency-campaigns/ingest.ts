@@ -5,8 +5,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import crypto from 'node:crypto';
-import { sessionMiddleware } from '../../../auth/session.middleware.js';
-import { tenantContextMiddleware } from '../../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { createChildLogger } from '@magick-agency/observability';
 // `getFileBuffer` is `storage/s3.ts`'s `getFile`, the one S3 module (decision B14): a
@@ -129,15 +127,17 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
    *
    * Multipart lives in its own sub-plugin so the parser is scoped to this one
    * route — registering it at the plugin
-   * root would put a body parser in front of every JSON route here. Hooks are
-   * re-added because a sub-plugin does not inherit the parent's.
+   * root would put a body parser in front of every JSON route here. The
+   * sub-plugin is an encapsulated CHILD of `proxyAgencyCampaignsRoutes`, so it
+   * inherits every hook that plugin added before registering it (session, tenant
+   * context, the path-param guard). They are NOT re-added: a second
+   * `sessionMiddleware` verified the token twice and charged the per-user rate
+   * bucket twice per upload (`proxy-agency-campaigns.upload-hooks.test.ts`).
    */
   await app.register(async function agencyUploadPlugin(sub) {
     await sub.register(import('@fastify/multipart'), {
       limits: { fileSize: CSV_MAX_BYTES },
     });
-    sub.addHook('preHandler', sessionMiddleware);
-    sub.addHook('preHandler', tenantContextMiddleware);
 
     sub.post('/ingest/upload', {
       preHandler: requirePermission('agency.campaigns.write'),

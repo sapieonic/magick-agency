@@ -22,6 +22,7 @@ import type {
   AgencyManualCallOutcome,
   AgencyManualCallState,
   AgencySessionKind,
+  AgencyClientKind,
 } from '@magick-agency/contracts/agency';
 
 /**
@@ -337,6 +338,11 @@ export interface AgencyAgentSessionRecord {
    * `campaign_id`: a soft-phone session has none, and stays in `break/soft_phone`.
    */
   kind: AgencySessionKind;
+  /**
+   * The app the station socket last attached from (0006): `web` or `mobile`, written by
+   * every attach (`readForStationAttach`). Client-declared; display only (the floor).
+   */
+  client_kind: AgencyClientKind;
   /**
    * NULL exactly when `kind` is `softphone`. Campaign-scoped code (pacing, staffing,
    * the station join and its break routes) only ever reads campaign sessions;

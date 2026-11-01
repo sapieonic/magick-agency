@@ -29,6 +29,8 @@ interface OldAgencySessionBootstrap {
   campaign_name: string;
   agent_user_id: string;
   state: Api.AgencyAgentState;
+  // Added deliberately (mobile app): the break's code, so a cold start can name it.
+  break_reason?: string;
   campaign_status: Api.AgencyCampaignStatus;
   station_ws_url: string;
   station_token_expires_at?: string;
@@ -88,6 +90,8 @@ interface OldAgencyStationReadyFrame {
   event: 'ready';
   session_id: string;
   state: Api.AgencyAgentState;
+  // Added deliberately (mobile app): the break's code, so a reconnect can name it.
+  break_reason?: string;
   active_attempt?: Api.AgencyActiveAttempt;
   active_wrapup?: Api.AgencyWrapupState;
   missed_release?: Api.AgencyMissedRelease;
@@ -104,6 +108,8 @@ interface OldAgencySupervisorAgent {
   connected: boolean | null;
   break_reason: string | null;
   calls_handled: number;
+  // Added deliberately (mobile app, 0006): the floor's phone marker.
+  client_kind: 'web' | 'mobile';
 }
 
 interface OldAgencyCampaignStats {

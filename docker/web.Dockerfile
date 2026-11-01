@@ -11,7 +11,8 @@
 #
 # VITE_* values are inlined into the bundles at BUILD time, so they are build
 # args, not runtime environment. None of them is a secret (Firebase web config
-# and a PostHog project key are public by design).
+# and a PostHog project key are public by design). The MOBILE_* app-link values are
+# the opposite: RUNTIME environment, read at every container start.
 
 FROM node:22-slim AS web-builder
 WORKDIR /repo
@@ -41,6 +42,10 @@ RUN pnpm --filter @magick-agency/console --filter @magick-agency/super-admin bui
 
 FROM nginx:1.27-alpine
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+# The image's entrypoint runs /docker-entrypoint.d/*.sh before nginx starts: this one writes
+# the Universal Links / App Links files from MOBILE_* env (see the script's header).
+COPY docker/mobile-app-links.sh /docker-entrypoint.d/40-mobile-app-links.sh
+RUN chmod 0755 /docker-entrypoint.d/40-mobile-app-links.sh
 COPY --from=web-builder /repo/apps/console/dist /usr/share/nginx/console
 COPY --from=web-builder /repo/apps/super-admin/dist /usr/share/nginx/super-admin
 EXPOSE 8080 8081

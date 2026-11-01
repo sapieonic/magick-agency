@@ -100,6 +100,7 @@ vi.mock('../../../src/services/tenant-name-resolver.js', () => ({
 import Fastify from 'fastify';
 import { buildApp } from '../../../src/app.js';
 import { platformPlugin, PLATFORM_ROUTE_PREFIXES } from '../../../src/api/platform.plugin.js';
+import { registerRateLimit } from '../../../src/api/middleware/rate-limit.middleware.js';
 
 /**
  * How each platform route is meant to be reached. `public` routes run no session
@@ -122,12 +123,16 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /feature-flags',
   'GET /notifications/preferences',
   'POST /auth/session',
+  // The mobile pre-flight's upload-speed probe: any verified user, no tenant data.
+  'POST /client-config/uplink-probe',
   'PUT /notifications/preferences',
 ].sort();
 
 /** Unauthenticated by design; asserted separately (they never consult a session). */
 const PUBLIC_ROUTES = new Set([
   'POST /auth/session',
+  // The mobile app's version gate: an app too old to sign in must still learn it has to update.
+  'GET /client-config',
   'GET /invites/:token',
   'POST /invites/:token/claim',
   'POST /super-admin/login',
@@ -166,6 +171,9 @@ beforeAll(async () => {
     const methods = Array.isArray(r.method) ? r.method : [r.method];
     for (const m of methods) if (m !== 'HEAD' && m !== 'OPTIONS') pluginRoutes.push({ method: m, url: r.url });
   });
+  // The limiter first, as `app.ts` registers it: the uplink probe's per-user cap is built
+  // on it, and refuses to register without it.
+  await registerRateLimit(bare, null);
   await bare.register(platformPlugin, { ctx: null });
   await bare.ready();
   await bare.close();
