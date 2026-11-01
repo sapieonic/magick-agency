@@ -16,7 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //    so a silent phone is closed 4408 within 10–15s;
 //  * the probe's timer and listeners go with the socket — detach, supersede or close —
 //    so nothing leaks;
-//  * the mid-attempt rule is unchanged for a phone.
+//  * the mid-attempt rule holds for a phone with one exception (decision M1): silent past
+//    its grace on a call the agent can see, it is dropped and the deferred hangup decides.
 // ---------------------------------------------------------------------------
 
 vi.mock('@magick-agency/observability', () => ({
@@ -80,6 +81,12 @@ class FakeWs extends EventEmitter {
   close(code?: number, reason?: string): void {
     this.closeArgs.push([code, reason]);
     this.readyState = 2;
+  }
+  terminated = 0;
+  /** `ws` destroys the transport: CLOSED and `close` follow without a handshake. */
+  terminate(): void {
+    this.terminated++;
+    this.closed();
   }
   /** The socket is gone: `ws` sets CLOSED and emits `close` in one step. */
   closed(): void {
@@ -275,17 +282,49 @@ describe('the sweep, per station (AgencyRuntime)', () => {
     expect(browser.closeArgs).toEqual([[AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, 'station_heartbeat_timeout']]);
   });
 
-  it('keeps the mid-attempt rule for a phone: never closed while an attempt is live, the pre-bind grace armed', async () => {
+  it('a pre-bind dial keeps the mid-attempt rule for a phone: not closed, the pre-bind grace armed', async () => {
     const phone = new FakeWs();
     phone.autoPong = false;
     await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile' });
     vi.spyOn(runtime.dialer, 'hasLiveAttempt').mockReturnValue(true);
+    vi.spyOn(runtime.dialer, 'hasUnannouncedAttempt').mockReturnValue(true);
     const noteClosed = vi.spyOn(runtime.dialer, 'noteStationClosed');
 
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS + 1)).toBe(0);
     expect(phone.closeArgs).toEqual([]);
+    expect(phone.terminated).toBe(0);
     expect(noteClosed).toHaveBeenCalledWith('phone');
     expect(runtime.stations.isLocallyOwned('phone')).toBe(true);
+  });
+
+  it('drops a phone silent past its 10s grace on a call the agent can see (M1), and only then', async () => {
+    const phone = new FakeWs();
+    phone.autoPong = false;
+    await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile' });
+    vi.spyOn(runtime.dialer, 'hasLiveAttempt').mockReturnValue(true);
+    vi.spyOn(runtime.dialer, 'hasUnannouncedAttempt').mockReturnValue(false);
+    const noteClosed = vi.spyOn(runtime.dialer, 'noteStationClosed');
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS)).toBe(0);
+    expect(phone.terminated).toBe(0);
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS + 1)).toBe(1);
+    // terminate, not close: a dead transport would hold `close` (and so the deferred
+    // hangup) behind ws's 30 s closing timeout.
+    expect(phone.terminated).toBe(1);
+    expect(phone.closeArgs).toEqual([]);
+    expect(noteClosed).not.toHaveBeenCalled();
+  });
+
+  it('a silent web console on a call is still never closed (rule 1 unchanged for the web)', async () => {
+    const browser = new FakeWs();
+    await runtime.stations.attach({ sessionId: 'web', ws: browser as never, ...ENTRY });
+    vi.spyOn(runtime.dialer, 'hasLiveAttempt').mockReturnValue(true);
+    vi.spyOn(runtime.dialer, 'hasUnannouncedAttempt').mockReturnValue(false);
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS * 10)).toBe(0);
+    expect(browser.terminated).toBe(0);
+    expect(browser.closeArgs).toEqual([]);
   });
 
   it('on its own timers: a phone that stops answering is closed within 15s; one that answers never is', async () => {

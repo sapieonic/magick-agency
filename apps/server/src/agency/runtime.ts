@@ -324,7 +324,7 @@ export class AgencyRuntime {
    * Two rules decide what is safe to close, and both are about not curing a
    * diagnostic with an outage:
    *
-   * 1. **Never a socket that is mid-attempt.** This socket IS the media leg,
+   * 1. **Never a socket that is mid-attempt** (one exception for a phone, below). This socket IS the media leg,
    *    and media frames do not renew `lastSeen` — only `ping` does — so a console
    *    whose heartbeat timer died while its audio kept flowing is exactly the shape
    *    that would be closed here. That would put a live customer on silence and arm
@@ -386,14 +386,16 @@ export class AgencyRuntime {
    * the process are alive, so a mobile station mid-call that is silent past 10s is
    * almost certainly a dead transport or a suspended app, not a stalled timer.
    *
-   * Rule 1 is kept for it anyway, deliberately, and the probe makes it cheaper rather
-   * than different. A live attempt's outcome belongs to the bridge's deferred hangup
-   * and the reaper (this sweep must not decide a conversation is over on a liveness
-   * guess), and an unbound dial still gets its pre-bind grace armed here, exactly as on
-   * the web: that is the case that otherwise becomes an abandoned call. What the probe
-   * changes is everything outside an attempt: an `available` phone that stops answering
-   * leaves the pool within 10–15s instead of 30–40s, which is the window in which a
-   * customer could be bridged to it.
+   * So rule 1 has one exception, for a phone only (decision M1): a mobile station silent
+   * past its grace on a call the agent can see is dropped (`terminate`). The sweep still
+   * does not decide the call is over: dropping the socket is exactly a network drop, and
+   * the bridge's deferred hangup (8 s) decides, so a phone that comes back in time
+   * resumes the call. Without it, a suspended app or a dead transport left the customer
+   * on silence until TCP gave up. An unbound dial still gets its pre-bind grace armed
+   * here, exactly as on the web: that is the case that otherwise becomes an abandoned
+   * call. Outside an attempt, an `available` phone that stops answering leaves the pool
+   * within 10–15s instead of 30–40s, which is the window in which a customer could be
+   * bridged to it.
    */
   sweepSilentStations(
     graceMs: number | ((entry: Parameters<typeof stationGraceFor>[0]) => number) = stationGraceFor,
@@ -422,6 +424,23 @@ export class AgencyRuntime {
       // because the reaper exclusion it provides is exactly what must not be
       // dropped from under an attempt that may still bind.
       if (this.dialer.hasLiveAttempt(entry.sessionId)) {
+        // The one exception (decision M1): a phone silent past its grace on a call the
+        // agent can see is dropped, so the bridge's deferred hangup starts now instead of
+        // the customer waiting on silence until TCP gives up. `terminate`, not `close`:
+        // on a dead transport `close` emits `close` only after ws's 30 s closing timeout,
+        // and that event is what arms the deferred hangup. A pre-bind dial falls through
+        // to its own grace below; once it binds, the next tick lands here.
+        if (entry.clientKind === 'mobile' && !this.dialer.hasUnannouncedAttempt(entry.sessionId)
+          && entry.ws.readyState !== 3 /* CLOSED */) {
+          log.warn({
+            sessionId: entry.sessionId,
+            campaignId: entry.campaignId,
+            silentForMs: now - entry.lastSeen,
+          }, 'Mobile station silent past its grace on a live call — dropping it; the deferred hangup now decides the call');
+          try { entry.ws.terminate(); } catch { /* already gone */ }
+          acted++;
+          continue;
+        }
         this.dialer.noteStationClosed(entry.sessionId);
         continue;
       }

@@ -74,8 +74,10 @@ relative to the API origin; the app resolves it against `API_ORIGIN` (`Env.resol
   on every attach. The server pings a mobile station every 3 s (`MOBILE_STATION_PROBE_MS`); a
   protocol pong or an app ping renews it in memory. It closes a silent mobile station 10–15 s
   after its last sign of life (`MOBILE_STATION_HEARTBEAT_GRACE_MS` 10 s, swept every 5 s); a
-  console gets 30 s. As on the web, the sweep never closes a station with a live call; the
-  bridge's 8 s deferred hangup owns that case.
+  console gets 30 s. A silent phone on a call the agent can see is dropped too (decision M1),
+  with `terminate` so the bridge's 8 s deferred hangup starts at once: back in time, the call
+  resumes; otherwise it ends. A dial still ringing before the bind keeps its pre-bind grace,
+  and a console with a live call is never closed.
 - **`media=alaw8`**: audio travels as binary frames of raw G.711 A-law, 8 kHz mono, 160 bytes per
   20 ms, both ways. Text frames stay JSON control. With VoiceLink, whose wire audio is already
   A-law, the server relays the bytes untouched: no transcoding, no base64, no JSON per frame.

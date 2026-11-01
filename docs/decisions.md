@@ -205,6 +205,12 @@ Rulings of 2026-10-30 (soft phone, [`softphone.md`](softphone.md)):
 | SP6 | Roster contact | A tagged call to a number on that campaign's roster claims the contact and its outcome settles it, forward only (a terminal contact is never reopened; suppress always applies) | **Decided** |
 | SP7 | Switch from a running campaign | An agent on a campaign can switch to the soft phone (a `soft_phone` break, queued while busy) and return; both are audited (`agency_session.softphone_started` / `softphone_ended`) and shown in the campaign activity trail | **Decided** |
 
+Rulings of 2026-11-01 (agent mobile app, [`mobile.md`](mobile.md)):
+
+| # | Topic | Ruling | Status |
+|---|---|---|---|
+| M1 | A phone silent during a call | A mobile station silent past its 10 s grace on a call the agent can see is dropped by the sweep (`terminate`, not `close`, which waits 30 s on a dead transport), and the bridge's 8 s deferred hangup decides: the phone back in time resumes the call, otherwise it ends. Before this, no station was closed mid-call and the customer waited on silence until TCP gave up. A pre-bind dial keeps its own grace; the web console is unchanged | **Decided** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
