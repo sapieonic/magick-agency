@@ -50,8 +50,10 @@ final softphonePermissionsProvider = Provider<SoftphonePermissions>(
 ///
 /// Opening is an explicit tap (never on arriving at the tab): it asks for the
 /// microphone and notifications first, in the foreground, so the permission
-/// prompt never lands mid-call and Android lets the on-duty service start. An
-/// existing session is resumed by the core without a tap.
+/// prompt never lands mid-call and Android lets the on-duty service start. A
+/// session this phone was hosting is resumed by the core without a tap; one
+/// open on the web or another phone waits for "Use it on this phone", which
+/// asks the same prompts first.
 ///
 /// It reads only [softphoneViewProvider] and calls [softphoneActionsProvider].
 class PhoneScreen extends ConsumerStatefulWidget {
@@ -111,6 +113,14 @@ class _PhoneScreenState extends ConsumerState<PhoneScreen> {
       SoftphoneScreenActive() => const SoftphonePanel(surface: SoftphoneSurface.phone),
       final SoftphoneScreenOnCampaign s => OnCampaignCard(state: s),
       final SoftphoneScreenElsewhere s => ElsewhereCard(state: s),
+      // Taking a session over hosts its microphone here: the same prompts as Open first.
+      final SoftphoneScreenOtherDevice s => OtherDeviceCard(
+        state: s,
+        onUse: _open,
+        onOpenSettings: openSettings,
+        permissionNote: _permissionNote,
+        askingPermission: _asking,
+      ),
       SoftphoneScreenOff() => const OffCard(),
       final SoftphoneScreenOffStranded s => StrandedCard(state: s),
       final SoftphoneScreenError s => ErrorCard(state: s),

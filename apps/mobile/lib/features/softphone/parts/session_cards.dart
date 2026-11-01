@@ -10,8 +10,8 @@ import '../../station/parts/banners.dart' show BusyLabel;
 import '../softphone_copy.dart';
 
 /// The Phone tab's screens when it is not drawing the soft phone itself: not
-/// open yet, opening, live on a campaign, open in another account, turned off,
-/// and failed. Each says what is true and offers the one thing that helps, so
+/// open yet, opening, live on a campaign, open in another account or on
+/// another device, turned off, and failed. Each says what is true and offers the one thing that helps, so
 /// none is a dead end.
 
 /// A full-screen message: icon, title, body, then the actions pinned below
@@ -223,8 +223,11 @@ class ClosedCard extends ConsumerWidget {
         FilledButton.icon(
           key: const Key('softphone-open'),
           onPressed: askingPermission ? null : onOpen,
-          icon: const Icon(Icons.phone_outlined),
-          label: BusyLabel(label: SoftphoneCopy.open, busy: askingPermission, color: t.onAccent),
+          // While the prompts are up the spinner takes the icon's place: one at a time, never both.
+          icon: askingPermission
+              ? SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2, color: t.onAccent))
+              : const Icon(Icons.phone_outlined),
+          label: const Text(SoftphoneCopy.open),
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
         ),
         if (permissionNote != null)
@@ -274,14 +277,21 @@ class OnCampaignCard extends ConsumerWidget {
     }
 
     final switching = busy == SoftphoneSessionBusy.switching;
-    final midCall = s.switchQueued;
+    // A switch is offered for a station here that is not on the soft phone
+    // yet, and only while new soft-phone work may start (not in finish mode).
+    final startAllowed = ref.watch(softphoneViewProvider.select((v) => v.startAllowed));
+    final canSwitch = s.hostedHere && !s.onSoftphone && startAllowed;
+    final stationOnly = !canSwitch && !s.switchQueued;
     return SessionCard(
       key: const Key('softphone-on-campaign'),
       icon: Icons.headset_mic_outlined,
       title: SoftphoneCopy.onCampaignTitle(s.campaignName, sameAccount: true),
       body: SoftphoneCopy.onCampaignDetail(s.campaignName, s.stateLabel, sameAccount: true),
       notes: [
-        if (s.hostedHere) Text(midCall ? SoftphoneCopy.onCampaignSwitchQueued : SoftphoneCopy.onCampaignSwitchIdle),
+        if (s.hostedHere && s.switchQueued)
+          const Text(SoftphoneCopy.onCampaignSwitchQueued)
+        else if (canSwitch)
+          const Text(SoftphoneCopy.onCampaignSwitchIdle),
         const SessionErrorNote(),
       ],
       actions: [
@@ -292,7 +302,7 @@ class OnCampaignCard extends ConsumerWidget {
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
             child: const Text(SoftphoneCopy.switchQueued),
           )
-        else if (s.hostedHere)
+        else if (canSwitch)
           FilledButton(
             key: const Key('softphone-switch'),
             onPressed: busy != SoftphoneSessionBusy.none
@@ -309,11 +319,20 @@ class OnCampaignCard extends ConsumerWidget {
               color: t.onAccent,
             ),
           ),
-        OutlinedButton(
-          key: const Key('softphone-go-to-station'),
-          onPressed: switching ? null : () => GoRouter.maybeOf(context)?.go(Routes.station(s.campaignId)),
-          child: const Text(SoftphoneCopy.goToStation),
-        ),
+        // The only way on when there is nothing to switch: the primary button then.
+        if (stationOnly)
+          FilledButton(
+            key: const Key('softphone-go-to-station'),
+            onPressed: switching ? null : () => GoRouter.maybeOf(context)?.go(Routes.station(s.campaignId)),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+            child: const Text(SoftphoneCopy.goToStation),
+          )
+        else
+          OutlinedButton(
+            key: const Key('softphone-go-to-station'),
+            onPressed: switching ? null : () => GoRouter.maybeOf(context)?.go(Routes.station(s.campaignId)),
+            child: const Text(SoftphoneCopy.goToStation),
+          ),
       ],
     );
   }
@@ -363,6 +382,77 @@ class ElsewhereCard extends ConsumerWidget {
             child: BusyLabel(label: closing ? SoftphoneCopy.closing : SoftphoneCopy.elsewhereClose, busy: closing, color: t.onAccent),
           ),
         ?goThere,
+      ],
+    );
+  }
+}
+
+/// The words of [OtherDeviceCard].
+abstract final class OtherDeviceCopy {
+  static const title = 'Your soft phone is open on another device';
+  static const body = 'It may be in use on the web or another phone. Using it here moves it, and any call on it, to this phone.';
+  static const useHere = 'Use it on this phone';
+  static const close = 'Close it';
+}
+
+/// A session this phone did not host is open (on the web, or on another
+/// phone): nothing is taken over until the agent asks. "Use it on this phone"
+/// asks for the microphone and notifications first, as Open does, then moves
+/// the session (and any call on it) here; "Close it" closes it there, offered
+/// only when nothing there is unfinished.
+class OtherDeviceCard extends ConsumerWidget {
+  const OtherDeviceCard({
+    super.key,
+    required this.state,
+    required this.onUse,
+    required this.onOpenSettings,
+    this.permissionNote,
+    this.askingPermission = false,
+  });
+
+  final SoftphoneScreenOtherDevice state;
+  final VoidCallback onUse;
+  final VoidCallback onOpenSettings;
+
+  /// Why the last tap did not take it over (the microphone was refused), or null.
+  final String? permissionNote;
+  final bool askingPermission;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final busy = ref.watch(softphoneViewProvider.select((v) => v.sessionBusy));
+    final t = context.tokens;
+    final using = askingPermission || busy == SoftphoneSessionBusy.opening;
+    final closing = busy == SoftphoneSessionBusy.closing;
+    final idle = !using && !closing;
+    return SessionCard(
+      key: const Key('softphone-other-device'),
+      icon: Icons.devices_other,
+      title: OtherDeviceCopy.title,
+      body: OtherDeviceCopy.body,
+      notes: [
+        if (permissionNote case final note?) CardNote(note, danger: true, live: true),
+        const SessionErrorNote(),
+      ],
+      actions: [
+        FilledButton(
+          key: const Key('softphone-use-here'),
+          onPressed: idle ? onUse : null,
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+          child: BusyLabel(label: OtherDeviceCopy.useHere, busy: using, color: t.onAccent),
+        ),
+        if (state.canClose)
+          OutlinedButton(
+            key: const Key('softphone-other-device-close'),
+            onPressed: idle ? () => ref.read(softphoneActionsProvider).close() : null,
+            child: BusyLabel(label: closing ? SoftphoneCopy.closing : OtherDeviceCopy.close, busy: closing),
+          ),
+        if (permissionNote != null)
+          OutlinedButton(
+            key: const Key('softphone-open-settings'),
+            onPressed: onOpenSettings,
+            child: const Text(SoftphoneCopy.openSettings),
+          ),
       ],
     );
   }

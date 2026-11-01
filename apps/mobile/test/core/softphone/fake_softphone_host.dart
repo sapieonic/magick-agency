@@ -11,7 +11,9 @@ import 'package:magick_agency_agent/app/providers.dart';
 import 'package:magick_agency_agent/core/api/api_client.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/session/account_choice.dart';
+import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/softphone/call_state.dart';
+import 'package:magick_agency_agent/core/softphone/hosted_here.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_controller.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
@@ -354,6 +356,7 @@ class SoftphoneHarness {
         softphoneHostActionsProvider.overrideWithValue(this.host),
         stationLauncherProvider.overrideWithValue(launcher),
         preflightChecksProvider.overrideWithValue(mic),
+        keyValueStoreProvider.overrideWithValue(kv),
         appGateProvider.overrideWith(() => FakeGate(gate ?? readyIn(chennai))),
         ...softphoneOverrides,
       ],
@@ -378,6 +381,9 @@ class SoftphoneHarness {
   final host = FakeSoftphoneHost();
   final launcher = FakeLauncher();
   final mic = FakeMicChecks();
+
+  /// The phone's own store (the session it last hosted, per workspace).
+  final kv = MemoryStore();
   final List<Object> unauthorized = [];
   final List<Sent> sent = [];
   final Map<String, Reply> routes = {};
@@ -394,6 +400,13 @@ class SoftphoneHarness {
   List<Sent> get bootstraps => requests('GET', '/proxy/agency/softphone/bootstrap');
   List<Sent> get dials => requests('POST', '/proxy/agency/softphone/calls');
   List<Sent> patches(String callId) => requests('PATCH', '/proxy/agency/softphone/calls/$callId');
+
+  /// The session this phone last hosted in [workspace] (the gate's `user:tenant:account`), or null.
+  String? hostedHere([String workspace = 'u-1:t1:a1']) => kv.values[HostedHere.keyFor(workspace)] as String?;
+
+  /// As if this phone had hosted [sessionId] before (in a run the app was killed in).
+  void rememberHosted(String sessionId, [String workspace = 'u-1:t1:a1']) =>
+      kv.values[HostedHere.keyFor(workspace)] = sessionId;
 
   /// Answers [path] (`METHOD /path`) with [body] at [status].
   void reply(String route, Object body, {int status = 200}) => routes[route] = (_) => json(status, body);

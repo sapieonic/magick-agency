@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 
 import '../../features/performance/logic/en_in_format.dart';
 import '../../features/performance/logic/stats_windows.dart' show DeviceCalendar, LocalCalendar;
+import '../station/server_clock.dart' show correctedInstant;
 import 'call_labels.dart' show formatDialNumber;
 import 'softphone_view.dart';
 
@@ -156,11 +157,15 @@ String? formatNextOpening(DateTime? nextOpenAt, {required DateTime now, LocalCal
   return '${until[0].toUpperCase()}${until.substring(1)} — $clock your time';
 }
 
-/// The prompt for `outside_calling_hours`. [now] is this phone's clock.
+/// The prompt for `outside_calling_hours`. [now] is this phone's clock;
+/// [offsetMs] (the session's server-clock offset) puts the server's
+/// `next_open_at` on it, so "Opens again — in N min" counts down truly on a
+/// phone whose clock is off.
 SoftphoneOverridePrompt describeHoursRefusal(
   SoftphoneOutsideHoursRefusal refusal, {
   String? campaignName,
   required DateTime now,
+  int offsetMs = 0,
   LocalCalendar calendar = const DeviceCalendar(),
 }) {
   final window = refusal.window;
@@ -183,7 +188,7 @@ SoftphoneOverridePrompt describeHoursRefusal(
       SoftphoneFact(
         label: 'Opens again',
         value:
-            formatNextOpening(refusal.nextOpenAt, now: now, calendar: calendar) ??
+            formatNextOpening(correctedInstant(refusal.nextOpenAt, offsetMs), now: now, calendar: calendar) ??
             'Never — the campaign has no calling days set',
       ),
     ],

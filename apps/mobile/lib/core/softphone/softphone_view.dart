@@ -485,6 +485,7 @@ final class SoftphoneScreenOnCampaign extends SoftphoneScreenState {
     required this.hostedHere,
     this.switchQueued = false,
     this.canSwitchAccount = false,
+    this.onSoftphone = false,
   });
 
   final String campaignId;
@@ -509,6 +510,10 @@ final class SoftphoneScreenOnCampaign extends SoftphoneScreenState {
   /// button ([SoftphoneActions.requestAccountSwitch]) when the agent has that account.
   final bool canSwitchAccount;
 
+  /// That session is already on the soft phone (`break/soft_phone`): there is
+  /// nothing to switch, only the station to go to.
+  final bool onSoftphone;
+
   @override
   bool operator ==(Object other) =>
       other is SoftphoneScreenOnCampaign &&
@@ -520,10 +525,11 @@ final class SoftphoneScreenOnCampaign extends SoftphoneScreenState {
       other.sameAccount == sameAccount &&
       other.hostedHere == hostedHere &&
       other.switchQueued == switchQueued &&
-      other.canSwitchAccount == canSwitchAccount;
+      other.canSwitchAccount == canSwitchAccount &&
+      other.onSoftphone == onSoftphone;
   @override
   int get hashCode =>
-      Object.hash(campaignId, stateLabel, accountId, sameAccount, hostedHere, switchQueued, canSwitchAccount);
+      Object.hash(campaignId, stateLabel, accountId, sameAccount, hostedHere, switchQueued, canSwitchAccount, onSoftphone);
 }
 
 /// `session_on_softphone`: the agent's soft-phone session is open in ANOTHER
@@ -554,6 +560,34 @@ final class SoftphoneScreenElsewhere extends SoftphoneScreenState {
       other.canSwitchAccount == canSwitchAccount;
   @override
   int get hashCode => Object.hash(accountId, accountName, callPending, canSwitchAccount);
+}
+
+/// A session in this account that this phone did not host is open: on the
+/// web, or on another phone. Nothing is resumed by itself (that would move the
+/// session, and any call on it, away from wherever the agent is using it): the
+/// agent taps "Use it on this phone" ([SoftphoneActions.open], after the
+/// microphone and notification prompts), or "Close it"
+/// ([SoftphoneActions.close]) when [canClose].
+final class SoftphoneScreenOtherDevice extends SoftphoneScreenState {
+  const SoftphoneScreenOtherDevice({this.campaignId, this.campaignName, this.canClose = false});
+
+  /// A campaign session on the soft phone (with a call to finish): "Use it on
+  /// this phone" starts its station here. Null for the soft-phone session.
+  final String? campaignId;
+  final String? campaignName;
+
+  /// Nothing there is unfinished (no live call, no owed outcome): "Close it"
+  /// is offered too. Never for a campaign session.
+  final bool canClose;
+
+  @override
+  bool operator ==(Object other) =>
+      other is SoftphoneScreenOtherDevice &&
+      other.campaignId == campaignId &&
+      other.campaignName == campaignName &&
+      other.canClose == canClose;
+  @override
+  int get hashCode => Object.hash(campaignId, campaignName, canClose);
 }
 
 /// The soft phone is off for the account and nothing here is left to finish:
@@ -1055,7 +1089,9 @@ abstract interface class SoftphoneActions {
 
   /// Opens the soft phone (or resumes this account's session). The UI has
   /// already asked for the microphone and notification permissions. The
-  /// result lands in [SoftphoneView.screen].
+  /// result lands in [SoftphoneView.screen]. On [SoftphoneScreenOtherDevice]
+  /// it is "Use it on this phone": the session (or the campaign station on the
+  /// soft phone) is taken over here.
   Future<void> open();
 
   /// Re-reads the bootstrap (and re-tries a failed open) after
@@ -1063,7 +1099,9 @@ abstract interface class SoftphoneActions {
   Future<void> retry();
 
   /// Closes the hosted soft-phone session (the Phone surface's header).
-  /// Refused while a call is live or its outcome is owed.
+  /// Refused while a call is live or its outcome is owed. On
+  /// [SoftphoneScreenOtherDevice] with [SoftphoneScreenOtherDevice.canClose]
+  /// it is "Close it": the session open on the other device is closed.
   Future<void> close();
 
   /// [SoftphoneScreenElsewhere]: closes the agent's soft-phone session in its

@@ -79,6 +79,19 @@ void main() {
     'pending_break_reason': null,
   };
 
+  const bootstrapPath = 'GET /proxy/agency/softphone/bootstrap';
+  final dncRefusal = {
+    'error': 'Conflict',
+    'code': 'dnc_listed',
+    'message': 'Listed',
+    'entry': {'id': 'dnc-1', 'scope': 'account', 'reason': 'Asked not to be called', 'created_at': '2026-10-12T09:00:00.000Z'},
+  };
+  // The account's field set with a required field added since the first read.
+  final fieldsWithLoanId = [
+    ...(bootstrapJson()['call_fields']! as List<Object?>),
+    {'key': 'loan_id', 'label': 'Loan ID', 'type': 'text', 'required': true},
+  ];
+
   // ─── Rule 1 ───────────────────────────────────────────────────────────────
 
   group('rule 1: one dial in flight, never retried', () {
@@ -126,6 +139,40 @@ void main() {
       expect(h.view.dialError, softphoneDialUnconfirmedCopy);
       h.async.elapse(const Duration(minutes: 1));
       expect(h.dials, hasLength(1));
+    });
+  });
+
+  group('rule 1b: the number is the one dialled until the server answers', () {
+    softphoneTest('the pad takes no input while the dial is in flight', (h) {
+      h.openWith();
+      final answer = Completer<http.Response>();
+      h.routes['POST $callsPath'] = (_) => answer.future;
+      fire(h.actions.dial());
+      h.pump();
+      expect(h.view.placing, isTrue);
+      expect(h.view.dialPadEnabled, isFalse);
+      h.actions.backspace();
+      h.actions.pressKey('4');
+      h.actions.setNumber('9820461744');
+      h.actions.pasteNumber('+91 98204 61755');
+      h.actions.clearNumber();
+      expect(h.view.number, '9820461733');
+      answer.complete(json(409, dncRefusal));
+      h.pump();
+      expect(h.view.dialPadEnabled, isTrue);
+    });
+
+    softphoneTest('Call anyway redials the number the server refused, and the prompt names it', (h) {
+      h.openWith();
+      final replies = [json(409, dncRefusal), json(201, manualCallJson())];
+      h.routes['POST $callsPath'] = (_) => replies.removeAt(0);
+      h.run(h.actions.dial());
+      // The pad is the agent's again behind the prompt; an edit there is not what was refused.
+      h.actions.backspace();
+      h.actions.pressKey('4');
+      expect({for (final f in h.view.overridePrompt!.facts) f.label: f.value}['Number'], '+91 98204 61733');
+      h.run(h.actions.confirmOverride('Customer asked us to call back'));
+      expect(h.dials.map((d) => d.json['to']), ['9820461733', '9820461733']);
     });
   });
 
@@ -342,6 +389,29 @@ void main() {
     });
   });
 
+  softphoneTest('rule 5b: "Opens again" counts down on this phone’s clock', (h) {
+    // The server's clock is 10 minutes ahead of this phone's.
+    h.host.view = hostView(clockOffsetMs: 10 * 60 * 1000);
+    h.pump();
+    h.actions.setNumber('9820461733');
+    h.reply('POST $callsPath', {
+      'error': 'Conflict',
+      'code': 'outside_calling_hours',
+      'message': 'Outside',
+      'window': {
+        'start': '09:00',
+        'end': '20:00',
+        'days': [1, 2, 3, 4, 5],
+        'timezone': 'Asia/Kolkata',
+      },
+      'timezone_source': 'campaign_default',
+      'next_open_at': '2026-10-30T11:00:30.000Z',
+    }, status: 409);
+    h.run(h.actions.dial());
+    final opens = h.view.overridePrompt!.facts.firstWhere((f) => f.label == 'Opens again').value;
+    expect(opens, 'In 50 min — Fri 30 Oct, 16:20 your time');
+  });
+
   // ─── Rule 6 ───────────────────────────────────────────────────────────────
 
   group('rule 6: the other refusals', () {
@@ -468,19 +538,76 @@ void main() {
     });
   });
 
+  group('rule 7b: a field the phone does not know re-reads the field set', () {
+    softphoneTest('on saving the outcome', (h) {
+      h.openWith(call: owed());
+      h.refuse('POST $callsPath/mc-1/disposition', 'fields_invalid', status: 400, extra: {
+        'details': [
+          {'path': 'fields.loan_id', 'message': 'is required'},
+        ],
+      });
+      h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'call_fields': fieldsWithLoanId}));
+      final before = h.bootstraps.length;
+      h.actions.selectOutcome('resolved');
+      h.run(h.actions.saveOutcome());
+      expect(h.view.padRejection, softphoneRefusalCopy[SoftphoneErrorCode.fieldsInvalid]);
+      expect(h.bootstraps.length, before + 1);
+      expect(h.view.fields.firstWhere((f) => f.key == 'loan_id').error, 'is required');
+    });
+
+    softphoneTest('on an autosave', (h) {
+      h.openWith(call: bridged());
+      h.refuse('PATCH $callsPath/mc-1', 'fields_invalid', status: 400, extra: {
+        'details': [
+          {'path': 'fields.loan_id', 'message': 'is required'},
+        ],
+      });
+      h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'call_fields': fieldsWithLoanId}));
+      final before = h.bootstraps.length;
+      h.actions.setFieldValue('customer_name', 'Asha');
+      h.async.elapse(const Duration(milliseconds: 700));
+      h.pump();
+      expect(h.patches('mc-1'), isNotEmpty);
+      expect(h.bootstraps.length, before + 1);
+      expect(h.view.fields.firstWhere((f) => f.key == 'loan_id').error, 'is required');
+    });
+
+    softphoneTest('not when every field it names is known', (h) {
+      h.openWith(call: owed());
+      h.refuse('POST $callsPath/mc-1/disposition', 'fields_invalid', status: 400, extra: {
+        'details': [
+          {'path': 'fields.reason', 'message': 'Pick one of the options.'},
+        ],
+      });
+      final before = h.bootstraps.length;
+      h.actions.selectOutcome('resolved');
+      h.run(h.actions.saveOutcome());
+      expect(h.bootstraps.length, before);
+    });
+  });
+
   // ─── Rule 8 ───────────────────────────────────────────────────────────────
 
   group('rule 8: notes on the outcome', () {
     softphoneTest('notes the agent cleared go as \'\', and the pending autosave is cancelled', (h) {
       h.openWith(call: owed({'notes': 'Old note'}));
-      h.reply('POST $callsPath/mc-1/disposition', {'call': settledJson(owed(), code: 'resolved')});
+      // A slow save: the autosave the edit armed would fall due while it is in flight.
+      final answer = Completer<http.Response>();
+      h.routes['POST $callsPath/mc-1/disposition'] = (_) => answer.future;
       expect(h.view.notes.text, 'Old note');
       h.actions.setNotes('');
       h.actions.selectOutcome('resolved');
-      h.run(h.actions.saveOutcome());
+      fire(h.actions.saveOutcome());
+      h.pump();
       final body = h.requests('POST', '$callsPath/mc-1/disposition').single.json;
       expect(body.containsKey('notes'), isTrue);
       expect(body['notes'], '');
+      h.async.elapse(const Duration(seconds: 5));
+      h.pump();
+      expect(h.patches('mc-1'), isEmpty);
+      answer.complete(json(200, {'call': settledJson(owed(), code: 'resolved')}));
+      h.pump();
+      expect(h.view.phase, SoftphonePhase.ready);
       h.async.elapse(const Duration(seconds: 5));
       expect(h.patches('mc-1'), isEmpty);
     });
@@ -625,14 +752,47 @@ void main() {
     }, before: off);
   });
 
+  group('rule 11b: the override prompt and finish mode', () {
+    softphoneTest('finish mode arriving closes an open prompt, and Call anyway dials nothing', (h) {
+      h.openWith();
+      h.reply('POST $callsPath', dncRefusal, status: 409);
+      h.run(h.actions.dial());
+      expect(h.view.overridePrompt, isNotNull);
+
+      // A reconnect re-reads the bootstrap: the soft phone is off now.
+      h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'softphone_enabled': false}));
+      h.host.view = copyHost(h.host.view!, link: StationLink.reconnecting, everOpened: true);
+      h.pump();
+      h.host.view = copyHost(h.host.view!, link: StationLink.open);
+      h.pump();
+      expect(h.view.finishOnly, isTrue);
+      expect(h.view.overridePrompt, isNull);
+      h.reply('POST $callsPath', manualCallJson(), status: 201);
+      h.run(h.actions.confirmOverride('Customer asked us to call back'));
+      expect(h.dials, hasLength(1));
+    });
+
+    softphoneTest('Call anyway waits like Call does: nothing is dialled while the socket is away', (h) {
+      h.openWith();
+      h.reply('POST $callsPath', dncRefusal, status: 409);
+      h.run(h.actions.dial());
+      h.host.view = copyHost(h.host.view!, link: StationLink.reconnecting, everOpened: true);
+      h.pump();
+      expect(h.view.overridePrompt, isNotNull);
+      h.reply('POST $callsPath', manualCallJson(), status: 201);
+      h.run(h.actions.confirmOverride('Customer asked us to call back'));
+      expect(h.dials, hasLength(1));
+    });
+  });
+
   // ─── Rule 12 ──────────────────────────────────────────────────────────────
 
   group('rule 12: a reconnect re-reads the bootstrap', () {
     softphoneTest('the first open does not; a reconnect does, and retires a call that settled meanwhile', (h) {
-      final reads = h.bootstraps.length;
       final call = bridged();
       h.host.view = hostView(link: StationLink.connecting, everOpened: false, call: call);
       h.pump();
+      final reads = h.bootstraps.length;
       h.host.view = copyHost(h.host.view!, link: StationLink.open);
       h.pump();
       expect(h.bootstraps.length, reads);
@@ -761,34 +921,90 @@ void main() {
     });
   });
 
+  group('rule 15b: a new session reads the bootstrap again, and starts from a clean setup', () {
+    softphoneTest(
+      'a station that starts after the bootstrap was read: a campaign staffed since is the preset',
+      (h) {
+        h.routes[bootstrapPath] = (_) => json(200, bootstrapJson());
+        final before = h.bootstraps.length;
+        h.host.view = campaignHost();
+        h.pump();
+        expect(h.bootstraps.length, before + 1);
+        expect(h.view.tagCampaignId, 'camp-1');
+      },
+      before: (h) => h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'taggable_campaigns': <Object?>[]})),
+    );
+
+    softphoneTest('switching the station to the soft phone reads it again, and presets from that answer', (h) {
+      h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'taggable_campaigns': <Object?>[]}));
+      h.host.view = campaignHost(onSoftphone: false);
+      h.pump();
+      h.routes[bootstrapPath] = (_) => json(200, bootstrapJson());
+      final before = h.bootstraps.length;
+      h.host.view = campaignHost();
+      h.pump();
+      expect(h.bootstraps.length, before + 1);
+      expect(h.view.tagCampaignId, 'camp-1');
+    });
+
+    softphoneTest('a Phone-tab session after a station starts untagged, on the default caller ID', (h) {
+      h.host.view = campaignHost();
+      h.pump();
+      expect(h.view.tagCampaignId, 'camp-1');
+      h.host.view = null;
+      h.pump();
+      h.host.view = hostView();
+      h.pump();
+      expect(h.view.tagCampaignId, isNull);
+      expect(h.view.callerId, '+912248908888');
+    });
+
+    softphoneTest('a caller ID picked in one session is not carried into the next', (h) {
+      h.openWith();
+      h.actions.setCallerId('+912248909999');
+      expect(h.view.callerId, '+912248909999');
+      h.host.view = null;
+      h.pump();
+      h.host.view = hostView(sessionId: 'sess-sp-2');
+      h.pump();
+      expect(h.view.callerId, '+912248908888');
+    });
+  });
+
   // ─── Rule 16 ──────────────────────────────────────────────────────────────
 
   group('rule 16: an existing session resumes by itself', () {
     softphoneTest(
-      'a soft-phone session in this account is reopened',
+      'a soft-phone session this phone hosted is reopened',
       (h) {
         expect(h.host.count('open'), 1);
         expect(h.view.screen, const SoftphoneScreenActive());
       },
-      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
-        200,
-        bootstrapJson({'softphone_enabled': false, 'session': sessionSummary()}),
-      ),
+      before: (h) {
+        h.rememberHosted('sess-sp');
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
+          200,
+          bootstrapJson({'softphone_enabled': false, 'session': sessionSummary()}),
+        );
+      },
     );
 
     softphoneTest(
-      'a campaign session here on the soft phone with an unsettled call has its station started',
+      'a campaign session this phone hosted, on the soft phone with an unsettled call, has its station started',
       (h) {
         expect(h.launcher.started, ['camp-1']);
         expect(h.host.count('open'), 0);
       },
-      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
-        200,
-        bootstrapJson({
-          'session': sessionSummary(kind: 'campaign', campaignId: 'camp-1', campaignName: 'Home Loan Renewals'),
-          'call': owedJson({'session_id': 'sess-1'}),
-        }),
-      ),
+      before: (h) {
+        h.rememberHosted('sess-1');
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
+          200,
+          bootstrapJson({
+            'session': sessionSummary(kind: 'campaign', campaignId: 'camp-1', campaignName: 'Home Loan Renewals'),
+            'call': owedJson({'session_id': 'sess-1'}),
+          }),
+        );
+      },
     );
 
     softphoneTest('nothing to resume: Open is the agent’s', (h) {
@@ -809,26 +1025,160 @@ void main() {
         expect(h.host.count('open'), 1);
       },
       foreground: false,
-      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
-        200,
-        bootstrapJson({'session': sessionSummary()}),
-      ),
+      before: (h) {
+        h.rememberHosted('sess-sp');
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'session': sessionSummary()}));
+      },
     );
 
     softphoneTest(
-      'once per workspace: a session closed later is not reopened behind the agent',
+      'put off in the background, it asks the server again on return: a session closed meanwhile is not reopened',
+      (h) {
+        expect(h.host.count('open'), 0);
+        // While away, the session is closed elsewhere (the web, the reaper).
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson());
+        h.async.elapse(const Duration(hours: 2));
+        final before = h.bootstraps.length;
+        h.lifecycle.show();
+        h.pump();
+        expect(h.bootstraps.length, before + 1);
+        expect(h.host.count('open'), 0);
+        expect(h.view.screen, const SoftphoneScreenClosed());
+      },
+      foreground: false,
+      before: (h) {
+        h.rememberHosted('sess-sp');
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'session': sessionSummary()}));
+      },
+    );
+
+    softphoneTest(
+      'once per workspace: a session this phone stops hosting is not reopened behind the agent',
       (h) {
         expect(h.host.count('open'), 1);
         h.host.view = null;
         h.pump();
         expect(h.host.count('open'), 1);
-        expect(h.view.screen, const SoftphoneScreenClosed());
+        expect(h.view.screen, const SoftphoneScreenOtherDevice(canClose: true));
+      },
+      before: (h) {
+        h.rememberHosted('sess-sp');
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'session': sessionSummary()}));
+      },
+    );
+  });
+
+  group('rule 16b: a session this phone did not host is the agent’s to take', () {
+    softphoneTest(
+      'a soft-phone session open elsewhere waits for "Use it on this phone"',
+      (h) {
+        expect(h.host.count('open'), 0);
+        expect(h.view.screen, const SoftphoneScreenOtherDevice(canClose: true));
+        h.lifecycle.show();
+        h.async.elapse(resumeRereadAfter);
+        h.lifecycle.show();
+        h.pump();
+        expect(h.host.count('open'), 0);
+
+        h.run(h.actions.open());
+        expect(h.host.count('open'), 1);
+        expect(h.view.screen, const SoftphoneScreenActive());
+        expect(h.hostedHere(), 'sess-sp');
+      },
+      before: (h) =>
+          h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'session': sessionSummary()})),
+    );
+
+    softphoneTest(
+      'another session than the one this phone hosted is not resumed either',
+      (h) {
+        expect(h.host.count('open'), 0);
+        expect(h.view.screen, const SoftphoneScreenOtherDevice(canClose: true));
+      },
+      before: (h) {
+        h.rememberHosted('sess-old');
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'session': sessionSummary()}));
+      },
+    );
+
+    softphoneTest(
+      'with a call unfinished there: no Close',
+      (h) {
+        expect(h.view.screen, const SoftphoneScreenOtherDevice());
+        h.run(h.actions.close());
+        expect(h.host.count('close'), 0);
+        expect(h.host.count('open'), 0);
       },
       before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
         200,
-        bootstrapJson({'session': sessionSummary()}),
+        bootstrapJson({'session': sessionSummary(), 'call': owedJson({'session_id': 'sess-sp'})}),
       ),
     );
+
+    softphoneTest(
+      '"Close it" closes it where it is, and opens nothing here',
+      (h) {
+        h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson());
+        h.run(h.actions.close());
+        expect(h.host.lastClose, (sessionId: 'sess-sp', accountId: 'a1'));
+        expect(h.host.count('open'), 0);
+        expect(h.view.screen, const SoftphoneScreenClosed());
+      },
+      before: (h) =>
+          h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'session': sessionSummary()})),
+    );
+
+    softphoneTest(
+      '"Close it" refused because a call started there meanwhile: Close goes, and says why',
+      (h) {
+        h.host.closeResult = const SoftphoneCloseCallPending();
+        h.run(h.actions.close());
+        expect(h.view.screen, const SoftphoneScreenOtherDevice());
+        expect(h.view.sessionError, softphoneLeaveBlockedCopy);
+      },
+      before: (h) =>
+          h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(200, bootstrapJson({'session': sessionSummary()})),
+    );
+
+    softphoneTest(
+      'a campaign station on the soft phone elsewhere is not started until asked',
+      (h) {
+        expect(h.launcher.started, isEmpty);
+        expect(
+          h.view.screen,
+          const SoftphoneScreenOtherDevice(campaignId: 'camp-1', campaignName: 'Home Loan Renewals'),
+        );
+        h.run(h.actions.open());
+        expect(h.launcher.started, ['camp-1']);
+        expect(h.host.count('open'), 0);
+      },
+      before: (h) => h.routes['GET /proxy/agency/softphone/bootstrap'] = (_) => json(
+        200,
+        bootstrapJson({
+          'session': sessionSummary(kind: 'campaign', campaignId: 'camp-1', campaignName: 'Home Loan Renewals'),
+          'call': owedJson({'session_id': 'sess-1'}),
+        }),
+      ),
+    );
+
+    softphoneTest('the phone remembers the session it hosts, until another device takes it or it ends', (h) {
+      expect(h.hostedHere(), isNull);
+      h.host.view = hostView();
+      h.pump();
+      expect(h.hostedHere(), 'sess-sp');
+      h.host.view = copyHost(h.host.view!, link: StationLink.superseded);
+      h.pump();
+      expect(h.hostedHere(), isNull);
+      h.host.view = copyHost(h.host.view!, link: StationLink.open);
+      h.pump();
+      expect(h.hostedHere(), 'sess-sp');
+      h.host.view = null;
+      h.pump();
+      expect(h.hostedHere(), isNull);
+      h.host.view = campaignHost(onSoftphone: false);
+      h.pump();
+      expect(h.hostedHere(), 'sess-1');
+    });
   });
 
   // ─── Availability ─────────────────────────────────────────────────────────
@@ -997,6 +1347,28 @@ void main() {
       expect(h.run(h.actions.switchToSoftphone()), isFalse);
       expect(h.view.sessionError, contains('nothing changed'));
     });
+
+    softphoneTest('a station hosted here already on the soft phone: nothing to switch, only the station', (h) {
+      h.host.view = campaignHost();
+      h.pump();
+      final s = h.view.screen as SoftphoneScreenOnCampaign;
+      expect(s.hostedHere, isTrue);
+      expect(s.onSoftphone, isTrue);
+      expect(h.run(h.actions.switchToSoftphone()), isFalse);
+      expect(h.host.count('switch'), 0);
+    });
+
+    softphoneTest(
+      'in finish mode a station hosted here is not switched to the soft phone',
+      (h) {
+        h.host.view = campaignHost(onSoftphone: false);
+        h.pump();
+        expect(h.view.startAllowed, isFalse);
+        expect(h.run(h.actions.switchToSoftphone()), isFalse);
+        expect(h.host.count('switch'), 0);
+      },
+      before: (h) => h.routes[bootstrapPath] = (_) => json(200, bootstrapJson({'softphone_enabled': false})),
+    );
 
     softphoneTest('open elsewhere: closing it is blocked while its call is unfinished', (h) {
       h.host.openResult = const SoftphoneOpenElsewhere(SessionOnSoftphoneRefusal(sessionId: 'sess-x', accountId: 'a2'));

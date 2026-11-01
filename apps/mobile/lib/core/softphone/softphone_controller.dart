@@ -21,6 +21,7 @@ import '../telemetry/log.dart';
 import 'call_fields.dart';
 import 'call_labels.dart';
 import 'call_state.dart';
+import 'hosted_here.dart';
 import 'manual_autosave.dart';
 import 'overrides.dart';
 import 'phone_input.dart';
@@ -65,9 +66,18 @@ import 'softphone_view.dart';
 ///
 /// ── When the bootstrap is read ──────────────────────────────────────────────
 /// On a workspace change (at gate-ready too), on return to the app at most
-/// every [resumeRereadAfter], after the hosted session closes, after a
-/// reconnect, and after `softphone_disabled` (and the other refusals that
-/// mean what may be dialled changed).
+/// every [resumeRereadAfter] (and always for a resume put off in the
+/// background), when the host starts holding a new session, when a station
+/// switches to the soft phone, after the hosted session closes, after a
+/// reconnect, after `softphone_disabled` (and the other refusals that mean
+/// what may be dialled changed), and after a `fields_invalid` naming a field
+/// this phone does not know.
+///
+/// ── Resuming only what this phone hosted ────────────────────────────────────
+/// A session the bootstrap names resumes by itself only when it is the one
+/// this phone last hosted ([HostedHere]). One opened on the web or on another
+/// phone waits for the agent's "Use it on this phone": rehydrating it here
+/// would take it, and any call on it, away from wherever the agent is using it.
 final softphoneControllerProvider = NotifierProvider<SoftphoneController, SoftphoneCoreState>(SoftphoneController.new);
 
 /// Its own app-lifecycle source: the station's attaches one listener to its
@@ -121,12 +131,15 @@ enum _Reach {
   forbidden,
 }
 
-/// The override prompt waiting for the agent: what it says, and the overrides
-/// already given in this dial (kept when a second refusal of the other kind arrives).
+/// The override prompt waiting for the agent: what it says, the overrides
+/// already given in this dial (kept when a second refusal of the other kind
+/// arrives), and the number the server refused: "Call anyway" redials that
+/// one, whatever the pad holds by then.
 final class _Override {
-  const _Override(this.prompt, this.overrides);
+  const _Override(this.prompt, this.overrides, this.to);
   final SoftphoneOverridePrompt prompt;
   final ManualCallOverridesRequest overrides;
+  final String to;
 }
 
 class SoftphoneController extends Notifier<SoftphoneCoreState> implements SoftphoneActions {
@@ -144,11 +157,19 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
 
   // ── Bootstrap ──
   SoftphoneBootstrap? _bootstrap;
-  String? _bootstrapAccount;
   _Reach _reach = _Reach.none;
   String? _bootstrapError;
   int _bootstrapSeq = 0;
   DateTime? _bootstrapReadAt;
+
+  /// The hosted session when the bootstrap held now was asked for, and
+  /// whether it was on the soft phone then: the SP7 preset is judged only on
+  /// an answer asked for that session on the soft phone.
+  String? _bootstrapFor;
+  bool _bootstrapOnSoftphone = false;
+
+  /// A reconciling read is in flight (see [_loadBootstrap]'s `reconcile`).
+  bool _reconcileAsked = false;
   bool _resumeTried = false;
   bool _resumePending = false;
 
@@ -159,6 +180,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   String? _hydratedFor;
   ManualCall? _lastCall;
   ({String callId, String? name})? _nameSent;
+
+  /// What [HostedHere] was last told this phone hosts.
+  ({String workspace, String sessionId})? _hosted;
 
   // ── The Phone tab's screen, when no session is hosted ──
   SoftphoneScreenState _screen = const SoftphoneScreenLoading();
@@ -262,10 +286,12 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
 
   void _resetForWorkspace() {
     _bootstrap = null;
-    _bootstrapAccount = null;
     _reach = _Reach.none;
     _bootstrapError = null;
     _bootstrapReadAt = null;
+    _bootstrapFor = null;
+    _bootstrapOnSoftphone = false;
+    _reconcileAsked = false;
     _resumeTried = false;
     _resumePending = false;
     _prevCall = null;
@@ -430,7 +456,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
 
   bool get _canDial => _dialUnavailableReason == null && dialBlockReason(_number) == null && !_placing;
 
-  bool get _dialPadEnabled => !_finishOnly && _call == null;
+  /// Typing, paste and the pad: locked while a dial is in flight too, so the
+  /// number on screen is the one the server is answering about.
+  bool get _dialPadEnabled => !_finishOnly && _call == null && !_placing;
 
   /// Something here to finish with the soft phone off: a soft-phone session
   /// (here, or stranded in another account), or a campaign session here on the
@@ -447,6 +475,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   void _onHost(SoftphoneHostView? next) {
     final prev = _host;
     _host = next;
+    _trackHostedHere(next);
     if (prev?.sessionId != next?.sessionId) {
       if (next == null) {
         // The station (or the soft-phone session) closed: where things stand now is the bootstrap's.
@@ -455,20 +484,52 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
         unawaited(_loadBootstrap());
       } else {
         if (_screen is SoftphoneScreenOpening) _screen = const SoftphoneScreenClosed();
-        // Read in the session's own account when the bootstrap was read in another.
-        if (next.accountId != null && _bootstrapAccount != null && next.accountId != _bootstrapAccount) {
-          unawaited(_loadBootstrap());
-        }
+        // A new session starts from a clean setup: the last one's tag (a
+        // station's campaign) and caller ID are not this one's.
+        _tagDraft = null;
+        _callerDraft = null;
+        // Read for this session, in its own account: the campaigns, caller IDs
+        // and fields may have changed since the last read (a campaign staffed
+        // since is the station's preset tag only once the bootstrap says so).
+        // The host has just loaded the session's call, so nothing is reconciled.
+        unawaited(_loadBootstrap(reconcile: false));
       }
     } else if (next != null && prev != null) {
-      // A reconnect, not the first open: a call that settled meanwhile sent no frame.
       if (next.link == StationLink.open && prev.link != StationLink.open && prev.everOpened) {
+        // A reconnect, not the first open: a call that settled meanwhile sent no frame.
         unawaited(_loadBootstrap());
+      } else if (next.onSoftphone && !prev.onSoftphone) {
+        // A station switched to the soft phone: what it may dial and log to is read now.
+        unawaited(_loadBootstrap(reconcile: false));
       }
     }
     _applyPreset();
     _syncCall();
     _emit();
+  }
+
+  /// Keeps [HostedHere] in step with the host: this phone hosts a session
+  /// while the host holds it and no other device has taken it (4409).
+  void _trackHostedHere(SoftphoneHostView? next) {
+    final hosting = next != null && next.link != StationLink.superseded ? next : null;
+    final workspace = hosting == null ? null : _workspaceFor(hosting.accountId);
+    final was = _hosted;
+    if (was != null && was.sessionId == hosting?.sessionId && was.workspace == workspace) return;
+    final memory = ref.read(hostedHereProvider);
+    // Another session in the same workspace overwrites; otherwise the old one is forgotten.
+    if (was != null && was.workspace != workspace) unawaited(memory.forget(was.workspace, was.sessionId));
+    _hosted = null;
+    if (hosting != null && workspace != null) {
+      _hosted = (workspace: workspace, sessionId: hosting.sessionId);
+      unawaited(memory.remember(workspace, hosting.sessionId));
+    }
+  }
+
+  /// `user:tenant:account` for [accountId] (else the gate's account), as [agentWorkspaceProvider] spells it.
+  String? _workspaceFor(String? accountId) {
+    final gate = ref.read(appGateProvider);
+    if (gate is! GateReady) return null;
+    return '${gate.userId}:${gate.tenantId}:${accountId ?? gate.accountId}';
   }
 
   /// A call arriving, a call settling, and the moment it is answered.
@@ -517,11 +578,15 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     if (!_building) unawaited(_loadRecent());
   }
 
-  /// SP7: the station's campaign is the tag, once the bootstrap confirms it is taggable.
+  /// SP7: the station's campaign is the tag, once the bootstrap confirms it is
+  /// taggable. Judged once per session, on an answer asked for while that
+  /// station was on the soft phone: one read before then may predate the
+  /// agent's staffing on it.
   void _applyPreset() {
     final host = _host;
     final b = _bootstrap;
-    if (host == null || b == null || host.kind != SessionKind.campaign) return;
+    if (host == null || b == null || host.kind != SessionKind.campaign || !host.onSoftphone) return;
+    if (_bootstrapFor != host.sessionId || !_bootstrapOnSoftphone) return;
     if (_presetFor == host.sessionId) return;
     _presetFor = host.sessionId;
     final campaignId = host.campaignId;
@@ -547,8 +612,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     unawaited(_checkMicrophone());
     if (_resumePending) {
       _resumePending = false;
-      final b = _bootstrap;
-      if (b != null && _host == null) unawaited(_settleScreen(b, initial: true));
+      // Settled from a fresh answer, never the one read in the background: that
+      // may be hours old, and its session closed since (a resume would then open a new one).
+      if (_host == null) unawaited(_loadBootstrap(initial: true));
       return;
     }
     final readAt = _bootstrapReadAt;
@@ -578,10 +644,17 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
 
   /// Reads the bootstrap in the hosted session's account (else this one).
   /// [initial]: the first read for this workspace, which may resume a session.
-  Future<void> _loadBootstrap({bool initial = false}) async {
+  /// [reconcile]: the answer's `call` is the authority on the hosted session's
+  /// call (adopted, or the copy held at the ask retired). Off for a read that
+  /// only refreshes what may be dialled (a new session, the switch to the soft
+  /// phone), where no frame can have been missed; a reconciling read it
+  /// supersedes still has its answer reconciled.
+  Future<void> _loadBootstrap({bool initial = false, bool reconcile = true}) async {
     if (_workspace == null) return;
     final epoch = _epoch;
     final seq = ++_bootstrapSeq;
+    final reconciles = reconcile || _reconcileAsked;
+    _reconcileAsked = reconciles;
     final host = _host;
     // What is held at the moment of asking: if the answer says there is no
     // call, THIS copy is the one it contradicts. A newer frame arriving
@@ -589,12 +662,21 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     final heldAtAsk = host?.call;
     final account = host?.accountId;
     _bootstrapReadAt = _now();
+    // Read beside the bootstrap: whether the session it names is the one this phone hosted.
+    final hostedBefore = host == null ? _readHostedHere() : Future<String?>.value();
     try {
       final b = await _api.bootstrap(accountId: account);
+      final hosted = await hostedBefore;
       if (epoch != _epoch || seq != _bootstrapSeq) return;
       final wasKnown = _fieldsKnown;
       _bootstrap = b;
-      _bootstrapAccount = account ?? _accountId;
+      _bootstrapFor = host?.sessionId;
+      _bootstrapOnSoftphone = host?.onSoftphone ?? false;
+      if (!b.softphoneEnabled) {
+        // Off: nothing new may start, so a prompt to dial anyway goes.
+        _override = null;
+        _overrideError = null;
+      }
       _reach = _Reach.ok;
       _bootstrapError = null;
       final disabledAt = _disabledAtSeq;
@@ -602,8 +684,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
         _disabledSeen = false;
         _disabledAtSeq = null;
       }
+      _reconcileAsked = false;
       final h = _host;
-      if (h != null && (b.session == null || b.session!.sessionId == h.sessionId)) {
+      if (reconciles && h != null && (b.session == null || b.session!.sessionId == h.sessionId)) {
         final call = b.call;
         if (call != null) {
           _adopt(call);
@@ -616,7 +699,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       final current = _call;
       if (!wasKnown && current != null && !_fieldsTouched) _fieldValues = Map.of(current.fields);
       _applyPreset();
-      if (_host == null) await _settleScreen(b, initial: initial);
+      if (_host == null) await _settleScreen(b, initial: initial, hostedBefore: hosted);
       if (epoch != _epoch) return;
       if (initial) unawaited(_loadRecent());
     } on ApiError catch (e) {
@@ -637,12 +720,21 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _emit();
   }
 
+  /// The session this phone last hosted in this workspace, or null.
+  Future<String?> _readHostedHere() async {
+    final workspace = _workspaceFor(null);
+    return workspace == null ? null : ref.read(hostedHereProvider).read(workspace);
+  }
+
   /// The Phone tab's screen from the bootstrap, when no session is hosted here.
-  /// On the first read, a session to resume is resumed (decision 1): a
-  /// soft-phone session in this account is reopened (the server rehydrates it
-  /// even with the flag off), and a campaign session here on the soft phone
-  /// with an unsettled call has its station started.
-  Future<void> _settleScreen(SoftphoneBootstrap b, {required bool initial}) async {
+  /// On the first read, a session to resume is resumed (decision 1) when it is
+  /// the one this phone last hosted ([hostedBefore]): a soft-phone session in
+  /// this account is reopened (the server rehydrates it even with the flag
+  /// off), and a campaign session here on the soft phone with an unsettled
+  /// call has its station started. A session this phone did not host (the
+  /// web, another phone) is [SoftphoneScreenOtherDevice]: nothing opens until
+  /// the agent asks.
+  Future<void> _settleScreen(SoftphoneBootstrap b, {required bool initial, String? hostedBefore}) async {
     final s = b.session;
     final here = _accountId;
     final enabled = b.softphoneEnabled && !_disabledSeen;
@@ -652,8 +744,13 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       return;
     }
     final resume = initial && !_resumeTried;
+    final hostedHere = s.sessionId == hostedBefore;
     if (s.kind == SessionKind.softphone) {
       if (s.accountId == here) {
+        if (!hostedHere) {
+          _screen = SoftphoneScreenOtherDevice(canClose: b.call == null);
+          return;
+        }
         if (resume && _foregroundOrDefer()) {
           _resumeTried = true;
           await _openSession();
@@ -676,6 +773,10 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       return;
     }
     final unsettledHere = s.onSoftphone && s.accountId == here && b.call != null;
+    if (unsettledHere && !hostedHere) {
+      _screen = SoftphoneScreenOtherDevice(campaignId: s.campaignId ?? '', campaignName: s.campaignName ?? '');
+      return;
+    }
     if (unsettledHere && resume && _foregroundOrDefer()) {
       _resumeTried = true;
       _screen = _onCampaignFromSummary(s);
@@ -748,6 +849,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     hostedHere: false,
     switchQueued: s.switchQueued,
     canSwitchAccount: _canSwitchTo(s.accountId),
+    onSoftphone: s.onSoftphone,
   );
 
   SoftphoneScreenOnCampaign _onCampaignFromRefusal(SoftphoneSessionOnCampaignRefusal r) => SoftphoneScreenOnCampaign(
@@ -787,6 +889,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       sameAccount: true,
       hostedHere: true,
       switchQueued: host.switchQueued,
+      onSoftphone: host.onSoftphone,
     );
   }
 
@@ -795,7 +898,43 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   @override
   Future<void> open() async {
     if (_workspace == null || _host?.kind == SessionKind.softphone || _sessionBusy != SoftphoneSessionBusy.none) return;
+    final screen = _screen;
+    if (_host == null && screen is SoftphoneScreenOtherDevice && screen.campaignId != null) {
+      await _useStationHere(screen);
+      return;
+    }
     await _openSession();
+  }
+
+  /// "Use it on this phone" for a campaign station on the soft phone that
+  /// another device holds: its station is started here (the host rehydrates it).
+  Future<void> _useStationHere(SoftphoneScreenOtherDevice screen) async {
+    final epoch = _epoch;
+    _resumeTried = true;
+    _sessionBusy = SoftphoneSessionBusy.opening;
+    _sessionError = null;
+    _emit();
+    StationStart started;
+    try {
+      started = await ref
+          .read(stationLauncherProvider)
+          .start(screen.campaignId!, campaignName: screen.campaignName ?? '');
+    } catch (e) {
+      _log.warn('station take-over failed', {'error': e.runtimeType.toString()});
+      started = const StationRefused(softphoneOpenFailedCopy);
+    }
+    if (epoch != _epoch) return;
+    _sessionBusy = SoftphoneSessionBusy.none;
+    switch (started) {
+      case StationStarted():
+        break;
+      case StationRefused(:final message):
+        _sessionError = message;
+      case StationElsewhere() || StationOnSoftphone():
+        _sessionError = softphoneStillOpenCopy;
+        unawaited(_loadBootstrap());
+    }
+    _emit();
   }
 
   Future<void> _openSession() async {
@@ -851,7 +990,11 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   @override
   Future<void> close() async {
     final host = _host;
-    if (host == null || host.kind != SessionKind.softphone || _sessionBusy != SoftphoneSessionBusy.none) return;
+    if (host == null) {
+      await _closeOtherDevice();
+      return;
+    }
+    if (host.kind != SessionKind.softphone || _sessionBusy != SoftphoneSessionBusy.none) return;
     if (_call != null) {
       _sessionError = softphoneLeaveBlockedCopy;
       _emit();
@@ -869,6 +1012,33 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
         _screen = const SoftphoneScreenClosed();
       case SoftphoneCloseCallPending(:final call):
         if (call != null) _adopt(call);
+        _sessionError = softphoneLeaveBlockedCopy;
+      case SoftphoneCloseFailed(:final message):
+        _sessionError = message;
+    }
+    _emit();
+  }
+
+  /// "Close it" on [SoftphoneScreenOtherDevice]: the soft-phone session the
+  /// other device holds is closed where it is; nothing opens here.
+  Future<void> _closeOtherDevice() async {
+    final screen = _screen;
+    final sessionId = _screenSessionId;
+    if (screen is! SoftphoneScreenOtherDevice || !screen.canClose || _sessionBusy != SoftphoneSessionBusy.none) return;
+    final epoch = _epoch;
+    _sessionBusy = SoftphoneSessionBusy.closing;
+    _sessionError = null;
+    _emit();
+    final result = await _actions.closeSoftphone(sessionId: sessionId, accountId: _accountId);
+    if (epoch != _epoch) return;
+    _sessionBusy = SoftphoneSessionBusy.none;
+    switch (result) {
+      case SoftphoneClosed() || SoftphoneCloseNoSession():
+        _screen = const SoftphoneScreenClosed();
+        unawaited(_loadBootstrap());
+      case SoftphoneCloseCallPending():
+        // A call started there meanwhile: it is the other device's to finish, or this phone's to take.
+        _screen = const SoftphoneScreenOtherDevice();
         _sessionError = softphoneLeaveBlockedCopy;
       case SoftphoneCloseFailed(:final message):
         _sessionError = message;
@@ -936,7 +1106,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   Future<bool> switchToSoftphone() async {
     final screen = _screenNow;
     if (screen is! SoftphoneScreenOnCampaign || _sessionBusy != SoftphoneSessionBusy.none) return false;
-    if (!screen.sameAccount) return false;
+    // Nothing to switch on a station already on the soft phone, and no new
+    // soft-phone work with the soft phone off (finish mode).
+    if (!screen.sameAccount || screen.onSoftphone || _bootstrap?.softphoneEnabled != true || _disabledSeen) return false;
     final epoch = _epoch;
     _sessionBusy = SoftphoneSessionBusy.switching;
     _sessionError = null;
@@ -1091,10 +1263,12 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   /// One dial in flight: [_placing] is set before the first await, so two
   /// presses in the same frame (a double tap, the keyboard's Go on top of a
   /// tap) place one call. `POST /calls` is never retried.
-  Future<void> _place(ManualCallOverridesRequest overrides) async {
+  Future<void> _place(ManualCallOverridesRequest overrides, {String? to}) async {
     final host = _host;
     final b = _bootstrap;
     if (host == null || b == null || _placing) return;
+    // The number this dial is about: an override prompt names it, and "Call anyway" redials it.
+    final number = to ?? _number;
     _placing = true;
     _dialError = null;
     _overrideError = null;
@@ -1103,7 +1277,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     final cleaned = cleanFieldValues(b.callFields, _fieldValues);
     final request = ManualCallCreateRequest(
       sessionId: host.sessionId,
-      to: _number,
+      to: number,
       callerId: _draftCallerId,
       campaignId: _tagDraft,
       fields: cleaned.isEmpty ? null : cleaned,
@@ -1120,7 +1294,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       _placing = false;
       final body = refusalBodyOf(e);
       if (body != null && body.softphoneCode != SoftphoneErrorCode.unknown) {
-        _onDialRefused(body, overrides);
+        _onDialRefused(body, overrides, number);
       } else if (e is ApiUnauthorized || (e is ApiHttpError && !e.isServerError)) {
         _override = null;
         _dialError = softphoneErrorCopy(e);
@@ -1135,7 +1309,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     _emit();
   }
 
-  void _onDialRefused(ErrorBody refusal, ManualCallOverridesRequest overrides) {
+  void _onDialRefused(ErrorBody refusal, ManualCallOverridesRequest overrides, String number) {
     final campaignName = _draftCampaign?.campaignName;
     final copy = refusalCopy(refusal);
     switch (refusal.softphoneCode) {
@@ -1150,11 +1324,12 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
           describeDncRefusal(
             dnc,
             // As dialled: a number typed without a country code is read in the account's.
-            number: _number.startsWith('+') ? _number : '$_countryCode$_number',
+            number: number.startsWith('+') ? number : '$_countryCode$number',
             campaignName: campaignName,
             calendar: ref.read(softphoneCalendarProvider),
           ),
           overrides,
+          number,
         );
       case SoftphoneErrorCode.outsideCallingHours:
         final hours = refusal.outsideHours;
@@ -1168,9 +1343,11 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
             hours,
             campaignName: campaignName,
             now: _now(),
+            offsetMs: _host?.clockOffsetMs ?? 0,
             calendar: ref.read(softphoneCalendarProvider),
           ),
           overrides,
+          number,
         );
       case SoftphoneErrorCode.overrideNoteInvalid:
         if (_override != null) {
@@ -1192,7 +1369,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       case SoftphoneErrorCode.fieldsInvalid:
         _override = null;
         final details = refusal.details;
-        if (details != null && details.isNotEmpty) _fieldErrors = fieldErrorsFromDetails(details);
+        if (details != null && details.isNotEmpty) _onFieldsInvalid(details);
         _dialError = copy;
       case SoftphoneErrorCode.softphoneDisabled:
         // Turned off under an open soft phone: finish mode, and the bootstrap says the rest.
@@ -1277,9 +1454,17 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     final body = refusalBodyOf(error);
     final details = body?.details;
     if (body?.softphoneCode == SoftphoneErrorCode.fieldsInvalid && details != null && details.isNotEmpty) {
-      _fieldErrors = fieldErrorsFromDetails(details);
+      _onFieldsInvalid(details);
     }
     _emit();
+  }
+
+  /// Marks the fields a `fields_invalid` names. One this phone does not know
+  /// means the field set changed since it was read (a required field added):
+  /// re-read it, so the field appears with its error and can be filled.
+  void _onFieldsInvalid(List<FieldIssue> details) {
+    _fieldErrors = fieldErrorsFromDetails(details);
+    if (_fieldErrors.keys.any((key) => _fields.every((f) => f.key != key))) unawaited(_loadBootstrap(reconcile: false));
   }
 
   // ─── The outcome ──────────────────────────────────────────────────────────
@@ -1364,7 +1549,7 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
         _padRejection = catalogChangedCopy;
       } else if (code == SoftphoneErrorCode.fieldsInvalid) {
         final details = refusal?.details;
-        if (details != null && details.isNotEmpty) _fieldErrors = fieldErrorsFromDetails(details);
+        if (details != null && details.isNotEmpty) _onFieldsInvalid(details);
         _padRejection = softphoneRefusalCopy[SoftphoneErrorCode.fieldsInvalid];
       } else if (code == SoftphoneErrorCode.callSettled) {
         // Saved already (a supervisor on the agent's behalf): the server's view retires it here.
@@ -1458,14 +1643,15 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
   @override
   Future<void> confirmOverride(String note) async {
     final o = _override;
-    if (o == null || _placing) return;
+    // As Call: nothing is dialled in finish mode or while the phone cannot dial.
+    if (o == null || _placing || _dialUnavailableReason != null) return;
     final block = overrideNoteBlock(note);
     if (block != null) {
       _overrideError = overrideNoteBlockCopy[block];
       _emit();
       return;
     }
-    await _place(withOverride(o.overrides, o.prompt.kind, note));
+    await _place(withOverride(o.overrides, o.prompt.kind, note), to: o.to);
   }
 
   @override
