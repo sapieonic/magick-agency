@@ -401,6 +401,29 @@ void main() {
       expect(h.auth.signOuts, 1);
     });
 
+    test('a 401 while a soft-phone call owes its outcome waits for the outcome to be saved', () async {
+      signedIn();
+      final c = h.container();
+      final ready = await startGate(c);
+      const softphone = StationSignals(onDuty: true, onBreak: true, sessionKind: StationSessionKind.softphone);
+      final signals = c.read(testSignalsProvider.notifier)
+        ..set(const StationSignals(onDuty: true, onBreak: true, sessionKind: StationSessionKind.softphone, outcomeOwed: true));
+      c.read(appGateProvider.notifier).reportUnauthorized();
+      await settle();
+      expect(c.read(appGateProvider), ready, reason: 'signing out would close the session and lapse the outcome');
+      expect(c.read(appGateProvider.notifier).signOutDeferred, isTrue);
+      expect(h.auth.signOuts, 0);
+
+      // A plain sign-out asked for meanwhile waits too.
+      await c.read(appGateProvider.notifier).signOut();
+      expect(c.read(appGateProvider), ready);
+
+      signals.set(softphone);
+      await settle();
+      expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+      expect(h.auth.signOuts, 1);
+    });
+
     test('Firebase dropping the user signs out, deferred the same way during a call', () async {
       signedIn();
       final c = h.container();

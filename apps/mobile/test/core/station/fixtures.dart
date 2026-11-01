@@ -125,3 +125,24 @@ Map<String, Object?> bootstrapJson({
     };
 
 SessionBootstrap bootstrap() => SessionBootstrap.fromJson(bootstrapJson());
+
+/// `POST /softphone/sessions`' answer as the server sends it.
+Map<String, Object?> softphoneSessionJson({
+  String sessionId = 'sess-sp',
+  String stationWsUrl = '/proxy/agency/station?token=sp',
+}) =>
+    {
+      'session_id': sessionId,
+      'kind': 'softphone',
+      'state': 'break',
+      'break_reason': 'soft_phone',
+      'station_ws_url': stationWsUrl,
+      'station_token_expires_at': '2026-11-01T09:02:00.000Z',
+      'intervals': {
+        'heartbeat_ms': 10000,
+        'heartbeat_grace_ms': 10000,
+        'reservation_lease_ms': 10000,
+        'countdown_ms': 3000,
+        'deferred_hangup_ms': 8000,
+      },
+    };

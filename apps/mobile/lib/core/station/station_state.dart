@@ -1,6 +1,8 @@
 import 'package:agency_wire/agency_wire.dart';
 import 'package:meta/meta.dart';
 
+import '../softphone/call_state.dart' show newerCall;
+
 /// The station's state and the one pure function that moves it: a port of the
 /// console's `agencyStationReducer.ts`, field for field and rule for rule.
 ///
@@ -187,8 +189,11 @@ final class StationState {
   final String? campaignMessage;
   final int missedPings;
 
-  /// The session's soft-phone call, as the newest `manual_call` frame stated it.
-  final ManualCallFrame? manualCall;
+  /// The session's soft-phone call: the newest copy seen, from a
+  /// `manual_call` frame or an adopted HTTP answer (`newerCall`, the frame
+  /// winning a tie). Kept once settled until the next dial replaces it, so the
+  /// soft phone sees it settle. Cleared only with the session.
+  final ManualCall? manualCall;
 
   /// The attempt the station holds now (live, retained for wrap-up, or the
   /// wrap-up's own). What notes and the disposition are keyed by.
@@ -232,13 +237,13 @@ final class StationState {
         dialing: dialing ?? this.dialing,
         campaignMessage: identical(campaignMessage, _keep) ? this.campaignMessage : campaignMessage as String?,
         missedPings: missedPings ?? this.missedPings,
-        manualCall: identical(manualCall, _keep) ? this.manualCall : manualCall as ManualCallFrame?,
+        manualCall: identical(manualCall, _keep) ? this.manualCall : manualCall as ManualCall?,
       );
 
   @override
   String toString() => 'StationState($connection, $agentState, live: ${live?.attemptId}, '
       'retained: ${retainedAttempt?.attemptId}, wrapup: ${wrapup?.attemptId}, release: ${release?.reasonRaw}, '
-      'pendingBreak: $pendingBreakCode, missedPings: $missedPings)';
+      'pendingBreak: $pendingBreakCode, missedPings: $missedPings, manual: $manualCall)';
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
@@ -317,9 +322,29 @@ final class ErrorAction extends StationAction {
   final StationErrorFrame frame;
 }
 
+/// A `manual_call` frame's row (the frame's typed call; a frame whose row did
+/// not read is never dispatched). The frame is the authority: it wins a tie.
 final class ManualCallAction extends StationAction {
   const ManualCallAction(this.call);
-  final ManualCallFrame call;
+  final ManualCall call;
+}
+
+/// An HTTP answer's copy of the session's call (`POST /calls`, the hang-up,
+/// the outcome, `PATCH`, a refusal's `call`). Merged by `newerCall` with the
+/// copy already held, which wins a tie: the answer to a hang-up is read the
+/// instant it is issued and may still say `ringing` after the frame said `ended`.
+final class ManualCallAdoptAction extends StationAction {
+  const ManualCallAdoptAction(this.call);
+  final ManualCall call;
+}
+
+/// The bootstrap said the session has no call: drops the held copy, but only
+/// if it is still the copy named by [versionKey] (`ManualCall.versionKey`,
+/// `id@updated_at`). A newer frame that arrived after the bootstrap was asked
+/// for is kept (the console's `staleKeys`).
+final class ManualCallRetireAction extends StationAction {
+  const ManualCallRetireAction(this.versionKey);
+  final String versionKey;
 }
 
 /// The HTTP answer to a session transition (`break`, `available`,
@@ -456,7 +481,16 @@ StationState stationReducer(StationState state, StationAction action) {
     case ManualCallAction(:final call):
       // The frame's copy goes first so it wins a tie: the frame is the authority.
       final newer = newerCall(call, state.manualCall);
-      return identical(newer, state.manualCall) ? state : state._with(manualCall: newer);
+      return identical(newer, state.manualCall) || newer == state.manualCall ? state : state._with(manualCall: newer);
+
+    case ManualCallAdoptAction(:final call):
+      // The held copy goes first: an HTTP answer never displaces an equal-stamped frame.
+      final newer = newerCall(state.manualCall, call);
+      return identical(newer, state.manualCall) || newer == state.manualCall ? state : state._with(manualCall: newer);
+
+    case ManualCallRetireAction(:final versionKey):
+      final held = state.manualCall;
+      return held == null || held.versionKey != versionKey ? state : state._with(manualCall: null);
 
     case SessionStateAction(:final response):
       if (response.state != state.agentState || state.agentStateSince != null) return state;
@@ -465,23 +499,4 @@ StationState stationReducer(StationState state, StationAction action) {
         breakReasonCode: response.state == AgentState.onBreak ? response.breakReason : state.breakReasonCode,
       );
   }
-}
-
-/// The newer of two soft-phone call rows (port of `callState.ts` `newerCall`):
-/// a different call wins by `created_at`, the same call by `updated_at`, and a
-/// tie goes to the settled copy, then to [a].
-ManualCallFrame? newerCall(ManualCallFrame? a, ManualCallFrame? b) {
-  if (a == null) return b;
-  if (b == null) return a;
-  int instant(ManualCallFrame f, String key) {
-    final v = f.call[key];
-    return v is String ? (DateTime.tryParse(v)?.millisecondsSinceEpoch ?? 0) : 0;
-  }
-
-  if (a.id != b.id) return instant(b, 'created_at') > instant(a, 'created_at') ? b : a;
-  final at = instant(a, 'updated_at');
-  final bt = instant(b, 'updated_at');
-  if (bt > at) return b;
-  if (bt == at && b.call['settled_at'] != null && a.call['settled_at'] == null) return b;
-  return a;
 }

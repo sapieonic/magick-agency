@@ -1,5 +1,7 @@
 import 'package:agency_wire/agency_wire.dart' as wire;
 
+import '../lifecycle/lifecycle_policy.dart' show isCallPhase;
+
 import 'contact_context.dart';
 import 'server_clock.dart';
 import 'station_copy.dart';
@@ -51,6 +53,15 @@ class StationViewMapper {
   /// The offset the view applies now.
   int get appliedOffsetMs => _offset;
 
+  /// Moves the applied offset to [offsetMs] when it has moved by
+  /// [offsetStep] or more, and returns the offset applied. [map] does this
+  /// itself; a soft-phone session, which has no campaign view, calls it alone
+  /// so its timers get the same hysteresis.
+  int applyOffset(int offsetMs) {
+    if ((offsetMs - _offset).abs() >= offsetStep) _offset = offsetMs;
+    return _offset;
+  }
+
   StationView map({
     required String campaignId,
     required String campaignName,
@@ -73,7 +84,7 @@ class StationViewMapper {
     required bool missedReleaseDismissed,
     required bool awayPauseRequested,
   }) {
-    if ((s.clockOffsetMs - _offset).abs() >= offsetStep) _offset = s.clockOffsetMs;
+    applyOffset(s.clockOffsetMs);
     final phase = phaseOf(s.agentState);
     final link = linkOf(s.connection);
     final phaseSince = correctedInstant(s.agentStateSince, _offset);
@@ -308,5 +319,37 @@ StationSignals signalsOf(StationView? view) {
     callActive: view.callActive,
     onBreak: view.phase == AgentPhase.onBreak,
     campaignId: view.campaignId,
+  );
+}
+
+/// The shell's facts for the hosted session of either kind, from the station
+/// state rather than the campaign view (a soft-phone session has none).
+///
+/// For a campaign station this is exactly [signalsOf] of its view, plus the
+/// soft-phone facts. [over] is the session as this phone no longer holds it: the
+/// server ended it (4404), another device took it (4409), or it cannot open
+/// here (a fatal message); it holds nothing, as in [signalsOf].
+///
+/// * [StationSignals.callActive]: a campaign call (reserved, on a call, wrap-up)
+///   or a soft-phone call on the line (dialing, ringing, on the call).
+/// * [StationSignals.outcomeOwed]: the soft-phone call ended and owes its outcome.
+/// * [StationSignals.onSoftphone]: a campaign station on the `soft_phone` break.
+StationSignals hostSignalsOf({
+  required StationSessionKind kind,
+  required String? campaignId,
+  required StationState state,
+  required bool over,
+}) {
+  if (over) return const StationSignals();
+  final call = state.manualCall;
+  final onBreak = state.agentState == wire.AgentState.onBreak;
+  return StationSignals(
+    onDuty: true,
+    callActive: isCallPhase(state.agentState) || (call?.isLive ?? false),
+    onBreak: onBreak,
+    campaignId: campaignId,
+    sessionKind: kind,
+    outcomeOwed: call?.owesOutcome ?? false,
+    onSoftphone: kind == StationSessionKind.campaign && onBreak && state.breakReasonCode == wire.softphoneBreakReason,
   );
 }

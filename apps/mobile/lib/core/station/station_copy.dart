@@ -150,6 +150,46 @@ String softphoneJoinFailedCopy(String? detail) => detail != null && detail.isNot
     ? 'Closed the soft phone, but couldn’t join this campaign — $detail'
     : 'Closed the soft phone, but couldn’t join this campaign. Try again.';
 
+// ─── The soft phone, as the session host says it ────────────────────────────
+
+/// The on-duty notification of a soft-phone session (Android), and its lines
+/// for either kind of session while on the soft phone.
+const softphoneNotificationTitle = 'Soft phone';
+const softphoneReadyNotificationText = 'Ready to dial';
+const softphoneCallingNotificationText = 'Calling…';
+const softphoneOnCallNotificationText = 'On a call';
+const softphoneOutcomeNotificationText = 'Outcome needed';
+
+/// The console's `SOFTPHONE_REFUSAL_COPY` lines the host's own actions can meet.
+const softphoneManualCallLiveCopy = 'Finish this call and save its outcome first.';
+const softphoneOutcomePendingCopy = 'Save the outcome of your last call before you dial again.';
+const softphoneDisabledCopy = 'The soft phone is turned off for this account. Ask your supervisor.';
+
+/// `dial_failed` on the switch or the return: the agent state store did not
+/// take the write, and nothing was being dialled (the console's `status` context).
+const softphoneStatusFailedCopy = 'Couldn’t change your status just now; nothing changed. Try again.';
+
+/// The switch, cancel or return asked of something that is not a campaign station here.
+const softphoneNoStationCopy = 'That works only at a campaign station on this phone.';
+
+/// Reopening a soft-phone session the server ended found the agent elsewhere.
+const softphoneOnCampaignCopy = 'You’re still at a campaign station.';
+const softphoneElsewhereCopy = 'Your soft phone is open in another account.';
+
+/// A queued switch the agent tried to withdraw had already applied.
+const softphoneSwitchAlreadyAppliedCopy = 'You’re already on the soft phone.';
+
+/// The line for a refused switch to the soft phone, its withdrawal or the
+/// return to the campaign: ours for the codes whose meaning the status context
+/// fixes, else the server's sentence, else a plain retry.
+String softphoneStatusRefusalCopy(SoftphoneErrorCode code, String? serverSentence) => switch (code) {
+      SoftphoneErrorCode.dialFailed => softphoneStatusFailedCopy,
+      SoftphoneErrorCode.manualCallLive => softphoneManualCallLiveCopy,
+      SoftphoneErrorCode.outcomePending => softphoneOutcomePendingCopy,
+      SoftphoneErrorCode.softphoneDisabled => softphoneDisabledCopy,
+      _ => serverSentence ?? actionFailedCopy,
+    };
+
 // ─── Call actions ───────────────────────────────────────────────────────────
 
 /// The human detail of a failure, or null when there is none worth quoting.

@@ -185,8 +185,9 @@ const sessionExpiredNotice = 'Your sign-in has expired. Please sign in again.';
 /// workspace) → the account pick → [RequestScope] → [GateReady].
 ///
 /// Sign-outs the agent did not ask for (a 401 anywhere, Firebase dropping the
-/// user) are held while a call or its wrap-up is on screen and happen as soon
-/// as it ends: cutting a customer off to show a sign-in form helps nobody.
+/// user) are held while a call or its wrap-up is on screen, or a soft-phone
+/// call owes its outcome, and happen as soon as it ends: cutting a customer off
+/// to show a sign-in form helps nobody.
 ///
 /// The invite page holds the gate while it gets a credential, so that
 /// credential is never turned into a session by the auth listener: the claim
@@ -243,8 +244,12 @@ class AppGateNotifier extends Notifier<AppGate> {
 
   bool _current(int run) => ref.mounted && run == _run;
 
-  /// Whether a call or its wrap-up is on screen.
-  bool get _callActive => ref.read(stationSignalsProvider).callActive;
+  /// Whether a call or its wrap-up is on screen, or a soft-phone call ended
+  /// and owes its outcome (signing out would close the session and let the
+  /// outcome lapse).
+  bool get _callActive => _holds(ref.read(stationSignalsProvider));
+
+  static bool _holds(StationSignals s) => s.callActive || s.outcomeOwed;
 
   // ─── Start-up ─────────────────────────────────────────────────────────────
 
@@ -543,7 +548,8 @@ class AppGateNotifier extends Notifier<AppGate> {
   // ─── Sign-out ─────────────────────────────────────────────────────────────
 
   /// Signs out of Firebase and Google and forgets the account choice. While a
-  /// call or wrap-up is on screen it waits for it to end.
+  /// call or wrap-up is on screen, or a soft-phone outcome is owed, it waits
+  /// for that to end.
   Future<void> signOut({String? notice}) async {
     if (_callActive) {
       _deferSignOut(notice);
@@ -591,7 +597,7 @@ class AppGateNotifier extends Notifier<AppGate> {
     _deferredSignOut = _deferredSignOut == sessionExpiredNotice ? sessionExpiredNotice : (notice ?? '');
     _log.info('Sign-out held until the call and wrap-up end');
     _signalsSub ??= ref.listen<StationSignals>(stationSignalsProvider, (_, next) {
-      if (!next.callActive) _resumeDeferredSignOut();
+      if (!_holds(next)) _resumeDeferredSignOut();
     });
     _deferredRecheck?.cancel();
     _deferredRecheck = null;

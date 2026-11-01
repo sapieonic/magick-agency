@@ -25,6 +25,10 @@ abstract interface class AudioEngine {
   Future<void> setMuted(bool muted);
   Future<void> setRoute(AudioRoute route);
 
+  /// The ringback tone while a soft-phone call rings (generated on the device,
+  /// mixed into playout). [stop] clears it.
+  Future<void> setRingback(bool on);
+
   Future<void> startCall({required String callId, required String displayName, required String handle});
   Future<void> reportConnected(String callId);
   Future<void> endCall(String callId, {CallEndReason reason = CallEndReason.local});
@@ -69,6 +73,9 @@ final class PluginAudioEngine implements AudioEngine {
 
   @override
   Future<void> setRoute(AudioRoute route) => _audio.setRoute(route);
+
+  @override
+  Future<void> setRingback(bool on) => _audio.setRingback(on);
 
   @override
   Future<void> startCall({required String callId, required String displayName, required String handle}) =>

@@ -7,7 +7,7 @@ import 'package:magick_agency_agent/core/audio/audio_engine.dart';
 /// An [AudioEngine] that records what it was asked to do, for tests of the
 /// station core and of screens that need a station. Lifecycle calls are
 /// logged by name (`prepare`, `startCall`, `arm`, `uplink`, `connected`,
-/// `endCall`, `stop`, `release`, `fgs.start` …); [fail] makes the next call
+/// `endCall`, `stop`, `release`, `fgs.start`, `ringback.on` …); [fail] makes the next call
 /// of a name throw.
 class FakeAudioEngine implements AudioEngine {
   final List<String> calls = [];
@@ -20,6 +20,9 @@ class FakeAudioEngine implements AudioEngine {
   int playedFrames = 0;
   Uint8List? lastPlayed;
   bool muted = false;
+
+  /// The ringback as the native side holds it: set by [setRingback], cleared by [stop].
+  bool ringback = false;
   OnDutyNotification? notification;
 
   /// Every notification the service was started or updated with, in order.
@@ -56,6 +59,7 @@ class FakeAudioEngine implements AudioEngine {
   @override
   Future<void> stop({bool keepWarm = true}) {
     muted = false;
+    ringback = false;
     return _record(keepWarm ? 'stop' : 'release');
   }
 
@@ -76,6 +80,12 @@ class FakeAudioEngine implements AudioEngine {
 
   @override
   Future<void> setRoute(AudioRoute route) => _record('route:${route.id}');
+
+  @override
+  Future<void> setRingback(bool on) {
+    ringback = on;
+    return _record(on ? 'ringback.on' : 'ringback.off');
+  }
 
   @override
   Future<void> startCall({required String callId, required String displayName, required String handle}) {

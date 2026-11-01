@@ -11,12 +11,25 @@ import 'audio_engine.dart';
 /// What the audio should be doing, derived from the station state.
 @immutable
 final class AudioTarget {
-  const AudioTarget({this.attemptId, this.bridged = false, this.displayName = '', this.handle = '', this.endReason});
+  const AudioTarget({
+    this.attemptId,
+    this.bridged = false,
+    this.displayName = '',
+    this.handle = '',
+    this.endReason,
+    this.ringback = false,
+  });
 
   static const idle = AudioTarget();
 
-  /// The live attempt (reserved or on a call), or null between calls.
+  /// The live call, or null between calls: a campaign attempt (reserved or on
+  /// a call), or a soft-phone call from the moment it is placed (`queued`), so
+  /// the microphone is armed before the customer's "hello".
   final String? attemptId;
+
+  /// Audio is live both ways, so the uplink may start: a campaign attempt's
+  /// `bridged` frame, a soft-phone call's `bridged_at` (never `answered`, which
+  /// would put the agent's voice on the wire before audio reaches them).
   final bool bridged;
 
   /// For CallKit: the contact's name, or the number.
@@ -25,6 +38,11 @@ final class AudioTarget {
 
   /// How the PREVIOUS call ended, for CallKit's record of it.
   final audio.CallEndReason? endReason;
+
+  /// Play the ringback: a soft-phone call is ringing and the agent has not
+  /// muted the ring. Never for a campaign attempt (pacing bridges an answered
+  /// call; there is nothing to ring).
+  final bool ringback;
 }
 
 /// Drives the voice engine from the agent's state (the audio half of the
@@ -36,6 +54,7 @@ final class AudioTarget {
 /// | `reserved`                | CallKit `startCall`, then `armMicrophone`      |
 /// | `bridged`                 | `startUplink`, CallKit `reportConnected`       |
 /// | `released`                | CallKit `endCall`, then `stop` (kept warm)     |
+/// | soft-phone call ringing   | `setRingback(true)` unless the ring is muted   |
 /// | leave                     | `release`, stop the on-duty service            |
 ///
 /// Lifecycle calls run strictly in order on one queue; [sync] records the
@@ -66,6 +85,9 @@ class AudioOrchestrator {
   Future<void> _tail = Future<void>.value();
   String? _callId;
   bool _bridged = false;
+
+  /// The ringback was asked for and not yet turned off (or cleared by `stop`).
+  bool _ringback = false;
   /// A `prepare` is queued or done (cleared when one fails).
   bool _prepared = false;
   bool _opened = false;
@@ -157,6 +179,8 @@ class AudioOrchestrator {
         _enqueue('stop', () => _engine.stop());
         _callId = null;
         _bridged = false;
+        // `stop` clears the ringback on the native side.
+        _ringback = false;
         _autoMuted = false;
         _setView(AudioView(routes: _view.routes, route: _view.route, micProblem: _persistentMicProblem()));
       }
@@ -191,6 +215,12 @@ class AudioOrchestrator {
       _bridged = true;
       _enqueue('uplink', _engine.startUplink);
       _enqueue('connected', () => _engine.reportConnected(id));
+    }
+    // After the call's own start, so a ring asked for at dial plays once the engine runs.
+    final ring = target.attemptId != null && target.ringback && !target.bridged;
+    if (ring != _ringback) {
+      _ringback = ring;
+      _enqueue(ring ? 'ringback.on' : 'ringback.off', () => _engine.setRingback(ring));
     }
   }
 
@@ -250,6 +280,7 @@ class AudioOrchestrator {
     _enqueue('release', _engine.release);
     _enqueue('fgs.stop', _engine.stopOnDutyService);
     _callId = null;
+    _ringback = false;
     _opened = false;
     _prepared = false;
     _serviceUp = false;

@@ -12,8 +12,10 @@ import 'package:magick_agency_agent/app/providers.dart';
 import 'package:magick_agency_agent/core/api/api_client.dart';
 import 'package:magick_agency_agent/core/env.dart';
 import 'package:magick_agency_agent/core/lifecycle/app_lifecycle.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
 import 'package:magick_agency_agent/core/station/station_deps.dart';
+import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
 import '../audio/fake_audio_engine.dart';
@@ -178,6 +180,15 @@ class App {
         'expires_at': '2026-11-01T09:02:00.000Z',
       });
     };
+    routes['POST /proxy/agency/softphone/sessions'] = (_) => json(201, softphoneSessionJson());
+    routes['POST /proxy/agency/sessions/sess-sp/station-token'] = (_) {
+      mints++;
+      return json(200, {
+        'session_id': 'sess-sp',
+        'station_ws_url': '/proxy/agency/station?token=mint$mints',
+        'expires_at': '2026-11-01T09:02:00.000Z',
+      });
+    };
   }
 
   final FakeAsync async;
@@ -200,6 +211,10 @@ class App {
 
   StationController get controller => container.read(stationControllerProvider.notifier);
   StationView? get view => container.read(stationControllerProvider);
+
+  /// The soft phone's view of the hosted session, and the shell's signals.
+  SoftphoneHostView? get hostView => container.read(softphoneHostViewProvider);
+  StationSignals get signals => container.read(stationSignalsProvider);
   FakeTransport get socket => connector.last;
 
   List<Sent> requests(String method, String path) => sent.where((r) => r.method == method && r.path == path).toList();
@@ -240,6 +255,16 @@ class App {
     async.flushMicrotasks();
     return r;
   }
+
+  /// Opens the soft phone (`POST /softphone/sessions`) and its socket.
+  SoftphoneOpenResult openSoftphone() {
+    final r = run(controller.openSoftphone());
+    async.flushMicrotasks();
+    return r;
+  }
+
+  /// A `manual_call` frame carrying [call] (a row from `manual_calls.dart`).
+  void manualCallFrame(Map<String, Object?> call) => frame({'event': 'manual_call', 'call': call});
 
   void frame(Map<String, Object?> json) {
     socket.serverText(jsonEncode(json));

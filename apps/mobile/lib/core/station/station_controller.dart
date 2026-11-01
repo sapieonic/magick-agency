@@ -13,9 +13,15 @@ import '../api/api_error.dart';
 import '../audio/audio_orchestrator.dart';
 import '../lifecycle/app_lifecycle.dart';
 import '../lifecycle/lifecycle_policy.dart';
+import '../softphone/call_state.dart';
+import '../softphone/softphone_api.dart';
+import '../softphone/softphone_host.dart';
+import '../softphone/softphone_view.dart' show SoftphonePhase;
 import '../telemetry/log.dart';
+import 'close_softphone.dart';
 import 'contact_context.dart';
 import 'disposition_rules.dart';
+import 'hosted_session.dart';
 import 'notes_autosave.dart';
 import 'server_clock.dart';
 import 'station_api.dart';
@@ -27,33 +33,38 @@ import 'station_state.dart';
 import 'station_view.dart';
 import 'station_view_mapper.dart';
 
-/// The live station: socket, reducer, actions, audio and app lifecycle, behind
-/// [StationView] / [StationActions] / [StationLauncher].
+/// The session host: the live session of either kind (a campaign station or a
+/// soft-phone session) on one socket, one audio engine and one on-duty
+/// service, with its reducer, actions and app lifecycle. A campaign station is
+/// read through [StationView] / [StationActions] / [StationLauncher]; the soft
+/// phone through [SoftphoneHostView] / [SoftphoneHostActions]; the shell
+/// through [StationSignals] (published in [stationHostProvider]).
 final stationControllerProvider = NotifierProvider<StationController, StationView?>(StationController.new);
 
 /// What `main.dart` adds to its `ProviderScope` overrides to plug the station
-/// core into the seams the screens read.
+/// core into the seams the screens and the soft phone read.
 final List<Override> stationOverrides = [
   stationViewProvider.overrideWith((ref) => ref.watch(stationControllerProvider)),
   stationActionsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
   stationLauncherProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
-  // `select`: the shell rebuilds only when one of its three facts changes.
-  stationSignalsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.select(signalsOf))),
+  // `select`: the shell rebuilds only when one of its facts changes.
+  stationSignalsProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.signals))),
   stationTeardownProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier).leaveForSignOut),
+  softphoneHostViewProvider.overrideWith((ref) => ref.watch(stationHostProvider.select((h) => h.softphone))),
+  softphoneHostActionsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
 ];
 
 final class _Session {
-  _Session(this.bootstrap, this.campaignName);
+  _Session(this.hosted);
 
-  final SessionBootstrap bootstrap;
-  final String campaignName;
+  final HostedSession hosted;
   late final StationSocket socket;
   late final AudioOrchestrator audio;
   late final NotesAutosave notes;
   StreamSubscription<List<ConnectivityResult>>? network;
   AppLifecycleSource? lifecycle;
 
-  String get id => bootstrap.sessionId;
+  String get id => hosted.sessionId;
 
   void stopListening() {
     lifecycle?.detach();
@@ -62,7 +73,8 @@ final class _Session {
   }
 }
 
-class StationController extends Notifier<StationView?> implements StationActions, StationLauncher {
+class StationController extends Notifier<StationView?>
+    implements StationActions, StationLauncher, SoftphoneHostActions {
   static final _log = Log('station');
 
   _Session? _s;
@@ -83,6 +95,21 @@ class StationController extends Notifier<StationView?> implements StationActions
   ReleasedFrame? _lastRelease;
   ({String attemptId, String? name})? _nameCache;
   StationViewMapper _mapper = StationViewMapper();
+
+  // The soft-phone call's local facts (the call itself is in the reducer).
+  /// The ring is muted for [_ringCallId]; any other call rings.
+  bool _ringMuted = false;
+  String? _ringCallId;
+
+  /// The matched contact's name for a soft-phone call (CallKit), from the soft phone.
+  ({String callId, String? name})? _manualName;
+
+  /// The call the audio was last told about, so the end reason handed to
+  /// CallKit is that call's: a campaign release's, or a soft-phone call's.
+  String? _lastTargetId;
+
+  /// The socket has opened at least once in this session.
+  bool _everOpened = false;
 
   /// The server refused the socket's upgrade (1008): nothing here can work.
   bool _upgradeRefused = false;
@@ -113,6 +140,12 @@ class StationController extends Notifier<StationView?> implements StationActions
   bool? _wakeLockOn;
 
   late final StationApi _api = StationApi(
+    ref.read(apiClientProvider),
+    scopedTo: _scopedClient,
+    onUnauthorized: _reportUnauthorized,
+  );
+
+  late final SoftphoneApi _softphoneApi = SoftphoneApi(
     ref.read(apiClientProvider),
     scopedTo: _scopedClient,
     onUnauthorized: _reportUnauthorized,
@@ -163,17 +196,19 @@ class StationController extends Notifier<StationView?> implements StationActions
   Future<StationStart> start(String campaignId, {required String campaignName}) async {
     final current = _s;
     if (current != null &&
-        current.bootstrap.campaignId == campaignId &&
+        !current.hosted.isSoftphone &&
+        current.hosted.campaignId == campaignId &&
         _station.connection != StationConnection.sessionGone) {
       return const StationStarted();
     }
+    final accountId = _api.accountId;
     final SessionBootstrap bootstrap;
     try {
       bootstrap = await _api.join(campaignId);
     } on ApiError catch (e) {
       return _joinRefusal(e);
     }
-    await _open(bootstrap, campaignName);
+    await _open(HostedSession.campaign(bootstrap, campaignName: campaignName, accountId: accountId));
     return const StationStarted();
   }
 
@@ -206,18 +241,21 @@ class StationController extends Notifier<StationView?> implements StationActions
     return result;
   }
 
-  /// Closes a soft-phone session that has no unsettled call (in its own
-  /// account), then starts.
+  /// Closes the agent's soft-phone session (in its own account) unless its
+  /// call is live or owes its outcome ([closeSoftphone]: the bootstrap is read
+  /// first, since `leave` refuses only a live call and an owed outcome would
+  /// lapse), then starts. The session closed is torn down here too when it is
+  /// the one this phone hosts.
   @override
   Future<StationStart> closeSoftphoneAndStart(StationOnSoftphone softphone, String campaignId, {required String campaignName}) async {
-    try {
-      await _api.leave(softphone.sessionId, accountId: softphone.accountId);
-    } on ApiError catch (e) {
-      final code = e is ApiHttpError ? e.code : null;
-      if (code == AgencyErrorCode.agentOnLiveCall.wire || code == 'manual_call_live') {
+    final closed = await closeSoftphone(sessionId: softphone.sessionId, accountId: softphone.accountId);
+    switch (closed) {
+      case SoftphoneCloseCallPending():
         return const StationRefused(softphoneCallPendingCopy, code: 'call_pending');
-      }
-      if (!_alreadyLeft(e)) return StationRefused(softphoneStillOpenCopy(errorDetail(e)));
+      case SoftphoneCloseFailed(:final message):
+        return StationRefused(message);
+      case SoftphoneClosed() || SoftphoneCloseNoSession():
+        break;
     }
     final result = await start(campaignId, campaignName: campaignName);
     if (result is StationRefused) return StationRefused(softphoneJoinFailedCopy(result.message), code: result.code);
@@ -239,7 +277,7 @@ class StationController extends Notifier<StationView?> implements StationActions
         // The session to leave and the account it is in come together, or
         // not at all (a server older than the fields). Without them only this
         // phone's own open station can be left from here, in its own account.
-        final ownThere = own != null && own.bootstrap.campaignId == c.campaignId;
+        final ownThere = own != null && !own.hosted.isSoftphone && own.hosted.campaignId == c.campaignId;
         return StationElsewhere(
           sessionId: c.canLeave ? c.sessionId! : (ownThere ? own.id : ''),
           campaignId: c.campaignId,
@@ -262,15 +300,16 @@ class StationController extends Notifier<StationView?> implements StationActions
     }
   }
 
-  Future<void> _open(SessionBootstrap bootstrap, String campaignName) async {
+  Future<void> _open(HostedSession hosted) async {
     await _closeSession();
-    _station = bootstrap.campaignStatus == CampaignStatus.running
+    final bootstrap = hosted.bootstrap;
+    _station = bootstrap == null || bootstrap.campaignStatus == CampaignStatus.running
         ? StationState.initial
         : stationReducer(StationState.initial, const CampaignStateAction(dialing: false));
-    _catalog = bootstrap.dispositionCatalog;
-    _breakReasons = bootstrap.breakReasons;
+    _catalog = hosted.catalog;
+    _breakReasons = hosted.breakReasons;
 
-    final s = _Session(bootstrap, campaignName);
+    final s = _Session(hosted);
     _s = s;
     s.audio = AudioOrchestrator(
       engine: ref.read(audioEngineProvider),
@@ -288,20 +327,21 @@ class StationController extends Notifier<StationView?> implements StationActions
     s.socket = StationSocket(
       connector: ref.read(stationConnectorProvider),
       resolveUrl: ref.read(envProvider).resolveStationUrl,
-      mintToken: () async => (await _api.mintStationToken(bootstrap.sessionId)).stationWsUrl,
+      mintToken: () async => (await _api.mintStationToken(hosted.sessionId)).stationWsUrl,
       refreshIdToken: () async {
         await tokens.idToken(forceRefresh: true);
       },
-      initialUrl: bootstrap.stationWsUrl,
-      initialUrlExpiresAt: bootstrap.stationTokenExpiresAt,
-      heartbeat: bootstrap.intervals.heartbeat,
+      initialUrl: hosted.stationWsUrl,
+      initialUrlExpiresAt: hosted.stationTokenExpiresAt,
+      heartbeat: hosted.intervals.heartbeat,
       clientHeader: ref.read(clientIdentityProvider).header,
       onFrame: _onFrame,
       onPong: _onPong,
       onBinary: s.audio.playFrame,
       onConnection: _onConnection,
       onMissedPings: (n) => _dispatch(MissedPingsAction(n)),
-      callLive: () => _station.live != null || isCallPhase(_station.agentState),
+      // A soft-phone call on the line holds the socket as a campaign call does.
+      callLive: () => _station.live != null || isCallPhase(_station.agentState) || isCallLive(_station.manualCall),
       now: _now,
       decode: ref.read(stationFrameDecoderProvider),
     );
@@ -347,7 +387,10 @@ class StationController extends Notifier<StationView?> implements StationActions
     // The last seconds of typing are sent, not dropped with the debounce.
     final notesSent = s.notes.flushNow(timeout: notesFlushTimeout);
     _resetSessionState();
-    if (!disposing && ref.mounted) state = null;
+    if (!disposing && ref.mounted) {
+      state = null;
+      _publishHost();
+    }
     _setWakeLock(false);
     _setNotice(AwayNotice.none, null);
     await Future.wait([s.audio.close(), notesSent]);
@@ -422,6 +465,11 @@ class StationController extends Notifier<StationView?> implements StationActions
     _upgradeRefused = false;
     _readySeen = false;
     _mapper = StationViewMapper();
+    _ringMuted = false;
+    _ringCallId = null;
+    _manualName = null;
+    _lastTargetId = null;
+    _everOpened = false;
   }
 
   // ─── Frames ─────────────────────────────────────────────────────────────
@@ -438,13 +486,13 @@ class StationController extends Notifier<StationView?> implements StationActions
         _reconnectWindow = null;
         final first = !_readySeen;
         _readySeen = true;
-        final bootstrap = _s?.bootstrap;
+        final hosted = _s?.hosted;
         _dispatch(ReadyAction(
           frame,
           wrapup: activeWrapup == null ? null : openWrapup(activeWrapup, _station.clockOffsetMs, _now()),
-          // The join's answer said the same thing moments ago, when the frame states nothing.
+          // The opening answer said the same thing moments ago, when the frame states nothing.
           breakReason: frame.breakReason ??
-              (first && bootstrap != null && bootstrap.state == AgentState.onBreak ? bootstrap.breakReason : null),
+              (first && hosted != null && hosted.initialState == AgentState.onBreak ? hosted.initialBreakReason : null),
         ));
       case AgentStateFrame():
         // The authority: an HTTP answer held for reconciliation is now stale.
@@ -478,8 +526,13 @@ class StationController extends Notifier<StationView?> implements StationActions
       case StationErrorFrame():
         _log.warn('station error frame', {'code': frame.codeRaw});
         _dispatch(ErrorAction(frame));
-      case ManualCallFrame():
-        _dispatch(ManualCallAction(frame));
+      case ManualCallFrame(:final manualCall):
+        if (manualCall == null) {
+          // A row this build cannot read: never fatal, never logged whole (it can hold contact data).
+          _log.warn('unreadable manual_call frame', {'id': frame.id ?? ''});
+          break;
+        }
+        _dispatch(ManualCallAction(manualCall));
       case PongFrame():
         // The socket hands pongs to [_onPong] itself; none arrive here.
         break;
@@ -516,9 +569,12 @@ class StationController extends Notifier<StationView?> implements StationActions
       }));
     }
     final wasOpen = _station.connection == StationConnection.open;
-    if (connection == StationConnection.reconnecting && wasOpen && _station.live != null) {
-      // The server holds a live call this long for the same session to come back.
-      final hold = _s?.bootstrap.intervals.deferredHangup ?? const Duration(seconds: 8);
+    if (connection == StationConnection.open) _everOpened = true;
+    if (connection == StationConnection.reconnecting && wasOpen && (_station.live != null || _manualAnswered)) {
+      // The server holds a live call this long for the same session to come
+      // back. A soft-phone call only once answered: one still ringing is
+      // ended by the server at once, so there is nothing to count down to.
+      final hold = _s?.hosted.intervals.deferredHangup ?? const Duration(seconds: 8);
       _reconnectDeadline = _now().add(hold);
       _reconnectWindow = hold;
     } else if (connection != StationConnection.reconnecting) {
@@ -584,8 +640,16 @@ class StationController extends Notifier<StationView?> implements StationActions
     }
     if (_saved != null && _saved!.attemptId != _station.currentAttemptId) _saved = null;
     if (_dncOutcome != null && _dncOutcome!.attemptId != _station.currentAttemptId) _dncOutcome = null;
+    // The ring's mute belongs to one call: the next one rings again.
+    final callId = _station.manualCall?.id;
+    if (callId != _ringCallId) {
+      _ringCallId = callId;
+      _ringMuted = false;
+    }
 
-    s.audio.sync(_audioTarget());
+    final target = _audioTarget();
+    _lastTargetId = target.attemptId;
+    s.audio.sync(target);
     s.notes.attemptChanged(
       _station.currentAttemptId,
       accepting: _station.currentAttemptId != null && isCallPhase(_station.agentState),
@@ -599,15 +663,25 @@ class StationController extends Notifier<StationView?> implements StationActions
     final s = _s;
     if (s == null) {
       state = null;
+      _publishHost();
+      return;
+    }
+    if (s.hosted.isSoftphone) {
+      // No campaign view: the soft phone reads the host view. The offset still
+      // moves with the view's hysteresis, for the notification's call timer.
+      _mapper.applyOffset(_station.clockOffsetMs);
+      s.audio.updateNotification(_onDutyNotification());
+      state = null;
+      _publishHost();
       return;
     }
     final missed = _station.missedRelease;
     final view = _mapper.map(
-      campaignId: s.bootstrap.campaignId,
-      campaignName: s.campaignName,
+      campaignId: s.hosted.campaignId!,
+      campaignName: s.hosted.campaignName ?? '',
       sessionId: s.id,
       s: _station,
-      bootstrap: s.bootstrap,
+      bootstrap: s.hosted.bootstrap,
       catalog: _catalog,
       breakReasons: _breakReasons,
       pendingBreakCode: _pendingBreakCode,
@@ -628,19 +702,100 @@ class StationController extends Notifier<StationView?> implements StationActions
     // view settled on (with its hysteresis), not every pong's raw estimate.
     s.audio.updateNotification(_onDutyNotification());
     state = view;
+    _publishHost();
   }
 
+  /// Writes the shell's signals and the soft phone's view of the session.
+  void _publishHost() {
+    if (!ref.mounted) return;
+    final s = _s;
+    ref.read(stationHostProvider.notifier).set(
+          s == null
+              ? StationHost.none
+              : StationHost(
+                  signals: hostSignalsOf(
+                    kind: s.hosted.signalKind,
+                    campaignId: s.hosted.campaignId,
+                    state: _station,
+                    // Ended (4404), taken by another device (4409), or unable to open
+                    // here: the call moved with the session, so nothing is held.
+                    over: _terminal || _fatal != null,
+                  ),
+                  softphone: _softphoneView(s),
+                ),
+        );
+  }
+
+  SoftphoneHostView _softphoneView(_Session s) {
+    final call = _station.manualCall;
+    return SoftphoneHostView(
+      sessionId: s.id,
+      kind: s.hosted.kind,
+      accountId: s.hosted.accountId,
+      campaignId: s.hosted.campaignId,
+      campaignName: s.hosted.bootstrap?.campaignName ?? s.hosted.campaignName,
+      link: StationViewMapper.linkOf(_station.connection),
+      everOpened: _everOpened,
+      phase: StationViewMapper.phaseOf(_station.agentState),
+      onSoftphone: _onSoftphoneBreak,
+      switchQueued: _pendingBreakCode == softphoneBreakReason,
+      call: call,
+      clockOffsetMs: _mapper.appliedOffsetMs,
+      audio: s.audio.view,
+      ringMuted: _ringMuted,
+      reconnectDeadline: isCallLive(call) ? _reconnectDeadline : null,
+    );
+  }
+
+  /// On the `soft_phone` break: always, for a soft-phone session once its
+  /// socket says so; for a campaign station, once the switch applied.
+  bool get _onSoftphoneBreak =>
+      _station.agentState == AgentState.onBreak && _station.breakReasonCode == softphoneBreakReason;
+
+  /// A soft-phone call is on the line and the customer has answered: the
+  /// server holds it [StationIntervals.deferredHangup] for a dropped socket.
+  bool get _manualAnswered {
+    final call = _station.manualCall;
+    if (call == null || !call.isLive) return false;
+    return call.answeredAt != null ||
+        call.bridgedAt != null ||
+        call.state == AttemptState.answered ||
+        call.state == AttemptState.bridged;
+  }
+
+  /// The audio's call: a campaign attempt wins (the two cannot both be live on
+  /// one session, so a held manual copy beside an attempt is stale), else a
+  /// soft-phone call on the line (a port of the console's `audioTarget`).
   AudioTarget _audioTarget() {
-    final endReason = _endReasonFor(_lastRelease);
-    final live = _station.live;
+    final manual = _station.manualCall;
+    // How the call the audio last held ended, in that call's own terms.
+    final previous = _lastTargetId;
+    final endReason = previous != null && manual != null && previous == manual.id && !manual.isLive
+        ? _manualEndReasonFor(manual.endReason)
+        : _endReasonFor(_lastRelease);
     // Superseded: the call moved with the session to the other device.
-    if (live == null || _terminal) return AudioTarget(endReason: endReason);
+    if (_terminal) return AudioTarget(endReason: endReason);
+    final live = _station.live;
+    if (live == null) {
+      if (manual == null || !manual.isLive) return AudioTarget(endReason: endReason);
+      final named = _manualName;
+      final name = named != null && named.callId == manual.id ? named.name : null;
+      return AudioTarget(
+        attemptId: manual.id,
+        // Only `bridged_at` opens the uplink: audio is live both ways from there.
+        bridged: manual.bridgedAt != null,
+        displayName: name ?? manual.destinationE164,
+        handle: manual.destinationE164,
+        endReason: endReason,
+        ringback: manual.state == AttemptState.ringing && manual.bridgedAt == null && !_ringMuted,
+      );
+    }
     final cached = _nameCache;
     final String? name;
     if (cached != null && cached.attemptId == live.attemptId) {
       name = cached.name;
     } else {
-      name = displayNameFor(live.attempt.context, _s?.bootstrap.contextDisplay);
+      name = displayNameFor(live.attempt.context, _s?.hosted.contextDisplay);
       _nameCache = (attemptId: live.attemptId, name: name);
     }
     return AudioTarget(
@@ -664,8 +819,21 @@ class StationController extends Notifier<StationView?> implements StationActions
         _ => audio.CallEndReason.remoteEnded,
       };
 
+  static audio.CallEndReason _manualEndReasonFor(ManualCallEndReason? reason) => switch (reason) {
+        ManualCallEndReason.agentHangup => audio.CallEndReason.local,
+        ManualCallEndReason.noAnswer => audio.CallEndReason.unanswered,
+        ManualCallEndReason.busy ||
+        ManualCallEndReason.failed ||
+        ManualCallEndReason.invalid ||
+        ManualCallEndReason.agentDisconnected ||
+        ManualCallEndReason.orphaned =>
+          audio.CallEndReason.failed,
+        _ => audio.CallEndReason.remoteEnded,
+      };
+
   audio.OnDutyNotification _onDutyNotification() {
     final s = _s;
+    if (s != null && (s.hosted.isSoftphone || _onSoftphoneBreak)) return _softphoneNotification(s);
     final state = _station.agentState;
     final away = state == AgentState.onBreak &&
         (_station.breakReasonCode ?? (_awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null)) ==
@@ -681,20 +849,41 @@ class StationController extends Notifier<StationView?> implements StationActions
     // After 4404/4409 the call is not this phone's: no Mute or Hang up for it.
     final live = _terminal ? null : _station.live;
     return audio.OnDutyNotification(
-      title: s == null ? 'On duty' : 'On duty · ${s.campaignName}',
+      title: s == null ? 'On duty' : 'On duty · ${s.hosted.campaignName}',
       text: text,
       channelName: 'On duty',
-      call: live == null
-          ? null
-          : audio.OnDutyCall(
-              muted: s?.audio.view.muted ?? false,
-              muteLabel: 'Mute',
-              unmuteLabel: 'Unmute',
-              hangUpLabel: 'Hang up',
-              connectedAt: correctedInstant(live.bridgedAt, _mapper.appliedOffsetMs),
-            ),
+      call: live == null ? null : _notificationCall(s, live.bridgedAt),
     );
   }
+
+  /// The soft phone's notification: "Soft phone" for a soft-phone session
+  /// (the service runs for the session's whole life), the station's title for
+  /// a campaign station on the soft phone. Mute and Hang up while a call is on
+  /// the line; Hang up there acts at once ([hangUp]).
+  audio.OnDutyNotification _softphoneNotification(_Session s) {
+    final call = _terminal ? null : _station.manualCall;
+    final text = switch (softphonePhase(call)) {
+      SoftphonePhase.ready => softphoneReadyNotificationText,
+      SoftphonePhase.dialing || SoftphonePhase.ringing => softphoneCallingNotificationText,
+      SoftphonePhase.onCall => softphoneOnCallNotificationText,
+      SoftphonePhase.outcome => softphoneOutcomeNotificationText,
+    };
+    return audio.OnDutyNotification(
+      title: s.hosted.isSoftphone ? softphoneNotificationTitle : 'On duty · ${s.hosted.campaignName}',
+      text: text,
+      channelName: 'On duty',
+      call: call != null && call.isLive ? _notificationCall(s, call.bridgedAt) : null,
+    );
+  }
+
+  audio.OnDutyCall _notificationCall(_Session? s, DateTime? bridgedAt) => audio.OnDutyCall(
+        muted: s?.audio.view.muted ?? false,
+        muteLabel: 'Mute',
+        unmuteLabel: 'Unmute',
+        hangUpLabel: 'Hang up',
+        connectedAt: correctedInstant(bridgedAt, _mapper.appliedOffsetMs),
+      );
+
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────
 
@@ -777,10 +966,21 @@ class StationController extends Notifier<StationView?> implements StationActions
 
   void _applyLifecycle(_Session s) {
     final st = _station.agentState;
-    s.socket.setAppPings(appPingsWanted(foreground: _foreground, state: st) && !_terminal);
-    s.socket.setKeepAlive(keepAliveWanted(foreground: _foreground, state: st));
+    // A soft-phone call live or owing its outcome keeps the socket wanted in
+    // the background, as a call or wrap-up does (the agent state stays `break`).
+    final manual = _terminal ? null : _station.manualCall;
+    final manualHeld = isCallUnsettled(manual);
+    s.socket.setAppPings(appPingsWanted(foreground: _foreground, state: st, manualCall: manualHeld) && !_terminal);
+    s.socket.setKeepAlive(keepAliveWanted(foreground: _foreground, state: st, manualCall: manualHeld));
     if (!_foreground) _maybeSendAway();
-    _setWakeLock(wakeLockWanted(onDuty: !_terminal, foreground: _foreground));
+    _setWakeLock(wakeLockWanted(
+      onDuty: !_terminal,
+      foreground: _foreground,
+      idleSoftphone: s.hosted.isSoftphone && !manualHeld,
+    ));
+    final outcomeDue = manual != null && manual.owesOutcome
+        ? correctedInstant(manual.outcomeDueAt, _mapper.appliedOffsetMs)
+        : null;
     final notice = _terminal
         ? AwayNotice.none
         : awayNoticeFor(
@@ -790,8 +990,14 @@ class StationController extends Notifier<StationView?> implements StationActions
                 (st == AgentState.onBreak && _awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null),
             pauseRequested: _awayPauseRequested,
             wrapupDeadline: _station.wrapup?.deadline,
+            outcomeDueAt: outcomeDue,
           );
-    _setNotice(notice, notice == AwayNotice.wrapupDeadline ? _station.wrapup?.deadline : null);
+    _setNotice(
+      notice,
+      notice == AwayNotice.wrapupDeadline
+          ? (st == AgentState.wrapup ? _station.wrapup?.deadline : outcomeDue)
+          : null,
+    );
   }
 
   /// While away, asks for the `device_away` pause (now, or queued behind a
@@ -808,7 +1014,8 @@ class StationController extends Notifier<StationView?> implements StationActions
     final s = _s;
     if (s == null || _foreground || _awayInFlight || _terminal || _awayClosed || _awayRetry != null) return;
     final st = _station.agentState;
-    final action = awayActionFor(st, pendingBreakCode: _pendingBreakCode);
+    // A soft-phone session is never in the pool: nothing to pause.
+    final action = awayActionFor(st, pendingBreakCode: _pendingBreakCode, softphoneSession: s.hosted.isSoftphone);
     if (action == AwayAction.none) return;
     // One queued pause per away period: the call it was queued behind may end
     // (no attempt on screen) before the state moves on.
@@ -1028,13 +1235,19 @@ class StationController extends Notifier<StationView?> implements StationActions
         }
       });
 
+  /// The station's hang-up, and the system's (CallKit, the notification): a
+  /// campaign attempt, or with none a soft-phone call on the line, which the
+  /// system controls end at once ([hangUpManual]).
   @override
   Future<void> hangUp() async {
     // After 4404/4409 the call (if any) is another device's or already gone:
     // a stale notification or CallKit button must never end it from here.
     if (_terminal) return;
     final attemptId = _station.live?.attemptId;
-    if (attemptId == null) return;
+    if (attemptId == null) {
+      if (isCallLive(_station.manualCall)) await hangUpManual();
+      return;
+    }
     await _run(StationBusy.hangingUp, (s) async {
       try {
         await _api.hangup(attemptId);
@@ -1177,8 +1390,22 @@ class StationController extends Notifier<StationView?> implements StationActions
       s.socket.reconnect();
       return;
     }
+    if (s.hosted.isSoftphone) {
+      // The soft-phone session is over server-side: open it again (the server
+      // rehydrates one that is still live, even with the flag off).
+      final result = await openSoftphone();
+      _fatal = switch (result) {
+        SoftphoneOpened() => null,
+        SoftphoneOpenRefused(:final message) => message,
+        SoftphoneOpenDisabled() => softphoneDisabledCopy,
+        SoftphoneOpenOnCampaign() => softphoneOnCampaignCopy,
+        SoftphoneOpenElsewhere() => softphoneElsewhereCopy,
+      };
+      _emit();
+      return;
+    }
     // The session is over server-side: join again (a fresh session).
-    final result = await start(s.bootstrap.campaignId, campaignName: s.campaignName);
+    final result = await start(s.hosted.campaignId!, campaignName: s.hosted.campaignName ?? '');
     _fatal = switch (result) {
       StationStarted() => null,
       StationRefused(:final message) => message,
@@ -1186,6 +1413,204 @@ class StationController extends Notifier<StationView?> implements StationActions
       StationOnSoftphone() => softphoneCallPendingCopy,
     };
     _emit();
+  }
+
+  // ─── The soft phone (SoftphoneHostActions) ──────────────────────────────
+
+  Future<SoftphoneOpenResult>? _openingSoftphone;
+
+  /// Opens (or rehydrates) the soft-phone session in the current account and
+  /// hosts it: the on-duty service ("Soft phone", for the session's whole
+  /// life), the audio pre-warm and the socket. One open at a time: a second
+  /// call while one is in flight gets the same answer.
+  @override
+  Future<SoftphoneOpenResult> openSoftphone() {
+    final current = _s;
+    if (current != null && current.hosted.isSoftphone && !_terminal && _fatal == null) {
+      return Future.value(SoftphoneOpened(sessionId: current.id, created: false));
+    }
+    return _openingSoftphone ??= _openSoftphone().whenComplete(() => _openingSoftphone = null);
+  }
+
+  Future<SoftphoneOpenResult> _openSoftphone() async {
+    final accountId = _softphoneApi.accountId;
+    final SoftphoneSessionResponse response;
+    try {
+      response = await _softphoneApi.openSession();
+    } on ApiError catch (e) {
+      return _openRefusal(e);
+    }
+    if (!ref.mounted) return SoftphoneOpened(sessionId: response.sessionId, created: false);
+    await _open(HostedSession.softphone(response, accountId: accountId));
+    // The answer's status (201 / 200) does not reach here: "could not tell".
+    return SoftphoneOpened(sessionId: response.sessionId, created: false);
+  }
+
+  static SoftphoneOpenResult _openRefusal(ApiError e) {
+    if (e is! ApiHttpError) return SoftphoneOpenRefused(e.userMessage);
+    final body = ErrorBody.fromJson(e.body);
+    final onCampaign = body.sessionOnCampaign;
+    if (onCampaign != null) return SoftphoneOpenOnCampaign(onCampaign);
+    final elsewhere = body.softphoneConflict;
+    if (elsewhere != null) return SoftphoneOpenElsewhere(elsewhere);
+    if (body.softphoneCode == SoftphoneErrorCode.softphoneDisabled) return const SoftphoneOpenDisabled();
+    final message = body.message.trim();
+    return SoftphoneOpenRefused(
+      message.isEmpty ? e.userMessage : message,
+      code: body.softphoneCode == SoftphoneErrorCode.unknown ? null : body.softphoneCode,
+      retryable: e.isServerError || e.status == 429,
+    );
+  }
+
+  /// A port of the console's `closeSoftphoneSession` (`close_softphone.dart`):
+  /// the bootstrap is read in the session's own account first, and nothing is
+  /// closed while its call is live or owes its outcome. When the session
+  /// closed is the one hosted here, it is torn down here too.
+  @override
+  Future<SoftphoneCloseResult> closeSoftphone({String? sessionId, String? accountId}) async {
+    final own = _s;
+    final id = sessionId ?? (own != null && own.hosted.isSoftphone ? own.id : null);
+    // The hosted session is closed in the account it was opened in.
+    final account = accountId ?? (own != null && id != null && own.id == id ? own.hosted.accountId : null);
+    final outcome = await closeSoftphoneSession(
+      readBootstrap: (a) => _softphoneApi.bootstrap(accountId: a),
+      leave: (sessionId, a) => _api.leave(sessionId, accountId: a),
+      currentAccountId: _softphoneApi.accountId,
+      sessionId: id,
+      sessionAccountId: account,
+      heldCall: (sessionId) => _s?.id == sessionId ? _station.manualCall : null,
+    );
+    final result = outcome.result;
+    if (result is SoftphoneCloseCallPending) {
+      final call = result.call;
+      if (call != null) adoptManualCall(call);
+    }
+    final closedId = outcome.closedId;
+    final current = _s;
+    if (closedId != null && current != null && current.id == closedId) await _closeSession();
+    return result;
+  }
+
+  @override
+  Future<SoftphoneSwitchResult> switchToSoftphone() => _switchAction(StationBusy.takingBreak, (s) async {
+        final r = await _softphoneApi.switchToSoftphone(s.id, accountId: s.hosted.accountId);
+        final queued = r.pendingState != null;
+        if (_live(s)) {
+          // Queued behind a call or wrap-up until the `agent_state` frame applies it.
+          _writeQueue(queued ? (r.breakReason ?? softphoneBreakReason) : null);
+          _reconcile(r);
+        }
+        return queued ? const SoftphoneSwitchQueued() : const SoftphoneSwitchApplied();
+      });
+
+  @override
+  Future<SoftphoneSwitchResult> cancelSwitch() => _switchAction(StationBusy.cancellingBreak, (s) async {
+        try {
+          final r = await _api.cancelBreak(s.id);
+          if (_live(s)) {
+            _writeQueue(r?.pendingState != null ? r?.breakReason : null);
+            _reconcile(r);
+          }
+          return const SoftphoneSwitchApplied();
+        } on ApiError catch (e) {
+          if (errorCodeOf(e) != AgencyErrorCode.breakAlreadyApplied) rethrow;
+          if (_live(s)) _writeQueue(null);
+          return const SoftphoneSwitchRefused(softphoneSwitchAlreadyAppliedCopy);
+        }
+      });
+
+  @override
+  Future<SoftphoneSwitchResult> returnToCampaign() => _switchAction(StationBusy.endingBreak, (s) async {
+        final r = await _softphoneApi.returnToCampaign(s.id, accountId: s.hosted.accountId);
+        if (_live(s)) {
+          _writeQueue(r.pendingState != null ? r.breakReason : null);
+          _reconcile(r);
+        }
+        return const SoftphoneSwitchApplied();
+      });
+
+  /// The SP7 actions on a campaign station: single-flight like the station's
+  /// own, and every refusal in words (`dial_failed` there is the agent's
+  /// status not changing, not a call failing to go out).
+  Future<SoftphoneSwitchResult> _switchAction(
+    StationBusy busy,
+    Future<SoftphoneSwitchResult> Function(_Session s) body,
+  ) async {
+    final s = _s;
+    if (s == null || s.hosted.isSoftphone || _terminal) return const SoftphoneSwitchRefused(softphoneNoStationCopy);
+    SoftphoneSwitchResult? result;
+    await _run(busy, (s) async {
+      try {
+        result = await body(s);
+      } on ApiError catch (e) {
+        result = _switchRefusal(e, s);
+      }
+    });
+    return result ?? const SoftphoneSwitchRefused(actionFailedCopy);
+  }
+
+  SoftphoneSwitchResult _switchRefusal(ApiError e, _Session s) {
+    if (e is! ApiHttpError) return SoftphoneSwitchRefused(e.userMessage);
+    final body = ErrorBody.fromJson(e.body);
+    // `manual_call_live` names the call that blocks the return: held here, so
+    // the soft phone shows it rather than an error.
+    final pending = body.callPending;
+    if (pending != null && _live(s)) adoptManualCall(pending.call);
+    final code = body.softphoneCode;
+    return SoftphoneSwitchRefused(
+      softphoneStatusRefusalCopy(code, _serverSentence(e)),
+      code: code == SoftphoneErrorCode.unknown ? null : code,
+      call: pending?.call,
+    );
+  }
+
+  /// An HTTP answer's copy of this session's call, merged with what is held
+  /// (`newerCall`, a frame winning a tie). A call of another session is not
+  /// this host's to hold.
+  @override
+  void adoptManualCall(ManualCall call) {
+    final s = _s;
+    if (s == null || call.sessionId != s.id) return;
+    _dispatch(ManualCallAdoptAction(call));
+  }
+
+  @override
+  void retireManualCall(String versionKey) {
+    if (_s == null) return;
+    _dispatch(ManualCallRetireAction(versionKey));
+  }
+
+  /// The ring's mute, for the call on the line now; the next call rings again.
+  @override
+  void setRingMuted(bool muted) {
+    if (_s == null || muted == _ringMuted) return;
+    _ringMuted = muted;
+    _ringCallId = _station.manualCall?.id;
+    _afterChange();
+  }
+
+  @override
+  void setCallDisplayName(String callId, String? name) => _manualName = (callId: callId, name: name);
+
+  /// Hangs up the soft-phone call on the line at once (the system controls:
+  /// CallKit, the notification). The in-app button holds to confirm and goes
+  /// through the soft phone instead.
+  @override
+  Future<void> hangUpManual() async {
+    if (_terminal) return;
+    final call = _station.manualCall;
+    if (call == null || !call.isLive) return;
+    await _run(StationBusy.hangingUp, (s) async {
+      try {
+        final r = await _softphoneApi.hangup(call.id, accountId: s.hosted.accountId);
+        if (_live(s)) adoptManualCall(r);
+      } on ApiError catch (e) {
+        _log.warn('soft-phone hang-up failed', {'error': e.runtimeType.toString()});
+        if (_live(s) && _station.manualCall?.id == call.id && isCallLive(_station.manualCall)) {
+          _actionError = hangupFailureCopy(e);
+        }
+      }
+    });
   }
 
   @override

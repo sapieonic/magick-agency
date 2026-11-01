@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_state.dart';
 
+import '../softphone/manual_calls.dart' as mc;
 import 'fixtures.dart';
 
 /// The station's transitions without a socket: a case-for-case port of the
@@ -316,6 +317,48 @@ void main() {
       );
       expect(held.deadline, isNull);
       expect(held.total, isNull);
+    });
+  });
+
+  group('the soft-phone call (manual_call frames and HTTP copies)', () {
+    final queued = mc.manualCall();
+    final ringing = mc.step(queued, 2, {'state': 'ringing'});
+    final bridged = mc.step(queued, 5, {'state': 'bridged', 'bridged_at': '2026-10-30T10:00:05.000Z'});
+
+    test('a newer copy wins whichever source it came from', () {
+      var s = run([ManualCallAction(queued), ManualCallAdoptAction(ringing)]);
+      expect(s.manualCall, ringing);
+      s = run([ManualCallAdoptAction(bridged), ManualCallAction(ringing)]);
+      expect(s.manualCall, bridged, reason: 'an older frame never rolls the call back');
+    });
+
+    test('a tie goes to the frame', () {
+      // The hang-up's answer is read as the hang-up is issued: same stamp, still ringing.
+      final frame = mc.step(queued, 2, {'state': 'ringing', 'end_reason': null});
+      final http = mc.step(queued, 2, {'state': 'ringing', 'notes': 'from http'});
+      expect(run([ManualCallAction(frame), ManualCallAdoptAction(http)]).manualCall, frame);
+      expect(run([ManualCallAdoptAction(http), ManualCallAction(frame)]).manualCall, frame);
+    });
+
+    test('an equal copy changes nothing (no rebuild)', () {
+      final s = run([ManualCallAction(ringing)]);
+      expect(identical(stationReducer(s, ManualCallAction(mc.step(queued, 2, {'state': 'ringing'}))), s), isTrue);
+    });
+
+    test('retiring by key drops only the copy that was asked about', () {
+      var s = run([ManualCallAction(ringing)]);
+      final asked = s.manualCall!.versionKey;
+      // A newer frame arrived while the bootstrap was in flight: kept.
+      s = run([ManualCallAction(bridged), ManualCallRetireAction(asked)], s);
+      expect(s.manualCall, bridged);
+      s = run([ManualCallRetireAction(bridged.versionKey)], s);
+      expect(s.manualCall, isNull);
+    });
+
+    test('a new dial replaces a settled call', () {
+      final settled = mc.step(queued, 30, {'state': 'ended', 'settled_at': '2026-10-30T10:00:30.000Z'});
+      final next = mc.manualCall({'id': 'mc-2', 'created_at': '2026-10-30T10:05:00.000Z', 'updated_at': '2026-10-30T10:05:00.000Z'});
+      expect(run([ManualCallAction(settled), ManualCallAdoptAction(next)]).manualCall, next);
     });
   });
 }

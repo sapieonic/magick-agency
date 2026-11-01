@@ -114,6 +114,52 @@ void main() {
     });
   });
 
+  group('the ringback (a soft-phone call)', () {
+    const queued = AudioTarget(attemptId: 'mc-1', displayName: '+919820461733', handle: '+919820461733');
+    const ringing =
+        AudioTarget(attemptId: 'mc-1', displayName: '+919820461733', handle: '+919820461733', ringback: true);
+    const bridged = AudioTarget(attemptId: 'mc-1', bridged: true, displayName: '+919820461733', handle: '+919820461733');
+
+    test('on after the call is armed, off once bridged, never repeated', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.sync(queued);
+        r.sync(ringing);
+        r.sync(ringing);
+        expect(r.engine.lifecycle, ['fgs.start', 'prepare', 'startCall', 'arm', 'ringback.on']);
+        expect(r.engine.ringback, isTrue);
+        r.sync(bridged);
+        expect(r.engine.lifecycle.skip(5), ['uplink', 'connected', 'ringback.off']);
+        expect(r.engine.ringback, isFalse);
+      });
+    });
+
+    test('a ring asked for with the uplink open is never played', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.sync(const AudioTarget(attemptId: 'mc-1', bridged: true, ringback: true));
+        expect(r.engine.calls, isNot(contains('ringback.on')));
+      });
+    });
+
+    test('a call that ends while ringing: stop clears the ring, and the next call starts silent', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.sync(ringing);
+        r.sync(const AudioTarget(endReason: audio.CallEndReason.unanswered));
+        expect(r.engine.lifecycle.skip(5), ['endCall', 'stop']);
+        expect(r.engine.ringback, isFalse);
+        r.sync(const AudioTarget(attemptId: 'mc-2'));
+        expect(r.engine.calls, isNot(contains('ringback.off')), reason: 'nothing to turn off: stop already did');
+        r.sync(const AudioTarget(attemptId: 'mc-2', ringback: true));
+        expect(r.engine.calls.last, 'ringback.on');
+      });
+    });
+  });
+
   group('the phone gets in the way', () {
     test('a phone call mid-call mutes and says why; when it ends, the mute it added is undone', () {
       fakeAsync((async) {

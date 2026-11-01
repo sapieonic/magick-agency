@@ -45,6 +45,39 @@ void main() {
       expect(wakeLockWanted(onDuty: true, foreground: false), isFalse);
       expect(wakeLockWanted(onDuty: false, foreground: true), isFalse);
     });
+
+    test('a soft-phone session is never paused, whatever its state reads', () {
+      for (final s in AgentState.values) {
+        expect(awayActionFor(s, pendingBreakCode: null, softphoneSession: true), AwayAction.none, reason: s.wire);
+      }
+    });
+
+    test('a soft-phone call live or owed keeps pings and keep-alive on in the background, as a call does', () {
+      expect(appPingsWanted(foreground: false, state: AgentState.onBreak, manualCall: true), isTrue);
+      expect(keepAliveWanted(foreground: false, state: AgentState.onBreak, manualCall: true), isTrue);
+      expect(appPingsWanted(foreground: false, state: AgentState.onBreak), isFalse);
+    });
+
+    test('an owed soft-phone outcome is the wrap-up notice away, and only away', () {
+      final due = DateTime.utc(2026, 11, 1, 11, 28);
+      expect(
+        awayNoticeFor(AgentState.onBreak, foreground: false, breakCode: 'soft_phone', pauseRequested: false, wrapupDeadline: null, outcomeDueAt: due),
+        AwayNotice.wrapupDeadline,
+      );
+      expect(
+        awayNoticeFor(AgentState.onBreak, foreground: true, breakCode: 'soft_phone', pauseRequested: false, wrapupDeadline: null, outcomeDueAt: due),
+        AwayNotice.none,
+      );
+      expect(
+        awayNoticeFor(AgentState.onBreak, foreground: false, breakCode: 'soft_phone', pauseRequested: false, wrapupDeadline: null),
+        AwayNotice.none,
+      );
+    });
+
+    test('the wake lock: an idle soft phone lets the screen sleep', () {
+      expect(wakeLockWanted(onDuty: true, foreground: true, idleSoftphone: true), isFalse);
+      expect(wakeLockWanted(onDuty: true, foreground: true, idleSoftphone: false), isTrue);
+    });
   });
 
   group('leaving the app', () {
