@@ -99,13 +99,23 @@ const ALLOWED = new Set([
   join('packages', 'web-ui', 'test', 'noParentBrand.test.ts'),
 ]);
 
+/**
+ * A developer's own git-ignored copy, never committed: `.env*`, `*.local.json` (the app's
+ * `env/dev.local.json`, `.test-env.local.json`) and Firebase's downloaded native config.
+ * They hold real hosts and project ids by design, so following the setup steps must not
+ * turn this test red. `.env.example` is the committed template and is scanned.
+ */
+function isLocalOnly(name: string): boolean {
+  if (name === '.env.example') return false;
+  return name.startsWith('.env') || name.endsWith('.local.json')
+    || name === 'google-services.json' || name === 'GoogleService-Info.plist';
+}
+
 function walk(dir: string, out: string[]): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       if (!SKIP_DIRS.has(entry.name)) walk(join(dir, entry.name), out);
-    } else if (TEXT_EXT.has(extname(entry.name)) && !entry.name.startsWith('.env') && entry.name !== '.test-env.local.json') {
-      out.push(join(dir, entry.name));
-    } else if (entry.name === '.env.example') {
+    } else if (TEXT_EXT.has(extname(entry.name)) && !isLocalOnly(entry.name)) {
       out.push(join(dir, entry.name));
     }
   }
@@ -119,6 +129,15 @@ describe('the repository is self-contained', () => {
     expect(files.length).toBeGreaterThan(500);
     expect(files.some((f) => f.endsWith(`${sep}docs${sep}architecture.md`))).toBe(true);
     expect(files.some((f) => f.endsWith(`${sep}src${sep}index.ts`))).toBe(true);
+  });
+
+  it('skips only the git-ignored local copies, never a committed file', () => {
+    for (const name of ['.env', '.env.local', '.test-env.local.json', 'dev.local.json', 'google-services.json', 'GoogleService-Info.plist']) {
+      expect(isLocalOnly(name), name).toBe(true);
+    }
+    for (const name of ['.env.example', 'dev.json', 'staging.json', 'package.json', 'Info.plist']) {
+      expect(isLocalOnly(name), name).toBe(false);
+    }
   });
 
   it.each(FORBIDDEN)('no file contains %s', (_label, pattern) => {
