@@ -36,10 +36,16 @@ final class _Tracked {
   bool ended = false;
 }
 
-/// The station's call events: `call_connected` and `call_ended`, once per
-/// call, for campaign and soft-phone calls alike (`kind`), each end with
-/// [media]. The station controller feeds it frames and audio; the soft phone
-/// tells it which calls it placed ([manualPlaced]).
+/// The station's call events, once per call, named and shaped as the
+/// console's (`apps/console/src/analytics/events.ts`) so one dashboard reads
+/// both clients, each end with [media] besides:
+/// * a campaign call: `agency_attempt_bridged`, `agency_attempt_released`;
+/// * a soft-phone call: `agency_softphone_call_bridged`,
+///   `agency_softphone_call_ended` (the console has neither; the server
+///   settles its calls).
+///
+/// The station controller feeds it frames and audio; the soft phone tells it
+/// which calls it placed ([manualPlaced]).
 final class CallTelemetry {
   CallTelemetry({DateTime Function()? now}) : _now = now ?? DateTime.now;
 
@@ -53,35 +59,55 @@ final class CallTelemetry {
   final media = CallMedia();
 
   String? _attemptId;
+  String? _campaignId;
+  DateTime? _reservedAt;
   DateTime? _bridgedAt;
   _Tracked? _manual;
 
   // ─── Campaign calls ───────────────────────────────────────────────────────
 
-  void campaignReserved(String attemptId) {
-    _attemptId = attemptId;
+  void campaignReserved(ReservedAttempt attempt) {
+    _attemptId = attempt.attemptId;
+    _campaignId = attempt.campaignId;
+    _reservedAt = _now();
     _bridgedAt = null;
     media.reset();
   }
 
   void campaignBridged(String attemptId) {
-    if (_attemptId == attemptId && _bridgedAt != null) return;
-    _attemptId = attemptId;
-    _bridgedAt = _now();
-    Telemetry.event('call_connected', {'kind': 'campaign'});
+    final seen = _attemptId == attemptId;
+    if (seen && _bridgedAt != null) return;
+    final now = _now();
+    final reservedAt = seen ? _reservedAt : null;
+    if (!seen) {
+      // Rejoined mid-call: the reservation was another run's (or this socket's before a drop).
+      _attemptId = attemptId;
+      _campaignId = null;
+      _reservedAt = null;
+    }
+    _bridgedAt = now;
+    Telemetry.event('agency_attempt_bridged', {
+      'campaign_id': _campaignId,
+      'ring_seconds': reservedAt == null ? 0 : now.difference(reservedAt).inSeconds,
+      'from_reconnect': reservedAt == null,
+    });
   }
 
   void campaignReleased(ReleasedFrame frame) {
-    final bridgedAt = _attemptId == frame.attemptId ? _bridgedAt : null;
-    Telemetry.event('call_ended', {
-      'kind': 'campaign',
+    final seen = _attemptId == frame.attemptId;
+    final bridgedAt = seen ? _bridgedAt : null;
+    Telemetry.event('agency_attempt_released', {
+      'campaign_id': seen ? _campaignId : null,
       'reason': frame.reasonRaw,
-      'connected': bridgedAt != null,
       'requires_disposition': frame.requiresDisposition,
-      if (bridgedAt != null) 'connected_s': _now().difference(bridgedAt).inSeconds,
+      'was_bridged': bridgedAt != null,
+      'talk_seconds': bridgedAt == null ? 0 : _now().difference(bridgedAt).inSeconds,
+      'missed': false,
       ...media.properties,
     });
     _attemptId = null;
+    _campaignId = null;
+    _reservedAt = null;
     _bridgedAt = null;
     media.reset();
   }
@@ -113,17 +139,17 @@ final class CallTelemetry {
     if (!t.live) return;
     if (!t.connected && call.bridgedAt != null) {
       t.connected = true;
-      Telemetry.event('call_connected', {'kind': 'softphone'});
+      Telemetry.event('agency_softphone_call_bridged', {'tagged': call.tag != null});
     }
     if (!t.ended && call.endedAt != null) {
       t.ended = true;
-      Telemetry.event('call_ended', {
-        'kind': 'softphone',
+      Telemetry.event('agency_softphone_call_ended', {
         'outcome': call.outcomeRaw,
         'end_reason': call.endReasonRaw,
         'state': call.stateRaw,
-        'connected': call.bridgedAt != null,
-        'talk_s': call.talkSeconds,
+        'was_bridged': call.bridgedAt != null,
+        'talk_seconds': call.talkSeconds ?? 0,
+        'tagged': call.tag != null,
         'dnc_overridden': call.dncOverridden,
         'hours_overridden': call.hoursOverridden,
         ...media.properties,

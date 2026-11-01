@@ -40,8 +40,22 @@ final class PosthogSink implements TelemetrySink {
   }
 
   @override
+  void group(String type, String key) => unawaited(_posthog.group(groupType: type, groupKey: key));
+
+  @override
   void reset() => unawaited(_posthog.reset().then((_) => register(base)));
 }
+
+/// What every event from this build carries. `product` and `environment` are
+/// the console's super properties, so one dashboard reads both clients;
+/// `client` tells them apart, and `api_host` which server the build talks to
+/// (a dev build can point at staging).
+Map<String, Object> posthogBaseProperties(Env env) => {
+      'product': 'agency',
+      'client': 'mobile',
+      'environment': env.flavor,
+      'api_host': Uri.tryParse(env.apiOrigin)?.host ?? '',
+    };
 
 /// PostHog's settings for this build, or null without a key (no telemetry).
 ///
@@ -66,8 +80,9 @@ PostHogConfig? posthogConfig(Env env) {
   return config;
 }
 
-/// PostHog started for this build, its every event tagged with the flavour
-/// and the server it talks to; null without a key, or when the SDK does not
+/// PostHog started for this build, its every event tagged as the console's
+/// are (`product`, `environment`) and with the client and the server it talks
+/// to; null without a key, or when the SDK does not
 /// start in time (logged: the app runs without telemetry rather than late).
 Future<TelemetrySink?> startPosthog(Env env, {Duration timeout = const Duration(seconds: 5)}) async {
   final config = posthogConfig(env);
@@ -75,7 +90,7 @@ Future<TelemetrySink?> startPosthog(Env env, {Duration timeout = const Duration(
   try {
     final posthog = Posthog();
     await posthog.setup(config).timeout(timeout);
-    return PosthogSink(posthog, base: {'flavor': env.flavor, 'api_host': Uri.tryParse(env.apiOrigin)?.host ?? ''});
+    return PosthogSink(posthog, base: posthogBaseProperties(env));
   } catch (e, st) {
     _log.error('PostHog did not start; running without telemetry', const {}, e, st);
     return null;

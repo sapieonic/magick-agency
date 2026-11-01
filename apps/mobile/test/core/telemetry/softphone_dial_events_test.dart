@@ -20,37 +20,46 @@ void main() {
   });
   tearDown(Telemetry.uninstall);
 
-  softphoneTest('a refused dial is dial_refused with the server’s code, never the number', (h) {
+  softphoneTest('a refused dial is agency_softphone_call_refused, shaped as the console’s, never the number', (h) {
     h.openWith();
     h.refuse('POST $callsPath', 'outcome_pending', extra: {'call': manualCallJson({'id': 'mc-old', 'state': 'ended'})});
     h.run(h.actions.dial());
-    expect(sink.names, ['dial_refused']);
-    expect(sink.last('dial_refused'), {'code': 'outcome_pending', 'status': 409, 'error': 'ApiHttpError', 'overrides': false});
+    expect(sink.names, ['agency_softphone_call_refused']);
+    expect(sink.last('agency_softphone_call_refused'), {'code': 'outcome_pending', 'tagged': false});
     expect('${sink.events}', isNot(contains('9820461733')));
   });
 
-  softphoneTest('a dial with no answer is dial_failed', (h) {
+  softphoneTest('a tagged dial says so', (h) {
+    h.openWith();
+    h.actions.setTag('camp-1');
+    h.refuse('POST $callsPath', 'contact_in_flight', extra: {'campaign_id': 'camp-1', 'contact_id': 'c-1'});
+    h.run(h.actions.dial());
+    expect(sink.last('agency_softphone_call_refused'), {'code': 'contact_in_flight', 'tagged': true});
+  });
+
+  softphoneTest('a dial with no answer is agency_softphone_dial_failed', (h) {
     h.openWith();
     h.routes['POST $callsPath'] = (_) => throw http.ClientException('offline');
     h.run(h.actions.dial());
-    expect(sink.names, ['dial_failed']);
-    expect(sink.last('dial_failed'), containsPair('overrides', false));
-    expect(sink.last('dial_failed').containsKey('code'), isFalse);
+    expect(sink.names, ['agency_softphone_dial_failed']);
+    expect(sink.last('agency_softphone_dial_failed'), containsPair('overrides', 'none'));
+    expect(sink.last('agency_softphone_dial_failed').containsKey('code'), isFalse);
   });
 
   softphoneTest('a dial answered with a call already failed (the carrier refused it) is that call’s end', (h) {
     h.openWith();
     h.reply('POST $callsPath', manualCallJson({'state': 'ended', 'outcome': 'failed', 'end_reason': 'telephony_init_failed', 'ended_at': '2026-10-30T10:00:00.500Z'}), status: 201);
     h.run(h.actions.dial());
-    expect(sink.names, ['call_ended']);
-    expect(sink.last('call_ended'), containsPair('kind', 'softphone'));
-    expect(sink.last('call_ended'), containsPair('outcome', 'failed'));
+    expect(sink.names, ['agency_softphone_call_placed', 'agency_softphone_call_ended']);
+    expect(sink.last('agency_softphone_call_ended'), containsPair('outcome', 'failed'));
+    expect(sink.last('agency_softphone_call_ended'), containsPair('end_reason', 'telephony_init_failed'));
   });
 
-  softphoneTest('a dial placed and still ringing reports nothing yet', (h) {
+  softphoneTest('a dial placed and still ringing: placed, as the console’s, and nothing else yet', (h) {
     h.openWith();
     h.reply('POST $callsPath', manualCallJson(), status: 201);
     h.run(h.actions.dial());
-    expect(sink.events, isEmpty);
+    expect(sink.names, ['agency_softphone_call_placed']);
+    expect(sink.last('agency_softphone_call_placed'), {'tagged': false, 'overrides': 'none'});
   });
 }

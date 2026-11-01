@@ -529,7 +529,7 @@ class StationController extends Notifier<StationView?>
         _dispatch(WrapupAction(openWrapup(wrapup, _station.clockOffsetMs, _now())));
       case ReservedFrame(:final attempt):
         _countdown = null;
-        _calls.campaignReserved(attempt.attemptId);
+        _calls.campaignReserved(attempt);
         _dispatch(ReservedAction(attempt));
       case CountdownFrame(:final attemptId, :final secondsRemaining):
         if (_station.live?.attemptId == attemptId) {

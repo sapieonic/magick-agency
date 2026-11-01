@@ -41,12 +41,15 @@ void main() {
       async.flushMicrotasks();
       app.releasedFrame('att-1');
 
-      expect(sink.names, ['call_connected', 'call_ended']);
-      expect(sink.last('call_ended'), containsPair('kind', 'campaign'));
-      expect(sink.last('call_ended'), containsPair('reason', 'remote_hangup'));
-      expect(sink.last('call_ended'), containsPair('media_binary_in', 3));
-      expect(sink.last('call_ended'), containsPair('media_json_in', 1));
-      expect(sink.last('call_ended'), containsPair('media_sent', 2));
+      expect(sink.names, ['agency_attempt_bridged', 'agency_attempt_released']);
+      expect(sink.last('agency_attempt_bridged'), containsPair('campaign_id', 'camp-1'));
+      final released = sink.last('agency_attempt_released');
+      expect(released, containsPair('campaign_id', 'camp-1'));
+      expect(released, containsPair('reason', 'remote_hangup'));
+      expect(released, containsPair('was_bridged', true));
+      expect(released, containsPair('media_binary_in', 3));
+      expect(released, containsPair('media_json_in', 1));
+      expect(released, containsPair('media_sent', 2));
       expect(app.socket.sentBinary, 2, reason: 'counted, and still sent');
       app.dispose();
     });
@@ -61,7 +64,7 @@ void main() {
       async.flushMicrotasks();
       app.readyFrame('on_call');
       app.releasedFrame('att-1');
-      expect(sink.last('call_ended'), containsPair('media_unsent', 1));
+      expect(sink.last('agency_attempt_released'), containsPair('media_unsent', 1));
       app.dispose();
     });
   });
@@ -89,11 +92,11 @@ void main() {
         'updated_at': '2026-10-30T10:00:40.000Z',
       }));
 
-      expect(sink.names, ['call_connected', 'call_ended']);
-      expect(sink.last('call_ended'), containsPair('kind', 'softphone'));
-      expect(sink.last('call_ended'), containsPair('outcome', 'connected'));
-      expect(sink.last('call_ended'), containsPair('talk_s', 29));
-      expect(sink.last('call_ended'), containsPair('media_binary_in', 1));
+      expect(sink.names, ['agency_softphone_call_bridged', 'agency_softphone_call_ended']);
+      final ended = sink.last('agency_softphone_call_ended');
+      expect(ended, containsPair('outcome', 'connected'));
+      expect(ended, containsPair('talk_seconds', 29));
+      expect(ended, containsPair('media_binary_in', 1));
       app.dispose();
     });
   });

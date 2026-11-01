@@ -24,15 +24,17 @@ void main() {
         tenantId: 't1',
         accountId: account,
         accountName: 'Chennai',
+        tenantName: 'Sapionic',
       );
 
-  test('signed in: identified by id, the tenant and account on every event; no name, no email', () {
+  test('signed in: identified by id; the tenant and account on every event, as the console tags them; no name, no email', () {
     gate.changed(const GateLoading());
     gate.changed(ready());
     expect(sink.identified, ['u-1']);
     expect(sink.registered, [
-      {'tenant_id': 't1', 'account_id': 'a1'},
+      {'tenant_id': 't1', 'tenant_name': 'Sapionic', 'account_id': 'a1', 'account_name': 'Chennai'},
     ]);
+    expect(sink.groups, [('tenant', 't1'), ('account', 'a1')]);
     final everything = '${sink.identified} ${sink.registered} ${sink.events}';
     expect(everything, isNot(contains('Meera')));
     expect(everything, isNot(contains('example.com')));

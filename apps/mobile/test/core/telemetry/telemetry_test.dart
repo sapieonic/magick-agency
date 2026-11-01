@@ -38,11 +38,13 @@ void main() {
       });
     });
 
-    test('identify, register and reset reach the sink; register is masked too', () {
+    test('identify, register, group and reset reach the sink; register is masked too', () {
       Telemetry.identify('u-1');
       Telemetry.register({'tenant_id': 't1', 'oops': '+919820012345', 'none': null});
+      Telemetry.group('account', 'a1');
       Telemetry.reset();
       expect(sink.identified, ['u-1']);
+      expect(sink.groups, [('account', 'a1')]);
       expect(sink.registered.single, {'tenant_id': 't1', 'oops': '<tel …45>'});
       expect(sink.resets, 1);
     });
@@ -82,12 +84,12 @@ void main() {
   });
 
   group('Log lines', () {
-    test('info and debug stay on the phone; a warning is an app_warning with its fields', () {
+    test('info and debug stay on the phone; a warning is an agency_app_warning with its fields', () {
       log.debug('frame');
       log.info('connected');
       log.warn('station closed 1011: server error', {'reason': 'down', 'in_a_row': 2});
-      expect(sink.names, ['app_warning']);
-      expect(sink.last('app_warning'), {
+      expect(sink.names, ['agency_app_warning']);
+      expect(sink.last('agency_app_warning'), {
         'reason': 'down',
         'in_a_row': 2,
         'tag': 'station_socket',
@@ -95,9 +97,9 @@ void main() {
       });
     });
 
-    test('an error without an exception is an app_error; with one, an exception carrying the line', () {
+    test('an error without an exception is an agency_app_error; with one, an exception carrying the line', () {
       log.error('GET /x failed', {'status': 500});
-      expect(sink.last('app_error'), {'status': 500, 'tag': 'station_socket', 'message': 'GET /x failed'});
+      expect(sink.last('agency_app_error'), {'status': 500, 'tag': 'station_socket', 'message': 'GET /x failed'});
 
       final stack = StackTrace.current;
       log.error('Uncaught error', const {}, StateError('lost +919820012345'), stack);
@@ -106,18 +108,18 @@ void main() {
       expect(error.toString(), 'Bad state: lost <tel …45>');
       expect(sentStack, same(stack));
       expect(props, {'tag': 'station_socket', 'message': 'Uncaught error: Bad state: lost <tel …45>', 'source': 'station_socket'});
-      expect(sink.names, ['app_error'], reason: 'the exception is not also an app_error');
+      expect(sink.names, ['agency_app_error'], reason: 'the exception is not also an agency_app_error');
     });
 
     test('a long message is cut to ${Telemetry.maxMessageLength} characters', () {
       log.warn('x' * 1000);
-      expect(sink.last('app_warning')['message'], '${'x' * Telemetry.maxMessageLength}…');
+      expect(sink.last('agency_app_warning')['message'], '${'x' * Telemetry.maxMessageLength}…');
     });
 
     test('a field cannot overwrite the tag or the message', () {
       log.warn('real message', {'tag': 'fake', 'message': 'fake'});
-      expect(sink.last('app_warning')['tag'], 'station_socket');
-      expect(sink.last('app_warning')['message'], 'real message');
+      expect(sink.last('agency_app_warning')['tag'], 'station_socket');
+      expect(sink.last('agency_app_warning')['message'], 'real message');
     });
   });
 

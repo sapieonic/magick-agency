@@ -14,6 +14,10 @@ abstract interface class TelemetrySink {
   /// Properties every later event carries.
   void register(Map<String, Object> properties);
 
+  /// Later events belong to this [type] group (`tenant`, `account`), as the
+  /// console's do.
+  void group(String type, String key);
+
   /// Signed out: later events are a new anonymous user's, without the
   /// registered properties.
   void reset();
@@ -29,7 +33,7 @@ abstract interface class TelemetrySink {
 ///
 /// Every warning and error [Log] keeps is reported too: one logged with an
 /// exception as that exception (masked, with its stack), the rest as
-/// `app_warning` / `app_error` events. Each message is capped at
+/// `agency_app_warning` / `agency_app_error` events. Each message is capped at
 /// [linesPerMessage] a minute, and all of them at [linesPerMinute], so one
 /// stuck loop cannot flood the project; the first line admitted after a cap
 /// says how many were dropped.
@@ -92,6 +96,12 @@ abstract final class Telemetry {
     _guard(() => sink.register(_clean(properties)));
   }
 
+  static void group(String type, String key) {
+    final sink = _sink;
+    if (sink == null) return;
+    _guard(() => sink.group(type, key));
+  }
+
   static void reset() {
     final sink = _sink;
     if (sink == null) return;
@@ -113,7 +123,7 @@ abstract final class Telemetry {
     if (error != null) {
       exception(error, stack, source: record.tag, properties: properties);
     } else {
-      event(record.level == LogLevel.error ? 'app_error' : 'app_warning', properties);
+      event(record.level == LogLevel.error ? 'agency_app_error' : 'agency_app_warning', properties);
     }
   }
 

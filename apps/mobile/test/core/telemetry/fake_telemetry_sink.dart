@@ -6,6 +6,7 @@ class FakeTelemetrySink implements TelemetrySink {
   final exceptions = <(Object, StackTrace?, Map<String, Object>)>[];
   final identified = <String>[];
   final registered = <Map<String, Object>>[];
+  final groups = <(String, String)>[];
   int resets = 0;
 
   /// Every call throws, as a broken SDK might.
@@ -42,6 +43,12 @@ class FakeTelemetrySink implements TelemetrySink {
   void register(Map<String, Object> properties) {
     _check();
     registered.add(properties);
+  }
+
+  @override
+  void group(String type, String key) {
+    _check();
+    groups.add((type, key));
   }
 
   @override
