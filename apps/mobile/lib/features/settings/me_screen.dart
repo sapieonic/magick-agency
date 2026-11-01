@@ -41,7 +41,7 @@ const signOutBlockedOnBreak = 'You’re on a break, but your station is still op
 const signOutBlockedOpen = 'Your station is still open on this phone — leave the station first, then sign out.';
 
 /// The Me tab: who and where the agent is, their email preferences, this
-/// phone's sound and vibration, diagnostics for support, and sign-out.
+/// phone's theme, sound and vibration, diagnostics for support, and sign-out.
 class MeScreen extends ConsumerWidget {
   const MeScreen({super.key});
 
@@ -67,6 +67,10 @@ class MeScreen extends ConsumerWidget {
           const SectionLabel('Email notifications'),
           const SizedBox(height: Space.sm),
           const _NotificationSection(),
+          const SizedBox(height: Space.xl),
+          const SectionLabel('Appearance'),
+          const SizedBox(height: Space.sm),
+          const _AppearanceCard(),
           const SizedBox(height: Space.xl),
           const SectionLabel('Sound and haptics'),
           const SizedBox(height: Space.sm),
@@ -248,6 +252,27 @@ class _EventRow extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+}
+
+/// Until the agent chooses, the switch shows what the phone's own setting gives.
+class _AppearanceCard extends ConsumerWidget {
+  const _AppearanceCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final chosen = ref.watch(localPreferencesProvider.select((p) => p.darkTheme));
+    final dark = chosen ?? MediaQuery.platformBrightnessOf(context) == Brightness.dark;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: SwitchListTile(
+        value: dark,
+        onChanged: ref.read(localPreferencesProvider.notifier).setDarkTheme,
+        secondary: Icon(dark ? Icons.dark_mode_outlined : Icons.light_mode_outlined),
+        title: const Text('Dark theme'),
+        subtitle: Text('On this phone only', style: Theme.of(context).textTheme.bodySmall),
+      ),
     );
   }
 }

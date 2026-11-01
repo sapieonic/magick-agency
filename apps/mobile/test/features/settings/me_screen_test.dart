@@ -138,6 +138,32 @@ void main() {
     expect(h.server.calls('PUT', '/notifications/preferences'), isEmpty);
   });
 
+  testWidgets('the theme switch starts from the phone\'s own setting and is kept on the phone', (tester) async {
+    tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+    addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    final c = await started(tester);
+    await pumpScreen(tester, c, const MeScreen());
+    final darkSwitch = find.widgetWithText(SwitchListTile, 'Dark theme');
+    await scrollTo(tester, darkSwitch);
+    expect(c.read(localPreferencesProvider).darkTheme, isNull);
+    expect(tester.widget<SwitchListTile>(darkSwitch).value, isTrue);
+
+    await tapVisible(tester, find.text('Dark theme'));
+    await tester.pumpAndSettle();
+    expect(c.read(localPreferencesProvider).darkTheme, isFalse);
+    expect(h.store.values[LocalPreferencesNotifier.darkThemeKey], false);
+    expect(tester.widget<SwitchListTile>(darkSwitch).value, isFalse);
+    expect(h.server.calls('PUT', '/notifications/preferences'), isEmpty);
+  });
+
+  testWidgets('a saved theme choice is read back on the next start', (tester) async {
+    h.store.values[LocalPreferencesNotifier.darkThemeKey] = true;
+    final c = await started(tester);
+    c.read(localPreferencesProvider);
+    await tester.runAsync(settle);
+    expect(c.read(localPreferencesProvider).darkTheme, isTrue);
+  });
+
   testWidgets('diagnostics: version, X-Client, and recent logs to the clipboard', (tester) async {
     String? copied;
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {

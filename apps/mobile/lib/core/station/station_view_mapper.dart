@@ -299,5 +299,10 @@ StationSignals signalsOf(StationView? view) {
   if (view == null || view.link == StationLink.sessionGone || view.link == StationLink.superseded) {
     return const StationSignals();
   }
-  return StationSignals(onDuty: true, callActive: view.callActive, campaignId: view.campaignId);
+  return StationSignals(
+    onDuty: true,
+    callActive: view.callActive,
+    onBreak: view.phase == AgentPhase.onBreak,
+    campaignId: view.campaignId,
+  );
 }

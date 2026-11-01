@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../core/session/local_preferences.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
 
-/// The root widget. Theme follows the system light/dark setting; dark is the
-/// product's default look.
+/// The root widget. Theme follows the system light/dark setting until the
+/// agent picks one in the Me tab; dark is the product's default look.
 class AgentApp extends ConsumerWidget {
   const AgentApp({super.key});
 
@@ -16,12 +17,13 @@ class AgentApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final darkTheme = ref.watch(localPreferencesProvider.select((p) => p.darkTheme));
     return MaterialApp.router(
       title: 'Magick Agency',
       debugShowCheckedModeBanner: false,
       theme: _light,
       darkTheme: _dark,
-      themeMode: ThemeMode.system,
+      themeMode: themeModeFor(darkTheme),
       routerConfig: ref.watch(routerProvider),
       locale: const Locale('en', 'IN'),
       supportedLocales: const [Locale('en', 'IN'), Locale('en')],
@@ -38,3 +40,10 @@ class AgentApp extends ConsumerWidget {
     );
   }
 }
+
+/// The agent's choice from the Me tab; none yet follows the phone.
+ThemeMode themeModeFor(bool? darkTheme) => switch (darkTheme) {
+      true => ThemeMode.dark,
+      false => ThemeMode.light,
+      null => ThemeMode.system,
+    };

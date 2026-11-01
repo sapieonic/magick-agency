@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// changes (not on every timer tick or audio frame).
 @immutable
 class StationSignals {
-  const StationSignals({this.onDuty = false, this.callActive = false, this.campaignId});
+  const StationSignals({this.onDuty = false, this.callActive = false, this.onBreak = false, this.campaignId});
 
   /// The agent holds a live station session (any state but offline).
   final bool onDuty;
@@ -15,15 +15,26 @@ class StationSignals {
   /// and the tab bar hidden, whichever tab the agent was on.
   final bool callActive;
 
+  /// On a break (the agent's own, or paused for leaving the app).
+  final bool onBreak;
+
   /// The campaign of the live session, when [onDuty].
   final String? campaignId;
 
-  @override
-  bool operator ==(Object other) =>
-      other is StationSignals && other.onDuty == onDuty && other.callActive == callActive && other.campaignId == campaignId;
+  /// On duty and not on a break: the agent belongs on the station screen, so
+  /// the other tabs are closed to them until they take a break or leave.
+  bool get holdsStation => onDuty && !onBreak;
 
   @override
-  int get hashCode => Object.hash(onDuty, callActive, campaignId);
+  bool operator ==(Object other) =>
+      other is StationSignals &&
+      other.onDuty == onDuty &&
+      other.callActive == callActive &&
+      other.onBreak == onBreak &&
+      other.campaignId == campaignId;
+
+  @override
+  int get hashCode => Object.hash(onDuty, callActive, onBreak, campaignId);
 }
 
 /// Overridden by the station layer with a provider derived from its state.
