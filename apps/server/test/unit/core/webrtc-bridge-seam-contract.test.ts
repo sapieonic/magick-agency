@@ -21,6 +21,12 @@ import {
   type WebRtcLifecycleListener,
   type WebRtcRejectReason,
 } from '../../../src/core/webrtc-bridge-manager.js';
+import {
+  browserLegMediaFormatOf,
+  setBrowserLegMediaFormat,
+  type BrowserLegMediaFormat,
+} from '../../../src/core/bridge/browser-leg-media.js';
+import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 
 /** The seam member list. */
 interface BridgeSeam {
@@ -103,6 +109,16 @@ describe('WebRtcBridgeManager — the docs/seams.md seam (type-level)', () => {
     expectTypeOf<WebRtcLifecycleEvent>().toEqualTypeOf<CoreLifecycleEvent>();
     expectTypeOf<WebRtcLifecycleListener>().toEqualTypeOf<(event: CoreLifecycleEvent) => void>();
     expectTypeOf<WebRtcRejectReason>().toEqualTypeOf<CoreRejectReason>();
+    expect(true).toBe(true);
+  });
+
+  it('keeps the browser leg media-format tag (the station socket names its format; every attach reads it)', () => {
+    // The format travels on the socket, not as a parameter of the members above: the
+    // station handler tags the socket at upgrade, and createBridgedCall / bind / re-attach
+    // read the tag of the socket they are handed (docs/seams.md §3.1).
+    expectTypeOf(setBrowserLegMediaFormat).toEqualTypeOf<(ws: WebSocket, format: AgencyStationMediaFormat) => void>();
+    expectTypeOf(browserLegMediaFormatOf).toEqualTypeOf<(ws: WebSocket) => AgencyStationMediaFormat>();
+    expectTypeOf<BrowserLegMediaFormat>().toEqualTypeOf<AgencyStationMediaFormat>();
     expect(true).toBe(true);
   });
 

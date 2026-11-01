@@ -6,9 +6,12 @@ import type { AgencyRuntime } from './runtime.js';
 import { AGENT_LEASE_MS } from './agent-state-machine.js';
 import type {
   AgencyStationClientFrame,
+  AgencyStationMediaFormat,
   AgencyStationPingFrame,
 } from '@magick-agency/contracts/agency';
 import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
+import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
+import { parseStationMediaFormat } from './station-media-format.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -40,13 +43,19 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
   // token on the upgrade (minted over authenticated HTTP) is what authenticates it.
   app.get('/station/:sessionId', { websocket: true }, (socket: WebSocket, request: FastifyRequest<{
     Params: { sessionId: string };
-    Querystring: { token?: string };
+    Querystring: { token?: string; media?: string };
   }>) => {
     if (!runtime) {
       try { socket.close(1011, 'agency_runtime_unavailable'); } catch { /* ignore */ }
       return;
     }
-    void handleStationSocket(socket, request.params.sessionId, request.query?.token, runtime);
+    // The same refusal the served route makes (`proxy-agency-station.routes.ts`).
+    const media = parseStationMediaFormat(request.query);
+    if (!media.ok) {
+      try { socket.close(1008, 'unsupported media format'); } catch { /* ignore */ }
+      return;
+    }
+    void handleStationSocket(socket, request.params.sessionId, request.query?.token, runtime, media.format);
   });
 }
 
@@ -56,13 +65,21 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
  * (the dialer depends on the bridge, never the reverse). The bridge attaches its
  * own listeners per attempt and removes them at
  * detach, so both handler sets coexist without interfering.
+ *
+ * `mediaFormat` is the agent leg's audio format, from the upgrade's `media=` (the route
+ * parsed and validated it). It is recorded on the socket for the bridge, which reads it
+ * at every attach of this socket to a call (`core/bridge/browser-leg-media.ts`).
  */
 export async function handleStationSocket(
   socket: WebSocket,
   sessionId: string,
   token: string | undefined,
   runtime: AgencyRuntime,
+  mediaFormat: AgencyStationMediaFormat = 'pcm16',
 ): Promise<void> {
+  // Before anything can attach this socket to a call, so no attach can read it untagged.
+  setBrowserLegMediaFormat(socket, mediaFormat);
+
   // Verify FIRST, before any DB work — an unauthenticated upgrade must not be
   // able to probe which session ids exist.
   if (!(await runtime.tokens.verifyAndConsume(sessionId, token))) {
@@ -115,6 +132,17 @@ export async function handleStationSocket(
     return held;
   }
   let closeSeen = false;
+  /**
+   * Media frames in the other format than this socket's (a binary frame on `pcm16`, a JSON
+   * `media` frame on `alaw8`). Ignored here — media is the bridge's — and counted, with
+   * the first one logged at debug and the total on the close line.
+   */
+  let ignoredMediaFrames = 0;
+  const noteIgnoredMedia = (why: string): void => {
+    if (ignoredMediaFrames++ === 0) {
+      log.debug({ sessionId, mediaFormat, why }, 'Station socket: ignoring a media frame not in this socket\'s format');
+    }
+  };
 
   /**
    * "Is this socket still the one holding this session, and still open?"
@@ -224,7 +252,14 @@ export async function handleStationSocket(
     });
   }
 
-  socket.on('message', (data: Buffer | string) => {
+  socket.on('message', (data: Buffer | string, isBinary?: boolean) => {
+    // Binary frames are `alaw8` audio, the bridge's to relay — never parsed here. Routed
+    // on `isBinary` rather than a failed `JSON.parse`, which would throw per audio frame
+    // (50/s) and could, by chance, parse.
+    if (isBinary === true) {
+      if (mediaFormat !== 'alaw8') noteIgnoredMedia('binary frame on a pcm16 socket');
+      return;
+    }
     // Taken before the parse, so a ping's `server_ts` is the arrival instant and
     // owes nothing to how long anything downstream takes.
     const receivedAt = Date.now();
@@ -232,7 +267,7 @@ export async function handleStationSocket(
     try {
       parsed = JSON.parse(typeof data === 'string' ? data : data.toString());
     } catch {
-      return; // media/binary or malformed — the bridge's own listener handles media
+      return; // malformed text — ignored like any other non-frame
     }
     // ── A PARSE THAT SUCCEEDS IS NOT YET A FRAME ─────────────────────────
     //
@@ -250,7 +285,9 @@ export async function handleStationSocket(
       if (!stationLive) { deferredPing = { frame, receivedAt }; return; }
       handlePing(frame, receivedAt);
     }
-    // `media` is consumed by the bridge's borrowed-socket listener, not here.
+    // `media` is consumed by the bridge's borrowed-socket listener, not here — on a
+    // `pcm16` socket. On `alaw8` it is not this socket's format, and the bridge drops it.
+    else if (frame.event === 'media' && mediaFormat !== 'pcm16') noteIgnoredMedia('json media frame on an alaw8 socket');
     //
     // Nothing else is read. A `hangup` frame is handled neither here nor by the
     // bridge's listener: the agent's hang-up is `POST /agency/attempts/:id/hangup`,
@@ -352,7 +389,7 @@ export async function handleStationSocket(
       const wentOffline = superseded
         ? false
         : await runtime.releaseStationOnClose(sessionId, socket);
-      log.info({ sessionId, superseded, wentOffline }, 'Station socket closed');
+      log.info({ sessionId, superseded, wentOffline, mediaFormat, ignoredMediaFrames }, 'Station socket closed');
     })();
   });
 

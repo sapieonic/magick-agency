@@ -25,7 +25,9 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *     (`attachPstnLeg` + VoiceLink `start`, `handleVoicelinkStatus` `call.ended`).
  *
  * The station socket is at the console's path, `/proxy/agency/station/:sessionId`; the two
- * upgrades below use it.
+ * upgrades below use it. The live one asks for the compact media format (`media=alaw8`, the
+ * mobile app's), so the call's audio crosses a real socket as binary A-law and VoiceLink's
+ * A-law passes through the bridge untouched in both directions.
  *
  * The two steps with HTTP routes (`POST /sessions/:id/available`,
  * `POST /attempts/:id/disposition`) are driven through exactly the runtime and repository
@@ -122,6 +124,8 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
   let stopAnalysis: (() => Promise<void>) | null = null;
   let station: WebSocket | null = null;
   const frames: Array<Record<string, unknown>> = [];
+  /** Binary messages on the station: `alaw8` audio. */
+  const audio: Buffer[] = [];
   let liveSessionId: string | null = null;
 
   beforeAll(async () => {
@@ -214,8 +218,11 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
     const refusedCode = await new Promise<number>((resolve) => refused.on('close', (code) => resolve(code)));
     expect(refusedCode).toBe(4401);
 
-    station = new WebSocket(`ws://127.0.0.1:${port}/proxy/agency/station/${sessionId}?token=${token}`);
-    station.on('message', (raw) => frames.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+    station = new WebSocket(`ws://127.0.0.1:${port}/proxy/agency/station/${sessionId}?token=${token}&media=alaw8`);
+    station.on('message', (raw, isBinary) => {
+      if (isBinary) audio.push(raw as Buffer);
+      else frames.push(JSON.parse(raw.toString()) as Record<string, unknown>);
+    });
     const ready = await waitFor('ready', () => frames.find((f) => f['event'] === 'ready'));
     // No live lease ⇒ `break`, never `available` (`rehydrateAgent`).
     expect(ready['state']).toBe('break');
@@ -261,6 +268,22 @@ describe('agency runtime end to end — real app, real bridge, fake carrier (int
     });
     expect(live.answered_at).not.toBeNull();
     expect((await runtime.agents.get(sessionId))?.state).toBe('on_call');
+
+    // ── Audio both ways over the real station socket, as `alaw8` binary messages. ─
+    // The agent's A-law reaches the carrier byte for byte (passthrough: VoiceLink is A-law)…
+    const spoken = Buffer.alloc(320);
+    for (let i = 0; i < spoken.length; i++) spoken[i] = (i * 37) & 0xff;
+    station.send(spoken, { binary: true });
+    const relayed = await waitFor('agent audio at the carrier', () =>
+      pstn.sent.find((m) => m['event'] === 'media') as { media: { payload: string } } | undefined);
+    expect(Buffer.from(relayed.media.payload, 'base64').equals(spoken)).toBe(true);
+    // …and the carrier's reaches the agent the same way, one 20 ms frame per message.
+    const heard = Buffer.alloc(160, 0x2a);
+    pstn.emit('message', JSON.stringify({ event: 'media', media: { payload: heard.toString('base64') } }));
+    await waitFor('carrier audio at the agent', () => audio.length > 0);
+    expect(audio).toHaveLength(1);
+    expect(audio[0]!.equals(heard)).toBe(true);
+    expect(frames.some((f) => f['event'] === 'media')).toBe(false);
 
     // ── The customer hangs up: the carrier's `call.ended`. ───────────────────────
     await bridge.handleVoicelinkStatus(callId, {
