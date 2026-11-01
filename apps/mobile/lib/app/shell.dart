@@ -29,6 +29,27 @@ List<int> shellTabBranches({required bool phone}) => [
       ShellBranch.me,
     ];
 
+/// The most a tab label's text scales (Material's `NavigationBar` clamps it here).
+const _maxTabLabelScale = 1.3;
+
+/// Whether [label] fits one line in a tab [width] wide, as `NavigationBar` sets
+/// it (its text scaling clamped to [_maxTabLabelScale]). `NavigationBar` takes a
+/// plain string and wraps a long one onto a second line, so a label that does
+/// not fit is swapped for its short form instead: five tabs on a 360 dp phone
+/// leave about 72 dp each, which "Performance" overruns at normal text size.
+@visibleForTesting
+bool tabLabelFits(String label, {required double width, required TextStyle? style, required TextScaler textScaler}) {
+  final painter = TextPainter(
+    text: TextSpan(text: label, style: style),
+    textDirection: TextDirection.ltr,
+    textScaler: textScaler.clamp(maxScaleFactor: _maxTabLabelScale),
+    maxLines: 1,
+  )..layout();
+  final fits = painter.width <= width - 4 && !painter.didExceedMaxLines;
+  painter.dispose();
+  return fits;
+}
+
 /// The tabbed shell: Station · Phone · Performance · My calls · Me (Phone only
 /// while the soft phone is available, `softphoneAvailabilityProvider`).
 ///
@@ -84,13 +105,19 @@ class AppShell extends ConsumerWidget {
       return null;
     }
 
+    final tabWidth = MediaQuery.sizeOf(context).width / branches.length;
+    final labelStyle = Theme.of(context).navigationBarTheme.labelTextStyle?.resolve(const {WidgetState.selected});
+    final textScaler = MediaQuery.textScalerOf(context);
+    String fitted(String full, String short) =>
+        tabLabelFits(full, width: tabWidth, style: labelStyle, textScaler: textScaler) ? full : short;
+
     NavigationDestination destination(int branch) {
       final reason = closedBecause(branch);
       final (icon, selected, label) = switch (branch) {
         ShellBranch.station => (Icons.call_outlined, Icons.call, 'Station'),
         ShellBranch.phone => (Icons.dialpad_outlined, Icons.dialpad, 'Phone'),
-        ShellBranch.performance => (Icons.bar_chart_outlined, Icons.bar_chart, 'Performance'),
-        ShellBranch.calls => (Icons.list_alt_outlined, Icons.list_alt, 'My calls'),
+        ShellBranch.performance => (Icons.bar_chart_outlined, Icons.bar_chart, fitted('Performance', 'Stats')),
+        ShellBranch.calls => (Icons.list_alt_outlined, Icons.list_alt, fitted('My calls', 'Calls')),
         _ => (Icons.person_outline, Icons.person, 'Me'),
       };
       return NavigationDestination(

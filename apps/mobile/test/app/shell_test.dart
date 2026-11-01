@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/app/app.dart';
@@ -196,5 +197,43 @@ void main() {
     expect(themeModeFor(true), ThemeMode.dark);
     expect(themeModeFor(false), ThemeMode.light);
     expect(themeModeFor(null), ThemeMode.system);
+  });
+  group('tab labels never wrap', () {
+    // The test font draws every glyph one em wide, so a label is its length ×
+    // 11.5 dp (labelSmall) wide: "Performance" 126.5, "My calls" 92, "Station" 80.5.
+    Future<void> pumpAt(WidgetTester tester, double width, {double textScale = 1}) async {
+      tester.view.physicalSize = Size(width, 900);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = textScale;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      c.read(testAvailabilityProvider.notifier).set(phoneShown);
+      await pumpShell(tester, c);
+    }
+
+    void expectOneLineEach(WidgetTester tester, double textScale) {
+      for (final label in tabLabels(tester)) {
+        final paragraph = tester.renderObject<RenderParagraph>(find.text(label));
+        expect(paragraph.size.height, lessThan(2 * 11.5 * 1.2 * textScale), reason: '$label wraps');
+      }
+    }
+
+    testWidgets('five tabs on a narrow screen: a label that would wrap takes its short name', (tester) async {
+      await pumpAt(tester, 500); // 100 dp a tab
+      expect(tabLabels(tester), ['Station', 'Phone', 'Stats', 'My calls', 'Me']);
+      expectOneLineEach(tester, 1);
+    });
+
+    testWidgets('room enough: the full names', (tester) async {
+      await pumpAt(tester, 800); // 160 dp a tab
+      expect(tabLabels(tester), ['Station', 'Phone', 'Performance', 'My calls', 'Me']);
+      expectOneLineEach(tester, 1);
+    });
+
+    testWidgets('larger text counts, up to the bar\'s own 1.3× cap', (tester) async {
+      await pumpAt(tester, 800, textScale: 2);
+      expect(tabLabels(tester), ['Station', 'Phone', 'Stats', 'My calls', 'Me']);
+      expectOneLineEach(tester, 1.3);
+    });
   });
 }
