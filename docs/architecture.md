@@ -230,7 +230,9 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   console with a live attempt is never closed by the sweep (the bridge's deferred hangup owns the
   call). A phone silent on a call the agent can see is dropped the same way and the 8 s deferred
   hangup decides the call (M1); on either app an unbound dial is not closed but gets its pre-bind
-  grace armed. The join (`X-Client`, parsed by
+  grace armed. A live soft-phone call follows the same rule (M1 as amended): a console is never
+  closed, a silent phone is dropped, and the bridge's rule for a manual leg decides (an immediate
+  hangup before the answer, the 8 s deferred hangup after it). The join (`X-Client`, parsed by
   `utils/client-header.ts`) serves the mobile app `heartbeat_grace_ms` 10 000. The `media=` format
   is the agent leg's audio for the socket's life: the handler routes frames on `ws`'s `isBinary`
   (binary is `alaw8` audio, text is JSON control) and tags the socket for the bridge
@@ -266,7 +268,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   soft phone is a `break/soft_phone`, a Lua-guarded `manual` claim on the agent hash keeps the
   session out of `available` while a call is live or awaiting its outcome, pacing headroom counts
   the whole account's live calls (`countLiveForAccount`), and the reaper's orphan and lapse
-  sweeps close what nobody owns.
+  sweeps close what nobody owns. Both clients have it on the same routes and station frame: the
+  console's `/dialer/phone` and the agent app's Phone tab ([`mobile.md`](mobile.md)).
 - **Completion notice** (`campaign-completion-notice.ts`). When a campaign finishes, mails holders
   of `agency.supervise`.
 

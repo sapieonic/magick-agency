@@ -13,7 +13,8 @@ each package. The console's soft-phone test files (added 2026-10-30) are static 
 where the file has no `it.each` and marked `~` where it has one; the two existing console files the
 soft phone added a case to (`HoldToConfirmButton`, `DncPage`) show the printed count plus that case.
 The files the mobile app's presence work added or changed (2026-11-01) show the counts Vitest printed
-that day.
+that day, and so do the contracts files and `station-mobile-liveness` after the mobile soft phone
+(2026-11-01).
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -228,7 +229,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
-| `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 14 |
+| `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 20 |
 | `apps/server/test/unit/agency/station-socket-media.test.ts` | 6 |
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 4 |
 | `apps/server/test/unit/agency/station-registry.test.ts` | 29 |
@@ -948,7 +949,9 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 `test-env.ts` (the per-worktree test database and Redis db), the Vitest decorator transform, and the guard over the release-please setup (B24): `release-please-config.json` and `.release-please-manifest.json` at the root, `.github/workflows/release-please.yml` and `pr-title.yml`. See [`operations.md`](operations.md), "Releases and versioning".
 
-Files: `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
+`contracts-literals.mjs` regenerates `packages/contracts/fixtures/agent/literals.json`, the literal unions the agent app switches on (38 vocabularies), and with `--check` fails when it is stale ([`mobile.md`](mobile.md), "Wire types").
+
+Files: `contracts-literals.mjs`, `release-please.test.mjs`, `test-env.ts`, `vitest-decorator-transform.ts`
 
 | Test file | Cases |
 |---|---|
@@ -964,10 +967,11 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 
 | Test file | Cases |
 |---|---|
+| `packages/contracts/test/agent-fixtures.test.ts` (the agent app's fixtures against the contract, `softphone.json` included) | 152 |
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` | 10 |
-| `packages/contracts/test/exports.test.ts` | 11 |
+| `packages/contracts/test/exports.test.ts` | 12 |
 | `packages/contracts/test/flags.test.ts` | 7 |
 | `packages/contracts/test/rbac.test.ts` | 60 |
 | `packages/contracts/test/stall.test.ts` | 4 |
@@ -1729,13 +1733,16 @@ Scenario, flow, guard and setup tests that span several modules.
 The agent app (Flutter, Android and iOS); how it works is in [`mobile.md`](mobile.md). Dart
 tests run with `flutter test` from `apps/mobile` (each package's from its own folder). Counts are
 static counts of `test(` / `testWidgets(` calls on 2026-11-01, marked `~`: a loop of cases counts
-as one, so they undercount.
+as one, so they undercount. The files the soft phone added or changed were re-counted the same way
+after it (`softphone_controller_test.dart` counts its `softphoneTest(` helper). The Kotlin tests of
+`agent_audio` run from `apps/mobile/android` (`./gradlew :agent_audio:testDebugUnitTest`).
 
 ### `apps/mobile/lib/` (`main.dart`, `app/`, `ui/`)
 
 Start-up (`main.dart`: client identity and Firebase, each failure logged and survived), the
-root widget, the router (the gate's redirect, then the station's), the tab shell, the splash,
-theme tokens mirrored from `packages/web-ui`, and shared widgets.
+root widget, the router (the gate's redirect, then the station's, which holds a live or owed
+soft-phone call on its screen), the tab shell (the Phone tab at index 1 where the soft phone is
+available), the splash, theme tokens mirrored from `packages/web-ui`, and shared widgets.
 
 Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `app/routes.dart`, `app/shell.dart`, `app/splash_screen.dart`, `app/theme/app_theme.dart`, `app/theme/tokens.dart`, `ui/primitives.dart`
 
@@ -1756,7 +1763,7 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 | Test file | Cases |
 |---|---|
 | `apps/mobile/test/core/api/api_client_test.dart` | ~14 |
-| `apps/mobile/test/core/auth/app_gate_test.dart` | ~43 |
+| `apps/mobile/test/core/auth/app_gate_test.dart` | ~47 |
 | `apps/mobile/test/core/auth/auth_copy_test.dart` | ~5 |
 | `apps/mobile/test/core/auth/firebase_auth_service_test.dart` | ~4 |
 | `apps/mobile/test/core/auth/firebase_token_source_test.dart` | ~4 |
@@ -1769,19 +1776,49 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 The station core behind the screens' seam (`station_view.dart`): the reducer mirrored from the
 console, server clock, liveness, the socket and its transport, the controller and view mapper,
 notes autosave; audio orchestration by phase; the foreground rules (`device_away`), wake lock and
-local notifications.
+local notifications. The controller hosts a campaign station or a soft-phone session
+(`hosted_session.dart`: `HostedSession`, `StationHost`, `stationHostProvider`), implements the soft
+phone's host actions, and closes a soft-phone session without closing over its call
+(`close_softphone.dart`, a port of the console's `closeSoftphoneSession`).
 
-Files: `station/contact_context.dart`, `station/disposition_rules.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
+Files: `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/core/audio/audio_orchestration_test.dart` | ~23 |
-| `apps/mobile/test/core/lifecycle/lifecycle_test.dart` | ~13 |
+| `apps/mobile/test/core/audio/audio_orchestration_test.dart` | ~27 |
+| `apps/mobile/test/core/lifecycle/lifecycle_test.dart` | ~23 |
 | `apps/mobile/test/core/station/clock_and_liveness_test.dart` | ~18 |
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
 | `apps/mobile/test/core/station/station_controller_test.dart` | ~49 |
-| `apps/mobile/test/core/station/station_reducer_test.dart` | ~23 |
+| `apps/mobile/test/core/station/softphone_host_test.dart` | ~31 |
+| `apps/mobile/test/core/station/station_reducer_test.dart` | ~28 |
 | `apps/mobile/test/core/station/station_socket_test.dart` | ~27 |
+
+### `apps/mobile/lib/core/softphone/`
+
+The soft phone's call domain ([`mobile.md`](mobile.md), "The soft phone"): the API client for
+every soft-phone route (scoped to the session's account; the dial never retried), the host seam
+(`softphone_host.dart`: what the soft phone reads of the hosted session and may ask of it) and the
+UI seam (`softphone_view.dart`: `SoftphoneView`, `SoftphoneActions`, the Phone tab's screen states
+and availability), and `SoftphoneController`, a port of the console's `useSoftphone`, per
+workspace (`softphoneOverrides`). Pure helpers with the console's tables: call state and labels,
+phone input, call fields, overrides, refusal copy, and the debounced autosave (`manual:<id>`).
+Test helpers: `manual_calls.dart` (rows shared with the console's tests), `fake_softphone_host.dart`.
+
+Files: `call_fields.dart`, `call_labels.dart`, `call_state.dart`, `manual_autosave.dart`, `overrides.dart`, `phone_input.dart`, `refusal_copy.dart`, `softphone_api.dart`, `softphone_controller.dart`, `softphone_copy.dart`, `softphone_host.dart`, `softphone_view.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/core/softphone/call_fields_test.dart` | ~10 |
+| `apps/mobile/test/core/softphone/call_labels_test.dart` | ~12 |
+| `apps/mobile/test/core/softphone/call_state_test.dart` | ~18 |
+| `apps/mobile/test/core/softphone/manual_autosave_test.dart` | ~9 |
+| `apps/mobile/test/core/softphone/overrides_test.dart` | ~11 |
+| `apps/mobile/test/core/softphone/phone_input_test.dart` | ~20 |
+| `apps/mobile/test/core/softphone/refusal_copy_test.dart` | ~7 |
+| `apps/mobile/test/core/softphone/softphone_api_test.dart` | ~15 |
+| `apps/mobile/test/core/softphone/softphone_controller_test.dart` | ~73 |
+| `apps/mobile/test/core/softphone/softphone_seams_test.dart` | ~14 |
 
 ### `apps/mobile/lib/features/` (`auth/`, `join/`, `accounts/`, `campaigns/`, `settings/`)
 
@@ -1804,10 +1841,11 @@ Files: `auth/auth_widgets.dart`, `auth/no_membership_screen.dart`, `auth/sign_in
 ### `apps/mobile/lib/features/` (`performance/`, `calls/`)
 
 My performance (windows, readouts, the bucket chart, stale-while-revalidate) and My calls (keyset
-pages, filters, the debounced number search, the attempt sheet); both keyed by
-`agentWorkspaceProvider`.
+pages, filters, the debounced number search, the attempt sheet; and the "Soft-phone calls" segment
+with its own list, filters and detail sheet, `calls/softphone/`); all keyed by
+`agentWorkspaceProvider`. Test helper: `softphone_support.dart`.
 
-Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `performance/logic/bucket_series.dart`, `performance/logic/en_in_format.dart`, `performance/logic/performance_view.dart`, `performance/logic/readouts.dart`, `performance/logic/stats_windows.dart`, `performance/performance_api.dart`, `performance/performance_controller.dart`, `performance/performance_screen.dart`, `performance/widgets/bucket_chart.dart`, `calls/calls_controller.dart`, `calls/calls_screen.dart`, `calls/logic/attempt_copy.dart`, `calls/logic/attempt_filters.dart`, `calls/logic/debouncer.dart`, `calls/widgets/attempt_detail_sheet.dart`, `calls/widgets/attempt_tile.dart`, `calls/widgets/filter_bar.dart`
+Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `performance/logic/bucket_series.dart`, `performance/logic/en_in_format.dart`, `performance/logic/performance_view.dart`, `performance/logic/readouts.dart`, `performance/logic/stats_windows.dart`, `performance/performance_api.dart`, `performance/performance_controller.dart`, `performance/performance_screen.dart`, `performance/widgets/bucket_chart.dart`, `calls/calls_controller.dart`, `calls/calls_screen.dart`, `calls/logic/attempt_copy.dart`, `calls/logic/attempt_filters.dart`, `calls/logic/debouncer.dart`, `calls/softphone/softphone_call_detail_sheet.dart`, `calls/softphone/softphone_call_tile.dart`, `calls/softphone/softphone_calls_controller.dart`, `calls/softphone/softphone_calls_list.dart`, `calls/widgets/attempt_detail_sheet.dart`, `calls/widgets/attempt_tile.dart`, `calls/widgets/filter_bar.dart`
 
 | Test file | Cases |
 |---|---|
@@ -1823,6 +1861,8 @@ Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `p
 | `apps/mobile/test/features/calls/calls_controller_test.dart` | ~15 |
 | `apps/mobile/test/features/calls/calls_screen_test.dart` | ~11 |
 | `apps/mobile/test/features/calls/debouncer_test.dart` | ~2 |
+| `apps/mobile/test/features/calls/softphone_calls_controller_test.dart` | ~18 |
+| `apps/mobile/test/features/calls/softphone_calls_screen_test.dart` | ~18 |
 
 ### `apps/mobile/lib/features/` (`preflight/`, `station/`)
 
@@ -1843,38 +1883,60 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_modals_test.dart` | ~20 |
 | `apps/mobile/test/features/station/station_phases_test.dart` | ~37 |
 
+### `apps/mobile/lib/features/softphone/`
+
+The Phone tab (`PhoneScreen`: closed, opening, active, live on a campaign, open in another account,
+off, off and stranded, error) and `SoftphonePanel(surface:)`, one scrolling column for the Phone tab
+and the station switched to the soft phone: the rail, the number field and pad, Log to and Call
+from, recent calls, the roster contact, call details, notes, the controls, hold-to-hang-up, the
+outcome pad and countdown, the DNC and override sheets, the finish notice. It reads only the
+soft-phone UI seam. Test helper: `softphone_harness.dart`.
+
+Files: `phone_screen.dart`, `softphone_copy.dart`, `softphone_panel.dart`, `parts/*` (`call_controls`, `call_fields_form`, `contact_section`, `dial_pad`, `dnc_sheet`, `finish_notice`, `modal_guard`, `notes_section`, `number_field`, `outcome_section`, `override_sheet`, `recent_calls`, `session_cards`, `setup_section`, `status_band`)
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/features/softphone/phone_screen_test.dart` | ~19 |
+| `apps/mobile/test/features/softphone/softphone_a11y_test.dart` | ~15 |
+| `apps/mobile/test/features/softphone/softphone_panel_test.dart` | ~51 |
+
 ### `apps/mobile/packages/agency_wire/`
 
-Hand-written Dart types for the API and the station frames, checked against
-`packages/contracts` fixtures and literal unions.
+Hand-written Dart types for the API and the station frames, the soft phone's included
+(`softphone.dart`; refusals as typed `ErrorBody` accessors), checked against `packages/contracts`
+fixtures and literal unions.
 
-Files: `lib/src/actions.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/station.dart`
+Files: `lib/src/actions.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/softphone.dart`, `lib/src/station.dart`
 
 | Test file | Cases |
 |---|---|
 | `apps/mobile/packages/agency_wire/test/actions_test.dart` | ~18 |
 | `apps/mobile/packages/agency_wire/test/decode_budget_test.dart` | ~2 |
-| `apps/mobile/packages/agency_wire/test/fixtures_test.dart` | ~4 |
-| `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~8 |
+| `apps/mobile/packages/agency_wire/test/fixtures_test.dart` | ~5 |
+| `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~10 |
 | `apps/mobile/packages/agency_wire/test/platform_test.dart` | ~13 |
 | `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
 | `apps/mobile/packages/agency_wire/test/session_test.dart` | ~14 |
-| `apps/mobile/packages/agency_wire/test/station_test.dart` | ~29 |
+| `apps/mobile/packages/agency_wire/test/softphone_test.dart` | ~27 |
+| `apps/mobile/packages/agency_wire/test/station_test.dart` | ~32 |
 
 ### `apps/mobile/packages/agent_audio/`
 
 The native voice engine as a Flutter plugin: the Dart API and reference models (A-law codec,
-half-band filter, jitter buffer, loopback), with the Kotlin (`android/`) and Swift (`ios/`)
-engines, the Android on-duty service and iOS CallKit.
+half-band filter, jitter buffer, loopback, the soft phone's ringback tone), with the Kotlin
+(`android/`) and Swift (`ios/`) engines, the Android on-duty service and iOS CallKit. Kotlin tests
+on 2026-11-01, as Gradle printed them: 29, `RingbackTest.kt` 7 of them (the shared golden vectors
+in `test/support/ringback_vectors.dart`).
 
-Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
+Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/tone/ringback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/packages/agent_audio/test/agent_audio_test.dart` | ~23 |
+| `apps/mobile/packages/agent_audio/test/agent_audio_test.dart` | ~26 |
 | `apps/mobile/packages/agent_audio/test/alaw_test.dart` | ~6 |
 | `apps/mobile/packages/agent_audio/test/events_test.dart` | ~9 |
 | `apps/mobile/packages/agent_audio/test/half_band_test.dart` | ~10 |
 | `apps/mobile/packages/agent_audio/test/jitter_buffer_test.dart` | ~16 |
 | `apps/mobile/packages/agent_audio/test/loopback_test.dart` | ~6 |
+| `apps/mobile/packages/agent_audio/test/ringback_test.dart` | ~9 |
 | `apps/mobile/packages/agent_audio/test/types_test.dart` | ~6 |

@@ -1,8 +1,8 @@
 # Magick Agency agent app
 
 The agent-only mobile app: one Flutter project that builds the Android and the iOS app. Agents
-sign in, go on duty on a campaign, take power-dialled calls, write up each call and see their own
-numbers. There is nothing for supervisors or admins here; those stay in the web consoles.
+sign in, go on duty on a campaign, take power-dialled calls, dial numbers themselves on the soft
+phone, write up each call and see their own numbers. There is nothing for supervisors or admins here; those stay in the web consoles.
 
 It is a second client of the same server the web console uses: the public API under `/auth`,
 `/accounts`, `/proxy/agency/*`, and the station WebSocket `/proxy/agency/station/:sessionId`, which
@@ -20,18 +20,21 @@ apps/mobile/
     core/
       api/              ApiClient: Firebase bearer, X-Tenant-Id/X-Account-Id, X-Client, typed errors
       auth/             the app gate (signed out → ready), Firebase sign-in
-      station/          station socket, state machine, actions; station_view.dart is the UI seam
+      station/          station socket, state machine, actions; station_view.dart is the UI seam;
+                        hosts a campaign station or a soft-phone session
+      softphone/        the soft phone's API client and controller; softphone_view.dart is its UI seam
       audio/            AudioEngine facade over packages/agent_audio
       lifecycle/        foreground/background rules (the device_away pause), wake lock
       telemetry/        PII-masking log
     features/           one folder per screen family: auth, join, accounts, campaigns, preflight,
-                        station, performance, calls, settings
+                        station, softphone (the Phone tab), performance, calls, settings
     ui/                 shared primitives (pills, cards, the live dot)
   packages/
     agency_wire/        wire types for the API and the station socket, hand-written against
                         packages/contracts and checked by its fixtures (packages/contracts/fixtures/agent)
     agent_audio/        the native voice engine: capture, playback, echo cancellation, routes,
-                        CallKit (iOS) and the on-duty foreground service (Android)
+                        the soft phone's ringback, CallKit (iOS) and the on-duty foreground
+                        service (Android)
   android/  ios/        the platform hosts
   env/                  dev.json, staging.json, prod.json: build-time config (no secrets);
                         your own copies go in *.local.json (git-ignored)

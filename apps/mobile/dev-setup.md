@@ -184,6 +184,16 @@ To take a call from the app you need:
 - a **running campaign** the agent is staffed on (console › campaign › Agents). An unstaffed
   agent is refused with "You're not assigned to this campaign".
 
+The **Phone tab** (the soft phone) shows only when the soft-phone flag
+**`agency_softphone_enabled`** is on for the agent's account. It is off by default. Turn it on
+in the super-admin console › the tenant › *Feature Flags*, for the tenant or for one of its
+accounts; or set `FF_AGENCY_SOFTPHONE=true` in `apps/server/.env` and restart the server, which
+makes it the default everywhere (an override row still wins). Every agent has the permission it
+needs (`agency.softphone.dial`). A dial needs a caller ID: a number assigned to the account
+(super-admin console › *Phone Numbers*), or one of the campaign's when the call is logged to it.
+Without a carrier a dial ends `failed` and unplaced, which is enough to see the screens and the
+refusals.
+
 The server's mobile settings (`MOBILE_MIN_SUPPORTED_VERSION`, `MOBILE_LATEST_VERSION`, store
 URLs) have working defaults for development.
 
