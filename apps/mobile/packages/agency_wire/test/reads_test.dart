@@ -94,5 +94,21 @@ void main() {
       expect(const AttemptsQuery(cursor: 'abc', limit: 25).toQuery(), {'cursor': 'abc', 'limit': '25'});
       expect(const AttemptsQuery().toQuery(), isEmpty);
     });
+
+    test('query: outcomes comma-joined under one key, phone as given, empty ones left out', () {
+      expect(
+        const AttemptsQuery(outcomes: [AttemptOutcome.connected, AttemptOutcome.noAnswer], phone: '+919840012345').toQuery(),
+        {'outcome': 'connected,no_answer', 'phone': '+919840012345'},
+      );
+      expect(const AttemptsQuery(outcomes: [], phone: '').toQuery(), isEmpty);
+      expect(
+        const AttemptsQuery(outcomes: [AttemptOutcome.connected], phone: '98400'),
+        const AttemptsQuery(outcomes: [AttemptOutcome.connected], phone: '98400'),
+      );
+      expect(
+        const AttemptsQuery(outcomes: [AttemptOutcome.connected]) == const AttemptsQuery(outcomes: [AttemptOutcome.noAnswer]),
+        isFalse,
+      );
+    });
   });
 }

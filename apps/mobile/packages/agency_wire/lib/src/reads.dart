@@ -697,7 +697,15 @@ AttemptsPage decodeAttemptsPage(Map<String, Object?> json) => KeysetPage.fromJso
 /// allow-list: paging plus a window and a campaign).
 @immutable
 final class AttemptsQuery {
-  const AttemptsQuery({this.cursor, this.limit, this.from, this.to, this.campaignId});
+  const AttemptsQuery({
+    this.cursor,
+    this.limit,
+    this.from,
+    this.to,
+    this.campaignId,
+    this.outcomes = const [],
+    this.phone,
+  });
 
   final String? cursor;
   final int? limit;
@@ -705,12 +713,21 @@ final class AttemptsQuery {
   final DateTime? to;
   final String? campaignId;
 
+  /// `outcome`: sent comma-joined, the form the server splits (several values, one key).
+  final List<AttemptOutcome> outcomes;
+
+  /// `phone`: a leading `+` is an exact E.164 match; otherwise a suffix match on the
+  /// digits. A term with no digit is a 400, so callers check before sending.
+  final String? phone;
+
   Map<String, String> toQuery() => <String, String>{
     'cursor': ?cursor,
     if (limit != null) 'limit': '$limit',
     if (from != null) 'from': isoUtc(from!),
     if (to != null) 'to': isoUtc(to!),
     'campaign_id': ?campaignId,
+    if (outcomes.isNotEmpty) 'outcome': outcomes.map((o) => o.wire).join(','),
+    if (phone != null && phone!.isNotEmpty) 'phone': phone!,
   };
 
   @override
@@ -720,8 +737,10 @@ final class AttemptsQuery {
       other.limit == limit &&
       other.from == from &&
       other.to == to &&
-      other.campaignId == campaignId;
+      other.campaignId == campaignId &&
+      listEquals(other.outcomes, outcomes) &&
+      other.phone == phone;
 
   @override
-  int get hashCode => Object.hash(cursor, limit, from, to, campaignId);
+  int get hashCode => Object.hash(cursor, limit, from, to, campaignId, listHash(outcomes), phone);
 }
