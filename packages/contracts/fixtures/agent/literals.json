@@ -164,8 +164,9 @@
     ]
   },
   "reserved_break_codes": {
-    "source": "packages/contracts/src/agency/*.ts#*_BREAK_REASON",
+    "source": "packages/contracts/src/agency/breaks.ts#RESERVED_BREAK_REASONS",
     "values": [
+      "device_away",
       "soft_phone"
     ]
   },

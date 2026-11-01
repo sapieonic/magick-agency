@@ -12,13 +12,27 @@
     "station_ws_url": "/proxy/agency/station?token=st_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
     "station_token_expires_at": "2026-11-01T06:02:00.000Z",
     "disposition_catalog": [
-      { "code": "interested", "label": "Interested", "is_success": true },
-      { "code": "not_interested", "label": "Not interested" },
-      { "code": "wrong_number", "label": "Wrong number", "terminal": true },
+      {
+        "code": "interested",
+        "label": "Interested",
+        "is_success": true
+      },
+      {
+        "code": "not_interested",
+        "label": "Not interested"
+      },
+      {
+        "code": "wrong_number",
+        "label": "Wrong number",
+        "terminal": true
+      },
       {
         "code": "voicemail",
         "label": "Voicemail",
-        "retry": { "delay_minutes": 120, "max_attempts": 3 }
+        "retry": {
+          "delay_minutes": 120,
+          "max_attempts": 3
+        }
       },
       {
         "code": "callback",
@@ -38,14 +52,33 @@
     "wrapup_auto_return": true,
     "record_calls": true,
     "break_reasons": [
-      { "code": "tea", "label": "Tea break", "is_paid": true },
-      { "code": "lunch", "label": "Lunch", "is_paid": false },
-      { "code": "training", "label": "Training" }
+      {
+        "code": "tea",
+        "label": "Tea break",
+        "is_paid": true
+      },
+      {
+        "code": "lunch",
+        "label": "Lunch",
+        "is_paid": false
+      },
+      {
+        "code": "training",
+        "label": "Training"
+      }
     ],
     "context_display": {
-      "hero": ["Name", "Policy No", "Renewal Due"],
-      "order": ["Premium (INR)"],
-      "hidden": ["Internal ID"]
+      "hero": [
+        "Name",
+        "Policy No",
+        "Renewal Due"
+      ],
+      "order": [
+        "Premium (INR)"
+      ],
+      "hidden": [
+        "Internal ID"
+      ]
     },
     "intervals": {
       "heartbeat_ms": 10000,
@@ -65,14 +98,30 @@
     "station_ws_url": "/proxy/agency/station?token=st_0a1b2c3d4e5f60718293a4b5c6d7e8f9",
     "station_token_expires_at": "2026-11-01T09:12:00.000Z",
     "disposition_catalog": [
-      { "code": "voicemail", "label": "Voicemail" },
-      { "code": "callback", "label": "Callback", "requires_datetime": true },
-      { "code": "do_not_call", "label": "Do not call", "suppress": true }
+      {
+        "code": "voicemail",
+        "label": "Voicemail"
+      },
+      {
+        "code": "callback",
+        "label": "Callback",
+        "requires_datetime": true
+      },
+      {
+        "code": "do_not_call",
+        "label": "Do not call",
+        "suppress": true
+      }
     ],
     "wrapup_seconds": 0,
     "wrapup_auto_return": false,
     "record_calls": false,
-    "break_reasons": [{ "code": "break", "label": "Break" }],
+    "break_reasons": [
+      {
+        "code": "break",
+        "label": "Break"
+      }
+    ],
     "context_display": {},
     "intervals": {
       "heartbeat_ms": 10000,
@@ -133,5 +182,16 @@
     "session_id": "9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a",
     "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
     "account_name": "Pune Branch"
+  },
+  "break_request_device_away": {
+    "reason": "device_away"
+  },
+  "session_state_device_away": {
+    "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "kind": "campaign",
+    "state": "break",
+    "since": "2026-11-01T06:52:03.100Z",
+    "break_reason": "device_away"
   }
 }

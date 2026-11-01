@@ -29,7 +29,7 @@
  * happens, change the vocabulary's entry below, not the regexes.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -133,18 +133,25 @@ function fieldUnion(file, iface, field) {
 }
 
 /**
- * Every `export const <X>_BREAK_REASON = '<code>'` in the contract: the break codes the
- * server reserves (entered only through their own routes, never offered in a campaign's
- * `break_reasons`). A new reserved code must follow the same naming to be picked up.
+ * The break codes the server reserves (entered only through their own routes, never offered
+ * in a campaign's `break_reasons`): the contract's `RESERVED_BREAK_REASONS` list
+ * (`agency/breaks.ts`), whose members are constants (`SOFTPHONE_BREAK_REASON`, …), each
+ * resolved to its `'<code>'` wherever in `agency/` it is declared. Reading the list, not a
+ * naming convention, means a new reserved code is picked up the moment it is listed.
  */
 function reservedBreakCodes() {
-  const out = [];
-  for (const file of ['agency/softphone.ts', 'agency/session.ts', 'agency/actions.ts', 'agency/station.ts']) {
-    for (const m of source(file).matchAll(/export const ([A-Z_]+_BREAK_REASON)\s*=\s*'([^']+)'/g)) {
-      out.push(m[2]);
+  const list = /export const RESERVED_BREAK_REASONS\s*=\s*\[([^\]]*)\]\s*as const/.exec(source('agency/breaks.ts'));
+  if (!list) throw new Error('const RESERVED_BREAK_REASONS not found in agency/breaks.ts');
+  const names = list[1].split(',').map((s) => s.trim()).filter(Boolean);
+  const files = readdirSync(join(SRC, 'agency')).filter((f) => f.endsWith('.ts')).map((f) => `agency/${f}`);
+  const out = names.map((name) => {
+    for (const file of files) {
+      const m = new RegExp(`export const ${name}\\s*=\\s*'([^']+)'`).exec(source(file));
+      if (m) return m[1];
     }
-  }
-  if (out.length === 0) throw new Error('no *_BREAK_REASON constants found');
+    throw new Error(`RESERVED_BREAK_REASONS names ${name}, which no agency/*.ts declares as a string`);
+  });
+  if (out.length === 0) throw new Error('RESERVED_BREAK_REASONS is empty');
   return out.sort();
 }
 
@@ -190,7 +197,7 @@ const VOCABULARIES = {
   wrapup_hold_reasons: ['agency/actions.ts#AgencyWrapupHoldReason', () => typeUnion('agency/actions.ts', 'AgencyWrapupHoldReason')],
   dnc_scopes: ['agency/actions.ts#AgencyDncScope', () => typeUnion('agency/actions.ts', 'AgencyDncScope')],
   session_kinds: ['agency/softphone.ts#AGENCY_SESSION_KINDS', () => constList('agency/softphone.ts', 'AGENCY_SESSION_KINDS')],
-  reserved_break_codes: ['agency/*.ts#*_BREAK_REASON', reservedBreakCodes],
+  reserved_break_codes: ['agency/breaks.ts#RESERVED_BREAK_REASONS', reservedBreakCodes],
   action_error_codes: ['errors.ts#AGENCY_ACTION_ERROR_CODES', () => constList('errors.ts', 'AGENCY_ACTION_ERROR_CODES')],
   roles: ['rbac.ts#ROLES', () => constList('rbac.ts', 'ROLES')],
   invite_unavailable_statuses: [

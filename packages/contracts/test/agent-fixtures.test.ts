@@ -140,6 +140,8 @@ const SESSION = {
   break_request: fits<Core.AgencySessionBreakRequest>()(session.break_request),
   session_state_available: fits<Core.AgencySessionStateResponse>()(session.session_state_available),
   session_state_break_queued: fits<Core.AgencySessionStateResponse>()(session.session_state_break_queued),
+  break_request_device_away: fits<Core.AgencySessionBreakRequest>()(session.break_request_device_away),
+  session_state_device_away: fits<Core.AgencySessionStateResponse>()(session.session_state_device_away),
   session_state_left: fits<Core.AgencySessionStateResponse>()(session.session_state_left),
   conflict_other_campaign: fits<Core.AgencySessionCampaignConflict>()(session.conflict_other_campaign),
   conflict_softphone: fits<Core.AgencySoftphoneSessionOnSoftphoneRefusal>()(session.conflict_softphone),
@@ -189,6 +191,9 @@ const PLATFORM = {
   notification_preferences: fits<PlatformApi.NotificationPreferencesResponse>()(platform.notification_preferences),
   notification_update: fits<PlatformApi.NotificationPreferenceUpdate>()(platform.notification_update),
   error_generic: fits<{ error: string; code?: string; message: string }>()(platform.error_generic),
+  client_config: fits<PlatformApi.ClientConfigResponse>()(platform.client_config),
+  uplink_probe_response: fits<PlatformApi.UplinkProbeResponse>()(platform.uplink_probe_response),
+  error_not_staffed: fits<Core.AgencyActionErrorResponse>()(platform.error_not_staffed),
 };
 
 // ── The runtime checks ───────────────────────────────────────────────────────
@@ -230,6 +235,10 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['session', 'bootstrap_retry_rehydrated', 'state', 'agent_states'],
   ['session', 'session_state_break_queued', 'kind', 'session_kinds'],
   ['session', 'session_state_break_queued', 'pending_state', 'agent_states'],
+  ['session', 'session_state_device_away', 'state', 'agent_states'],
+  ['session', 'session_state_device_away', 'break_reason', 'reserved_break_codes'],
+  ['session', 'break_request_device_away', 'reason', 'reserved_break_codes'],
+  ['platform', 'error_not_staffed', 'code', 'action_error_codes'],
   ['session', 'conflict_other_campaign', 'code', 'action_error_codes'],
   ['session', 'conflict_other_campaign', 'state', 'agent_states'],
   ['actions', 'hangup_response', 'state', 'attempt_states'],

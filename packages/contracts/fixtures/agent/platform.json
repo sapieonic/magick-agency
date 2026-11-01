@@ -138,5 +138,23 @@
   "error_generic": {
     "error": "Not Found",
     "message": "Membership not found"
+  },
+  "client_config": {
+    "mobile": {
+      "min_supported": "0.1.0",
+      "latest": "0.2.0",
+      "store_urls": {
+        "ios": "https://apps.apple.com/app/id0000000000",
+        "android": "https://play.google.com/store/apps/details?id=com.magickagency.agent"
+      }
+    }
+  },
+  "uplink_probe_response": {
+    "received_bytes": 32768
+  },
+  "error_not_staffed": {
+    "error": "Forbidden",
+    "code": "not_staffed",
+    "message": "You're not assigned to this campaign. Ask your supervisor to add you."
   }
 }
