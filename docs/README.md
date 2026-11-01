@@ -58,7 +58,7 @@ Details and next steps: [`status.md`](status.md).
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |
-| [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo |
+| [`../CLAUDE.md`](../CLAUDE.md) | Rules for agents working in this repo; each app and package has its own `CLAUDE.md` with its area's rules |
 | `../packages/db/BASELINE.md` | The baseline schema inventory |
 | `../packages/contracts/src/api/agency/CONTRACT-DIFF.md` | Where the dialer contract and the console wire types differ |
 
