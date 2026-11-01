@@ -1,0 +1,9 @@
+# Changelog
+
+## [0.2.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.1.0...mobile-v0.2.0) (2026-11-01)
+
+
+### Features
+
+* **mobile,server:** agent mobile app V1 with the soft phone, and its server support ([#22](https://github.com/sapieonic/magick-agency/issues/22)) ([61fa54b](https://github.com/sapieonic/magick-agency/commit/61fa54ba8f172daca8a1cdce50a99f70c0b5ba7e))
+* **mobile:** PostHog telemetry for failures and calls, and tab labels that do not wrap ([#23](https://github.com/sapieonic/magick-agency/issues/23)) ([aedc13a](https://github.com/sapieonic/magick-agency/commit/aedc13a6aa73391c9439d2b5aefcfdec9dd862e6))

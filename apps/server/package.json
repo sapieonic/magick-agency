@@ -1,6 +1,6 @@
 {
   "name": "@magick-agency/server",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "The one Magick Agency process: identity, tenancy, super-admin, API, station WS, voice engine, pacing, analysis worker.",
   "scripts": {
