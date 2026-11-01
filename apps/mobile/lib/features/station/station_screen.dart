@@ -1,12 +1,214 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
-/// Placeholder: replaced by the feature's owner. Keep the class name and
-/// constructor: `lib/app/router.dart` builds it.
-class StationScreen extends StatelessWidget {
+import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/station/station_view.dart';
+import 'parts/idle_views.dart';
+import 'parts/link_screens.dart';
+import 'parts/on_call_view.dart';
+import 'parts/ringing_view.dart';
+import 'parts/wrapup_view.dart';
+import 'station_copy.dart';
+
+/// Which whole screen the station shows. Only a change of stage swaps the
+/// body; everything inside a stage updates in place from its own slice.
+enum StationStage { notHere, fatal, connecting, superseded, sessionGone, offline, available, onBreak, away, reserved, onCall, wrapup }
+
+/// Pure, so the precedence is testable: a session-level failure outranks the
+/// agent's phase (an agent whose station moved must not be told they are
+/// waiting for a call).
+StationStage stationStageOf(StationView? v, String campaignId) {
+  if (v == null || v.campaignId != campaignId) return StationStage.notHere;
+  if (v.fatal != null) return StationStage.fatal;
+  switch (v.link) {
+    case StationLink.superseded:
+      return StationStage.superseded;
+    case StationLink.sessionGone:
+      return StationStage.sessionGone;
+    case StationLink.connecting when !v.callActive:
+      return StationStage.connecting;
+    default:
+      break;
+  }
+  return switch (v.phase) {
+    AgentPhase.offline => StationStage.offline,
+    AgentPhase.available => StationStage.available,
+    AgentPhase.onBreak => (v.onBreak?.isDeviceAway ?? false) ? StationStage.away : StationStage.onBreak,
+    AgentPhase.reserved => StationStage.reserved,
+    AgentPhase.onCall => StationStage.onCall,
+    AgentPhase.wrapup => StationStage.wrapup,
+  };
+}
+
+/// The station: one screen that renders the agent's phase.
+///
+/// It reads only [stationViewProvider] and [stationActionsProvider]. It owns
+/// two things the phases share: the notes controller for the call on screen
+/// (so text, cursor and keyboard survive On call → Wrap-up), and the phase
+/// announcements and haptics.
+class StationScreen extends ConsumerStatefulWidget {
   const StationScreen({super.key, required this.campaignId});
 
   final String campaignId;
 
   @override
-  Widget build(BuildContext context) => const Scaffold(body: Center(child: Text('StationScreen')));
+  ConsumerState<StationScreen> createState() => _StationScreenState();
+}
+
+class _StationScreenState extends ConsumerState<StationScreen> {
+  String? _notesFor;
+  TextEditingController? _notes;
+
+  // The outgoing call's controller lives one switch longer: the old body is
+  // still on screen while the switcher fades it out.
+  TextEditingController? _retired;
+
+  TextEditingController _notesController(String? attemptId) {
+    if (_notes == null || attemptId != _notesFor) {
+      _retired?.dispose();
+      _retired = _notes;
+      _notesFor = attemptId;
+      _notes = TextEditingController(text: ref.read(stationViewProvider)?.notes.text ?? '');
+    }
+    return _notes!;
+  }
+
+  @override
+  void dispose() {
+    _notes?.dispose();
+    _retired?.dispose();
+    super.dispose();
+  }
+
+  void _onPhase(AgentPhase? prev, AgentPhase? next) {
+    if (next == prev || next == null) return;
+    // Feel the call arrive and connect without looking. The ring tone itself
+    // is the core's.
+    if (next == AgentPhase.reserved) unawaited(HapticFeedback.heavyImpact());
+    if (next == AgentPhase.onCall) unawaited(HapticFeedback.mediumImpact());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final stage = ref.watch(stationViewProvider.select((v) => stationStageOf(v, widget.campaignId)));
+    final attemptId = ref.watch(stationViewProvider.select((v) => v?.call?.attemptId));
+    ref.listen<AgentPhase?>(stationViewProvider.select((v) => v?.phase), _onPhase);
+
+    final notes = _notesController(attemptId);
+    final still = MediaQuery.disableAnimationsOf(context);
+
+    final Widget body = switch (stage) {
+      StationStage.notHere => const NotHereView(),
+      StationStage.fatal => const FatalView(),
+      StationStage.connecting => const ConnectingView(),
+      StationStage.superseded => const SupersededView(),
+      StationStage.sessionGone => const SessionEndedView(),
+      StationStage.offline => const OfflineView(),
+      StationStage.available => const WaitingView(),
+      StationStage.onBreak => const BreakView(),
+      StationStage.away => const AwayView(),
+      StationStage.reserved => const RingingView(),
+      StationStage.onCall => OnCallView(notes: notes),
+      StationStage.wrapup => WrapupPhaseView(key: ValueKey('wrapup-$attemptId'), notes: notes),
+    };
+
+    final onCall = stage == StationStage.reserved || stage == StationStage.onCall || stage == StationStage.wrapup;
+    // Mid-call the system back gesture must not take the call screen away;
+    // the way off it is finishing the call.
+    return PopScope(
+      canPop: !onCall,
+      child: Scaffold(
+        body: SafeArea(
+          child: Stack(
+            children: [
+              const Positioned(left: 0, top: 0, width: 1, height: 1, child: PhaseAnnouncer()),
+              Positioned.fill(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  // Landscape and tablets: a readable column, not a 1000 px line.
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    child: AnimatedSwitcher(
+                      duration: still ? Duration.zero : const Duration(milliseconds: 220),
+                      switchInCurve: Curves.easeOutCubic,
+                      switchOutCurve: Curves.easeInCubic,
+                      transitionBuilder: (child, animation) => _StageTransition(animation: animation, child: child),
+                      layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
+                      child: KeyedSubtree(key: ValueKey(stage), child: body),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A fade with a short rise: enough to tell the agent the screen changed
+/// meaning (a call arrived, it ended) without motion for its own sake.
+class _StageTransition extends StatelessWidget {
+  const _StageTransition({required this.animation, required this.child});
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: animation,
+      child: SlideTransition(
+        position: Tween<Offset>(begin: const Offset(0, 0.02), end: Offset.zero).animate(animation),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// The station's live region: a one-pixel node whose label is the phase, so
+/// TalkBack and VoiceOver say "Ringing", "On call", "Wrap-up" as they happen
+/// (polite). Ringing is also sent as an assertive announcement where the
+/// platform supports one, because it is time-critical.
+class PhaseAnnouncer extends ConsumerStatefulWidget {
+  const PhaseAnnouncer({super.key});
+
+  @override
+  ConsumerState<PhaseAnnouncer> createState() => _PhaseAnnouncerState();
+}
+
+class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
+  String _said = '';
+
+  void _announce(String message, {bool assertive = false}) {
+    setState(() => _said = message);
+    if (assertive && MediaQuery.supportsAnnounceOf(context)) {
+      unawaited(
+        SemanticsService.sendAnnouncement(View.of(context), message, Directionality.of(context), assertiveness: Assertiveness.assertive),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(stationViewProvider.select((v) => (phase: v?.phase, away: v?.onBreak?.isDeviceAway ?? false, label: v?.onBreak?.label)), (
+      prev,
+      next,
+    ) {
+      final phase = next.phase;
+      if (phase == null || (prev?.phase == phase && prev?.away == next.away)) return;
+      _announce(
+        StationCopy.announce(phase, breakLabel: next.label, deviceAway: next.away),
+        assertive: phase == AgentPhase.reserved,
+      );
+    });
+    ref.listen(stationViewProvider.select((v) => v?.dispositionSaved), (prev, next) {
+      if (next != null && prev == null) _announce(StationCopy.outcomeSavedAnnouncement);
+    });
+    return Semantics(key: const Key('phase-live-region'), container: true, liveRegion: true, label: _said, child: const SizedBox.expand());
+  }
 }

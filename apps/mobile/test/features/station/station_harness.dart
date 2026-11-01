@@ -1,0 +1,306 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
+import 'package:magick_agency_agent/app/routes.dart';
+import 'package:magick_agency_agent/app/theme/app_theme.dart';
+import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/station_providers.dart';
+import 'package:magick_agency_agent/features/station/station_screen.dart';
+
+/// Test doubles and a pump helper for the station screen.
+
+/// Records every call. Each action can be held open with [hold] so a test
+/// can look at the in-flight state.
+class FakeStationActions implements StationActions {
+  final calls = <String>[];
+  final args = <String, List<Object?>>{};
+
+  /// When set, actions call it with their name (to change the view, say).
+  void Function(String name)? onCall;
+
+  Future<void> _rec(String name, [List<Object?> a = const []]) async {
+    calls.add(name);
+    args[name] = a;
+    onCall?.call(name);
+  }
+
+  int count(String name) => calls.where((c) => c == name).length;
+
+  @override
+  Future<void> goAvailable() => _rec('goAvailable');
+  @override
+  Future<void> takeBreak(String code) => _rec('takeBreak', [code]);
+  @override
+  Future<void> cancelQueuedBreak() => _rec('cancelQueuedBreak');
+  @override
+  Future<void> endBreak() => _rec('endBreak');
+  @override
+  Future<void> hangUp() => _rec('hangUp');
+  @override
+  Future<void> setMuted(bool muted) => _rec('setMuted', [muted]);
+  @override
+  Future<void> setRoute(AudioRouteOption route) => _rec('setRoute', [route]);
+  @override
+  void updateNotes(String text) => _rec('updateNotes', [text]);
+  @override
+  Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt}) =>
+      _rec('submitDisposition', [code, notes, callbackAt]);
+  @override
+  Future<void> markDnc({String? reason}) => _rec('markDnc', [reason]);
+  @override
+  Future<void> leave() => _rec('leave');
+  @override
+  Future<void> reconnect() => _rec('reconnect');
+  @override
+  Future<void> useThisDevice() => _rec('useThisDevice');
+  @override
+  void dismissActionError() => _rec('dismissActionError');
+  @override
+  void dismissMissedRelease() => _rec('dismissMissedRelease');
+}
+
+class ViewHolder extends Notifier<StationView?> {
+  ViewHolder(this.initial);
+  final StationView? initial;
+
+  @override
+  StationView? build() => initial;
+
+  void set(StationView? v) => state = v;
+}
+
+class TestClock {
+  TestClock(this.now);
+  DateTime now;
+  DateTime call() => now;
+}
+
+/// 11:20 on a Saturday, local time.
+final t0 = DateTime(2026, 10, 31, 11, 20);
+
+class StationHarness {
+  StationHarness(this.tester, this.container, this.holder, this.actions, this.clock, this.platformCalls, this.announcements);
+
+  final WidgetTester tester;
+  final ProviderContainer container;
+  final NotifierProvider<ViewHolder, StationView?> holder;
+  final FakeStationActions actions;
+  final TestClock clock;
+  final List<MethodCall> platformCalls;
+  final List<Object?> announcements;
+  int settingsOpened = 0;
+
+  StationView? get view => container.read(holder);
+
+  Future<void> setView(StationView? v) async {
+    container.read(holder.notifier).set(v);
+    await settle(tester);
+  }
+
+  /// Moves the test clock and fake time together.
+  Future<void> advance(Duration d) async {
+    var left = d;
+    const step = Duration(milliseconds: 250);
+    while (left > Duration.zero) {
+      final s = left < step ? left : step;
+      clock.now = clock.now.add(s);
+      await tester.pump(s);
+      left -= s;
+    }
+  }
+
+  List<String> get haptics => [
+    for (final c in platformCalls)
+      if (c.method == 'HapticFeedback.vibrate') '${c.arguments}',
+  ];
+}
+
+/// Lets a pushed route (sheet, dialog) or a stage switch finish animating:
+/// one frame to start the animation, one to finish it.
+Future<void> settle(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 500));
+}
+
+Future<StationHarness> pumpStation(
+  WidgetTester tester,
+  StationView? view, {
+  DateTime? now,
+  double textScale = 1,
+  Size size = const Size(390, 844),
+  bool disableAnimations = false,
+  bool supportsAnnounce = false,
+  String campaignId = 'c1',
+  Brightness brightness = Brightness.dark,
+}) async {
+  tester.view.devicePixelRatio = 3;
+  tester.view.physicalSize = size * 3;
+  addTearDown(tester.view.reset);
+
+  final platformCalls = <MethodCall>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+    platformCalls.add(call);
+    return null;
+  });
+  addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+  final announcements = <Object?>[];
+  tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, (msg) async {
+    announcements.add(msg);
+    return null;
+  });
+  addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
+
+  final holder = NotifierProvider<ViewHolder, StationView?>(() => ViewHolder(view));
+  final actions = FakeStationActions();
+  final clock = TestClock(now ?? t0);
+  late final StationHarness h;
+  final container = ProviderContainer(
+    overrides: [
+      stationViewProvider.overrideWith((ref) => ref.watch(holder)),
+      stationActionsProvider.overrideWithValue(actions),
+      stationClockProvider.overrideWithValue(clock.call),
+      stationOpenSettingsProvider.overrideWithValue(() async => h.settingsOpened++),
+    ],
+  );
+  addTearDown(container.dispose);
+  h = StationHarness(tester, container, holder, actions, clock, platformCalls, announcements);
+
+  final router = GoRouter(
+    initialLocation: Routes.station(campaignId),
+    routes: [
+      GoRoute(
+        path: Routes.home,
+        builder: (_, _) => const Scaffold(body: Text('campaigns-home')),
+        routes: [
+          GoRoute(
+            path: 'station/:campaignId',
+            builder: (_, s) => StationScreen(campaignId: s.pathParameters['campaignId']!),
+          ),
+        ],
+      ),
+    ],
+  );
+  addTearDown(router.dispose);
+
+  final tokens = brightness == Brightness.dark ? AppTokens.dark : AppTokens.light;
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MaterialApp.router(
+        theme: buildTheme(tokens, brightness),
+        routerConfig: router,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context)
+              .copyWith(textScaler: TextScaler.linear(textScale), disableAnimations: disableAnimations, supportsAnnounce: supportsAnnounce),
+          child: child!,
+        ),
+      ),
+    ),
+  );
+  await tester.pump();
+  return h;
+}
+
+// ── Fixtures ──────────────────────────────────────────────────────────
+
+const breaks = [BreakOption(code: 'lunch', label: 'Lunch'), BreakOption(code: 'tea', label: 'Tea break')];
+
+const dispositions = [
+  DispositionOption(code: 'interested', label: 'Interested', isSuccess: true),
+  DispositionOption(code: 'not_interested', label: 'Not interested'),
+  DispositionOption(code: 'callback', label: 'Callback', requiresCallbackTime: true),
+  DispositionOption(code: 'voicemail', label: 'Voicemail'),
+  DispositionOption(code: 'wrong', label: 'Wrong number', requiresNote: true),
+  DispositionOption(code: 'dnc', label: 'Do not call', suppresses: true),
+];
+
+CallView call({DateTime? bridgedAt, int? countdown, bool recording = false, String? name = 'Priya Raman', int otherFields = 6}) => CallView(
+  attemptId: 'a1',
+  phoneE164: '+919840012345',
+  attemptNumber: 2,
+  callerId: '+918047182200',
+  campaignName: 'Q4 Card Renewals',
+  displayName: name,
+  heroFields: const [
+    ContactField(key: 'city', label: 'City', value: 'Chennai'),
+    ContactField(key: 'card', label: 'Card', value: 'Platinum'),
+    ContactField(key: 'due', label: 'Amount due', value: '₹12,400'),
+    ContactField(key: 'renewal', label: 'Renewal', value: '15 Nov'),
+  ],
+  heroesConfigured: true,
+  otherFields: [
+    for (var i = 0; i < otherFields; i++) ContactField(key: 'f$i', label: 'Field $i', value: i == 3 ? 'Policy 7781' : 'Value $i'),
+  ],
+  priorAttempts: [
+    PriorAttempt(at: DateTime(2026, 10, 20, 9, 30), outcomeLabel: 'Busy', sameCampaign: false, campaignName: 'Diwali Offers'),
+    PriorAttempt(at: DateTime(2026, 10, 28, 18, 5), outcomeLabel: 'No answer'),
+  ],
+  countdownSeconds: countdown,
+  bridgedAt: bridgedAt,
+  recording: recording,
+);
+
+StationView station({
+  StationLink link = StationLink.open,
+  AgentPhase phase = AgentPhase.available,
+  DateTime? phaseSince,
+  bool dialing = true,
+  BreakInfo? onBreak,
+  BreakInfo? queuedBreak,
+  CallView? call,
+  ReleaseView? release,
+  WrapupView? wrapup,
+  String? dispositionSaved,
+  NotesView notes = const NotesView(),
+  AudioView audio = const AudioView(),
+  MissedReleaseView? missedRelease,
+  DateTime? reconnectDeadline,
+  bool weak = false,
+  StationBusy busy = StationBusy.none,
+  String? actionError,
+  String? fatal,
+  String campaignId = 'c1',
+}) => StationView(
+  campaignId: campaignId,
+  campaignName: 'Q4 Card Renewals',
+  sessionId: 's1',
+  link: link,
+  phase: phase,
+  phaseSince: phaseSince,
+  campaignDialing: dialing,
+  onBreak: onBreak,
+  queuedBreak: queuedBreak,
+  breakOptions: breaks,
+  call: call,
+  release: release,
+  wrapup: wrapup,
+  dispositions: dispositions,
+  dispositionSaved: dispositionSaved,
+  notes: notes,
+  audio: audio,
+  missedRelease: missedRelease,
+  reconnectDeadline: reconnectDeadline,
+  weakConnection: weak,
+  busy: busy,
+  actionError: actionError,
+  fatal: fatal,
+);
+
+const hungUpRelease = ReleaseView(
+  headline: 'Wrap-up',
+  detail: 'The customer hung up.',
+  tone: ReleaseTone.neutral,
+  requiresDisposition: true,
+);
+
+/// A Wrap-up that started at [t0] and lasts 30 s.
+WrapupView wrapup({WrapupHold hold = WrapupHold.none, bool submitted = false, DateTime? endsAt, bool noTimer = false}) => WrapupView(
+  endsAt: noTimer ? null : (endsAt ?? t0.add(const Duration(seconds: 30))),
+  secondsTotal: 30,
+  hold: hold,
+  dispositionSubmitted: submitted,
+  autoReturn: true,
+);

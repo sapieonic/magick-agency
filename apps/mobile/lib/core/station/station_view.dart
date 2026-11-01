@@ -264,17 +264,20 @@ enum NotesStatus { idle, saving, saved, retrying, failed, closed }
 
 @immutable
 class NotesView {
-  const NotesView({this.text = '', this.status = NotesStatus.idle, this.changedElsewhere = false});
+  const NotesView({this.text = '', this.status = NotesStatus.idle, this.changedElsewhere = false, this.savedAt});
   final String text;
   final NotesStatus status;
+
+  /// When the server last accepted the notes, on this device's clock ("Saved 14:32").
+  final DateTime? savedAt;
 
   /// A supervisor edited the notes on the server since the agent typed.
   final bool changedElsewhere;
 
   @override
-  bool operator ==(Object other) => other is NotesView && other.text == text && other.status == status && other.changedElsewhere == changedElsewhere;
+  bool operator ==(Object other) => other is NotesView && other.text == text && other.status == status && other.changedElsewhere == changedElsewhere && other.savedAt == savedAt;
   @override
-  int get hashCode => Object.hash(text, status, changedElsewhere);
+  int get hashCode => Object.hash(text, status, changedElsewhere, savedAt);
 }
 
 enum AudioRouteKind { earpiece, speaker, wired, bluetooth }
@@ -344,7 +347,7 @@ class MissedReleaseView {
 }
 
 /// An action in flight, so its button shows progress and cannot double-fire.
-enum StationBusy { none, goingAvailable, takingBreak, cancellingBreak, hangingUp, savingDisposition, markingDnc, leaving }
+enum StationBusy { none, goingAvailable, takingBreak, cancellingBreak, endingBreak, hangingUp, savingDisposition, markingDnc, leaving }
 
 @immutable
 class StationView {
@@ -369,6 +372,8 @@ class StationView {
     this.audio = const AudioView(),
     this.missedRelease,
     this.reconnectDeadline,
+    this.reconnectWindow,
+    this.dncOutcome,
     this.weakConnection = false,
     this.busy = StationBusy.none,
     this.actionError,
@@ -405,6 +410,14 @@ class StationView {
 
   /// Mid-call reconnect: the server ends the call if the socket is not back by then.
   final DateTime? reconnectDeadline;
+
+  /// The whole mid-call reconnect window ([reconnectDeadline] minus the drop time), so a
+  /// countdown can be drawn to scale. Null with no deadline.
+  final Duration? reconnectWindow;
+
+  /// The follow-up line after Mark DNC for the call on screen, in the console's words
+  /// (what the server confirmed it recorded). Null until a mark succeeds.
+  final String? dncOutcome;
 
   /// Pings are arriving late (≥ 2 missed): show "Weak connection".
   final bool weakConnection;
@@ -445,6 +458,8 @@ class StationView {
       other.audio == audio &&
       other.missedRelease == missedRelease &&
       other.reconnectDeadline == reconnectDeadline &&
+      other.reconnectWindow == reconnectWindow &&
+      other.dncOutcome == dncOutcome &&
       other.weakConnection == weakConnection &&
       other.busy == busy &&
       other.actionError == actionError &&
@@ -539,6 +554,10 @@ abstract interface class StationLauncher {
 
   /// Leaves [other] (refused while a call is live there), then starts.
   Future<StationStart> leaveOtherAndStart(StationElsewhere other, String campaignId, {required String campaignName});
+
+  /// Closes the agent's soft-phone session (refused, as a [StationRefused] in the
+  /// console's words, while it has an unsettled call), then starts.
+  Future<StationStart> closeSoftphoneAndStart(StationOnSoftphone softphone, String campaignId, {required String campaignName});
 }
 
 final stationLauncherProvider = Provider<StationLauncher>(
