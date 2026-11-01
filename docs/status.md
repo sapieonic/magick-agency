@@ -322,6 +322,29 @@ ends `failed` and unplaced; ringing, the answer, A-law both ways and the ringbac
 VoiceLink sandbox. A network change while a call rings ends it (no grace before the answer, SP3);
 accepted.
 
+### The agent app on a phone, and its telemetry 2026-11-01
+
+The first calls from a phone (Android 16, a Redmi, a release-mode `dev` build against staging):
+
+- The first dials were refused by VoiceLink: `Client has no allocated channels available`. Channels
+  were allocated on the VoiceLink account; no code change.
+- The next call connected but was noise, with nothing heard from the phone: staging still ran a
+  server from before PR #22, which ignored the app's `media=alaw8`, so the phone's A-law went
+  unread (`browserToPstnFrames` 0) and the server's `pcm16` played as noise. After staging was
+  deployed from `main`, a 39 s call carried 1820 frames up and 1884 down, none ignored.
+- Staging's server reports as `OTEL_SERVICE_NAME=magick-agency`, the production name, so its alerts
+  route as production. It should be `magick-agency-Staging` (`grafana/README.md`); a setting on
+  the staging host, not in this repo.
+- CI's first iOS build (on `main`) fails at package resolution (`mobile.md`, "Not verified yet").
+
+Then, so the next failure on a tester's phone can be read without their logs:
+
+- Telemetry to PostHog when the build has `POSTHOG_KEY` (`mobile.md`, "Telemetry"): every warning
+  and error the app logs (masked, capped), its exceptions with stacks, and the call events named as
+  the console's, each call's end with the phone's own audio counts. Mutation-checked: 14 changes to
+  the rules each turn a test red.
+- Tab labels that would wrap on a narrow phone take a short name ("Stats", "Calls").
+
 ## Test counts
 
 Latest run, 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8

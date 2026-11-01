@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/session/local_preferences.dart';
+import '../core/telemetry/gate_telemetry.dart';
 import 'router.dart';
 import 'theme/app_theme.dart';
 import 'theme/tokens.dart';
@@ -17,6 +18,7 @@ class AgentApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(gateTelemetryProvider);
     final darkTheme = ref.watch(localPreferencesProvider.select((p) => p.darkTheme));
     return MaterialApp.router(
       title: 'Magick Agency',

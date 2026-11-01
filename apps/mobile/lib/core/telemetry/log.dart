@@ -37,6 +37,11 @@ class Log {
 
   static LogLevel minLevel = kDebugMode ? LogLevel.debug : LogLevel.info;
 
+  /// Every warning and error as it is kept (masked), with the error and stack
+  /// [error] was given, for telemetry (`telemetry.dart`). Null until installed.
+  /// A throw here is swallowed: reporting a line never breaks logging it.
+  static void Function(LogRecord record, Object? error, StackTrace? stack)? forward;
+
   /// The most recent lines, oldest first.
   static List<LogRecord> recent() => List.unmodifiable(_ring);
 
@@ -47,11 +52,11 @@ class Log {
   void info(String message, [Map<String, Object?> fields = const {}]) => _emit(LogLevel.info, message, fields);
   void warn(String message, [Map<String, Object?> fields = const {}]) => _emit(LogLevel.warn, message, fields);
   void error(String message, [Map<String, Object?> fields = const {}, Object? error, StackTrace? stack]) {
-    _emit(LogLevel.error, error == null ? message : '$message: ${mask(error.toString())}', fields);
+    _emit(LogLevel.error, error == null ? message : '$message: ${mask(error.toString())}', fields, error, stack);
     if (stack != null && kDebugMode) debugPrintStack(stackTrace: stack, maxFrames: 12);
   }
 
-  void _emit(LogLevel level, String message, Map<String, Object?> fields) {
+  void _emit(LogLevel level, String message, Map<String, Object?> fields, [Object? error, StackTrace? stack]) {
     if (level.index < minLevel.index) return;
     final record = LogRecord(
       DateTime.now(),
@@ -63,13 +68,18 @@ class Log {
     if (_ring.length == _capacity) _ring.removeFirst();
     _ring.addLast(record);
     if (kDebugMode) debugPrint(record.toString());
+    final out = forward;
+    if (out != null && level.index >= LogLevel.warn.index) {
+      try {
+        out(record, error, stack);
+      } catch (_) {}
+    }
   }
 
   /// A field value as it may be stored: strings masked; any other object as
   /// its masked `toString` (an int can be a phone number, an exception's text
   /// can quote one). Null, booleans and numbers that mask to themselves keep
   /// their type.
-  @visibleForTesting
   static Object? maskField(Object? value) {
     if (value == null || value is bool) return value;
     if (value is String) return mask(value);

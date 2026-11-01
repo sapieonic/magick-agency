@@ -17,7 +17,9 @@ import '../station/server_clock.dart';
 import '../station/station_copy.dart' show agentStateLabel, catalogChangedCopy;
 import '../station/station_deps.dart' show notesStoreProvider, stationNowProvider;
 import '../station/station_view.dart';
+import '../telemetry/call_telemetry.dart';
 import '../telemetry/log.dart';
+import '../telemetry/telemetry.dart';
 import 'call_fields.dart';
 import 'call_labels.dart';
 import 'call_state.dart';
@@ -1285,6 +1287,8 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     );
     try {
       final call = await _api.placeCall(request, accountId: host.accountId);
+      Telemetry.event('agency_softphone_call_placed', {'tagged': request.campaignId != null, 'overrides': _overridesLabel(overrides)});
+      CallTelemetry.instance.manualPlaced(call);
       if (epoch != _epoch) return;
       _placing = false;
       _override = null;
@@ -1293,7 +1297,18 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       if (epoch != _epoch) return;
       _placing = false;
       final body = refusalBodyOf(e);
-      if (body != null && body.softphoneCode != SoftphoneErrorCode.unknown) {
+      final refused = body != null && body.softphoneCode != SoftphoneErrorCode.unknown;
+      // As the console's `agency_softphone_call_refused`; a failure it has no event for besides.
+      Telemetry.event(refused ? 'agency_softphone_call_refused' : 'agency_softphone_dial_failed', {
+        'code': refused ? body.codeRaw : (e is ApiHttpError ? e.code : null),
+        'tagged': request.campaignId != null,
+        if (!refused) ...{
+          'status': e is ApiHttpError ? e.status : null,
+          'error': e.runtimeType.toString(),
+          'overrides': _overridesLabel(overrides),
+        },
+      });
+      if (refused) {
         _onDialRefused(body, overrides, number);
       } else if (e is ApiUnauthorized || (e is ApiHttpError && !e.isServerError)) {
         _override = null;
@@ -1308,6 +1323,14 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
     }
     _emit();
   }
+
+  /// Which refusals a dial went through with a note, as the console labels it.
+  static String _overridesLabel(ManualCallOverridesRequest o) => switch ((o.dncNote != null, o.hoursNote != null)) {
+        (false, false) => 'none',
+        (true, false) => 'dnc',
+        (false, true) => 'hours',
+        (true, true) => 'both',
+      };
 
   void _onDialRefused(ErrorBody refusal, ManualCallOverridesRequest overrides, String number) {
     final campaignName = _draftCampaign?.campaignName;

@@ -48,8 +48,9 @@ class Env {
   final String firebaseMessagingSenderId;
   final String googleIosClientId;
   final String googleServerClientId;
-  /// Reserved for product analytics (`POSTHOG_*` in `env/*.json`); nothing
-  /// reads them yet.
+  /// PostHog's project key and host (`POSTHOG_*` in `env/*.json`): telemetry
+  /// is on when the key is set (`core/telemetry/posthog_sink.dart`). An empty
+  /// host is PostHog's US cloud.
   final String posthogKey;
   final String posthogHost;
 

@@ -1749,7 +1749,7 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/app/shell_test.dart` | ~19 |
+| `apps/mobile/test/app/shell_test.dart` | ~22 |
 | `apps/mobile/test/app/softphone_navigation_test.dart` | ~26 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
 | `apps/mobile/test/core/foundation_test.dart` | ~20 |
@@ -1758,9 +1758,11 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 
 The API client and its typed errors, the app gate (version check → Firebase user → session →
 accounts → ready), Firebase and Google auth behind `AuthService`, account choice and phone-only
-preferences, build-time config, and the masked in-memory log.
+preferences, build-time config, the masked in-memory log, and telemetry: PostHog behind
+`TelemetrySink`, the log's warnings and errors forwarded masked and capped, the call events with the
+phone's own audio counts, and the gate's identity (`mobile.md`, "Telemetry").
 
-Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_identity.dart`, `auth/app_gate.dart`, `auth/auth_copy.dart`, `auth/auth_providers.dart`, `auth/auth_service.dart`, `auth/fake_auth_service.dart`, `auth/firebase_auth_service.dart`, `auth/firebase_token_source.dart`, `session/account_choice.dart`, `session/local_preferences.dart`, `session/session_api.dart`, `session/session_store.dart`, `telemetry/log.dart`
+Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_identity.dart`, `auth/app_gate.dart`, `auth/auth_copy.dart`, `auth/auth_providers.dart`, `auth/auth_service.dart`, `auth/fake_auth_service.dart`, `auth/firebase_auth_service.dart`, `auth/firebase_token_source.dart`, `session/account_choice.dart`, `session/local_preferences.dart`, `session/session_api.dart`, `session/session_store.dart`, `telemetry/call_telemetry.dart`, `telemetry/gate_telemetry.dart`, `telemetry/log.dart`, `telemetry/posthog_sink.dart`, `telemetry/telemetry.dart`
 
 | Test file | Cases |
 |---|---|
@@ -1772,6 +1774,12 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 | `apps/mobile/test/core/session/account_choice_test.dart` | ~8 |
 | `apps/mobile/test/core/session/local_preferences_test.dart` | ~1 |
 | `apps/mobile/test/core/session/session_api_test.dart` | ~6 |
+| `apps/mobile/test/core/telemetry/call_telemetry_test.dart` | ~10 |
+| `apps/mobile/test/core/telemetry/gate_telemetry_test.dart` | ~3 |
+| `apps/mobile/test/core/telemetry/posthog_sink_test.dart` | ~4 |
+| `apps/mobile/test/core/telemetry/softphone_dial_events_test.dart` | ~5 |
+| `apps/mobile/test/core/telemetry/station_call_events_test.dart` | ~3 |
+| `apps/mobile/test/core/telemetry/telemetry_test.dart` | ~13 |
 
 ### `apps/mobile/lib/core/` (`station/`, `audio/`, `lifecycle/`)
 

@@ -318,6 +318,28 @@ packages/
 - **Logs** stay on the phone (a 2,000-line ring the Me tab copies for support). Phone numbers in
   the usual written forms and email addresses are masked in messages and in every field value;
   invite tokens are cut from request paths.
+- **Telemetry** (`lib/core/telemetry/`) goes to PostHog when the build has `POSTHOG_KEY`, so a
+  tester's failure can be read without their logs. Nothing leaves without a key.
+  - Every warning and error the log keeps is sent, masked the same way: one logged with an
+    exception as a PostHog exception (its real type, its stack, its text masked), the rest as
+    `agency_app_warning` / `agency_app_error` with the line's tag, message and fields. Each message
+    is capped at 5 a minute and all of them at 60, and the next line admitted says how many were
+    dropped. Info and debug lines stay on the phone.
+  - Call events, named and shaped as the console's where it has them, so one dashboard reads both:
+    `agency_attempt_bridged` and `agency_attempt_released` for campaign calls,
+    `agency_softphone_call_placed` / `_refused` (as the console's), `_bridged`, `_ended` and
+    `agency_softphone_dial_failed` for the soft phone. Each call's end carries what the phone saw of
+    its audio: A-law frames received, JSON `pcm16` frames received (on the app's `alaw8` socket,
+    the sign of a server that ignored the format: the caller is heard as noise), microphone frames
+    sent and refused by a closed socket.
+  - Who: the user's server id; the tenant and account ids and names and PostHog groups, as the
+    console tags them; `product: agency`, `client: mobile`, `environment` (the flavour) and
+    `api_host` on every event. Never a person's name, email or a phone number. Sign-out starts a
+    new anonymous identity.
+  - Native exceptions (the Kotlin and Swift engine) are captured by the SDK. Its Dart error hooks
+    stay off: `main.dart`'s handlers log the error and the log sends it masked. No session replay,
+    surveys or feature flags. The SDK starts from Dart (`AUTO_INIT` off in the manifest and
+    `Info.plist`) and never holds the launch screen.
 - **Audio** (`packages/agent_audio`):
   - The engine is pre-warmed when the station opens and at `available`.
   - The microphone is armed at `reserved` (with CallKit `startCall` on iOS).
@@ -348,6 +370,8 @@ packages/
 - Lists use `ListView.builder` with fixed-height rows. My calls prefetches the next page about 20 rows early and debounces the number search by 400 ms.
 - Stale-while-revalidate for Performance: the last result shows at once and refreshes behind it.
 - 48 dp touch targets, reduced-motion respected, layouts tested at 200% text on a 360×640 phone.
+- A tab label that would wrap (five tabs on a 360 dp phone leave about 72 dp each) takes its short
+  name: "Performance" → "Stats", "My calls" → "Calls". Measured at the bar's own 1.3× text cap.
 - Live-region announcements for station phases ("Ringing", "On call", "Wrap-up", "Outcome saved").
 - Copy follows the console's words wherever the console has them.
 
@@ -369,7 +393,7 @@ packages/
 
 ## Not verified yet
 
-- **iOS has never been compiled.** There is no Xcode in the build environment, so the Swift engine and CallKit code was reviewed against the SDK headers only. That includes the Swift ringback (written to the shared vectors, never run) and CallKit for soft-phone calls.
+- **iOS does not build yet.** CI's first iOS build (on `main`, 2026-11-01) stopped at package resolution: `firebase_core` 5.1.0 needs `gtm-session-fetcher` 4–6 and `google_sign_in_ios` 6.3.8 needs 3.x. Until that is fixed, the Swift engine and CallKit code is reviewed against the SDK headers only, the Swift ringback (written to the shared vectors) and CallKit for soft-phone calls included.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and with SP3 the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.
