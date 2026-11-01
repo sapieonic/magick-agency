@@ -496,7 +496,9 @@ const routes = [
   AudioRouteOption(id: 's', kind: AudioRouteKind.speaker, name: 'Speaker'),
 ];
 
-/// Ready to dial, connected, with a number typed.
+/// Ready to dial, connected, with a number typed. As the core builds it, the
+/// number, the pad and Log to / Call from are locked in finish mode and while
+/// a dial is in flight ([placing]): a refusal then names the number sent.
 SoftphoneView readyView({
   String number = '9812345678',
   bool canDial = true,

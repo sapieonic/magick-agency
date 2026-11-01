@@ -64,6 +64,17 @@ void main() {
       expect(h.actions.count('dial'), 0);
     });
 
+    testWidgets('while placing, the number, the pad and Delete are locked: the refusal must be about the number sent', (
+      tester,
+    ) async {
+      final h = await pumpSoftphone(tester, readyView(placing: true));
+      expect(tester.widget<TextField>(find.byKey(const Key('dial-number'))).enabled, isFalse);
+      await tester.tap(find.byKey(const Key('dial-key-4')));
+      await tester.tap(find.byKey(const Key('dial-backspace')));
+      await tester.longPress(find.byKey(const Key('dial-key-0')));
+      expect(h.actions.calls, isEmpty);
+    });
+
     testWidgets('a number that cannot be called says why beside Call', (tester) async {
       await pumpSoftphone(tester, readyView(number: '98', canDial: false, dialBlockReason: 'That number is too short to call.'));
       expect(find.text('That number is too short to call.'), findsOneWidget);
