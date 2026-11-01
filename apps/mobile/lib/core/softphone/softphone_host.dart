@@ -43,6 +43,7 @@ class SoftphoneHostView {
     this.audio = const AudioView(),
     this.ringMuted = false,
     this.reconnectDeadline,
+    this.hangupFailure,
   });
 
   /// The live session's id.
@@ -102,6 +103,14 @@ class SoftphoneHostView {
   /// ends a ringing call at once) and while connected.
   final DateTime? reconnectDeadline;
 
+  /// A hang-up from the system controls ([SoftphoneHostActions.hangUpManual]:
+  /// CallKit, the notification) that failed while the call stays on the line,
+  /// in words ready to show ("We couldn’t end the call — …"). The host owns it
+  /// because those controls never pass through the soft phone; the soft phone
+  /// shows it as its own hang-up failure. Null once the call is no longer on
+  /// the line, or when the next hang-up starts.
+  final String? hangupFailure;
+
   /// A soft-phone call is on the line.
   bool get callLive => call?.isLive ?? false;
 
@@ -125,7 +134,8 @@ class SoftphoneHostView {
       other.clockOffsetMs == clockOffsetMs &&
       other.audio == audio &&
       other.ringMuted == ringMuted &&
-      other.reconnectDeadline == reconnectDeadline;
+      other.reconnectDeadline == reconnectDeadline &&
+      other.hangupFailure == hangupFailure;
 
   @override
   int get hashCode => Object.hash(
@@ -143,6 +153,7 @@ class SoftphoneHostView {
     audio,
     ringMuted,
     reconnectDeadline,
+    hangupFailure,
   );
 }
 
@@ -301,8 +312,10 @@ abstract interface class SoftphoneHostActions {
   /// Not the microphone.
   void setRingMuted(bool muted);
 
-  /// The matched contact's name for the call [callId] (CallKit and the
-  /// on-duty notification); null clears it.
+  /// The matched contact's name for the call [callId], as the soft phone
+  /// reads it. Advisory: CallKit cannot rename a call once it is reported,
+  /// and the host reports a call before the soft phone hears of it, so the
+  /// station host names the call itself from the row and ignores this.
   void setCallDisplayName(String callId, String? name);
 
   /// Hangs up the live manual call (`POST /softphone/calls/:id/hangup`) for the

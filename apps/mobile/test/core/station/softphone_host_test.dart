@@ -60,6 +60,16 @@ final _settled = _at(50, {
   'settled_at': '2026-10-30T10:00:50.000Z',
 });
 
+/// The bootstrap's `session` when it names the hosted soft-phone session.
+const _session = <String, Object?>{
+  'session_id': 'sess-sp',
+  'account_id': 'acc-1',
+  'kind': 'softphone',
+  'state': 'break',
+  'break_reason': 'soft_phone',
+  'on_softphone': true,
+};
+
 void main() {
   group('open, rehydrate and close', () {
     test('open: the session, its socket, the "Soft phone" notification and audio; no campaign view', () {
@@ -357,6 +367,32 @@ void main() {
       });
     });
 
+    test('CallKit shows the matched contact’s name from the first report; a call with no contact shows the number', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.manualCallFrame(mc.manualCallJson({
+          'contact': {
+            'contact_id': 'c-1',
+            'state': 'in_progress',
+            'claimed': true,
+            'context': {'Name': 'Rahul Verma', 'Loan account': 'HL-2231'},
+            'prior_attempts': <Object?>[],
+          },
+        }));
+        // CallKit cannot rename a call once reported: the name is the host's
+        // own, read from the row before the first report.
+        expect(app.engine.startedCalls.single, (callId: 'mc-1', displayName: 'Rahul Verma', handle: '+919820461733'));
+        app.manualCallFrame(_at(20, {'state': 'ended', 'end_reason': 'no_answer', 'settled_at': '2026-10-30T10:00:20.000Z'}));
+        app.manualCallFrame(mc.manualCallJson({
+          'id': 'mc-2',
+          'created_at': '2026-10-30T10:01:00.000Z',
+          'updated_at': '2026-10-30T10:01:00.000Z',
+        }));
+        expect(app.engine.startedCalls.last, (callId: 'mc-2', displayName: '+919820461733', handle: '+919820461733'));
+        app.dispose();
+      });
+    });
+
     test('Mute ring silences the ringback for this call only; the next call rings again', () {
       fakeAsync((async) {
         final app = _softphone(async);
@@ -407,6 +443,71 @@ void main() {
         async.flushMicrotasks();
         expect(app.requests('POST', _hangup), hasLength(1));
         expect(app.requests('POST', _hangup).single.headers['x-account-id'], 'acc-1');
+        app.dispose();
+      });
+    });
+
+    test('a failed CallKit hang-up is on the host view for the soft phone, and CallKit is told the call goes on', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.routes['POST $_hangup'] = (_) => json(500, {'error': 'Internal', 'message': 'boom'});
+        app.manualCallFrame(_bridged);
+        final base = app.engine.lifecycle.length;
+        app.engine.emitEvent(const audio.CallSystemAction(
+          kind: audio.CallActionKind.end,
+          source: audio.CallActionSource.callKit,
+          callId: 'mc-1',
+        ));
+        async.flushMicrotasks();
+        expect(app.requests('POST', _hangup), hasLength(1));
+        expect(app.hostView!.callLive, isTrue);
+        expect(app.hostView!.hangupFailure, startsWith('We couldn’t end the call'));
+        // CallKit already ended it on its side: reported again, connected, so
+        // the lock screen's controls and the audio session come back.
+        expect(app.engine.lifecycle.skip(base), ['startCall', 'connected']);
+        expect(app.engine.startedCalls.last.callId, 'mc-1');
+        // The call ending clears it.
+        app.manualCallFrame(_owed);
+        expect(app.hostView!.hangupFailure, isNull);
+        app.dispose();
+      });
+    });
+
+    test('a failed notification hang-up is shown; nothing is reported again (the call never left the system UI)', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.routes['POST $_hangup'] = (_) => json(503, {'error': 'Unavailable', 'message': 'down'});
+        app.manualCallFrame(_bridged);
+        final base = app.engine.lifecycle.length;
+        app.engine.emitEvent(const audio.CallSystemAction(
+          kind: audio.CallActionKind.end,
+          source: audio.CallActionSource.notification,
+        ));
+        async.flushMicrotasks();
+        expect(app.hostView!.hangupFailure, isNotNull);
+        expect(app.engine.lifecycle.skip(base), isEmpty);
+        // The next try starts clean, and a hang-up that lands clears it.
+        app.routes['POST $_hangup'] = (_) => json(200, _owed);
+        app.run(app.controller.hangUpManual());
+        expect(app.hostView!.hangupFailure, isNull);
+        expect(app.hostView!.callLive, isFalse);
+        app.dispose();
+      });
+    });
+
+    test('a hang-up refused because the call already settled reads the bootstrap and lets the call go', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.routes['POST $_hangup'] = (_) =>
+            json(409, {'error': 'Conflict', 'code': 'call_settled', 'message': 'That call has already ended.'});
+        app.routes['GET $_bootstrap'] = (_) => json(200, mc.bootstrapJson({'session': _session}));
+        app.manualCallFrame(_bridged);
+        app.run(app.controller.hangUpManual());
+        async.flushMicrotasks();
+        expect(app.hostView!.hangupFailure, isNull, reason: 'nothing for the agent to do');
+        expect(app.requests('GET', _bootstrap).single.headers['x-account-id'], 'acc-1');
+        expect(app.hostView!.call, isNull);
+        expect(app.signals.callActive, isFalse);
         app.dispose();
       });
     });
@@ -513,6 +614,84 @@ void main() {
     });
   });
 
+  group('a call that settled while the socket was away (no frame after the reconnect)', () {
+    /// Drops the socket and lets it reconnect; the test plays the new `ready`.
+    void reconnect(App app) {
+      final first = app.socket;
+      first.serverClose(1006);
+      app.async.elapse(const Duration(seconds: 5));
+      expect(identical(app.socket, first), isFalse);
+      _ready(app);
+    }
+
+    test('the host reads the bootstrap itself, retrying, and lets the ringing call go: no ringback, no CallKit, no hold', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.manualCallFrame(_ringing);
+        expect(app.engine.ringback, isTrue);
+        var reads = 0;
+        app.routes['GET $_bootstrap'] = (_) => ++reads == 1
+            ? json(503, {'error': 'Unavailable', 'message': 'down'})
+            : json(200, mc.bootstrapJson({'session': _session}));
+        reconnect(app);
+        async.elapse(const Duration(seconds: 30));
+        expect(app.requests('GET', _bootstrap), hasLength(2), reason: 'the failed read is retried');
+        expect(app.requests('GET', _bootstrap).map((r) => r.headers['x-account-id']), everyElement('acc-1'));
+        expect(app.engine.ringback, isFalse);
+        expect(app.engine.endedCalls.single.callId, 'mc-1');
+        expect(app.hostView!.call, isNull);
+        expect(app.signals.callActive, isFalse);
+        async.elapse(const Duration(minutes: 2));
+        expect(app.requests('GET', _bootstrap), hasLength(2), reason: 'settled: nothing more to ask');
+        app.dispose();
+      });
+    });
+
+    test('an owed outcome that lapsed meanwhile: the hold on the tabs lifts', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.manualCallFrame(_owed);
+        expect(app.signals.outcomeOwed, isTrue);
+        app.routes['GET $_bootstrap'] = (_) => json(200, mc.bootstrapJson({'session': _session, 'call': _settled}));
+        reconnect(app);
+        async.elapse(const Duration(seconds: 10));
+        expect(app.signals.outcomeOwed, isFalse);
+        expect(app.hostView!.call!.isSettled, isTrue);
+        app.dispose();
+      });
+    });
+
+    test('a manual_call frame after the ready means the server still holds the call: nothing is read', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.manualCallFrame(_ringing);
+        app.routes['GET $_bootstrap'] = (_) => json(200, mc.bootstrapJson({'session': _session}));
+        reconnect(app);
+        app.manualCallFrame(_ringing);
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('GET', _bootstrap), isEmpty);
+        expect(app.engine.ringback, isTrue);
+        app.dispose();
+      });
+    });
+
+    test('no reads while the socket is away, and none once the session is gone', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.manualCallFrame(_ringing);
+        app.routes['GET $_bootstrap'] = (_) => json(503, {'error': 'Unavailable', 'message': 'down'});
+        reconnect(app);
+        async.elapse(const Duration(seconds: 3));
+        final before = app.requests('GET', _bootstrap).length;
+        expect(before, greaterThan(0));
+        app.socket.serverClose(4404);
+        async.elapse(const Duration(minutes: 2));
+        expect(app.requests('GET', _bootstrap), hasLength(before));
+        app.dispose();
+      });
+    });
+  });
+
   group('switch, cancel and return (SP7)', () {
     const switchPath = '/proxy/agency/sessions/sess-1/softphone';
     const returnPath = '/proxy/agency/sessions/sess-1/softphone/return';
@@ -583,7 +762,7 @@ void main() {
     });
   });
 
-  group('the session ends or moves (4404, 4409)', () {
+  group('the session ends or moves (4404, 4409, 1008)', () {
     test('4404: off duty here; Reconnect opens the soft phone again', () {
       fakeAsync((async) {
         final app = _softphone(async);
@@ -597,6 +776,31 @@ void main() {
         expect(app.requests('POST', '/proxy/agency/softphone/sessions'), hasLength(2));
         expect(app.requests('POST', '/proxy/agency/sessions'), isEmpty, reason: 'never a campaign join');
         expect(app.hostView!.link, StationLink.open);
+        app.dispose();
+      });
+    });
+
+    test('1008 while the call owes its outcome: the session is not left (the outcome would lapse)', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.manualCallFrame(_owed);
+        app.routes['POST /proxy/agency/sessions/sess-sp/leave'] = (_) => json(204, {});
+        app.socket.serverClose(1008);
+        async.flushMicrotasks();
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-sp/leave'), isEmpty);
+        expect(app.signals, const StationSignals(), reason: 'still over on this phone');
+        app.dispose();
+      });
+    });
+
+    test('1008 with nothing owed: the session is left, best effort', () {
+      fakeAsync((async) {
+        final app = _softphone(async);
+        app.manualCallFrame(_settled);
+        app.routes['POST /proxy/agency/sessions/sess-sp/leave'] = (_) => json(204, {});
+        app.socket.serverClose(1008);
+        async.flushMicrotasks();
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-sp/leave'), hasLength(1));
         app.dispose();
       });
     });

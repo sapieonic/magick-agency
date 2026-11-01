@@ -86,6 +86,14 @@ class AudioOrchestrator {
   String? _callId;
   bool _bridged = false;
 
+  /// How the current call was reported to CallKit, to report it again.
+  String _displayName = '';
+  String _handle = '';
+
+  /// CallKit ended the current call on its side (the agent's End on the lock
+  /// screen) before the app hung it up: see [reportCallAgain].
+  bool _systemEnded = false;
+
   /// The ringback was asked for and not yet turned off (or cleared by `stop`).
   bool _ringback = false;
   /// A `prepare` is queued or done (cleared when one fails).
@@ -179,6 +187,7 @@ class AudioOrchestrator {
         _enqueue('stop', () => _engine.stop());
         _callId = null;
         _bridged = false;
+        _systemEnded = false;
         // `stop` clears the ringback on the native side.
         _ringback = false;
         _autoMuted = false;
@@ -188,6 +197,8 @@ class AudioOrchestrator {
       if (next != null) {
         _callId = next;
         _bridged = false;
+        _displayName = target.displayName;
+        _handle = target.handle;
         if (!_prepared) {
           _prepared = true;
           _enqueue('prepare', () => _engine.prepare(format));
@@ -222,6 +233,22 @@ class AudioOrchestrator {
       _ringback = ring;
       _enqueue(ring ? 'ringback.on' : 'ringback.off', () => _engine.setRingback(ring));
     }
+  }
+
+  /// The hang-up CallKit asked for did not happen (the server refused or was
+  /// unreachable) and the call is still on the line. CallKit has already
+  /// ended it on its side, taking the lock-screen controls and the audio
+  /// session with it, so the call is reported again (as connected once
+  /// bridged), and CallKit hands the audio session back. Nothing to do for a
+  /// hang-up from Android's notification, which never left the system UI.
+  void reportCallAgain() {
+    final id = _callId;
+    if (!_opened || id == null || !_systemEnded) return;
+    _systemEnded = false;
+    final name = _displayName;
+    final handle = _handle;
+    _enqueue('startCall', () => _engine.startCall(callId: id, displayName: name, handle: handle));
+    if (_bridged) _enqueue('connected', () => _engine.reportConnected(id));
   }
 
   /// Downlink: one frame, straight to the engine.
@@ -280,6 +307,7 @@ class AudioOrchestrator {
     _enqueue('release', _engine.release);
     _enqueue('fgs.stop', _engine.stopOnDutyService);
     _callId = null;
+    _systemEnded = false;
     _ringback = false;
     _opened = false;
     _prepared = false;
@@ -336,11 +364,14 @@ class AudioOrchestrator {
         } else if (_view.micProblem == MicProblem.lost) {
           _setView(_copy(micProblem: _baseline));
         }
-      case audio.CallSystemAction(kind: audio.CallActionKind.end, :final callId):
+      case audio.CallSystemAction(kind: audio.CallActionKind.end, :final callId, :final source):
         // Android's notification names no call: it is this call only while
         // there is one. With none (ended, or moved to another device) there is
         // nothing here to hang up.
-        if (_callId != null && (callId == null || callId == _callId)) _onSystemHangUp();
+        if (_callId != null && (callId == null || callId == _callId)) {
+          if (source == audio.CallActionSource.callKit) _systemEnded = true;
+          _onSystemHangUp();
+        }
       case audio.CallSystemAction(kind: audio.CallActionKind.mute, :final muted):
         // The plugin already applied it to the uplink; mirror it.
         _autoMuted = false;

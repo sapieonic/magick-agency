@@ -348,6 +348,38 @@ void main() {
       });
     });
 
+    test('a CallKit hang-up that did not happen: the call is reported again, as it was, connected once bridged', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.sync(_bridged);
+        final base = r.engine.lifecycle.length;
+        r.orchestrator.reportCallAgain();
+        async.flushMicrotasks();
+        expect(r.engine.lifecycle.skip(base), isEmpty, reason: 'CallKit never ended it');
+        r.event(const audio.CallSystemAction(kind: audio.CallActionKind.end, source: audio.CallActionSource.callKit, callId: 'att-1'));
+        r.orchestrator.reportCallAgain();
+        r.orchestrator.reportCallAgain();
+        async.flushMicrotasks();
+        expect(r.engine.lifecycle.skip(base), ['startCall', 'connected'], reason: 'once per CallKit end');
+        expect(r.engine.startedCalls.last, (callId: 'att-1', displayName: 'Asha Rao', handle: '+919876543210'));
+      });
+    });
+
+    test('an Android notification hang-up that did not happen reports nothing again (it never left the system UI)', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.sync(_reserved);
+        final base = r.engine.lifecycle.length;
+        r.event(const audio.CallSystemAction(kind: audio.CallActionKind.end, source: audio.CallActionSource.notification));
+        r.orchestrator.reportCallAgain();
+        async.flushMicrotasks();
+        expect(r.hangUps, 1);
+        expect(r.engine.lifecycle.skip(base), isEmpty);
+      });
+    });
+
     test('a notification hang-up (no call id) with no call on this phone hangs up nothing', () {
       fakeAsync((async) {
         final r = _Rig(async);

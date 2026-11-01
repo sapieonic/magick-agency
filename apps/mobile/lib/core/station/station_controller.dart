@@ -14,7 +14,9 @@ import '../audio/audio_orchestrator.dart';
 import '../lifecycle/app_lifecycle.dart';
 import '../lifecycle/lifecycle_policy.dart';
 import '../softphone/call_state.dart';
+import '../softphone/refusal_copy.dart' show refusalBodyOf, softphoneErrorCopy;
 import '../softphone/softphone_api.dart';
+import '../softphone/softphone_copy.dart' show softphoneHangupFailedCopy;
 import '../softphone/softphone_host.dart';
 import '../softphone/softphone_view.dart' show SoftphonePhase;
 import '../telemetry/log.dart';
@@ -101,8 +103,16 @@ class StationController extends Notifier<StationView?>
   bool _ringMuted = false;
   String? _ringCallId;
 
-  /// The matched contact's name for a soft-phone call (CallKit), from the soft phone.
-  ({String callId, String? name})? _manualName;
+  /// A system hang-up of the soft-phone call [callId] that failed, in the
+  /// soft phone's words ([SoftphoneHostView.hangupFailure]).
+  ({String callId, String text})? _manualHangupFailure;
+
+  /// The read that checks a held soft-phone call after a reconnect
+  /// ([_checkHeldCall]), how many in a row have failed, and which check a
+  /// read in flight belongs to (a cancelled check's answer schedules nothing).
+  Timer? _heldCallTimer;
+  int _heldCallFailures = 0;
+  int _heldCallCheck = 0;
 
   /// The call the audio was last told about, so the end reason handed to
   /// CallKit is that call's: a campaign release's, or a soft-phone call's.
@@ -468,7 +478,8 @@ class StationController extends Notifier<StationView?>
     _mapper = StationViewMapper();
     _ringMuted = false;
     _ringCallId = null;
-    _manualName = null;
+    _manualHangupFailure = null;
+    _cancelHeldCallCheck();
     _lastTargetId = null;
     _everOpened = false;
   }
@@ -495,6 +506,10 @@ class StationController extends Notifier<StationView?>
           breakReason: frame.breakReason ??
               (first && hosted != null && hosted.initialState == AgentState.onBreak ? hosted.initialBreakReason : null),
         ));
+        // Back after a drop with a soft-phone call held: the server sends its
+        // copy right after `ready` only while the call is unsettled, so one
+        // that settled meanwhile sends nothing and would stay "live" here.
+        if (!first && isCallUnsettled(_station.manualCall)) _startHeldCallCheck();
       case AgentStateFrame():
         // The authority: an HTTP answer held for reconciliation is now stale.
         _lastStateResponse = null;
@@ -533,6 +548,8 @@ class StationController extends Notifier<StationView?>
           _log.warn('unreadable manual_call frame', {'id': frame.id ?? ''});
           break;
         }
+        // The server's own word on the call: nothing left to check.
+        _cancelHeldCallCheck();
         _dispatch(ManualCallAction(manualCall));
       case PongFrame():
         // The socket hands pongs to [_onPong] itself; none arrive here.
@@ -565,9 +582,14 @@ class StationController extends Notifier<StationView?>
       _upgradeRefused = true;
       _fatal = upgradeRefusedCopy;
       // Not left to linger as a joined agent who cannot connect: best effort.
-      unawaited(_api.leave(s.id).catchError((Object e) {
-        _log.warn('leaving after a refused upgrade failed', {'error': e.runtimeType.toString()});
-      }));
+      // Never while a soft-phone call is live or owes its outcome: the server
+      // refuses the first, and leaving would let the outcome lapse (the agent
+      // can still save it from another device, where the session rehydrates).
+      if (!isCallUnsettled(_station.manualCall)) {
+        unawaited(_api.leave(s.id).catchError((Object e) {
+          _log.warn('leaving after a refused upgrade failed', {'error': e.runtimeType.toString()});
+        }));
+      }
     }
     final wasOpen = _station.connection == StationConnection.open;
     if (connection == StationConnection.open) _everOpened = true;
@@ -596,6 +618,7 @@ class StationController extends Notifier<StationView?>
   /// are sent. [dismiss] or the next start closes the rest.
   void _letGo(_Session s, {required bool keepSocket}) {
     _cancelAwayTimers();
+    _cancelHeldCallCheck();
     _setWakeLock(false);
     _setNotice(AwayNotice.none, null);
     unawaited(s.audio.close());
@@ -745,7 +768,15 @@ class StationController extends Notifier<StationView?>
       audio: s.audio.view,
       ringMuted: _ringMuted,
       reconnectDeadline: isCallLive(call) ? _reconnectDeadline : null,
+      hangupFailure: _hangupFailureFor(call),
     );
+  }
+
+  /// The failed system hang-up, while the call it was for is still on the line.
+  String? _hangupFailureFor(ManualCall? call) {
+    final failure = _manualHangupFailure;
+    if (failure == null || call == null || call.id != failure.callId || !call.isLive) return null;
+    return failure.text;
   }
 
   /// On the `soft_phone` break: always, for a soft-phone session once its
@@ -779,8 +810,7 @@ class StationController extends Notifier<StationView?>
     final live = _station.live;
     if (live == null) {
       if (manual == null || !manual.isLive) return AudioTarget(endReason: endReason);
-      final named = _manualName;
-      final name = named != null && named.callId == manual.id ? named.name : null;
+      final name = _cachedName(manual.id, () => contactName(manual, _contextDisplayFor(manual)));
       return AudioTarget(
         attemptId: manual.id,
         // Only `bridged_at` opens the uplink: audio is live both ways from there.
@@ -791,14 +821,7 @@ class StationController extends Notifier<StationView?>
         ringback: manual.state == AttemptState.ringing && manual.bridgedAt == null && !_ringMuted,
       );
     }
-    final cached = _nameCache;
-    final String? name;
-    if (cached != null && cached.attemptId == live.attemptId) {
-      name = cached.name;
-    } else {
-      name = displayNameFor(live.attempt.context, _s?.hosted.contextDisplay);
-      _nameCache = (attemptId: live.attemptId, name: name);
-    }
+    final name = _cachedName(live.attemptId, () => displayNameFor(live.attempt.context, _s?.hosted.contextDisplay));
     return AudioTarget(
       attemptId: live.attemptId,
       bridged: live.bridgedAt != null,
@@ -806,6 +829,29 @@ class StationController extends Notifier<StationView?>
       handle: live.attempt.phoneE164,
       endReason: endReason,
     );
+  }
+
+  /// The contact's name for CallKit, worked out once per call (a campaign
+  /// attempt's id or a soft-phone call's), not on every frame and pong.
+  String? _cachedName(String callId, String? Function() derive) {
+    final cached = _nameCache;
+    if (cached != null && cached.attemptId == callId) return cached.name;
+    final name = derive();
+    _nameCache = (attemptId: callId, name: name);
+    return name;
+  }
+
+  /// The column settings a soft-phone call's contact is read through: the
+  /// hosted campaign's, for a call tagged to it. Otherwise none is held here
+  /// (the soft phone's bootstrap has them), and the row's own column names
+  /// are read as they are: the settings only hide and order columns, and the
+  /// name must be known before CallKit is first told about the call, which
+  /// cannot rename it afterwards.
+  ContextDisplay? _contextDisplayFor(ManualCall call) {
+    final hosted = _s?.hosted;
+    final tag = call.tag;
+    if (hosted == null || tag == null || tag.campaignId != hosted.campaignId) return null;
+    return hosted.contextDisplay;
   }
 
   static audio.CallEndReason _endReasonFor(ReleasedFrame? frame) => switch (frame?.reason) {
@@ -1593,8 +1639,13 @@ class StationController extends Notifier<StationView?>
     _afterChange();
   }
 
+  /// A no-op: the host names the call itself, from the row, before CallKit
+  /// is first told about it ([_contextDisplayFor]). The soft phone learns of a
+  /// call only after the host has reported it, and CallKit (the engine has no
+  /// update for a reported call) and the on-duty notification (which shows no
+  /// name) have nothing to take a later name.
   @override
-  void setCallDisplayName(String callId, String? name) => _manualName = (callId: callId, name: name);
+  void setCallDisplayName(String callId, String? name) {}
 
   /// Hangs up the soft-phone call on the line at once (the system controls:
   /// CallKit, the notification). The in-app button holds to confirm and goes
@@ -1604,17 +1655,103 @@ class StationController extends Notifier<StationView?>
     if (_terminal) return;
     final call = _station.manualCall;
     if (call == null || !call.isLive) return;
+    if (_inFlight.contains(StationBusy.hangingUp)) return;
+    _manualHangupFailure = null;
     await _run(StationBusy.hangingUp, (s) async {
       try {
         final r = await _softphoneApi.hangup(call.id, accountId: s.hosted.accountId);
         if (_live(s)) adoptManualCall(r);
       } on ApiError catch (e) {
         _log.warn('soft-phone hang-up failed', {'error': e.runtimeType.toString()});
-        if (_live(s) && _station.manualCall?.id == call.id && isCallLive(_station.manualCall)) {
-          _actionError = hangupFailureCopy(e);
+        if (!_live(s) || _station.manualCall?.id != call.id || !isCallLive(_station.manualCall)) return;
+        final code = refusalBodyOf(e)?.softphoneCode;
+        if (code == SoftphoneErrorCode.callSettled || code == SoftphoneErrorCode.callNotFound) {
+          // Over already, and no frame said so: the bootstrap says how it stands.
+          _startHeldCallCheck(now: true);
+          return;
         }
+        // The soft phone's panel shows this (a soft-phone session has no
+        // station view); a campaign station keeps its own banner too.
+        _manualHangupFailure = (callId: call.id, text: softphoneHangupFailedCopy(softphoneErrorCopy(e)));
+        _actionError = hangupFailureCopy(e);
+        // CallKit ended the call on its side already: the call goes on, so
+        // its controls and audio session must come back.
+        s.audio.reportCallAgain();
       }
     });
+  }
+
+  // ─── A held soft-phone call after a reconnect ──────────────────────────
+
+  /// The waits before each read that checks a held soft-phone call ([_checkHeldCall]);
+  /// the last repeats while reads fail. The first is the grace for the
+  /// `manual_call` frame the server sends right after `ready` for a call it still holds.
+  static const heldCallCheckDelays = [
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+    Duration(seconds: 8),
+    Duration(seconds: 16),
+    Duration(seconds: 30),
+  ];
+
+  void _startHeldCallCheck({bool now = false}) {
+    _cancelHeldCallCheck();
+    final s = _s;
+    if (now && s != null) {
+      unawaited(_checkHeldCall(s));
+    } else {
+      _scheduleHeldCallCheck(heldCallCheckDelays.first);
+    }
+  }
+
+  void _scheduleHeldCallCheck(Duration wait) {
+    final s = _s;
+    if (s == null) return;
+    _heldCallTimer = Timer(wait, () => unawaited(_checkHeldCall(s)));
+  }
+
+  void _cancelHeldCallCheck() {
+    _heldCallTimer?.cancel();
+    _heldCallTimer = null;
+    _heldCallFailures = 0;
+    _heldCallCheck++;
+  }
+
+  /// Asks the bootstrap (in the session's own account) about the soft-phone
+  /// call held here, so the ringback, CallKit, the microphone and the
+  /// router's hold never wait on the soft-phone controller being alive. The
+  /// server's copy is adopted; a held copy the server no longer has is
+  /// retired by its version, so a frame that arrived meanwhile stands.
+  /// Stops once answered, once the held copy settles, when the socket is not
+  /// open (the next `ready` starts again) and when the session ends; a failed
+  /// read is retried after [heldCallCheckDelays].
+  Future<void> _checkHeldCall(_Session s) async {
+    _heldCallTimer = null;
+    if (!_live(s) || !ref.mounted || _terminal || _station.connection != StationConnection.open) return;
+    final held = _station.manualCall;
+    if (held == null || !held.isUnsettled) return;
+    final check = _heldCallCheck;
+    final SoftphoneBootstrap b;
+    try {
+      b = await _softphoneApi.bootstrap(accountId: s.hosted.accountId);
+    } on ApiError catch (e) {
+      if (!_live(s) || check != _heldCallCheck) return;
+      _log.warn('checking the soft-phone call after a reconnect failed', {'error': e.runtimeType.toString()});
+      final retry = e is! ApiHttpError || e.isServerError || e.status == 429;
+      if (!retry) return;
+      _heldCallFailures++;
+      _scheduleHeldCallCheck(heldCallCheckDelays[_heldCallFailures.clamp(0, heldCallCheckDelays.length - 1)]);
+      return;
+    }
+    if (!_live(s)) return;
+    _heldCallFailures = 0;
+    // Another session named: this one is not the server's live session, and
+    // the socket's own close says so; nothing here to judge the call by.
+    final session = b.session;
+    if (session != null && session.sessionId != s.id) return;
+    final call = b.call;
+    if (call == null || call.id != held.id) retireManualCall(held.versionKey);
+    if (call != null) adoptManualCall(call);
   }
 
   @override
