@@ -176,6 +176,47 @@ void main() {
       expectTarget(tester, find.byKey(const Key('redial-m1')));
     });
 
+    // Tall, so nothing is cut off by the scrolling column (a clipped target
+    // reads as too small).
+    for (final scale in [1.0, 2.0]) {
+      testWidgets('every phase meets the tap-target and label guidelines at ${scale}x text', (tester) async {
+        final semantics = tester.ensureSemantics();
+        final h = await pumpSoftphone(tester, readyView(), textScale: scale, size: const Size(360, 4000));
+        for (final v in [
+          readyView(tag: 'c2'),
+          readyView(dialError: 'Refused.', bootstrapError: 'No answer'),
+          readyView(link: StationLink.disconnected),
+          callView(SoftphonePhase.ringing),
+          callView(SoftphonePhase.onCall, outcomeCode: 'callback', dncOutcome: 'Added'),
+          callView(SoftphonePhase.onCall, audio: const AudioView(micProblem: MicProblem.permissionDenied)),
+          callView(SoftphonePhase.outcome, outcomeCode: 'callback', callbackAt: t0.add(const Duration(hours: 1))),
+        ]) {
+          await h.setView(v);
+          await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+          await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+        }
+        semantics.dispose();
+      });
+    }
+
+    testWidgets('every Phone screen state meets the tap-target and label guidelines', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final h = await pumpSoftphone(tester, const SoftphoneView(), phoneScreen: true, size: small);
+      const states = <SoftphoneScreenState>[
+        SoftphoneScreenClosed(),
+        SoftphoneScreenOnCampaign(campaignId: 'c1', campaignName: 'Q4', stateLabel: 'On break', accountId: 'a1', sameAccount: true, hostedHere: true),
+        SoftphoneScreenElsewhere(accountId: 'a2', accountName: 'Mumbai', canSwitchAccount: true),
+        SoftphoneScreenOffStranded(accountId: 'a2', callOwed: true),
+        SoftphoneScreenError('The server did not answer.'),
+      ];
+      for (final s in states) {
+        await h.setView(SoftphoneView(screen: s));
+        await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+        await expectLater(tester, meetsGuideline(labeledTapTargetGuideline));
+      }
+      semantics.dispose();
+    });
+
     testWidgets('the call controls, hang-up and the outcome buttons are at least 48 dp', (tester) async {
       await pumpSoftphone(tester, callView(SoftphonePhase.onCall), textScale: 2, size: small);
       for (final k in ['softphone-mute', 'softphone-audio', 'softphone-dnc', 'softphone-hang-up', 'outcome-interested']) {

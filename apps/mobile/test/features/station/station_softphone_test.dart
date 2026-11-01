@@ -7,7 +7,7 @@ import 'package:magick_agency_agent/features/softphone/softphone_panel.dart';
 import 'package:magick_agency_agent/features/station/station_copy.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
-import '../softphone/softphone_harness.dart' show callView, expectEveryPanelPhaseFits, readyView, sweepTextScales;
+import '../softphone/softphone_harness.dart' show callView, expectEveryPanelPhaseFits, expectNoOverflow, readyView, sweepTextScales;
 import 'station_harness.dart';
 
 /// The station switched to the soft phone (SP7), and the ways onto it.
@@ -141,6 +141,22 @@ void main() {
       await settle(tester);
       expect(h.host.calls, ['switchToSoftphone']);
       expect(h.actions.calls, isNot(contains('takeBreak')));
+    });
+
+    testWidgets('at 200% text on 360×640, waiting and on a break, it fits and can be reached', (tester) async {
+      const size = Size(360, 640);
+      final h = await pumpStation(tester, station(phase: AgentPhase.available), availability: softphoneOn, textScale: 2, size: size);
+      for (final v in [
+        station(phase: AgentPhase.available),
+        station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'tea', label: 'Tea break')),
+      ]) {
+        await h.setView(v);
+        await expectNoOverflow(tester);
+        await tester.ensureVisible(find.byKey(const Key('switch-softphone')));
+        await tester.pump();
+        final r = tester.getRect(find.byKey(const Key('switch-softphone')));
+        expect(r.top >= 0 && r.bottom <= size.height, isTrue, reason: '${v.phase}: switch at $r');
+      }
     });
 
     testWidgets('on a break: offered beside End break', (tester) async {
