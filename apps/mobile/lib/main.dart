@@ -12,7 +12,11 @@ import 'app/providers.dart';
 import 'core/api/client_identity.dart';
 import 'core/auth/firebase_token_source.dart';
 import 'core/env.dart';
+import 'core/station/station_controller.dart';
+import 'core/station/station_deps.dart';
 import 'core/telemetry/log.dart';
+import 'features/preflight/device_preflight_checks.dart';
+import 'features/preflight/preflight_checks.dart';
 
 final _log = Log('main');
 
@@ -44,6 +48,12 @@ Future<void> main() async {
         clientIdentityProvider.overrideWithValue(identity),
         idTokenSourceProvider.overrideWithValue(
           env.hasFirebase ? FirebaseIdTokenSource(FirebaseAuth.instance) : const NoIdTokenSource(),
+        ),
+        // The station core behind the screens' seam (station_view.dart).
+        ...stationOverrides,
+        // Pre-flight measures with the station's own voice engine instance, never a second one.
+        preflightChecksProvider.overrideWith(
+          (ref) => DevicePreflightChecks(audio: ref.watch(agentAudioPluginProvider), api: ref.watch(apiClientProvider)),
         ),
       ],
       child: const AgentApp(),

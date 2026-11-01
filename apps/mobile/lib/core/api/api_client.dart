@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show SocketException, HandshakeException;
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -86,7 +87,9 @@ class ApiClient {
   }) async {
     final uri = _env.apiBase.replace(path: path, queryParameters: (query == null || query.isEmpty) ? null : query);
     final requestId = _newRequestId();
-    final encodedBody = body == null ? null : jsonEncode(body);
+    // A Uint8List goes as raw octets (the pre-flight upload probe); anything else as JSON.
+    final bytesBody = body is Uint8List ? body : null;
+    final encodedBody = body == null || bytesBody != null ? null : jsonEncode(body);
 
     Future<http.Response> attempt({required bool forceRefresh}) async {
       final headers = <String, String>{
@@ -94,6 +97,7 @@ class ApiClient {
         'x-client': _identity.header,
         'x-request-id': requestId,
         if (encodedBody != null) 'content-type': 'application/json',
+        if (bytesBody != null) 'content-type': 'application/octet-stream',
       };
       if (authenticated) {
         final token = await _tokens.idToken(forceRefresh: forceRefresh);
@@ -108,6 +112,7 @@ class ApiClient {
       }
       final request = http.Request(method, uri)..headers.addAll(headers);
       if (encodedBody != null) request.body = encodedBody;
+      if (bytesBody != null) request.bodyBytes = bytesBody;
       final streamed = await _http.send(request).timeout(timeout ?? defaultTimeout);
       return http.Response.fromStream(streamed).timeout(timeout ?? defaultTimeout);
     }

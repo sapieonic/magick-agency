@@ -32,5 +32,4 @@ linter:
     - prefer_single_quotes
     - sort_child_properties_last
     - unawaited_futures
-    - unnecessary_await_in_return
     - use_super_parameters

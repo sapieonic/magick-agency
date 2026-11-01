@@ -27,6 +27,7 @@ abstract final class PreflightCopy {
 
   // Sound check.
   static const sound = 'Sound check';
+  static const soundListening = 'Say hello — we’re listening to your mic…';
   static const soundOk = 'We heard you back clearly';
   static const soundQuiet = 'We could barely hear you. Check the mic isn’t covered.';
   static const soundNotHeard = 'We didn’t hear you back. Check your headset’s mic.';

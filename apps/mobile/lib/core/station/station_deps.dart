@@ -45,12 +45,16 @@ final wakeLockProvider = Provider<WakeLock>((ref) => const WakelockPlusLock());
 
 final appLifecycleSourceProvider = Provider<AppLifecycleSource>((ref) => FlutterAppLifecycleSource());
 
-/// The one voice engine for the process (the plugin keeps native state).
-final audioEngineProvider = Provider<AudioEngine>((ref) {
+/// The one plugin instance for the process: it tracks the native engine's phase, so the
+/// station and pre-flight (the loopback test) must share it, never build their own.
+final agentAudioPluginProvider = Provider<AgentAudio>((ref) {
   final plugin = AgentAudio();
   ref.onDispose(plugin.dispose);
-  return PluginAudioEngine(plugin);
+  return plugin;
 });
+
+/// The one voice engine for the process (the plugin keeps native state).
+final audioEngineProvider = Provider<AudioEngine>((ref) => PluginAudioEngine(ref.watch(agentAudioPluginProvider)));
 
 /// The present, injectable so timing rules are tested on a fake clock.
 final stationNowProvider = Provider<DateTime Function()>((ref) => DateTime.now);

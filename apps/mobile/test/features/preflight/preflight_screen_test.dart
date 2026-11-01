@@ -195,14 +195,16 @@ void main() {
       await pumpPreflight(tester, checks, FakeLauncher([]));
       expect(find.text('Ready to take calls?'), findsOneWidget);
       expect(find.text('Q4 Card Renewals'), findsOneWidget);
-      expect(find.text('Checking…'), findsNWidgets(6));
+      // Five rows checking; the sound check asks the agent to speak while it listens.
+      expect(find.text('Checking…'), findsNWidgets(5));
+      expect(find.text('Say hello — we’re listening to your mic…'), findsOneWidget);
       expect(dutyEnabled(tester), isFalse);
 
       checks.bat.complete(const BatterySample(level: 34, charging: false));
       await settle(tester);
       expect(find.text('Battery 34%'), findsOneWidget);
       expect(find.text('Plug in for a long shift'), findsOneWidget);
-      expect(find.text('Checking…'), findsNWidgets(5));
+      expect(find.text('Checking…'), findsNWidgets(4));
 
       checks.mic.complete(MicPermission.granted);
       checks.net.complete(const NetworkSample(online: true, transport: '4G', latencyMs: 46, uploadKbps: 1800));

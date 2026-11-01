@@ -91,7 +91,11 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
       ..clear()
       ..addAll({
         PreflightCheck.microphone: const CheckResult.pending(PreflightCopy.mic),
-        PreflightCheck.soundCheck: const CheckResult.pending(PreflightCopy.sound),
+        PreflightCheck.soundCheck: const CheckResult(
+          status: CheckStatus.pending,
+          title: PreflightCopy.sound,
+          detail: PreflightCopy.soundListening,
+        ),
         PreflightCheck.headset: const CheckResult.pending(PreflightCopy.headset),
         PreflightCheck.network: const CheckResult.pending(PreflightCopy.network),
         PreflightCheck.battery: const CheckResult.pending(PreflightCopy.battery),

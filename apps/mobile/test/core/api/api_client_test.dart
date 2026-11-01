@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -87,6 +88,18 @@ void main() {
     expect(body, isNull);
     expect(seen.headers['content-type'], startsWith('application/json'));
     expect(jsonDecode(seen.body), {'campaign_id': 'c'});
+  });
+
+  test('POST of a Uint8List sends raw octets, not JSON', () async {
+    late http.Request seen;
+    final api = client((req) async {
+      seen = req;
+      return _json(200, {'received_bytes': 3});
+    });
+    await api.post('/client-config/uplink-probe', body: Uint8List.fromList([1, 2, 255]));
+    expect(seen.headers['content-type'], startsWith('application/octet-stream'));
+    expect(seen.bodyBytes, [1, 2, 255]);
+    expect(seen.headers['authorization'], startsWith('Bearer '));
   });
 
   test('a 401 is retried once with a forced token refresh', () async {
