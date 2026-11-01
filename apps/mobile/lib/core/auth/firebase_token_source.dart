@@ -10,11 +10,22 @@ class FirebaseIdTokenSource implements IdTokenSource {
 
   final FirebaseAuth _auth;
 
+  /// Firebase's word that the sign-in itself is over, not that the network failed: the
+  /// user was disabled or deleted, or the refresh token was revoked. Read as "signed
+  /// out" (null, so the API layer answers `ApiUnauthorized` and the gate signs out
+  /// once no call is live) rather than retried as a network error for ever.
+  static const signInEndedCodes = {'user-disabled', 'user-not-found', 'user-token-expired', 'invalid-user-token'};
+
   @override
   Future<String?> idToken({bool forceRefresh = false}) async {
     final user = _auth.currentUser;
     if (user == null) return null;
-    return user.getIdToken(forceRefresh);
+    try {
+      return await user.getIdToken(forceRefresh);
+    } on FirebaseAuthException catch (e) {
+      if (signInEndedCodes.contains(e.code)) return null;
+      rethrow;
+    }
   }
 }
 

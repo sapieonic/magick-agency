@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:agency_wire/agency_wire.dart';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/app/providers.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
@@ -356,6 +357,101 @@ void main() {
       c.read(testSignalsProvider.notifier).set(const StationSignals());
       await settle();
       expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+    });
+
+    group('the station is left before the sign-out', () {
+      /// A station teardown that records each call with the gate and Firebase
+      /// as they stood at that moment, and answers from [answers] (true once
+      /// they run out).
+      late List<(AppGate, int)> teardowns;
+      late List<bool> answers;
+      ProviderContainer withStation() {
+        teardowns = [];
+        answers = [];
+        late ProviderContainer c;
+        c = h.container(extra: [
+          stationTeardownProvider.overrideWithValue(() async {
+            teardowns.add((c.read(appGateProvider), h.auth.signOuts));
+            return answers.isEmpty ? true : answers.removeAt(0);
+          }),
+        ]);
+        return c;
+      }
+
+      test('on duty with no call: a 401 takes the agent off duty, THEN signs out', () async {
+        signedIn();
+        final c = withStation();
+        final ready = await startGate(c);
+        c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+        c.read(appGateProvider.notifier).reportUnauthorized();
+        await settle();
+        expect(teardowns, [(ready, 0)], reason: 'left while still signed in, before Firebase was signed out');
+        expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+        expect(h.auth.signOuts, 1);
+      });
+
+      test('a 401 during a call: held through wrap-up, then the station is left before signing out', () async {
+        signedIn();
+        final c = withStation();
+        final ready = await startGate(c);
+        final signals = c.read(testSignalsProvider.notifier)
+          ..set(const StationSignals(onDuty: true, callActive: true, campaignId: 'c1'));
+        c.read(appGateProvider.notifier).reportUnauthorized();
+        await settle();
+        expect(teardowns, isEmpty, reason: 'never torn down under a live call');
+        // Wrap-up over, auto-returned to available: still on duty.
+        signals.set(const StationSignals(onDuty: true, campaignId: 'c1'));
+        await settle();
+        expect(teardowns, [(ready, 0)]);
+        expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+      });
+
+      test('Firebase dropping the user and an explicit sign-out leave the station too', () async {
+        signedIn();
+        final c = withStation();
+        await startGate(c);
+        h.auth.externalSignOut();
+        await settle();
+        expect(teardowns, hasLength(1));
+        expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+
+        signedIn();
+        final c2 = withStation();
+        await startGate(c2);
+        await c2.read(appGateProvider.notifier).signOut();
+        expect(teardowns, hasLength(1));
+        expect(c2.read(appGateProvider), const GateSignedOut());
+      });
+
+      test('a call that went live before the station could be left holds the sign-out until it ends', () async {
+        signedIn();
+        final c = withStation();
+        final ready = await startGate(c);
+        answers = [false];
+        final signals = c.read(testSignalsProvider.notifier);
+        c.read(appGateProvider.notifier).reportUnauthorized();
+        await settle();
+        expect(teardowns, hasLength(1));
+        expect(c.read(appGateProvider), ready);
+        expect(c.read(appGateProvider.notifier).signOutDeferred, isTrue);
+        expect(h.auth.signOuts, 0);
+        signals.set(const StationSignals(onDuty: true, callActive: true, campaignId: 'c1'));
+        await settle();
+        signals.set(const StationSignals(onDuty: true, campaignId: 'c1'));
+        await settle();
+        expect(teardowns, hasLength(2));
+        expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+      });
+
+      test('a teardown that fails never keeps the agent signed in', () async {
+        signedIn();
+        final c = h.container(extra: [stationTeardownProvider.overrideWithValue(() async => throw StateError('boom'))]);
+        await startGate(c);
+        c.read(appGateProvider.notifier).reportUnauthorized();
+        await settle();
+        expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+        expect(h.auth.signOuts, 1);
+      });
     });
 
     test('a different user signing in elsewhere is resolved afresh', () async {

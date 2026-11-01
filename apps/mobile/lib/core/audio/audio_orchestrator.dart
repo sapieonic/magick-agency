@@ -71,6 +71,15 @@ class AudioOrchestrator {
   bool _opened = false;
   bool _autoMuted = false;
   bool _guardSpeaker = false;
+
+  /// The on-duty service (Android's foreground service) is running, or a
+  /// start is queued. iOS's is a no-op that always succeeds.
+  bool _serviceUp = false;
+  bool _serviceStarting = false;
+
+  /// What the agent is told while the service is not running: without it
+  /// Android takes the microphone away the moment the app leaves the screen.
+  MicProblem _serviceProblem = MicProblem.none;
   audio.OnDutyNotification? _notification;
   List<audio.AudioRoute> _routes = const [];
   AudioView _view = const AudioView();
@@ -91,9 +100,52 @@ class AudioOrchestrator {
     _uplinkSub = _engine.uplink.listen(_sendUplink);
     _eventsSub = _engine.events.listen(_onEvent);
     _notification = notification;
-    _enqueue('fgs.start', () => _engine.startOnDutyService(notification));
+    _startService();
     prewarm();
   }
+
+  /// The app is back on screen: an on-duty service that could not start
+  /// (Android refuses one from the background, or a permission was missing)
+  /// is started now. Repeated on every return until it runs.
+  void resumed() {
+    if (!_opened || _serviceUp || _serviceStarting) return;
+    _startService();
+  }
+
+  void _startService() {
+    _serviceStarting = true;
+    _enqueue('fgs.start', () async {
+      try {
+        final notification = _notification;
+        if (!_opened || notification == null) return;
+        await _engine.startOnDutyService(notification);
+        if (!_opened) return;
+        _serviceUp = true;
+        final was = _serviceProblem;
+        _serviceProblem = MicProblem.none;
+        if (was != MicProblem.none && _view.micProblem == was) _setView(_copy(micProblem: MicProblem.none));
+      } catch (e) {
+        if (_opened) {
+          _serviceUp = false;
+          final code = e is audio.AgentAudioException ? e.code : audio.AgentAudioErrorCode.unknown;
+          final problem = _micProblemFor(code);
+          final was = _serviceProblem;
+          // No dedicated wording yet: a service that is not running loses the
+          // microphone in the background, which "disconnected" describes.
+          _serviceProblem = problem == MicProblem.none ? MicProblem.lost : problem;
+          if (_view.micProblem == MicProblem.none || _view.micProblem == was) {
+            _setView(_copy(micProblem: _serviceProblem));
+          }
+        }
+        rethrow;
+      } finally {
+        _serviceStarting = false;
+      }
+    });
+  }
+
+  /// The problem shown when nothing call-specific is wrong.
+  MicProblem get _baseline => _serviceProblem;
 
   /// Pre-warms the session between calls (at open and at "Go available").
   void prewarm() {
@@ -137,7 +189,7 @@ class AudioOrchestrator {
         );
         _enqueue('arm', () async {
           await _engine.armMicrophone();
-          if (_view.micProblem != MicProblem.none) _setView(_copy(micProblem: MicProblem.none));
+          if (_view.micProblem != _baseline) _setView(_copy(micProblem: _baseline));
         });
       }
     }
@@ -154,14 +206,30 @@ class AudioOrchestrator {
 
   Future<void> setMuted(bool muted) async {
     _autoMuted = false;
-    if (muted == _view.muted) return;
+    await _applyMute(muted);
+  }
+
+  /// Returns whether the engine took it.
+  Future<bool> _applyMute(bool muted) async {
+    if (muted == _view.muted) return true;
     _setView(_copy(muted: muted));
     try {
       await _engine.setMuted(muted);
+      return true;
     } on audio.AgentAudioException catch (e) {
       _log.warn('mute failed', {'code': e.code.wireName});
       _setView(_copy(muted: !muted));
+      return false;
     }
+  }
+
+  /// Mutes for a phone call. Marked BEFORE the engine answers, so an
+  /// interruption that ends first still unmutes; unmarked if the mute failed
+  /// (nothing to undo then).
+  Future<void> _autoMute() async {
+    _autoMuted = true;
+    final ok = await _applyMute(true);
+    if (!ok) _autoMuted = false;
   }
 
   Future<void> setRoute(AudioRouteOption option) async {
@@ -191,6 +259,8 @@ class AudioOrchestrator {
     _callId = null;
     _opened = false;
     _prepared = false;
+    _serviceUp = false;
+    _serviceProblem = MicProblem.none;
     // Not awaited: a broadcast subscription's cancel future may belong to
     // another zone, and nothing here depends on it.
     unawaited(_uplinkSub?.cancel());
@@ -226,7 +296,7 @@ class AudioOrchestrator {
         _setView(_copy(interruption: kind));
         if (kind == AudioInterruption.phoneCall && _callId != null && !_view.muted) {
           // The customer must not hear the agent's other call.
-          unawaited(setMuted(true).then((_) => _autoMuted = true));
+          unawaited(_autoMute());
         }
       case audio.AudioInterruptionEnded():
         _setView(_copy(interruption: AudioInterruption.none));
@@ -240,7 +310,7 @@ class AudioOrchestrator {
           final problem = _micProblemFor(code);
           if (problem != MicProblem.none) _setView(_copy(micProblem: problem));
         } else if (_view.micProblem == MicProblem.lost) {
-          _setView(_copy(micProblem: MicProblem.none));
+          _setView(_copy(micProblem: _baseline));
         }
       case audio.CallSystemAction(kind: audio.CallActionKind.end, :final callId):
         if (callId == null || callId == _callId) _onSystemHangUp();
@@ -293,7 +363,7 @@ class AudioOrchestrator {
 
   /// A denied permission outlives the call; a busy or lost device does not.
   MicProblem _persistentMicProblem() =>
-      _view.micProblem == MicProblem.permissionDenied ? MicProblem.permissionDenied : MicProblem.none;
+      _view.micProblem == MicProblem.permissionDenied ? MicProblem.permissionDenied : _baseline;
 
   static AudioRouteOption _option(audio.AudioRoute r) => AudioRouteOption(
         id: r.id,

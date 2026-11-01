@@ -39,9 +39,14 @@ class FakeTokens implements IdTokenSource {
   int forced = 0;
   bool signedOut = false;
 
+  /// When set, every call throws it (Firebase failing to mint).
+  Object? throws;
+
   @override
   Future<String?> idToken({bool forceRefresh = false}) async {
     if (forceRefresh) forced++;
+    final e = throws;
+    if (e != null) throw e;
     return signedOut ? null : 'tok';
   }
 }

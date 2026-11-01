@@ -229,16 +229,46 @@ class NotesAutosave {
     }
   }
 
-  /// The disposition (which carries the notes) was saved: forget them.
-  void savedWithDisposition(String attemptId) {
-    _unsent.remove(attemptId);
-    _retryTimers.remove(attemptId)?.cancel();
-    if (_pending?.attemptId == attemptId) {
+  /// The disposition carrying [sent] as the notes was saved: the server has
+  /// that text. Anything typed while the outcome was saving is newer than
+  /// what it carried, so its save goes ahead and its copy stays on the device.
+  void savedWithDisposition(String attemptId, String sent) {
+    final pending = _pending;
+    if (pending?.attemptId == attemptId && pending?.value == sent) {
+      // The debounce holds exactly what the disposition carried.
       _debounceTimer?.cancel();
       _debounceTimer = null;
       _pending = null;
     }
+    if (_unsent[attemptId] != sent) return;
+    _unsent.remove(attemptId);
+    _retryTimers.remove(attemptId)?.cancel();
     unawaited(_deleteStored(attemptId));
+  }
+
+  /// The station is closing: sends what the debounce is holding, and what is
+  /// waiting on a retry, now rather than never. Waits at most [timeout]; what
+  /// has not landed by then stays in [NotesStore] ([persistNow] runs first).
+  Future<void> flushNow({Duration timeout = const Duration(seconds: 2)}) async {
+    if (_disposed) return;
+    final sends = <Future<void>>[];
+    final pending = _pending;
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
+    _pending = null;
+    if (pending != null) sends.add(_flush(pending));
+    for (final attemptId in _retryTimers.keys.toList()) {
+      if (attemptId == pending?.attemptId) continue;
+      final latest = _unsent[attemptId];
+      _retryTimers.remove(attemptId)?.cancel();
+      if (latest != null) sends.add(_flush((attemptId: attemptId, value: latest)));
+    }
+    if (sends.isEmpty) return;
+    try {
+      await Future.wait(sends).timeout(timeout);
+    } catch (e) {
+      _log.warn('notes not all sent before closing', {'error': e.runtimeType.toString()});
+    }
   }
 
   void dispose() {

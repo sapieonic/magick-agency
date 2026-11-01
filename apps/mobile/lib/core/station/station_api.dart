@@ -75,8 +75,8 @@ final class StationApi {
     return _tryDecode(body, SessionStateResponse.fromJson);
   }
 
-  Future<void> leave(String sessionId, {String? accountId}) async {
-    await _post(_via(accountId), '$_base/sessions/$sessionId/leave');
+  Future<void> leave(String sessionId, {String? accountId, Duration? timeout}) async {
+    await _post(_via(accountId), '$_base/sessions/$sessionId/leave', timeout: timeout);
   }
 
   Future<HangupResponse?> hangup(String attemptId) async {

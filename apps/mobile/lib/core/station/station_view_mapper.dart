@@ -290,8 +290,14 @@ class StationViewMapper {
   }
 }
 
-/// The shell's facts, from the view.
+/// The shell's facts, from the view. A session the server ended (4404) or
+/// another device took (4409) holds nothing here: no duty and no call, even
+/// when the last phase seen was mid-call (the call moved with the session).
+/// The station screen still shows why; the tab bar, sign-out and account
+/// switch are free again.
 StationSignals signalsOf(StationView? view) {
-  if (view == null || view.link == StationLink.sessionGone) return const StationSignals();
+  if (view == null || view.link == StationLink.sessionGone || view.link == StationLink.superseded) {
+    return const StationSignals();
+  }
   return StationSignals(onDuty: true, callActive: view.callActive, campaignId: view.campaignId);
 }

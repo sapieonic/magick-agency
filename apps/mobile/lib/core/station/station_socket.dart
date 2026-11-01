@@ -30,7 +30,8 @@ import 'station_transport.dart';
 /// * **Give up** after [missedPingLimit] heartbeats with a ping unanswered,
 ///   unless a call is live (the server is holding it; keep trying).
 /// * **Flap cap:** more than [flapLimit] proven-live-then-dead sockets in
-///   [flapWindow] is a duel over the session; stop and let the agent decide.
+///   [flapWindow] is a duel over the session; stop and let the agent decide,
+///   unless a call is live (as for the heartbeat give-up).
 /// * Mobile: app-level pings only while [setAppPings] says so (foreground, or a
 ///   call or wrap-up is live); protocol pings every 3 s regardless; an OS
 ///   network change reconnects at once instead of after a backoff step; with
@@ -79,7 +80,7 @@ class StationSocket {
   /// `X-Client` on the upgrade request.
   final String _clientHeader;
 
-  /// Whether a call is live (the heartbeat give-up holds while it is).
+  /// Whether a call is live (the heartbeat and flap give-ups hold while it is).
   final bool Function() _callLive;
   final MediaFormat _media;
   final DateTime Function() _now;
@@ -295,9 +296,10 @@ class StationSocket {
   Future<String> _mintWithDeadline() {
     final done = Completer<String>();
     _mintTimer?.cancel();
-    _mintTimer = Timer(tokenMintTimeout, () {
+    final timer = Timer(tokenMintTimeout, () {
       if (!done.isCompleted) done.completeError(TimeoutException('station token mint', tokenMintTimeout));
     });
+    _mintTimer = timer;
     _mint().then(
       (url) {
         if (!done.isCompleted) done.complete(url);
@@ -307,8 +309,9 @@ class StationSocket {
       },
     );
     return done.future.whenComplete(() {
-      _mintTimer?.cancel();
-      _mintTimer = null;
+      // Only this mint's own deadline: a newer connect's mint may hold the field now.
+      timer.cancel();
+      if (identical(_mintTimer, timer)) _mintTimer = null;
     });
   }
 
@@ -411,8 +414,12 @@ class StationSocket {
       final r = recordLiveThenDead(_flapStamps, _now().millisecondsSinceEpoch);
       _flapStamps = r.stamps;
       if (r.flapping) {
-        _giveUp('flapping');
-        return;
+        if (!_callLive()) {
+          _giveUp('flapping');
+          return;
+        }
+        // The server holds a live call for this session; giving up would end it.
+        _log.warn('station flapping on a live call: holding');
       }
     }
     if (!_keepAlive) {

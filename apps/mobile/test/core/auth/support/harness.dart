@@ -192,8 +192,9 @@ class Harness {
         stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider)),
       ];
 
-  ProviderContainer container() {
-    final c = ProviderContainer.test(overrides: overrides);
+  /// [extra] adds overrides (a recording station teardown, say).
+  ProviderContainer container({List<Override> extra = const []}) {
+    final c = ProviderContainer.test(overrides: [...overrides, ...extra]);
     return c;
   }
 }

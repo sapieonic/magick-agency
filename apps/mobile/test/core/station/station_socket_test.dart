@@ -246,6 +246,24 @@ void main() {
     });
   });
 
+  test('...but never while a call is live: the server is holding it, so the socket keeps trying', () {
+    fakeAsync((async) {
+      final h = _Harness(async)..openFirst();
+      h.callLive = true;
+      for (var i = 0; i < 6; i++) {
+        h.connector.last.serverPong();
+        h.dropAndMeasure(1006);
+        async.flushMicrotasks();
+      }
+      h.connector.last.serverPong();
+      h.dropAndMeasure(1006);
+      async.flushMicrotasks();
+      expect(h.state, StationConnection.open);
+      expect(h.connector.attempts, 8);
+      h.socket.dispose();
+    });
+  });
+
   test('a socket that never proves liveness is not a flap: it just walks the ladder', () {
     fakeAsync((async) {
       final h = _Harness(async)..openFirst();
@@ -297,6 +315,31 @@ void main() {
         // Timed out; next step is 1 s up the ladder.
         async.elapse(const Duration(seconds: 1));
         expect(h.mints, 2);
+        h.socket.dispose();
+        expect(async.pendingTimers, isEmpty);
+      });
+    });
+
+    test('an older mint finishing late never cancels the newer mint’s 8 s deadline', () {
+      fakeAsync((async) {
+        final h = _Harness(async)..openFirst();
+        final older = Completer<String>();
+        h.mintGate = older;
+        h.connector.last.serverClose(1006);
+        async.elapse(const Duration(milliseconds: 500));
+        expect(h.mints, 1);
+        // The agent taps Reconnect while that mint hangs: a second one starts.
+        h.mintGate = Completer<String>();
+        h.socket.reconnect();
+        async.flushMicrotasks();
+        expect(h.mints, 2);
+        older.complete('/proxy/agency/station?token=late');
+        async.flushMicrotasks();
+        expect(h.connector.attempts, 1, reason: 'the late answer belongs to a replaced connect');
+        async.elapse(const Duration(seconds: 8));
+        // Timed out; retried on the ladder (0.5 s after a reconnect's reset).
+        async.elapse(const Duration(milliseconds: 500));
+        expect(h.mints, 3);
         h.socket.dispose();
         expect(async.pendingTimers, isEmpty);
       });

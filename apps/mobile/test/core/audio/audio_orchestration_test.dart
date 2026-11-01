@@ -130,6 +130,20 @@ void main() {
       });
     });
 
+    test('a phone call that ends before the engine confirms the mute still unmutes', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.sync(_bridged);
+        // Both events before the mute's platform call returns.
+        r.engine.emitEvent(const audio.AudioInterruptionBegan(reason: audio.InterruptionReason.phoneCall));
+        r.engine.emitEvent(const audio.AudioInterruptionEnded(reason: audio.InterruptionReason.phoneCall, shouldResume: true));
+        async.flushMicrotasks();
+        expect(r.orchestrator.view.muted, isFalse);
+        expect(r.engine.muted, isFalse, reason: 'the customer hears the agent again');
+      });
+    });
+
     test('...but an agent who muted themselves stays muted', () {
       fakeAsync((async) {
         final r = _Rig(async);
@@ -190,6 +204,31 @@ void main() {
         expect(r.orchestrator.view.micProblem, MicProblem.permissionDenied);
         r.sync(const AudioTarget(attemptId: 'att-2'));
         expect(r.orchestrator.view.micProblem, MicProblem.none, reason: 'arming worked this time');
+      });
+    });
+
+    test('an on-duty service refused at open is a mic problem, retried on return to the app until it runs', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.engine.fail['fgs.start'] = const audio.AgentAudioException(audio.AgentAudioErrorCode.notInForeground);
+        r.orchestrator.open(_note);
+        async.flushMicrotasks();
+        expect(r.orchestrator.view.micProblem, MicProblem.lost);
+        // A call that arms fine does not hide it: the service is still down.
+        r.sync(_reserved);
+        expect(r.orchestrator.view.micProblem, MicProblem.lost);
+        r.engine.fail['fgs.start'] = const audio.AgentAudioException(audio.AgentAudioErrorCode.permissionDenied);
+        r.orchestrator.resumed();
+        async.flushMicrotasks();
+        expect(r.orchestrator.view.micProblem, MicProblem.permissionDenied);
+        r.orchestrator.resumed();
+        async.flushMicrotasks();
+        expect(r.orchestrator.view.micProblem, MicProblem.none);
+        expect(r.engine.calls.where((c) => c == 'fgs.start'), hasLength(3));
+        expect(r.engine.notification, _note);
+        r.orchestrator.resumed();
+        async.flushMicrotasks();
+        expect(r.engine.calls.where((c) => c == 'fgs.start'), hasLength(3), reason: 'running: never started twice');
       });
     });
 
@@ -264,6 +303,23 @@ void main() {
         app.engine.emitEvent(const audio.CallSystemAction(kind: audio.CallActionKind.end, source: audio.CallActionSource.callKit, callId: 'att-1'));
         async.flushMicrotasks();
         expect(app.requests('POST', '/proxy/agency/attempts/att-1/hangup'), hasLength(1));
+        app.dispose();
+      });
+    });
+
+    test('joined from the background: the on-duty service starts when the agent comes back', () {
+      fakeAsync((async) {
+        final app = App(async);
+        app.engine.fail['fgs.start'] = const audio.AgentAudioException(audio.AgentAudioErrorCode.notInForeground);
+        app.start();
+        async.flushMicrotasks();
+        expect(app.view!.audio.micProblem, isNot(MicProblem.none));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.engine.calls.where((c) => c == 'fgs.start'), hasLength(2));
+        expect(app.view!.audio.micProblem, MicProblem.none);
         app.dispose();
       });
     });

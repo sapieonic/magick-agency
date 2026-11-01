@@ -211,6 +211,9 @@ class AppGateNotifier extends Notifier<AppGate> {
 
   /// A sign-out waiting for the call to end ('' = no notice).
   String? _deferredSignOut;
+
+  /// A sign-out is taking the agent off duty first.
+  bool _signingOut = false;
   SessionResponse? _session;
   final Set<String> _verificationSentTo = {};
 
@@ -546,7 +549,8 @@ class AppGateNotifier extends Notifier<AppGate> {
   void reportUnauthorized() {
     final s = state;
     if (s is! GateReady && s is! GateNeedsAccount) return;
-    if (_deferredSignOut != null) return;
+    // Already on its way out (leaving the station can itself answer 401).
+    if (_deferredSignOut != null || _signingOut) return;
     _log.warn('The server no longer accepts this sign-in');
     unawaited(signOut(notice: sessionExpiredNotice));
   }
@@ -570,24 +574,62 @@ class AppGateNotifier extends Notifier<AppGate> {
     });
   }
 
+  /// How long a sign-out waits for the station to be left. Past it the
+  /// sign-out goes ahead and the station finishes closing on its own.
+  static const stationTeardownTimeout = Duration(seconds: 6);
+
   Future<void> _signOutNow({String? notice}) async {
-    if (!ref.mounted) return;
-    final auth = _auth;
-    final store = _store;
-    _run++;
-    _retryTimer?.cancel();
-    _deferredSignOut = null;
-    _signalsSub?.close();
-    _signalsSub = null;
-    _holdingInvite = false;
-    _forget();
-    state = GateSignedOut(notice: notice);
-    await store.clearLastAccount();
+    if (!ref.mounted || _signingOut) return;
+    _signingOut = true;
     try {
-      await auth.signOut();
-    } on AuthFailure catch (e) {
-      _log.warn('Firebase sign-out failed', {'code': e.code});
+      _deferredSignOut = null;
+      _signalsSub?.close();
+      _signalsSub = null;
+      // Off duty first, while the token still works: a phone showing the
+      // sign-in screen must never be sent a customer.
+      if (!await _leaveStation()) {
+        if (ref.mounted) _deferSignOut(notice);
+        return;
+      }
+      if (!ref.mounted) return;
+      final auth = _auth;
+      final store = _store;
+      _run++;
+      _retryTimer?.cancel();
+      _holdingInvite = false;
+      _forget();
+      state = GateSignedOut(notice: notice);
+      await store.clearLastAccount();
+      try {
+        await auth.signOut();
+      } on AuthFailure catch (e) {
+        _log.warn('Firebase sign-out failed', {'code': e.code});
+      }
+    } finally {
+      _signingOut = false;
     }
+  }
+
+  /// The station's teardown ([stationTeardownProvider]), bounded and never
+  /// throwing. False only when a call went live before it could leave.
+  Future<bool> _leaveStation() async {
+    final done = Completer<bool>();
+    void failed(Object e) {
+      _log.warn('Leaving the station failed; signing out anyway', {'error': e.runtimeType.toString()});
+      if (!done.isCompleted) done.complete(true);
+    }
+
+    try {
+      unawaited(ref.read(stationTeardownProvider)().then((left) {
+        if (!done.isCompleted) done.complete(left);
+      }, onError: failed));
+    } catch (e) {
+      failed(e);
+    }
+    return done.future.timeout(stationTeardownTimeout, onTimeout: () {
+      _log.warn('Leaving the station is taking too long; signing out anyway');
+      return true;
+    });
   }
 
   // ─── Invites ──────────────────────────────────────────────────────────────

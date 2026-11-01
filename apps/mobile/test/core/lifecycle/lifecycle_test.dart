@@ -141,6 +141,26 @@ void main() {
       });
     });
 
+    test('on a call: a queued pause that failed is asked for again on the next change', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        app.routes['POST $_breakPath'] = (_) => json(503, {'message': 'down'});
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath), hasLength(1));
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('wrapup', breakReason: 'device_away', pending: 'break'));
+        app.releasedFrame('att-1');
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath), hasLength(2));
+        app.agentStateFrame('wrapup');
+        app.wrapupFrame('att-1');
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath), hasLength(2), reason: 'once it landed, not again');
+        app.dispose();
+      });
+    });
+
     test('in wrap-up: the deadline notification, on this device’s clock', () {
       fakeAsync((async) {
         final app = App(async)..start();

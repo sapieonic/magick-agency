@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:io' show SocketException;
 
 import 'package:fake_async/fake_async.dart';
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
+import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/station/station_copy.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
@@ -285,6 +287,22 @@ void main() {
       });
     });
 
+    test('4409 mid-call: the shell sees no call and no duty, so its tab bar comes back', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inWrapup('att-1');
+        expect(app.container.read(stationSignalsProvider).callActive, isTrue);
+        app.socket.serverClose(4409);
+        expect(app.view!.link, StationLink.superseded);
+        expect(app.view!.callActive, isTrue, reason: 'the station screen still knows what moved');
+        expect(app.container.read(stationSignalsProvider), const StationSignals());
+        app.run(app.controller.useThisDevice());
+        async.flushMicrotasks();
+        expect(app.container.read(stationSignalsProvider).callActive, isTrue, reason: 'taken back: the call is here again');
+        app.dispose();
+      });
+    });
+
     test('4404: session gone; Reconnect joins again', () {
       fakeAsync((async) {
         final app = App(async)..start();
@@ -530,6 +548,65 @@ void main() {
         });
       });
 
+      test('notes typed while the outcome is saving are still sent, not dropped with it', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.inWrapup('att-1');
+          final answer = Completer<http.Response>();
+          app.routes['POST /proxy/agency/attempts/att-1/disposition'] = (_) => answer.future;
+          app.routes['POST /proxy/agency/attempts/att-1/notes'] =
+              (r) => json(200, {'attempt_id': 'att-1', 'notes': (r.body! as Map)['notes'], 'updated_at': '2026-11-01T09:00:30.000Z'});
+          app.controller.updateNotes('Wants a quote');
+          final saving = app.controller.submitDisposition('interested');
+          async.flushMicrotasks();
+          app.controller.updateNotes('Wants a quote, call after 6');
+          answer.complete(json(200, {
+            'campaign_id': 'camp-1',
+            'attempt_id': 'att-1',
+            'contact_id': 'c-att-1',
+            'disposition_code': 'interested',
+            'contact_state': 'completed',
+            'agent_state': 'wrapup',
+          }));
+          app.run(saving);
+          expect(app.view!.dispositionSaved, 'interested');
+          expect(app.controller.stationState.currentAttemptId, 'att-1');
+          async.elapse(const Duration(seconds: 2));
+          expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').single.body, {'notes': 'Wants a quote, call after 6'});
+          expect(app.store.entries, isEmpty);
+          app.dispose();
+        });
+      });
+
+      test('Firebase failing to mint a token: the outcome says so, and the notes retry rather than spin', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.inWrapup('att-1');
+          app.controller.updateNotes('Wants a quote');
+          app.tokens.throws = FirebaseAuthException(code: 'network-request-failed');
+          app.run(app.controller.submitDisposition('interested'));
+          expect(app.view!.actionError, const ApiNetworkError('x').userMessage);
+          expect(app.view!.dispositionSaved, isNull);
+          async.elapse(const Duration(seconds: 2));
+          expect(app.view!.notes.status, NotesStatus.retrying);
+          expect(app.store.entries['att-1']?.notes, 'Wants a quote');
+          app.dispose();
+        });
+      });
+
+      test('an unforeseen failure of the save is shown, never only logged', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.inWrapup('att-1');
+          app.routes['POST /proxy/agency/attempts/att-1/disposition'] = (_) => throw StateError('unforeseen');
+          app.run(app.controller.submitDisposition('interested'));
+          expect(app.view!.actionError, actionFailedCopy);
+          expect(app.view!.dispositionSaved, isNull);
+          expect(app.view!.busy, StationBusy.none);
+          app.dispose();
+        });
+      });
+
       test('unknown_disposition_code re-syncs the catalog from allowed_codes', () {
         fakeAsync((async) {
           final app = App(async)..start();
@@ -638,6 +715,119 @@ void main() {
           expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').single.body, {'notes': 'about call one'});
           expect(app.requests('POST', '/proxy/agency/attempts/att-2/notes'), isEmpty);
           expect(app.view!.notes.text, '');
+          app.dispose();
+        });
+      });
+    });
+
+    test('leaving sends the notes the autosave was still holding, rather than dropping them', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inWrapup('att-1');
+        app.routes['POST /proxy/agency/attempts/att-1/notes'] =
+            (r) => json(200, {'attempt_id': 'att-1', 'notes': (r.body! as Map)['notes'], 'updated_at': '2026-11-01T09:00:30.000Z'});
+        app.routes['POST /proxy/agency/sessions/sess-1/leave'] = (_) => json(200, stateBody('offline'));
+        app.controller.updateNotes('Call back after 6');
+        async.elapse(const Duration(milliseconds: 500));
+        app.run(app.controller.leave());
+        async.flushMicrotasks();
+        expect(app.view, isNull);
+        expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').single.body, {'notes': 'Call back after 6'});
+        expect(app.store.entries, isEmpty);
+        expect(async.pendingTimers.where((t) => t.duration > Duration.zero), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('...and so does a rejoin after 4404, before the old session is dropped', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        app.routes['POST /proxy/agency/attempts/att-1/notes'] =
+            (r) => json(200, {'attempt_id': 'att-1', 'notes': (r.body! as Map)['notes'], 'updated_at': '2026-11-01T09:00:30.000Z'});
+        app.controller.updateNotes('Asked about EMI');
+        async.elapse(const Duration(milliseconds: 500));
+        app.socket.serverClose(4404);
+        app.run(app.controller.reconnect());
+        async.flushMicrotasks();
+        expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').single.body, {'notes': 'Asked about EMI'});
+        app.dispose();
+      });
+    });
+
+    group('signing out (the gate’s station teardown)', () {
+      Future<bool> teardown(App app) => app.container.read(stationTeardownProvider)();
+
+      test('leaves the session, then closes the socket, the on-duty service and the audio', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.readyFrame('available');
+          app.agentStateFrame('available');
+          app.routes['POST /proxy/agency/sessions/sess-1/leave'] = (_) => json(200, stateBody('offline'));
+          expect(app.run(teardown(app)), isTrue);
+          async.flushMicrotasks();
+          expect(app.requests('POST', '/proxy/agency/sessions/sess-1/leave'), hasLength(1));
+          expect(app.view, isNull);
+          expect(app.socket.closedWith, 1000);
+          expect(app.engine.calls, containsAllInOrder(['release', 'fgs.stop']));
+          expect(app.wakeLock.on, isFalse);
+          expect(app.container.read(stationSignalsProvider), const StationSignals());
+          app.dispose();
+        });
+      });
+
+      test('a leave that fails (the sign-in already refused, or offline) still closes everything', () {
+        fakeAsync((async) {
+          for (final reply in <Reply>[
+            (_) => json(401, {'error': 'Unauthorized'}),
+            (_) => throw const SocketException('offline'),
+          ]) {
+            final app = App(async)..start();
+            app.readyFrame('available');
+            app.routes['POST /proxy/agency/sessions/sess-1/leave'] = reply;
+            expect(app.run(teardown(app)), isTrue);
+            async.flushMicrotasks();
+            expect(app.view, isNull);
+            expect(app.socket.closedWith, 1000);
+            expect(app.engine.calls, contains('fgs.stop'));
+            app.dispose();
+          }
+        });
+      });
+
+      test('superseded: the other device holds the session, so only this phone lets go', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.socket.serverClose(4409);
+          expect(app.run(teardown(app)), isTrue);
+          async.flushMicrotasks();
+          expect(app.requests('POST', '/proxy/agency/sessions/sess-1/leave'), isEmpty);
+          expect(app.view, isNull);
+          expect(app.engine.calls, contains('fgs.stop'));
+          app.dispose();
+        });
+      });
+
+      test('a call that went live before the leave: refused, nothing closed, the gate waits', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.readyFrame('available');
+          app.routes['POST /proxy/agency/sessions/sess-1/leave'] =
+              (_) => json(409, {'code': 'agent_on_live_call', 'message': 'Finish the call first.'});
+          expect(app.run(teardown(app)), isFalse);
+          expect(app.view, isNotNull);
+          expect(app.view!.link, StationLink.open);
+          expect(app.view!.busy, StationBusy.none);
+          expect(app.engine.calls, isNot(contains('fgs.stop')));
+          app.dispose();
+        });
+      });
+
+      test('no station: nothing to leave', () {
+        fakeAsync((async) {
+          final app = App(async);
+          expect(app.run(teardown(app)), isTrue);
+          expect(app.sent, isEmpty);
           app.dispose();
         });
       });

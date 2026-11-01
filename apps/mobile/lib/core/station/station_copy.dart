@@ -107,6 +107,9 @@ const breakAlreadyStartedCopy = 'Your break already started.';
 const cancelBreakFailedCopy = "Couldn't cancel. Try again.";
 const presenceFailedCopy = 'That didn’t go through. Try again in a moment.';
 
+/// Any action that failed in a way nothing more specific covers.
+const actionFailedCopy = 'That didn’t go through. Try again in a moment.';
+
 // ─── Join ───────────────────────────────────────────────────────────────────
 
 bool conflictIsMidCall(AgentState state) =>

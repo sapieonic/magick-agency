@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -13,10 +14,13 @@ class _Tokens implements IdTokenSource {
   int calls = 0;
   int forced = 0;
   String? token = 't1';
+  Object? throws;
 
   @override
   Future<String?> idToken({bool forceRefresh = false}) async {
     calls++;
+    final e = throws;
+    if (e != null) throw e;
     if (forceRefresh) {
       forced++;
       token = 't2';
@@ -125,6 +129,20 @@ void main() {
       return _json(200, {});
     });
     await expectLater(api.get('/auth/me'), throwsA(isA<ApiUnauthorized>()));
+    expect(requests, 0);
+  });
+
+  test('Firebase failing to mint a token is an ApiNetworkError, sent nowhere', () async {
+    var requests = 0;
+    final api = client((req) async {
+      requests++;
+      return _json(200, {});
+    });
+    tokens.throws = FirebaseAuthException(code: 'network-request-failed');
+    await expectLater(api.post('/proxy/agency/attempts/a1/disposition', body: {}), throwsA(isA<ApiNetworkError>()));
+    // Whatever the token source throws, never past the client.
+    tokens.throws = StateError('token refresh stalled');
+    await expectLater(api.get('/x'), throwsA(isA<ApiNetworkError>()));
     expect(requests, 0);
   });
 

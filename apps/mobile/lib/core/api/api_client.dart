@@ -100,7 +100,18 @@ class ApiClient {
         if (bytesBody != null) 'content-type': 'application/octet-stream',
       };
       if (authenticated) {
-        final token = await _tokens.idToken(forceRefresh: forceRefresh);
+        final String? token;
+        try {
+          token = await _tokens.idToken(forceRefresh: forceRefresh);
+        } on ApiError {
+          rethrow;
+        } catch (e) {
+          // Firebase failing to mint (`network-request-failed`, a stalled
+          // refresh) is a request that never left: every caller handles an
+          // ApiNetworkError, none handles a FirebaseAuthException.
+          _log.warn('$method $path: no ID token', {'error': e.runtimeType.toString(), 'request_id': requestId});
+          throw ApiNetworkError(e);
+        }
         if (token == null) throw const ApiUnauthorized();
         headers['authorization'] = 'Bearer $token';
       }

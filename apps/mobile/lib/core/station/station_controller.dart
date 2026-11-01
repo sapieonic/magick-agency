@@ -39,6 +39,7 @@ final List<Override> stationOverrides = [
   stationLauncherProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier)),
   // `select`: the shell rebuilds only when one of its three facts changes.
   stationSignalsProvider.overrideWith((ref) => ref.watch(stationControllerProvider.select(signalsOf))),
+  stationTeardownProvider.overrideWith((ref) => ref.watch(stationControllerProvider.notifier).leaveForSignOut),
 ];
 
 final class _Session {
@@ -90,6 +91,7 @@ class StationController extends Notifier<StationView?> implements StationActions
   bool _awayInFlight = false;
   bool _awayPauseRequested = false;
   String? _awayQueuedFor;
+  bool _awayQueueFailed = false;
   AwayNotice _notice = AwayNotice.none;
   DateTime? _noticeDeadline;
   bool? _wakeLockOn;
@@ -333,7 +335,8 @@ class StationController extends Notifier<StationView?> implements StationActions
     } catch (_) {}
   }
 
-  /// Local teardown: socket, audio, listeners, notifications, wake lock. No HTTP.
+  /// Local teardown: socket, audio, listeners, notifications, wake lock. The
+  /// only HTTP is the notes the autosave was still holding (bounded).
   Future<void> _closeSession({bool disposing = false}) async {
     final s = _s;
     if (s == null) return;
@@ -341,12 +344,55 @@ class StationController extends Notifier<StationView?> implements StationActions
     s.socket.dispose();
     s.stopListening();
     await s.notes.persistNow();
-    s.notes.dispose();
+    // The last seconds of typing are sent, not dropped with the debounce.
+    final notesSent = s.notes.flushNow(timeout: notesFlushTimeout);
     _resetSessionState();
     if (!disposing && ref.mounted) state = null;
     _setWakeLock(false);
     _setNotice(AwayNotice.none, null);
-    await s.audio.close();
+    await Future.wait([s.audio.close(), notesSent]);
+    s.notes.dispose();
+  }
+
+  /// How long closing the station waits for the last notes to be sent.
+  static const notesFlushTimeout = Duration(seconds: 2);
+
+  /// How long signing out waits for the server to take the agent off duty.
+  static const signOutLeaveTimeout = Duration(seconds: 4);
+
+  /// Signing out: off duty whatever happens, so no customer is ever bridged
+  /// to a phone showing the sign-in screen. Leaves the session (skipped when
+  /// the server already ended it or another device holds it), then closes the
+  /// socket, the on-duty service and the audio. A failed leave is logged, not
+  /// a reason to stay: closing the socket is what the server sees next.
+  ///
+  /// Returns false, and changes nothing, only when the server refuses because
+  /// a call went live in the meantime: the sign-out waits for it to end.
+  Future<bool> leaveForSignOut() async {
+    final s = _s;
+    if (s == null) return true;
+    if (!_terminal) {
+      _inFlight.add(StationBusy.leaving);
+      _emit();
+      try {
+        await _api.leave(s.id, timeout: signOutLeaveTimeout);
+      } on ApiError catch (e) {
+        final code = e is ApiHttpError ? e.code : null;
+        if (code == AgencyErrorCode.agentOnLiveCall.wire || code == 'manual_call_live') {
+          _log.warn('sign-out held: a call went live before the station was left');
+          if (identical(_s, s)) {
+            _inFlight.remove(StationBusy.leaving);
+            _emit();
+          }
+          return false;
+        }
+        if (!_alreadyLeft(e)) _log.warn('leaving for sign-out failed; closing anyway', {'error': e.runtimeType.toString()});
+      } catch (e) {
+        _log.warn('leaving for sign-out failed; closing anyway', {'error': e.runtimeType.toString()});
+      }
+    }
+    if (identical(_s, s)) await _closeSession();
+    return true;
   }
 
   void _resetSessionState() {
@@ -369,6 +415,7 @@ class StationController extends Notifier<StationView?> implements StationActions
     _awayInFlight = false;
     _awayPauseRequested = false;
     _awayQueuedFor = null;
+    _awayQueueFailed = false;
     _mapper = StationViewMapper();
   }
 
@@ -616,6 +663,7 @@ class StationController extends Notifier<StationView?> implements StationActions
     if (s == null) return;
     final queuedFor = _awayQueuedFor;
     _awayQueuedFor = null;
+    _awayQueueFailed = false;
     _awayKey = null;
     if (queuedFor != null &&
         _pendingBreakCode == ReservedBreakCode.deviceAway.wire &&
@@ -628,6 +676,9 @@ class StationController extends Notifier<StationView?> implements StationActions
         _afterChange();
       }, onError: (Object e) => _log.warn('cancelling the away pause failed', {'error': e.runtimeType.toString()})));
     }
+    // Android starts the on-duty service only from the foreground: one that
+    // failed (the join finished after the agent switched apps) starts now.
+    s.audio.resumed();
     final c = _station.connection;
     if (c == StationConnection.reconnecting || c == StationConnection.disconnected) s.socket.reconnect();
     _afterChange();
@@ -658,7 +709,7 @@ class StationController extends Notifier<StationView?> implements StationActions
     if (action == AwayAction.none) return;
     // One queued pause per away period: the call it was queued behind may end
     // (no attempt on screen) before the state moves on.
-    if (action == AwayAction.queuePause && _awayQueuedFor != null) return;
+    if (action == AwayAction.queuePause && _awayQueuedFor != null && !_awayQueueFailed) return;
     final key = action == AwayAction.pauseNow
         ? 'now:${st.wire}:${_station.agentStateSince?.millisecondsSinceEpoch}'
         : 'queue:${_station.currentAttemptId}';
@@ -669,6 +720,7 @@ class StationController extends Notifier<StationView?> implements StationActions
       _awayPauseRequested = true;
     } else {
       _awayQueuedFor = _station.currentAttemptId ?? '';
+      _awayQueueFailed = false;
     }
     _log.info('left the app: pausing', {'state': st.wire, 'queued': action == AwayAction.queuePause});
     unawaited(_api
@@ -686,6 +738,10 @@ class StationController extends Notifier<StationView?> implements StationActions
       if (!identical(_s, s)) return;
       // The server's mobile grace still pauses the agent: app pings have stopped.
       _awayKey = null;
+      // A failed queued pause is asked for again on the next change. Its
+      // marker stays: a request that timed out may still have landed, and
+      // coming back must cancel it.
+      if (action == AwayAction.queuePause) _awayQueueFailed = true;
       _log.warn('device_away pause failed', {'error': e.runtimeType.toString()});
     }));
   }
@@ -723,7 +779,11 @@ class StationController extends Notifier<StationView?> implements StationActions
     try {
       await body(s);
     } catch (e, st) {
+      // Nothing failed silently: an error the action did not foresee still
+      // tells the agent it did not go through (an outcome left unsaved must
+      // never look saved).
       _log.error('station action failed', {'action': kind.name}, e, st);
+      if (identical(_s, s)) _actionError = e is ApiError ? e.userMessage : actionFailedCopy;
     } finally {
       if (identical(_s, s)) {
         _inFlight.remove(kind);
@@ -840,7 +900,8 @@ class StationController extends Notifier<StationView?> implements StationActions
     await _run(StationBusy.savingDisposition, (s) async {
       try {
         final r = await _api.disposition(attemptId, request);
-        s.notes.savedWithDisposition(attemptId);
+        // The text the outcome was built from: anything typed since is newer.
+        s.notes.savedWithDisposition(attemptId, text);
         final current = _station.currentAttemptId;
         if (r.attemptId != attemptId || (current != null && current != attemptId)) {
           // Saved, but for a call no longer on screen: nothing to show about it.

@@ -28,3 +28,13 @@ class StationSignals {
 
 /// Overridden by the station layer with a provider derived from its state.
 final stationSignalsProvider = Provider<StationSignals>((ref) => const StationSignals());
+
+/// Takes the agent off duty before a sign-out: leaves the station session and
+/// closes its socket, on-duty service and audio. Completes true when nothing
+/// is left on duty (or there was no station), false when the server refused
+/// because a call went live first (the sign-out then waits for it to end).
+///
+/// The app gate calls this and knows nothing else about the station; the
+/// station layer overrides it (`stationOverrides`). The default has no
+/// station to leave.
+final stationTeardownProvider = Provider<Future<bool> Function()>((ref) => () async => true);
