@@ -1,56 +1,73 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repo. This file holds only what applies everywhere. Each app and
+package has its own `CLAUDE.md` with its rules, commands and gotchas; Claude Code loads it when
+you work in that directory, so do not copy area detail up here.
 
-Magick Agency: human-agent outbound power dialing as one self-contained application. Start with
-`docs/README.md` (status, doc map, reading order). Status: `docs/status.md`. How it is built:
-`docs/architecture.md`. Every module and its tests: `docs/modules.md`. Decisions (cited by ID in
-comments): `docs/decisions.md`. Where files go, module-area files and seams: `docs/seams.md`.
-Running and deploying: `docs/operations.md`. Product intent and the delivery phases:
-`docs/intent-and-plan.md`. Docs and comments describe this repo only; never cite another
-system, repo or external design doc.
+Magick Agency: an outbound power dialer for human agents, as one self-contained application.
+Start with `docs/README.md` (status, doc map, reading order). Docs and comments describe this repo
+only; never cite another system, repo or external design doc.
+
+| Doc | Read it when |
+|---|---|
+| `docs/status.md` | you need where things stand, test counts, open decisions |
+| `docs/architecture.md` | you need how the pieces fit |
+| `docs/modules.md` | you are looking for a module and the tests that cover it |
+| `docs/decisions.md` | a comment cites an ID (B16, Q6, SP3, ...) |
+| `docs/seams.md` | you move a file, add config, a route plugin, a bootstrap or touch a seam |
+| `docs/softphone.md`, `docs/mobile.md` | you work on the soft phone or the agent app |
+| `docs/operations.md`, `DEPLOYMENT.md` | you run, release or deploy it |
+
+## Layout
+
+```
+apps/server/         one Fastify process, single replica: platform, agency, voice, analysis
+apps/console/        Vite + React: agent station, soft phone, supervisor, team, invites, settings
+apps/super-admin/    Vite + React: tenants, users, numbers, limits, credentials, flags, usage
+apps/mobile/         Flutter agent app (Android + iOS); not a pnpm package
+packages/contracts/  wire contract shared by server, UIs and (through fixtures) the mobile app
+packages/domain/     pure dialer rules: leaf modules, no imports beyond contracts and other leaves
+packages/db/         pg pool, shared repositories and models, the migrations
+packages/observability/  logger, OTel tracing, metric declarations per module area
+packages/web-ui/     components, hooks and helpers shared by both web UIs (B23)
+grafana/             alert rules + dashboard (Terraform, own state; grafana/README.md)
+aws/                 S3 bucket, IAM user, optional VM per environment (Terraform; aws/README.md)
+tooling/             test-env resolver, release-please guard, contract-literal extractor
+```
 
 ## Rules that are not negotiable
 
 - **Test counts are evidence.** A run without printed counts is not a run. Never
-  `--reporter=basic` (Vitest 4: runs nothing, exits 0). Run tests from inside the package
+  `--reporter=basic` (Vitest 4: runs nothing, exits 0). Run a package's tests from inside its
   directory (dotenv resolves from cwd).
 - **Real Postgres for repository and SQL tests.** A mocked pool hides SQL drift.
 - **Ports:** Postgres 5436, Redis 6383 (db 0 dev, db 1 test), server 3021, console 5175,
   super-admin 5176. Never 5432/5433/5434/6379/6380/6381 (other local stacks use them).
 - **Never two integration runs on one database.** Integration global setup drops and re-migrates
-  it. Each worktree gets its own test database (see below).
-- **Contracts, schema and composition files change deliberately.** `packages/contracts`,
-  `packages/db/migrations`, `apps/server/src/seams/**`, `apps/server/src/{app.ts,app-context.ts,index.ts}`,
-  `apps/server/src/config/{index,load,schema,env}.ts`, `config/blocks/base.ts`, root config, CI and
-  the release-please config are shared by every module area: change them with their consumers and tests in the same commit.
-  Never edit or renumber an applied migration; add a new one.
-- **Module-area files:** each area (platform, agency, voice, analysis) adds config only in
-  `apps/server/src/config/blocks/<area>.ts`, routes only in `apps/server/src/api/<area>.plugin.ts`,
-  background work only in `apps/server/src/bootstrap/<area>.ts`, metrics only in
-  `packages/observability/src/metrics/<area>.ts`. Config blocks must declare disjoint top-level keys
-  (enforced at load and by a test). See `docs/seams.md`.
+  it. Each git worktree sets an untracked `.test-env.local.json` at the repo root
+  (`{ "dbName": "magick_agency_test_<x>", "redisDb": 2 }`), or worktrees truncate each other's
+  rows. Guards refuse any other port, a DB not named `magick_agency_test*`, or Redis db 0
+  (`tooling/test-env.ts`).
+- **Shared files change deliberately**, with their consumers and tests in the same commit:
+  `packages/contracts`, `packages/db/migrations`, `apps/server/src/seams/**`,
+  `apps/server/src/{app.ts,app-context.ts,index.ts}`,
+  `apps/server/src/config/{index,load,schema,env}.ts`, `apps/server/src/config/blocks/base.ts`,
+  root config, CI (`.github/workflows/`) and the release-please config. Never edit or renumber an
+  applied migration; add a new one.
 - **Mutation-check guard tests.** When a test is claimed to guard something, break the code, watch
   it go red, restore. Commit before mutating, so restoring with `git checkout` cannot lose work.
-- **Guard tests to keep green:** route tables enumerated from `onRoute`, agent-reach tests,
-  config-blocks-disjoint, the bridge seam contract, the VoiceLink carrier fixture, the branding
-  guards in all three apps, the console dev-proxy prefixes test, the error-code unions.
-- **Releases are release-please's** (`docs/operations.md` "Releases and versioning", B24). PR titles
-  are Conventional Commits (`feat(console): …`, `fix(server)!: …`); they become the squash commit that
-  picks each component's next version. Never hand-edit a `package.json` `version`, a `CHANGELOG.md`
-  or `.release-please-manifest.json`. A new workspace package gets a component in
-  `release-please-config.json` and a manifest entry in the same commit (`pnpm test:release`).
+- **Releases are release-please's** (B24, `docs/operations.md` "Releases and versioning"). PR
+  titles are Conventional Commits (`feat(console): …`, `fix(server)!: …`); they become the squash
+  commit that picks each component's next version. Never hand-edit a `package.json` `version`, the
+  mobile `pubspec.yaml` `version:`, a `CHANGELOG.md` or `.release-please-manifest.json`. A new
+  workspace package gets a component in `release-please-config.json` and a manifest entry in the
+  same commit (`pnpm test:release`).
 - **Scoped git:** `git add <paths>` only; no `git add -A`, no `git stash`. Nothing is pushed
   without Manas.
-- Zod `.refine` runs on a dirty result: guard `BigInt` / `JSON.parse` inside it.
-- Enumerate routes from Fastify's `onRoute` hook (`buildApp({ onRoute })`), never by grep.
-- A parameter used in two SQL contexts must be typed at each use (`42P08` otherwise). An optional
-  create-input field plus an explicit INSERT column list typechecks and silently drops the value. A
-  non-UUID string reaching a `uuid` cast is `22P02`: validate ids at the edge.
 
 ## Commands
 
-pnpm 10 workspace, Node 22.
+pnpm 10 workspace, Node 22 (`.nvmrc`). Full first-run setup is in `README.md`.
 
 ```bash
 pnpm install
@@ -63,78 +80,20 @@ pnpm --filter @magick-agency/super-admin dev   # :5176
 
 pnpm lint                # tsc --noEmit over src AND test, every package
 pnpm test                # unit, all packages
-pnpm test:integration    # real Postgres/Redis (needs infra:up); runs packages serially
+pnpm test:integration    # real Postgres/Redis (needs infra:up); packages run serially
 pnpm build
-pnpm test:grafana        # alert rules + dashboard vs metric declarations (grafana/scripts)
-pnpm test:release        # release-please config vs workspace packages and versions
+pnpm test:grafana        # alert rules + dashboard vs metric declarations
+pnpm test:release        # release-please config vs workspace packages, the mobile app and versions
 
 docker build -f docker/Dockerfile -t magick-agency-server .     # production server image
-docker build -f docker/web.Dockerfile -t magick-agency-web .     # nginx + both UIs
+docker build -f docker/web.Dockerfile -t magick-agency-web .     # nginx + both web UIs
 ```
 
-Run a package's tests from inside its directory (dotenv resolves from cwd):
+The mobile app builds with Flutter, not pnpm: see `apps/mobile/CLAUDE.md`.
 
-```bash
-cd apps/server && pnpm vitest run test/unit/agency/pacing-engine.test.ts
-cd apps/server && pnpm vitest run -c vitest.config.integration.ts test/integration/agency/<file>.test.ts
-cd apps/server && pnpm vitest run -t "<test name>"
-```
+CI: `.github/workflows/ci.yml` (lint, unit, grafana, release guard, build; integration as three
+parallel jobs: db, server, server wall-clock), `mobile.yml` (path-filtered on `apps/mobile`,
+`packages/contracts` and the literal extractor), `pr-title.yml`, `release-please.yml`.
 
-- Integration suites (server and `packages/db`) run file-serially against one database; the
-  db global setup resets the schema and runs the migrations. Chaos suites live under
-  `apps/server/test/integration/agency/chaos/` and run with integration.
-- Test DB/Redis default to `magick_agency_test` / Redis db 1. Parallel git worktrees must each
-  set an untracked `.test-env.local.json` at the repo root (`{ "dbName": "magick_agency_test_<x>",
-  "redisDb": 2 }`), or they truncate each other's rows. Guards refuse any other port, a DB not
-  named `magick_agency_test*`, or Redis db 0. See `tooling/test-env.ts`.
-- `apps/server/test/unit/audio/decode.test.ts` needs `mpg123` and `sndfile-programs` installed.
-- Console tests are split into two Vitest projects: `*.timezone.test.ts(x)` vs the rest, with
-  TZ=UTC and an en-US locale pinned in `vite.config.ts`. A file must match exactly one project.
-- First super-admin: `SUPER_ADMIN_PASSWORD=… pnpm tsx scripts/create-super-admin.ts --email … --name …`
-  from `apps/server` (no seeded credentials).
-
-## Architecture
-
-```
-apps/server/         one Fastify process, single replica
-apps/console/        Vite + React: agent station, supervisor, team, invites, settings
-apps/super-admin/    Vite + React: tenants, users, numbers, limits, settings, flags, usage
-packages/contracts/  wire contract shared by server and UIs
-packages/domain/     pure dialer rules: leaf modules with no imports beyond contracts
-packages/db/         pg pool, shared repositories/models, the baseline migration
-packages/observability/  logger, OTel tracing (`@Traced`), metric declarations per module area
-grafana/             agency's alert rules + dashboard (Terraform root module, own state; routing comes
-                     from the Grafana stack's shared notification policy — see grafana/README.md)
-aws/                the server's S3 bucket + IAM user per environment, and optionally its VM + Elastic IP
-                     (Terraform root module, state per workspace = environment; see aws/README.md)
-```
-
-**Four module areas in one server**, each with its own config block, Fastify plugin and bootstrap:
-
-- **platform**: identity, tenancy, super-admin auth, RBAC, invites, settings, flags, notifications, audit.
-- **agency** (`src/agency/`): the dialer runtime (pacing engine, dial dispatcher, agent state
-  machine, station WebSocket, wrap-up, reaper) and campaign management (campaigns, roster ingest,
-  dispositions, DNC, retries, staffing, stats).
-- **voice** (`src/core/`, `src/telephony/`): the voice engine: WebRTC bridge
-  (`src/core/webrtc-bridge-manager.ts`), VoiceLink webhooks and media WS, concurrency guard, audio.
-- **analysis**: post-call transcription and analysis worker, retention. Every AI request goes out
-  through the client factory in `src/ai/` (`openai_compatible`, `azure_openai`, `gemini`).
-
-`src/index.ts` starts them in a fixed order (platform → voice → agency → analysis, then listen) and,
-on shutdown, closes HTTP first and stops them in reverse. Voice starts before agency so the bridge's
-startup self-heal finishes before any pacing tick. `src/app.ts` (`buildApp`) registers app-wide pieces
-once (rate limiter, error handler + 5xx mask, `@fastify/websocket`, health probes) before the four
-plugins. `buildApp({ ctx: null })` builds a routing-only app for tests.
-
-**Public API layer and internal handler instance.** The public route handlers (auth, tenancy, RBAC,
-validation, enrichment) call the dialer's handlers in-process through `callCore`
-(`src/api/core-dispatch.ts`) on a private Fastify instance that never listens
-(`src/api/core-handlers.ts`). Decision B16.
-
-**Seams** (`docs/seams.md`, `apps/server/src/seams/`): module areas talk through fixed interfaces
-registered at bootstrap, e.g. bridge → analysis hooks, super-admin → concurrency control, and the
-`WebRtcBridgeManager` member set the dialer runtime calls (pinned by a type-level test).
-
-**Data:** calls are rows in `agency_calls`. The whole schema is one migration,
-`packages/db/migrations/0001_baseline.sql` (node-pg-migrate), inventoried in `packages/db/BASELINE.md`.
-Redis holds leases and call tokens and must not evict (see `.env.example`).
+The repo's `.mcp.json` adds the Grafana Cloud MCP server (stack `sapieonic`) for live metrics,
+logs and alerts.
