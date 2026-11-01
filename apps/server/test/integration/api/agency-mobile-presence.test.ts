@@ -99,6 +99,11 @@ beforeEach(async () => {
   const supervisor = await user(tenant, account, 'account_admin');
   // `break_reasons` lists none: the built-ins (`lunch` among them) apply.
   const campaign = (await insertAgencyCampaign({ status: 'running', tenant_id: tenant, account_id: account })).id as string;
+  // Staffed, so the join passes the staffing check (`not_staffed`, `agency/sessions.ts`).
+  await getTestPool().query(
+    `INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)`,
+    [tenant, account, campaign, agent.id],
+  );
   w = { tenant, account, agent, supervisor, campaign };
 });
 
