@@ -160,6 +160,7 @@ abstract final class StationCopy {
     MicProblem.noDevice => 'No microphone was found — the customer cannot hear you.',
     MicProblem.busy => 'Your microphone is in use by another app — the customer cannot hear you.',
     MicProblem.lost => 'Your microphone disconnected — the customer cannot hear you.',
+    MicProblem.serviceStopped => 'If you leave the app, your phone may cut the microphone mid-call.',
     MicProblem.none => '',
   };
   static String micRemedy(MicProblem p) => switch (p) {
@@ -167,6 +168,7 @@ abstract final class StationCopy {
     MicProblem.noDevice => 'Reconnect your headset, or pick the phone in Audio.',
     MicProblem.busy => 'Close the other app using it, then come back here.',
     MicProblem.lost => 'Reconnect your headset, or pick the phone in Audio.',
+    MicProblem.serviceStopped => 'Keep Magick Agency on screen. It tries again each time you come back to it.',
     MicProblem.none => '',
   };
   static const openSettings = 'Open Settings';

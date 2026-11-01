@@ -130,9 +130,8 @@ class AudioOrchestrator {
           final code = e is audio.AgentAudioException ? e.code : audio.AgentAudioErrorCode.unknown;
           final problem = _micProblemFor(code);
           final was = _serviceProblem;
-          // No dedicated wording yet: a service that is not running loses the
-          // microphone in the background, which "disconnected" describes.
-          _serviceProblem = problem == MicProblem.none ? MicProblem.lost : problem;
+          // A missing permission is named as such; anything else is the service itself.
+          _serviceProblem = problem == MicProblem.permissionDenied ? problem : MicProblem.serviceStopped;
           if (_view.micProblem == MicProblem.none || _view.micProblem == was) {
             _setView(_copy(micProblem: _serviceProblem));
           }

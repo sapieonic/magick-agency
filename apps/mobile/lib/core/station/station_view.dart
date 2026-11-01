@@ -297,7 +297,10 @@ class AudioRouteOption {
   int get hashCode => Object.hash(id, kind, name);
 }
 
-enum MicProblem { none, permissionDenied, noDevice, busy, lost }
+/// [serviceStopped]: Android would not start the on-duty foreground service (the app
+/// was in the background at join, or a permission is missing). The microphone works
+/// while the app is on screen, but the phone may cut it the moment the agent leaves.
+enum MicProblem { none, permissionDenied, noDevice, busy, lost, serviceStopped }
 
 /// Why the phone took the audio away mid-call.
 enum AudioInterruption { none, phoneCall, otherApp }

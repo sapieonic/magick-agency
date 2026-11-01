@@ -4,11 +4,20 @@ import 'package:magick_agency_agent/features/station/logic/disposition_form.dart
 import 'package:magick_agency_agent/features/station/logic/format.dart';
 import 'package:magick_agency_agent/features/station/logic/wrapup_math.dart';
 import 'package:magick_agency_agent/features/station/parts/contact_details.dart';
+import 'package:magick_agency_agent/features/station/station_copy.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
 
 import 'station_harness.dart';
 
 void main() {
+  test('every microphone problem has a headline and a remedy; none has neither', () {
+    for (final p in MicProblem.values) {
+      final words = [StationCopy.micHeadline(p), StationCopy.micRemedy(p)];
+      expect(words.every((w) => w.isNotEmpty), p != MicProblem.none, reason: '$p');
+      expect(words.every((w) => w.isEmpty), p == MicProblem.none, reason: '$p');
+    }
+  });
+
   group('format', () {
     test('formatClock pads, rolls into hours and never goes negative', () {
       expect(formatClock(const Duration(seconds: 102)), '01:42');

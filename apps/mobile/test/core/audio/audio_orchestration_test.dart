@@ -213,10 +213,10 @@ void main() {
         r.engine.fail['fgs.start'] = const audio.AgentAudioException(audio.AgentAudioErrorCode.notInForeground);
         r.orchestrator.open(_note);
         async.flushMicrotasks();
-        expect(r.orchestrator.view.micProblem, MicProblem.lost);
+        expect(r.orchestrator.view.micProblem, MicProblem.serviceStopped);
         // A call that arms fine does not hide it: the service is still down.
         r.sync(_reserved);
-        expect(r.orchestrator.view.micProblem, MicProblem.lost);
+        expect(r.orchestrator.view.micProblem, MicProblem.serviceStopped);
         r.engine.fail['fgs.start'] = const audio.AgentAudioException(audio.AgentAudioErrorCode.permissionDenied);
         r.orchestrator.resumed();
         async.flushMicrotasks();
