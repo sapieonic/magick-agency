@@ -597,6 +597,7 @@
     "error": "Bad Request",
     "message": "That outcome cannot be saved as submitted.",
     "code": "disposition_invalid",
+    "reason": "unknown_code",
     "allowed_codes": ["interested", "callback", "documents", "do_not_call"]
   },
   "refusal_softphone_disabled": {

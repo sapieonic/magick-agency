@@ -195,7 +195,7 @@ const SOFTPHONE = {
   ),
   refusal_outcome_pending: fits<Core.AgencySoftphoneCallPendingRefusal>()(softphone.refusal_outcome_pending),
   refusal_fields_invalid: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_fields_invalid),
-  refusal_disposition_invalid: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_disposition_invalid),
+  refusal_disposition_invalid: fits<Core.AgencySoftphoneDispositionInvalidRefusal>()(softphone.refusal_disposition_invalid),
   refusal_softphone_disabled: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_softphone_disabled),
 };
 

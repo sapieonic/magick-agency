@@ -756,6 +756,16 @@ export interface AgencySoftphoneOutsideHoursRefusal extends AgencySoftphoneError
   next_open_at: string | null;
 }
 
+/**
+ * 400 `disposition_invalid` from the outcome route: `reason` names the rule that refused
+ * (the code is not in the call's catalog, or its note / callback is missing or invalid);
+ * `allowed_codes` comes with `unknown_code`.
+ */
+export interface AgencySoftphoneDispositionInvalidRefusal extends AgencySoftphoneErrorResponse {
+  code: 'disposition_invalid';
+  reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
+}
+
 /** 409 `contact_in_flight`: a campaign attempt is live on the matched contact. No override. */
 export interface AgencySoftphoneContactInFlightRefusal extends AgencySoftphoneErrorResponse {
   code: 'contact_in_flight';
