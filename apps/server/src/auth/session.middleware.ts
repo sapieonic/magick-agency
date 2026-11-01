@@ -80,6 +80,11 @@ export async function sessionMiddleware(request: FastifyRequest, reply: FastifyR
 
     request.user = user;
     authAttemptsTotal.inc({ method: 'firebase', status: 'success' });
+    // The per-user rate-limit bucket (decision Q9, amended 2026-11-01), charged HERE because
+    // this is the one place every authenticated route passes once the caller is known: the
+    // key is this verified id, never a header. Throws the 429. Absent on an app built
+    // without `registerUserRateLimit` (route-plugin unit tests).
+    await request.server.chargeUserRateLimit?.(request as FastifyRequest & { user: UserRecord }, reply);
     return;
   }
 

@@ -8,7 +8,7 @@ import { platformPlugin } from './api/platform.plugin.js';
 import { agencyPlugin } from './api/agency.plugin.js';
 import { voicePlugin } from './api/voice.plugin.js';
 import { analysisPlugin } from './api/analysis.plugin.js';
-import { registerRateLimit } from './api/middleware/rate-limit.middleware.js';
+import { registerRateLimit, registerUserRateLimit } from './api/middleware/rate-limit.middleware.js';
 import { agencyErrorHandler } from './api/middleware/agency-error-handler.js';
 import { errorMaskHook } from './api/middleware/error-mask.middleware.js';
 import { clientLogContextHook } from './api/middleware/client-log-context.js';
@@ -90,11 +90,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // The buckets key on `request.ip`, which honours exactly `TRUST_PROXY_HOPS` proxies
   // (`trustProxy` above; decisions Q7/Q9): a spoofed leftmost X-Forwarded-For entry
   // cannot move a client into a fresh bucket, and clients behind the proxy do not share one.
+  // A request carrying a bearer gets the larger `ip_auth` ceiling, and the per-USER bucket
+  // (decorated here, charged by `sessionMiddleware` once it has verified the caller) is the
+  // one that binds authenticated traffic: many agents share one IP behind a carrier-grade
+  // NAT (decision Q9, amended 2026-11-01).
   await registerRateLimit(app, opts.ctx?.redis ?? null, {
     max: opts.ctx?.config.rateLimit.max,
+    ipAuthMax: opts.ctx?.config.rateLimit.ipAuthMax,
     webhookMax: opts.ctx?.config.rateLimit.webhookMax,
     carrierMediaMax: opts.ctx?.config.rateLimit.carrierMediaMax,
     internalMax: opts.ctx?.config.rateLimit.internalMax,
+    timeWindow: opts.ctx?.config.rateLimit.timeWindow,
+  });
+  registerUserRateLimit(app, {
+    max: opts.ctx?.config.userRateLimit.max,
     timeWindow: opts.ctx?.config.rateLimit.timeWindow,
   });
 

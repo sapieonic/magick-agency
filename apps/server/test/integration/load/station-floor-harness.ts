@@ -166,7 +166,11 @@ export async function createFloorWorld(opts: FloorWorldOptions): Promise<FloorWo
   const joins = tenants.flatMap((tenant, t) => Array.from({ length: opts.agentsPerTenant }, (_, i) => ({ tenant, label: `t${t}-agent-${i}` })));
   const joined = await Promise.all(joins.map(async ({ tenant, label }) => {
     const agentUserId = randomUUID();
-    const res = await post('/sessions', tenant, { campaign_id: tenant.campaignId, agent_user_id: agentUserId });
+    // `supervise: true`: these tenants and agents exist only in the dialer's tables (no
+    // platform tenant, user or staffing row can name them), so the join is sent as the
+    // public layer sends one for a role exempt from the staffing check (`not_staffed`).
+    // The check itself is `agency-join-staffing.test.ts`'s.
+    const res = await post('/sessions', tenant, { campaign_id: tenant.campaignId, agent_user_id: agentUserId, supervise: true });
     if (res.statusCode !== 201) throw new Error(`join ${label}: ${res.statusCode} ${JSON.stringify(res.json())}`);
     const bootstrap = res.json();
     // The catalog the bootstrap advertises is the one the break route validates.

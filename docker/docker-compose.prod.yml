@@ -82,6 +82,12 @@ services:
         VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
         VITE_POSTHOG_ENVIRONMENT: ${VITE_POSTHOG_ENVIRONMENT:-production}
     image: magick-agency-web
+    # Universal Links / App Links for the mobile app (docker/mobile-app-links.sh, read at
+    # every start): unset or empty = that file is not served (404).
+    environment:
+      MOBILE_IOS_APP_IDS: ${MOBILE_IOS_APP_IDS:-}
+      MOBILE_ANDROID_PACKAGE: ${MOBILE_ANDROID_PACKAGE:-com.magickagency.agent}
+      MOBILE_ANDROID_CERT_SHA256: ${MOBILE_ANDROID_CERT_SHA256:-}
     ports:
       # Console + carrier webhooks/media, for the TLS terminator only (invariant 2).
       # A terminator on another machine: bind a private interface and firewall it.

@@ -66,7 +66,7 @@ beforeAll(async () => {
   mocks.verifyIdToken.mockImplementation(verifyTestToken);
   // The supervisors poll with no pause at all, far past the per-IP ceiling a real dashboard
   // stays under; the limiter is `rate-limit-bursts.test.ts`'s subject, not this one's.
-  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000 } }) });
+  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 1_000_000, ipAuthMax: 1_000_000 }, userRateLimit: { max: 1_000_000 } }) });
 });
 
 afterAll(async () => {

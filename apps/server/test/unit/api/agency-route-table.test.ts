@@ -87,6 +87,10 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   // The console's old `/proxy/feature-flags` path is not served. The flag map stays at
   // `GET /feature-flags`, and the console calls it there; the old path is `not_served` in the fixture.
   ['GET /feature-flags', 'client flag map at its agency path (the console calls it here)'],
+  // Public, called by the mobile app before sign-in (`client-config.routes.ts`); the console
+  // does not call it.
+  ['GET /client-config', 'mobile app version gate (public, platform config)'],
+  ['POST /client-config/uplink-probe', 'mobile pre-flight upload-speed probe (authenticated body sink, 64 KiB, 6/min per user)'],
 ]);
 
 /** Fastify param names differ between files; the table compares shapes. */

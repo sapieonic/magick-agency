@@ -139,6 +139,12 @@ export async function seedFloor(opts: {
   supervisorsPerTenant?: number;
   campaignsPerTenant?: number;
   campaignStatus?: string;
+  /**
+   * Staff every agent on every campaign of their tenant (`agency_campaign_agents`), so a
+   * join passes the staffing check (`not_staffed`). Off by default: a suite that staffs
+   * through the API (the morning rush) must start from none.
+   */
+  staffAgents?: boolean;
 }): Promise<TenantFloor[]> {
   const floors: TenantFloor[] = [];
   const tenants: Record<string, unknown>[] = [];
@@ -146,6 +152,7 @@ export async function seedFloor(opts: {
   const users: Record<string, unknown>[] = [];
   const memberships: Record<string, unknown>[] = [];
   const campaigns: Record<string, unknown>[] = [];
+  const staffing: Record<string, unknown>[] = [];
   const flags: Record<string, unknown>[] = [];
 
   for (let t = 0; t < opts.tenants; t++) {
@@ -181,6 +188,13 @@ export async function seedFloor(opts: {
         calling_days: [1, 2, 3, 4, 5, 6, 7], default_timezone: 'UTC',
       });
     }
+    if (opts.staffAgents) {
+      for (const campaign of floor.campaigns) {
+        for (const agent of floor.agents) {
+          staffing.push({ tenant_id: tenant, account_id: account, campaign_id: campaign, user_id: agent.id });
+        }
+      }
+    }
     floors.push(floor);
   }
 
@@ -189,6 +203,7 @@ export async function seedFloor(opts: {
   for (let i = 0; i < users.length; i += 500) await bulkInsert('users', users.slice(i, i + 500));
   for (let i = 0; i < memberships.length; i += 500) await bulkInsert('memberships', memberships.slice(i, i + 500));
   await bulkInsert('agency_campaigns', campaigns);
+  for (let i = 0; i < staffing.length; i += 500) await bulkInsert('agency_campaign_agents', staffing.slice(i, i + 500));
   for (const f of flags) {
     await getTestPool().query(
       `INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, value) VALUES ($1, $2, $3, $4::jsonb)`,

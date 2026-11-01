@@ -42,7 +42,7 @@ by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 | Block | Top-level keys |
 |---|---|
 | `base.ts` | `server`, `db`, `redis` |
-| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions` |
+| `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile` |
 | `agency.ts` | `agency` |
 | `voice.ts` | `concurrency`, `telephony`, `telephonyCredentials`, `rateLimit`, `s3`, `staticCallTts`, `audio`, `analytics` |
 | `analysis.ts` | `postCallAnalysis`, `dialerAnalysis`, `voicelinkRecording`, `recordingUrlSigningSecret`, `retention` |

@@ -73,10 +73,14 @@ export const telephonySchema = z.object({
   requireField('voicelink.webhookBaseUrl', data.voicelink.webhookBaseUrl);
 });
 
-// The sizing rationale (why webhookMax is 1000, why carrier media has its own bucket)
-// is in the rate-limit middleware header.
+// The sizing rationale (why webhookMax is 1000, why carrier media has its own bucket,
+// why bearer-carrying traffic gets `ipAuthMax`) is in the rate-limit middleware header.
+// The per-USER ceiling is not here: it keys on the verified user, which is the platform
+// block's (`userRateLimit`, `RATE_LIMIT_USER_MAX`).
 const rateLimitSchema = z.object({
   max: z.coerce.number().int().min(1).default(200),
+  /** `RATE_LIMIT_IP_AUTH_MAX`: the per-IP ceiling for requests carrying `Authorization: Bearer`. */
+  ipAuthMax: z.coerce.number().int().min(1).default(3000),
   webhookMax: z.coerce.number().int().min(1).default(1000),
   carrierMediaMax: z.coerce.number().int().min(1).default(600),
   internalMax: z.coerce.number().int().min(1).default(1000),
@@ -252,6 +256,7 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
     },
     rateLimit: {
       max: env['RATE_LIMIT_MAX'],
+      ipAuthMax: env['RATE_LIMIT_IP_AUTH_MAX'],
       webhookMax: env['RATE_LIMIT_WEBHOOK_MAX'],
       carrierMediaMax: env['RATE_LIMIT_CARRIER_MEDIA_MAX'],
       internalMax: env['RATE_LIMIT_INTERNAL_MAX'],

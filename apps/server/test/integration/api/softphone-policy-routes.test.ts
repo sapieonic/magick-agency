@@ -417,6 +417,7 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
        VALUES ($1, $2, true, true, 20)`, [tenant, dimmed]);
     const agent = await user(tenant, dimmed, 'agent');
     const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: dimmed });
+    await staff(campaign.id, agent.id, dimmed);
     const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
     expect(joined.statusCode, joined.body).toBe(201);
     const sessionId = joined.json().session_id as string;
@@ -670,6 +671,7 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
   it('the return refuses dial_failed when Redis cannot take the write, and changes nothing', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, status: 'paused' });
+    await staff(campaign.id, agent.id);
     const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
     const sessionId = joined.json().session_id as string;
     const station = await connect(joined.json().station_ws_url);
@@ -697,6 +699,7 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
   it('the switch is a CAS from the state it read: a reservation made meanwhile is kept and the switch queued', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account, status: 'paused' });
+    await staff(campaign.id, agent.id);
     const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
     const sessionId = joined.json().session_id as string;
     await connect(joined.json().station_ws_url);

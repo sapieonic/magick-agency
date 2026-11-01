@@ -51,13 +51,52 @@ The two UIs can't share an origin, because both own `/` and call the API on thei
   media WebSocket and recording playback. That makes `CONSOLE_BASE_URL` this block's public https
   origin, and `VOICELINK_WEBHOOK_BASE_URL` that origin plus `/api/v1/webhooks/voicelink` (a bare
   origin makes every status webhook 404). `/healthz` and `/readyz` are proxied for
-  the TLS terminator's health check.
+  the TLS terminator's health check, and `/client-config` is proxied with the API prefixes: `GET
+  /client-config` (public, the mobile app's version gate) and `POST /client-config/uplink-probe`
+  (the app's pre-flight upload-speed check: a Firebase bearer required, checked before the body is
+  read; `application/octet-stream` up to 65536 bytes, else 413 / 415; 6 per user per rate-limit
+  window, else 429; answers `{ "received_bytes": n }` and touches neither Postgres nor Redis beyond
+  its rate-limit counters. The app times a 32 KB upload and blocks "Go on duty" below 64 kbps).
   WebSocket upgrades pass through with a 1 h read timeout (station socket, media socket).
   Request bodies up to 513 MB are streamed, not buffered, for the 512 MiB roster CSV.
+  `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` are served by nginx
+  itself (see "Mobile app links").
 - **:8081, super-admin.** The SPA plus `/super-admin/`. The compose file publishes it on
   `127.0.0.1` only, so reach it over an SSH or Session Manager tunnel or a VPN
   (`SUPER_ADMIN_BIND` to change), or publish it through the host's TLS terminator on its own
   domain (`DEPLOYMENT.md` section 8.4; the bind stays loopback).
+
+### Mobile app links
+
+The agent invite link (`/agency/join/<token>`) opens the mobile app when it is installed:
+Universal Links on iOS, App Links on Android. Both platforms fetch a file from this origin:
+
+| File | Written when | From |
+|---|---|---|
+| `/.well-known/apple-app-site-association` | `MOBILE_IOS_APP_IDS` is set | `TEAMID.bundle.id`, comma-separated; `applinks` covers ONLY `/agency/join/*` |
+| `/.well-known/assetlinks.json` | `MOBILE_ANDROID_CERT_SHA256` is set | `MOBILE_ANDROID_PACKAGE` (default `com.magickagency.agent`) and the SHA-256 fingerprints, comma-separated |
+
+`docker/mobile-app-links.sh` writes them at every start of the web container (the nginx image runs
+`/docker-entrypoint.d/*.sh` before nginx), from the web container's environment (the compose file
+passes the three variables from `docker/.env`). nginx serves each as `application/json` from an exact
+`location`, with no redirect (both platforms refuse one) and no SPA fallback. A file whose variable
+is unset or empty, or holds a value that does not validate (a team ID that is not 10 characters, a
+fingerprint that is not 32 bytes of hex), is not written, and a stale one is removed, so the path
+answers 404 instead of a bad file; the script logs why to the container log and never stops nginx
+from starting. Android cannot narrow a domain to a path in `assetlinks.json`: the app's manifest
+intent filter names `/agency/join/` itself.
+
+The Android fingerprint is the **Play App Signing** certificate's (Play Console, App integrity), not
+the upload key's: Play re-signs the app. Add the upload or a debug key's fingerprint beside it only
+for builds installed outside Play. Check after deploying:
+
+```bash
+curl -si https://agency.example.com/.well-known/apple-app-site-association   # 200, application/json
+curl -si https://agency.example.com/.well-known/assetlinks.json
+```
+
+Changing a value needs a restart of `web`, not a rebuild. iOS caches the association through Apple's
+CDN, so a change reaches installed apps within a day or so.
 
 **Proxy hops.** nginx serves plain HTTP, so a TLS terminator in front of :8080 is mandatory: a
 load balancer, or a host nginx or Caddy. Browsers need a secure origin for the station, and
@@ -156,7 +195,11 @@ production.
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
 | `CONCURRENCY_RECONCILE_INTERVAL_MS` | `300000` | Self-heal reconcile cadence |
 | `STALE_CALL_SWEEP_MINUTES` | `30` | Stale bridged-call sweep |
-| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 200, 1000, 600, 1000, `1 minute` | Rate-limit buckets |
+| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 200, 1000, 600, 1000, `1 minute` | Rate-limit buckets (`architecture.md`, "Rate limiting and client IP") |
+| `RATE_LIMIT_IP_AUTH_MAX` | 3000 | Per-IP bucket for requests carrying a bearer: a call floor behind one NAT (Q9, amended 2026-11-01) |
+| `RATE_LIMIT_USER_MAX` | 300 | Per verified user, charged by the session middleware; the bucket that binds signed-in traffic |
+| `MOBILE_MIN_SUPPORTED_VERSION`, `MOBILE_LATEST_VERSION` | `0.1.0`, `0.1.0` | `GET /client-config`; `MAJOR.MINOR.PATCH`, and the minimum may not be newer than the latest (boot refuses) |
+| `MOBILE_IOS_STORE_URL`, `MOBILE_ANDROID_STORE_URL` | unset | Store links on `GET /client-config`; https only |
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |

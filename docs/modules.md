@@ -224,7 +224,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
 | `apps/server/test/unit/agency/runtime-collapses.test.ts` | 7 |
-| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 16 |
+| `apps/server/test/unit/agency/session-join-conflict-route.test.ts` | 26 |
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
@@ -327,6 +327,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-offboarding-staffing.test.ts` | ~17 |
 | `apps/server/test/integration/api/agency-performance-access.test.ts` | ~16 |
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
+| `apps/server/test/integration/api/agency-join-staffing.test.ts` | ~4 |
 | `apps/server/test/integration/api/agency-runtime-routes.test.ts` | ~19 |
 | `apps/server/test/integration/api/agency-mobile-presence.test.ts` | 11 |
 | `apps/server/test/integration/api/agency-session-conflict-forward.test.ts` | ~13 |
@@ -355,7 +356,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 ### `apps/server/src/api/middleware/`
 
-App-wide middleware: rate limiter and its buckets, error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, and the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request).
+App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, and the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request).
 
 Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
@@ -366,8 +367,9 @@ Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`,
 | `apps/server/test/unit/api/middleware/error-mask.middleware.test.ts` | 17 |
 | `apps/server/test/unit/api/middleware/headers.test.ts` | 2 |
 | `apps/server/test/unit/api/middleware/rate-limit.app-scope.test.ts` | 8 |
-| `apps/server/test/unit/api/middleware/rate-limit.middleware.test.ts` | 38 |
+| `apps/server/test/unit/api/middleware/rate-limit.middleware.test.ts` | 43 |
 | `apps/server/test/unit/api/middleware/rate-limit.scope.test.ts` | 3 |
+| `apps/server/test/unit/api/middleware/rate-limit.user-bucket.test.ts` | 4 |
 | `apps/server/test/unit/api/middleware/tenant-context.middleware.test.ts` | 24 |
 | `apps/server/test/unit/api/client-log-context.test.ts` | 3 |
 
@@ -387,7 +389,7 @@ Route families: a large plugin keeps its exported function, hooks and module not
 
 Shared helpers (`helpers/`): `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe, and `stringField`), `csv-attachment.ts` (the CSV `Content-Disposition` pair), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `settled.ts` (`settledValue`: independent reads started together, answered in order).
 
-Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/device-away.ts`, `agency/helpers.ts`, `agency/sessions.ts`, `agency/softphone-answer.ts`, `agency/softphone.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/core-campaign.ts`, `helpers/csv-attachment.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/settled.ts`, `helpers/softphone-list-query.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-softphone.routes.ts`, `proxy-agency-softphone/calls.ts`, `proxy-agency-softphone/reads.ts`, `proxy-agency-softphone/sessions.ts`, `proxy-agency-softphone/settings.ts`, `proxy-agency-softphone/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
+Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/device-away.ts`, `agency/helpers.ts`, `agency/sessions.ts`, `agency/softphone-answer.ts`, `agency/softphone.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `client-config.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/core-campaign.ts`, `helpers/csv-attachment.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/settled.ts`, `helpers/softphone-list-query.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-softphone.routes.ts`, `proxy-agency-softphone/calls.ts`, `proxy-agency-softphone/reads.ts`, `proxy-agency-softphone/sessions.ts`, `proxy-agency-softphone/settings.ts`, `proxy-agency-softphone/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
 
 | Test file | Cases |
 |---|---|
@@ -402,6 +404,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
 | `apps/server/test/unit/api/routes/phone-numbers-byoc-merge.test.ts` | 6 |
+| `apps/server/test/unit/api/routes/client-config.routes.test.ts` | 28 |
 | `apps/server/test/unit/api/routes/proxy-feature-flags.routes.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
 | `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 38 |
@@ -493,7 +496,7 @@ Files: `firebase-identity.ts`, `firebase.ts`, `session-email.ts`, `session-paylo
 | `apps/server/test/unit/auth/firebase-identity.test.ts` | 20 |
 | `apps/server/test/unit/auth/invite-claim-session-composition.test.ts` | 11 |
 | `apps/server/test/unit/auth/session-email.test.ts` | 6 |
-| `apps/server/test/unit/auth/session.middleware.test.ts` | 8 |
+| `apps/server/test/unit/auth/session.middleware.test.ts` | 11 |
 
 ### `apps/server/src/bootstrap/`
 
@@ -853,6 +856,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/server/test/integration/flows/tts-cache-sweep-scale.test.ts` | ~6 |
 | `apps/server/test/integration/scripts/create-super-admin.test.ts` | ~5 |
 | `apps/server/test/unit/branding/no-parent-brand.test.ts` | 5 |
+| `apps/server/test/unit/deploy/mobile-app-links.test.ts` | 17 |
 | `apps/server/test/unit/deploy/production-packaging.test.ts` | 15 |
 | `apps/server/test/unit/scenarios/feature-flag-rollout-scenarios.test.ts` | 3 |
 | `apps/server/test/unit/scenarios/stale-call-sweep-lifecycle-scenarios.test.ts` | 4 |
@@ -916,6 +920,7 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/campaign-mutation-races.test.ts` | ~6 | Racing lifecycle and PATCH requests end legal and audited; 2 `it.fails` (audit `from`, combined calling window) |
 | `apps/server/test/integration/load/roster-ingest-concurrency.test.ts` | ~3 | Concurrent ingests: totals exact, chunk idempotency keys honoured |
 | `apps/server/test/integration/load/rate-limit-bursts.test.ts` | ~5 | Exact ceilings, 429 body and headers, per-client buckets, probes and webhooks unaffected |
+| `apps/server/test/integration/load/rate-limit-user-bucket.test.ts` | ~3 | A floor behind one NAT address: a per-user budget each, an exact per-user ceiling under a burst, the bearer IP bucket apart from the unauthenticated one |
 | `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~3 | A tiny and a starved pg pool, Redis cut and restored: probes correct, no 401 sign-outs, recovery |
 | `apps/server/test/integration/load/hostile-input-fuzz.test.ts` | ~5 | Seeded fuzz over every route from `onRoute`: 4xx per contract, never a 500 or a stack; 1 `it.fails` (headerless multipart part hangs) |
 
@@ -1032,7 +1037,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/account-settings.repository.test.ts` | ~23 |
 | `packages/db/test/integration/repositories/account.repository.test.ts` | ~16 |
 | `packages/db/test/integration/repositories/agency-campaign-agent.concurrency.test.ts` | ~11 |
-| `packages/db/test/integration/repositories/agency-campaign-agent.repository.test.ts` | ~38 |
+| `packages/db/test/integration/repositories/agency-campaign-agent.repository.test.ts` | ~43 |
 | `packages/db/test/integration/repositories/announcement-advanced.repository.test.ts` | ~14 |
 | `packages/db/test/integration/repositories/announcement.repository.test.ts` | ~14 |
 | `packages/db/test/integration/repositories/audio-file-advanced.repository.test.ts` | ~13 |

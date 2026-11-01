@@ -6,7 +6,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * The app-wide limiter (`rate-limit.middleware.ts`, registered once in `app.ts`) keys the
  * `ip` bucket on `request.ip`, which honours exactly `TRUST_PROXY_HOPS` (1) proxies, and
  * counts in Redis. This suite bursts it far past its ceiling — the shared bucket lowered to
- * {@link MAX} so a burst stays small, the per-route ceilings (`POST /super-admin/login`
+ * {@link MAX} so a burst stays small (and the bearer bucket, `ipa:<ip>`, too: these bursts
+ * carry a bearer; the per-user bucket is lifted out of the way and has its own suite,
+ * `rate-limit-user-bucket.test.ts`), the per-route ceilings (`POST /super-admin/login`
  * 5/min, `GET /invites/:token` 20/min) at their production values — through `inject` and
  * through real sockets (`listen({ port: 0 })` + `fetch`).
  *
@@ -56,7 +58,7 @@ const app = () => loaded.app;
 beforeAll(async () => {
   console.log(`[rate-limit-bursts] seed=${rng.seed} max=${MAX} burst=${BURST}`);
   mocks.verifyIdToken.mockImplementation(verifyTestToken);
-  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: MAX, timeWindow: '1 minute' } }) });
+  loaded = await startLoadApp({ configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: MAX, ipAuthMax: MAX, timeWindow: '1 minute' }, userRateLimit: { max: 1_000_000 } }) });
   await truncateAll();
   floors = await seedFloor({ tenants: 2, agentsPerTenant: scaled(15) });
 });

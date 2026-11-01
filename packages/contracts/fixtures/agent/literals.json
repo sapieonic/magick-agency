@@ -189,7 +189,8 @@
       "no_station",
       "attempt_not_live",
       "campaign_not_running",
-      "feature_disabled"
+      "feature_disabled",
+      "not_staffed"
     ]
   },
   "roles": {

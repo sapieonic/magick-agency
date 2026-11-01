@@ -26,7 +26,7 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
 | `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components and `AppVersion` (the sidebar version footer) with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), the telephony-provider aliases, `mapWithConcurrency`, `useAsyncResource`, `useDialogFocus` (the one focus trap). React, the router and `lucide-react` are peer dependencies; its own no-parent-brand scan (B17). Decision B23 |
 | `tooling/` | `test-env.ts` (per-worktree test database), the Vitest decorator transform, the release-please config guard (`release-please.test.mjs`, B24) |
-| `docker/` | Dev Postgres and Redis (`docker-compose.dev.yml`); production: the server image (`Dockerfile`, `entrypoint.sh`), nginx with both UIs (`web.Dockerfile`, `nginx.conf`) and `docker-compose.prod.yml` (see [`operations.md`](operations.md)) |
+| `docker/` | Dev Postgres and Redis (`docker-compose.dev.yml`); production: the server image (`Dockerfile`, `entrypoint.sh`), nginx with both UIs (`web.Dockerfile`, `nginx.conf`, and `mobile-app-links.sh`, which writes the mobile app-link files at start) and `docker-compose.prod.yml` (see [`operations.md`](operations.md)) |
 
 Inside `apps/server/src`, the module areas are: `api/` (plugins, routes, middleware), `auth/`,
 `rbac/`, `settings/`, `invites/`, `notifications/`, `audit/`, `cache/`, `feature-flags/` (the
@@ -46,7 +46,7 @@ cycle (B12). Boundaries are described in [`seams.md`](seams.md).
  │ app-wide: rate limiter · error handler + 5xx mask · @fastify/websocket · probes │
  │                                                                                │
  │ platformPlugin   /auth /tenants /accounts /users /invites /notifications       │
- │                  /feature-flags /super-admin/*                                 │
+ │                  /feature-flags /client-config /super-admin/*                  │
  │ agencyPlugin     /proxy/agency/* /dnc /phone-numbers /proxy/call-analysis-...  │
  │      │  callCore() ──inject──► internal handler instance (never listens)       │
  │      │                          /api/v1/agency, /agency-campaigns, /agency-agents│
@@ -85,7 +85,7 @@ their key env var is set, and the subsystem behind them is then registered or sk
 `pool`, the ioredis client. `buildApp({ ctx: null })` builds a routing-only app for tests.
 
 **`buildApp`** (`app.ts`) registers, in order: the rate limiter (app scope, so every route is in a
-bucket); the error handler with the `22P02 → 400` backstop and the 5xx error mask (no driver text
+bucket) and the per-user bucket the session middleware charges; the error handler with the `22P02 → 400` backstop and the 5xx error mask (no driver text
 or SQL reaches a client); `/healthz` and `/readyz` (Postgres `SELECT 1` and Redis `PING`); the
 feature-flag service; one `@fastify/websocket`; then the four plugins: platform, agency, voice,
 analysis. `trustProxy` is a hop-count function from `TRUST_PROXY_HOPS` (Q9). Request ids come from
@@ -164,7 +164,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   hierarchy `agent 5 < viewer 10 < operator 20 < account_admin 30 < tenant_admin 40 <
   tenant_owner 50`, and a permission matrix of minimum roles. `agent` sits below `viewer` on
   purpose: it reaches only the agent surfaces, `/auth/session`, `/accounts/mine`, notification
-  preferences and the flag map. Enforced by `rbac/rbac.middleware.ts`.
+  preferences, the flag map and the uplink probe (`POST /client-config/uplink-probe`, any verified
+  user). Enforced by `rbac/rbac.middleware.ts`.
 - **Settings.** `settings/agency-account-settings.ts` resolves the per-account row to effective
   values (`allow_recording` and `analyze_calls` default `false`, `max_concurrent_calls` 5,
   `webrtc_max_duration_seconds` 1800).
@@ -197,9 +198,19 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   another break is already queued, which it never replaces; on any other break, `offline`, no
   lease, or a soft-phone session it changes nothing and answers the current state (200, and no
   audit row). The return is the ordinary `/available`; `break/cancel` withdraws a queued one.
+- **Joining** (`POST /proxy/agency/sessions`, internal `api/routes/agency/sessions.ts`). One live
+  session per agent per tenant (`uq_agency_agent_live_tenant`, `409 session_on_other_campaign`). A
+  NEW session needs an active staffing row on the campaign (`agency_campaign_agents`, the rows
+  `GET /proxy/agency/my-assignments` lists), else `403 not_staffed`, unless the caller's role holds
+  `agency.supervise` (the public layer reads it from the membership and sends `supervise`).
+  Re-bootstrapping the agent's own live session on that campaign is not refused: unassigning closes
+  the staffing row and touches no live session, so an agent unassigned mid-shift keeps that session
+  (a reload, an app resume) until they leave it. Staffing narrows where a session may start; it
+  grants nothing.
 - **Stations** (`station-registry.ts`, `station-socket.ts`, `station-token.ts`,
   `station-upgrade.ts`). The browser console or the agent mobile app opens a WebSocket at
-  `/proxy/agency/station/:sessionId` with a single-use token (2 min TTL, consumed in Lua) minted over
+  `/proxy/agency/station/:sessionId` (`station_ws_url`, a path relative to the API origin) with a
+  single-use token (2 min TTL, consumed in Lua) minted over
   authenticated HTTP. Only the session's own agent can mint its token (Q8). The upgrade query names
   the app and its media encoding, `client=web|mobile` and `media=pcm16|alaw8` (defaults `web`,
   `pcm16`); an unknown value is refused 1008 before the token is consumed
@@ -367,11 +378,33 @@ the same transaction as the attempt bookkeeping. Operators manage the list at `/
 
 ## Rate limiting and client IP
 
-`api/middleware/rate-limit.middleware.ts`, registered once at app scope: buckets for ordinary traffic
-(default 200/min), webhooks (1000), carrier media (600) and internal (1000); `/healthz` and `/readyz`
-exempt; per-route limits (super-admin login 5/min, public invite routes) honoured. There is no
-bucket keyed on a client-supplied header. Buckets key on `request.ip`, which trusts exactly
-`TRUST_PROXY_HOPS` proxies (Q9).
+`api/middleware/rate-limit.middleware.ts`, registered once at app scope, in `onRequest` (before any
+auth). Each request is charged to one bucket, and each bucket has its own key namespace so one
+counter never holds two ceilings:
+
+| Bucket | Key | Default / min | Who |
+|---|---|---|---|
+| `webhook` | `wh:<ip>` | 1000 (`RATE_LIMIT_WEBHOOK_MAX`) | `/api/v1/webhooks/*` |
+| `carrier_media` | `cm:<ip>` | 600 (`RATE_LIMIT_CARRIER_MEDIA_MAX`) | media sockets, TTS clips, both WebRTC legs |
+| `internal` | `int:<ip>` | 1000 (`RATE_LIMIT_INTERNAL_MAX`) | `/internal/*` (none served) |
+| `ip_auth` | `ipa:<ip>` | 3000 (`RATE_LIMIT_IP_AUTH_MAX`) | any other request carrying `Authorization: Bearer` |
+| `ip` | `<ip>` | 200 (`RATE_LIMIT_MAX`) | everything else: sign-in, invites, `GET /client-config`, the station socket upgrade (a query token, not a bearer) |
+| `exempt` | none | unlimited | `/healthz`, `/readyz` (exact paths) |
+
+Then, inside every authenticated route, `sessionMiddleware` charges the **per-user** bucket once it
+has verified the caller: key `u:<user id>`, default 300/min (`RATE_LIMIT_USER_MAX`, platform config
+block), same window and store. That one binds authenticated traffic: agents behind one carrier-grade
+NAT (Jio, Airtel) share an IP but never a user bucket, and the IP bucket for bearer traffic is
+deliberately coarse. Only the PRESENCE of a bearer picks `ip_auth`; it is not verified there and its
+value is never a key, so a forged bearer buys the larger coarse bucket and is then refused 401 (Q9,
+amended 2026-11-01). A route may add its own tighter per-user cap in its own namespace
+(`createUserRateLimit`): `POST /client-config/uplink-probe` allows 6 per user per window (`up:<id>`),
+charged with its authentication in `preParsing`, so no body is read for a caller who fails either.
+Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
+Per-route limits (super-admin login 5/min, public invite routes 20/min) are honoured. A 429 from any
+bucket has the same body and `retry-after`, and counts `rate_limit_rejected_total{bucket_kind}`
+(`user` for the per-user bucket). No bucket is keyed on a client-supplied header. The IP buckets
+key on `request.ip`, which trusts exactly `TRUST_PROXY_HOPS` proxies (Q9).
 
 The mobile app names itself in `X-Client` (`magick-agency-mobile/<semver>+<build> (<ios|android>
 <osver>; <model>)`; anything else is `web`, `utils/client-header.ts`). An app-wide `onRequest` hook

@@ -13,6 +13,7 @@ import { z } from 'zod';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { requirePermission } from '../../rbac/rbac.middleware.js';
+import { hasPermission } from '@magick-agency/contracts/rbac';
 import { callCore, forwardCore } from '../core-dispatch.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { rewriteStationWsUrl } from './proxy-agency-station.routes.js';
@@ -235,6 +236,10 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
    * a registered route; the console connects to the proxy path. The query string
    * (which carries the station token) is preserved as-is — this route neither
    * mints nor validates it.
+   *
+   * A caller not actively staffed on the campaign, whose role cannot supervise, is
+   * refused `403 not_staffed` by the internal handler (`sessions.ts`, which owns the
+   * rule and its rehydrate exception); this route supplies `supervise`.
    */
   app.post('/sessions', {
     preHandler: requirePermission('agency.station.connect'),
@@ -254,6 +259,12 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     if (!actor.ok) {
       return reply.code(400).send({ error: 'Bad Request', code: actor.code, message: actor.message });
     }
+    // The staffing check's exemption (`not_staffed`): whether the caller's ROLE holds
+    // `agency.supervise`, from the authenticated membership, never from the body (the
+    // schema strips any `supervise` a client sends, and this is spread after it). The
+    // same reading `resolveAgencyActor` makes for `on_behalf`, which is not threaded here.
+    const role = request.membership?.role;
+    const supervise = role ? hasPermission(role, 'agency.supervise') : false;
 
     const result = await callCore({
       method: 'POST',
@@ -264,6 +275,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
         ...parsed.data,
         agent_user_id: actor.actor.agent_user_id,
         client_kind: parseClientHeader(request.headers['x-client']).kind,
+        supervise,
       },
       tenantId: request.tenantId!,
       accountId: request.accountId,

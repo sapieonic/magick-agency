@@ -211,6 +211,17 @@ export function useStationJoin({
           trackAgencyStationJoinFailed({ reason: 'api_error', conflict_state: null });
           return;
         }
+        /**
+         * 403 `not_staffed`: nobody has assigned them to this campaign. No remedy on this
+         * screen (a supervisor staffs them), so it is `StationFatal` with the API's own
+         * sentence, which names who to ask, and its escape to a landing screen that will
+         * not send them straight back.
+         */
+        if (errorCode(err) === 'not_staffed') {
+          setJoinError(notStaffedSentence(err));
+          trackAgencyStationJoinFailed({ reason: 'not_staffed', conflict_state: null });
+          return;
+        }
         const conflict = parseJoinConflict(err);
         if (conflict) {
           rememberLiveSessionFromConflict(tenantId, conflict);
@@ -564,6 +575,15 @@ export const SOFTPHONE_CLOSE_NO_SESSION_COPY =
 /** The soft phone was opened again (another window) between the close and the join. */
 export const SOFTPHONE_REOPENED_COPY =
   'The soft phone was opened again, maybe in another window. Close it there, or try again.';
+
+/** `not_staffed`'s copy when the refusal carries no usable sentence of its own. */
+export const NOT_STAFFED_COPY = 'You’re not assigned to this campaign. Ask your supervisor to add you.';
+
+/** The API's sentence on a `not_staffed` refusal, else {@link NOT_STAFFED_COPY}. */
+function notStaffedSentence(err: unknown): string {
+  const message = errorBody(err)?.message;
+  return typeof message === 'string' && message.trim().length > 0 ? message : NOT_STAFFED_COPY;
+}
 
 /** The soft-phone session a `session_on_softphone` refusal named, and its account. */
 interface SoftphoneSessionRef {

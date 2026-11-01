@@ -10,7 +10,7 @@ import { AGENCY_ACTION_ERROR_CODES, type AgencyActionErrorCode } from '../../typ
  * The console's `types/agency.ts` re-exports the contract's list rather than
  * declaring a copy, and that is what keeps the two from drifting. Comparing the
  * contents would pass on a hand-made copy that happens to agree today, so the
- * test asserts it is the same array. The ordered 18-code snapshot lives in the
+ * test asserts it is the same array. The ordered 19-code snapshot lives in the
  * contracts package (`test/errors.test.ts`); the two-sided union-to-list guard in
  * its `src/errors.ts` fails `tsc` if a code is added to the union and not the list.
  */

@@ -481,6 +481,64 @@ describe('registerRateLimit', () => {
     expect(budgetFor({ headers: {} })).toBe('ip');
   });
 
+  // ── Bearer-carrying traffic: the `ip_auth` bucket (Q9, amended 2026-11-01) ───
+  // A call floor behind one carrier-grade NAT shares an IP; requests carrying a bearer
+  // get a larger per-IP ceiling in their OWN namespace, and the per-user bucket (charged
+  // by the session middleware, `rate-limit.user-bucket.test.ts`) binds them instead.
+
+  it('gives a bearer-carrying request the ip_auth ceiling under its own ipa: key', async () => {
+    const app = { register: mockRegister } as any;
+    await registerRateLimit(app, null, { max: 200, ipAuthMax: 3000 });
+
+    const { max, keyGenerator } = mockRegister.mock.calls[0]![1] as any;
+    const bearer = { url: '/proxy/agency/sessions', headers: { authorization: 'Bearer anything' }, ip: '100.64.1.1' };
+    expect(budgetFor(bearer)).toBe('ip_auth');
+    expect(max(bearer)).toBe(3000);
+    expect(keyGenerator(bearer)).toBe('ipa:100.64.1.1');
+    // The same address without one stays in the plain bucket at the plain ceiling.
+    const plain = { url: '/proxy/agency/sessions', headers: {}, ip: '100.64.1.1' };
+    expect(max(plain)).toBe(200);
+    expect(keyGenerator(plain)).toBe('100.64.1.1');
+  });
+
+  it('defaults the ip_auth ceiling to 3000 and propagates an override', async () => {
+    const app = { register: mockRegister } as any;
+    await registerRateLimit(app);
+    await registerRateLimit(app, null, { ipAuthMax: 42 });
+    const bearer = { url: '/auth/me', headers: { authorization: 'Bearer t' }, ip: 'i' };
+    expect((mockRegister.mock.calls[0]![1] as any).max(bearer)).toBe(3000);
+    expect((mockRegister.mock.calls[1]![1] as any).max(bearer)).toBe(42);
+  });
+
+  it('a bearer never moves webhook, carrier-media, internal or exempt traffic', () => {
+    const headers = { authorization: 'Bearer t' };
+    expect(budgetFor({ url: '/healthz', headers })).toBe('exempt');
+    expect(budgetFor({ url: '/api/v1/webhooks/voicelink/status/x', headers })).toBe('webhook');
+    expect(budgetFor({ url: '/api/v1/webrtc-call/c1/browser-stream', headers })).toBe('carrier_media');
+    expect(budgetFor({ url: '/internal/x', headers })).toBe('internal');
+  });
+
+  it('only a well-formed bearer counts: another scheme, a bare "Bearer", or a duplicated header is ip', () => {
+    for (const authorization of ['Basic dXNlcjpwYXNz', 'Bearer', 'bearer t', ['Bearer a', 'Bearer b']]) {
+      expect(budgetFor({ url: '/auth/me', headers: { authorization } }), String(authorization)).toBe('ip');
+    }
+  });
+
+  it('keeps max and keyGenerator in lockstep for the ip_auth bucket too', async () => {
+    const app = { register: mockRegister } as any;
+    await registerRateLimit(app, null, { max: 200, ipAuthMax: 3000, webhookMax: 300 });
+    const { max, keyGenerator } = mockRegister.mock.calls[0]![1] as any;
+    for (const req of [
+      { url: '/proxy/agency/sessions', headers: { authorization: 'Bearer t' }, ip: 'i' },
+      { url: '/proxy/agency/sessions', headers: {}, ip: 'i' },
+      { url: '/api/v1/webhooks/x', headers: { authorization: 'Bearer t' }, ip: 'i' },
+    ]) {
+      const key = String(keyGenerator(req));
+      // The invariant: the ip_auth ceiling iff the ipa: counter.
+      expect(max(req) === 3000).toBe(key.startsWith('ipa:'));
+    }
+  });
+
   // ── 429 telemetry (Part 1) ─────────────────────────────────────────────────
   // The incident was invisible: no onExceeded hook, no counter, no alert. 17,539
   // rejections were found by log archaeology on error-handler warn lines.

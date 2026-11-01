@@ -264,10 +264,9 @@ describe('offboarding closes agency staffing (integration)', () => {
      * inspecting `agency_campaign_agents` and reasoning about it.
      *
      * `agency.station.connect` specifically, because that is the permission the
-     * feature's own docs name as the one that actually gates a join: *"nothing
-     * consults this table to decide whether a join is allowed —
-     * `agency.station.connect` does, and the membership removal is what takes that
-     * away."*
+     * feature's own docs name as the one that gates a join at all, and the
+     * membership removal is what takes it away. (Staffing only NARROWS a join that
+     * permission already allows: `not_staffed`, `agency-join-staffing.test.ts`.)
      */
     app.get('/probe/station', {
       preHandler: [sessionMiddleware, tenantContextMiddleware, requirePermission('agency.station.connect')],
@@ -427,7 +426,8 @@ describe('offboarding closes agency staffing (integration)', () => {
        * `requirePermission('agency.station.connect')` against the real
        * `memberships` table, with the stale row sitting right there in
        * `agency_campaign_agents`. Reading the table and reasoning about it would
-       * assert nothing, because the claim is precisely that NOTHING reads it.
+       * assert nothing, because the claim is that nothing GRANTS from it (the join
+       * reads it only to narrow, `not_staffed`, after this permission has passed).
        *
        * The 403 also has to be a 403 for the right reason, so the same probe is
        * asserted to succeed BEFORE the offboarding. Otherwise a probe that was

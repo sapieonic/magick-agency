@@ -44,8 +44,9 @@ function makeReply() {
   return reply;
 }
 
+/** `server` is the Fastify instance a real request carries; `{}` has no per-user limiter. */
 function makeRequest(overrides: Record<string, unknown> = {}): any {
-  return { headers: {}, ...overrides };
+  return { headers: {}, server: {}, ...overrides };
 }
 
 describe('sessionMiddleware', () => {
@@ -123,6 +124,46 @@ describe('sessionMiddleware', () => {
       );
 
       expect(reply.code).toHaveBeenCalledWith(401);
+    });
+  });
+
+  // ─── The per-user rate-limit bucket (Q9, amended 2026-11-01) ──
+  describe('per-user rate limit', () => {
+    it('charges the verified user once request.user is set, and only then', async () => {
+      mocks.verifyIdToken.mockResolvedValue({ uid: 'fb-uid-1' });
+      mocks.findByFirebaseUid.mockResolvedValue(activeUser);
+      const charge = vi.fn(async (request: { user?: unknown }) => {
+        // The key is the verified id, so the user must already be on the request.
+        expect(request.user).toEqual(activeUser);
+      });
+      const reply = makeReply();
+      const req = makeRequest({ headers: { authorization: 'Bearer valid-token' }, server: { chargeUserRateLimit: charge } });
+      await sessionMiddleware(req, reply);
+      expect(charge).toHaveBeenCalledTimes(1);
+      expect(charge).toHaveBeenCalledWith(req, reply);
+    });
+
+    it('propagates the 429 the bucket throws', async () => {
+      mocks.verifyIdToken.mockResolvedValue({ uid: 'fb-uid-1' });
+      mocks.findByFirebaseUid.mockResolvedValue(activeUser);
+      const tooMany = { statusCode: 429, error: 'Too Many Requests', retryAfter: 12 };
+      const req = makeRequest({
+        headers: { authorization: 'Bearer valid-token' },
+        server: { chargeUserRateLimit: vi.fn().mockRejectedValue(tooMany) },
+      });
+      await expect(sessionMiddleware(req, makeReply())).rejects.toBe(tooMany);
+    });
+
+    it('charges nobody a refused request: a bad token, an inactive user, no bearer', async () => {
+      const charge = vi.fn();
+      const server = { chargeUserRateLimit: charge };
+      mocks.verifyIdToken.mockRejectedValueOnce(new Error('expired'));
+      await sessionMiddleware(makeRequest({ headers: { authorization: 'Bearer bad' }, server }), makeReply());
+      mocks.verifyIdToken.mockResolvedValueOnce({ uid: 'fb-uid-1' });
+      mocks.cacheGet.mockResolvedValueOnce(inactiveUser);
+      await sessionMiddleware(makeRequest({ headers: { authorization: 'Bearer ok' }, server }), makeReply());
+      await sessionMiddleware(makeRequest({ server }), makeReply());
+      expect(charge).not.toHaveBeenCalled();
     });
   });
 

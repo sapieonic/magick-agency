@@ -126,18 +126,17 @@ locals {
       {
         uid  = "agy-rate-limit-ip-rejected"
         name = "Client traffic sustained over its rate limit"
-        # Warning, 1/s for 30m. Only `ip` — there is no `tenant` bucket — so
-        # this is the console, the
-        # agent stations, super-admin and any unauthenticated caller, keyed by
-        # client IP.
-        expr          = "sum by (service_name, bucket_kind, route_class) (rate(rate_limit_rejected_total{bucket_kind=\"ip\",${local.agency}}[15m]))"
+        # Warning, 1/s for 30m. The client buckets — there is no `tenant` bucket:
+        # `ip` (unauthenticated, by client IP), `ip_auth` (bearer-carrying, by client
+        # IP) and `user` (by verified user; decision Q9, amended 2026-11-01).
+        expr          = "sum by (service_name, bucket_kind, route_class) (rate(rate_limit_rejected_total{bucket_kind=~\"ip|ip_auth|user\",${local.agency}}[15m]))"
         op            = "gt"
         threshold     = 1
         for           = "30m"
         severity      = "warning"
         no_data_state = "OK"
         summary       = "A client has been rate-limited above 1/s for 30m"
-        description   = "rate_limit_rejected_total{bucket_kind=\"ip\"} has exceeded 1/s for 30m on {{ $labels.service_name }} (route_class={{ $labels.route_class }}). Some client IP is sustainably over RATE_LIMIT_MAX (default 200/min). In agency the `ip` bucket holds every browser — supervisors, agent stations, super-admin — so a whole call floor behind one office NAT shares one budget: if route_class is agency or api and the tenant runs a large floor, the limit may simply be too low. Otherwise look for a retry loop (a station reconnecting in a tight loop) or a scraper. The counter carries no tenant id; find the client IP in the request logs before raising the ceiling."
+        description   = "rate_limit_rejected_total{bucket_kind=\"{{ $labels.bucket_kind }}\"} has exceeded 1/s for 30m on {{ $labels.service_name }} (route_class={{ $labels.route_class }}). bucket_kind=user: one signed-in person is sustainably over RATE_LIMIT_USER_MAX (default 300/min), almost always a client retry loop (a console or app polling in a tight loop), not load; find the user in the request logs. bucket_kind=ip_auth: one client IP's bearer-carrying traffic is over RATE_LIMIT_IP_AUTH_MAX (default 3000/min): a very large floor behind one NAT, or forged bearers (each one a 401); raise the ceiling only for the first. bucket_kind=ip: one client IP's unauthenticated traffic (sign-in, invites, the station socket upgrade, /client-config) is over RATE_LIMIT_MAX (default 200/min): a reconnect storm or a scraper. The counter carries no tenant id; find the client in the request logs before raising a ceiling."
       },
     ]
 

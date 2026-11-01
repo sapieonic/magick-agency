@@ -125,6 +125,14 @@ export interface AgencyCreateSessionRequest {
    */
   agent_user_id: string;
   /**
+   * Whether the joining user's ROLE holds `agency.supervise`, derived by the public API
+   * layer from the authenticated membership (never from the browser, whose schema
+   * strips it). `true` skips the staffing check: a supervisor covering a shift joins a
+   * campaign nobody staffed them on. Absent means `false`, so an internal caller that
+   * forgets it gets the check, not a bypass (`not_staffed`).
+   */
+  supervise?: boolean;
+  /**
    * Optional resume hint. The dialer runtime rehydrates from `agency_agent_sessions` regardless
    * (a restart drops every socket, and sessions are rehydrated rather than
    * recreated), so this only lets the client assert which session it thinks it had.
@@ -167,7 +175,13 @@ export interface AgencySessionBootstrap {
   state: AgencyAgentState;
   campaign_status: AgencyCampaignStatus;
 
-  /** Absolute wss:// URL for the station socket, token already appended. */
+  /**
+   * The station socket's path, RELATIVE to the API origin, token already appended:
+   * `/proxy/agency/station/<session id>?token=<token>`. A client builds the `wss://` URL
+   * from the origin it called (the console uses its own page origin; the mobile app its
+   * configured API origin). Never absolute: the server does not know which public origin
+   * the client reached it through.
+   */
   station_ws_url: string;
   /**
    * ISO-8601 expiry of the token embedded in `station_ws_url`.

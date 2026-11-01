@@ -50,7 +50,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await truncateAll();
-  floor = (await seedFloor({ tenants: 1, agentsPerTenant: AGENTS, campaignsPerTenant: K }))[0]!;
+  floor = (await seedFloor({ tenants: 1, agentsPerTenant: AGENTS, campaignsPerTenant: K, staffAgents: true }))[0]!;
 });
 
 afterAll(async () => {

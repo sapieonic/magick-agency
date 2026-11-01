@@ -138,15 +138,28 @@ export type AgencyActionErrorCode =
   | 'attempt_not_live'
   | 'campaign_not_running'
   /** The agency dialer flag is off for this tenant/account. */
-  | 'feature_disabled';
+  | 'feature_disabled'
+  /**
+   * `POST /sessions` refused (403): the caller is not actively staffed on this campaign
+   * (`agency_campaign_agents`, the rows `/my-assignments` lists) and their ROLE does not
+   * hold `agency.supervise`. Staffing narrows where an agent may START a session; it
+   * grants nothing, and a supervisor covering a shift still joins any campaign.
+   *
+   * Only a NEW session is refused. Re-bootstrapping the agent's own live session on
+   * this campaign (a page reload, an app resume) is not: an agent unassigned mid-shift
+   * keeps that session until they leave it, because refusing the rehydrate would strand
+   * a live call on a station they can no longer open. Leaving ends it; the next join is
+   * refused.
+   */
+  | 'not_staffed';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **18 members, not 16** — any older note saying 16 predates
- * `session_on_other_campaign` and `agent_on_live_call`. `test/errors.test.ts`
- * snapshots the list.
+ * ⚠️ **19 members** — 16 before `session_on_other_campaign` and
+ * `agent_on_live_call`, 18 before `not_staffed`. `test/errors.test.ts` snapshots
+ * the list.
  *
  * Order is the declaration order of the union.
  */
@@ -169,6 +182,7 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'attempt_not_live',
   'campaign_not_running',
   'feature_disabled',
+  'not_staffed',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**

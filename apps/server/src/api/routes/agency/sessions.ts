@@ -26,6 +26,7 @@ import type {
   AgencyStationTokenResponse,
 } from '@magick-agency/contracts/agency';
 import { isCampaignSession } from '../../../db/models/agency.model.js';
+import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { accountNameInTenant, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 import { runDeviceAway } from './device-away.js';
@@ -35,6 +36,29 @@ const log = createChildLogger({ component: 'agency-routes' });
 /** The `softphone_audit` key for an answer that left the soft phone, else nothing. */
 function exitAudit(left: boolean, audit: SoftphoneSessionExitAudit): Record<string, SoftphoneSessionExitAudit> {
   return left ? { [SOFTPHONE_SESSION_AUDIT_KEY]: audit } : {};
+}
+
+/**
+ * May this non-supervising agent join `campaignId`? Yes when they are actively staffed on
+ * it (`isActiveOnCampaign`, the rows `/my-assignments` lists), or when their one live
+ * session in the tenant is already a campaign session on it: that join is a REHYDRATE
+ * (a reload, an app resume), not a new session.
+ *
+ * The rehydrate is allowed on purpose. Unassigning closes the staffing row and touches no
+ * live session (`proxy-agency-staffing/campaign-agents.ts`; an offboarding also revokes
+ * the membership, and RBAC then refuses before this runs). Refusing the rehydrate would
+ * not end that session: it would strand it, possibly mid-call, on a station the agent can
+ * no longer open, while their lease keeps them dialable. So an agent unassigned
+ * mid-shift keeps working until they leave, and the next join is refused.
+ *
+ * The live-session read runs only for an unstaffed caller, so a staffed join costs one
+ * indexed probe. The check and the join are two statements: a staffing change landing
+ * between them decides only whether this one join started, as it would a moment earlier.
+ */
+async function mayStartOrResume(tenantId: string, campaignId: string, agentUserId: string): Promise<boolean> {
+  if (await agencyCampaignAgentRepository.isActiveOnCampaign(tenantId, campaignId, agentUserId)) return true;
+  const live = await agencyAgentSessionRepository.findLiveForAgent(tenantId, agentUserId);
+  return live !== null && isCampaignSession(live) && live.campaign_id === campaignId;
 }
 
 /**
@@ -63,6 +87,18 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     const campaign = await agencyCampaignRepository.findById(body.campaign_id);
     if (!campaign || campaign.tenant_id !== tenantId || campaign.account_id !== accountId) {
       return reply.code(404).send({ error: 'Not Found', message: 'Campaign not found' });
+    }
+
+    // Staffing gates a NEW session (`not_staffed`), after the flag and the campaign so an
+    // unknown campaign is still the 404. `supervise` is the public API layer's reading of
+    // the caller's role; absent is `false`, so a caller that forgets it gets the check.
+    if (body.supervise !== true && !(await mayStartOrResume(tenantId, campaign.id, body.agent_user_id))) {
+      const refusal: AgencyActionErrorResponse = {
+        error: 'Forbidden',
+        code: 'not_staffed',
+        message: 'You\'re not assigned to this campaign. Ask your supervisor to add you.',
+      };
+      return reply.code(403).send(refusal);
     }
 
     const join = await agencyAgentSessionRepository.joinOrRehydrate({
