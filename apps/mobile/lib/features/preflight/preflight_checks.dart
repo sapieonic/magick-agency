@@ -85,6 +85,11 @@ abstract interface class PreflightChecks {
 
   /// A short loopback: play a tone, record it back.
   Future<SoundCheckSample> soundCheck();
+
+  /// "Go on duty": the station takes the voice engine from here. A sound check
+  /// still running (or one that outlived the screen's deadline) must then leave
+  /// the engine as the station sets it, never release it.
+  void handOverAudio();
   Future<AudioRouteSample> audioRoute();
   Future<NetworkSample> network();
   Future<BatterySample> battery();

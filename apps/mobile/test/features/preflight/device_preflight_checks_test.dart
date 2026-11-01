@@ -1,9 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show SocketException;
 
 import 'package:agent_audio/agent_audio.dart';
 import 'package:battery_plus/battery_plus.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:fake_async/fake_async.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -11,6 +14,7 @@ import 'package:magick_agency_agent/core/api/api_client.dart';
 import 'package:magick_agency_agent/core/api/client_identity.dart';
 import 'package:magick_agency_agent/core/env.dart';
 import 'package:magick_agency_agent/features/preflight/device_preflight_checks.dart';
+import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
 import 'package:mocktail/mocktail.dart';
 
 class _Audio extends Mock implements AgentAudio {}
@@ -39,6 +43,7 @@ const _env = Env(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late _Conn conn;
   final paths = <String>[];
 
@@ -98,7 +103,7 @@ void main() {
       }
       return ok({'mobile': <String, Object?>{}});
     }).network();
-    expect(paths, ['GET /client-config', 'POST /client-config/uplink-probe']);
+    expect(paths, ['GET /client-config', 'GET /client-config', 'POST /client-config/uplink-probe']);
     expect(probe.bodyBytes.length, DevicePreflightChecks.probeBytes);
     expect(probe.headers['content-type'], startsWith('application/octet-stream'));
     expect(n.online, isTrue);
@@ -106,6 +111,39 @@ void main() {
     expect(n.uploadKbps, isNotNull);
     expect(n.uploadKbps!, greaterThan(500));
     expect(n.uploadKbps!, lessThanOrEqualTo(DevicePreflightChecks.probeBytes * 8));
+  });
+
+  test('the round trip is timed on a warm connection, not the handshake\'s', () async {
+    var gets = 0;
+    final n = await checks((req) async {
+      if (req.url.path == '/client-config') {
+        // The first read on an idle connection also pays for DNS, TCP and TLS.
+        if (gets++ == 0) await Future<void>.delayed(const Duration(milliseconds: 400));
+        return ok({});
+      }
+      return ok({'received_bytes': req.bodyBytes.length});
+    }).network();
+    expect(gets, 2);
+    expect(n.latencyMs, lessThan(200));
+    expect(gradeNetwork(n).pill, 'Good');
+  });
+
+  test('an upload that runs out of time is below the probe\'s ceiling, and blocks', () {
+    fakeAsync((async) {
+      NetworkSample? n;
+      checks((req) async {
+        if (req.url.path == '/client-config/uplink-probe') {
+          await Future<void>.delayed(const Duration(seconds: 30)); // under 32 kbps: never finishes in 8 s
+        }
+        return ok({});
+      }).network().then((v) => n = v);
+      async.elapse(const Duration(seconds: 20));
+      expect(n, isNotNull);
+      expect(n!.online, isTrue);
+      // 32 KB not through in 8 s: under 32768 × 8 / 8000 ≈ 32.8 kbps.
+      expect(n!.uploadKbps, 32.0);
+      expect(gradeNetwork(n!).status, CheckStatus.fail);
+    });
   });
 
   test('a server without the probe (404) reports no upload figure', () async {
@@ -119,5 +157,83 @@ void main() {
   test('battery optimisation does not apply off Android', () async {
     final b = await checks((_) async => ok({})).batteryOptimisation();
     expect(b.applies, isFalse);
+  });
+
+  group('sound check and the station share one voice engine', () {
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const methods = MethodChannel(AgentAudioChannels.methods);
+    late List<String> calls;
+    late Completer<void> loopback;
+    late AgentAudio audio;
+
+    setUp(() {
+      calls = [];
+      loopback = Completer<void>();
+      messenger.setMockMethodCallHandler(methods, (call) async {
+        final args = call.arguments;
+        calls.add(call.method == 'stop' && args is Map && args['keepWarm'] == false ? 'release' : call.method);
+        if (call.method == 'loopbackTest') {
+          await loopback.future;
+          return {'levels': <double>[], 'playedBack': false};
+        }
+        return null;
+      });
+      // The real plugin class: its lifecycle calls run in order, as on a phone.
+      audio = AgentAudio();
+    });
+
+    tearDown(() async {
+      await audio.dispose();
+      messenger.setMockMethodCallHandler(methods, null);
+    });
+
+    DevicePreflightChecks soundChecks() => DevicePreflightChecks(
+          audio: audio,
+          api: ApiClient(http: MockClient((_) async => ok({})), env: _env, tokens: _Tokens(), identity: ClientIdentity.test, scope: RequestScope()),
+          connectivity: conn,
+          battery: _Battery(),
+          isAndroid: false,
+          microphoneGranted: () async => true,
+        );
+
+    test('alone, it warms the idle engine and leaves it idle again', () async {
+      final checks = soundChecks();
+      final sample = checks.soundCheck();
+      await pumpEventQueue();
+      loopback.complete();
+      expect((await sample).ran, isTrue);
+      expect(calls, ['prepare', 'loopbackTest', 'release']);
+      expect(audio.phase, AgentAudioPhase.idle);
+    });
+
+    test('the station takes the engine mid-check: the check never releases it, and the first call has audio', () async {
+      final checks = soundChecks();
+      final sample = checks.soundCheck();
+      await pumpEventQueue();
+      expect(calls, ['prepare', 'loopbackTest']);
+
+      // "Go on duty": the station prepares while the loopback is still listening.
+      checks.handOverAudio();
+      final stationPrepare = audio.prepare(format: AgentAudioFormat.alaw8);
+      loopback.complete();
+      await sample;
+      await stationPrepare;
+
+      expect(calls, isNot(contains('release')));
+      expect(audio.phase, AgentAudioPhase.prepared);
+      await audio.armMicrophone(); // the first call: would throw "not prepared" on a released engine
+      expect(audio.phase, AgentAudioPhase.armed);
+    });
+
+    test('on an engine the station already prepared, the check leaves it prepared', () async {
+      await audio.prepare(format: AgentAudioFormat.alaw8);
+      final checks = soundChecks();
+      final sample = checks.soundCheck();
+      await pumpEventQueue();
+      loopback.complete();
+      expect((await sample).ran, isTrue);
+      expect(calls, ['prepare', 'loopbackTest']);
+      expect(audio.phase, AgentAudioPhase.prepared);
+    });
   });
 }

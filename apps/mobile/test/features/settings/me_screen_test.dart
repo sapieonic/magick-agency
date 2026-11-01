@@ -9,6 +9,7 @@ import 'package:magick_agency_agent/core/auth/fake_auth_service.dart';
 import 'package:magick_agency_agent/core/session/local_preferences.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
+import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/telemetry/log.dart';
 import 'package:magick_agency_agent/features/settings/me_screen.dart';
 import 'package:magick_agency_agent/features/settings/notification_preferences.dart';
@@ -181,13 +182,35 @@ void main() {
     await scrollTo(tester, find.widgetWithText(OutlinedButton, 'Sign out'));
     final button = tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Sign out'));
     expect(button.onPressed, isNull);
-    expect(find.text('You’re still on duty — leave the station first, or a call could be sent to an empty screen.'), findsOneWidget);
+    expect(find.text('Your station is still open on this phone — leave the station first, then sign out.'), findsOneWidget);
   });
 
-  test('signOutBlockedReason: the call wording wins over the duty wording', () {
+  testWidgets('on a break: still blocked while the station is open here, and it says so', (tester) async {
+    final c = ProviderContainer.test(overrides: [
+      ...h.overrides,
+      stationViewProvider.overrideWithValue(const StationView(campaignId: 'c1', campaignName: 'Q4 Card Renewals', phase: AgentPhase.onBreak)),
+    ]);
+    await tester.runAsync(() => startGate(c));
+    c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+    await pumpScreen(tester, c, const MeScreen());
+    await scrollTo(tester, find.widgetWithText(OutlinedButton, 'Sign out'));
+    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Sign out')).onPressed, isNull);
+    expect(
+      find.text('You’re on a break, but your station is still open on this phone — leave the station first, then sign out.'),
+      findsOneWidget,
+    );
+  });
+
+  test('signOutBlockedReason: the console\'s Exit wording; the call wording wins', () {
     expect(signOutBlockedReason(const StationSignals()), isNull);
-    expect(signOutBlockedReason(const StationSignals(onDuty: true, callActive: true)),
-        'Finish this call first — this call is still on your screen.');
+    expect(signOutBlockedReason(const StationSignals(onDuty: true, callActive: true), phase: AgentPhase.onCall),
+        'Finish this call first — this call is still on your screen.'); // EXIT_BLOCKED_COPY
+    // EXIT_AVAILABLE_BLOCKED_COPY, without "or go on break": a break does not end the station here.
+    expect(signOutBlockedReason(const StationSignals(onDuty: true), phase: AgentPhase.available),
+        'You’re still in the dialing pool — leave the station first, or a call could be sent to an empty screen.');
+    final onBreak = signOutBlockedReason(const StationSignals(onDuty: true), phase: AgentPhase.onBreak)!;
+    expect(onBreak, contains('on a break'));
+    expect(onBreak, isNot(contains('dialing pool')));
   });
 
   test('categoryLabel: known names, else title-cased', () {

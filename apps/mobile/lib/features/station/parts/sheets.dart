@@ -12,7 +12,9 @@ import 'contact_details.dart';
 /// The station's dialogs and bottom sheets. Free functions over a [WidgetRef]
 /// so the phase views stay small and every flow is one call.
 
-/// A yes/no dialog. [danger] paints the confirm action as destructive.
+/// A yes/no dialog. [danger] paints the confirm action as destructive. With
+/// [closeWhenCallArrives] (a question asked while waiting) a call reaching the
+/// agent closes it, answered "no" (see [CloseWhenCallArrives]).
 Future<bool> confirmDialog(
   BuildContext context, {
   required String title,
@@ -20,24 +22,70 @@ Future<bool> confirmDialog(
   required String confirm,
   String cancel = StationCopy.cancel,
   bool danger = false,
+  bool closeWhenCallArrives = false,
 }) async {
   final t = context.tokens;
   final ok = await showDialog<bool>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: Text(title),
-      content: SingleChildScrollView(child: Text(message)),
-      actions: [
-        TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(cancel)),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          style: danger ? FilledButton.styleFrom(backgroundColor: t.danger, foregroundColor: t.onAccent) : null,
-          child: Text(confirm),
-        ),
-      ],
-    ),
+    builder: (context) {
+      final dialog = AlertDialog(
+        title: Text(title),
+        content: SingleChildScrollView(child: Text(message)),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text(cancel)),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: danger ? FilledButton.styleFrom(backgroundColor: t.danger, foregroundColor: t.onAccent) : null,
+            child: Text(confirm),
+          ),
+        ],
+      );
+      return closeWhenCallArrives ? CloseWhenCallArrives(child: dialog) : dialog;
+    },
   );
   return ok ?? false;
+}
+
+/// Closes the dialog or sheet it sits in once a call is on screen (ringing,
+/// on a call, wrap-up). Those routes sit on the root navigator, above the
+/// station, so without this "Leave this station?" or the break reasons would
+/// cover the ringing call. Closing answers nothing: the caller gets null.
+class CloseWhenCallArrives extends ConsumerStatefulWidget {
+  const CloseWhenCallArrives({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  ConsumerState<CloseWhenCallArrives> createState() => _CloseWhenCallArrivesState();
+}
+
+class _CloseWhenCallArrivesState extends ConsumerState<CloseWhenCallArrives> {
+  bool _closing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Immediately too: the call may have arrived while the route was opening.
+    ref.listenManual<bool>(stationViewProvider.select((v) => v?.callActive ?? false), (_, active) {
+      if (active) _close();
+    }, fireImmediately: true);
+  }
+
+  void _close() {
+    if (_closing) return;
+    _closing = true;
+    // Not inside the build or notification that told us.
+    Future.microtask(() {
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route == null || !route.isActive) return;
+      final navigator = Navigator.of(context);
+      route.isCurrent ? navigator.pop() : navigator.removeRoute(route);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// The screen-reader path of hold-to-hang-up.
@@ -63,7 +111,7 @@ Future<void> showBreakSheet(BuildContext context, WidgetRef ref, {required bool 
     useSafeArea: true,
     builder: (context) {
       final text = Theme.of(context).textTheme;
-      return SingleChildScrollView(
+      final sheet = SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -98,9 +146,16 @@ Future<void> showBreakSheet(BuildContext context, WidgetRef ref, {required bool 
           ],
         ),
       );
+      // A break that "starts now" is a question for a waiting agent; a call
+      // reaching them closes it. ("After this call" is asked during the call.)
+      return queued ? sheet : CloseWhenCallArrives(child: sheet);
     },
   );
-  if (code != null) await ref.read(stationActionsProvider).takeBreak(code);
+  if (code == null) return;
+  // Picked in the same instant a call arrived: a break "now" is no longer what
+  // the sheet offered. The call screen offers one after the call instead.
+  if (!queued && (ref.read(stationViewProvider)?.callActive ?? false)) return;
+  await ref.read(stationActionsProvider).takeBreak(code);
 }
 
 /// Leave: refused while a call is on screen; otherwise confirmed, and then
@@ -116,8 +171,14 @@ Future<void> leaveStation(BuildContext context, WidgetRef ref) async {
     title: StationCopy.leaveTitle,
     message: StationCopy.leaveMessage,
     confirm: StationCopy.leaveAction,
+    closeWhenCallArrives: true,
   );
   if (!ok || !context.mounted) return;
+  // Confirmed in the same instant a call arrived: the call comes first.
+  if (ref.read(stationViewProvider)?.callActive ?? false) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(StationCopy.leaveBlocked)));
+    return;
+  }
   // Captured now: once the session closes, this view may already have been
   // replaced by the time the server answers.
   final router = GoRouter.of(context);

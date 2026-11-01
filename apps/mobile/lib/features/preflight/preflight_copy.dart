@@ -7,6 +7,7 @@ abstract final class PreflightCopy {
   static const keepOpen = 'Keep this app open while you wait for calls. If you leave it, we pause you.';
   static const goOnDuty = 'Go on duty';
   static const joining = 'Joining…';
+  static const finishingSoundCheck = 'Finishing the sound check…';
   static const checkAgain = 'Check again';
   static const back = 'Back';
 

@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
+import 'package:magick_agency_agent/features/performance/agent_workspace.dart';
 import 'package:magick_agency_agent/features/performance/logic/stats_windows.dart';
 import 'package:magick_agency_agent/features/performance/performance_api.dart';
 import 'package:magick_agency_agent/features/performance/performance_controller.dart';
@@ -80,17 +81,14 @@ StaffingHistoryEntry staffing(String id, String? name) => StaffingHistoryEntry(
 class FakePerformanceApi implements PerformanceApi {
   FakePerformanceApi({this.campaigns = const []});
 
-  String workspace = 't1:a1';
   List<StaffingHistoryEntry> campaigns;
+  int campaignReads = 0;
   final List<AgentStatsQuery> statsQueries = [];
   final List<Completer<AgentStats>> pending = [];
 
   /// When set, answers immediately instead of waiting.
   AgentStats Function(AgentStatsQuery q)? autoAnswer;
   Object? campaignsError;
-
-  @override
-  String get workspaceKey => workspace;
 
   @override
   Future<AgentStats> myStats(AgentStatsQuery query) {
@@ -104,6 +102,7 @@ class FakePerformanceApi implements PerformanceApi {
 
   @override
   Future<StaffingHistory> myCampaigns() async {
+    campaignReads++;
     if (campaignsError != null) throw campaignsError!;
     return StaffingHistory(campaigns);
   }
@@ -116,7 +115,19 @@ class FakePerformanceApi implements PerformanceApi {
 /// Wed 14 Oct 2026, 10:30 IST.
 final fixedNow = DateTime.utc(2026, 10, 14, 5);
 
+/// Whose records are on screen (`user:tenant:account`); a test switches
+/// account, or signs another agent in, by setting it.
+class TestWorkspace extends Notifier<String?> {
+  @override
+  String? build() => 'u1:t1:a1';
+
+  void set(String? workspace) => state = workspace;
+}
+
+final testWorkspaceProvider = NotifierProvider<TestWorkspace, String?>(TestWorkspace.new);
+
 List<Override> perfOverrides(FakePerformanceApi api, {DateTime? now, LocalCalendar calendar = ist}) => [
+      agentWorkspaceProvider.overrideWith((ref) => ref.watch(testWorkspaceProvider)),
       performanceApiProvider.overrideWithValue(api),
       statsClockProvider.overrideWithValue(() => now ?? fixedNow),
       localCalendarProvider.overrideWithValue(calendar),

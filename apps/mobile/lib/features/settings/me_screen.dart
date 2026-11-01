@@ -10,21 +10,35 @@ import '../../core/api/api_error.dart';
 import '../../core/auth/app_gate.dart';
 import '../../core/session/local_preferences.dart';
 import '../../core/station/station_signals.dart';
+import '../../core/station/station_view.dart';
 import '../../core/telemetry/log.dart';
 import '../../ui/primitives.dart';
 import '../accounts/account_switcher.dart';
 import 'notification_preferences.dart';
 
-/// Why signing out is refused right now, or null. The console's station-exit
-/// wording: a call on screen is finished first, and an agent in the dialing
-/// pool leaves the station first, or a call could reach an empty screen.
-String? signOutBlockedReason(StationSignals signals) {
-  if (signals.callActive) return 'Finish this call first — this call is still on your screen.';
-  if (signals.onDuty) {
-    return 'You’re still on duty — leave the station first, or a call could be sent to an empty screen.';
-  }
-  return null;
+/// Why signing out is refused right now, or null.
+///
+/// A call on screen, and an agent still in the dialing pool, get the
+/// console's Exit-station sentences (`EXIT_BLOCKED_COPY` and
+/// `EXIT_AVAILABLE_BLOCKED_COPY` in `apps/console`), less its "or go on
+/// break": the console lets an agent on a break exit, but this phone keeps the
+/// station open until the agent leaves it, so a break is no way out here and
+/// the sentence on a break says so.
+String? signOutBlockedReason(StationSignals signals, {AgentPhase? phase}) {
+  if (signals.callActive) return signOutBlockedOnCall;
+  if (!signals.onDuty) return null;
+  return switch (phase) {
+    AgentPhase.available => signOutBlockedAvailable,
+    AgentPhase.onBreak => signOutBlockedOnBreak,
+    _ => signOutBlockedOpen,
+  };
 }
+
+const signOutBlockedOnCall = 'Finish this call first — this call is still on your screen.';
+const signOutBlockedAvailable =
+    'You’re still in the dialing pool — leave the station first, or a call could be sent to an empty screen.';
+const signOutBlockedOnBreak = 'You’re on a break, but your station is still open on this phone — leave the station first, then sign out.';
+const signOutBlockedOpen = 'Your station is still open on this phone — leave the station first, then sign out.';
 
 /// The Me tab: who and where the agent is, their email preferences, this
 /// phone's sound and vibration, diagnostics for support, and sign-out.
@@ -359,7 +373,10 @@ class _SignOutState extends ConsumerState<_SignOut> {
 
   @override
   Widget build(BuildContext context) {
-    final blocked = signOutBlockedReason(ref.watch(stationSignalsProvider));
+    final blocked = signOutBlockedReason(
+      ref.watch(stationSignalsProvider),
+      phase: ref.watch(stationViewProvider.select((v) => v?.phase)),
+    );
     final t = context.tokens;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

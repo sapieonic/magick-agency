@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/theme/tokens.dart';
 import '../../ui/primitives.dart';
+import '../performance/agent_workspace.dart';
 import '../performance/campaign_names.dart';
 import 'calls_controller.dart';
 import 'logic/attempt_copy.dart';
@@ -40,6 +41,15 @@ class _CallsScreenState extends ConsumerState<CallsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // The shell keeps this tab mounted across an account switch or a new
+    // sign-in: the controller drops the old rows itself, this asks for the
+    // new agent's first page.
+    ref.listen<String?>(agentWorkspaceProvider, (prev, next) {
+      if (next == null || next == prev) return;
+      Future.microtask(() {
+        if (mounted) unawaited(ref.read(attemptsControllerProvider.notifier).ensureLoaded());
+      });
+    });
     return Scaffold(
       appBar: AppBar(
         toolbarHeight: 64,

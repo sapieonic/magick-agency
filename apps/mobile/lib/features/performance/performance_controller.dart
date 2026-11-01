@@ -2,6 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'agent_workspace.dart';
 import 'logic/stats_windows.dart';
 import 'performance_api.dart';
 
@@ -12,7 +13,8 @@ import 'performance_api.dart';
 /// back to "This week" paints instantly from the cache and refreshes behind
 /// it. Results are keyed by the window's NAME (see [StatsWindow]) and the
 /// campaign, never by the range, and the whole cache is dropped when the
-/// workspace changes (a campaign id belongs to one tenant).
+/// workspace or the signed-in agent changes (a campaign id belongs to one
+/// tenant, the figures to one agent).
 
 /// Injected so window math is testable with a fixed clock.
 final statsClockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
@@ -117,8 +119,22 @@ class PerformanceController extends Notifier<PerformanceState> {
   /// request was made is dropped rather than painted over it.
   final Map<StatsKey, int> _generation = {};
 
+  /// Bumped on every workspace change. The notifier outlives a rebuild, so a
+  /// read for the previous workspace is told apart by this, not by
+  /// `ref.mounted` (still true) or its per-selection count (restarted).
+  int _epoch = 0;
+
+  /// Rebuilt whenever [agentWorkspaceProvider] changes (another account,
+  /// another agent, signed out): nothing cached belongs to the new one, and a
+  /// campaign scope from the old one would point at a campaign it cannot see.
+  /// The screen revalidates on the change.
   @override
-  PerformanceState build() => PerformanceState(workspace: ref.read(performanceApiProvider).workspaceKey);
+  PerformanceState build() {
+    final workspace = ref.watch(agentWorkspaceProvider);
+    _epoch++;
+    _generation.clear();
+    return PerformanceState(workspace: workspace ?? '', window: stateOrNull?.window ?? StatsWindow.today);
+  }
 
   /// Switch window and revalidate it (cached answer shows at once).
   Future<void> selectWindow(StatsWindow window) {
@@ -137,17 +153,14 @@ class PerformanceController extends Notifier<PerformanceState> {
   /// Re-read the current selection. Completes when the read settles (for
   /// pull-to-refresh); never throws: failures land in the slot.
   Future<void> revalidate() async {
+    // Signed out (or between accounts): there is nobody to read for.
+    if (ref.read(agentWorkspaceProvider) == null) return;
     final api = ref.read(performanceApiProvider);
-    if (api.workspaceKey != state.workspace) {
-      // Another tenant/account: nothing cached belongs to it, and a campaign
-      // scope from the old one would point at a campaign it cannot see.
-      _generation.clear();
-      state = PerformanceState(workspace: api.workspaceKey, window: state.window);
-    }
-
     final key = state.key;
+    final epoch = _epoch;
     final mine = (_generation[key] ?? 0) + 1;
     _generation[key] = mine;
+    bool stale() => !ref.mounted || epoch != _epoch || _generation[key] != mine;
     state = state.withSlot(key, state.current.copyWith(loading: true));
 
     // One `now` per read, so `to` is one instant (the console's rule).
@@ -157,10 +170,10 @@ class PerformanceController extends Notifier<PerformanceState> {
 
     try {
       final stats = await api.myStats(query);
-      if (!ref.mounted || _generation[key] != mine) return;
+      if (stale()) return;
       state = state.withSlot(key, StatsSlot(stats: stats));
     } on Exception catch (e) {
-      if (!ref.mounted || _generation[key] != mine) return;
+      if (stale()) return;
       final slot = state.slots[key] ?? StatsSlot.empty;
       state = state.withSlot(key, slot.copyWith(error: errorMessage(e, 'Could not load these numbers.'), loading: false));
     }

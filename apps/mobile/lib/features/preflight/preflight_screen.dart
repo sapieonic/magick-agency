@@ -44,6 +44,12 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
   final Map<PreflightCheck, CheckResult> _results = {};
   int _generation = 0;
   bool _starting = false;
+
+  /// "Go on duty" was tapped while the sound check was still listening.
+  bool _finishingSoundCheck = false;
+
+  /// The current run's sound check, settled (graded or timed out).
+  Future<void>? _soundCheck;
   StationStart? _outcome;
   bool _awaitingSettings = false;
   final Set<Timer> _deadlines = {};
@@ -86,6 +92,8 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
   PreflightChecks get _checks => ref.read(preflightChecksProvider);
 
   void _runAll({bool initial = false}) {
+    // Not under a join: the station is taking the voice engine.
+    if (_starting) return;
     final gen = ++_generation;
     void reset() => _results
       ..clear()
@@ -106,7 +114,7 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
     final checks = _checks;
     final mic = _measure(checks.microphone);
     _settle(gen, PreflightCheck.microphone, () async => gradeMicrophone(await mic));
-    _settle(gen, PreflightCheck.soundCheck, () async {
+    _soundCheck = _settle(gen, PreflightCheck.soundCheck, () async {
       final sample = await _measure(checks.soundCheck);
       final allowed = await mic.then((m) => m == MicPermission.granted, onError: (Object _) => false);
       return gradeSoundCheck(sample, micAllowed: allowed);
@@ -143,8 +151,8 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
     return done.future;
   }
 
-  void _settle(int gen, PreflightCheck check, Future<CheckResult?> Function() grade) {
-    unawaited(() async {
+  Future<void> _settle(int gen, PreflightCheck check, Future<CheckResult?> Function() grade) {
+    final done = () async {
       CheckResult? result;
       try {
         result = await grade();
@@ -159,7 +167,9 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
           _results[check] = result;
         }
       });
-    }());
+    }();
+    unawaited(done);
+    return done;
   }
 
   Future<void> _fix(PreflightCheck check, CheckFix fix) async {
@@ -187,10 +197,22 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
 
   Future<void> _start(Future<StationStart> Function(StationLauncher l, String name) how) async {
     if (_starting) return;
+    final sound = _soundCheck;
+    final listening = _results[PreflightCheck.soundCheck]?.status == CheckStatus.pending;
     setState(() {
       _starting = true;
+      _finishingSoundCheck = sound != null && listening;
       _outcome = null;
     });
+    // The sound check borrows the voice engine and puts it back when it ends; the
+    // station must not prepare it until then (about a second and a half), or the
+    // put-back would undo the station's and its first call would be silent.
+    if (sound != null && listening) {
+      await sound;
+      if (!mounted) return;
+      setState(() => _finishingSoundCheck = false);
+    }
+    _checks.handOverAudio();
     StationStart result;
     try {
       result = await how(ref.read(stationLauncherProvider), _campaignName);
@@ -299,7 +321,7 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
                         Align(
                           child: TextButton.icon(
                             key: const Key('check-again'),
-                            onPressed: _runAll,
+                            onPressed: _starting ? null : _runAll,
                             icon: const Icon(Icons.refresh),
                             label: const Text(PreflightCopy.checkAgain),
                           ),
@@ -333,7 +355,11 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
                           ],
                           EmberButton(
                             key: const Key('go-on-duty'),
-                            label: _starting ? PreflightCopy.joining : PreflightCopy.goOnDuty,
+                            label: _finishingSoundCheck
+                                ? PreflightCopy.finishingSoundCheck
+                                : _starting
+                                    ? PreflightCopy.joining
+                                    : PreflightCopy.goOnDuty,
                             icon: Icons.headset_mic,
                             onPressed: block == null && !_starting ? _goOnDuty : null,
                           ),

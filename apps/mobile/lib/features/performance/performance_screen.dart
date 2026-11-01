@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/theme/app_theme.dart';
 import '../../app/theme/tokens.dart';
 import '../../ui/primitives.dart';
+import 'agent_workspace.dart';
 import 'campaign_names.dart';
 import 'logic/performance_view.dart';
 import 'logic/readouts.dart';
@@ -54,17 +55,21 @@ class _PerformanceScreenState extends ConsumerState<PerformanceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // The shell keeps this tab mounted across an account switch or a new
+    // sign-in: the controller drops the old figures itself, this reads the
+    // new agent's.
+    ref.listen<String?>(agentWorkspaceProvider, (prev, next) {
+      if (next == null || next == prev) return;
+      Future.microtask(() {
+        if (mounted) unawaited(ref.read(performanceControllerProvider.notifier).revalidate());
+      });
+    });
+    final scoped = ref.watch(_scopeShownProvider);
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 64,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Semantics(header: true, child: const Text('My performance')),
-            const _CampaignScopeButton(),
-          ],
-        ),
+        title: Semantics(header: true, child: const Text('My performance')),
+        // Under the title, a full 48 dp row so the scope is easy to hit.
+        bottom: scoped ? const PreferredSize(preferredSize: Size.fromHeight(Space.touch), child: _CampaignScopeButton()) : null,
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
@@ -84,8 +89,15 @@ class _PerformanceScreenState extends ConsumerState<PerformanceScreen> {
   }
 }
 
-/// "All campaigns ▾" under the title, when there is a choice to make or a
-/// scope already in force (the console's `showScope`).
+/// Whether the campaign scope is offered: a choice to make or a scope
+/// already in force (the console's `showScope`).
+final _scopeShownProvider = Provider.autoDispose<bool>((ref) {
+  final names = ref.watch(campaignNamesProvider);
+  final applied = ref.watch(performanceControllerProvider.select((s) => s.campaignId));
+  return showScope(scopeOptions(names).length, applied);
+});
+
+/// "All campaigns ▾" under the title (see [_scopeShownProvider]).
 class _CampaignScopeButton extends ConsumerWidget {
   const _CampaignScopeButton();
 
@@ -94,31 +106,41 @@ class _CampaignScopeButton extends ConsumerWidget {
     final names = ref.watch(campaignNamesProvider);
     final applied = ref.watch(performanceControllerProvider.select((s) => s.campaignId));
     final options = scopeOptions(names);
-    if (!showScope(options.length, applied)) return const SizedBox.shrink();
     final t = context.tokens;
     final label = applied == null ? 'All campaigns' : campaignLabel(applied, names);
-    return Semantics(
-      button: true,
-      label: 'Campaign: $label. Change',
-      excludeSemantics: true,
-      child: InkWell(
-        key: const Key('campaign-scope'),
-        borderRadius: BorderRadius.circular(Radii.sm),
-        onTap: () => _pickCampaign(context, ref, options, applied, names),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 28, minWidth: Space.touch),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelMedium!.copyWith(color: t.accentHover),
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Padding(
+        // The label lines up with the title; the ripple reaches past it.
+        padding: const EdgeInsetsDirectional.only(start: NavigationToolbar.kMiddleSpacing - Space.sm, end: Space.lg),
+        child: Semantics(
+          button: true,
+          label: 'Campaign: $label. Change',
+          excludeSemantics: true,
+          child: InkWell(
+            key: const Key('campaign-scope'),
+            borderRadius: BorderRadius.circular(Radii.sm),
+            onTap: () => _pickCampaign(context, ref, options, applied, names),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: Space.touch, minWidth: Space.touch),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: Space.sm),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium!.copyWith(color: t.accentHover),
+                      ),
+                    ),
+                    Icon(Icons.arrow_drop_down, size: 20, color: t.accentHover),
+                  ],
                 ),
               ),
-              Icon(Icons.arrow_drop_down, size: 20, color: t.accentHover),
-            ],
+            ),
           ),
         ),
       ),

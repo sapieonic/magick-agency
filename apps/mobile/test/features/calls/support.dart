@@ -40,12 +40,8 @@ AttemptsPage page(Iterable<int> ids, {String? next}) =>
 
 /// A scripted `/my-attempts`: every request waits until the test answers it.
 class FakeAttemptsApi implements AttemptsApi {
-  String workspace = 't1:a1';
   final List<AttemptsQuery> queries = [];
   final List<Completer<AttemptsPage>> pending = [];
-
-  @override
-  String get workspaceKey => workspace;
 
   @override
   Future<AttemptsPage> myAttempts(AttemptsQuery query) {

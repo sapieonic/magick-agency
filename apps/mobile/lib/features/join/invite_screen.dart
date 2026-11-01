@@ -26,11 +26,21 @@ class InviteScreen extends ConsumerWidget {
     final provider = inviteControllerProvider(token);
     final state = ref.watch(provider);
 
-    // The router leaves a ready gate on this page (an invite link must open
-    // even for someone signed in), so the page moves on once its claim is in.
-    // Either can land second, so both are watched.
+    // The router leaves a ready gate, and one still choosing an account, on
+    // this page (an invite link must open for someone signed in, and may add
+    // the account they are about to pick), so the page moves on once its claim
+    // is in: to the campaigns, or to the account picker when the new workspace
+    // is one of several. Either can land second, so both are watched.
     void moveOnIfReady() {
-      if (ref.read(appGateProvider) is GateReady && ref.read(provider).phase == InvitePhase.done) context.go(Routes.home);
+      if (ref.read(provider).phase != InvitePhase.done) return;
+      switch (ref.read(appGateProvider)) {
+        case GateReady():
+          context.go(Routes.home);
+        case GateNeedsAccount():
+          context.go(Routes.accounts);
+        default:
+          break;
+      }
     }
 
     ref.listen<AppGate>(appGateProvider, (_, _) => moveOnIfReady());

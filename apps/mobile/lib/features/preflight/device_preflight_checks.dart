@@ -25,15 +25,31 @@ class DevicePreflightChecks implements PreflightChecks {
     Connectivity? connectivity,
     Battery? battery,
     bool? isAndroid,
+    this.uploadTimeout = const Duration(seconds: 8),
+    Future<bool> Function()? microphoneGranted,
   })  : _connectivity = connectivity ?? Connectivity(),
         _battery = battery ?? Battery(),
-        _isAndroid = isAndroid ?? Platform.isAndroid;
+        _isAndroid = isAndroid ?? Platform.isAndroid,
+        _microphoneGranted = microphoneGranted ?? (() => ph.Permission.microphone.isGranted);
 
   final AgentAudio _audio;
   final ApiClient _api;
   final Connectivity _connectivity;
   final Battery _battery;
   final bool _isAndroid;
+  final Future<bool> Function() _microphoneGranted;
+
+  /// Sound checks in flight ("Check again" can start one before the last ends).
+  int _soundChecks = 0;
+
+  /// Pre-flight prepared the engine and nothing has taken it since: the last sound
+  /// check out puts it back to idle. Cleared by [handOverAudio], so an engine the
+  /// station has prepared (or armed) is never released from here.
+  bool _warmedHere = false;
+
+  /// How long the upload probe may take. Not finishing in time is itself a
+  /// measurement: fewer than [probeBytes] in this long (see [_uploadKbps]).
+  final Duration uploadTimeout;
 
   static final _log = Log('preflight');
 
@@ -62,14 +78,18 @@ class DevicePreflightChecks implements PreflightChecks {
   @override
   Future<SoundCheckSample> soundCheck() async {
     try {
-      if (!await ph.Permission.microphone.isGranted) return const SoundCheckSample(ran: false);
+      if (!await _microphoneGranted()) return const SoundCheckSample(ran: false);
       // Only on an engine nobody is using: a station that is already armed or on a
       // call owns the microphone, and the loopback must not touch it.
       final phase = _audio.phase;
       if (phase != AgentAudioPhase.idle && phase != AgentAudioPhase.prepared) return const SoundCheckSample(ran: false);
-      final warmedHere = phase == AgentAudioPhase.idle;
-      if (warmedHere) await _audio.prepare(format: AgentAudioFormat.alaw8);
+      _soundChecks++;
       try {
+        if (phase == AgentAudioPhase.idle) {
+          // Before the await: a hand-over while this prepares must still clear it.
+          _warmedHere = true;
+          await _audio.prepare(format: AgentAudioFormat.alaw8);
+        }
         // No play-back: the agent was asked to speak, not to listen to themselves.
         final r = await _audio.loopbackTest(playBack: false);
         return SoundCheckSample(
@@ -78,13 +98,30 @@ class DevicePreflightChecks implements PreflightChecks {
           quiet: r.voiceDetected && r.speechLevelDbfs < quietSpeechDbfs,
         );
       } finally {
-        // Leave the engine as found: the station prepares it again when it opens.
-        if (warmedHere) await _audio.release();
+        _soundChecks--;
+        await _putBack();
       }
     } on Object catch (e) {
       _log.warn('Sound check could not run', {'error': '$e'});
       return const SoundCheckSample(ran: false);
     }
+  }
+
+  /// Leaves the engine as pre-flight found it, when that is still ours to do: the last
+  /// sound check is out, pre-flight warmed it, it has not been handed over, and it is
+  /// still only prepared. Lifecycle calls run in order, so a release sent after the
+  /// station's own `prepare` would leave the station's first call silent.
+  Future<void> _putBack() async {
+    if (_soundChecks > 0 || !_warmedHere) return;
+    _warmedHere = false;
+    if (_audio.phase != AgentAudioPhase.prepared) return;
+    await _audio.release();
+  }
+
+  @override
+  void handOverAudio() {
+    if (_warmedHere) _log.info('Voice engine handed over during the sound check');
+    _warmedHere = false;
   }
 
   @override
@@ -134,15 +171,21 @@ class DevicePreflightChecks implements PreflightChecks {
 
     // Round trip: the public client config, the cheapest read the server has. Any HTTP
     // answer proves the server is reachable; only a transport failure means offline.
-    final rtt = Stopwatch()..start();
-    try {
-      await _api.getPublic('/client-config', timeout: const Duration(seconds: 5));
-    } on ApiNetworkError {
-      return NetworkSample(online: false, transport: transport);
-    } on ApiError {
-      // Reachable.
+    // Read twice and time the second: the first also pays for DNS and the TCP and TLS
+    // handshakes on an idle connection, which a call's media (one long-lived socket)
+    // does not, and would mark good 4G "Weak".
+    var latencyMs = 0;
+    for (var i = 0; i < 2; i++) {
+      final rtt = Stopwatch()..start();
+      try {
+        await _api.getPublic('/client-config', timeout: const Duration(seconds: 5));
+      } on ApiNetworkError {
+        return NetworkSample(online: false, transport: transport);
+      } on ApiError {
+        // Reachable.
+      }
+      latencyMs = (rtt..stop()).elapsedMilliseconds;
     }
-    final latencyMs = (rtt..stop()).elapsedMilliseconds;
 
     return NetworkSample(
       online: true,
@@ -152,15 +195,24 @@ class DevicePreflightChecks implements PreflightChecks {
     );
   }
 
-  /// Times an upload to the API's probe. Null when it could not be measured (an older
-  /// server without the probe, a refusal, a timeout): the grade then says "may stutter"
-  /// rather than inventing a number.
+  /// Times an upload to the API's probe.
+  ///
+  /// A probe that runs out of time WAS measured: fewer than [probeBytes] went up in
+  /// [uploadTimeout], so the uplink is below that ceiling (32 kbps for 32 KB in 8 s),
+  /// and the ceiling is reported, which blocks like any figure under 64 kbps. Null only
+  /// when there is no figure at all (an older server without the probe, a refusal, a
+  /// dropped connection): the grade then says "may stutter" rather than inventing one.
   Future<double?> _uploadKbps(int latencyMs) async {
     final body = Uint8List(probeBytes);
     final sw = Stopwatch()..start();
     try {
-      await _api.post('/client-config/uplink-probe', body: body, scoped: false, timeout: const Duration(seconds: 8));
+      await _api.post('/client-config/uplink-probe', body: body, scoped: false, timeout: uploadTimeout);
     } on Object catch (e) {
+      if (e is ApiNetworkError && e.timedOut) {
+        final ceiling = (probeBytes * 8 / uploadTimeout.inMilliseconds).floorToDouble();
+        _log.info('Upload probe ran out of time', {'below_kbps': ceiling});
+        return ceiling;
+      }
       _log.info('Upload probe not measured', {'error': '$e'});
       return null;
     }

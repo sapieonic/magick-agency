@@ -123,14 +123,44 @@ void main() {
     final first = controller().selectCampaign('c1');
     api.answer(0, todayStats);
     await first;
-    api.workspace = 't2:a9';
+    container.read(testWorkspaceProvider.notifier).set('u1:t2:a9');
     final next = controller().revalidate();
     expect(state().campaignId, isNull);
     expect(state().current.firstLoad, isTrue);
-    expect(state().workspace, 't2:a9');
+    expect(state().workspace, 'u1:t2:a9');
     expect(api.statsQueries.last.campaignId, isNull);
     api.answer(1, todayStats);
     await next;
+  });
+
+  test('another agent on the same account: the cache goes at once and a late answer for the first is dropped', () async {
+    final first = controller().selectCampaign('c1');
+    api.answer(0, todayStats);
+    await first;
+    // The first agent's unscoped read, still in flight at the switch.
+    final late = controller().selectCampaign(null);
+    container.read(testWorkspaceProvider.notifier).set('u2:t1:a1');
+    expect(state().slots, isEmpty);
+    expect(state().workspace, 'u2:t1:a1');
+
+    // The same selection, read for the new agent: it must not take the late answer.
+    final next = controller().revalidate();
+    api.answer(1, weekStats);
+    await late;
+    expect(state().current.stats, isNull);
+    api.answer(2, todayStats);
+    await next;
+    expect(state().current.stats, todayStats);
+  });
+
+  test('signed out: the cache is dropped and nothing is read', () async {
+    final first = controller().revalidate();
+    api.answer(0, todayStats);
+    await first;
+    container.read(testWorkspaceProvider.notifier).set(null);
+    expect(state().slots, isEmpty);
+    await controller().revalidate();
+    expect(api.statsQueries, hasLength(1));
   });
 
   test('the view: tiles, readouts, caption and the floored breakdown', () {

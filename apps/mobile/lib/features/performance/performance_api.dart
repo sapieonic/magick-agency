@@ -12,9 +12,6 @@ class PerformanceApi {
 
   final ApiClient _api;
 
-  /// `tenant:account`, so cached results never cross a workspace switch.
-  String get workspaceKey => '${_api.scope.tenantId ?? ''}:${_api.scope.accountId ?? ''}';
-
   /// `GET /proxy/agency/my-stats`: one call gives the tiles and the series.
   Future<AgentStats> myStats(AgentStatsQuery query) async {
     final body = await _api.get('/proxy/agency/my-stats', query: query.toQuery());

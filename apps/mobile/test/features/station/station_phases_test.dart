@@ -47,6 +47,53 @@ void main() {
       expect(find.text('campaigns-home'), findsOneWidget);
     });
 
+    testWidgets('a call arriving closes "Leave this station?" without leaving', (tester) async {
+      final h = await pumpStation(tester, station());
+      await tester.tap(find.byKey(const Key('leave')));
+      await settle(tester);
+      expect(find.text('Leave this station?'), findsOneWidget);
+      await h.setView(station(phase: AgentPhase.reserved, call: call(countdown: 3)));
+      await settle(tester);
+      expect(find.text('Leave this station?'), findsNothing);
+      expect(find.text('Priya Raman'), findsWidgets);
+      expect(h.actions.calls, isNot(contains('leave')));
+    });
+
+    testWidgets('Leave confirmed in the instant a call arrives: the call comes first', (tester) async {
+      final h = await pumpStation(tester, station());
+      await tester.tap(find.byKey(const Key('leave')));
+      await settle(tester);
+      final confirm = tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Leave station'));
+      h.container.read(h.holder.notifier).set(station(phase: AgentPhase.reserved, call: call(countdown: 3)));
+      confirm.onPressed!(); // the tap lands before the dialog has closed itself
+      await settle(tester);
+      expect(h.actions.calls, isNot(contains('leave')));
+      expect(find.text('Finish this call first — leaving now would cut the customer off.'), findsOneWidget);
+      expect(find.text('campaigns-home'), findsNothing);
+    });
+
+    testWidgets('a call arriving closes the break reasons without taking a break', (tester) async {
+      final h = await pumpStation(tester, station());
+      await tester.tap(find.byKey(const Key('take-break')));
+      await settle(tester);
+      expect(find.byKey(const Key('break-tea')), findsOneWidget);
+      await h.setView(station(phase: AgentPhase.reserved, call: call(countdown: 3)));
+      await settle(tester);
+      expect(find.byKey(const Key('break-tea')), findsNothing);
+      expect(h.actions.calls, isNot(contains('takeBreak')));
+    });
+
+    testWidgets('a break picked in the instant a call arrives is not started', (tester) async {
+      final h = await pumpStation(tester, station());
+      await tester.tap(find.byKey(const Key('take-break')));
+      await settle(tester);
+      final tea = tester.widget<ListTile>(find.byKey(const Key('break-tea')));
+      h.container.read(h.holder.notifier).set(station(phase: AgentPhase.reserved, call: call(countdown: 3)));
+      tea.onTap!();
+      await settle(tester);
+      expect(h.actions.calls, isNot(contains('takeBreak')));
+    });
+
     testWidgets('a refused leave keeps the agent here, with the reason', (tester) async {
       final h = await pumpStation(tester, station());
       h.actions.onCall = (name) {

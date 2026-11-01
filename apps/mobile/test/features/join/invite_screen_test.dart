@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/auth/auth_service.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/features/join/invite_screen.dart';
@@ -97,6 +98,24 @@ void main() {
     await tapVisible(tester, find.text('Continue with Google'));
     await tester.pumpAndSettle();
     expect(find.text('at /home'), findsOneWidget);
+  });
+
+  testWidgets('claimed into one of several accounts → on to the account picker', (tester) async {
+    h.auth.googleUser = meera;
+    h.server.json('GET', '/invites/tok', inviteJson());
+    h.server.json('POST', '/invites/tok/claim', sessionJson(
+      tenants: [tenantJson('t1', 'Acme Collections')],
+      memberships: [membershipJson('t1', accountId: 'a1')],
+    ));
+    h.server.on('GET', '/accounts/mine', (_) => jsonResponse({
+          'accounts': [accountJson('a1', 'Chennai', 't1'), accountJson('a2', 'Pune', 't1')],
+        }));
+    final c = await started(tester);
+    await pumpScreen(tester, c, const InviteScreen(token: 'tok'), extraRoutes: const ['/home', '/sign-in', '/accounts']);
+    await tapVisible(tester, find.text('Continue with Google'));
+    await tester.pumpAndSettle();
+    expect(c.read(appGateProvider), isA<GateNeedsAccount>());
+    expect(find.text('at /accounts'), findsOneWidget);
   });
 
   testWidgets('a different Google address asks first, with both addresses', (tester) async {

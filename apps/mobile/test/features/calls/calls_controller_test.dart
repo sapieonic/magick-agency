@@ -151,11 +151,39 @@ void main() {
     final applied = controller().applyFilters(const AttemptFilters(campaignId: 'c1'));
     api.answer(1, page([1]));
     await applied;
-    api.workspace = 't2:a2';
+    container.read(testWorkspaceProvider.notifier).set('u1:t2:a2');
     final f = controller().ensureLoaded();
     expect(state().filters, AttemptFilters.initial);
     expect(api.q(2).containsKey('campaign_id'), isFalse);
     api.answer(2, page([]));
     await f;
+  });
+
+  test('another agent signs in on the same account: the old rows go at once, and a late page for them is dropped', () async {
+    await firstPage();
+    expect(state().rows, hasLength(50));
+    final late = controller().reload(keepRows: true); // in flight for the first agent
+    container.read(testWorkspaceProvider.notifier).set('u2:t1:a1');
+    // Nothing of the first agent's is left to paint, before any new read.
+    expect(state().rows, isEmpty);
+    expect(state().status, AttemptsStatus.loading);
+    api.answer(1, page([7, 8, 9]));
+    await late;
+    expect(state().rows, isEmpty);
+
+    final f = controller().ensureLoaded();
+    expect(api.queries, hasLength(3));
+    api.answer(2, page([42]));
+    await f;
+    expect(state().rows.map((r) => r.id), ['a42']);
+  });
+
+  test('signed out: the rows are dropped and nothing is read', () async {
+    await firstPage();
+    container.read(testWorkspaceProvider.notifier).set(null);
+    expect(state().rows, isEmpty);
+    await controller().ensureLoaded();
+    await controller().applyFilters(const AttemptFilters(campaignId: 'c1'));
+    expect(api.queries, hasLength(1));
   });
 }

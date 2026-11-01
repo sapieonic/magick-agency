@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/features/calls/calls_screen.dart';
 
@@ -174,5 +175,29 @@ void main() {
     final a = tester.getSize(find.byKey(const ValueKey('a1')));
     final b = tester.getSize(find.byKey(const ValueKey('a2')));
     expect(a.height, b.height);
+  });
+
+  testWidgets('an account switch with the tab still mounted drops the old numbers and names, then reads the new agent\'s', (tester) async {
+    await open(tester);
+    api.answer(0, page([1, 2, 3]));
+    await flush(tester);
+    expect(find.text('+91 98400 10001'), findsOneWidget);
+    expect(find.textContaining('Q4 Card Renewals'), findsNWidgets(3));
+    expect(perf.campaignReads, 1);
+
+    // The shell's indexed stack keeps this screen alive; another agent signs in.
+    perf.campaigns = [staffing('c1', 'Diwali Offers')];
+    ProviderScope.containerOf(tester.element(find.byType(CallsScreen))).read(testWorkspaceProvider.notifier).set('u2:t1:a1');
+    await flush(tester);
+    expect(find.text('+91 98400 10001'), findsNothing);
+    expect(find.byKey(const Key('attempts-skeleton')), findsOneWidget);
+    expect(api.queries, hasLength(2));
+
+    api.answer(1, page([5]));
+    await flush(tester);
+    expect(find.text('+91 98400 10005'), findsOneWidget);
+    expect(perf.campaignReads, 2);
+    expect(find.textContaining('Diwali Offers'), findsOneWidget);
+    expect(find.textContaining('Q4 Card Renewals'), findsNothing);
   });
 }

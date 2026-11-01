@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
+import '../performance/agent_workspace.dart';
 import '../performance/performance_api.dart';
 import '../performance/performance_controller.dart';
 import 'logic/attempt_filters.dart';
@@ -21,9 +22,6 @@ class AttemptsApi {
   AttemptsApi(this._api);
 
   final ApiClient _api;
-
-  /// `tenant:account`: the filters (a campaign id) never cross a switch.
-  String get workspaceKey => '${_api.scope.tenantId ?? ''}:${_api.scope.accountId ?? ''}';
 
   /// `GET /proxy/agency/my-attempts`.
   Future<AttemptsPage> myAttempts(AttemptsQuery query) async {
@@ -117,13 +115,27 @@ class AttemptsController extends Notifier<AttemptsState> {
   int _generation = 0;
   String? _workspace;
 
+  /// A first page has been asked for in this workspace.
+  bool _requested = false;
+
+  /// Rebuilt whenever [agentWorkspaceProvider] changes (another account,
+  /// another agent, signed out): the rows, the cursor and the filters (a
+  /// campaign id belongs to one workspace) are dropped at once, and any page
+  /// still in flight for the old one is thrown away. The notifier outlives
+  /// the rebuild, so the counter moves on here rather than relying on
+  /// `ref.mounted`. The screen asks for the new first page.
   @override
-  AttemptsState build() => AttemptsState();
+  AttemptsState build() {
+    _workspace = ref.watch(agentWorkspaceProvider);
+    _generation++;
+    _requested = false;
+    return AttemptsState();
+  }
 
   /// Replace the applied filters and read the first page. A no-op when
   /// nothing changed and a page is already on screen.
   Future<void> applyFilters(AttemptFilters filters) {
-    if (filters == state.filters && state.status != AttemptsStatus.error && _workspace != null) {
+    if (filters == state.filters && state.status != AttemptsStatus.error && _requested) {
       return Future.value();
     }
     return _loadFirst(filters, keepRows: false);
@@ -135,18 +147,15 @@ class AttemptsController extends Notifier<AttemptsState> {
 
   /// Ensure a first page exists (screen arrival, workspace switch).
   Future<void> ensureLoaded() {
-    final key = ref.read(attemptsApiProvider).workspaceKey;
-    if (_workspace != key) {
-      _workspace = key;
-      // A campaign id belongs to one workspace: start clean in a new one.
-      return _loadFirst(AttemptFilters.initial, keepRows: false);
-    }
-    if (state.status == AttemptsStatus.ready) return Future.value();
-    return _loadFirst(state.filters, keepRows: false);
+    final current = state; // brings the workspace up to date first
+    if (_requested && current.status != AttemptsStatus.error) return Future.value();
+    return _loadFirst(current.filters, keepRows: false);
   }
 
   Future<void> _loadFirst(AttemptFilters filters, {required bool keepRows}) async {
-    _workspace = ref.read(attemptsApiProvider).workspaceKey;
+    // Signed out (or between accounts): there is nobody to read for.
+    if (_workspace == null) return;
+    _requested = true;
     final mine = ++_generation;
     state = keepRows
         ? state.copyWith(filters: filters, refreshing: true, loadingMore: false, clearMoreError: true)

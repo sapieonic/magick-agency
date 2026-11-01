@@ -23,6 +23,11 @@ class FakeChecks implements PreflightChecks {
   int settingsOpened = 0;
   int runs = 0;
 
+  /// What happened to the voice engine and the station, in order.
+  final List<String> log;
+
+  FakeChecks([List<String>? log]) : log = log ?? [];
+
   void allGood() {
     mic.complete(MicPermission.granted);
     sound.complete(const SoundCheckSample(ran: true, heardBack: true));
@@ -54,12 +59,14 @@ class FakeChecks implements PreflightChecks {
   Future<void> openAppSettings() async => settingsOpened++;
   @override
   Future<void> requestBatteryExemption() async {}
+  @override
+  void handOverAudio() => log.add('handOverAudio');
 }
 
 class FakeLauncher implements StationLauncher {
-  FakeLauncher(this.outcomes);
+  FakeLauncher(this.outcomes, [List<String>? calls]) : calls = calls ?? [];
   final List<StationStart> outcomes;
-  final calls = <String>[];
+  final List<String> calls;
   String? lastName;
 
   StationStart _next() => outcomes.isEmpty ? const StationStarted() : outcomes.removeAt(0);
@@ -259,6 +266,45 @@ void main() {
       expect(launcher.calls, ['start:c1']);
       expect(launcher.lastName, 'Q4 Card Renewals');
       expect(find.text('station-c1'), findsOneWidget);
+    });
+
+    testWidgets('Go on duty while the sound check is still listening waits for it, then hands the engine over', (tester) async {
+      final log = <String>[];
+      final checks = FakeChecks(log);
+      final launcher = FakeLauncher([const StationStarted()], log);
+      await pumpPreflight(tester, checks, launcher);
+      checks.mic.complete(MicPermission.granted);
+      checks.net.complete(const NetworkSample(online: true, transport: '4G', latencyMs: 46, uploadKbps: 1800));
+      await settle(tester);
+      expect(dutyEnabled(tester), isTrue); // the sound check never blocks on its own
+
+      await tester.tap(goOnDuty);
+      await settle(tester);
+      // Busy, saying why, and the station not started while the engine is borrowed.
+      expect(find.text('Finishing the sound check…'), findsOneWidget);
+      expect(dutyEnabled(tester), isFalse);
+      expect(log, isEmpty);
+
+      checks.sound.complete(const SoundCheckSample(ran: true, heardBack: true));
+      await settle(tester);
+      expect(log, ['handOverAudio', 'start:c1']);
+      expect(find.text('station-c1'), findsOneWidget);
+    });
+
+    testWidgets('a sound check that hangs holds Go on duty only until its deadline', (tester) async {
+      final log = <String>[];
+      final checks = FakeChecks(log);
+      await pumpPreflight(tester, checks, FakeLauncher([const StationStarted()], log));
+      checks.mic.complete(MicPermission.granted);
+      checks.net.complete(const NetworkSample(online: true, transport: '4G', latencyMs: 46, uploadKbps: 1800));
+      await settle(tester);
+      await tester.tap(goOnDuty);
+      await settle(tester);
+      expect(log, isEmpty);
+      await tester.pump(PreflightScreen.checkTimeout);
+      await settle(tester);
+      // Handed over first: the late loopback must leave the station's engine alone.
+      expect(log, ['handOverAudio', 'start:c1']);
     });
 
     testWidgets('elsewhere: offers to leave the other station and join here', (tester) async {

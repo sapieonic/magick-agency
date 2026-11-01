@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/features/performance/logic/bucket_series.dart';
 import 'package:magick_agency_agent/features/performance/performance_screen.dart';
@@ -159,5 +160,37 @@ void main() {
       await tester.pump();
     }
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('an account switch with the tab still mounted drops the old figures and reads the new agent\'s', (tester) async {
+    await open(tester);
+    api.answer(0, todayStats);
+    await flush(tester);
+    expect(find.bySemanticsLabel('Dials: 52'), findsOneWidget);
+
+    ProviderScope.containerOf(tester.element(find.byType(PerformanceScreen))).read(testWorkspaceProvider.notifier).set('u1:t2:a2');
+    await flush(tester);
+    expect(find.bySemanticsLabel('Dials: 52'), findsNothing);
+    expect(find.byKey(const Key('performance-skeleton')), findsOneWidget);
+    expect(api.statsQueries, hasLength(2));
+    expect(api.campaignReads, 2);
+
+    api.answer(1, stats(from: todayStats.from, to: fixedNow, t: totals(attempts: 7)));
+    await flush(tester);
+    expect(find.bySemanticsLabel('Dials: 7'), findsOneWidget);
+  });
+
+  testWidgets('the campaign scope is a 48 dp target, and fits at 200% text', (tester) async {
+    api.campaigns = [staffing('c1', 'Q4 Card Renewals'), staffing('c2', 'Gold upgrades — festive season top-up campaign')];
+    for (final scale in [1.0, 2.0]) {
+      await setPhoneSize(tester);
+      await tester.pumpWidget(harness(const PerformanceScreen(), perfOverrides(api), textScale: scale));
+      await flush(tester);
+      final scope = find.byKey(const Key('campaign-scope'));
+      expect(scope, findsOneWidget);
+      expect(tester.getSize(scope).height, greaterThanOrEqualTo(48), reason: 'at ${scale}x');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    }
   });
 }

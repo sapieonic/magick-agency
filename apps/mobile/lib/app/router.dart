@@ -46,7 +46,8 @@ String? gateRedirect(AppGate gate, String location) {
       // Claiming an invite is exactly how someone without a membership gets one.
       return location == Routes.noMembership || invite ? null : Routes.noMembership;
     case GateNeedsAccount():
-      return location == Routes.accounts ? null : Routes.accounts;
+      // An invite can add the very account they are about to pick.
+      return location == Routes.accounts || invite ? null : Routes.accounts;
     case GateReady():
       if (location == Routes.splash || (public && !invite) || location == Routes.accounts) return Routes.home;
       return null;
