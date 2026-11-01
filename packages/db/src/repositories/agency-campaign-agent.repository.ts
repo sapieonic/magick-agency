@@ -341,10 +341,12 @@ export class AgencyCampaignAgentRepository {
    *
    * ── Closing a row REVOKES NOTHING, and that is what makes this automatic ───
    * Staffing is not authorization (see also the module header
-   * of `proxy-agency-staffing.routes.ts`): nothing consults this table to decide
-   * whether a join is allowed — `agency.station.connect` does, and the membership
-   * removal is what takes that away. So this is a tidy-up of a navigation list,
-   * safe to do without asking, and its failure is survivable. It is emphatically
+   * of `proxy-agency-staffing.routes.ts`): it GRANTS nothing. The join reads it to
+   * NARROW where a non-supervising agent may start a session ({@link isActiveOnCampaign},
+   * `not_staffed`), but what decides whether they may join at all is
+   * `agency.station.connect`, and the membership removal is what takes that away. So
+   * this is a tidy-up, safe to do without asking, and its failure is survivable: a
+   * stale open row lets nobody without the membership join anything. It is emphatically
    * NOT the mechanism that ends someone's access, and it must never be made into
    * one: a caller that treats a closed row as a revocation has re-introduced the
    * conflation of staffing with authorization.
@@ -443,6 +445,33 @@ export class AgencyCampaignAgentRepository {
       [campaignId, tenantId],
     );
     return result.rows;
+  }
+
+  /**
+   * Is this user ACTIVELY staffed on this campaign? The join's staffing check
+   * (`POST /proxy/agency/sessions`, answered `403 not_staffed` for a caller who is not
+   * and cannot supervise). "Active" is exactly what `/my-assignments` lists
+   * ({@link listActiveForUser}): an open row, `unassigned_at IS NULL`, so the picker
+   * never offers a campaign the join would then refuse.
+   *
+   * Tenant-scoped in the same statement, as every reader here: `campaign_id` carries no
+   * FK, and a row from another tenant must not count. One indexed probe
+   * (`uq_agency_campaign_agent_active_campaign`), on the join only, never a hot path.
+   */
+  async isActiveOnCampaign(
+    tenantId: string,
+    campaignId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const pool = getPool();
+    const result = await pool.query<{ staffed: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM agency_campaign_agents
+          WHERE tenant_id = $1 AND campaign_id = $2 AND user_id = $3 AND unassigned_at IS NULL
+       ) AS staffed`,
+      [tenantId, campaignId, userId],
+    );
+    return result.rows[0]?.staffed === true;
   }
 
 /**

@@ -499,6 +499,7 @@ export interface AgencyStationBridgeEndedFrame {
  */
 export interface AgencyStationTokenResponse {
   session_id: string;
+  /** RELATIVE path with the token appended, as on `AgencySessionBootstrap.station_ws_url`. */
   station_ws_url: string;
   /** ISO-8601. Single-use, and short — see `station_token_expires_at`. */
   expires_at: string;

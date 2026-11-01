@@ -76,7 +76,7 @@ beforeAll(async () => {
   console.log(`[hostile-input-fuzz] seed=${rng.seed} variants=${VARIANTS}`);
   mocks.verifyIdToken.mockImplementation(verifyTestToken);
   loaded = await startLoadApp({
-    configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 10_000_000, webhookMax: 10_000_000, carrierMediaMax: 10_000_000 } }),
+    configure: (c) => ({ ...c, rateLimit: { ...c.rateLimit, max: 10_000_000, ipAuthMax: 10_000_000, webhookMax: 10_000_000, carrierMediaMax: 10_000_000 }, userRateLimit: { max: 10_000_000 } }),
     onRoute: (r: RouteOptions) => {
       const methods = Array.isArray(r.method) ? r.method : [r.method];
       for (const m of methods) {
@@ -86,7 +86,7 @@ beforeAll(async () => {
     },
   });
   await truncateAll();
-  floor = (await seedFloor({ tenants: 1, agentsPerTenant: 2, supervisorsPerTenant: 1, campaignStatus: 'running' }))[0]!;
+  floor = (await seedFloor({ tenants: 1, agentsPerTenant: 2, supervisorsPerTenant: 1, campaignStatus: 'running', staffAgents: true }))[0]!;
   const admin = randomUUID();
   await getTestPool().query(
     `INSERT INTO super_admins (id, email, password_hash, name, status) VALUES ($1, 'fuzz@load.example.com', 'x', 'Fuzz', 'active')`, [admin]);

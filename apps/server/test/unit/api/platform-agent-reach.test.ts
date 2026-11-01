@@ -128,6 +128,8 @@ const EXPECTED_AGENT_REACHABLE = [
 /** Unauthenticated by design; asserted separately (they never consult a session). */
 const PUBLIC_ROUTES = new Set([
   'POST /auth/session',
+  // The mobile app's version gate: an app too old to sign in must still learn it has to update.
+  'GET /client-config',
   'GET /invites/:token',
   'POST /invites/:token/claim',
   'POST /super-admin/login',

@@ -133,6 +133,19 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   }
   const post = (url: string, who: Who, body: unknown = {}, acct?: string, t?: string) =>
     app.inject({ method: 'POST', url, headers: headers(who, acct, t), payload: JSON.stringify(body) });
+
+  /**
+   * Join a campaign as `who`, staffed on it first: a join needs an active staffing row
+   * unless the role supervises (`not_staffed`). Idempotent, so a rejoin re-staffs nothing.
+   */
+  async function joinStaffed(who: Who, campaignId: string, acct?: string) {
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id)
+       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+      [tenant, acct ?? account, campaignId, who.id],
+    );
+    return post('/proxy/agency/sessions', who, { campaign_id: campaignId }, acct);
+  }
   const patch = (url: string, who: Who, body: unknown) =>
     app.inject({ method: 'PATCH', url, headers: headers(who), payload: JSON.stringify(body) });
   const put = (url: string, who: Who, body: unknown) =>
@@ -225,7 +238,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
    * owes its outcome (docs/softphone.md §4.1 steps 6–7): the state finding 1 is about.
    */
   async function campaignSessionOwingAnOutcome(agent: Who, campaignId: string, to: string) {
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaignId });
+    const joined = await joinStaffed(agent, campaignId);
     expect(joined.statusCode, joined.body).toBe(201);
     const sessionId = joined.json().session_id as string;
     const station = await connect(joined.json().station_ws_url);
@@ -529,7 +542,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   it('the switch from a campaign session: queued, applied, return refused while unsettled, return — audited and on the campaign trail', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account, disposition_catalog: CATALOG });
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const joined = await joinStaffed(agent, campaign.id);
     expect(joined.statusCode, joined.body).toBe(201);
     const sessionId = joined.json().session_id as string;
     const station = await connect(joined.json().station_ws_url);
@@ -558,8 +571,13 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     await waitFor('soft_phone break', () => station.frames.some((f) =>
       f['event'] === 'agent_state' && f['state'] === 'break' && f['break_reason'] === 'soft_phone'));
 
+    // Unassigned mid-shift: the live session stands (a join needed the staffing; a closed
+    // row ends nothing live), but tagging follows staffing.
+    await getTestPool().query(
+      `UPDATE agency_campaign_agents SET unassigned_at = now() WHERE campaign_id = $1 AND user_id = $2`,
+      [campaign.id, agent.id],
+    );
     const placed = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811200030', campaign_id: campaign.id });
-    // The agent is not staffed on this campaign: they joined it, but tagging follows staffing.
     expect(placed.statusCode).toBe(403);
     expect(placed.json().code).toBe('campaign_not_taggable');
     const untagged = await post('/proxy/agency/softphone/calls', agent, { session_id: sessionId, to: '+919811200030' });
@@ -622,7 +640,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     await getTestRedis().del(leaseKey(sessionId));
 
     // The agent reloads: the campaign join rehydrates the session onto the soft phone.
-    const rejoined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const rejoined = await joinStaffed(agent, campaign.id);
     expect(rejoined.statusCode, rejoined.body).toBe(201); // the campaign join is always 201
     expect(rejoined.json()).toMatchObject({ session_id: sessionId, state: 'break' });
     expect(await runtime.agents.manualCallOf(sessionId)).toBe(callId);
@@ -683,7 +701,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   it('break/cancel withdraws a queued switch; a soft-phone session refuses break/cancel and force-available', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const joined = await joinStaffed(agent, campaign.id);
     const sessionId = joined.json().session_id as string;
     const station = await connect(joined.json().station_ws_url);
     await runtime.agents.set(sessionId, 'wrapup', { leaseMs: AGENT_LEASE_MS.wrapup });
@@ -716,7 +734,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect(switched.statusCode).toBe(409);
     expect(switched.json().code).toBe('wrong_session_kind');
     // The campaign join names the soft-phone session.
-    const join = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const join = await joinStaffed(agent, campaign.id);
     expect(join.statusCode).toBe(409);
     expect(join.json()).toMatchObject({ code: 'session_on_softphone', session_id: spSession });
     expect((await post(`/proxy/agency/sessions/${spSession}/leave`, agent)).statusCode).toBe(200);
@@ -725,7 +743,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   it('every way off the soft phone is audited once, with how; a repeated switch is not audited again', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({ tenant_id: tenant, account_id: account });
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const joined = await joinStaffed(agent, campaign.id);
     const sessionId = joined.json().session_id as string;
     await connect(joined.json().station_ws_url);
     const switchNow = async () => {
@@ -773,7 +791,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
   it('a break with another reason queued over a queued switch withdraws the switch, audited with its reason', async () => {
     const agent = await user(tenant, account, 'agent');
     const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: account });
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const joined = await joinStaffed(agent, campaign.id);
     const sessionId = joined.json().session_id as string;
     await connect(joined.json().station_ws_url);
     await runtime.agents.set(sessionId, 'wrapup', { leaseMs: AGENT_LEASE_MS.wrapup });
@@ -853,7 +871,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
 
     // The campaign join in the sibling names the same session and account.
     const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: sibling });
-    const join = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id }, sibling);
+    const join = await joinStaffed(agent, campaign.id, sibling);
     expect(join.statusCode, join.body).toBe(409);
     expect(join.json()).toMatchObject({
       code: 'session_on_softphone', session_id: sessionId, account_id: account, account_name: owner.name,
@@ -874,7 +892,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     const agent = await user(tenant, account, 'agent');
     await insertMembership({ user_id: agent.id, tenant_id: tenant, account_id: sibling, role: 'agent' });
     const campaign = await insertAgencyCampaign({ status: 'paused', tenant_id: tenant, account_id: sibling });
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id }, sibling);
+    const joined = await joinStaffed(agent, campaign.id, sibling);
     expect(joined.statusCode, joined.body).toBe(201);
     const sessionId = joined.json().session_id as string;
     const { rows: [siblingAccount] } = await getTestPool().query('SELECT name FROM accounts WHERE id = $1', [sibling]);
@@ -1007,7 +1025,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
 
   /** A campaign session switched to the soft phone, with no call on it. */
   async function campaignSessionOnSoftphone(agent: Who, campaignId: string) {
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaignId });
+    const joined = await joinStaffed(agent, campaignId);
     expect(joined.statusCode, joined.body).toBe(201);
     const sessionId = joined.json().session_id as string;
     const station = await connect(joined.json().station_ws_url);
@@ -1133,7 +1151,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
       status: 'paused', tenant_id: tenant, account_id: account,
       break_reasons: JSON.stringify([{ code: 'lunch', label: 'Lunch' }, { code: 'soft_phone', label: 'Sneaky' }]),
     });
-    const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const joined = await joinStaffed(agent, campaign.id);
     expect(joined.statusCode, joined.body).toBe(201);
     const sessionId = joined.json().session_id as string;
     expect(joined.json().break_reasons).toEqual([{ code: 'lunch', label: 'Lunch' }]);
@@ -1235,7 +1253,7 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     expect((await sessionRow(sessionId)).state).toBe('offline');
     expect(await runtime.agents.get(sessionId)).toBeNull();
 
-    const rejoined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+    const rejoined = await joinStaffed(agent, campaign.id);
     expect(rejoined.statusCode, rejoined.body).toBe(201); // the campaign join is always 201
     expect(rejoined.json()).toMatchObject({ session_id: sessionId, state: 'break' });
     const back = await connect(rejoined.json().station_ws_url);

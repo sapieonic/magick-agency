@@ -377,7 +377,10 @@ describe('the agent state machine, walked as one cycle (integration)', () => {
     // `break`, never `available`, because the engine must not dial into a pool
     // that has not demonstrably re-attached a socket. So the honest first hop is
     // into `break`, and the diagram's `offline → available` edge is really two.
-    const join = await post('/sessions', { campaign_id: campaign.id, agent_user_id: AGENT_USER });
+    // `supervise: true` (a role exempt from the staffing check): this agent and tenant exist
+    // only in the dialer's tables, so no staffing row can name them. The check itself is
+    // `agency-join-staffing.test.ts`'s.
+    const join = await post('/sessions', { campaign_id: campaign.id, agent_user_id: AGENT_USER, supervise: true });
     expect(join.statusCode).toBe(201);
     const bootstrap = join.json();
     const sessionId = bootstrap.session_id as string;

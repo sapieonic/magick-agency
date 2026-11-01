@@ -67,8 +67,12 @@ const { repos } = vi.hoisted(() => ({
     attempt: { findById: vi.fn(), findPriorForContactLineage: vi.fn().mockResolvedValue([]) },
     campaign: { findById: vi.fn() },
     contact: { findById: vi.fn() },
-    session: { findById: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn() },
+    session: { findById: vi.fn(), findLiveForAgent: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn() },
+    staffing: { isActiveOnCampaign: vi.fn() },
   },
+}));
+vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () => ({
+  agencyCampaignAgentRepository: repos.staffing,
 }));
 const { accounts } = vi.hoisted(() => ({ accounts: { findByIdInTenant: vi.fn() } }));
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({ accountRepository: accounts }));
@@ -144,6 +148,10 @@ beforeEach(async () => {
     id === 'camp-new' ? REQUESTED : id === 'camp-old' ? OTHER : null);
   mint.mockResolvedValue({ token: 'tok', expiresAt: new Date('2026-08-16T12:02:00.000Z') });
   agentsGet.mockResolvedValue(null);
+  // Staffed by default: the conflict cases below are about the live-session index, not
+  // staffing (`not_staffed` has its own describe at the end).
+  repos.staffing.isActiveOnCampaign.mockResolvedValue(true);
+  repos.session.findLiveForAgent.mockResolvedValue(null);
   accounts.findByIdInTenant.mockImplementation(async (id: string, tenantId: string) =>
     id === 'a2' && tenantId === 't1' ? { id: 'a2', tenant_id: 't1', name: 'North Region' } : null);
   app = await buildApp();
@@ -447,5 +455,103 @@ describe('POST /sessions — the happy path stays intact', () => {
     expect(res.json().error).toBe('Internal Server Error');
     // Loudly, and without handing out a credential for the mismatched session.
     expect(mint).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `not_staffed`: a NEW session needs an active staffing row on the campaign, unless the
+// caller's role supervises (`supervise`, set by the public API layer from the membership).
+// A rehydrate of the agent's own live session on the campaign is allowed (see
+// `mayStartOrResume` in `sessions.ts`).
+// ---------------------------------------------------------------------------
+describe('POST /sessions — the staffing check', () => {
+  const NOT_STAFFED = {
+    error: 'Forbidden',
+    code: 'not_staffed',
+    message: "You're not assigned to this campaign. Ask your supervisor to add you.",
+  };
+
+  beforeEach(() => {
+    repos.staffing.isActiveOnCampaign.mockResolvedValue(false);
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new' }),
+    });
+  });
+
+  it('refuses an unstaffed agent 403 not_staffed, and starts nothing', async () => {
+    const res = await join();
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual(NOT_STAFFED);
+    expect(repos.staffing.isActiveOnCampaign).toHaveBeenCalledWith('t1', 'camp-new', 'u-agent');
+    expect(repos.session.joinOrRehydrate).not.toHaveBeenCalled();
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it('joins a staffed agent without reading their live session', async () => {
+    repos.staffing.isActiveOnCampaign.mockResolvedValue(true);
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(repos.session.findLiveForAgent).not.toHaveBeenCalled();
+  });
+
+  it('lets a supervising caller join unstaffed, without consulting staffing', async () => {
+    const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', supervise: true });
+
+    expect(res.statusCode).toBe(201);
+    expect(repos.staffing.isActiveOnCampaign).not.toHaveBeenCalled();
+  });
+
+  it.each([['false', false], ['the string "true"', 'true'], ['1', 1]])(
+    'treats supervise=%s as not supervising',
+    async (_label, supervise) => {
+      const res = await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', supervise });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('not_staffed');
+    },
+  );
+
+  it('rehydrates the agent\'s own live session on this campaign, though they were unassigned mid-shift', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(liveSession({ id: 'sess-new', campaign_id: 'camp-new', state: 'on_call' }));
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().session_id).toBe('sess-new');
+    expect(repos.session.findLiveForAgent).toHaveBeenCalledWith('t1', 'u-agent');
+  });
+
+  it('a live session on ANOTHER campaign does not make this one a rehydrate', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(liveSession());
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe('not_staffed');
+    expect(repos.session.joinOrRehydrate).not.toHaveBeenCalled();
+  });
+
+  it('a live soft-phone session does not make this one a rehydrate', async () => {
+    repos.session.findLiveForAgent.mockResolvedValue(
+      liveSession({ kind: 'softphone', campaign_id: null, break_reason: 'soft_phone' }),
+    );
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe('not_staffed');
+  });
+
+  it('answers an unknown campaign 404 before staffing, and a disabled flag 403 before both', async () => {
+    const unknown = await join({ campaign_id: 'camp-missing', agent_user_id: 'u-agent' });
+    expect(unknown.statusCode).toBe(404);
+
+    flags.isEnabled.mockResolvedValue(false);
+    const disabled = await join();
+    expect(disabled.statusCode).toBe(403);
+    expect(disabled.json().error).toBe('Feature Not Enabled');
+    expect(repos.staffing.isActiveOnCampaign).not.toHaveBeenCalled();
   });
 });

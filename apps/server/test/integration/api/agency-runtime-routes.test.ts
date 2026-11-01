@@ -145,6 +145,12 @@ beforeEach(async () => {
   const campaign = (await insertAgencyCampaign({ ...base, tenant_id: tenant, account_id: account })).id as string;
   const siblingCampaign = (await insertAgencyCampaign({ ...base, tenant_id: tenant, account_id: sibling })).id as string;
   const foreignCampaign = (await insertAgencyCampaign({ ...base, tenant_id: otherTenant, account_id: otherAccount })).id as string;
+  // Agent A is staffed on their own account's campaign, so the bootstrap case passes the
+  // join's staffing check (`not_staffed`); the 404 cases name campaigns they cannot see.
+  await getTestPool().query(
+    `INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)`,
+    [tenant, account, campaign, agentA.id],
+  );
 
   const sessionB = (await insertAgentSession(campaign, { tenant_id: tenant, account_id: account, agent_user_id: agentB.id, state: 'wrapup' })).id as string;
   const b = await bridgedAttempt(campaign, tenant, account, sessionB, '+919811100001');

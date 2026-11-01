@@ -637,11 +637,12 @@ export interface AgencyCampaignLineage extends Omit<Core.AgencyCampaignLineage, 
 
 // ── Agent ↔ campaign assignment (the public API layer-native) ──────────────────
 //
-// Staffing, **not authorization**. Joining a station stays gated on
-// `agency.station.connect` alone, so a supervisor covering a shift can still
-// join a campaign nobody assigned them to. An assignment only decides where an
-// `agent`-role user — who inherits no navigation at level 5 — is sent by
-// default when they open the app.
+// Staffing, **not authorization**: an assignment grants nothing. Joining a station
+// is gated on `agency.station.connect`; staffing only NARROWS where a caller whose
+// role cannot supervise may start a session (`403 not_staffed` on any other
+// campaign), so a supervisor covering a shift can still join a campaign nobody
+// assigned them to. An assignment also decides where an `agent`-role user — who
+// inherits no navigation at level 5 — is sent by default when they open the app.
 //
 // The rows live in the public API layer (`agency_campaign_agents`), never the dialer runtime: the dialer runtime has no
 // identity model at all (no user table, no FK, `agent_user_id` is an opaque

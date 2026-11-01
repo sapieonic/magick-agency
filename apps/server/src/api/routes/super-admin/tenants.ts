@@ -38,8 +38,9 @@ const log = createChildLogger({ component: 'super-admin-routes' });
  * account-scoped.
  *
  * Never throws: the membership change it follows has already committed, and a
- * closed staffing row revokes nothing (staffing is not authorization), so a
- * failure leaves a stale navigation entry rather than a stale permission. The
+ * closed staffing row revokes nothing (staffing is not authorization; the join's
+ * `not_staffed` check narrows, it never grants), so a failure leaves a stale staffing
+ * entry rather than a stale permission: the revoked membership already refuses the join. The
  * closed rows are returned for the super-admin audit row.
  *
  * NOT written: per-row `agency_campaign_agent.unassigned` platform audit rows.

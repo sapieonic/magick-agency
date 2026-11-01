@@ -310,6 +310,7 @@ TRUST_PROXY_HOPS=2
 | `MAILJET_API_KEY`, `MAILJET_API_SECRET`, `MAILJET_FROM_EMAIL`, `MAILJET_FROM_NAME` | From Mailjet; the sender must be on the domain verified in 4.2 |
 | `S3_AUDIO_BUCKET`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | The four lines from step 3.4 |
 | Analysis, PostHog, OpenTelemetry | Optional; see the comments in the file and `apps/server/.env.example` |
+| `MOBILE_*` | Optional, only with the mobile app; see 8.5 |
 
 `NODE_ENV`, `PORT` and `REDIS_URL` are set by the compose file. Do not set them here.
 
@@ -467,6 +468,36 @@ What publishing it costs:
   allow-list when you can (two lines and a reload).
 - **Not Caddy's `basic_auth`** as a substitute for the allow-list: the UI sends its own
   `Authorization: Bearer` header on every API call, so a basic-auth gate rejects them after login.
+
+### 8.5 The mobile app (optional)
+
+Skip this until the agent app is published. Two things on the server side, both in `docker/.env`:
+
+1. **Version gate** (served by the server at `GET /client-config`, public). `MOBILE_MIN_SUPPORTED_VERSION`
+   is the oldest app allowed to run (older ones block on an update screen) and
+   `MOBILE_LATEST_VERSION` the newest released; both `MAJOR.MINOR.PATCH`, the minimum never newer
+   than the latest (the server refuses to boot otherwise). `MOBILE_IOS_STORE_URL` and
+   `MOBILE_ANDROID_STORE_URL` are the https store pages the update screen opens. Restart `server`
+   after a change.
+2. **Invite links that open the app** (served by nginx at `/.well-known/…`, written when `web`
+   starts). Without them an agent's invite link still works, in the browser.
+   - iOS: `MOBILE_IOS_APP_IDS=<TEAMID>.com.magickagency.agent` (the Apple Developer team ID, 10
+     characters, then the bundle id; comma-separate several). The app's Associated Domains
+     entitlement must list `applinks:agency.example.com`.
+   - Android: `MOBILE_ANDROID_CERT_SHA256` = the SHA-256 fingerprint of the **app signing key** from
+     Play Console → *Test and release* → *App integrity* → *App signing* (not the upload key: Play
+     re-signs the app). Comma-separate several. `MOBILE_ANDROID_PACKAGE` only if the package is not
+     `com.magickagency.agent`.
+   - Apply with `docker compose -f docker/docker-compose.prod.yml up -d web` (no rebuild), then:
+
+   ```bash
+   curl -si https://agency.example.com/.well-known/apple-app-site-association   # 200, application/json
+   curl -si https://agency.example.com/.well-known/assetlinks.json              # 200, application/json
+   docker compose -f docker/docker-compose.prod.yml logs web | grep mobile-app-links
+   ```
+
+   A 404 means the variable is unset or did not validate; the log line says which. The TLS
+   terminator must pass these paths through unchanged: no redirect, no auth.
 
 ## 9. Verify the deployment
 

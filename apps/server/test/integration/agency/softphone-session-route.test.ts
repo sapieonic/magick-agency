@@ -75,7 +75,10 @@ describe('POST /sessions on the soft phone — real repository (integration)', (
     try {
       const res = await app.inject({
         method: 'POST', url: '/api/v1/agency/sessions', headers: HEADERS,
-        payload: { campaign_id: campaign.id, agent_user_id: agent },
+        // `supervise: true` (a role exempt from the staffing check): this agent exists only
+        // in the dialer's tables, so no staffing row can name them, and the refusal under
+        // test is the live-session one, not `not_staffed`.
+        payload: { campaign_id: campaign.id, agent_user_id: agent, supervise: true },
       });
 
       expect(res.statusCode).toBe(409);
