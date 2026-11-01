@@ -99,6 +99,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     ipAuthMax: opts.ctx?.config.rateLimit.ipAuthMax,
     webhookMax: opts.ctx?.config.rateLimit.webhookMax,
     carrierMediaMax: opts.ctx?.config.rateLimit.carrierMediaMax,
+    stationMax: opts.ctx?.config.rateLimit.stationMax,
     internalMax: opts.ctx?.config.rateLimit.internalMax,
     timeWindow: opts.ctx?.config.rateLimit.timeWindow,
   });

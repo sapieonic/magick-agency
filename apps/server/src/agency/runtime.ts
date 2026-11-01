@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { AsyncResource } from 'node:async_hooks';
 import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
@@ -36,6 +37,9 @@ import { SoftphoneService } from './softphone/softphone-service.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
+/** A registry entry, as the sweep sees it (`StationRegistry.silentSince`). */
+type StationEntry = ReturnType<StationRegistry['silentSince']>[number];
+
 /**
  * Assembles the agency dialer and owns its lifecycle.
  *
@@ -64,6 +68,16 @@ export class AgencyRuntime {
    */
   private stationSweepTimer: NodeJS.Timeout | null = null;
   private stationSweepIdlePasses = 0;
+  /**
+   * The async context the runtime was built in (bootstrap, outside any request), captured
+   * once. {@link wakeStationSweep} arms its timer inside it, because the first call comes
+   * from a station's upgrade request: a timer armed there would carry that request's
+   * AsyncLocalStorage stores for its whole life — the ambient log context
+   * (`client-log-context.ts` seeds it with `enterWith`, plus tenant/account) and the trace
+   * context — stamping one agent's `client`/`clientVersion`/tenant on every sweep line for
+   * every station.
+   */
+  private readonly ownScope = new AsyncResource('AgencyRuntime');
   readonly tokens: StationTokenStore;
   /**
    * The Do Not Call registry the pre-dial gate reads (decision B8). Exposed so the
@@ -229,10 +243,12 @@ export class AgencyRuntime {
 
     await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
     // Best-effort mirror. Redis is the authority; a failed write here costs a
-    // durable record, never correctness.
+    // durable record, never correctness. The caller's row keeps its break reason:
+    // a phone Android killed while paused (`device_away`) or on a named break comes
+    // back to that break, not an unnamed one (`ready` and the bootstrap carry it).
     await (softphoneFlavoured
       ? agencyAgentSessionRepository.setState(sessionId, 'break', SOFTPHONE_BREAK_REASON)
-      : agencyAgentSessionRepository.setState(sessionId, 'break'))
+      : agencyAgentSessionRepository.setState(sessionId, 'break', row?.break_reason ?? null))
       .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
     return 'break';
   }
@@ -333,9 +349,10 @@ export class AgencyRuntime {
    *    {@link releaseStationOnClose} uses and the one that spans `dialing` through
    *    the deferred-hangup window. An agent in wrap-up has no live attempt and IS
    *    closable: the call is already over and `ready` will restore their countdown.
-   * 2. **Never a socket that is already CLOSING.** `close()` starts a handshake and
+   * 2. **Never a web socket that is already CLOSING.** `close()` starts a handshake and
    *    the entry stays in the registry until `close` fires, so an unguarded sweep
-   *    would re-close and re-log the same socket every tick and never go dormant.
+   *    would re-close and re-log the same socket every tick and never go dormant. (A
+   *    phone is terminated instead, CLOSING or not: below.)
    *
    * A socket that is already **CLOSED** is the third case, and it is the only one
    * this sweep acts on by detaching rather than closing. The rule above used to be
@@ -368,7 +385,10 @@ export class AgencyRuntime {
    *
    * `ws` emits `close` off its own closing timeout even when the peer never
    * answers, so a wedged socket still reaches its handler and the CLOSED arm stays
-   * a backstop.
+   * a backstop. That timeout is **30 s**: a `close()` on a dead transport leaves the
+   * entry CLOSING, still attached and `isLocallyOwned`, for that long. For the web
+   * console that is acceptable (its silence may be a stalled timer on a live socket,
+   * and the close frame lets it re-mint at once); for a phone it is not, see below.
    *
    * ── The grace is per station ──────────────────────────────────────────────
    *
@@ -393,9 +413,23 @@ export class AgencyRuntime {
    * resumes the call. Without it, a suspended app or a dead transport left the customer
    * on silence until TCP gave up. An unbound dial still gets its pre-bind grace armed
    * here, exactly as on the web: that is the case that otherwise becomes an abandoned
-   * call. Outside an attempt, an `available` phone that stops answering leaves the pool
-   * within 10–15s instead of 30–40s, which is the window in which a customer could be
-   * bridged to it.
+   * call.
+   *
+   * ── A silent phone is always dropped with `terminate`, never `close` ──────────
+   *
+   * On a call and off one alike ({@link dropSilentPhone}). A phone silent past 10 s is
+   * almost always a dead transport, and on a dead transport `close(4408)` gets no
+   * answer: the entry would sit CLOSING for ws's 30 s closing timeout, still
+   * `isLocallyOwned`, so pacing kept admitting the agent and every tick reserved them,
+   * claimed a contact, inserted an attempt that `dispatch` then refused (the socket is
+   * not OPEN), wrote it `orphaned` and released the agent `available` again — several
+   * orphaned attempt rows a second per phone, each one bumping the contact's
+   * attempt_number. `terminate` destroys the transport, so `close` follows at once and
+   * the station's close handler detaches it and resolves presence. The app treats any
+   * close as a reconnect, so it loses nothing the 4408 told it. A CLOSING phone is
+   * terminated too, for the same reason. So an `available` phone that stops answering
+   * leaves the pool 10–15 s after its last sign of life, instead of 30–40 s, which is the
+   * window in which a customer could be bridged to it.
    */
   sweepSilentStations(
     graceMs: number | ((entry: Parameters<typeof stationGraceFor>[0]) => number) = stationGraceFor,
@@ -432,12 +466,7 @@ export class AgencyRuntime {
         // to its own grace below; once it binds, the next tick lands here.
         if (entry.clientKind === 'mobile' && !this.dialer.hasUnannouncedAttempt(entry.sessionId)
           && entry.ws.readyState !== 3 /* CLOSED */) {
-          log.warn({
-            sessionId: entry.sessionId,
-            campaignId: entry.campaignId,
-            silentForMs: now - entry.lastSeen,
-          }, 'Mobile station silent past its grace on a live call — dropping it; the deferred hangup now decides the call');
-          try { entry.ws.terminate(); } catch { /* already gone */ }
+          this.dropSilentPhone(entry, now, 'on_call');
           acted++;
           continue;
         }
@@ -464,7 +493,15 @@ export class AgencyRuntime {
         continue;
       }
 
-      // Rule 2: CLOSING (and a socket somehow still CONNECTING) is left alone.
+      // A phone, OPEN or CLOSING: `terminate`, never `close` — see the doc comment.
+      // `close` here would hold the entry CLOSING (and the agent dialable) for 30 s.
+      if (entry.clientKind === 'mobile') {
+        this.dropSilentPhone(entry, now, 'idle');
+        acted++;
+        continue;
+      }
+
+      // Rule 2 (the web): CLOSING (and a socket somehow still CONNECTING) is left alone.
       if (entry.ws.readyState !== 1 /* OPEN */) continue;
 
       log.warn({
@@ -481,6 +518,27 @@ export class AgencyRuntime {
   }
 
   /**
+   * Drop a mobile station silent past its grace: `terminate`, which destroys the
+   * transport, so `ws` emits `close` at once and the station's close handler detaches
+   * the entry and resolves presence (or, on a call, the bridge's deferred hangup starts).
+   * Never `close()`: on a dead transport its `close` event waits out ws's 30 s closing
+   * timeout. One place for both arms (on a call, decision M1; and idle), so they cannot
+   * drift apart.
+   */
+  private dropSilentPhone(entry: StationEntry, now: number, during: 'on_call' | 'idle'): void {
+    log.warn({
+      sessionId: entry.sessionId,
+      campaignId: entry.campaignId,
+      clientKind: entry.clientKind,
+      silentForMs: now - entry.lastSeen,
+      during,
+    }, during === 'on_call'
+      ? 'Mobile station silent past its grace on a live call — terminating it; the deferred hangup now decides the call'
+      : 'Mobile station silent past its grace — terminating it');
+    try { entry.ws.terminate(); } catch { /* already gone */ }
+  }
+
+  /**
    * Arm the silent-station sweep. Called after every station attach.
    *
    * Demand-driven and self-dormant, the same shape as the telephony guard host's
@@ -492,7 +550,9 @@ export class AgencyRuntime {
   wakeStationSweep(): void {
     this.stationSweepIdlePasses = 0;
     if (this.stationSweepTimer) return;
-    this.stationSweepTimer = setInterval(() => {
+    // Armed in the runtime's own context, not the caller's (an upgrade request): see
+    // `ownScope`. A timer keeps the async context it was created in.
+    this.stationSweepTimer = this.ownScope.runInAsyncScope(() => setInterval(() => {
       let acted = 0;
       try {
         acted = this.sweepSilentStations();
@@ -509,7 +569,7 @@ export class AgencyRuntime {
       if (++this.stationSweepIdlePasses >= STATION_SWEEP_IDLE_PASSES_BEFORE_DORMANT) {
         this.stopStationSweep();
       }
-    }, STATION_HEARTBEAT_SWEEP_MS);
+    }, STATION_HEARTBEAT_SWEEP_MS));
     this.stationSweepTimer.unref?.();
   }
 

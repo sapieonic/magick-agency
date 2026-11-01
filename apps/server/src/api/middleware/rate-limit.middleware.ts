@@ -28,6 +28,16 @@ const DEFAULT_IP_AUTH_MAX = 3000;
 const DEFAULT_USER_MAX = 300;
 const DEFAULT_WEBHOOK_MAX = 1000;
 const DEFAULT_CARRIER_MEDIA_MAX = 600;
+/**
+ * The station socket upgrade's ceiling per IP. Sized for a reconnect storm behind one NAT
+ * (Q9): a Wi-Fi blip on a floor sends every agent down the reconnect ladder at once, 6
+ * upgrades in ~33 s each, so 1200/min holds a 200-agent floor all walking the whole ladder
+ * inside one window. Generous because a refused upgrade is the expensive failure here (a
+ * mid-call agent who cannot reconnect misses the 8 s deferred hangup), and safe because the
+ * upgrade is gated by a single-use token minted over authenticated, per-user-limited HTTP:
+ * an upgrade without one costs a Redis lookup and a 4401 close, and buys nothing.
+ */
+const DEFAULT_STATION_MAX = 1200;
 const DEFAULT_INTERNAL_MAX = 1000;
 const DEFAULT_WINDOW = '1 minute';
 
@@ -86,6 +96,15 @@ const CARRIER_MEDIA_PATH_PREFIXES = [
 const WEBRTC_MEDIA_PARENT_PREFIX = '/api/v1/webrtc-call';
 const WEBRTC_MEDIA_LEG_SUFFIXES = ['/pstn-stream', '/browser-stream'] as const;
 
+/**
+ * The agent station socket upgrade, `/proxy/agency/station/:sessionId` (`agency.plugin.ts`).
+ * Its credential is a single-use query token, not a bearer, so without its own bucket it
+ * shared the plain 200/min `<ip>` counter with every unauthenticated request from that IP —
+ * sign-in, invites, `/client-config` — and a floor behind one NAT reconnecting at once could
+ * spend it. See {@link DEFAULT_STATION_MAX}.
+ */
+const STATION_PATH_PREFIX = '/proxy/agency/station';
+
 /** Control-plane prefix (bearer-authenticated callers). No route is served there today. */
 const INTERNAL_PATH_PREFIX = '/internal';
 
@@ -108,6 +127,7 @@ export type RateLimitBucketKind =
   | 'exempt'
   | 'webhook'
   | 'carrier_media'
+  | 'station'
   | 'internal'
   | 'ip_auth'
   | 'ip';
@@ -264,8 +284,10 @@ function hasBearer(headers: Record<string, unknown>): boolean {
  *    which is what it actually authenticates with: a request that forgot the
  *    header would otherwise silently land in a different bucket than the one
  *    the route serves;
+ *  - `station` on the path, ahead of `ip_auth`, so the upgrade lands in its own bucket
+ *    whatever headers it carries;
  *  - `ip_auth` (a bearer is present, {@link hasBearer}) last, so a bearer moves
- *    only what would otherwise be `ip`: webhook, carrier-media and internal
+ *    only what would otherwise be `ip`: webhook, carrier-media, station and internal
  *    traffic keep their own buckets whatever headers they carry.
  *
  * ⚠️ **Classification is pre-authentication, so the raised ceilings are
@@ -295,6 +317,7 @@ export function budgetFor(
   if (EXEMPT_PATHS.some((p) => path === p)) return 'exempt';
   if (isWebhookPath(path)) return 'webhook';
   if (isCarrierMediaPath(path)) return 'carrier_media';
+  if (hasPrefix(path, STATION_PATH_PREFIX)) return 'station';
   if (hasPrefix(path, INTERNAL_PATH_PREFIX)) return 'internal';
   if (hasBearer(request.headers)) return 'ip_auth';
   return 'ip';
@@ -324,6 +347,12 @@ export interface RateLimitOptions {
   carrierMediaMax?: number;
   /** Max requests per window for `/internal/*` traffic. Default 1000. */
   internalMax?: number;
+  /**
+   * Max station socket upgrades per window per IP. Default 1200 (`DEFAULT_STATION_MAX`).
+   * No env key: the ceilings above come from the voice config block, and this one is fixed
+   * until an operator needs to move it.
+   */
+  stationMax?: number;
   /** Window size (fastify-rate-limit duration string or ms). Default '1 minute'. */
   timeWindow?: string | number;
 }
@@ -359,9 +388,10 @@ export interface RateLimitOptions {
  * |-----------------|----------------|--------------------|
  * | `webhook`       | `wh:<ip>`      | Volume scales with DIAL RATE, not tenant API usage — several lifecycle callbacks per call, all from a handful of carrier IPs. |
  * | `carrier_media` | `cm:<ip>`      | Same IPs, but a 429 on a WS upgrade is dead air on a live call, not a retryable failure. Must not be exhaustible by a webhook storm. Covers the AI + WS-static media streams, the pre-generated TTS clip, and both WebRTC bridge legs. |
+ * | `station`       | `st:<ip>`      | The agent station socket upgrade (its credential is a single-use query token, not a bearer). A NAT'd floor reconnecting at once must not 429 a mid-call agent's reconnect, nor spend the plain bucket. |
  * | `internal`      | `int:<ip>`     | Control-plane callers authenticate with `Authorization: Bearer` from a few egress IPs and retry, so at the `ip` ceiling a breach would amplify exactly as the incident did. |
  * | `ip_auth`       | `ipa:<ip>`     | Any other request carrying `Authorization: Bearer`: a call floor behind one NAT shares an IP (Q9, amended 2026-11-01). Coarse; the per-user bucket below binds verified traffic. |
- * | `ip`            | `<ip>`         | Everything else: unauthenticated traffic, and the station socket upgrade (its credential is a query token, not a bearer). |
+ * | `ip`            | `<ip>`         | Everything else: unauthenticated traffic. |
  * | `exempt`        | (not limited)  | `/healthz`, `/readyz` (exact paths only) — a 429 here fails the readiness gate. |
  *
  * Behind those, inside the authenticated scopes, every request whose bearer verified is
@@ -392,9 +422,10 @@ export async function registerRateLimit(
   const webhookMax = opts?.webhookMax ?? DEFAULT_WEBHOOK_MAX;
   const carrierMediaMax = opts?.carrierMediaMax ?? DEFAULT_CARRIER_MEDIA_MAX;
   const internalMax = opts?.internalMax ?? DEFAULT_INTERNAL_MAX;
+  const stationMax = opts?.stationMax ?? DEFAULT_STATION_MAX;
   const timeWindow = opts?.timeWindow ?? DEFAULT_WINDOW;
 
-  const ceilings = { max, ipAuthMax, webhookMax, carrierMediaMax, internalMax, timeWindow };
+  const ceilings = { max, ipAuthMax, webhookMax, carrierMediaMax, stationMax, internalMax, timeWindow };
   if (redis) {
     log.info(ceilings, 'Rate limiter using Redis store (cluster-wide limits)');
   } else {
@@ -406,6 +437,7 @@ export async function registerRateLimit(
     switch (kind) {
       case 'webhook': return webhookMax;
       case 'carrier_media': return carrierMediaMax;
+      case 'station': return stationMax;
       case 'internal': return internalMax;
       case 'ip_auth': return ipAuthMax;
       case 'ip': return max;
@@ -446,6 +478,7 @@ export async function registerRateLimit(
       switch (kind) {
         case 'webhook': return `wh:${request.ip}`;
         case 'carrier_media': return `cm:${request.ip}`;
+        case 'station': return `st:${request.ip}`;
         case 'internal': return `int:${request.ip}`;
         // Its own namespace, never the plain `<ip>` counter: one counter under two ceilings
         // would let a NAT's bearer traffic 429 every unauthenticated request from that IP.

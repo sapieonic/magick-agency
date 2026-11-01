@@ -16,13 +16,20 @@ const JWT_EXPIRY = '4h';
 export async function registerSuperAdminLoginRoute(app: FastifyInstance): Promise<void> {
   /**
    * POST /super-admin/login
-   * Email + password → JWT (4h expiry). Rate limited separately.
+   * Email + password → JWT (4h expiry). Rate limited separately: 5/minute per IP.
+   *
+   * The key is pinned here, not inherited. A per-route `rateLimit` inherits the app-scope
+   * limiter's `keyGenerator`, which keys a request carrying `Authorization: Bearer` as
+   * `ipa:<ip>` and one without as `<ip>` (the `ip_auth` split, Q9): two counters, so
+   * alternating a bogus bearer with none would double the brute-force budget to 10. One
+   * key per IP whatever the headers, in its own namespace.
    */
   app.post('/login', {
     config: {
       rateLimit: {
         max: 5,
         timeWindow: '1 minute',
+        keyGenerator: (request: FastifyRequest) => `sal:${request.ip}`,
       },
     },
   }, async (request: FastifyRequest, reply: FastifyReply) => {

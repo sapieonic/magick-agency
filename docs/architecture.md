@@ -224,9 +224,13 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   ping every 3 s (`MOBILE_STATION_PROBE_MS`), and every protocol pong, or ping from the app, renews
   `lastSeen` in memory only, never Postgres or Redis; the probe's timer and listeners go with the
   socket (detach, supersede or close). The silent-station sweep runs every 5 s, so a silent console
-  is closed 4408 30–35 s after its last sign of life and a silent phone 10–15 s after; a station
-  with a live attempt is never closed by it, on either app (the bridge's deferred hangup owns the
-  call; an unbound dial gets its pre-bind grace armed). The join (`X-Client`, parsed by
+  is closed 4408 30–35 s after its last sign of life, and a silent phone is dropped 10–15 s after
+  with `terminate`, never `close` (on a dead transport `close` waits out `ws`'s 30 s closing
+  timeout, leaving the agent attached and dialable; the app treats any close as a reconnect). A
+  console with a live attempt is never closed by the sweep (the bridge's deferred hangup owns the
+  call). A phone silent on a call the agent can see is dropped the same way and the 8 s deferred
+  hangup decides the call (M1); on either app an unbound dial is not closed but gets its pre-bind
+  grace armed. The join (`X-Client`, parsed by
   `utils/client-header.ts`) serves the mobile app `heartbeat_grace_ms` 10 000. The `media=` format
   is the agent leg's audio for the socket's life: the handler routes frames on `ws`'s `isBinary`
   (binary is `alaw8` audio, text is JSON control) and tags the socket for the bridge
@@ -386,9 +390,10 @@ counter never holds two ceilings:
 |---|---|---|---|
 | `webhook` | `wh:<ip>` | 1000 (`RATE_LIMIT_WEBHOOK_MAX`) | `/api/v1/webhooks/*` |
 | `carrier_media` | `cm:<ip>` | 600 (`RATE_LIMIT_CARRIER_MEDIA_MAX`) | media sockets, TTS clips, both WebRTC legs |
+| `station` | `st:<ip>` | 1200 (`RATE_LIMIT_STATION_MAX`) | the station socket upgrade, `/proxy/agency/station/*` (a single-use query token, not a bearer): a floor behind one NAT walking the reconnect ladder at once must not spend the plain bucket or 429 a mid-call reconnect |
 | `internal` | `int:<ip>` | 1000 (`RATE_LIMIT_INTERNAL_MAX`) | `/internal/*` (none served) |
 | `ip_auth` | `ipa:<ip>` | 3000 (`RATE_LIMIT_IP_AUTH_MAX`) | any other request carrying `Authorization: Bearer` |
-| `ip` | `<ip>` | 200 (`RATE_LIMIT_MAX`) | everything else: sign-in, invites, `GET /client-config`, the station socket upgrade (a query token, not a bearer) |
+| `ip` | `<ip>` | 200 (`RATE_LIMIT_MAX`) | everything else: sign-in, invites, `GET /client-config` |
 | `exempt` | none | unlimited | `/healthz`, `/readyz` (exact paths) |
 
 Then, inside every authenticated route, `sessionMiddleware` charges the **per-user** bucket once it
@@ -401,7 +406,9 @@ amended 2026-11-01). A route may add its own tighter per-user cap in its own nam
 (`createUserRateLimit`): `POST /client-config/uplink-probe` allows 6 per user per window (`up:<id>`),
 charged with its authentication in `preParsing`, so no body is read for a caller who fails either.
 Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
-Per-route limits (super-admin login 5/min, public invite routes 20/min) are honoured. A 429 from any
+Per-route limits (super-admin login 5/min, public invite routes 20/min) are honoured, each keyed on
+the IP alone (the route pins its `keyGenerator`; an inherited one would split a bearer and a
+non-bearer request into two counters). A 429 from any
 bucket has the same body and `retry-after`, and counts `rate_limit_rejected_total{bucket_kind}`
 (`user` for the per-user bucket). No bucket is keyed on a client-supplied header. The IP buckets
 key on `request.ip`, which trusts exactly `TRUST_PROXY_HOPS` proxies (Q9).

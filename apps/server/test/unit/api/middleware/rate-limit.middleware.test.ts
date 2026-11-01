@@ -429,7 +429,7 @@ describe('registerRateLimit', () => {
   it('keeps max, keyGenerator and allowList in lockstep for EVERY bucket kind', async () => {
     const app = { register: mockRegister } as any;
     await registerRateLimit(app, null, {
-      max: 200, webhookMax: 300, carrierMediaMax: 600, internalMax: 1000,
+      max: 200, webhookMax: 300, carrierMediaMax: 600, internalMax: 1000, stationMax: 1200,
     });
 
     const { max, keyGenerator, allowList } = mockRegister.mock.calls[0]![1] as any;
@@ -438,13 +438,14 @@ describe('registerRateLimit', () => {
     // SAME predicate as the counter it is measured in, so one counter can never
     // hold two ceilings.
     const expected: Record<string, number> = {
-      'wh:': 300, 'cm:': 600, 'int:': 1000,
+      'wh:': 300, 'cm:': 600, 'int:': 1000, 'st:': 1200,
     };
     const cases = [
       { url: '/api/v1/webhooks/x', headers: {}, ip: 'i' },
       { url: '/api/v1/media-stream/x', headers: {}, ip: 'i' },
       { url: '/api/v1/tts-audio/x', headers: {}, ip: 'i' },
       { url: '/internal/x', headers: {}, ip: 'i' },
+      { url: '/proxy/agency/station/s1?token=t&client=mobile', headers: {}, ip: 'i' },
       { url: '/api/v1/webrtc-call/c1/pstn-stream', headers: {}, ip: 'i' },
       { url: '/api/v1/webrtc-call/c1', headers: {}, ip: 'i' },
       { url: '/api/v1/calls', headers: {}, ip: 'i' },
@@ -479,6 +480,37 @@ describe('registerRateLimit', () => {
     // A missing url mis-buckets rather than throwing: keyGenerator runs inside the
     // request path, and a throw there is a 500 on every call.
     expect(budgetFor({ headers: {} })).toBe('ip');
+  });
+
+  // ── The station socket upgrade: its own `st:<ip>` bucket ───────────────────────
+  // Its credential is a single-use query token, not a bearer, so it used to share the plain
+  // 200/min `<ip>` counter with all unauthenticated traffic from the IP: a NAT'd floor
+  // walking the reconnect ladder at once could 429 a mid-call agent's reconnect.
+
+  it('puts the station upgrade in its own bucket, 1200/min under st:<ip>, with or without a bearer', async () => {
+    const app = { register: mockRegister } as any;
+    await registerRateLimit(app);
+    const { max, keyGenerator } = mockRegister.mock.calls[0]![1] as any;
+    for (const headers of [{}, { authorization: 'Bearer t' }]) {
+      const req = { url: '/proxy/agency/station/9b2e?token=abc&client=mobile&media=alaw8', headers, ip: '100.64.1.1' };
+      expect(budgetFor(req)).toBe('station');
+      expect(max(req)).toBe(1200);
+      expect(keyGenerator(req)).toBe('st:100.64.1.1');
+    }
+    // Path boundary: a lookalike is not the station.
+    expect(budgetFor({ url: '/proxy/agency/stations', headers: {} })).toBe('ip');
+    // The authenticated agency API next to it is untouched.
+    expect(budgetFor({ url: '/proxy/agency/sessions', headers: {} })).toBe('ip');
+    expect(budgetFor({ url: '/proxy/agency/sessions', headers: { authorization: 'Bearer t' } })).toBe('ip_auth');
+    // Throttled upgrades are still labelled as agency traffic.
+    expect(routeClassFor('/proxy/agency/station/9b2e?token=abc')).toBe('agency');
+  });
+
+  it('propagates a stationMax override', async () => {
+    const app = { register: mockRegister } as any;
+    await registerRateLimit(app, null, { stationMax: 9 });
+    const { max } = mockRegister.mock.calls[0]![1] as any;
+    expect(max(apiReq('/proxy/agency/station/s1'))).toBe(9);
   });
 
   // ── Bearer-carrying traffic: the `ip_auth` bucket (Q9, amended 2026-11-01) ───

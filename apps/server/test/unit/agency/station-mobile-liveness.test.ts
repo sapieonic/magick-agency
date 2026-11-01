@@ -13,7 +13,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 //    every protocol pong (or ping from the app) renews its `lastSeen` — in memory only,
 //    never Postgres or Redis;
 //  * the sweep holds each station to its OWN grace: the web keeps 30s, a mobile one 10s,
-//    so a silent phone is closed 4408 within 10–15s;
+//    so a silent phone is dropped within 10–15s — `terminate`, never `close(4408)`, because
+//    on a dead transport `close` holds the entry CLOSING (and the agent dialable) for ws's
+//    30s closing timeout; a silent web console is still closed 4408;
 //  * the probe's timer and listeners go with the socket — detach, supersede or close —
 //    so nothing leaks;
 //  * the mid-attempt rule holds for a phone with one exception (decision M1): silent past
@@ -265,21 +267,61 @@ describe('the sweep, per station (AgencyRuntime)', () => {
     vi.useRealTimers();
   });
 
-  it('closes a silent phone 4408 at its 10s grace while a silent web console keeps its 30s', async () => {
+  it('drops a silent phone at its 10s grace (terminate) while a silent web console keeps its 30s (close 4408)', async () => {
     const phone = new FakeWs();
     phone.autoPong = false;
     const browser = new FakeWs();
     await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile' });
     await runtime.stations.attach({ sessionId: 'web', ws: browser as never, ...ENTRY });
+    // The station route's close handler detaches (`station-socket.ts`).
+    phone.on('close', () => { void runtime.stations.detach('phone', phone as never); });
 
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS)).toBe(0);
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS + 1)).toBe(1);
-    expect(phone.closeArgs).toEqual([[AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, 'station_heartbeat_timeout']]);
+    expect(phone.terminated).toBe(1);
+    expect(phone.closeArgs).toEqual([]);
     expect(browser.closeArgs).toEqual([]);
+    expect(browser.terminated).toBe(0);
 
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS)).toBe(0);
     expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS + 1)).toBe(1);
     expect(browser.closeArgs).toEqual([[AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, 'station_heartbeat_timeout']]);
+    expect(browser.terminated).toBe(0);
+  });
+
+  // The orphan storm: `close(4408)` on a dead transport leaves the entry CLOSING for ws's
+  // 30s closing timeout, `isLocallyOwned` true, and pacing admitting an agent it cannot
+  // dial — an orphaned attempt row per tick. `terminate` makes `close` (and so the station
+  // route's close handler, which detaches) follow at once.
+  it('a silent phone off a call is terminated, and once its close lands it is no longer locally owned', async () => {
+    const phone = new FakeWs();
+    phone.autoPong = false;
+    await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile' });
+    // What the station route's close handler does first (`station-socket.ts`).
+    phone.on('close', () => { void runtime.stations.detach('phone', phone as never); });
+    expect(runtime.stations.isLocallyOwned('phone')).toBe(true);
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS + 1)).toBe(1);
+    expect(phone.terminated).toBe(1);
+    expect(phone.closeArgs).toEqual([]);
+    expect(runtime.stations.isLocallyOwned('phone')).toBe(false);
+    // Nothing left for the next pass.
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + MOBILE_STATION_HEARTBEAT_GRACE_MS + 5_000)).toBe(0);
+  });
+
+  it('a silent phone already CLOSING is terminated too; a CLOSING web console is left to its handshake', async () => {
+    const phone = new FakeWs();
+    phone.autoPong = false;
+    const browser = new FakeWs();
+    await runtime.stations.attach({ sessionId: 'phone', ws: phone as never, ...ENTRY, clientKind: 'mobile' });
+    await runtime.stations.attach({ sessionId: 'web', ws: browser as never, ...ENTRY });
+    phone.readyState = 2;
+    browser.readyState = 2;
+
+    expect(runtime.sweepSilentStations(undefined, T0.getTime() + STATION_HEARTBEAT_GRACE_MS + 1)).toBe(1);
+    expect(phone.terminated).toBe(1);
+    expect(browser.terminated).toBe(0);
+    expect(browser.closeArgs).toEqual([]);
   });
 
   it('a pre-bind dial keeps the mid-attempt rule for a phone: not closed, the pre-bind grace armed', async () => {
@@ -327,7 +369,7 @@ describe('the sweep, per station (AgencyRuntime)', () => {
     expect(browser.closeArgs).toEqual([]);
   });
 
-  it('on its own timers: a phone that stops answering is closed within 15s; one that answers never is', async () => {
+  it('on its own timers: a phone that stops answering is dropped within 15s; one that answers never is', async () => {
     const healthy = new FakeWs();
     const asleep = new FakeWs();
     await runtime.stations.attach({ sessionId: 'healthy', ws: healthy as never, ...ENTRY, clientKind: 'mobile' });
@@ -342,16 +384,18 @@ describe('the sweep, per station (AgencyRuntime)', () => {
     for (let t = 0; t < 60_000; t += 1_000) {
       vi.advanceTimersByTime(1_000);
       await Promise.resolve();
-      if (closedAfter === null && asleep.closeArgs.length > 0) closedAfter = Date.now() - suspendedAt;
+      if (closedAfter === null && asleep.terminated > 0) closedAfter = Date.now() - suspendedAt;
     }
 
     expect(closedAfter).not.toBeNull();
     // Its last pong landed up to one probe before the suspension.
     expect(closedAfter!).toBeGreaterThan(MOBILE_STATION_HEARTBEAT_GRACE_MS - MOBILE_STATION_PROBE_MS);
     expect(closedAfter!).toBeLessThanOrEqual(MOBILE_STATION_HEARTBEAT_GRACE_MS + STATION_HEARTBEAT_SWEEP_MS);
-    expect(asleep.closeArgs).toEqual([[AGENCY_STATION_CLOSE.HEARTBEAT_TIMEOUT, 'station_heartbeat_timeout']]);
+    expect(asleep.terminated).toBe(1);
+    expect(asleep.closeArgs).toEqual([]);
     // 80s with no app-level ping at all: the probe alone kept it.
     expect(healthy.closeArgs).toEqual([]);
+    expect(healthy.terminated).toBe(0);
   });
 
   it('leaks no timer: after the phones close and detach, only the sweep is left, and it goes dormant', async () => {

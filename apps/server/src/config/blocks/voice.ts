@@ -83,6 +83,8 @@ const rateLimitSchema = z.object({
   ipAuthMax: z.coerce.number().int().min(1).default(3000),
   webhookMax: z.coerce.number().int().min(1).default(1000),
   carrierMediaMax: z.coerce.number().int().min(1).default(600),
+  /** `RATE_LIMIT_STATION_MAX`: station socket upgrades per IP (single-use token, no bearer). */
+  stationMax: z.coerce.number().int().min(1).default(1200),
   internalMax: z.coerce.number().int().min(1).default(1000),
   timeWindow: z.string().default('1 minute'),
 });
@@ -259,6 +261,7 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
       ipAuthMax: env['RATE_LIMIT_IP_AUTH_MAX'],
       webhookMax: env['RATE_LIMIT_WEBHOOK_MAX'],
       carrierMediaMax: env['RATE_LIMIT_CARRIER_MEDIA_MAX'],
+      stationMax: env['RATE_LIMIT_STATION_MAX'],
       internalMax: env['RATE_LIMIT_INTERNAL_MAX'],
       timeWindow: env['RATE_LIMIT_WINDOW'],
     },
