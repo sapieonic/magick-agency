@@ -100,6 +100,23 @@ class _NumberFieldState extends ConsumerState<NumberField> {
     );
   }
 
+  /// Typing: the core keeps only what can be dialled. A character it drops (a
+  /// dash, a space, a second `+`, a digit past the limit) leaves the number as
+  /// it was, so the view does not change and [_sync] never runs: put the
+  /// core's number back here, or the field would show a character that is
+  /// not dialled. The caret stays where the agent was typing.
+  void _typed(String value) {
+    ref.read(softphoneActionsProvider).setNumber(value);
+    final number = ref.read(softphoneViewProvider).number;
+    if (number == _controller.text) return;
+    final dropped = value.length - number.length;
+    final caret = (_controller.selection.isValid ? _controller.selection.extentOffset : value.length) - dropped;
+    _controller.value = TextEditingValue(
+      text: number,
+      selection: TextSelection.collapsed(offset: caret.clamp(0, number.length)),
+    );
+  }
+
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final raw = data?.text;
@@ -129,7 +146,7 @@ class _NumberFieldState extends ConsumerState<NumberField> {
             enableSuggestions: false,
             inputFormatters: [_formatter],
             style: monoStyle(context, size: 22, color: t.textPrimary),
-            onChanged: actions.setNumber,
+            onChanged: _typed,
             onSubmitted: (_) => widget.onSubmit(),
             contextMenuBuilder: (context, editable) {
               // The menu's Paste goes through the same cleaning as any paste,

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/softphone/phone_input.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/softphone/parts/number_field.dart';
@@ -107,6 +108,42 @@ void main() {
       expect(tester.widget<TextField>(find.byKey(const Key('dial-number'))).controller!.text, '9');
       await h.setView(readyView(number: '+919812345678'));
       expect(tester.widget<TextField>(find.byKey(const Key('dial-number'))).controller!.text, '+919812345678');
+    });
+
+    testWidgets('a character the core drops leaves the field too: a dash, a space, a second +, a digit past the limit', (
+      tester,
+    ) async {
+      final h = await pumpSoftphone(tester, readyView(number: '9820461733'));
+      // As the core does: it keeps only what can be dialled, and a number it
+      // leaves unchanged changes nothing in the view.
+      h.actions.onCall = (name) {
+        if (name != 'setNumber') return;
+        final kept = normaliseTypedNumber(sanitiseDialInput(h.actions.args[name]!.single! as String));
+        h.container.read(h.holder.notifier).set(readyView(number: kept));
+      };
+      final field = find.byKey(const Key('dial-number'));
+      TextEditingController controller() => tester.widget<TextField>(field).controller!;
+
+      for (final typed in ['9820461733-', '9820461733 ', '9820461733+', '9820461733,', '9820461733(']) {
+        await tester.enterText(field, typed);
+        await tester.pump();
+        expect(controller().text, '9820461733', reason: 'typed "$typed"');
+      }
+
+      // Typed in the middle: the caret stays where the agent was typing.
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(text: '98204-61733', selection: TextSelection.collapsed(offset: 6)),
+      );
+      await tester.pump();
+      expect(controller().text, '9820461733');
+      expect(controller().selection, const TextSelection.collapsed(offset: 5));
+
+      final longest = '9' * maxDialLength;
+      await h.setView(readyView(number: longest));
+      await tester.enterText(field, '${longest}1');
+      await tester.pump();
+      expect(controller().text, longest);
+      expect(h.actions.args['setNumber'], ['${longest}1']);
     });
 
     testWidgets('the paste detector reads what a paste put in at the caret', (tester) async {
