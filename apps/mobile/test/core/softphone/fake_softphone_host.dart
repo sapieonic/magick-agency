@@ -49,6 +49,7 @@ SoftphoneHostView hostView({
   AudioView audio = const AudioView(),
   bool ringMuted = false,
   DateTime? reconnectDeadline,
+  String? hangupFailure,
 }) => SoftphoneHostView(
   sessionId: sessionId,
   kind: kind,
@@ -65,6 +66,7 @@ SoftphoneHostView hostView({
   audio: audio,
   ringMuted: ringMuted,
   reconnectDeadline: reconnectDeadline,
+  hangupFailure: hangupFailure,
 );
 
 /// A campaign station on this phone (SP7), switched to the soft phone unless told otherwise.
@@ -78,7 +80,7 @@ SoftphoneHostView campaignHost({bool onSoftphone = true, String campaignId = 'ca
   call: call,
 );
 
-/// [v] with some fields replaced (`clearCall` drops the call).
+/// [v] with some fields replaced (`clearCall` drops the call, `clearHangupFailure` the host's hang-up failure).
 SoftphoneHostView copyHost(
   SoftphoneHostView v, {
   StationLink? link,
@@ -89,6 +91,8 @@ SoftphoneHostView copyHost(
   AudioView? audio,
   bool? ringMuted,
   bool? switchQueued,
+  String? hangupFailure,
+  bool clearHangupFailure = false,
 }) => SoftphoneHostView(
   sessionId: v.sessionId,
   kind: v.kind,
@@ -105,6 +109,7 @@ SoftphoneHostView copyHost(
   audio: audio ?? v.audio,
   ringMuted: ringMuted ?? v.ringMuted,
   reconnectDeadline: v.reconnectDeadline,
+  hangupFailure: clearHangupFailure ? null : (hangupFailure ?? v.hangupFailure),
 );
 
 class _HostSlot extends Notifier<SoftphoneHostView?> {

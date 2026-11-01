@@ -833,6 +833,27 @@ void main() {
     });
   });
 
+  softphoneTest('rule 12b: a failed hang-up from CallKit or the notification shows as the soft phone’s own', (h) {
+    const failure = 'We couldn’t end the call — you may still be connected. Check your connection.';
+    h.openWith(call: bridged());
+    expect(h.view.hangupFailure, isNull);
+    h.host.view = copyHost(h.host.view!, hangupFailure: failure);
+    h.pump();
+    expect(h.view.hangupFailure, failure);
+    h.host.view = copyHost(h.host.view!, clearHangupFailure: true);
+    h.pump();
+    expect(h.view.hangupFailure, isNull);
+
+    // The soft phone's own failure (its hang-up button) is the one shown when both are.
+    h.reply('POST $callsPath/mc-1/hangup', {'error': 'Internal Server Error', 'message': 'down'}, status: 500);
+    h.run(h.actions.hangUp());
+    final own = h.view.hangupFailure;
+    expect(own, isNotNull);
+    h.host.view = copyHost(h.host.view!, hangupFailure: failure);
+    h.pump();
+    expect(h.view.hangupFailure, own);
+  });
+
   // ─── Rule 13 ──────────────────────────────────────────────────────────────
 
   group('rule 13: Mute', () {

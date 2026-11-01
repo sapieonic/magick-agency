@@ -852,6 +852,9 @@ class SoftphoneView {
   final AudioView audio;
   final bool canHangUp;
   final bool hangingUp;
+
+  /// A hang-up that failed while the call stays on the line: this screen's
+  /// own, else one from CallKit or the notification (the host's).
   final String? hangupFailure;
 
   // ── Mark DNC ──

@@ -1868,7 +1868,9 @@ class SoftphoneController extends Notifier<SoftphoneCoreState> implements Softph
       audio: audio,
       canHangUp: live && !_hangingUp,
       hangingUp: _hangingUp,
-      hangupFailure: _hangupFailure,
+      // This screen's own hang-up failure, else one from the system controls
+      // (CallKit, the notification), which only the host sees.
+      hangupFailure: _hangupFailure ?? host?.hangupFailure,
       dncEnabled: _dncEnabled,
       dncScopeLabel: call == null ? null : softphoneDncScopeLabel(call.tag?.campaignName),
       dncInFlight: _dncInFlight,
