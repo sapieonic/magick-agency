@@ -335,7 +335,11 @@ The first calls from a phone (Android 16, a Redmi, a release-mode `dev` build ag
 - Staging's server reports as `OTEL_SERVICE_NAME=magick-agency`, the production name, so its alerts
   route as production. It should be `magick-agency-Staging` (`grafana/README.md`); a setting on
   the staging host, not in this repo.
-- CI's first iOS build (on `main`) fails at package resolution (`mobile.md`, "Not verified yet").
+- CI's first iOS build (on `main`) fails at package resolution. The fix holds Firebase on the iOS
+  SDK 12 line until `google_sign_in_ios` takes GoogleSignIn-iOS 10.1 or later (`mobile.md`,
+  "Builds and releases"). SwiftPM resolves the pinned set; the next iOS build on `main`, the first
+  compile of the iOS code, has not confirmed it yet. The pin also moves Android back to Firebase
+  BoM 34, not yet tried on a phone.
 
 Then, so the next failure on a tester's phone can be read without their logs:
 
