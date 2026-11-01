@@ -71,4 +71,5 @@ export * from './agency/campaign-defaults';
 export * from './agency/performance';
 export * from './agency/spine';
 export * from './agency/softphone';
+export * from './agency/breaks';
 export type { AgencyActionErrorCode, AgencySoftphoneErrorCode } from './errors';

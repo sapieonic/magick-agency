@@ -104,6 +104,8 @@ interface OldAgencySupervisorAgent {
   connected: boolean | null;
   break_reason: string | null;
   calls_handled: number;
+  // Added deliberately (mobile app, 0006): the floor's phone marker.
+  client_kind: 'web' | 'mobile';
 }
 
 interface OldAgencyCampaignStats {

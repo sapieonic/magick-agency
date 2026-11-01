@@ -1,5 +1,10 @@
 import { isUsableTimezone } from './calling-hours.js';
-import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import {
+  DEVICE_AWAY_BREAK_REASON,
+  RESERVED_BREAK_REASONS,
+  SOFTPHONE_BREAK_REASON,
+  type AgencyReservedBreakReason,
+} from '@magick-agency/contracts/agency';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG — THE INTERNAL HANDLER'S OWN BOUNDARY ───────────
@@ -461,19 +466,27 @@ export function validateAgencyCampaignConfig(
   return issues;
 }
 
+/** Why each reserved break code is reserved, as the refusal tells the operator. */
+const RESERVED_BREAK_REASON_OWNER: Readonly<Record<AgencyReservedBreakReason, string>> = {
+  [SOFTPHONE_BREAK_REASON]: 'the soft phone',
+  [DEVICE_AWAY_BREAK_REASON]: 'the mobile app (sent when it is backgrounded)',
+};
+
 /**
- * A campaign's break catalog may not list the soft phone's reserved reason
- * ({@link SOFTPHONE_BREAK_REASON}). The catalog drops it when read
- * (`resolveBreakReasons`), so it could never be taken from `/break`; refusing it at the
- * write tells the operator so instead of storing an entry that silently does nothing.
+ * A campaign's break catalog may not list a reserved reason (`RESERVED_BREAK_REASONS`:
+ * the soft phone's {@link SOFTPHONE_BREAK_REASON}, the mobile app's
+ * {@link DEVICE_AWAY_BREAK_REASON}). The catalog drops them when read
+ * (`resolveBreakReasons`), so neither could ever be offered from the break menu;
+ * refusing them at the write tells the operator so instead of storing an entry that
+ * silently does nothing. One issue per reserved code listed.
  */
 function validateBreakReasonsReserved(value: unknown): CampaignConfigIssue[] {
   if (!Array.isArray(value)) return [];
-  const reserved = value.some((r) => !!r && typeof r === 'object'
-    && (r as { code?: unknown }).code === SOFTPHONE_BREAK_REASON);
-  return reserved
-    ? [{ field: 'break_reasons', message: `break_reasons may not list "${SOFTPHONE_BREAK_REASON}": it is reserved for the soft phone.` }]
-    : [];
+  const listed = new Set(value.map((r) => (!!r && typeof r === 'object' ? (r as { code?: unknown }).code : undefined)));
+  return RESERVED_BREAK_REASONS.filter((code) => listed.has(code)).map((code) => ({
+    field: 'break_reasons',
+    message: `break_reasons may not list "${code}": it is reserved for ${RESERVED_BREAK_REASON_OWNER[code]}.`,
+  }));
 }
 
 /**

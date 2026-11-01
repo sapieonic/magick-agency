@@ -471,6 +471,13 @@
   color: var(--warning);
 }
 
+/* Neutral, not a warning: working from the mobile app is a fact, not a risk. */
+.mobileIcon {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
 .stateCell {
   display: inline-flex;
   align-items: center;

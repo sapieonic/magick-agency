@@ -2,7 +2,7 @@
 import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyAgentSessionRecord, AgencyCampaignSessionRecord } from '../../models/agency.model.js';
-import { SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencySessionKind } from '@magick-agency/contracts/agency';
+import { SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencyClientKind, type AgencySessionKind } from '@magick-agency/contracts/agency';
 
 const log = createChildLogger({ component: 'agency-repository' });
 
@@ -237,6 +237,45 @@ export class AgencyAgentSessionRepository {
     const { rows } = await getPool().query<AgencyAgentSessionRecord>(
       'SELECT * FROM agency_agent_sessions WHERE id = $1',
       [id],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * The station attach's session read, which also records the attaching app
+   * (`client_kind`, 0006) — {@link findById}'s answer, in the same single round trip.
+   *
+   * Every attach states its client, and a "continue on this phone" rehydrates the SAME
+   * session from another device, so the column is written on every attach rather than
+   * at join. Folded into the read the attach already makes instead of a second
+   * statement, and written only when it CHANGES: a reconnect from the same app (the
+   * common case: every wifi blip) reads and writes nothing, so it costs no dead tuple
+   * and takes no row lock. Never written on a session that has left.
+   *
+   * Returns the row as it stands after the write (the old row when nothing changed), or
+   * null when there is no such session; the caller's `left_at` check is unchanged.
+   *
+   * `$2` is typed at each use (`42P08` otherwise). `cur` and `upd` project the same
+   * table's columns in the same order, so the `UNION ALL` lines up; `cur` is the
+   * statement's snapshot, so it is read only when `upd` wrote nothing.
+   */
+  async readForStationAttach(id: string, clientKind: AgencyClientKind): Promise<AgencyAgentSessionRecord | null> {
+    const { rows } = await getPool().query<AgencyAgentSessionRecord>(
+      `WITH cur AS (
+         SELECT * FROM agency_agent_sessions WHERE id = $1
+       ), upd AS (
+         UPDATE agency_agent_sessions s
+            SET client_kind = $2::varchar
+           FROM cur
+          WHERE s.id = cur.id
+            AND cur.left_at IS NULL
+            AND cur.client_kind IS DISTINCT FROM $2::varchar
+         RETURNING s.*
+       )
+       SELECT * FROM upd
+       UNION ALL
+       SELECT * FROM cur WHERE NOT EXISTS (SELECT 1 FROM upd)`,
+      [id, clientKind],
     );
     return rows[0] ?? null;
   }

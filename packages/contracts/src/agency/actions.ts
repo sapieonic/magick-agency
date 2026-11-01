@@ -276,7 +276,11 @@ export interface AgencyDncResponse extends AgencyCampaignScoped {
 // listed separately because it is the only one an `agent` may not call.
 
 export interface AgencySessionBreakRequest {
-  /** Must match a `code` from bootstrap's `break_reasons`. */
+  /**
+   * Must match a `code` from bootstrap's `break_reasons` — or be
+   * `DEVICE_AWAY_BREAK_REASON`, the one reserved code this route accepts although no
+   * catalog lists it (see its rules in `./breaks.ts`).
+   */
   reason: string;
 }
 

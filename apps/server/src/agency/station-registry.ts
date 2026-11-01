@@ -1,7 +1,8 @@
 import type Redis from 'ioredis';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import { AGENCY_STATION_CLOSE, type AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, type AgencyClientKind, type AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -20,8 +21,25 @@ interface StationEntry {
   accountId: string;
   agentUserId: string;
   ws: WebSocket;
-  /** Last time a client `ping` arrived. Liveness is derived from this. */
+  /**
+   * Which app attached (`client=` on the upgrade). Picks the heartbeat grace the sweep
+   * holds this station to ({@link stationGraceFor}) and whether it is probed with
+   * protocol pings (`mobile`).
+   */
+  clientKind: AgencyClientKind;
+  /**
+   * Last sign of life: attach, every client `ping`, and — for a `mobile` station only —
+   * every protocol pong or ping. Liveness is derived from this.
+   */
   lastSeen: number;
+}
+
+/** What `attach` takes: the entry, with the client kind defaulting to `web`. */
+export type StationAttachInput = Omit<StationEntry, 'lastSeen' | 'clientKind'> & { clientKind?: AgencyClientKind };
+
+/** The heartbeat grace this station is held to: `heartbeat_grace_ms` for its client kind. */
+export function stationGraceFor(entry: Pick<StationEntry, 'clientKind'>): number {
+  return stationHeartbeatGraceMs(entry.clientKind);
 }
 
 /**
@@ -41,6 +59,8 @@ interface StationEntry {
  */
 export class StationRegistry {
   private readonly stations = new Map<string, StationEntry>();
+  /** A mobile station's protocol-ping probe, by session: its stop function. See {@link startProbe}. */
+  private readonly probes = new Map<string, () => void>();
 
   constructor(
     private readonly redis: Redis | null,
@@ -54,7 +74,8 @@ export class StationRegistry {
   }
 
   /** Register a newly-opened station socket and claim ownership of the agent. */
-  async attach(entry: Omit<StationEntry, 'lastSeen'>): Promise<void> {
+  async attach(input: StationAttachInput): Promise<void> {
+    const entry: Omit<StationEntry, 'lastSeen'> = { ...input, clientKind: input.clientKind ?? 'web' };
     // Supersede any prior socket for this session (a reconnect that raced the old
     // socket's close). The prior socket is closed so it cannot go on relaying.
     //
@@ -76,9 +97,71 @@ export class StationRegistry {
         'Superseding prior station socket for this session');
       try { prior.ws.close(AGENCY_STATION_CLOSE.SUPERSEDED, 'superseded'); } catch { /* already gone */ }
     }
+    // Whatever probed the prior entry stops with it: a probe belongs to one socket, and a
+    // superseded socket's pongs must not keep its replacement alive.
+    this.stopProbe(entry.sessionId);
     this.stations.set(entry.sessionId, { ...entry, lastSeen: Date.now() });
+    if (entry.clientKind === 'mobile') this.startProbe(entry.sessionId, entry.ws);
     await this.claimOwnership(entry.sessionId);
-    log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId }, 'Station socket attached');
+    log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind },
+      'Station socket attached');
+  }
+
+  /**
+   * ── THE MOBILE LIVENESS PROBE ──────────────────────────────────────────────
+   *
+   * A mobile station is sent an RFC 6455 ping every `MOBILE_STATION_PROBE_MS` (3s),
+   * and every protocol PONG renews its `lastSeen`, as does every protocol PING the app
+   * sends of its own (it pings at the same cadence). That is what lets the sweep hold
+   * a phone to `MOBILE_STATION_HEARTBEAT_GRACE_MS` (10s) without closing a healthy one:
+   * the app-level `ping` comes only every 10s, while a protocol frame is answered by
+   * the client's WebSocket stack, not its app code, so it stops exactly when the
+   * transport does or the OS suspends the app.
+   *
+   * **In memory only.** A renewal writes `lastSeen` and nothing else: no Postgres, no
+   * Redis. The ownership key and the agent lease are still renewed by the app-level
+   * `ping` alone (`heartbeat`, every 10s), exactly as on the web; the probe makes a
+   * dead phone visible sooner, it never keeps a lease alive.
+   *
+   * **Socket-scoped**, like `heartbeat` and `detach`: a renewal lands only while this
+   * socket is still the session's entry, so a superseded socket's late pong cannot
+   * keep its replacement alive. The timer and the three listeners are removed on
+   * whichever comes first: `detach` of this socket, a supersede (`attach` stops the
+   * prior probe), or the socket's own `close`. The timer is `unref`'d, so a probe can
+   * never hold the process open.
+   */
+  private startProbe(sessionId: string, ws: WebSocket): void {
+    // A socket already closing will emit no `close` for the stop below to hear.
+    if (ws.readyState !== 1 /* OPEN */) return;
+    const alive = (): void => {
+      const entry = this.stations.get(sessionId);
+      if (entry && entry.ws === ws) entry.lastSeen = Date.now();
+    };
+    const timer = setInterval(() => {
+      if (ws.readyState !== 1 /* OPEN */) return;
+      try { ws.ping(); } catch { /* closing under us; the close stops the probe */ }
+    }, MOBILE_STATION_PROBE_MS);
+    timer.unref?.();
+    const stop = (): void => {
+      clearInterval(timer);
+      ws.off('pong', alive);
+      ws.off('ping', alive);
+      ws.off('close', stop);
+      if (this.probes.get(sessionId) === stop) this.probes.delete(sessionId);
+    };
+    ws.on('pong', alive);
+    ws.on('ping', alive);
+    ws.on('close', stop);
+    this.probes.set(sessionId, stop);
+  }
+
+  private stopProbe(sessionId: string): void {
+    this.probes.get(sessionId)?.();
+  }
+
+  /** How many probes are armed: zero once every mobile station is gone (no timer leaks). */
+  probeCount(): number {
+    return this.probes.size;
   }
 
   /** Release the socket and the ownership key. Idempotent. */
@@ -87,6 +170,7 @@ export class StationRegistry {
     // A superseded socket closing must not evict the socket that replaced it.
     if (!entry || (ws && entry.ws !== ws)) return;
     this.stations.delete(sessionId);
+    this.stopProbe(sessionId);
     if (this.redis) {
       await this.redis.del(this.ownershipKey(sessionId)).catch((err) =>
         log.warn({ err, sessionId }, 'Failed to clear station ownership key'));
@@ -330,8 +414,12 @@ export class StationRegistry {
   }
 
   /**
-   * Stations whose last client `ping` is older than `graceMs` — the selector the
+   * Stations whose last sign of life is older than their grace — the selector the
    * silent-station sweep filters and acts on (`AgencyRuntime.sweepSilentStations`).
+   *
+   * `graceMs` is one grace for every entry, or a function of the entry: the sweep
+   * passes {@link stationGraceFor}, so a web station keeps its 30s and a mobile one is
+   * held to 10s (renewed by its protocol pongs as well as its pings).
    *
    * `lastSeen` is written at attach and on every heartbeat and, until that sweep
    * landed, was read by nothing at all. Note what it does and does not measure: a
@@ -348,10 +436,11 @@ export class StationRegistry {
    * The decision to close is NOT taken here: the registry has no way to ask whether
    * an agent is mid-call, and this socket is also the media leg.
    */
-  silentSince(graceMs: number, now = Date.now()): StationEntry[] {
+  silentSince(graceMs: number | ((entry: StationEntry) => number), now = Date.now()): StationEntry[] {
     const out: StationEntry[] = [];
     for (const entry of this.stations.values()) {
-      if (now - entry.lastSeen > graceMs) out.push(entry);
+      const grace = typeof graceMs === 'number' ? graceMs : graceMs(entry);
+      if (now - entry.lastSeen > grace) out.push(entry);
     }
     return out;
   }

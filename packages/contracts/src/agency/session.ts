@@ -8,6 +8,7 @@
 
 import type { AgencyActionErrorResponse } from './actions';
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
+import type { AgencyClientKind } from './station';
 
 // ─── Campaign-derived config the agent console needs ────────────────────────
 
@@ -129,6 +130,13 @@ export interface AgencyCreateSessionRequest {
    * recreated), so this only lets the client assert which session it thinks it had.
    */
   session_id?: string;
+  /**
+   * Which app is joining, parsed by the public API layer from the request's
+   * `X-Client` header (absent: `web`). It picks the `intervals` served, nothing else:
+   * a `mobile` join is told `heartbeat_grace_ms` = `MOBILE_STATION_HEARTBEAT_GRACE_MS`.
+   * Client-declared, so never an input to anything security-relevant.
+   */
+  client_kind?: AgencyClientKind;
 }
 
 /**
@@ -325,6 +333,13 @@ export interface AgencyStationIntervals {
    * Enforced by the silent-station sweep, which closes such a socket with `4408`.
    * `STATION_HEARTBEAT_GRACE_MS` in `agency/timers.ts` is the single source of the
    * value served here, so the advertised number and the enforced one cannot drift.
+   *
+   * **Per client kind.** A `mobile` session is served
+   * `MOBILE_STATION_HEARTBEAT_GRACE_MS` (10s): the server probes a mobile station with
+   * RFC 6455 pings every `MOBILE_STATION_PROBE_MS` (3s), and any protocol pong or
+   * ping counts as liveness, so a suspended phone is closed within about 10–15s
+   * rather than holding a live lease for 30–40s. The app-level `ping` at
+   * `heartbeat_ms` is still owed: it alone renews the Redis ownership key and the lease.
    */
   heartbeat_grace_ms: number;
   /** The `reserved`→dial lease. Design: 10s. Informational; the dialer runtime enforces it. */

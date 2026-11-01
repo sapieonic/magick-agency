@@ -12,6 +12,8 @@ under the source directory they mirror; tests that span several modules are list
 each package. The console's soft-phone test files (added 2026-10-30) are static counts too, exact
 where the file has no `it.each` and marked `~` where it has one; the two existing console files the
 soft phone added a case to (`HoldToConfirmButton`, `DncPage`) show the printed count plus that case.
+The files the mobile app's presence work added or changed (2026-11-01) show the counts Vitest printed
+that day.
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -37,9 +39,9 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 
 ### `apps/server/src/agency/`
 
-The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket, tokens and the upgrade's media format, wrap-up, breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; and the campaign-management layer: CSV ingest and its jobs, staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment.
+The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket, tokens and upgrade query (`station-upgrade.ts`: `client=` / `media=`; the registry probes a mobile station with protocol pings and holds each station to its client kind's heartbeat grace), wrap-up, breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; and the campaign-management layer: CSV ingest and its jobs, staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment.
 
-Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-record.ts`, `agent-state-machine.ts`, `calling-hours.ts`, `campaign-behavioral-settings.ts`, `campaign-completion-notice.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `live-concurrency-metrics.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-media-format.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `wrapup-manager.ts`
+Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-record.ts`, `agent-state-machine.ts`, `calling-hours.ts`, `campaign-behavioral-settings.ts`, `campaign-completion-notice.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `live-concurrency-metrics.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`
 
 | Test file | Cases |
 |---|---|
@@ -85,6 +87,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-stats-enrichment.test.ts` | ~16 |
 | `apps/server/test/integration/agency/agent-grouped-read.test.ts` | ~14 |
 | `apps/server/test/integration/agency/agent-multi-session.test.ts` | ~7 |
+| `apps/server/test/integration/agency/agent-session-client-kind.test.ts` | 5 |
 | `apps/server/test/integration/agency/agent-occupancy-carried-bound.test.ts` | 2 |
 | `apps/server/test/integration/agency/agent-occupancy-window.test.ts` | ~8 |
 | `apps/server/test/integration/agency/agent-record-tenant-isolation.test.ts` | ~7 |
@@ -156,7 +159,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/campaign-analysis-profile-route.test.ts` | 13 |
 | `apps/server/test/unit/agency/campaign-behavioral-settings.test.ts` | 52 |
 | `apps/server/test/unit/agency/campaign-completion-notice.test.ts` | 6 |
-| `apps/server/test/unit/agency/campaign-config-route.test.ts` | 58 |
+| `apps/server/test/unit/agency/campaign-config-route.test.ts` | 60 |
 | `apps/server/test/unit/agency/campaign-list-route.test.ts` | 6 |
 | `apps/server/test/unit/agency/campaign-conversion-stats.test.ts` | 9 |
 | `apps/server/test/unit/agency/campaign-health.test.ts` | 19 |
@@ -197,8 +200,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
 | `apps/server/test/unit/agency/profile-in-use-reference-check.test.ts` | 23 |
-| `apps/server/test/unit/agency/proxy-agency-agent-actions.test.ts` | 62 |
-| `apps/server/test/unit/agency/proxy-agency-agent-audit.test.ts` | 8 |
+| `apps/server/test/unit/agency/proxy-agency-agent-actions.test.ts` | 63 |
+| `apps/server/test/unit/agency/proxy-agency-agent-audit.test.ts` | 10 |
 | `apps/server/test/unit/agency/proxy-agency-calls.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-activity.routes.test.ts` | 41 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-behavioral-capabilities.routes.test.ts` | 32 |
@@ -215,7 +218,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 29 |
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
-| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 15 |
+| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 20 |
 | `apps/server/test/unit/agency/reaper.test.ts` | 43 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
@@ -225,11 +228,13 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/spine-filters.test.ts` | 34 |
 | `apps/server/test/unit/agency/spine-read-routes.test.ts` | 23 |
 | `apps/server/test/unit/agency/station-heartbeat-grace.test.ts` | 19 |
-| `apps/server/test/unit/agency/station-media-format.test.ts` | 15 |
+| `apps/server/test/unit/agency/station-mobile-liveness.test.ts` | 14 |
+| `apps/server/test/unit/agency/station-socket-media.test.ts` | 6 |
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 4 |
 | `apps/server/test/unit/agency/station-registry.test.ts` | 29 |
 | `apps/server/test/unit/agency/station-supersede-stomp.test.ts` | 10 |
 | `apps/server/test/unit/agency/station-token.test.ts` | 5 |
+| `apps/server/test/unit/agency/station-upgrade.test.ts` | 13 |
 | `apps/server/test/unit/agency/supervisor-stats.test.ts` | 26 |
 | `apps/server/test/unit/agency/wrapup-manager.test.ts` | 34 |
 
@@ -323,6 +328,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-performance-access.test.ts` | ~16 |
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
 | `apps/server/test/integration/api/agency-runtime-routes.test.ts` | ~19 |
+| `apps/server/test/integration/api/agency-mobile-presence.test.ts` | 11 |
 | `apps/server/test/integration/api/agency-session-conflict-forward.test.ts` | ~13 |
 | `apps/server/test/integration/api/agency-spine-export.e2e.test.ts` | ~4 |
 | `apps/server/test/integration/api/agency-staffing.routes.test.ts` | ~51 |
@@ -349,9 +355,9 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 ### `apps/server/src/api/middleware/`
 
-App-wide middleware: rate limiter and its buckets, error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers.
+App-wide middleware: rate limiter and its buckets, error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, and the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request).
 
-Files: `agency-error-handler.ts`, `auth.middleware.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
+Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
 | Test file | Cases |
 |---|---|
@@ -363,6 +369,7 @@ Files: `agency-error-handler.ts`, `auth.middleware.ts`, `error-handler.middlewar
 | `apps/server/test/unit/api/middleware/rate-limit.middleware.test.ts` | 38 |
 | `apps/server/test/unit/api/middleware/rate-limit.scope.test.ts` | 3 |
 | `apps/server/test/unit/api/middleware/tenant-context.middleware.test.ts` | 24 |
+| `apps/server/test/unit/api/client-log-context.test.ts` | 3 |
 
 ### `apps/server/src/api/responses/`
 
@@ -380,7 +387,7 @@ Route families: a large plugin keeps its exported function, hooks and module not
 
 Shared helpers (`helpers/`): `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe, and `stringField`), `csv-attachment.ts` (the CSV `Content-Disposition` pair), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `settled.ts` (`settledValue`: independent reads started together, answered in order).
 
-Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/helpers.ts`, `agency/sessions.ts`, `agency/softphone-answer.ts`, `agency/softphone.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/core-campaign.ts`, `helpers/csv-attachment.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/settled.ts`, `helpers/softphone-list-query.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-softphone.routes.ts`, `proxy-agency-softphone/calls.ts`, `proxy-agency-softphone/reads.ts`, `proxy-agency-softphone/sessions.ts`, `proxy-agency-softphone/settings.ts`, `proxy-agency-softphone/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
+Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/device-away.ts`, `agency/helpers.ts`, `agency/sessions.ts`, `agency/softphone-answer.ts`, `agency/softphone.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/core-campaign.ts`, `helpers/csv-attachment.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/settled.ts`, `helpers/softphone-list-query.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-softphone.routes.ts`, `proxy-agency-softphone/calls.ts`, `proxy-agency-softphone/reads.ts`, `proxy-agency-softphone/sessions.ts`, `proxy-agency-softphone/settings.ts`, `proxy-agency-softphone/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
 
 | Test file | Cases |
 |---|---|
@@ -411,6 +418,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/voicelink-webhooks.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/webrtc-recordings.test.ts` | 6 |
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
+| `apps/server/test/unit/agency/device-away-break.test.ts` | 35 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 49 |
 | `apps/server/test/integration/api/softphone-routes.test.ts` | 20 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
@@ -811,9 +819,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -827,6 +835,7 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-g
 | `apps/server/test/unit/utils/otel-sdk-config.test.ts` | 35 |
 | `apps/server/test/unit/utils/recording-proxy-resolve.test.ts` | 9 |
 | `apps/server/test/unit/utils/recording-proxy.test.ts` | 25 |
+| `apps/server/test/unit/utils/client-header.test.ts` | 5 |
 | `apps/server/test/unit/utils/recording-url.test.ts` | 13 |
 | `apps/server/test/unit/utils/trace-context.test.ts` | 4 |
 | `apps/server/test/unit/utils/redact-url.test.ts` | 23 |
@@ -962,9 +971,9 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 
 ### `packages/contracts/src/agency/`
 
-The dialer contract, one file per surface, re-exported by `../agency.ts`: shared enumerations (`enums.ts`), campaign-derived config and the session bootstrap (`session.ts`), the station socket, its close codes and media formats (`pcm16` JSON, `alaw8` binary A-law; `station.ts`), action and session-state routes with the Phase 2 pool (`actions.ts`), campaign stats and the campaign rate floor (`campaign-stats.ts`), the campaign config defaults the server applies and the console previews — built-in disposition catalog, our-fault redial bound (`campaign-defaults.ts`), lifecycle and retry campaigns (`campaign-lifecycle.ts`), series, agent record, roster and grouped reads (`performance.ts`), the attempt spine (`spine.ts`), the soft phone: session kind, manual call, call fields, settings, the `manual_call` frame and every soft-phone route's bodies (`softphone.ts`, `docs/softphone.md`).
+The dialer contract, one file per surface, re-exported by `../agency.ts`: shared enumerations (`enums.ts`), campaign-derived config and the session bootstrap (`session.ts`), the station socket, its close codes and media formats (`pcm16` JSON, `alaw8` binary A-law; `station.ts`), action and session-state routes with the Phase 2 pool (`actions.ts`), campaign stats and the campaign rate floor (`campaign-stats.ts`), the campaign config defaults the server applies and the console previews — built-in disposition catalog, our-fault redial bound (`campaign-defaults.ts`), lifecycle and retry campaigns (`campaign-lifecycle.ts`), series, agent record, roster and grouped reads (`performance.ts`), the attempt spine (`spine.ts`), the soft phone: session kind, manual call, call fields, settings, the `manual_call` frame and every soft-phone route's bodies (`softphone.ts`, `docs/softphone.md`), the reserved break codes and their labels (`breaks.ts`: `soft_phone`, the mobile app's `device_away`). The client kind (`AgencyClientKind`) is in `station.ts` too.
 
-Files: `actions.ts`, `campaign-defaults.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `performance.ts`, `session.ts`, `softphone.ts`, `spine.ts`, `station.ts`
+Files: `actions.ts`, `breaks.ts`, `campaign-defaults.ts`, `campaign-lifecycle.ts`, `campaign-stats.ts`, `enums.ts`, `performance.ts`, `session.ts`, `softphone.ts`, `spine.ts`, `station.ts`
 
 _No dedicated test files._
 
@@ -1092,6 +1101,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
 | `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
+| `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
@@ -1117,17 +1127,18 @@ Scenario, flow, guard and setup tests that span several modules.
 
 ### `packages/domain/src/`
 
-Pure dialer rules: abandonment predicate, break manager, keyset cursor, rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement).
+Pure dialer rules: abandonment predicate, break manager, keyset cursor, rates, retry campaign bounds and summary, success disposition, timers (and `elapsedSeconds`, the one spelling of a seat-time / latency measurement; the station liveness numbers, per client kind: `stationHeartbeatGraceMs`, `MOBILE_STATION_*`).
 
 Files: `abandonment-predicate.ts`, `break-manager.ts`, `index.ts`, `keyset-cursor.ts`, `rates.ts`, `retry-campaign-bounds.ts`, `retry-summary.ts`, `success-disposition.ts`, `timers.ts`
 
 | Test file | Cases |
 |---|---|
-| `packages/domain/test/unit/agency/break-manager.test.ts` | 20 |
+| `packages/domain/test/unit/agency/break-manager.test.ts` | 23 |
 | `packages/domain/test/unit/agency/elapsed-seconds.test.ts` | 3 |
 | `packages/domain/test/unit/agency/keyset-cursor.test.ts` | 9 |
 | `packages/domain/test/unit/agency/retry-campaign-bounds.test.ts` | 4 |
 | `packages/domain/test/unit/agency/retry-summary.test.ts` | 19 |
+| `packages/domain/test/unit/agency/station-liveness-timers.test.ts` | 3 |
 
 ## `packages/observability`
 
@@ -1301,7 +1312,7 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/AgencyWorkspaceSwitch.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/AgentAnalyticsSection.test.tsx` | 89 |
 | `apps/console/src/__tests__/components/AgentBucketChart.test.tsx` | 15 |
-| `apps/console/src/__tests__/components/AgentFloor.test.tsx` | 41 |
+| `apps/console/src/__tests__/components/AgentFloor.test.tsx` | 43 |
 | `apps/console/src/__tests__/components/AgentLanding.test.tsx` | 15 |
 | `apps/console/src/__tests__/components/AgentPerformancePanel.test.tsx` | 14 |
 | `apps/console/src/__tests__/components/AppLayout.mobileDrawer.test.tsx` | 8 |
@@ -1438,7 +1449,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 14 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 43 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 46 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 47 |
 | `apps/console/src/__tests__/pages/AgentHomePage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgentPerformancePage.test.tsx` | 51 |
 | `apps/console/src/__tests__/pages/AnalysisProfilesPage.test.tsx` | 9 |
@@ -1490,14 +1501,15 @@ _No dedicated test files._
 
 Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more. The soft phone's own helpers are in `softphone/` (next entry); here `agencyAgentSurfaces.ts` adds `SOFTPHONE_SURFACE` and `agentSurfacesFor` (the fourth agent screen, kept out of the fixed `AGENT_SURFACES`), `agencyCampaignTabs.ts` the Soft-phone calls tab with a `flag` that `visibleCampaignTabs` checks, and `agencyStationReducer.ts` the `manualCall` slot and its `manual_call` action. `format/` is the one rendering of counts, percentages and plurals (`number.ts`, display locale `en-IN`), durations (`duration.ts`: live timers floor, aggregates round), dates with cached formatters (`date.ts`), a named zone's wall clock (`zone.ts`) and calling days (`weekdays.ts`). `agency/` holds `metrics.ts` (`ratio`, `ratePct`, `stateShares`, `ON_SHIFT_STATES`) and the pieces the large agency modules were split into — `agentWindows`, `buckets`, `agentReadouts`, `roster/`, `overview/`, `config/` — each re-exported by its original module so import paths are unchanged.
 
-Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
+Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/reservedBreakReason.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/utils/agencyActionErrorCodes.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/agencyActivityCopy.test.ts` | 24 |
-| `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 67 |
+| `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 69 |
 | `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 73 |
+| `apps/console/src/__tests__/utils/agencyReservedBreakReason.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/agencyAgentRoster.test.ts` | 82 |
 | `apps/console/src/__tests__/utils/agencyAgentSurfaces.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyAssignmentEntry.test.ts` | 19 |

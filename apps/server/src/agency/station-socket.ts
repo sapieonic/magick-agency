@@ -11,7 +11,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
-import { parseStationMediaFormat } from './station-media-format.js';
+import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -49,13 +49,13 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
       try { socket.close(1011, 'agency_runtime_unavailable'); } catch { /* ignore */ }
       return;
     }
-    // The same refusal the served route makes (`proxy-agency-station.routes.ts`).
-    const media = parseStationMediaFormat(request.query);
-    if (!media.ok) {
-      try { socket.close(1008, 'unsupported media format'); } catch { /* ignore */ }
+    // The same refusal as the served path (`proxyAgencyStationRoutes`): 1008 before attach.
+    const upgrade = parseStationUpgradeQuery(request.query);
+    if (!upgrade.ok) {
+      try { socket.close(1008, upgrade.reason); } catch { /* ignore */ }
       return;
     }
-    void handleStationSocket(socket, request.params.sessionId, request.query?.token, runtime, media.format);
+    void handleStationSocket(socket, request.params.sessionId, request.query?.token, runtime, upgrade.query);
   });
 }
 
@@ -66,17 +66,20 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
  * own listeners per attempt and removes them at
  * detach, so both handler sets coexist without interfering.
  *
- * `mediaFormat` is the agent leg's audio format, from the upgrade's `media=` (the route
- * parsed and validated it). It is recorded on the socket for the bridge, which reads it
- * at every attach of this socket to a call (`core/bridge/browser-leg-media.ts`).
+ * `upgrade.media` is the agent leg's audio format (the route parsed and validated it). It
+ * is recorded on the socket for the bridge, which reads it at every attach of this socket
+ * to a call (`core/bridge/browser-leg-media.ts`). `upgrade.client` tunes liveness and is
+ * written to the session at attach.
  */
 export async function handleStationSocket(
   socket: WebSocket,
   sessionId: string,
   token: string | undefined,
   runtime: AgencyRuntime,
-  mediaFormat: AgencyStationMediaFormat = 'pcm16',
+  /** The upgrade's `client=` / `media=`, already validated (`parseStationUpgradeQuery`). */
+  upgrade: StationUpgradeQuery = DEFAULT_STATION_UPGRADE,
 ): Promise<void> {
+  const mediaFormat: AgencyStationMediaFormat = upgrade.media;
   // Before anything can attach this socket to a call, so no attach can read it untagged.
   setBrowserLegMediaFormat(socket, mediaFormat);
 
@@ -398,7 +401,11 @@ export async function handleStationSocket(
   // worth having a log line for was the one class that produced none.
   socket.on('error', (err) => log.warn({ err, sessionId }, 'Station socket error'));
 
-  const session = await agencyAgentSessionRepository.findById(sessionId);
+  // The session read, which also records which app is attaching (`client_kind`, written
+  // only when it changes): every attach states its client, and a "continue on this
+  // phone" attaches the same session from another device. One round trip, as the plain
+  // read was.
+  const session = await agencyAgentSessionRepository.readForStationAttach(sessionId, upgrade.client);
   if (!session || session.left_at) {
     try { socket.close(AGENCY_STATION_CLOSE.SESSION_GONE, 'session_not_found'); } catch { /* ignore */ }
     return;
@@ -431,6 +438,8 @@ export async function handleStationSocket(
     accountId: session.account_id,
     agentUserId: session.agent_user_id,
     ws: socket,
+    // Picks the heartbeat grace and, for `mobile`, arms the protocol-ping probe.
+    clientKind: upgrade.client,
   });
 
   // And the same question again, because `attach` has its own await (the ownership

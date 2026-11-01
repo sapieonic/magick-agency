@@ -187,14 +187,39 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   key with a lease written by Lua compare-and-set scripts: `reserved_predial` 10 s,
   `reserved_dialing` 15 s, `on_call` 15 s, `wrapup` 15 s, `available` / `break` 45 s; the owning
   replica renews every 5 s. Leases detect liveness; they are never business timers. A lapsed lease
-  on reconnect puts the agent in `break` (`rehydrateAgent`).
-- **Stations** (`station-registry.ts`, `station-socket.ts`, `station-token.ts`). The browser opens a
-  WebSocket at `/proxy/agency/station/:sessionId` with a single-use token (2 min TTL, consumed in
-  Lua) minted over authenticated HTTP. Heartbeat grace 30 s, sweep every 10 s
-  (`packages/domain/src/timers.ts`). Only the session's own agent can mint its token (Q8). The
-  upgrade's `media=pcm16|alaw8` (default `pcm16`, anything else closed 1008 before the token is
-  spent; `station-media-format.ts`) picks the agent leg's audio format for the socket's life; the
-  handler routes frames on `ws`'s `isBinary` (binary is audio, text is JSON control).
+  on reconnect puts the agent in `break` (`rehydrateAgent`). Two break codes are **reserved**
+  (`RESERVED_BREAK_REASONS`, `packages/contracts/src/agency/breaks.ts`): no campaign catalog may
+  list them (the campaign-config write refuses them, `resolveBreakReasons` drops them).
+  `soft_phone` is entered only through the soft-phone switch. `device_away` is what the mobile app
+  sends on `POST /sessions/:id/break` the moment it is backgrounded (`api/routes/agency/device-away.ts`):
+  from `available` it applies at once by CAS (a reservation that lands first wins, and the request
+  is queued instead); from `reserved` / `on_call` / `wrapup` it is queued like any break, unless
+  another break is already queued, which it never replaces; on any other break, `offline`, no
+  lease, or a soft-phone session it changes nothing and answers the current state (200, and no
+  audit row). The return is the ordinary `/available`; `break/cancel` withdraws a queued one.
+- **Stations** (`station-registry.ts`, `station-socket.ts`, `station-token.ts`,
+  `station-upgrade.ts`). The browser console or the agent mobile app opens a WebSocket at
+  `/proxy/agency/station/:sessionId` with a single-use token (2 min TTL, consumed in Lua) minted over
+  authenticated HTTP. Only the session's own agent can mint its token (Q8). The upgrade query names
+  the app and its media encoding, `client=web|mobile` and `media=pcm16|alaw8` (defaults `web`,
+  `pcm16`); an unknown value is refused 1008 before the token is consumed
+  (`parseStationUpgradeQuery`). Every attach writes the app to `agency_agent_sessions.client_kind`
+  (0006), folded into the attach's own session read and only when it changes
+  (`readForStationAttach`), so a session continued on another device follows it; the supervisor's
+  floor marks mobile agents with it. Liveness is the registry entry's `lastSeen`, renewed by the
+  client's app-level `ping` (which alone renews the Redis ownership key and the lease), and held to
+  a **per-station grace** (`packages/domain/src/timers.ts`): 30 s for the web, 10 s
+  (`MOBILE_STATION_HEARTBEAT_GRACE_MS`) for the mobile app. A mobile station is also sent an RFC 6455
+  ping every 3 s (`MOBILE_STATION_PROBE_MS`), and every protocol pong, or ping from the app, renews
+  `lastSeen` in memory only, never Postgres or Redis; the probe's timer and listeners go with the
+  socket (detach, supersede or close). The silent-station sweep runs every 5 s, so a silent console
+  is closed 4408 30–35 s after its last sign of life and a silent phone 10–15 s after; a station
+  with a live attempt is never closed by it, on either app (the bridge's deferred hangup owns the
+  call; an unbound dial gets its pre-bind grace armed). The join (`X-Client`, parsed by
+  `utils/client-header.ts`) serves the mobile app `heartbeat_grace_ms` 10 000. The `media=` format
+  is the agent leg's audio for the socket's life: the handler routes frames on `ws`'s `isBinary`
+  (binary is `alaw8` audio, text is JSON control) and tags the socket for the bridge
+  (`core/bridge/browser-leg-media.ts`).
 - **Pacing** (`pacing-engine.ts`, with `pacing/`: leader lease, caller-ID pool, campaign announcer,
   in-flight tracking). One leader per campaign via a Redis lease (15 s, renewed every
   5 s; a supervise pass every 2 s takes leadership); the leader ticks each campaign it leads every
@@ -348,13 +373,20 @@ exempt; per-route limits (super-admin login 5/min, public invite routes) honoure
 bucket keyed on a client-supplied header. Buckets key on `request.ip`, which trusts exactly
 `TRUST_PROXY_HOPS` proxies (Q9).
 
+The mobile app names itself in `X-Client` (`magick-agency-mobile/<semver>+<build> (<ios|android>
+<osver>; <model>)`; anything else is `web`, `utils/client-header.ts`). An app-wide `onRequest` hook
+(`api/middleware/client-log-context.ts`) puts it on every log line the request produces as `client`
+(with `clientVersion` / `clientPlatform` for the app), through the ambient log context. It is never
+a rate-limit key and never an auth input.
+
 ## Data layer
 
 - One Postgres. The schema is the baseline migration, `packages/db/migrations/0001_baseline.sql`
   (node-pg-migrate, one transaction; 33 tables plus default partitions for the two audit tables),
   and the numbered migrations after it (0002: the two telephony-credential tables; 0003: the
   dialer's attempt and contact indexes; 0004: the in-flight contacts index the reaper's
-  stranded-contact sweep reads), all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
+  stranded-contact sweep reads; 0005: the soft phone; 0006: `agency_agent_sessions.client_kind`),
+  all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`: `agency.repository.ts`, a barrel over `agency/`). Repository
   tests run on real Postgres. Transactions go through `withTransaction`

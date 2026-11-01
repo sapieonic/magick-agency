@@ -8,6 +8,29 @@
 import type { AgencyStationWrapupFrame, AgencyWrapupState } from './actions';
 import type { AgencyAgentState, AgencyAttemptOutcome, AgencyAttemptState, AgencyCampaignStatus } from './enums';
 import type { AgencyStationManualCallFrame } from './softphone';
+import type { AllListed } from '../primitives';
+
+// ─── Which client is on the other end ───────────────────────────────────────
+
+/**
+ * Which app an agent is working from: the browser console (`web`) or the agent
+ * mobile app (`mobile`).
+ *
+ * Declared by the client, never verified, so it is NEVER an auth input or a
+ * rate-limit key. It tunes liveness only (a mobile station is probed with protocol
+ * pings and given `MOBILE_STATION_HEARTBEAT_GRACE_MS`), labels logs and marks the
+ * supervisor's floor. Over HTTP it is read from `X-Client`
+ * (`magick-agency-mobile/<semver>+<build> (<ios|android> <osver>; <model>)`; anything
+ * else, or no header, is `web`); on the station socket from the upgrade query
+ * (`client=web|mobile`). Stored on `agency_agent_sessions.client_kind`, written by
+ * every station attach (0006).
+ */
+export type AgencyClientKind = 'web' | 'mobile';
+
+export const AGENCY_CLIENT_KINDS = ['web', 'mobile'] as const satisfies readonly AgencyClientKind[];
+
+const _allClientKindsListed: AllListed<AgencyClientKind, typeof AGENCY_CLIENT_KINDS> = true;
+void _allClientKindsListed;
 
 // ─── The station socket envelope ────────────────────────────────────────────
 //
@@ -88,6 +111,9 @@ export type AgencyStationMediaFormat = 'pcm16' | 'alaw8';
 
 /** Every {@link AgencyStationMediaFormat}, default first. */
 export const AGENCY_STATION_MEDIA_FORMATS = ['pcm16', 'alaw8'] as const satisfies readonly AgencyStationMediaFormat[];
+
+const _allMediaFormatsListed: AllListed<AgencyStationMediaFormat, typeof AGENCY_STATION_MEDIA_FORMATS> = true;
+void _allMediaFormatsListed;
 
 /** One 20 ms frame of `alaw8` audio: 8000 samples/s × 0.02 s × 1 byte. */
 export const AGENCY_STATION_ALAW8_FRAME_BYTES = 160;

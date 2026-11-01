@@ -337,3 +337,16 @@ export type AgencyStationServerFrame =
  * once in the dialer contract.
  */
 export { AGENCY_STATION_CLOSE } from '../../agency';
+
+/**
+ * The reserved break codes (the soft phone's, the mobile app's device-away) and their
+ * labels, declared once in the dialer contract: a console renders a reserved code
+ * from these, never from a campaign catalog, which lists none of them.
+ */
+export {
+  DEVICE_AWAY_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON_LABEL,
+  RESERVED_BREAK_REASONS,
+  RESERVED_BREAK_REASON_LABELS,
+} from '../../agency';
+export type { AgencyClientKind, AgencyReservedBreakReason } from '../../agency';

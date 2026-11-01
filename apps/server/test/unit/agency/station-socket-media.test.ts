@@ -48,7 +48,13 @@ const { repos } = vi.hoisted(() => ({
     attempt: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     campaign: { findById: vi.fn() },
     contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn() },
-    session: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn() },
+    session: {
+      findById: vi.fn(),
+      // The station attach's session read (it also records `client_kind`): the row `findById` gives.
+      readForStationAttach: vi.fn((id: string) => repos.session.findById(id)),
+      setState: vi.fn().mockResolvedValue(undefined),
+      leave: vi.fn(),
+    },
   },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -74,7 +80,6 @@ vi.mock('../../../src/analytics/posthog.js', () => ({
 }));
 
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
-import { parseStationMediaFormat } from '../../../src/agency/station-media-format.js';
 import { AgencyRuntime } from '../../../src/agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import { browserLegMediaFormatOf } from '../../../src/core/bridge/browser-leg-media.js';
@@ -110,32 +115,6 @@ const SESSION = {
   id: 'sess-1', agent_user_id: 'u-agent', campaign_id: 'camp-1',
   tenant_id: 't1', account_id: 'a1', state: 'available', left_at: null,
 };
-
-describe('parseStationMediaFormat', () => {
-  it('defaults to pcm16 when the parameter is absent (every existing client)', () => {
-    expect(parseStationMediaFormat({ token: 't' })).toEqual({ ok: true, format: 'pcm16' });
-    expect(parseStationMediaFormat({})).toEqual({ ok: true, format: 'pcm16' });
-    expect(parseStationMediaFormat(undefined)).toEqual({ ok: true, format: 'pcm16' });
-    expect(parseStationMediaFormat(null)).toEqual({ ok: true, format: 'pcm16' });
-  });
-
-  it('accepts exactly the contract formats', () => {
-    expect(parseStationMediaFormat({ media: 'pcm16' })).toEqual({ ok: true, format: 'pcm16' });
-    expect(parseStationMediaFormat({ media: 'alaw8' })).toEqual({ ok: true, format: 'alaw8' });
-  });
-
-  it.each([
-    ['an unknown word', 'opus'],
-    ['a different case', 'ALAW8'],
-    ['padding', ' alaw8'],
-    ['an empty value', ''],
-    ['a repeated parameter (parsed to an array)', ['alaw8', 'alaw8']],
-    ['a non-string', 8],
-    ['a prototype key', 'toString'],
-  ])('refuses %s', (_what, media) => {
-    expect(parseStationMediaFormat({ media })).toEqual({ ok: false, value: media });
-  });
-});
 
 describe('the station socket routes frames by isBinary, per its media format', () => {
   let app: FastifyInstance;

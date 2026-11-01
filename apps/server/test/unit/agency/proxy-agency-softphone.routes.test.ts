@@ -200,10 +200,16 @@ describe('floors and the flag', () => {
     mocks.callCore.mockResolvedValue(plain({ session_id: SESSION, station_ws_url: `/api/v1/agency/station/${SESSION}?token=t` }, 200));
     const agent = await appAs('agent');
     await agent.inject({ method: 'POST', url: `${P}/softphone/sessions`, payload: { rehydrate_only: false } });
-    expect(lastCore().body).toEqual({ agent_user_id: AGENT });
+    expect(lastCore().body).toEqual({ agent_user_id: AGENT, client_kind: 'web' });
     mocks.flagEnabled.mockResolvedValue(false);
     await agent.inject({ method: 'POST', url: `${P}/softphone/sessions`, payload: {} });
-    expect(lastCore().body).toEqual({ agent_user_id: AGENT, rehydrate_only: true });
+    expect(lastCore().body).toEqual({ agent_user_id: AGENT, client_kind: 'web', rehydrate_only: true });
+    // The mobile app's X-Client picks the mobile intervals; nothing else changes.
+    await agent.inject({
+      method: 'POST', url: `${P}/softphone/sessions`, payload: {},
+      headers: { 'x-client': 'magick-agency-mobile/1.0.0+1 (ios 17.5; iPhone15,2)' },
+    });
+    expect(lastCore().body).toEqual({ agent_user_id: AGENT, client_kind: 'mobile', rehydrate_only: true });
   });
 
   it('bootstrap reports the flag as softphone_enabled (a failed read reports it off)', async () => {
@@ -260,7 +266,7 @@ describe('the actor: supervise comes from the role, never the request', () => {
     mocks.callCore.mockResolvedValue(plain({ session_id: SESSION, station_ws_url: `/api/v1/agency/station/${SESSION}?token=t` }, 201));
     const admin = await appAs('account_admin');
     const res = await admin.inject({ method: 'POST', url: `${P}/softphone/sessions`, payload: { agent_user_id: AGENT } });
-    expect(lastCore().body).toEqual({ agent_user_id: SUPERVISOR });
+    expect(lastCore().body).toEqual({ agent_user_id: SUPERVISOR, client_kind: 'web' });
     expect(res.statusCode).toBe(201);
     expect(res.json().station_ws_url).toBe(`/proxy/agency/station/${SESSION}?token=t`);
   });

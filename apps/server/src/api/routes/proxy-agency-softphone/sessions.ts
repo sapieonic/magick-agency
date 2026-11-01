@@ -10,6 +10,7 @@ import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { resolvedUserAuditActor } from '../../../audit/platform/audit-actor.js';
 import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { parseClientHeader } from '../../../utils/client-header.js';
 import { stringField } from '../helpers/core-campaign.js';
 import { rewriteStationWsUrl } from '../proxy-agency-station.routes.js';
 import type { SoftphoneSwitchAudit } from '../agency/softphone-answer.js';
@@ -53,8 +54,13 @@ export async function registerSoftphoneSessionRoutes(app: FastifyInstance): Prom
     const result = await callCore({
       method: 'POST',
       path: '/agency/softphone/sessions',
-      // Only the agent: nobody opens a soft-phone session for someone else.
-      body: { agent_user_id: actor.agent_user_id, ...(enabled ? {} : { rehydrate_only: true }) },
+      // Only the agent: nobody opens a soft-phone session for someone else. `client_kind`
+      // (from `X-Client`) picks the intervals served, as on the campaign join.
+      body: {
+        agent_user_id: actor.agent_user_id,
+        client_kind: parseClientHeader(request.headers['x-client']).kind,
+        ...(enabled ? {} : { rehydrate_only: true }),
+      },
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });

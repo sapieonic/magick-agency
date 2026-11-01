@@ -11,7 +11,7 @@ import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
 import { onSoftphoneBreak, owedSoftphoneCall, setAvailableGuarded } from '../../../agency/softphone/session-guard.js';
 import { validateBreakReason, breakMustWait, resolveBreakReasons } from '@magick-agency/domain/break-manager';
-import { SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import { DEVICE_AWAY_BREAK_REASON, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
 import type {
   AgencyActionErrorResponse,
   AgencyAgentState,
@@ -26,8 +26,9 @@ import type {
   AgencyStationTokenResponse,
 } from '@magick-agency/contracts/agency';
 import { isCampaignSession } from '../../../db/models/agency.model.js';
-import { accountNameInTenant, requireOwnedSession, resolveRetryContext, STATION_INTERVALS } from './helpers.js';
+import { accountNameInTenant, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
+import { runDeviceAway } from './device-away.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
 
@@ -209,7 +210,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       record_calls: campaign.record_calls,
       break_reasons: resolveBreakReasons(campaign.break_reasons),
       context_display: campaign.context_display ?? {},
-      intervals: STATION_INTERVALS,
+      // By the joining app (`client_kind`, from `X-Client` on the public layer): a mobile
+      // station is held to the shorter grace the sweep enforces on it.
+      intervals: stationIntervalsFor(body.client_kind),
       // Spread rather than always present: the field is optional on the
       // contract and absent for every non-retry campaign, so an older console
       // that has never seen it gets a byte-identical payload.
@@ -464,6 +467,18 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
   sub.post('/sessions/:id/break', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // The mobile app's device-away break: no catalog lists it, and it has its own rules
+    // (it never replaces a break the agent chose, and answers 200 with the current state
+    // when there is nothing to protect, a soft-phone session included). `device-away.ts`.
+    if ((request.body as { reason?: unknown } | undefined)?.reason === DEVICE_AWAY_BREAK_REASON) {
+      const result = await runDeviceAway(runtime, session);
+      if (result.ok) return reply.send(result.body);
+      const err: AgencySoftphoneErrorResponse = {
+        error: 'Service Unavailable', code: 'dial_failed',
+        message: 'Could not change your status just now; nothing changed. Try again.',
+      };
+      return reply.code(503).send(err);
+    }
     // A soft-phone session has no campaign and so no break catalog; it is always on
     // the reserved `soft_phone` break (docs/softphone.md §6).
     if (!isCampaignSession(session)) {

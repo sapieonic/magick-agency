@@ -4,7 +4,7 @@ import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 import { disableNagle } from '../../utils/ws-nodelay.js';
 import { isUnsafeCorePath } from '../../proxy/safe-core-path.js';
 import { handleStationSocket } from '../../agency/station-socket.js';
-import { parseStationMediaFormat } from '../../agency/station-media-format.js';
+import { parseStationUpgradeQuery } from '../../agency/station-upgrade.js';
 import type { AgencyRuntime } from '../../agency/runtime.js';
 
 /*
@@ -12,8 +12,8 @@ import type { AgencyRuntime } from '../../agency/runtime.js';
  * (decision B16: one process, one socket).
  *
  * This route makes three refusals, in this order: a tokenless upgrade (4401), a
- * path-escaping session id (1008) and an unknown `media=` format (1008, contracts
- * `AgencyStationMediaFormat`). Past those, the console's socket IS the station
+ * path-escaping session id (1008), and an unknown `client=` or `media=` on the upgrade
+ * query (1008, `parseStationUpgradeQuery`). Past those, the console's socket IS the station
  * socket: it is handed to `handleStationSocket` (`agency/station-socket.ts`), which
  * verifies and consumes the single-use token before anything else. The WebRTC bridge
  * borrows this same socket for media. With no runtime (an app built without a context)
@@ -56,10 +56,11 @@ export const STATION_CLOSE_CODES = {
   /** The session id would escape `/api/v1/agency/station`. Do not retry. */
   INVALID_SESSION_ID: 1008,
   /**
-   * `media=` names no `AgencyStationMediaFormat`. Do not retry: the same query fails the
-   * same way. Refused before the station handler, so the single-use token is not spent.
+   * `client=` or `media=` names something this server does not speak. Do not retry: the
+   * same upgrade would be refused again. The close reason says which
+   * (`invalid_client` / `invalid_media`).
    */
-  INVALID_MEDIA_FORMAT: 1008,
+  INVALID_UPGRADE_QUERY: 1008,
   /** The close for an app built without a runtime. */
   RUNTIME_UNAVAILABLE: 1011,
 } as const;
@@ -96,7 +97,7 @@ export async function proxyAgencyStationRoutes(
   app: FastifyInstance,
   opts: ProxyAgencyStationRouteOptions,
 ): Promise<void> {
-  app.get<{ Params: { sessionId: string }; Querystring: { token?: string; media?: string } }>(
+  app.get<{ Params: { sessionId: string }; Querystring: { token?: string; client?: string; media?: string } }>(
     '/:sessionId',
     { websocket: true },
     (clientSocket, request) => {
@@ -119,12 +120,11 @@ export async function proxyAgencyStationRoutes(
         return;
       }
 
-      // The agent leg's audio format for this socket's whole life. Refused rather than
-      // defaulted: a client sending audio in a format the server did not pick hears silence.
-      const media = parseStationMediaFormat(request.query);
-      if (!media.ok) {
-        log.warn({ sessionId, media: media.value }, 'Station proxy: upgrade refused, unknown media format');
-        clientSocket.close(STATION_CLOSE_CODES.INVALID_MEDIA_FORMAT, 'unsupported media format');
+      // Before the token is consumed: a refused upgrade leaves the token for a corrected retry.
+      const upgrade = parseStationUpgradeQuery(request.query);
+      if (!upgrade.ok) {
+        log.warn({ sessionId, reason: upgrade.reason }, 'Station proxy: upgrade refused, unknown client or media');
+        clientSocket.close(STATION_CLOSE_CODES.INVALID_UPGRADE_QUERY, upgrade.reason);
         return;
       }
 
@@ -134,10 +134,11 @@ export async function proxyAgencyStationRoutes(
         return;
       }
 
-      log.info({ sessionId, mediaFormat: media.format }, 'Station proxy: handing the socket to the station handler');
+      log.info({ sessionId, client: upgrade.query.client, media: upgrade.query.media },
+        'Station proxy: handing the socket to the station handler');
       disableNagle(clientSocket, log, { sessionId, leg: 'agent' });
 
-      void handleStationSocket(clientSocket, sessionId, token, runtime, media.format);
+      void handleStationSocket(clientSocket, sessionId, token, runtime, upgrade.query);
     },
   );
 }

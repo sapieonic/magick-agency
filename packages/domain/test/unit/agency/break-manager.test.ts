@@ -18,6 +18,8 @@ import {
   DEFAULT_BREAK_REASONS,
   resolveBreakReasons,
   validateBreakReason,
+  isReservedBreakReason,
+  DEVICE_AWAY_BREAK,
   breakMustWait,
   BreakRegistry,
 } from '../../../src/break-manager.js';
@@ -72,6 +74,26 @@ describe('the soft phone\'s reserved reason', () => {
   it('is refused by `validateBreakReason`, so `/break` answers unknown_break_reason', () => {
     const check = validateBreakReason([{ code: 'soft_phone', label: 'Soft phone' }, { code: 'lunch', label: 'Lunch' }], 'soft_phone');
     expect(check).toEqual({ ok: false, allowed: ['lunch'] });
+  });
+});
+
+describe('the device-away break (the mobile app, reserved)', () => {
+  it('is never in a campaign\'s catalog, whatever the column holds, so the menu can never offer it', () => {
+    const configured = [{ code: 'device_away', label: 'Away' }, { code: 'lunch', label: 'Lunch' }];
+    expect(resolveBreakReasons(configured)).toEqual([{ code: 'lunch', label: 'Lunch' }]);
+    expect(resolveBreakReasons([{ code: 'device_away', label: 'Away' }])).toEqual([...DEFAULT_BREAK_REASONS]);
+    expect(validateBreakReason(configured, 'device_away')).toEqual({ ok: false, allowed: ['lunch'] });
+  });
+
+  it('is carried by the queue as a frozen entry with the contract\'s label', () => {
+    expect(DEVICE_AWAY_BREAK).toEqual({ code: 'device_away', label: 'Away (app in background)' });
+    expect(Object.isFrozen(DEVICE_AWAY_BREAK)).toBe(true);
+  });
+
+  it('isReservedBreakReason names both reserved codes and nothing else', () => {
+    expect(isReservedBreakReason('soft_phone')).toBe(true);
+    expect(isReservedBreakReason('device_away')).toBe(true);
+    for (const code of ['lunch', 'break', '', null, undefined, 42]) expect(isReservedBreakReason(code)).toBe(false);
   });
 });
 
