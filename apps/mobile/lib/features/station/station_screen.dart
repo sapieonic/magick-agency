@@ -231,17 +231,20 @@ class _PhaseAnnouncerState extends ConsumerState<PhaseAnnouncer> {
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(stationViewProvider.select((v) => (phase: v?.phase, away: v?.onBreak?.isDeviceAway ?? false, label: v?.onBreak?.label)), (
-      prev,
-      next,
-    ) {
-      final phase = next.phase;
-      if (phase == null || (prev?.phase == phase && prev?.away == next.away)) return;
-      _announce(
-        StationCopy.announce(phase, breakLabel: next.label, deviceAway: next.away),
-        assertive: phase == AgentPhase.reserved,
-      );
-    });
+    ref.listen(
+      stationViewProvider.select(
+        (v) => (phase: v?.phase, away: v?.onBreak?.isDeviceAway ?? false, softphone: onSoftphoneBreak(v), label: v?.onBreak?.label),
+      ),
+      (prev, next) {
+        final phase = next.phase;
+        // A break switched to the soft phone (or back) stays on break: still said.
+        if (phase == null || (prev?.phase == phase && prev?.away == next.away && prev?.softphone == next.softphone)) return;
+        _announce(
+          StationCopy.announce(phase, breakLabel: next.label, deviceAway: next.away, softphone: next.softphone),
+          assertive: phase == AgentPhase.reserved,
+        );
+      },
+    );
     ref.listen(stationViewProvider.select((v) => v?.dispositionSaved), (prev, next) {
       if (next != null && prev == null) _announce(StationCopy.outcomeSavedAnnouncement);
     });

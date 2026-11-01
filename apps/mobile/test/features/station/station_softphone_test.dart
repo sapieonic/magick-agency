@@ -87,6 +87,24 @@ void main() {
       expect(find.byType(SoftphonePanel), findsOneWidget);
     });
 
+    testWidgets('the live region says "On the soft phone", from waiting and from another break, not "On break"', (tester) async {
+      final semantics = tester.ensureSemantics();
+      final h = await pumpStation(tester, station(phase: AgentPhase.available), softphone: readyView(), availability: softphoneOn);
+      await settle(tester);
+      String said() => tester.getSemantics(find.byKey(const Key('phase-live-region'))).label;
+
+      await h.setView(onSoftphone());
+      expect(said(), 'On the soft phone');
+      await h.setView(station(phase: AgentPhase.onBreak, onBreak: const BreakInfo(code: 'tea', label: 'Tea break')));
+      expect(said(), 'On break — Tea break');
+      // Break to soft phone is the same phase: the change is still said.
+      await h.setView(onSoftphone());
+      expect(said(), 'On the soft phone');
+      await h.setView(station(phase: AgentPhase.available));
+      expect(said(), 'Available. Waiting for a call');
+      semantics.dispose();
+    });
+
     // The same panel inside the station's own Scaffold, on a 360×640 phone
     // with a status bar, the shell's bar and the keyboard up or down.
     for (final keyboard in [0.0, 300.0]) {

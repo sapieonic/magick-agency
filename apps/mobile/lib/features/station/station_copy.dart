@@ -19,15 +19,19 @@ abstract final class StationCopy {
   static const onCall = 'On call';
   static const wrapup = 'Wrap-up';
 
-  /// What the polite live region says when the phase changes.
-  static String announce(AgentPhase phase, {String? breakLabel, bool deviceAway = false}) => switch (phase) {
+  /// What the polite live region says when the phase changes. The soft phone
+  /// is a break to the dialer, not to the agent: it is said as what it is.
+  static String announce(AgentPhase phase, {String? breakLabel, bool deviceAway = false, bool softphone = false}) => switch (phase) {
     AgentPhase.offline => 'Offline',
     AgentPhase.available => 'Available. Waiting for a call',
     AgentPhase.reserved => 'Ringing',
     AgentPhase.onCall => 'On call',
     AgentPhase.wrapup => 'Wrap-up',
-    AgentPhase.onBreak => deviceAway ? 'Paused because you left the app' : breakTitle(breakLabel),
+    AgentPhase.onBreak when deviceAway => 'Paused because you left the app',
+    AgentPhase.onBreak when softphone => onTheSoftphone,
+    AgentPhase.onBreak => breakTitle(breakLabel),
   };
+  static const onTheSoftphone = 'On the soft phone';
 
   // ── Header ──
   static const running = 'Running';
