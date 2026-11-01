@@ -48,7 +48,7 @@ internal class Loopback(format: WireFormat, durationMs: Int, val playBack: Boole
  * buffer is the only state shared between threads and is guarded by one lock held for a
  * frame copy at most. Nothing allocates per frame.
  */
-internal class VoiceEngine(private val format: WireFormat, private val listener: Listener) {
+internal class VoiceEngine(private val format: WireFormat, private val listener: Listener) : CallEngine {
     interface Listener {
         /** Capture thread. Returns false when the frame could not be queued (dropped). */
         fun onUplinkFrame(frame: ByteArray, length: Int): Boolean
@@ -70,8 +70,7 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
     @Volatile var muted = false
     @Volatile var metering = false
 
-    /** Mix the ringback tone into playout (a soft-phone call that is ringing). */
-    @Volatile var ringback = false
+    @Volatile override var ringback = false
 
     private val jitter = JitterBuffer(JitterBufferConfig(frameSamples = format.frameSamples))
     private val jitterLock = Any()
@@ -96,7 +95,7 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
     val isRunning: Boolean get() = running
 
     /** Main thread. Opens the devices and starts both threads, or throws [EngineException]. */
-    fun start(loopback: Loopback? = null) {
+    override fun start(loopback: Loopback?) {
         check(!running) { "engine already running" }
         this.loopback = loopback
         synchronized(jitterLock) { jitter.reset() }
@@ -136,7 +135,7 @@ internal class VoiceEngine(private val format: WireFormat, private val listener:
     }
 
     /** Main thread. Idempotent. Stops both threads, then releases the devices. */
-    fun stop() {
+    override fun stop() {
         running = false
         // Unblock the threads: a paused + flushed track returns from write, a stopped record
         // returns from read. Either may already be dead; that is fine.

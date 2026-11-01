@@ -82,23 +82,61 @@ internal class Ringback(private val sampleRate: Int) {
     }
 }
 
+/** What [EngineSlot] drives: [VoiceEngine] in the plugin, a fake in `RingbackTest.kt`. */
+internal interface CallEngine {
+    /** Mix the ringback tone into playout (a soft-phone call that is ringing). */
+    var ringback: Boolean
+
+    /** Opens the devices and starts, or throws [EngineException]. */
+    fun start(loopback: Loopback?)
+
+    /** Idempotent. */
+    fun stop()
+}
+
 /**
- * The plugin's ringback request. Dart may ask before the engine runs (it starts with the
- * engine), the request outlives an engine restart after a device error, and `stop` clears it.
- * A loopback test never rings. Main thread only.
+ * The plugin's running engine and its ringback request. Every engine the plugin starts or
+ * stops goes through here, so the request's rules hold for each one (and `RingbackTest.kt`
+ * checks them): Dart may ask before the engine runs, and the engine started at arm rings; the
+ * request outlives an engine restart after a device error and a loopback test; `stop` and the
+ * plugin detaching clear it, even with no engine running; a loopback test never rings. Main
+ * thread only, except [engine], which the downlink queue also reads.
  */
-internal class RingbackRequest {
-    var on = false
+internal class EngineSlot<E : CallEngine> {
+    @Volatile var engine: E? = null
         private set
 
-    fun set(on: Boolean) {
-        this.on = on
+    var ringbackWanted = false
+        private set
+
+    private var loopback = false
+
+    /** Starts [e] with the request applied. If [CallEngine.start] throws, the slot stays empty. */
+    fun start(e: E, loopback: Loopback?) {
+        check(engine == null) { "an engine is already running" }
+        e.ringback = ringbackWanted && loopback == null
+        e.start(loopback)
+        this.loopback = loopback != null
+        engine = e
     }
 
-    fun clear() {
-        on = false
+    /** `setRingback`: kept until a stop that does not keep it, so a later engine gets it too. */
+    fun setRingback(on: Boolean) {
+        ringbackWanted = on
+        engine?.ringback = on && !loopback
     }
 
-    /** What a starting engine is told. */
-    fun forEngine(loopback: Boolean): Boolean = on && !loopback
+    /**
+     * Stops the engine, if one runs, and returns it. [keepRingback]: true for a restart after a
+     * device error or the end of a loopback test; false for `stop` and the plugin detaching
+     * (the call is over, so the next one starts silent).
+     */
+    fun stop(keepRingback: Boolean): E? {
+        if (!keepRingback) ringbackWanted = false
+        val e = engine ?: return null
+        engine = null
+        loopback = false
+        e.stop()
+        return e
+    }
 }

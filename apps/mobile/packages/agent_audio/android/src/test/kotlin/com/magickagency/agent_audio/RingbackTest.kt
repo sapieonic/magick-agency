@@ -3,8 +3,11 @@ package com.magickagency.agent_audio
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class RingbackTest {
@@ -145,21 +148,101 @@ class RingbackTest {
         assertContentEquals(ShortArray(160) { Ringback.sample(it.toLong(), 8000).toShort() }, next)
     }
 
+    /** Stands in for [VoiceEngine] in [EngineSlot]: records what the slot told it. */
+    private class FakeEngine(private val failStart: Boolean = false) : CallEngine {
+        override var ringback = false
+        var started = false
+        var stopped = false
+
+        override fun start(loopback: Loopback?) {
+            if (failStart) throw EngineException("device_busy", "The microphone is in use by another app")
+            started = true
+        }
+
+        override fun stop() {
+            stopped = true
+            ringback = false
+        }
+    }
+
     @Test
-    fun requestSurvivesArmAndRestartAndStopClearsIt() {
-        val r = RingbackRequest()
+    fun aRequestMadeBeforeArmStartsWithTheEngine() {
+        val slot = EngineSlot<FakeEngine>()
         // Asked for while prepared: nothing runs yet; the engine started at arm rings.
-        r.set(true)
-        assertTrue(r.forEngine(loopback = false), "arm")
+        slot.setRingback(true)
+        val armed = FakeEngine()
+        slot.start(armed, loopback = null)
+        assertTrue(armed.started)
+        assertTrue(armed.ringback, "arm")
+        // Answered, then rung again: each change reaches the running engine.
+        slot.setRingback(false)
+        assertFalse(armed.ringback)
+        slot.setRingback(true)
+        assertTrue(armed.ringback)
+    }
+
+    @Test
+    fun theRequestOutlivesARestartAndStopClearsIt() {
+        val slot = EngineSlot<FakeEngine>()
+        slot.setRingback(true)
+        val first = FakeEngine()
+        slot.start(first, loopback = null)
         // A device error rebuilds the engine; the request carries over.
-        assertTrue(r.forEngine(loopback = false), "restart")
-        assertFalse(r.forEngine(loopback = true), "never during the loopback test")
-        // stop
-        r.clear()
-        assertFalse(r.on)
-        assertFalse(r.forEngine(loopback = false), "the next call starts silent")
-        r.set(true)
-        r.set(false)
-        assertFalse(r.forEngine(loopback = false))
+        assertSame(first, slot.stop(keepRingback = true))
+        assertTrue(first.stopped)
+        assertNull(slot.engine)
+        val restarted = FakeEngine()
+        slot.start(restarted, loopback = null)
+        assertTrue(restarted.ringback, "restart")
+        // stop: the next call starts silent.
+        assertSame(restarted, slot.stop(keepRingback = false))
+        assertTrue(restarted.stopped)
+        assertFalse(slot.ringbackWanted)
+        val next = FakeEngine()
+        slot.start(next, loopback = null)
+        assertFalse(next.ringback, "the next call starts silent")
+        // A stopped engine is no longer told anything.
+        slot.setRingback(true)
+        assertFalse(restarted.ringback)
+        assertTrue(next.ringback)
+    }
+
+    @Test
+    fun stopWithNoEngineRunningStillClearsTheRequest() {
+        val slot = EngineSlot<FakeEngine>()
+        slot.setRingback(true)
+        assertNull(slot.stop(keepRingback = false), "nothing was running")
+        val armed = FakeEngine()
+        slot.start(armed, loopback = null)
+        assertFalse(armed.ringback)
+    }
+
+    @Test
+    fun aLoopbackTestNeverRingsAndKeepsTheRequest() {
+        val slot = EngineSlot<FakeEngine>()
+        slot.setRingback(true)
+        val test = FakeEngine()
+        slot.start(test, Loopback(WireFormat.ALAW8, durationMs = 400, playBack = true))
+        assertFalse(test.ringback, "never during the loopback test")
+        slot.setRingback(true)
+        assertFalse(test.ringback, "not even when asked for during it")
+        slot.stop(keepRingback = true)
+        val armed = FakeEngine()
+        slot.start(armed, loopback = null)
+        assertTrue(armed.ringback, "the call's engine after the test rings")
+    }
+
+    @Test
+    fun anEngineThatFailsToStartLeavesTheSlotEmpty() {
+        val slot = EngineSlot<FakeEngine>()
+        slot.setRingback(true)
+        val broken = FakeEngine(failStart = true)
+        assertFailsWith<EngineException> { slot.start(broken, loopback = null) }
+        assertNull(slot.engine)
+        assertNull(slot.stop(keepRingback = true))
+        assertFalse(broken.stopped)
+        val retried = FakeEngine()
+        slot.start(retried, loopback = null)
+        assertTrue(retried.ringback, "the request survives a failed start")
     }
 }

@@ -161,6 +161,16 @@ answered or ends.
   not change the phase), so a `stop` still in flight cannot clear a newer request. Turning it
   off and on again starts a fresh ring, at the top of the cadence; turning it off mid-burst
   cuts at the frame boundary.
+- Testing the request on Android: the plugin starts and stops every engine through
+  `EngineSlot` (`Ringback.kt`), which applies the request at each engine start and clears it on
+  a stop that ends the call. `RingbackTest.kt` drives the slot with a fake engine: a request
+  made before arm reaches the engine started at arm, changes reach the running engine, the
+  request survives a restart and a failed start, `stop` clears it (also with no engine
+  running), and a loopback engine never rings. What it cannot see is the plugin's choice at
+  each call site: `stop` and detaching pass `keepRingback = false`, a restart and the end of a
+  loopback test pass `true`. The plugin needs Flutter and Android, which these JVM tests do
+  not load. The Swift engine follows the same rules (`ringbackWanted` in `VoiceEngine.swift`)
+  with no test here.
 
 ## Codec and resampling
 

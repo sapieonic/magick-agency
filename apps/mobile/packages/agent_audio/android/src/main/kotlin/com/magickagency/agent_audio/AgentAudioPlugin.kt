@@ -98,14 +98,15 @@ class AgentAudioPlugin :
     private var session: AudioSessionController? = null
     private var activity: Activity? = null
 
-    @Volatile private var engine: VoiceEngine? = null
+    /** The running engine and the ringback request; engines start and stop only through it. */
+    private val engines = EngineSlot<VoiceEngine>()
+    private val engine: VoiceEngine? get() = engines.engine
 
     @Volatile private var uplink: UplinkSender? = null
     private var phase = Phase.IDLE
     private var format: WireFormat? = null
     private var muted = false
     private var metering = false
-    private val ringback = RingbackRequest()
     private var pendingLoopback: Result? = null
     private var pendingServiceStart: Result? = null
 
@@ -116,7 +117,7 @@ class AgentAudioPlugin :
     private val loopbackTimeout = Runnable {
         pendingLoopback?.let {
             pendingLoopback = null
-            stopEngine()
+            stopEngine(keepRingback = true)
             it.error("lost", "Loopback test timed out", null)
         }
     }
@@ -155,8 +156,7 @@ class AgentAudioPlugin :
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         cancelLoopback("The app is closing")
-        stopEngine()
-        ringback.clear()
+        stopEngine(keepRingback = false)
         session?.release()
         session = null
         phase = Phase.IDLE
@@ -272,9 +272,8 @@ class AgentAudioPlugin :
                 val keepWarm = call.argument<Boolean>("keepWarm") ?: true
                 val endsCall = phase == Phase.ARMED || phase == Phase.STREAMING
                 cancelLoopback("Stopped")
-                stopEngine()
+                stopEngine(keepRingback = false)
                 muted = false
-                ringback.clear()
                 if (!keepWarm) {
                     session?.release()
                     format = null
@@ -301,8 +300,7 @@ class AgentAudioPlugin :
             }
             // Kept until stop, so it also applies to an engine started (or restarted) later.
             "setRingback" -> {
-                ringback.set(call.argument<Boolean>("on") ?: false)
-                engine?.ringback = ringback.forEngine(loopback = pendingLoopback != null)
+                engines.setRingback(call.argument<Boolean>("on") ?: false)
                 result.success(null)
             }
             "setInputLevelMetering" -> {
@@ -365,26 +363,24 @@ class AgentAudioPlugin :
         val e = VoiceEngine(fmt, engineListener)
         e.muted = muted
         e.metering = metering
-        e.ringback = ringback.forEngine(loopback = loopback != null)
         uplink = sender
         try {
-            e.start(loopback)
+            engines.start(e, loopback)
         } catch (ex: EngineException) {
             sender.closed = true
             uplink = null
             throw ex
         }
-        engine = e
         session?.onEngineRunning(true, call = loopback == null)
     }
 
-    private fun stopEngine() {
-        val e = engine ?: return
-        engine = null
+    /** [keepRingback]: true for a restart or the end of a loopback test, false when the call ends. */
+    private fun stopEngine(keepRingback: Boolean) {
+        val running = engine != null
         uplink?.closed = true
         uplink = null
-        e.stop()
-        session?.onEngineRunning(false)
+        engines.stop(keepRingback)
+        if (running) session?.onEngineRunning(false)
     }
 
     private fun cancelLoopback(reason: String) {
@@ -435,7 +431,7 @@ class AgentAudioPlugin :
                 val pending = pendingLoopback ?: return@post
                 pendingLoopback = null
                 main.removeCallbacks(loopbackTimeout)
-                stopEngine()
+                stopEngine(keepRingback = true)
                 pending.success(mapOf("levels" to levels, "playedBack" to playedBack))
             }
         }
@@ -452,12 +448,12 @@ class AgentAudioPlugin :
             val pending = pendingLoopback!!
             pendingLoopback = null
             main.removeCallbacks(loopbackTimeout)
-            stopEngine()
+            stopEngine(keepRingback = true)
             pending.error(code, message, null)
             return
         }
         val wasOpen = failed.uplinkOpen
-        stopEngine()
+        stopEngine(keepRingback = true)
         val now = SystemClock.elapsedRealtime()
         while (restarts.isNotEmpty() && now - restarts.first() > RESTART_WINDOW_MS) restarts.removeFirst()
         var recovered = false
