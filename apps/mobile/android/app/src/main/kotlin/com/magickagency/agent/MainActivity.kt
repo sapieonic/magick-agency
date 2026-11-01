@@ -1,4 +1,4 @@
-package com.magickagency.magick_agency_agent
+package com.magickagency.agent
 
 import io.flutter.embedding.android.FlutterActivity
 
