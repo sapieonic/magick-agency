@@ -76,10 +76,47 @@ const TOP_LEVEL_KEYS = new Set([
   'release-search-depth', 'sequential-calls',
 ]);
 
-const configured = Object.keys(config.packages).sort();
+/**
+ * Flutter apps: directories under the same `apps/*`-style globs that hold a `pubspec.yaml` and no
+ * `package.json` (pnpm adopts only folders with a `package.json`, so these are invisible to it).
+ * Each is one component released with `release-type: dart`; the Dart packages nested inside one
+ * (`apps/mobile/packages/*`) ship inside the app and are not components of their own.
+ */
+function dartApps() {
+  const lines = readFileSync(join(root, 'pnpm-workspace.yaml'), 'utf8').split('\n');
+  const start = lines.findIndex((l) => /^packages:\s*$/.test(l));
+  const dirs = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\S/.test(line)) break;
+    const item = /^\s+-\s+['"]?([^'"#]+?)['"]?\s*(#.*)?$/.exec(line);
+    if (item) dirs.push(item[1].slice(0, -2));
+  }
+  return dirs
+    .flatMap((dir) =>
+      readdirSync(join(root, dir), { withFileTypes: true })
+        .filter(
+          (e) =>
+            e.isDirectory() &&
+            existsSync(join(root, dir, e.name, 'pubspec.yaml')) &&
+            !existsSync(join(root, dir, e.name, 'package.json')),
+        )
+        .map((e) => `${dir}/${e.name}`),
+    )
+    .sort();
+}
 
-test('every workspace package is a release-please component, and nothing else is', () => {
-  assert.deepEqual(configured, workspacePackages());
+/** The `version:` of a pubspec.yaml without its `+build` suffix (CI sets store build numbers). */
+function pubspecVersion(path) {
+  const match = /^version:\s*([^\s+#]+)(\+\S+)?\s*$/m.exec(readFileSync(join(root, path, 'pubspec.yaml'), 'utf8'));
+  assert.ok(match, `${path}/pubspec.yaml has no version`);
+  return match[1];
+}
+
+const configured = Object.keys(config.packages).sort();
+const dart = new Set(dartApps());
+
+test('every workspace package and Flutter app is a release-please component, and nothing else is', () => {
+  assert.deepEqual(configured, [...workspacePackages(), ...dart].sort());
 });
 
 test('every config key is one release-please reads (a misspelt key is ignored silently)', () => {
@@ -100,9 +137,10 @@ test('each component is named after its directory, so tags read <dir>-v<version>
   assert.equal(config['include-component-in-tag'], true);
 });
 
-test('every component is released as a node package', () => {
+test('node packages are released as node, Flutter apps as dart (which bumps pubspec.yaml)', () => {
   for (const [path, pkg] of Object.entries(config.packages)) {
-    assert.equal(pkg['release-type'] ?? config['release-type'], 'node', `${path}: release-type`);
+    const expected = dart.has(path) ? 'dart' : 'node';
+    assert.equal(pkg['release-type'] ?? config['release-type'], expected, `${path}: release-type`);
   }
 });
 
@@ -122,11 +160,11 @@ test('the manifest lists exactly the configured components', () => {
   assert.deepEqual(Object.keys(manifest).sort(), configured);
 });
 
-test('each manifest version equals the version in that package.json', () => {
+test('each manifest version equals the version in that package.json (or pubspec.yaml)', () => {
   for (const path of configured) {
-    const { version } = readJson(`${path}/package.json`);
+    const version = dart.has(path) ? pubspecVersion(path) : readJson(`${path}/package.json`).version;
     assert.match(manifest[path], /^\d+\.\d+\.\d+(-[\w.]+)?$/, `${path}: manifest version`);
-    assert.equal(version, manifest[path], `${path}: package.json version vs manifest`);
+    assert.equal(version, manifest[path], `${path}: package version vs manifest`);
   }
 });
 
