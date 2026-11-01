@@ -37,8 +37,9 @@ class LocalPreferencesNotifier extends Notifier<LocalPreferences> {
   static const hapticsKey = 'prefs.haptics';
   static const darkThemeKey = 'prefs.dark_theme';
 
-  // A toggle made before the stored values arrive wins over them.
-  bool _touched = false;
+  // Keys toggled before the stored values arrived: those toggles win, and
+  // every other key still takes its stored value.
+  final Set<String> _touched = {};
 
   @override
   LocalPreferences build() {
@@ -50,24 +51,28 @@ class LocalPreferencesNotifier extends Notifier<LocalPreferences> {
 
   Future<void> _load() async {
     final values = await Future.wait([_kv.getBool(soundsKey), _kv.getBool(hapticsKey), _kv.getBool(darkThemeKey)]);
-    if (!ref.mounted || _touched) return;
-    state = LocalPreferences(sounds: values[0] ?? true, haptics: values[1] ?? true, darkTheme: values[2]);
+    if (!ref.mounted) return;
+    state = LocalPreferences(
+      sounds: _touched.contains(soundsKey) ? state.sounds : values[0] ?? true,
+      haptics: _touched.contains(hapticsKey) ? state.haptics : values[1] ?? true,
+      darkTheme: _touched.contains(darkThemeKey) ? state.darkTheme : values[2],
+    );
   }
 
   Future<void> setSounds(bool on) async {
-    _touched = true;
+    _touched.add(soundsKey);
     state = state.copyWith(sounds: on);
     await _kv.setBool(soundsKey, on);
   }
 
   Future<void> setHaptics(bool on) async {
-    _touched = true;
+    _touched.add(hapticsKey);
     state = state.copyWith(haptics: on);
     await _kv.setBool(hapticsKey, on);
   }
 
   Future<void> setDarkTheme(bool on) async {
-    _touched = true;
+    _touched.add(darkThemeKey);
     state = LocalPreferences(sounds: state.sounds, haptics: state.haptics, darkTheme: on);
     await _kv.setBool(darkThemeKey, on);
   }

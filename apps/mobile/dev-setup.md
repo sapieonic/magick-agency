@@ -202,8 +202,8 @@ cp env/dev.json env/dev.local.json
 | `FIREBASE_API_KEY`, `FIREBASE_PROJECT_ID`, `FIREBASE_MESSAGING_SENDER_ID` | The **same Firebase project** as the server's `FIREBASE_PROJECT_ID` and the console's `VITE_FIREBASE_*` |
 | `FIREBASE_APP_ID_ANDROID`, `FIREBASE_APP_ID_IOS` | Register an Android app (`com.magickagency.agent.dev`) and an iOS app (`com.magickagency.agent`) in that project, then copy each App ID |
 | `GOOGLE_SERVER_CLIENT_ID` | The project's **Web** OAuth client id (Firebase › Authentication › Google › Web SDK configuration). Google sign-in on Android needs it |
-| `GOOGLE_IOS_CLIENT_ID` | The iOS OAuth client id. Google sign-in on iOS also needs its reversed form as a URL scheme in `ios/Runner/Info.plist` (`CFBundleURLTypes`) |
-| `POSTHOG_*` | Leave empty |
+| `GOOGLE_IOS_CLIENT_ID` | The iOS OAuth client id. Google sign-in on iOS also needs its reversed form as a URL scheme in `ios/Runner/Info.plist` (`CFBundleURLTypes`). The committed scheme is this repo's Firebase project's; with another project, replace it with yours |
+| `POSTHOG_*` | Leave empty (reserved; nothing reads them yet) |
 
 For **Google sign-in on Android**, add your debug keystore's SHA-1 to the Android app in Firebase.
 Print it with:
@@ -212,7 +212,9 @@ Print it with:
 keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA1
 ```
 
-With the Firebase keys empty, the app starts and stays on the sign-in screen.
+With the Firebase keys empty, or without this platform's `FIREBASE_APP_ID_*`, the app starts
+and stays on the sign-in screen. If Firebase fails to start for another reason, the app logs it
+and starts the same way.
 
 **`API_ORIGIN` by device:**
 
@@ -288,3 +290,4 @@ flutter build apk --debug --flavor dev --dart-define-from-file=env/dev.json
 | Microphone checks fail in pre-flight on an emulator | Turn on the emulator's microphone: *Extended controls › Microphone › Virtual microphone uses host audio input* |
 | iOS: `CocoaPods not installed` | `brew install cocoapods`, then `flutter run` again |
 | iOS: signing errors on a phone | Pick your team in Xcode (step 4). The simulator needs no signing |
+| Android: a release build fails on signing | Android release builds need `android/key.properties` with `storeFile`, `storePassword`, `keyAlias` and `keyPassword` (`storeFile` relative to `android/app`) and fail without them. To sign a local release build with the debug key on purpose: `ORG_GRADLE_PROJECT_allowDebugSigning=true flutter build apk --release --flavor <env> --dart-define-from-file=env/<env>.json` |

@@ -9,6 +9,7 @@ import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
+import 'package:magick_agency_agent/features/preflight/preflight_copy.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_screen.dart';
 
 /// Each check is a completer the test resolves when it wants.
@@ -153,6 +154,10 @@ void main() {
   group('grading', () {
     test('network: offline and < 64 kbps up block; slow warns; good is good', () {
       expect(gradeNetwork(const NetworkSample(online: false)).status, CheckStatus.fail);
+      final noAnswer = gradeNetwork(const NetworkSample(online: true, transport: '4G', noAnswer: true));
+      expect(noAnswer.status, CheckStatus.fail);
+      expect(noAnswer.detail, isNot(PreflightCopy.offline));
+      expect(noAnswer.detail, startsWith('Too slow for calls'));
       expect(gradeNetwork(const NetworkSample(online: true, latencyMs: 40, uploadKbps: 41)).status, CheckStatus.fail);
       expect(gradeNetwork(const NetworkSample(online: true, latencyMs: 40, uploadKbps: 64)).status, CheckStatus.warn);
       expect(gradeNetwork(const NetworkSample(online: true, latencyMs: 450, uploadKbps: 2000)).status, CheckStatus.warn);
@@ -402,6 +407,57 @@ void main() {
       expect(find.text('Couldn’t open the station. Check your connection and try again.'), findsOneWidget);
     });
 
+    testWidgets('Back while joining does nothing; the join lands on the station', (tester) async {
+      tester.view.devicePixelRatio = 3;
+      tester.view.physicalSize = const Size(390, 844) * 3;
+      addTearDown(tester.view.reset);
+      final checks = FakeChecks()..allGood();
+      final launcher = _HeldLauncher();
+      final router = GoRouter(
+        initialLocation: Routes.home,
+        routes: [
+          GoRoute(
+            path: Routes.preflightPattern,
+            builder: (_, s) => PreflightScreen(campaignId: s.pathParameters['campaignId']!),
+          ),
+          GoRoute(
+            path: Routes.home,
+            builder: (_, _) => const Scaffold(body: Text('campaigns-home')),
+            routes: [
+              GoRoute(
+                path: 'station/:campaignId',
+                builder: (_, s) => Scaffold(body: Text('station-${s.pathParameters['campaignId']}')),
+              ),
+            ],
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [preflightChecksProvider.overrideWithValue(checks), stationLauncherProvider.overrideWithValue(launcher)],
+          child: MaterialApp.router(theme: buildTheme(AppTokens.dark, Brightness.dark), routerConfig: router),
+        ),
+      );
+      unawaited(router.push(preflightLocation('c1', 'Q4 Card Renewals')));
+      await settle(tester);
+      expect(find.byType(BackButton), findsOneWidget);
+
+      await tester.tap(goOnDuty);
+      await settle(tester);
+      expect(find.text('Joining…'), findsOneWidget);
+      // No back arrow while joining, and the system back is held.
+      expect(find.byType(BackButton), findsNothing);
+      await tester.binding.handlePopRoute();
+      await settle(tester);
+      expect(find.text('Joining…'), findsOneWidget);
+      expect(find.text('campaigns-home'), findsNothing);
+
+      launcher.result.complete(const StationStarted());
+      await settle(tester);
+      expect(find.text('station-c1'), findsOneWidget);
+    });
+
     testWidgets('200% text on 360×640: no overflow, Go on duty reachable', (tester) async {
       final checks = FakeChecks()..allGood();
       await pumpPreflight(tester, checks, FakeLauncher([]), textScale: 2, size: const Size(360, 640));
@@ -411,6 +467,19 @@ void main() {
       expect(r.bottom, lessThanOrEqualTo(640));
     });
   });
+}
+
+/// A launcher whose answer the test gives when it wants.
+class _HeldLauncher implements StationLauncher {
+  Completer<StationStart> result = Completer<StationStart>();
+
+  @override
+  Future<StationStart> start(String campaignId, {required String campaignName}) => result.future;
+  @override
+  Future<StationStart> leaveOtherAndStart(StationElsewhere other, String campaignId, {required String campaignName}) => result.future;
+  @override
+  Future<StationStart> closeSoftphoneAndStart(StationOnSoftphone softphone, String campaignId, {required String campaignName}) =>
+      result.future;
 }
 
 class _ThrowingLauncher implements StationLauncher {

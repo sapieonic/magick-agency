@@ -94,8 +94,8 @@ export type AgencyActionErrorCode =
    * bridged into one headset.
    *
    * The only member of this union that sets `campaign_id` / `campaign_name` /
-   * `state`; see {@link AgencySessionCampaignConflict}, which narrows this shape
-   * for it. Those fields are read against this code exactly as `allowed_codes` is
+   * `state` / `session_id` / `account_id` / `account_name`; see
+   * {@link AgencySessionCampaignConflict}, which narrows this shape for it. Those fields are read against this code exactly as `allowed_codes` is
    * read against its three producers — nothing else sets them.
    */
   | 'session_on_other_campaign'
@@ -151,15 +151,22 @@ export type AgencyActionErrorCode =
    * a live call on a station they can no longer open. Leaving ends it; the next join is
    * refused.
    */
-  | 'not_staffed';
+  | 'not_staffed'
+  /**
+   * `POST /sessions/:id/break` with the mobile app's `device_away` reason refused (409):
+   * the agent's state kept changing under the request (every compare-and-swap lost to a
+   * reservation or a release, re-decided and lost again). Nothing changed; retry. A
+   * concurrency refusal, not a fault, so it is a 4xx the error mask passes unchanged.
+   */
+  | 'state_changing';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **19 members** — 16 before `session_on_other_campaign` and
- * `agent_on_live_call`, 18 before `not_staffed`. `test/errors.test.ts` snapshots
- * the list.
+ * ⚠️ **20 members** — 16 before `session_on_other_campaign` and
+ * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`.
+ * `test/errors.test.ts` snapshots the list.
  *
  * Order is the declaration order of the union.
  */
@@ -183,6 +190,7 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'campaign_not_running',
   'feature_disabled',
   'not_staffed',
+  'state_changing',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**

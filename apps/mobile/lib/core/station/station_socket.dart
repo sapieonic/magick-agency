@@ -24,7 +24,13 @@ import 'station_transport.dart';
 ///   not yet expired); every later connect mints, under [tokenMintTimeout]. A
 ///   mint replaces the previous token server-side, so none is minted ahead.
 /// * **Close codes:** 4404 session gone and 4409 superseded are terminal;
-///   everything else (4401, 4408, a drop) retries with a new token.
+///   1008 (the server refused the upgrade itself) is terminal too, reported
+///   as [StationConnection.disconnected] with its code: this build sends
+///   something the server does not speak, and retrying cannot change that.
+///   1011 (the server could not run the station) retries, but
+///   [serverErrorLimit] in a row with no `pong` between give up like a
+///   flapping socket (held while a call is live). Everything else (4401,
+///   4408, a drop) retries with a new token.
 /// * **The ladder** (0.5, 1, 2, 5, 10, 15 s) resets on a `pong`, never on open:
 ///   a socket that opens and dies at once must not reconnect at 2 Hz forever.
 /// * **Give up** after [missedPingLimit] heartbeats with a ping unanswered,
@@ -106,6 +112,7 @@ class StationSocket {
   Timer? _mintTimer;
   int _generation = 0;
   int _retryCount = 0;
+  int _serverErrors = 0;
   int _pendingPings = 0;
   int _unansweredSince = 0;
   bool _provedLive = false;
@@ -124,8 +131,13 @@ class StationSocket {
   StationConnection get connection => _connection;
   bool get isOpen => _connection == StationConnection.open;
 
-  /// How many reconnects in a row have failed since the last `pong`.
-  int get retryCount => _retryCount;
+  /// Why the socket last gave up (`heartbeat`, `flapping`, `server_error`,
+  /// `refused`), or null while it has not.
+  String? get gaveUpCause => _gaveUpCause;
+
+  /// This many 1011 closes in a row, with no `pong` between, is a server that
+  /// is up and broken: stop retrying and let the agent decide.
+  static const serverErrorLimit = 3;
 
   /// The ID token was refreshed elsewhere just now (the controller warms it at join).
   void markIdTokenFresh() => _idTokenRefreshedAt = _now();
@@ -142,10 +154,24 @@ class StationSocket {
   void reconnect() {
     if (_disposed) return;
     _retryCount = 0;
+    _serverErrors = 0;
     _flapStamps = const [];
     _gaveUpCause = null;
     _resetPings();
     unawaited(_connect());
+  }
+
+  /// Closes the socket now and waits, parked, for the app's return
+  /// ([setKeepAlive] true, or [reconnect]). The server's close handler then
+  /// takes the agent out of the dialable pool at once: what the app does when
+  /// the `device_away` pause cannot be delivered while it is in the background.
+  void park({String reason = 'device_away'}) {
+    if (_disposed) return;
+    _generation++;
+    _clearTimers();
+    _abandon(reason);
+    _parked = true;
+    _setConnection(StationConnection.reconnecting);
   }
 
   /// App-level `{event:'ping', ts}` on/off. Off stops the heartbeat and with it
@@ -198,14 +224,6 @@ class StationSocket {
     final t = _transport;
     if (t == null || !isOpen) return false;
     t.sendBinary(bytes);
-    return true;
-  }
-
-  /// A text frame (the `pcm16` media fallback).
-  bool sendText(String text) {
-    final t = _transport;
-    if (t == null || !isOpen) return false;
-    t.sendText(text);
     return true;
   }
 
@@ -380,6 +398,7 @@ class StationSocket {
     if (frame is PongFrame) {
       _pendingPings = 0;
       _retryCount = 0;
+      _serverErrors = 0;
       _provedLive = true;
       _unansweredSince = 0;
       _heldLogged = false;
@@ -401,6 +420,23 @@ class StationSocket {
         _log.warn('station closed 4409: superseded by another device');
         _setConnection(StationConnection.superseded, closeCode: code);
         return;
+      case StationCloseCode.invalidUpgrade:
+        // The same upgrade is refused again, whatever the token.
+        _log.warn('station closed 1008: upgrade refused', {'reason': reason ?? ''});
+        _giveUp('refused', closeCode: code);
+        return;
+      case StationCloseCode.internalError:
+        _serverErrors += 1;
+        _log.warn('station closed 1011: server error', {'reason': reason ?? '', 'in_a_row': _serverErrors});
+        if (_serverErrors >= serverErrorLimit) {
+          if (!_callLive()) {
+            _giveUp('server_error', closeCode: code);
+            return;
+          }
+          // The server holds a live call for this session; giving up would end it.
+          _log.warn('station failing on a live call: holding');
+        }
+        _scheduleRetry(code);
       case StationCloseCode.tokenRejected || StationCloseCode.heartbeatTimeout || null:
         _log.info('station closed', {'code': code, 'reason': reason ?? ''});
         _scheduleRetry(code);
@@ -431,14 +467,14 @@ class StationSocket {
     _retryTimer = Timer(delay, () => unawaited(_connect()));
   }
 
-  void _giveUp(String cause) {
+  void _giveUp(String cause, {int? closeCode}) {
     _generation++;
     _clearTimers();
     _abandon(cause);
     _flapStamps = const [];
     _gaveUpCause = cause;
     _log.warn('station gave up', {'cause': cause});
-    _setConnection(StationConnection.disconnected);
+    _setConnection(StationConnection.disconnected, closeCode: closeCode);
   }
 
   void _abandon(String reason) {

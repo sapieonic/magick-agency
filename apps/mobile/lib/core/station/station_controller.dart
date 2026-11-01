@@ -84,6 +84,13 @@ class StationController extends Notifier<StationView?> implements StationActions
   ({String attemptId, String? name})? _nameCache;
   StationViewMapper _mapper = StationViewMapper();
 
+  /// The server refused the socket's upgrade (1008): nothing here can work.
+  bool _upgradeRefused = false;
+
+  /// The first `ready` of this session has been seen (the bootstrap's break
+  /// reason stands in for a `ready` that states none only once).
+  bool _readySeen = false;
+
   // Lifecycle.
   bool _foreground = true;
   SessionStateResponse? _lastStateResponse;
@@ -92,6 +99,15 @@ class StationController extends Notifier<StationView?> implements StationActions
   bool _awayPauseRequested = false;
   String? _awayQueuedFor;
   bool _awayQueueFailed = false;
+
+  /// The pause asked for at once has been answered by the server.
+  bool _awayLanded = false;
+
+  /// The pause never landed, so the station socket was closed (parked) instead.
+  bool _awayClosed = false;
+  int _awayRetries = 0;
+  Timer? _awayRetry;
+  Timer? _awayDeadline;
   AwayNotice _notice = AwayNotice.none;
   DateTime? _noticeDeadline;
   bool? _wakeLockOn;
@@ -170,27 +186,12 @@ class StationController extends Notifier<StationView?> implements StationActions
       );
     }
     final own = _s;
-    var sessionId = own != null && own.bootstrap.campaignId == other.campaignId ? own.id : other.sessionId;
+    final sessionId = other.sessionId;
     if (sessionId.isEmpty) {
-      // The conflict names the campaign, not the session: rejoining it is how
-      // the console finds the id, and it re-reads the state on the way.
-      try {
-        final there = await _api.join(other.campaignId, accountId: other.accountId);
-        if (conflictIsMidCall(there.state)) {
-          return StationElsewhere(
-            sessionId: there.sessionId,
-            campaignId: other.campaignId,
-            campaignName: other.campaignName,
-            stateLabel: agentStateLabel(there.state, there.stateRaw),
-            canLeave: false,
-            accountId: other.accountId,
-            accountName: other.accountName,
-          );
-        }
-        sessionId = there.sessionId;
-      } on ApiError catch (e) {
-        return StationRefused(switchFailureCopy(SwitchStage.resume, other.campaignName, errorDetail(e)));
-      }
+      // A server older than the conflict's `session_id` / `account_id` names
+      // the campaign only. Rejoining it to find the id would join in THIS
+      // account, which may not be the one that session is in: say so instead.
+      return StationRefused(leaveOtherUnknownCopy(other.campaignName), code: AgencyErrorCode.sessionOnOtherCampaign.wire);
     }
     try {
       await _api.leave(sessionId, accountId: other.accountId);
@@ -235,19 +236,18 @@ class StationController extends Notifier<StationView?> implements StationActions
         final c = body.campaignConflict;
         if (c == null) return StationRefused(message.isEmpty ? joinFailedCopy : message, code: body.codeRaw);
         final own = _s;
-        final rawSession = body.raw['session_id'];
-        final rawAccount = body.raw['account_id'];
-        final rawAccountName = body.raw['account_name'];
+        // The session to leave and the account it is in come together, or
+        // not at all (a server older than the fields). Without them only this
+        // phone's own open station can be left from here, in its own account.
+        final ownThere = own != null && own.bootstrap.campaignId == c.campaignId;
         return StationElsewhere(
-          sessionId: rawSession is String
-              ? rawSession
-              : (own != null && own.bootstrap.campaignId == c.campaignId ? own.id : ''),
+          sessionId: c.canLeave ? c.sessionId! : (ownThere ? own.id : ''),
           campaignId: c.campaignId,
           campaignName: c.campaignName,
           stateLabel: agentStateLabel(c.state, c.stateRaw),
           canLeave: !conflictIsMidCall(c.state),
-          accountId: rawAccount is String && rawAccount.isNotEmpty ? rawAccount : null,
-          accountName: rawAccountName is String && rawAccountName.isNotEmpty ? rawAccountName : null,
+          accountId: c.canLeave ? c.accountId : null,
+          accountName: c.accountName,
         );
       case AgencyErrorCode.sessionOnSoftphone:
         final sp = body.softphoneConflict;
@@ -416,6 +416,11 @@ class StationController extends Notifier<StationView?> implements StationActions
     _awayPauseRequested = false;
     _awayQueuedFor = null;
     _awayQueueFailed = false;
+    _awayLanded = false;
+    _awayClosed = false;
+    _cancelAwayTimers();
+    _upgradeRefused = false;
+    _readySeen = false;
     _mapper = StationViewMapper();
   }
 
@@ -431,9 +436,15 @@ class StationController extends Notifier<StationView?> implements StationActions
       case ReadyFrame(:final activeWrapup):
         _reconnectDeadline = null;
         _reconnectWindow = null;
+        final first = !_readySeen;
+        _readySeen = true;
+        final bootstrap = _s?.bootstrap;
         _dispatch(ReadyAction(
           frame,
           wrapup: activeWrapup == null ? null : openWrapup(activeWrapup, _station.clockOffsetMs, _now()),
+          // The join's answer said the same thing moments ago, when the frame states nothing.
+          breakReason: frame.breakReason ??
+              (first && bootstrap != null && bootstrap.state == AgentState.onBreak ? bootstrap.breakReason : null),
         ));
       case AgentStateFrame():
         // The authority: an HTTP answer held for reconciliation is now stale.
@@ -470,7 +481,8 @@ class StationController extends Notifier<StationView?> implements StationActions
       case ManualCallFrame():
         _dispatch(ManualCallAction(frame));
       case PongFrame():
-        _onPong(frame, _now().millisecondsSinceEpoch);
+        // The socket hands pongs to [_onPong] itself; none arrive here.
+        break;
       case BridgeStatusFrame(:final statusRaw):
         // The media leg, not the attempt: diagnostic only.
         _log.debug('bridge status', {'status': statusRaw});
@@ -493,6 +505,16 @@ class StationController extends Notifier<StationView?> implements StationActions
   }
 
   void _onConnection(StationConnection connection, {int? closeCode}) {
+    final s = _s;
+    final refusedNow = s != null && closeCode == StationCloseCode.invalidUpgrade.code && !_upgradeRefused;
+    if (refusedNow) {
+      _upgradeRefused = true;
+      _fatal = upgradeRefusedCopy;
+      // Not left to linger as a joined agent who cannot connect: best effort.
+      unawaited(_api.leave(s.id).catchError((Object e) {
+        _log.warn('leaving after a refused upgrade failed', {'error': e.runtimeType.toString()});
+      }));
+    }
     final wasOpen = _station.connection == StationConnection.open;
     if (connection == StationConnection.reconnecting && wasOpen && _station.live != null) {
       // The server holds a live call this long for the same session to come back.
@@ -504,6 +526,26 @@ class StationController extends Notifier<StationView?> implements StationActions
       _reconnectWindow = null;
     }
     _dispatch(ConnectionAction(connection));
+    if (refusedNow) _afterChange();
+    if (s != null && identical(_s, s) && _terminal) _letGo(s, keepSocket: connection == StationConnection.superseded);
+  }
+
+  /// The station is over on this phone (see [_terminal]): the on-duty
+  /// service, the audio, the wake lock and the notices go at once, so the
+  /// notification never says "Waiting for calls" for a station this phone no
+  /// longer holds. The view stays, so the screen can say why. After 4409 the
+  /// socket is kept for "Use this phone" ([useThisDevice] starts the audio
+  /// again); otherwise the socket and the listeners go too and the notes held
+  /// are sent. [dismiss] or the next start closes the rest.
+  void _letGo(_Session s, {required bool keepSocket}) {
+    _cancelAwayTimers();
+    _setWakeLock(false);
+    _setNotice(AwayNotice.none, null);
+    unawaited(s.audio.close());
+    if (keepSocket) return;
+    s.socket.dispose(reason: 'over');
+    s.stopListening();
+    unawaited(s.notes.persistNow().then((_) => s.notes.flushNow(timeout: notesFlushTimeout)));
   }
 
   void _sendUplink(Uint8List frame) => _s?.socket.sendBinary(frame);
@@ -525,8 +567,13 @@ class StationController extends Notifier<StationView?> implements StationActions
   /// The HTTP answer's view of the queue, until the next frame states it.
   void _writeQueue(String? code) => _breakOverride = (code: code, atStatement: _station.pendingBreakStatements);
 
+  /// The station is over on this phone: the server ended the session (4404),
+  /// another device took it (4409), or the server refuses this app's socket
+  /// (1008). Nothing here may act on a call any more.
   bool get _terminal =>
-      _station.connection == StationConnection.sessionGone || _station.connection == StationConnection.superseded;
+      _station.connection == StationConnection.sessionGone ||
+      _station.connection == StationConnection.superseded ||
+      _upgradeRefused;
 
   void _afterChange() {
     final s = _s;
@@ -554,9 +601,8 @@ class StationController extends Notifier<StationView?> implements StationActions
       state = null;
       return;
     }
-    s.audio.updateNotification(_onDutyNotification());
     final missed = _station.missedRelease;
-    state = _mapper.map(
+    final view = _mapper.map(
       campaignId: s.bootstrap.campaignId,
       campaignName: s.campaignName,
       sessionId: s.id,
@@ -578,6 +624,10 @@ class StationController extends Notifier<StationView?> implements StationActions
       missedReleaseDismissed: missed != null && identical(missed, _dismissedMissed),
       awayPauseRequested: _awayPauseRequested,
     );
+    // After the mapper, so the notification's call timer uses the offset the
+    // view settled on (with its hysteresis), not every pong's raw estimate.
+    s.audio.updateNotification(_onDutyNotification());
+    state = view;
   }
 
   AudioTarget _audioTarget() {
@@ -628,7 +678,8 @@ class StationController extends Notifier<StationView?> implements StationActions
       AgentState.onBreak => away ? 'Paused · open the app to take calls' : 'On a break',
       AgentState.offline || AgentState.unknown => 'On duty',
     };
-    final live = _station.live;
+    // After 4404/4409 the call is not this phone's: no Mute or Hang up for it.
+    final live = _terminal ? null : _station.live;
     return audio.OnDutyNotification(
       title: s == null ? 'On duty' : 'On duty · ${s.campaignName}',
       text: text,
@@ -640,12 +691,20 @@ class StationController extends Notifier<StationView?> implements StationActions
               muteLabel: 'Mute',
               unmuteLabel: 'Unmute',
               hangUpLabel: 'Hang up',
-              connectedAt: correctedInstant(live.bridgedAt, _station.clockOffsetMs),
+              connectedAt: correctedInstant(live.bridgedAt, _mapper.appliedOffsetMs),
             ),
     );
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────────────────
+
+  /// How long the app keeps asking for the away pause before it closes the
+  /// station socket instead (see [_maybeSendAway]).
+  static const awayPauseBound = Duration(seconds: 10);
+
+  /// The waits between asks for the away pause (the last one repeats) until
+  /// [awayPauseBound].
+  static const awayRetryDelays = [Duration(seconds: 1), Duration(seconds: 2), Duration(seconds: 3)];
 
   void _onHide() {
     _foreground = false;
@@ -661,27 +720,59 @@ class StationController extends Notifier<StationView?> implements StationActions
     _foreground = true;
     final s = _s;
     if (s == null) return;
+    _cancelAwayTimers();
     final queuedFor = _awayQueuedFor;
+    // Asked for, never confirmed, and the socket was not closed for it: the
+    // server may still say `available` with the lease long lapsed (app pings
+    // stop while away), which never rings. Said again below.
+    final unconfirmed = _awayPauseRequested && !_awayLanded && !_awayInFlight && !_awayClosed;
     _awayQueuedFor = null;
     _awayQueueFailed = false;
     _awayKey = null;
+    _awayClosed = false;
+    _awayRetries = 0;
     if (queuedFor != null &&
         _pendingBreakCode == ReservedBreakCode.deviceAway.wire &&
         isCallPhase(_station.agentState)) {
       // Back before the call ended: the pause queued for after it is not wanted.
-      _awayPauseRequested = false;
-      unawaited(_api.cancelBreak(s.id).then((r) {
-        if (!identical(_s, s)) return;
-        _writeQueue(r?.pendingState != null ? r?.breakReason : null);
-        _afterChange();
-      }, onError: (Object e) => _log.warn('cancelling the away pause failed', {'error': e.runtimeType.toString()})));
+      _cancelAwayQueue(s);
     }
     // Android starts the on-duty service only from the foreground: one that
     // failed (the join finished after the agent switched apps) starts now.
     s.audio.resumed();
     final c = _station.connection;
-    if (c == StationConnection.reconnecting || c == StationConnection.disconnected) s.socket.reconnect();
+    // A give-up is the agent's to undo (Reconnect), except a silent one:
+    // that is worth one clean try, as when the network comes back.
+    if (c == StationConnection.reconnecting ||
+        (c == StationConnection.disconnected && s.socket.gaveUpCause == 'heartbeat')) {
+      s.socket.reconnect();
+    } else if (unconfirmed &&
+        c == StationConnection.open &&
+        !_terminal &&
+        _station.agentState == AgentState.available) {
+      _log.info('back: the away pause never landed, so available is said again');
+      unawaited(_api.available(s.id).then((r) {
+        if (identical(_s, s)) _reconcile(r);
+      }, onError: (Object e) => _log.warn('re-asserting available failed', {'error': e.runtimeType.toString()})));
+    }
     _afterChange();
+  }
+
+  void _cancelAwayQueue(_Session s) {
+    _awayQueuedFor = null;
+    _awayPauseRequested = false;
+    unawaited(_api.cancelBreak(s.id).then((r) {
+      if (!identical(_s, s)) return;
+      _writeQueue(r?.pendingState != null ? r?.breakReason : null);
+      _afterChange();
+    }, onError: (Object e) => _log.warn('cancelling the away pause failed', {'error': e.runtimeType.toString()})));
+  }
+
+  void _cancelAwayTimers() {
+    _awayRetry?.cancel();
+    _awayRetry = null;
+    _awayDeadline?.cancel();
+    _awayDeadline = null;
   }
 
   void _applyLifecycle(_Session s) {
@@ -690,20 +781,32 @@ class StationController extends Notifier<StationView?> implements StationActions
     s.socket.setKeepAlive(keepAliveWanted(foreground: _foreground, state: st));
     if (!_foreground) _maybeSendAway();
     _setWakeLock(wakeLockWanted(onDuty: !_terminal, foreground: _foreground));
-    final notice = awayNoticeFor(
-      st,
-      foreground: _foreground,
-      breakCode: _station.breakReasonCode ??
-          (st == AgentState.onBreak && _awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null),
-      pauseRequested: _awayPauseRequested,
-      wrapupDeadline: _station.wrapup?.deadline,
-    );
+    final notice = _terminal
+        ? AwayNotice.none
+        : awayNoticeFor(
+            st,
+            foreground: _foreground,
+            breakCode: _station.breakReasonCode ??
+                (st == AgentState.onBreak && _awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null),
+            pauseRequested: _awayPauseRequested,
+            wrapupDeadline: _station.wrapup?.deadline,
+          );
     _setNotice(notice, notice == AwayNotice.wrapupDeadline ? _station.wrapup?.deadline : null);
   }
 
+  /// While away, asks for the `device_away` pause (now, or queued behind a
+  /// call). A pause asked for at once that fails (`state_changing`, 429, 5xx,
+  /// no network) is asked for again on [awayRetryDelays]: with app pings off
+  /// and nothing changing, nothing else would ask, and the station socket
+  /// stays open on protocol pings alone, so the agent would stay dialable. If
+  /// it has not landed within [awayPauseBound] (or is refused outright) while
+  /// the agent is still `available`, the socket is closed instead: the
+  /// server's close handler takes the agent out of the pool at once, and the
+  /// app reconnects on return. A queued pause that fails is asked for again
+  /// on the next change (the call keeps the app pinging meanwhile).
   void _maybeSendAway() {
     final s = _s;
-    if (s == null || _foreground || _awayInFlight || _terminal) return;
+    if (s == null || _foreground || _awayInFlight || _terminal || _awayClosed || _awayRetry != null) return;
     final st = _station.agentState;
     final action = awayActionFor(st, pendingBreakCode: _pendingBreakCode);
     if (action == AwayAction.none) return;
@@ -717,7 +820,14 @@ class StationController extends Notifier<StationView?> implements StationActions
     _awayKey = key;
     _awayInFlight = true;
     if (action == AwayAction.pauseNow) {
+      if (!_awayPauseRequested || _awayLanded) {
+        // A new pause to deliver: the bound starts now.
+        _awayRetries = 0;
+        _awayDeadline?.cancel();
+        _awayDeadline = Timer(awayPauseBound, () => _awayOverdue(s));
+      }
       _awayPauseRequested = true;
+      _awayLanded = false;
     } else {
       _awayQueuedFor = _station.currentAttemptId ?? '';
       _awayQueueFailed = false;
@@ -728,22 +838,73 @@ class StationController extends Notifier<StationView?> implements StationActions
         .then((response) {
       _awayInFlight = false;
       if (!identical(_s, s)) return;
+      if (action == AwayAction.pauseNow) {
+        _awayLanded = true;
+        _cancelAwayTimers();
+      }
       if (response != null) {
-        if (response.pendingState != null) _writeQueue(response.breakReason ?? ReservedBreakCode.deviceAway.wire);
+        if (response.pendingState != null) {
+          _writeQueue(response.breakReason ?? ReservedBreakCode.deviceAway.wire);
+          // Queued, whichever ask it was (a pause asked for at once lands
+          // queued when a call was reserved meanwhile): coming back cancels it.
+          _awayQueuedFor = _station.currentAttemptId ?? '';
+          _awayQueueFailed = false;
+        }
         _lastStateResponse = response;
+      }
+      if (_foreground && _awayQueuedFor != null && response?.pendingState != null && isCallPhase(_station.agentState)) {
+        // The agent came back while this was in flight: the queued pause is not wanted.
+        _cancelAwayQueue(s);
       }
       _afterChange();
     }, onError: (Object e) {
       _awayInFlight = false;
       if (!identical(_s, s)) return;
-      // The server's mobile grace still pauses the agent: app pings have stopped.
-      _awayKey = null;
-      // A failed queued pause is asked for again on the next change. Its
-      // marker stays: a request that timed out may still have landed, and
-      // coming back must cancel it.
-      if (action == AwayAction.queuePause) _awayQueueFailed = true;
-      _log.warn('device_away pause failed', {'error': e.runtimeType.toString()});
+      _log.warn('device_away pause failed', {'error': e.runtimeType.toString(), 'queued': action == AwayAction.queuePause});
+      if (action == AwayAction.queuePause) {
+        // Asked for again on the next change. Its marker stays: a request
+        // that timed out may still have landed, and coming back must cancel it.
+        _awayKey = null;
+        _awayQueueFailed = true;
+        return;
+      }
+      if (_foreground) {
+        _awayKey = null;
+        return;
+      }
+      if (!_awayRetryable(e)) {
+        _awayOverdue(s);
+        return;
+      }
+      // Until it lands or [awayPauseBound] runs out (the deadline closes the socket).
+      final delay = awayRetryDelays[_awayRetries < awayRetryDelays.length ? _awayRetries : awayRetryDelays.length - 1];
+      _awayRetries++;
+      _awayRetry = Timer(delay, () {
+        _awayRetry = null;
+        if (!identical(_s, s)) return;
+        _awayKey = null;
+        _maybeSendAway();
+      });
     }));
+  }
+
+  static bool _awayRetryable(Object e) =>
+      e is ApiNetworkError ||
+      (e is ApiHttpError &&
+          (e.isServerError || e.status == 429 || e.code == AgencyErrorCode.stateChanging.wire));
+
+  /// The away pause did not land in time (or was refused): when the agent is
+  /// still dialable, close the station socket so the server takes them out
+  /// of the pool now rather than when the `available` lease lapses.
+  void _awayOverdue(_Session s) {
+    _cancelAwayTimers();
+    if (!identical(_s, s) || _foreground || _terminal || _awayLanded || _awayClosed) return;
+    // Only a socket that is open still holds the agent in the pool: one that
+    // already dropped (or gave up) was released by the server's close handler.
+    if (_station.agentState != AgentState.available || _station.connection != StationConnection.open) return;
+    _awayClosed = true;
+    _log.warn('device_away pause never landed: closing the station until the app is back');
+    s.socket.park();
   }
 
   void _setWakeLock(bool on) {
@@ -770,6 +931,9 @@ class StationController extends Notifier<StationView?> implements StationActions
   /// Single-flight per action: a second press of the same action while the
   /// first is in flight does nothing, and nothing runs while leaving. Hang-up
   /// is never held up behind another action (a CallKit end must always go).
+  ///
+  /// A body writes nothing after an await once [_s] is no longer its session
+  /// ([_live]): a late answer must never land in the next station.
   Future<void> _run(StationBusy kind, Future<void> Function(_Session s) body) async {
     final s = _s;
     if (s == null || _inFlight.contains(kind) || _inFlight.contains(StationBusy.leaving)) return;
@@ -794,6 +958,9 @@ class StationController extends Notifier<StationView?> implements StationActions
 
   static String? _serverSentence(Object e) => e is ApiHttpError && e.message.trim().isNotEmpty ? e.message.trim() : null;
 
+  /// Whether [s] is still the station on screen.
+  bool _live(_Session s) => identical(_s, s);
+
   void _reconcile(SessionStateResponse? response) {
     if (response == null) return;
     _lastStateResponse = response;
@@ -805,19 +972,21 @@ class StationController extends Notifier<StationView?> implements StationActions
         // Pre-warm on the agent's own "ready", so a late-bound call has audio inside its budget.
         s.audio.prewarm();
         try {
-          _reconcile(await _api.available(s.id));
+          final r = await _api.available(s.id);
+          if (_live(s)) _reconcile(r);
         } on ApiError catch (e) {
           // Shown as received: "Submit a disposition for your last call before going available."
-          _actionError = _serverSentence(e) ?? presenceFailedCopy;
+          if (_live(s)) _actionError = _serverSentence(e) ?? presenceFailedCopy;
         }
       });
 
   @override
   Future<void> endBreak() => _run(StationBusy.endingBreak, (s) async {
         try {
-          _reconcile(await _api.available(s.id));
+          final r = await _api.available(s.id);
+          if (_live(s)) _reconcile(r);
         } on ApiError catch (e) {
-          _actionError = _serverSentence(e) ?? presenceFailedCopy;
+          if (_live(s)) _actionError = _serverSentence(e) ?? presenceFailedCopy;
         }
       });
 
@@ -825,9 +994,11 @@ class StationController extends Notifier<StationView?> implements StationActions
   Future<void> takeBreak(String code) => _run(StationBusy.takingBreak, (s) async {
         try {
           final r = await _api.takeBreak(s.id, code);
+          if (!_live(s)) return;
           _writeQueue(r?.pendingState != null ? (r?.breakReason ?? code) : null);
           _reconcile(r);
         } on ApiError catch (e) {
+          if (!_live(s)) return;
           final body = errorBodyOf(e);
           final allowed = body?.allowedCodes;
           if (body?.code == AgencyErrorCode.unknownBreakReason && allowed != null) {
@@ -843,9 +1014,11 @@ class StationController extends Notifier<StationView?> implements StationActions
   Future<void> cancelQueuedBreak() => _run(StationBusy.cancellingBreak, (s) async {
         try {
           final r = await _api.cancelBreak(s.id);
+          if (!_live(s)) return;
           _writeQueue(r?.pendingState != null ? r?.breakReason : null);
           _reconcile(r);
         } on ApiError catch (e) {
+          if (!_live(s)) return;
           if (errorCodeOf(e) == AgencyErrorCode.breakAlreadyApplied) {
             _writeQueue(null);
             _actionError = breakAlreadyStartedCopy;
@@ -857,13 +1030,16 @@ class StationController extends Notifier<StationView?> implements StationActions
 
   @override
   Future<void> hangUp() async {
+    // After 4404/4409 the call (if any) is another device's or already gone:
+    // a stale notification or CallKit button must never end it from here.
+    if (_terminal) return;
     final attemptId = _station.live?.attemptId;
     if (attemptId == null) return;
     await _run(StationBusy.hangingUp, (s) async {
       try {
         await _api.hangup(attemptId);
       } on ApiError catch (e) {
-        if (_station.live?.attemptId == attemptId) _actionError = hangupFailureCopy(e);
+        if (_live(s) && _station.live?.attemptId == attemptId) _actionError = hangupFailureCopy(e);
       }
     });
   }
@@ -902,6 +1078,7 @@ class StationController extends Notifier<StationView?> implements StationActions
         final r = await _api.disposition(attemptId, request);
         // The text the outcome was built from: anything typed since is newer.
         s.notes.savedWithDisposition(attemptId, text);
+        if (!_live(s)) return;
         final current = _station.currentAttemptId;
         if (r.attemptId != attemptId || (current != null && current != attemptId)) {
           // Saved, but for a call no longer on screen: nothing to show about it.
@@ -910,6 +1087,7 @@ class StationController extends Notifier<StationView?> implements StationActions
         }
         _saved = (attemptId: attemptId, code: code);
       } on ApiError catch (e) {
+        if (!_live(s)) return;
         final current = _station.currentAttemptId;
         if (current != null && current != attemptId) {
           _actionError = dispositionLostCopy;
@@ -935,38 +1113,61 @@ class StationController extends Notifier<StationView?> implements StationActions
   }
 
   @override
-  Future<void> markDnc({String? reason}) async {
+  Future<void> markDnc({String? reason, String? attemptId}) async {
     if (_s == null) return;
-    final attemptId = _station.live?.attemptId;
-    if (attemptId == null) {
-      _actionError = dncNeedsCallCopy;
+    final live = _terminal ? null : _station.live?.attemptId;
+    if (live == null || (attemptId != null && attemptId != live)) {
+      // No call, or not the one the agent confirmed for: the next customer is
+      // never marked for the last one's answer.
+      _actionError = attemptId != null && live != null ? dncCallChangedCopy : dncNeedsCallCopy;
       _emit();
       return;
     }
     _dncOutcome = null;
     await _run(StationBusy.markingDnc, (s) async {
       try {
-        final r = await _api.markDnc(attemptId, DncRequest(reason: reason));
+        final r = await _api.markDnc(live, DncRequest(reason: reason));
         _log.info('marked do not call', {'recorded': r.dncRecorded});
-        if (_station.currentAttemptId == attemptId) _dncOutcome = (attemptId: attemptId, text: dncOutcomeCopy(r));
+        if (_live(s) && _station.currentAttemptId == live) _dncOutcome = (attemptId: live, text: dncOutcomeCopy(r));
       } on ApiError catch (e) {
-        if (_station.live?.attemptId == attemptId) _actionError = dncFailureCopy(e);
+        if (_live(s) && _station.live?.attemptId == live) _actionError = dncFailureCopy(e);
       }
     });
   }
 
   @override
-  Future<void> leave() => _run(StationBusy.leaving, (s) async {
-        try {
-          await _api.leave(s.id);
-        } on ApiError catch (e) {
-          if (!_alreadyLeft(e)) {
-            _actionError = _serverSentence(e) ?? e.userMessage;
-            return;
-          }
+  Future<LeaveOutcome> leave() async {
+    var outcome = LeaveOutcome.stayed;
+    await _run(StationBusy.leaving, (s) async {
+      try {
+        await _api.leave(s.id);
+      } on ApiNetworkError catch (e) {
+        if (!_live(s)) return;
+        if (_station.live != null || isCallPhase(_station.agentState)) {
+          // Never with a call on: closing here would drop the customer.
+          _actionError = e.userMessage;
+          return;
         }
+        // Offline, with no call: off the station here anyway. The socket
+        // closing (or the server's silence grace) takes the agent off duty;
+        // the session is reaped or picked up again as on any lost phone.
+        _log.warn('leaving offline: closing the station on this phone only');
+        outcome = LeaveOutcome.leftOffline;
         await _closeSession();
-      });
+        return;
+      } on ApiError catch (e) {
+        if (!_live(s)) return;
+        if (!_alreadyLeft(e)) {
+          _actionError = _serverSentence(e) ?? e.userMessage;
+          return;
+        }
+      }
+      if (!_live(s)) return;
+      outcome = LeaveOutcome.left;
+      await _closeSession();
+    });
+    return outcome;
+  }
 
   @override
   Future<void> reconnect() async {
@@ -988,7 +1189,20 @@ class StationController extends Notifier<StationView?> implements StationActions
   }
 
   @override
-  Future<void> useThisDevice() async => _s?.socket.reconnect();
+  Future<void> useThisDevice() async {
+    final s = _s;
+    if (s == null || _station.connection != StationConnection.superseded) return;
+    // The audio and the on-duty service were let go at 4409; the agent's tap
+    // has the app on screen, where Android allows the service to start.
+    s.audio.open(_onDutyNotification());
+    s.socket.reconnect();
+  }
+
+  @override
+  Future<void> dismiss() async {
+    if (_s == null || !(_terminal || _fatal != null)) return;
+    await _closeSession();
+  }
 
   @override
   void dismissActionError() {

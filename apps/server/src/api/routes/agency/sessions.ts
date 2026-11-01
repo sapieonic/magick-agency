@@ -30,6 +30,7 @@ import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/ag
 import { accountNameInTenant, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 import { runDeviceAway } from './device-away.js';
+import { breakReasonFor } from '../../../agency/station-socket.js';
 
 const log = createChildLogger({ component: 'agency-routes' });
 
@@ -167,6 +168,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       const otherName = other && other.tenant_id === liveSession.tenant_id
         ? other.name
         : 'another campaign';
+      // The session's own id and account, so the client can leave it from here: `leave`
+      // is scoped to the session's account, which is often a sibling of this one (see
+      // above). Only the caller's own session is ever named: `joinOrRehydrate` found it
+      // by (tenant, the authenticated agent), the same lookup that refused the join. The
+      // account name is best effort, read in this tenant (null when the read failed), as
+      // on `session_on_softphone` above.
+      const accountName = await accountNameInTenant(liveSession.account_id, liveSession.tenant_id);
       const conflict: AgencySessionCampaignConflict = {
         error: 'Conflict',
         code: 'session_on_other_campaign',
@@ -182,6 +190,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         campaign_id: liveSession.campaign_id,
         campaign_name: otherName,
         state: live?.state ?? liveSession.state,
+        session_id: liveSession.id,
+        account_id: liveSession.account_id,
+        account_name: accountName,
       };
       log.warn({
         agentUserId: body.agent_user_id, requestedCampaignId: campaign.id,
@@ -218,6 +229,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // live `on_call` lease and the next tick would reserve them for a second
     // call. Nothing may derive availability from the durable mirror.
     const state = await runtime.rehydrateAgent(session.id, session);
+    // From the row as joined, as `ready` does (`breakReasonFor`): the reason a client that
+    // was killed while paused needs to say why on its way back.
+    const breakReason = breakReasonFor(state, session);
 
     const minted = await runtime.tokens.mint(session.id);
 
@@ -237,6 +251,7 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       // `available` while Redis held `on_call` would have the console render a
       // ready agent over a live conversation.
       state,
+      ...(breakReason ? { break_reason: breakReason } : {}),
       campaign_status: campaign.status,
       station_ws_url: `/api/v1/agency/station/${session.id}?token=${minted.token}`,
       station_token_expires_at: minted.expiresAt.toISOString(),
@@ -509,11 +524,13 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     if ((request.body as { reason?: unknown } | undefined)?.reason === DEVICE_AWAY_BREAK_REASON) {
       const result = await runDeviceAway(runtime, session);
       if (result.ok) return reply.send(result.body);
-      const err: AgencySoftphoneErrorResponse = {
-        error: 'Service Unavailable', code: 'dial_failed',
-        message: 'Could not change your status just now; nothing changed. Try again.',
+      // Every pass lost its compare-and-swap to a reservation or a release: a conflict
+      // with the state, not a fault, so a 409 the error mask passes unchanged.
+      const err: AgencyActionErrorResponse = {
+        error: 'Conflict', code: 'state_changing',
+        message: 'Your status changed while pausing you; nothing changed. Try again.',
       };
-      return reply.code(503).send(err);
+      return reply.code(409).send(err);
     }
     // A soft-phone session has no campaign and so no break catalog; it is always on
     // the reserved `soft_phone` break (docs/softphone.md §6).

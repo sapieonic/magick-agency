@@ -1,6 +1,8 @@
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/api/api_error.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/features/performance/logic/bucket_series.dart';
 import 'package:magick_agency_agent/features/performance/logic/performance_view.dart';
 import 'package:magick_agency_agent/features/performance/logic/stats_windows.dart';
@@ -196,5 +198,22 @@ void main() {
     final v = buildPerformanceView(window: StatsWindow.today, stats: s, campaignNames: const {}, calendar: ist);
     expect(v.emptyLine, 'No calls reached you today.');
     expect(v.tiles[1].value, 'Not measured yet');
+  });
+
+  test('a 401 is handed to the gate (which signs out), not only shown', () async {
+    final done = controller().revalidate();
+    api.fail(0, const ApiUnauthorized());
+    await done;
+    await Future<void>.delayed(Duration.zero);
+    expect(state().current.error, const ApiUnauthorized().userMessage);
+    expect((container.read(appGateProvider.notifier) as RecordingGate).reported, [isA<ApiUnauthorized>()]);
+  });
+
+  test('other failures are the tab\'s own to show', () async {
+    final done = controller().revalidate();
+    api.fail(0);
+    await done;
+    await Future<void>.delayed(Duration.zero);
+    expect((container.read(appGateProvider.notifier) as RecordingGate).reported, isEmpty);
   });
 }

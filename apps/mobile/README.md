@@ -79,7 +79,8 @@ node ../../tooling/contracts-literals.mjs --check   # TS literal unions vs the D
 - Version: `pubspec.yaml` `version:` belongs to release-please (component `mobile`, `release-type: dart`);
   never edit it by hand (root `CLAUDE.md`). Store build numbers come from CI (`--build-number`).
 - Android flavours `dev`, `staging`, `prod` install side by side (`com.magickagency.agent[.dev|.staging]`).
-  Release signing reads `android/key.properties` (never committed).
+  Release signing reads `android/key.properties` (never committed); a release build fails without a
+  complete one unless `-PallowDebugSigning=true` is passed.
 - Invite links: `https://<console host>/agency/join/<token>` opens the app when the console host
   serves `/.well-known/assetlinks.json` and `/.well-known/apple-app-site-association` (see
   `DEPLOYMENT.md`) and the host is set in `android/app/build.gradle.kts` (`appLinkHost`) and

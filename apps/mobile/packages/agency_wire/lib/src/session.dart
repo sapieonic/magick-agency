@@ -15,36 +15,33 @@ import 'station.dart';
 /// `POST /proxy/agency/sessions`. The server supplies `agent_user_id` from the
 /// signed-in user; the app never sends one.
 ///
-/// Contract: `AgencyCreateSessionRequest` (minus the server-injected actor).
+/// Which app is joining is not in the body: the public API reads it from the
+/// request's `X-Client` header (and strips any body field), and it picks the
+/// `intervals` served (a phone's shorter heartbeat grace).
+///
+/// Contract: `AgencyCreateSessionRequest` (minus the server-injected actor,
+/// `supervise` and `client_kind`).
 @immutable
 final class CreateSessionRequest {
-  const CreateSessionRequest({required this.campaignId, this.sessionId, this.clientKind});
+  const CreateSessionRequest({required this.campaignId, this.sessionId});
 
   final String campaignId;
 
   /// Resume hint; the server rehydrates regardless.
   final String? sessionId;
 
-  /// Server addition (`AgencyClientKind`). Sent only when set, so an older
-  /// server that does not read it never sees it.
-  final ClientKind? clientKind;
-
   Map<String, Object?> toJson() {
     final json = <String, Object?>{'campaign_id': campaignId};
     putIfSet(json, 'session_id', sessionId);
-    putIfSet(json, 'client_kind', clientKind?.wire);
     return json;
   }
 
   @override
   bool operator ==(Object other) =>
-      other is CreateSessionRequest &&
-      other.campaignId == campaignId &&
-      other.sessionId == sessionId &&
-      other.clientKind == clientKind;
+      other is CreateSessionRequest && other.campaignId == campaignId && other.sessionId == sessionId;
 
   @override
-  int get hashCode => Object.hash(campaignId, sessionId, clientKind);
+  int get hashCode => Object.hash(campaignId, sessionId);
 }
 
 /// One disposition the agent can choose. A disposition's `retry`/`terminal`/
@@ -289,6 +286,7 @@ final class SessionBootstrap {
     required this.agentUserId,
     required this.state,
     String? stateRaw,
+    this.breakReason,
     required this.campaignStatus,
     String? campaignStatusRaw,
     required this.stationWsUrl,
@@ -317,6 +315,7 @@ final class SessionBootstrap {
       agentUserId: j.str('agent_user_id'),
       state: AgentState.fromWire(state),
       stateRaw: state,
+      breakReason: j.strOrNull('break_reason'),
       campaignStatus: CampaignStatus.fromWire(status),
       campaignStatusRaw: status,
       stationWsUrl: j.str('station_ws_url'),
@@ -341,12 +340,18 @@ final class SessionBootstrap {
   /// available).
   final AgentState state;
   final String stateRaw;
+
+  /// The break's code when [state] is `break`: a `break_reasons` code or a
+  /// [ReservedBreakCode] (`device_away` after the app was killed while
+  /// paused). Null when not on break, on a break with no recorded reason, or
+  /// from a server older than the field.
+  final String? breakReason;
   final CampaignStatus campaignStatus;
   final String campaignStatusRaw;
 
   /// The station socket's URL with its token appended. A **relative** path
-  /// behind the public API (`/proxy/agency/station?...`): prefix the
-  /// environment's `wss://` origin.
+  /// behind the public API (`/proxy/agency/station/<session id>?token=…`):
+  /// prefix the environment's `wss://` origin.
   final String stationWsUrl;
 
   /// When the embedded single-use token expires (~2 minutes).
@@ -383,6 +388,7 @@ final class SessionBootstrap {
       other.campaignName == campaignName &&
       other.agentUserId == agentUserId &&
       other.stateRaw == stateRaw &&
+      other.breakReason == breakReason &&
       other.campaignStatusRaw == campaignStatusRaw &&
       other.stationWsUrl == stationWsUrl &&
       other.stationTokenExpiresAt == stationTokenExpiresAt &&
@@ -402,6 +408,7 @@ final class SessionBootstrap {
     campaignName,
     agentUserId,
     stateRaw,
+    breakReason,
     campaignStatusRaw,
     stationWsUrl,
     stationTokenExpiresAt,
@@ -455,7 +462,7 @@ final class SessionBreakRequest {
   const SessionBreakRequest(this.reason);
 
   /// The reserved break the app takes when it leaves the foreground while
-  /// `available` (server addition).
+  /// `available` (`DEVICE_AWAY_BREAK_REASON`).
   SessionBreakRequest.deviceAway() : reason = ReservedBreakCode.deviceAway.wire;
 
   /// A `code` from the bootstrap's `break_reasons`, or a reserved code.

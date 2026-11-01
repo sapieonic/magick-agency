@@ -1,16 +1,14 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:agent_audio/agent_audio.dart';
-import 'package:flutter/foundation.dart';
-
-import 'audio_engine.dart';
+import 'package:magick_agency_agent/core/audio/audio_engine.dart';
 
 /// An [AudioEngine] that records what it was asked to do, for tests of the
 /// station core and of screens that need a station. Lifecycle calls are
 /// logged by name (`prepare`, `startCall`, `arm`, `uplink`, `connected`,
 /// `endCall`, `stop`, `release`, `fgs.start` …); [fail] makes the next call
 /// of a name throw.
-@visibleForTesting
 class FakeAudioEngine implements AudioEngine {
   final List<String> calls = [];
   final Map<String, AgentAudioException> fail = {};
@@ -23,6 +21,9 @@ class FakeAudioEngine implements AudioEngine {
   Uint8List? lastPlayed;
   bool muted = false;
   OnDutyNotification? notification;
+
+  /// Every notification the service was started or updated with, in order.
+  final List<OnDutyNotification> notifications = [];
   final List<({String callId, String displayName, String handle})> startedCalls = [];
   final List<({String callId, CallEndReason reason})> endedCalls = [];
 
@@ -94,12 +95,14 @@ class FakeAudioEngine implements AudioEngine {
   @override
   Future<void> startOnDutyService(OnDutyNotification notification) {
     this.notification = notification;
+    notifications.add(notification);
     return _record('fgs.start');
   }
 
   @override
   Future<void> updateOnDutyService(OnDutyNotification notification) {
     this.notification = notification;
+    notifications.add(notification);
     return _record('fgs.update');
   }
 

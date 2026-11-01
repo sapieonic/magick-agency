@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +10,7 @@ import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../station_copy.dart';
 import 'banners.dart';
+import 'idle_views.dart' show LeaveStationButton;
 
 /// Full-screen states with no station to work at: moved to another device,
 /// session over, refused, opening. Each has a way off it, so none is a trap.
@@ -91,18 +94,30 @@ class SupersededView extends ConsumerWidget {
           child: const Text(StationCopy.useThisPhone),
         ),
         const SizedBox(height: Space.sm),
-        TextButton(onPressed: () => context.go(Routes.home), child: const Text(StationCopy.backToCampaigns)),
+        TextButton(
+          key: const Key('superseded-back'),
+          onPressed: () => _leaveOver(context, ref),
+          child: const Text(StationCopy.backToCampaigns),
+        ),
       ],
     );
   }
 }
 
+/// Off a station that is over on this phone: home, and the core forgets it
+/// (the on-duty service and audio already went when it ended).
+void _leaveOver(BuildContext context, WidgetRef ref) {
+  final actions = ref.read(stationActionsProvider);
+  context.go(Routes.home);
+  unawaited(actions.dismiss());
+}
+
 /// 4404, or the session was left elsewhere.
-class SessionEndedView extends StatelessWidget {
+class SessionEndedView extends ConsumerWidget {
   const SessionEndedView({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return _FullScreenMessage(
       key: const Key('session-ended'),
       icon: Icons.logout,
@@ -111,7 +126,7 @@ class SessionEndedView extends StatelessWidget {
       actions: [
         FilledButton(
           key: const Key('back-to-campaigns'),
-          onPressed: () => context.go(Routes.home),
+          onPressed: () => _leaveOver(context, ref),
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
           child: const Text(StationCopy.backToCampaigns),
         ),
@@ -135,7 +150,8 @@ class FatalView extends ConsumerWidget {
       body: message,
       actions: [
         FilledButton(
-          onPressed: () => context.go(Routes.home),
+          key: const Key('fatal-back'),
+          onPressed: () => _leaveOver(context, ref),
           style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
           child: const Text(StationCopy.backToCampaigns),
         ),
@@ -171,13 +187,15 @@ class NotHereView extends ConsumerWidget {
   }
 }
 
-/// Joining / first connect.
-class ConnectingView extends StatelessWidget {
+/// Joining / first connect. Leave stays offered: with no network this screen
+/// could otherwise only be left by closing the app.
+class ConnectingView extends ConsumerWidget {
   const ConnectingView({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
+    final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
     return Column(
       key: const Key('connecting'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -196,6 +214,17 @@ class ConnectingView extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ActionErrorLine(),
+              LeaveStationButton(busy: busy),
+            ],
           ),
         ),
       ],

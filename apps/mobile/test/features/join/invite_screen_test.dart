@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/auth/auth_service.dart';
+import 'package:magick_agency_agent/core/auth/fake_auth_service.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/features/join/invite_screen.dart';
 
@@ -67,12 +68,49 @@ void main() {
     expect(find.text('at /sign-in'), findsOneWidget);
   });
 
-  testWidgets('expired → its screen, no sign-in button', (tester) async {
-    h.server.json('GET', '/invites/tok', {'status': 'expired'});
-    final c = await started(tester);
-    await pumpScreen(tester, c, const InviteScreen(token: 'tok'));
-    expect(find.text('This invitation has expired'), findsOneWidget);
-    expect(find.text('Go to sign in'), findsNothing);
+  group('every dead end has a way out', () {
+    for (final status in ['expired', 'revoked', 'not_found']) {
+      testWidgets('$status, signed out → to sign-in', (tester) async {
+        h.server.json('GET', '/invites/tok', {'status': status});
+        final c = await started(tester);
+        await pumpScreen(tester, c, const InviteScreen(token: 'tok'));
+        await tapVisible(tester, find.text('Go to sign in'));
+        await tester.pumpAndSettle();
+        expect(find.text('at /sign-in'), findsOneWidget);
+      });
+    }
+
+    testWidgets('expired, signed in → back to the app', (tester) async {
+      h = Harness(auth: FakeAuthService(signedIn: meera), server: h.server, store: h.store);
+      h.server.json('GET', '/invites/tok', {'status': 'expired'});
+      final c = await started(tester);
+      expect(c.read(appGateProvider), isA<GateReady>());
+      await pumpScreen(tester, c, const InviteScreen(token: 'tok'));
+      expect(find.text('This invitation has expired'), findsOneWidget);
+      expect(find.text('Go to sign in'), findsNothing);
+      await tapVisible(tester, find.text('Back to the app'));
+      await tester.pumpAndSettle();
+      expect(find.text('at /home'), findsOneWidget);
+    });
+
+    testWidgets('an invitation for the web console → a way out', (tester) async {
+      h.server.json('GET', '/invites/tok', inviteJson(role: 'operator'));
+      final c = await started(tester);
+      await pumpScreen(tester, c, const InviteScreen(token: 'tok'));
+      expect(find.text('Open this invitation on a computer'), findsOneWidget);
+      await tapVisible(tester, find.text('Go to sign in'));
+      await tester.pumpAndSettle();
+      expect(find.text('at /sign-in'), findsOneWidget);
+    });
+
+    testWidgets('unreachable → a way out beside Try again', (tester) async {
+      h.server.offline('GET', '/invites/tok');
+      final c = await started(tester);
+      await pumpScreen(tester, c, const InviteScreen(token: 'tok'));
+      await tapVisible(tester, find.text('Go to sign in'));
+      await tester.pumpAndSettle();
+      expect(find.text('at /sign-in'), findsOneWidget);
+    });
   });
 
   testWidgets('unreachable → Try again reads it again', (tester) async {
@@ -139,5 +177,8 @@ void main() {
     await pumpScreen(tester, c, const InviteScreen(token: 'tok'));
     expect(find.text('You’re on duty. Leave the station before accepting an invitation.'), findsOneWidget);
     expect(find.text('Continue with Google'), findsNothing);
+    await tapVisible(tester, find.text('Back to your station'));
+    await tester.pumpAndSettle();
+    expect(find.text('at /home/station/c1'), findsOneWidget);
   });
 }

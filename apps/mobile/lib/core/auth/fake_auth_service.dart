@@ -32,6 +32,10 @@ class FakeAuthService implements AuthService {
   /// The ID token prefix; tests change it to tell sessions apart.
   String tokenPrefix = 'token';
 
+  /// What the next [idToken] calls throw, one each, in order (an
+  /// `ApiNetworkError` stands for Firebase failing to mint offline).
+  final List<Object> idTokenErrors = [];
+
   void addPasswordAccount(String email, String password, {String? uid, bool verified = true}) {
     _accounts[email.toLowerCase()] = (
       password: password,
@@ -73,6 +77,7 @@ class FakeAuthService implements AuthService {
   Future<String?> idToken({bool forceRefresh = false}) async {
     final u = _user;
     if (u == null) return null;
+    if (idTokenErrors.isNotEmpty) throw idTokenErrors.removeAt(0);
     final t = '$tokenPrefix-${u.uid}${forceRefresh ? '!' : ''}';
     tokensIssued.add(t);
     return t;

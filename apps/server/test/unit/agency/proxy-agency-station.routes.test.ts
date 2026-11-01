@@ -35,6 +35,7 @@ import {
   rewriteStationWsUrl,
   STATION_CLOSE_CODES,
 } from '../../../src/api/routes/proxy-agency-station.routes.js';
+import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
 import {
   startProxyApp,
   connectClient,
@@ -148,6 +149,8 @@ describe('station WebSocket proxy', () => {
     const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t&${query}`);
     const closed = await client.waitForClose();
     expect(closed.code).toBe(STATION_CLOSE_CODES.INVALID_UPGRADE_QUERY);
+    // The contract's code, which the clients switch on: "do not retry".
+    expect(closed.code).toBe(AGENCY_STATION_CLOSE.INVALID_UPGRADE);
     expect(closed.code).toBe(1008);
     expect(closed.reason).toBe(reason);
     expect(mocks.handleStationSocket).not.toHaveBeenCalled();
@@ -160,7 +163,17 @@ describe('station WebSocket proxy', () => {
     const closed = await client.waitForClose();
 
     expect(closed.code).toBe(STATION_CLOSE_CODES.RUNTIME_UNAVAILABLE);
+    expect(closed.code).toBe(AGENCY_STATION_CLOSE.INTERNAL_ERROR);
     expect(mocks.handleStationSocket).not.toHaveBeenCalled();
+  });
+
+  it('every close code this route sends is one the contract declares', () => {
+    // A client knows only `AGENCY_STATION_CLOSE`; a code outside it reads as an
+    // ordinary drop and is retried forever.
+    const declared = new Set<number>(Object.values(AGENCY_STATION_CLOSE));
+    for (const [name, code] of Object.entries(STATION_CLOSE_CODES)) {
+      expect(declared.has(code), `${name} (${code})`).toBe(true);
+    }
   });
 });
 

@@ -5,9 +5,12 @@
 /// the whole payload; the model keeps the raw string beside the enum
 /// (`stateRaw`, `reasonRaw`, ...) for logs and fallback copy.
 ///
-/// `test/literals_test.dart` checks every enum here against
-/// `packages/contracts/fixtures/agent/literals.json`, which is extracted from
-/// the TypeScript sources.
+/// `test/literals_test.dart` checks every wire enum of this package (these, plus
+/// `StationEvent`, `AgencyErrorCode`, `SessionRefusalCode` and the station close
+/// codes) against `packages/contracts/fixtures/agent/literals.json`, which is
+/// extracted from the TypeScript sources: each TypeScript literal must be a
+/// value here, and, where the enum mirrors its vocabulary one to one or the app
+/// sends the value, each value here must still be a TypeScript literal.
 library;
 
 /// A member of a wire vocabulary. [wire] is the exact string on the wire;
@@ -253,9 +256,9 @@ enum SessionKind implements WireEnum {
 /// Break codes the server reserves: entered through their own routes, never
 /// offered in a campaign's `break_reasons`.
 ///
-/// Contract: `SOFTPHONE_BREAK_REASON` (`agency/softphone.ts`), plus
-/// `device_away` (the break the app takes when it leaves the foreground while
-/// `available`; a server addition this package models ahead of the contract).
+/// Contract: `RESERVED_BREAK_REASONS` (`agency/breaks.ts`): `soft_phone`
+/// (`SOFTPHONE_BREAK_REASON`) and `device_away` (`DEVICE_AWAY_BREAK_REASON`, the
+/// break the app takes when it leaves the foreground while `available`).
 enum ReservedBreakCode implements WireEnum {
   softPhone('soft_phone'),
   deviceAway('device_away'),
@@ -271,8 +274,10 @@ enum ReservedBreakCode implements WireEnum {
   static ReservedBreakCode? tryFromWire(String? raw) => _byWire[raw];
 }
 
-/// Which client a session or socket belongs to. Server addition
-/// (`AgencyClientKind`): `'web' | 'mobile'`.
+/// Which client a session or socket belongs to.
+///
+/// Contract: `AgencyClientKind` / `AGENCY_CLIENT_KINDS` (`agency/station.ts`).
+/// The app sends `mobile` as the station upgrade's `client=`.
 enum ClientKind implements WireEnum {
   web('web'),
   mobile('mobile'),
@@ -287,7 +292,10 @@ enum ClientKind implements WireEnum {
 }
 
 /// The station socket's media encoding, chosen by the upgrade's `media=` query
-/// parameter. Server addition: `pcm16 | alaw8`.
+/// parameter.
+///
+/// Contract: `AgencyStationMediaFormat` / `AGENCY_STATION_MEDIA_FORMATS`
+/// (`agency/station.ts`). The app sends `alaw8`.
 enum MediaFormat implements WireEnum {
   /// JSON text frames `{event:'media', media:{payload}}`, base64 PCM16LE at 16 kHz.
   pcm16('pcm16', sampleRate: 16000, bytesPerFrame: 640),
@@ -310,7 +318,7 @@ enum MediaFormat implements WireEnum {
   static MediaFormat fromWire(String? raw) => _byWire[raw] ?? unknown;
 }
 
-/// Contract: `AgencyStatsBucketUnit` / `StatsBucketUnit` (`primitives.ts`).
+/// Contract: `StatsBucketUnit` / `STATS_BUCKET_UNITS` (`primitives.ts`).
 enum StatsBucketUnit implements WireEnum {
   day('day'),
   week('week'),

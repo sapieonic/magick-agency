@@ -96,7 +96,41 @@ void main() {
       final c = e.campaignConflict!;
       expect(c.campaignName, 'Q3 Winback');
       expect(c.state, AgentState.onCall);
+      // What leaving it needs: the session, and the (sibling) account it is in.
+      expect(c.sessionId, '5d6e7f80-9a1b-4c2d-8e3f-4a5b6c7d8e9f');
+      expect(c.accountId, 'acc-4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a');
+      expect(c.accountName, 'Nashik Branch');
+      expect(c.canLeave, isTrue);
       expect(e.softphoneConflict, isNull);
+    });
+
+    test('a conflict from an older server, without the session fields, still reads', () {
+      final json = Map.of(fixture('session.json', 'conflict_other_campaign'))
+        ..remove('session_id')
+        ..remove('account_id')
+        ..remove('account_name');
+      final c = ErrorBody.fromJson(json).campaignConflict!;
+      expect(c.campaignName, 'Q3 Winback');
+      expect(c.sessionId, isNull);
+      expect(c.accountId, isNull);
+      expect(c.accountName, isNull);
+      expect(c.canLeave, isFalse);
+    });
+
+    test('an account name the server could not read is null, the ids still there', () {
+      final json = {...fixture('session.json', 'conflict_other_campaign'), 'account_name': null};
+      final c = ErrorBody.fromJson(json).campaignConflict!;
+      expect(c.accountName, isNull);
+      expect(c.canLeave, isTrue);
+    });
+
+    test('state_changing: the device-away pause lost to a moving state', () {
+      final e = ErrorBody.fromJson({
+        'error': 'Conflict',
+        'code': 'state_changing',
+        'message': 'Your status changed while pausing you; nothing changed. Try again.',
+      });
+      expect(e.code, AgencyErrorCode.stateChanging);
     });
 
     test('a conflict whose fields do not read degrades to the message', () {

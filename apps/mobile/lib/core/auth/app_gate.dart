@@ -197,6 +197,11 @@ class AppGateNotifier extends Notifier<AppGate> {
   StreamSubscription<AuthUser?>? _authSub;
   ProviderSubscription<StationSignals>? _signalsSub;
   Timer? _retryTimer;
+
+  /// Re-checks a held sign-out on a clock: a call that went live unseen (a
+  /// dial the app was never told of) can end unseen too, and then no signal
+  /// ever changes.
+  Timer? _deferredRecheck;
   int _retries = 0;
 
   /// Bumped by every resolution; an async step whose run is stale stops.
@@ -229,6 +234,7 @@ class AppGateNotifier extends Notifier<AppGate> {
       _run++;
       unawaited(_authSub?.cancel());
       _retryTimer?.cancel();
+      _deferredRecheck?.cancel();
       _signalsSub?.close();
     });
     unawaited(Future.microtask(_start));
@@ -269,8 +275,10 @@ class AppGateNotifier extends Notifier<AppGate> {
   /// that cannot answer must not keep agents out of a working app.
   Future<GateUpdateRequired?> _checkVersion() async {
     try {
-      final config = (await _api.clientConfig()).mobile;
       final identity = ref.read(clientIdentityProvider);
+      // A version that could not be read is not judged: start, never block.
+      if (!identity.versionKnown) return null;
+      final config = (await _api.clientConfig()).mobile;
       if (!config.mustUpdate(identity.version)) return null;
       _log.warn('This build is below the supported minimum', {'min': config.minSupported, 'have': identity.version});
       final urls = config.storeUrls;
@@ -550,7 +558,16 @@ class AppGateNotifier extends Notifier<AppGate> {
     final s = state;
     if (s is! GateReady && s is! GateNeedsAccount) return;
     // Already on its way out (leaving the station can itself answer 401).
-    if (_deferredSignOut != null || _signingOut) return;
+    if (_signingOut) return;
+    final held = _deferredSignOut;
+    if (held != null) {
+      // A sign-out is already waiting for a call: this one is forced, so it
+      // says why, and goes the moment nothing is live.
+      _deferredSignOut = sessionExpiredNotice;
+      if (held != sessionExpiredNotice) _log.warn('The server no longer accepts this sign-in (sign-out already held)');
+      if (!_callActive) unawaited(Future.microtask(() => _signOutNow(notice: sessionExpiredNotice)));
+      return;
+    }
     _log.warn('The server no longer accepts this sign-in');
     unawaited(signOut(notice: sessionExpiredNotice));
   }
@@ -564,14 +581,32 @@ class AppGateNotifier extends Notifier<AppGate> {
   /// Whether a sign-out is waiting for the call to end.
   bool get signOutDeferred => _deferredSignOut != null;
 
+  /// How often a held sign-out looks again when nothing tells it the call
+  /// ended. Tests shorten it.
+  @visibleForTesting
+  static Duration deferredSignOutRecheck = const Duration(seconds: 15);
+
   void _deferSignOut(String? notice) {
-    _deferredSignOut = notice ?? '';
+    // A forced sign-out's notice is never replaced by a plain one.
+    _deferredSignOut = _deferredSignOut == sessionExpiredNotice ? sessionExpiredNotice : (notice ?? '');
     _log.info('Sign-out held until the call and wrap-up end');
     _signalsSub ??= ref.listen<StationSignals>(stationSignalsProvider, (_, next) {
-      final pending = _deferredSignOut;
-      if (next.callActive || pending == null) return;
-      unawaited(Future.microtask(() => _signOutNow(notice: pending.isEmpty ? null : pending)));
+      if (!next.callActive) _resumeDeferredSignOut();
     });
+    _deferredRecheck?.cancel();
+    _deferredRecheck = null;
+    // Held with no call on screen: the leave was refused for a call the app
+    // never saw, whose end no signal will report. Look again on a clock.
+    if (_callActive) return;
+    _deferredRecheck = Timer.periodic(deferredSignOutRecheck, (_) {
+      if (!_callActive) _resumeDeferredSignOut();
+    });
+  }
+
+  void _resumeDeferredSignOut() {
+    final pending = _deferredSignOut;
+    if (pending == null || _signingOut) return;
+    unawaited(Future.microtask(() => _signOutNow(notice: pending.isEmpty ? null : pending)));
   }
 
   /// How long a sign-out waits for the station to be left. Past it the
@@ -585,6 +620,8 @@ class AppGateNotifier extends Notifier<AppGate> {
       _deferredSignOut = null;
       _signalsSub?.close();
       _signalsSub = null;
+      _deferredRecheck?.cancel();
+      _deferredRecheck = null;
       // Off duty first, while the token still works: a phone showing the
       // sign-in screen must never be sent a customer.
       if (!await _leaveStation()) {
@@ -661,7 +698,7 @@ class AppGateNotifier extends Notifier<AppGate> {
   /// Throws [InviteClaimRefused] or [ApiError]; the credential stays held.
   Future<void> claimInvite(String token, {AgencyInvite? invite}) async {
     final user = _auth.currentUser;
-    final idToken = await _auth.idToken();
+    final idToken = await _auth.idToken(forceRefresh: true);
     if (user == null || idToken == null) throw const ApiUnauthorized();
     final session = await _api.claimInvite(token, idToken);
     if (!ref.mounted) return;
@@ -715,8 +752,28 @@ final readyAccountProvider = Provider<({String tenantId, String accountId})?>((r
   return gate is GateReady ? (tenantId: gate.tenantId, accountId: gate.accountId) : null;
 });
 
-/// For the API layer: call it on an [ApiUnauthorized] (see
-/// [AppGateNotifier.reportUnauthorized]).
-final unauthorizedHandlerProvider = Provider<void Function()>(
-  (ref) => () => ref.read(appGateProvider.notifier).reportUnauthorized(),
-);
+/// Whose data a per-workspace cache holds: `user:tenant:account`, or null
+/// when nobody is signed in to an account.
+///
+/// The tabs stay mounted in the shell across an account switch, and a
+/// different agent can sign in on the same phone to the same account, so the
+/// signed-in user is part of the key, not only the account. Everything cached
+/// per workspace (the campaign list, notification settings, pages of calls,
+/// stats, campaign names) is keyed on this and dropped when it changes: one
+/// agent never sees another's data, nor one account another's.
+final agentWorkspaceProvider = Provider<String?>((ref) {
+  final account = ref.watch(readyAccountProvider);
+  final userId = ref.watch(appGateProvider.select((g) => g is GateReady ? g.userId : null));
+  if (account == null || userId == null) return null;
+  return '$userId:${account.tenantId}:${account.accountId}';
+});
+
+/// For features that read the API from a provider: hands an [ApiUnauthorized]
+/// to the gate (which signs out, after a live call) on the next microtask, so
+/// a provider mid-build never changes the gate synchronously. Anything else is
+/// ignored: the feature shows it.
+void reportToGate(Ref ref, Object error) {
+  if (error is! ApiUnauthorized) return;
+  final gate = ref.read(appGateProvider.notifier);
+  unawaited(Future.microtask(() => gate.reportError(error)));
+}

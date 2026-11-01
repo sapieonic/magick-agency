@@ -52,8 +52,10 @@ AwayNotice awayNoticeFor(
 }
 
 /// App-level pings run while the app is on screen or a call or wrap-up is
-/// live. Stopping them while away lets the server's mobile grace pause the
-/// agent even if the `device_away` request never lands.
+/// live. Stopping them while away lets the `available` lease lapse; it does
+/// not close the station (the OS still answers the server's protocol pings),
+/// so a `device_away` pause that never lands is retried and then the socket
+/// is closed by the station controller.
 bool appPingsWanted({required bool foreground, required AgentState state}) => foreground || isCallPhase(state);
 
 /// A dropped socket is retried at once only when someone needs it: the app is

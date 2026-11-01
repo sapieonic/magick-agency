@@ -40,9 +40,13 @@ class AudioRouteSample {
 
 @immutable
 class NetworkSample {
-  const NetworkSample({required this.online, this.transport, this.latencyMs, this.uploadKbps});
+  const NetworkSample({required this.online, this.transport, this.latencyMs, this.uploadKbps, this.noAnswer = false});
 
   final bool online;
+
+  /// A link, but the server did not answer within the round-trip limit: too slow
+  /// for calls (not offline, and not said to be).
+  final bool noAnswer;
 
   /// "Wi-Fi", "4G", "5G"…, when the OS says.
   final String? transport;
@@ -196,6 +200,9 @@ CheckResult gradeRoute(AudioRouteSample r) => switch (r.kind) {
 
 CheckResult gradeNetwork(NetworkSample n) {
   if (!n.online) return const CheckResult(status: CheckStatus.fail, title: PreflightCopy.network, detail: PreflightCopy.offline);
+  if (n.noAnswer) {
+    return CheckResult(status: CheckStatus.fail, title: PreflightCopy.network, detail: PreflightCopy.noAnswer(n.transport));
+  }
   final up = n.uploadKbps;
   final rtt = n.latencyMs;
   final parts = [?n.transport, if (rtt != null) '$rtt ms', if (up != null) PreflightCopy.upload(up)];

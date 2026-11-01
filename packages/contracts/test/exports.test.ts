@@ -96,12 +96,14 @@ describe('package surface', () => {
     expect([...Root.STATS_BUCKET_UNITS]).toEqual(['day', 'week', 'month']);
   });
 
-  it('declares the four station close codes once (SNAPSHOT, written out by hand)', () => {
+  it('declares the six station close codes once (SNAPSHOT, written out by hand)', () => {
     expect(AGENCY_STATION_CLOSE).toEqual({
       TOKEN_REJECTED: 4401,
       SESSION_GONE: 4404,
       HEARTBEAT_TIMEOUT: 4408,
       SUPERSEDED: 4409,
+      INVALID_UPGRADE: 1008,
+      INTERNAL_ERROR: 1011,
     });
     // The console layer re-exports the same object rather than a copy that could drop a code.
     expect(AgencyApi.AGENCY_STATION_CLOSE).toBe(AGENCY_STATION_CLOSE);

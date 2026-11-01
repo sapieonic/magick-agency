@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/auth/fake_auth_service.dart';
+import 'package:magick_agency_agent/core/session/account_choice.dart';
 import 'package:magick_agency_agent/core/session/local_preferences.dart';
 import 'package:magick_agency_agent/core/session/session_store.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
@@ -89,7 +90,7 @@ void main() {
       ],
     });
     expect(put.headers['x-tenant-id'], 't1');
-    expect(c.read(notificationPreferencesProvider).value!.single.enabled, isFalse);
+    expect(c.read(notificationPreferencesProvider(c.read(agentWorkspaceProvider)!)).value!.single.enabled, isFalse);
   });
 
   testWidgets('a refused save puts the switch back and says why', (tester) async {
@@ -98,8 +99,54 @@ void main() {
     await pumpScreen(tester, c, const MeScreen());
     await tapVisible(tester, find.byType(Switch).first);
     await tester.pumpAndSettle();
-    expect(c.read(notificationPreferencesProvider).value!.single.enabled, isTrue);
+    expect(c.read(notificationPreferencesProvider(c.read(agentWorkspaceProvider)!)).value!.single.enabled, isTrue);
     expect(find.byType(SnackBar), findsOneWidget);
+  });
+
+  group('switching account', () {
+    const pune = AccountChoice(tenantId: 't1', tenantName: 'Acme Collections', accountId: 'a2', accountName: 'Pune');
+
+    Future<ProviderContainer> onChennaiWithPuneFailing(WidgetTester tester) async {
+      h.server.standard(
+        memberships: [membershipJson('t1', accountId: 'a1'), membershipJson('t1', accountId: 'a2')],
+        accounts: {'t1': [accountJson('a1', 'Chennai', 't1'), accountJson('a2', 'Pune', 't1')]},
+      );
+      h.server.on('GET', '/notifications/preferences', (req) => req.headers['x-account-id'] == 'a1'
+          ? jsonResponse({'events': [event('agency.campaign.completed')]})
+          : jsonResponse({'message': 'Settings are unavailable right now.'}, status: 500));
+      await tester.runAsync(() => SessionStore(h.store).writeLastAccount(const LastAccount(tenantId: 't1', accountId: 'a1')));
+      return started(tester);
+    }
+
+    testWidgets('the new account\'s settings failing shows that failure, never the old account\'s list', (tester) async {
+      final c = await onChennaiWithPuneFailing(tester);
+      await pumpScreen(tester, c, const MeScreen());
+      expect(find.text('Campaign finished'), findsOneWidget);
+
+      await tester.runAsync(() => c.read(appGateProvider.notifier).switchAccount(pune));
+      await tester.pump();
+      // The first frame on the new account: not Chennai's list.
+      expect(find.text('Campaign finished'), findsNothing);
+      await tester.runAsync(settle);
+      await tester.pumpAndSettle();
+      expect(find.text('Settings are unavailable right now.'), findsOneWidget);
+      expect(find.text('Campaign finished'), findsNothing);
+      expect(h.server.calls('PUT', '/notifications/preferences'), isEmpty);
+    });
+
+    testWidgets('a save from the old account\'s list after the switch sends nothing', (tester) async {
+      final c = await onChennaiWithPuneFailing(tester);
+      final chennai = c.read(agentWorkspaceProvider)!;
+      c.listen(notificationPreferencesProvider(chennai), (_, _) {});
+      await tester.runAsync(settle);
+      final old = c.read(notificationPreferencesProvider(chennai).notifier);
+
+      await tester.runAsync(() => c.read(appGateProvider.notifier).switchAccount(pune));
+      expect(c.read(agentWorkspaceProvider), isNot(chennai));
+      final error = await tester.runAsync(() => old.setEnabled('agency.campaign.completed', false));
+      expect(error, isNull);
+      expect(h.server.calls('PUT', '/notifications/preferences'), isEmpty);
+    });
   });
 
   testWidgets('a digest offers its frequency', (tester) async {

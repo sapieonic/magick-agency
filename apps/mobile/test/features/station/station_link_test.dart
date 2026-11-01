@@ -79,15 +79,17 @@ void main() {
     await tester.tap(find.text('Back to campaigns'));
     await settle(tester);
     expect(find.text('campaigns-home'), findsOneWidget);
+    expect(h.actions.calls, ['useThisDevice', 'dismiss'], reason: 'the station that moved is forgotten here');
   });
 
   testWidgets('session gone: rejoin from the campaign list', (tester) async {
-    await pumpStation(tester, station(link: StationLink.sessionGone));
+    final h = await pumpStation(tester, station(link: StationLink.sessionGone));
     expect(find.text('Session ended'), findsOneWidget);
     expect(find.text('Rejoin the campaign to take calls.'), findsOneWidget);
     await tester.tap(find.byKey(const Key('back-to-campaigns')));
     await settle(tester);
     expect(find.text('campaigns-home'), findsOneWidget);
+    expect(h.actions.calls, ['dismiss']);
   });
 
   testWidgets('weak connection pill while the link is open', (tester) async {

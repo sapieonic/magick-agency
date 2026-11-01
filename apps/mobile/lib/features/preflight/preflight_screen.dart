@@ -265,109 +265,115 @@ class _PreflightScreenState extends ConsumerState<PreflightScreen> with WidgetsB
     final block = dutyBlock(_results);
     final outcome = _outcome;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(PreflightCopy.title),
-            if (name.isNotEmpty) Text(name, style: text.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
+    // Not while joining: the join would finish unseen (on duty with nobody
+    // looking at the station), or a conflict would have nowhere to show.
+    return PopScope(
+      canPop: !_starting,
+      child: Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: !_starting,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(PreflightCopy.title),
+              if (name.isNotEmpty) Text(name, style: text.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+          ),
         ),
-      ),
-      body: SafeArea(
-        top: false,
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
-                    children: [
-                      if (outcome != null) ...[
-                        _OutcomePanel(
-                          key: const Key('start-outcome'),
-                          outcome: outcome,
-                          busy: _starting,
-                          onSwitch: _switchFrom,
-                          onCloseSoftphone: _closeSoftphone,
-                          onRetry: _goOnDuty,
-                          onBack: () => context.go(Routes.home),
-                        ),
-                        const SizedBox(height: Space.lg),
-                      ],
-                      AppCard(
-                        padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.xs),
-                        child: Column(
-                          children: [
-                            for (final c in PreflightCheck.values)
-                              if (_results[c] != null)
-                                _CheckRow(
-                                  key: Key('check-${c.name}'),
-                                  result: _results[c]!,
-                                  last: c == _lastShown,
-                                  onFix: (fix) => _fix(c, fix),
-                                ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: Space.md),
-                      Text(PreflightCopy.keepOpen, style: text.bodySmall, textAlign: TextAlign.center),
-                      if (_results.values.any((r) => r.status == CheckStatus.warn || r.status == CheckStatus.fail))
-                        Align(
-                          child: TextButton.icon(
-                            key: const Key('check-again'),
-                            onPressed: _starting ? null : _runAll,
-                            icon: const Icon(Icons.refresh),
-                            label: const Text(PreflightCopy.checkAgain),
+        body: SafeArea(
+          top: false,
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.lg, Space.lg),
+                      children: [
+                        if (outcome != null) ...[
+                          _OutcomePanel(
+                            key: const Key('start-outcome'),
+                            outcome: outcome,
+                            busy: _starting,
+                            onSwitch: _switchFrom,
+                            onCloseSoftphone: _closeSoftphone,
+                            onRetry: _goOnDuty,
+                            onBack: () => context.go(Routes.home),
                           ),
-                        ),
-                    ],
-                  ),
-                ),
-                if (outcome == null)
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      border: Border(top: BorderSide(color: t.border)),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.md),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (block != null) ...[
-                            Text(
-                              switch (block) {
-                                DutyBlock.checking => PreflightCopy.blockedChecking,
-                                DutyBlock.microphone => PreflightCopy.blockedMic,
-                                DutyBlock.network => PreflightCopy.blockedNetwork,
-                              },
-                              key: const Key('duty-blocked'),
-                              textAlign: TextAlign.center,
-                              style: text.bodySmall!.copyWith(color: block == DutyBlock.checking ? t.textSecondary : t.danger),
-                            ),
-                            const SizedBox(height: Space.sm),
-                          ],
-                          EmberButton(
-                            key: const Key('go-on-duty'),
-                            label: _finishingSoundCheck
-                                ? PreflightCopy.finishingSoundCheck
-                                : _starting
-                                    ? PreflightCopy.joining
-                                    : PreflightCopy.goOnDuty,
-                            icon: Icons.headset_mic,
-                            onPressed: block == null && !_starting ? _goOnDuty : null,
-                          ),
+                          const SizedBox(height: Space.lg),
                         ],
-                      ),
+                        AppCard(
+                          padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.xs),
+                          child: Column(
+                            children: [
+                              for (final c in PreflightCheck.values)
+                                if (_results[c] != null)
+                                  _CheckRow(
+                                    key: Key('check-${c.name}'),
+                                    result: _results[c]!,
+                                    last: c == _lastShown,
+                                    onFix: (fix) => _fix(c, fix),
+                                  ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: Space.md),
+                        Text(PreflightCopy.keepOpen, style: text.bodySmall, textAlign: TextAlign.center),
+                        if (_results.values.any((r) => r.status == CheckStatus.warn || r.status == CheckStatus.fail))
+                          Align(
+                            child: TextButton.icon(
+                              key: const Key('check-again'),
+                              onPressed: _starting ? null : _runAll,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text(PreflightCopy.checkAgain),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-              ],
+                  if (outcome == null)
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border(top: BorderSide(color: t.border)),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.md),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (block != null) ...[
+                              Text(
+                                switch (block) {
+                                  DutyBlock.checking => PreflightCopy.blockedChecking,
+                                  DutyBlock.microphone => PreflightCopy.blockedMic,
+                                  DutyBlock.network => PreflightCopy.blockedNetwork,
+                                },
+                                key: const Key('duty-blocked'),
+                                textAlign: TextAlign.center,
+                                style: text.bodySmall!.copyWith(color: block == DutyBlock.checking ? t.textSecondary : t.danger),
+                              ),
+                              const SizedBox(height: Space.sm),
+                            ],
+                            EmberButton(
+                              key: const Key('go-on-duty'),
+                              label: _finishingSoundCheck
+                                  ? PreflightCopy.finishingSoundCheck
+                                  : _starting
+                                  ? PreflightCopy.joining
+                                  : PreflightCopy.goOnDuty,
+                              icon: Icons.headset_mic,
+                              onPressed: block == null && !_starting ? _goOnDuty : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),

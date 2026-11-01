@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
-import 'package:magick_agency_agent/features/performance/agent_workspace.dart';
 
 class _Gate extends AppGateNotifier {
   _Gate(this.initial);

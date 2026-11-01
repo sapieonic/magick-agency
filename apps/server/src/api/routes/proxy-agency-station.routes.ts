@@ -41,10 +41,11 @@ const log = createChildLogger({ component: 'agency-station-proxy' });
  * single-use and lives ~2 minutes, so re-mint-and-retry is the common path,
  * not an edge case.
  *
- * `INVALID_SESSION_ID` is the plain RFC 6455 policy-violation code rather than
- * one of the station's 44xx codes: nothing about it maps onto a station state,
- * because the upgrade is refused before the station handler runs, and
- * re-minting a token would not help.
+ * `INVALID_SESSION_ID` and `INVALID_UPGRADE_QUERY` are the plain RFC 6455
+ * policy-violation code (the contract's `INVALID_UPGRADE`, 1008) rather than one of
+ * the station's 44xx codes: nothing about them maps onto a station state, because
+ * the upgrade is refused before the station handler runs, and re-minting a token
+ * would not help. `RUNTIME_UNAVAILABLE` is the contract's `INTERNAL_ERROR` (1011).
  *
  * `handleStationSocket` also uses 4404 (re-bootstrap, do not retry) and 4409
  * (superseded). This route never originates those; the handler sends them on
@@ -54,15 +55,15 @@ export const STATION_CLOSE_CODES = {
   /** No token on the upgrade — never reached the station handler. Re-mint and retry. */
   MISSING_TOKEN: AGENCY_STATION_CLOSE.TOKEN_REJECTED,
   /** The session id would escape `/api/v1/agency/station`. Do not retry. */
-  INVALID_SESSION_ID: 1008,
+  INVALID_SESSION_ID: AGENCY_STATION_CLOSE.INVALID_UPGRADE,
   /**
    * `client=` or `media=` names something this server does not speak. Do not retry: the
    * same upgrade would be refused again. The close reason says which
    * (`invalid_client` / `invalid_media`).
    */
-  INVALID_UPGRADE_QUERY: 1008,
-  /** The close for an app built without a runtime. */
-  RUNTIME_UNAVAILABLE: 1011,
+  INVALID_UPGRADE_QUERY: AGENCY_STATION_CLOSE.INVALID_UPGRADE,
+  /** The close for an app built without a runtime. Retryable, but a client bounds it. */
+  RUNTIME_UNAVAILABLE: AGENCY_STATION_CLOSE.INTERNAL_ERROR,
 } as const;
 
 /**

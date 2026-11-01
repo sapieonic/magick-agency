@@ -1723,3 +1723,158 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/super-admin/src/__tests__/branding/brandAssets.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/branding/noParentBrand.test.ts` | 5 |
 | `apps/super-admin/src/__tests__/saStatus.test.ts` | 21 |
+
+## `apps/mobile`
+
+The agent app (Flutter, Android and iOS); how it works is in [`mobile.md`](mobile.md). Dart
+tests run with `flutter test` from `apps/mobile` (each package's from its own folder). Counts are
+static counts of `test(` / `testWidgets(` calls on 2026-11-01, marked `~`: a loop of cases counts
+as one, so they undercount.
+
+### `apps/mobile/lib/` (`main.dart`, `app/`, `ui/`)
+
+Start-up (`main.dart`: client identity and Firebase, each failure logged and survived), the
+root widget, the router (the gate's redirect, then the station's), the tab shell, the splash,
+theme tokens mirrored from `packages/web-ui`, and shared widgets.
+
+Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `app/routes.dart`, `app/shell.dart`, `app/splash_screen.dart`, `app/theme/app_theme.dart`, `app/theme/tokens.dart`, `ui/primitives.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/app/shell_test.dart` | ~19 |
+| `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
+| `apps/mobile/test/core/foundation_test.dart` | ~20 |
+
+### `apps/mobile/lib/core/` (`api/`, `auth/`, `session/`, `telemetry/`, `env.dart`)
+
+The API client and its typed errors, the app gate (version check → Firebase user → session →
+accounts → ready), Firebase and Google auth behind `AuthService`, account choice and phone-only
+preferences, build-time config, and the masked in-memory log.
+
+Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_identity.dart`, `auth/app_gate.dart`, `auth/auth_copy.dart`, `auth/auth_providers.dart`, `auth/auth_service.dart`, `auth/fake_auth_service.dart`, `auth/firebase_auth_service.dart`, `auth/firebase_token_source.dart`, `session/account_choice.dart`, `session/local_preferences.dart`, `session/session_api.dart`, `session/session_store.dart`, `telemetry/log.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/core/api/api_client_test.dart` | ~14 |
+| `apps/mobile/test/core/auth/app_gate_test.dart` | ~43 |
+| `apps/mobile/test/core/auth/auth_copy_test.dart` | ~5 |
+| `apps/mobile/test/core/auth/firebase_auth_service_test.dart` | ~4 |
+| `apps/mobile/test/core/auth/firebase_token_source_test.dart` | ~4 |
+| `apps/mobile/test/core/session/account_choice_test.dart` | ~8 |
+| `apps/mobile/test/core/session/local_preferences_test.dart` | ~1 |
+| `apps/mobile/test/core/session/session_api_test.dart` | ~6 |
+
+### `apps/mobile/lib/core/` (`station/`, `audio/`, `lifecycle/`)
+
+The station core behind the screens' seam (`station_view.dart`): the reducer mirrored from the
+console, server clock, liveness, the socket and its transport, the controller and view mapper,
+notes autosave; audio orchestration by phase; the foreground rules (`device_away`), wake lock and
+local notifications.
+
+Files: `station/contact_context.dart`, `station/disposition_rules.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/core/audio/audio_orchestration_test.dart` | ~23 |
+| `apps/mobile/test/core/lifecycle/lifecycle_test.dart` | ~13 |
+| `apps/mobile/test/core/station/clock_and_liveness_test.dart` | ~18 |
+| `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
+| `apps/mobile/test/core/station/station_controller_test.dart` | ~49 |
+| `apps/mobile/test/core/station/station_reducer_test.dart` | ~23 |
+| `apps/mobile/test/core/station/station_socket_test.dart` | ~27 |
+
+### `apps/mobile/lib/features/` (`auth/`, `join/`, `accounts/`, `campaigns/`, `settings/`)
+
+Sign-in, email verification, no-membership and update-required screens; the invite page and its
+controller; the account picker and switcher; the campaign list (per workspace); the Me tab and
+email preferences (per workspace).
+
+Files: `auth/auth_widgets.dart`, `auth/no_membership_screen.dart`, `auth/sign_in_screen.dart`, `auth/update_required_screen.dart`, `auth/verify_email_screen.dart`, `join/invite_controller.dart`, `join/invite_copy.dart`, `join/invite_screen.dart`, `accounts/account_picker_screen.dart`, `accounts/account_switcher.dart`, `campaigns/assignment_entry.dart`, `campaigns/campaigns_providers.dart`, `campaigns/campaigns_screen.dart`, `settings/me_screen.dart`, `settings/notification_preferences.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/features/auth/auth_screens_test.dart` | ~13 |
+| `apps/mobile/test/features/join/invite_controller_test.dart` | ~22 |
+| `apps/mobile/test/features/join/invite_redirect_test.dart` | ~2 |
+| `apps/mobile/test/features/join/invite_screen_test.dart` | ~13 |
+| `apps/mobile/test/features/accounts/account_picker_test.dart` | ~7 |
+| `apps/mobile/test/features/campaigns/campaigns_screen_test.dart` | ~13 |
+| `apps/mobile/test/features/settings/me_screen_test.dart` | ~17 |
+
+### `apps/mobile/lib/features/` (`performance/`, `calls/`)
+
+My performance (windows, readouts, the bucket chart, stale-while-revalidate) and My calls (keyset
+pages, filters, the debounced number search, the attempt sheet); both keyed by
+`agentWorkspaceProvider`.
+
+Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `performance/logic/bucket_series.dart`, `performance/logic/en_in_format.dart`, `performance/logic/performance_view.dart`, `performance/logic/readouts.dart`, `performance/logic/stats_windows.dart`, `performance/performance_api.dart`, `performance/performance_controller.dart`, `performance/performance_screen.dart`, `performance/widgets/bucket_chart.dart`, `calls/calls_controller.dart`, `calls/calls_screen.dart`, `calls/logic/attempt_copy.dart`, `calls/logic/attempt_filters.dart`, `calls/logic/debouncer.dart`, `calls/widgets/attempt_detail_sheet.dart`, `calls/widgets/attempt_tile.dart`, `calls/widgets/filter_bar.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/features/performance/agent_workspace_test.dart` | ~1 |
+| `apps/mobile/test/features/performance/bucket_chart_test.dart` | ~5 |
+| `apps/mobile/test/features/performance/bucket_series_test.dart` | ~13 |
+| `apps/mobile/test/features/performance/performance_controller_test.dart` | ~13 |
+| `apps/mobile/test/features/performance/performance_screen_test.dart` | ~9 |
+| `apps/mobile/test/features/performance/readouts_test.dart` | ~21 |
+| `apps/mobile/test/features/performance/stats_windows_test.dart` | ~16 |
+| `apps/mobile/test/features/calls/attempt_copy_test.dart` | ~5 |
+| `apps/mobile/test/features/calls/attempt_filters_test.dart` | ~11 |
+| `apps/mobile/test/features/calls/calls_controller_test.dart` | ~15 |
+| `apps/mobile/test/features/calls/calls_screen_test.dart` | ~11 |
+| `apps/mobile/test/features/calls/debouncer_test.dart` | ~2 |
+
+### `apps/mobile/lib/features/` (`preflight/`, `station/`)
+
+Pre-flight (pure grading apart from the device measurements) and the station screens: one
+screen per phase, the call band, contact details, notes, wrap-up and dispositions, sheets and
+link-state screens.
+
+Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dart`, `preflight/preflight_copy.dart`, `preflight/preflight_screen.dart`, and `station/` (`station_screen.dart`, `station_providers.dart`, `station_copy.dart`, `logic/*`, `parts/*`, `widgets/*`)
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/test/features/preflight/device_preflight_checks_test.dart` | ~15 |
+| `apps/mobile/test/features/preflight/preflight_screen_test.dart` | ~20 |
+| `apps/mobile/test/features/station/station_a11y_test.dart` | ~14 |
+| `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
+| `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
+| `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
+| `apps/mobile/test/features/station/station_modals_test.dart` | ~20 |
+| `apps/mobile/test/features/station/station_phases_test.dart` | ~37 |
+
+### `apps/mobile/packages/agency_wire/`
+
+Hand-written Dart types for the API and the station frames, checked against
+`packages/contracts` fixtures and literal unions.
+
+Files: `lib/src/actions.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `lib/src/errors.dart`, `lib/src/json.dart`, `lib/src/platform.dart`, `lib/src/reads.dart`, `lib/src/session.dart`, `lib/src/station.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/packages/agency_wire/test/actions_test.dart` | ~18 |
+| `apps/mobile/packages/agency_wire/test/decode_budget_test.dart` | ~2 |
+| `apps/mobile/packages/agency_wire/test/fixtures_test.dart` | ~4 |
+| `apps/mobile/packages/agency_wire/test/literals_test.dart` | ~8 |
+| `apps/mobile/packages/agency_wire/test/platform_test.dart` | ~13 |
+| `apps/mobile/packages/agency_wire/test/reads_test.dart` | ~11 |
+| `apps/mobile/packages/agency_wire/test/session_test.dart` | ~14 |
+| `apps/mobile/packages/agency_wire/test/station_test.dart` | ~29 |
+
+### `apps/mobile/packages/agent_audio/`
+
+The native voice engine as a Flutter plugin: the Dart API and reference models (A-law codec,
+half-band filter, jitter buffer, loopback), with the Kotlin (`android/`) and Swift (`ios/`)
+engines, the Android on-duty service and iOS CallKit.
+
+Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
+
+| Test file | Cases |
+|---|---|
+| `apps/mobile/packages/agent_audio/test/agent_audio_test.dart` | ~23 |
+| `apps/mobile/packages/agent_audio/test/alaw_test.dart` | ~6 |
+| `apps/mobile/packages/agent_audio/test/events_test.dart` | ~9 |
+| `apps/mobile/packages/agent_audio/test/half_band_test.dart` | ~10 |
+| `apps/mobile/packages/agent_audio/test/jitter_buffer_test.dart` | ~16 |
+| `apps/mobile/packages/agent_audio/test/loopback_test.dart` | ~6 |
+| `apps/mobile/packages/agent_audio/test/types_test.dart` | ~6 |

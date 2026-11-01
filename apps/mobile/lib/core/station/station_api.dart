@@ -42,7 +42,7 @@ final class StationApi {
     final body = await _post(
       _via(accountId),
       path,
-      body: CreateSessionRequest(campaignId: campaignId, clientKind: ClientKind.mobile).toJson(),
+      body: CreateSessionRequest(campaignId: campaignId).toJson(),
     );
     return _decode(path, body, SessionBootstrap.fromJson);
   }

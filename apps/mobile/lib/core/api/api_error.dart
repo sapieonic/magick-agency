@@ -96,5 +96,12 @@ final class ApiDecodeError extends ApiError {
   String get userMessage => 'The app couldn\'t read the server\'s answer. Update the app if an update is available.';
 
   @override
-  String toString() => 'ApiDecodeError($path, $cause)';
+  String toString() => 'ApiDecodeError(${loggableApiPath(path)}, $cause)';
 }
+
+/// [path] as a log line may carry it. An invitation's token is a credential
+/// (whoever holds it can claim the seat) and the diagnostics log is exported
+/// to support, so `/invites/<token>…` keeps its shape and loses the token.
+String loggableApiPath(String path) => path.replaceFirstMapped(_inviteToken, (m) => '${m[1]}<token>');
+
+final _inviteToken = RegExp(r'^(/invites/)[^/?#]+');

@@ -151,7 +151,7 @@ class ControlRow extends ConsumerWidget {
         label: route?.name ?? StationCopy.audio,
         semanticLabel: '${StationCopy.audio}: ${route?.name ?? ''}',
         active: route?.kind == AudioRouteKind.bluetooth || route?.kind == AudioRouteKind.wired || route?.kind == AudioRouteKind.speaker,
-        onPressed: () => showAudioRouteSheet(context, ref),
+        onPressed: () => showAudioRouteSheet(context),
       ),
       ControlTile(
         key: const Key('control-details'),
@@ -167,7 +167,7 @@ class ControlRow extends ConsumerWidget {
         icon: Icons.block,
         label: marking ? StationCopy.markingDnc : StationCopy.markDnc,
         color: t.danger,
-        onPressed: busy == StationBusy.none ? () => markDnc(context, ref) : null,
+        onPressed: busy == StationBusy.none ? () => markDnc(context) : null,
       ),
     ];
 
@@ -256,8 +256,14 @@ class ControlTile extends StatelessWidget {
 /// "☕ Break after this call", or the queued break with its ✕. The ✕ sends a
 /// real cancel: the pill is a warning that the agent is about to leave the
 /// pool, not a receipt to dismiss.
+///
+/// With [offer] false (wrap-up) only a queued break shows: one picked on the
+/// call, or in its sheet after the call ended, stays visible and cancellable
+/// until it starts.
 class QueuedBreakChip extends ConsumerWidget {
-  const QueuedBreakChip({super.key});
+  const QueuedBreakChip({super.key, this.offer = true});
+
+  final bool offer;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -266,13 +272,14 @@ class QueuedBreakChip extends ConsumerWidget {
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
     if (queued == null) {
+      if (!offer) return const SizedBox.shrink();
       return Align(
         alignment: AlignmentDirectional.centerStart,
         child: ActionChip(
           key: const Key('break-after-call'),
           avatar: Icon(Icons.free_breakfast_outlined, size: 18, color: t.textSecondary),
           label: BusyLabel(label: StationCopy.breakAfterCall, busy: busy == StationBusy.takingBreak),
-          onPressed: busy == StationBusy.none ? () => showBreakSheet(context, ref, queued: true) : null,
+          onPressed: busy == StationBusy.none ? () => showBreakSheet(context, queued: true) : null,
         ),
       );
     }

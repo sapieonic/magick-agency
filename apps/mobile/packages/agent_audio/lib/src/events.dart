@@ -68,6 +68,9 @@ sealed class AudioEvent {
         return AudioSessionActivation(active: boolOr(m['active']));
       case 'callReset':
         return const CallSystemReset();
+      case 'service':
+        // Only the stop is reported; a start is the result of `startOnDutyService`.
+        return m['running'] == false ? const OnDutyServiceStopped() : null;
     }
     return null;
   }
@@ -344,4 +347,20 @@ final class CallSystemReset extends AudioEvent {
 
   @override
   int get hashCode => (CallSystemReset).hashCode;
+}
+
+/// Android: the on-duty foreground service stopped without the app asking (the system or the
+/// agent stopped it). Until it runs again, Android may cut the microphone when the app leaves
+/// the screen; start it again with [AgentAudio.startOnDutyService] while the app is on screen.
+final class OnDutyServiceStopped extends AudioEvent {
+  const OnDutyServiceStopped();
+
+  @override
+  bool operator ==(Object other) => other is OnDutyServiceStopped;
+
+  @override
+  int get hashCode => (OnDutyServiceStopped).hashCode;
+
+  @override
+  String toString() => 'OnDutyServiceStopped()';
 }

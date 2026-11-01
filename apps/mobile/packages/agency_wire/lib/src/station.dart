@@ -165,6 +165,7 @@ final class ReadyFrame extends StationFrame {
     required this.sessionId,
     required this.state,
     String? stateRaw,
+    this.breakReason,
     this.activeAttempt,
     this.activeWrapup,
     this.missedRelease,
@@ -184,6 +185,7 @@ final class ReadyFrame extends StationFrame {
       sessionId: j.str('session_id'),
       state: AgentState.fromWire(state),
       stateRaw: state,
+      breakReason: j.strOrNull('break_reason'),
       activeAttempt: active == null ? null : ActiveAttempt.fromJson(active),
       activeWrapup: wrapup == null ? null : WrapupState.fromJson(wrapup),
       missedRelease: missed == null ? null : MissedRelease.fromJson(missed),
@@ -196,6 +198,11 @@ final class ReadyFrame extends StationFrame {
   final String sessionId;
   final AgentState state;
   final String stateRaw;
+
+  /// The break's code when [state] is `break` (e.g. `device_away`: the app was
+  /// paused for leaving the foreground). Null when not on break, on a break
+  /// with no recorded reason, or from a server older than the field.
+  final String? breakReason;
   final ActiveAttempt? activeAttempt;
   final WrapupState? activeWrapup;
   final MissedRelease? missedRelease;
@@ -215,6 +222,7 @@ final class ReadyFrame extends StationFrame {
       other is ReadyFrame &&
       other.sessionId == sessionId &&
       other.stateRaw == stateRaw &&
+      other.breakReason == breakReason &&
       other.activeAttempt == activeAttempt &&
       other.activeWrapup == activeWrapup &&
       other.missedRelease == missedRelease &&
@@ -222,12 +230,20 @@ final class ReadyFrame extends StationFrame {
       other.pendingBreakReason == pendingBreakReason;
 
   @override
-  int get hashCode =>
-      Object.hash(sessionId, stateRaw, activeAttempt, activeWrapup, missedRelease, pendingStateRaw, pendingBreakReason);
+  int get hashCode => Object.hash(
+    sessionId,
+    stateRaw,
+    breakReason,
+    activeAttempt,
+    activeWrapup,
+    missedRelease,
+    pendingStateRaw,
+    pendingBreakReason,
+  );
 
   @override
   String toString() =>
-      'ReadyFrame($stateRaw, active: ${activeAttempt?.attemptId}, '
+      'ReadyFrame($stateRaw${breakReason == null ? '' : '/$breakReason'}, active: ${activeAttempt?.attemptId}, '
       'wrapup: ${activeWrapup != null}, missed: ${missedRelease?.attemptId}, pending: $pendingStateRaw)';
 }
 
@@ -1094,6 +1110,10 @@ final class StationIntervals {
 ///
 /// Contract: `AGENCY_STATION_CLOSE`. A code not listed here (or none) is an
 /// ordinary drop: retry with a fresh token.
+///
+/// Three outcomes: [isTerminal] (stop: no retry on this socket's session or
+/// upgrade), [boundsRetries] (retry, but give up after a few in a row), and
+/// otherwise retry like any drop.
 enum StationCloseCode {
   /// Token missing, expired, used or wrong. Re-mint and retry.
   tokenRejected(4401),
@@ -1105,7 +1125,17 @@ enum StationCloseCode {
   heartbeatTimeout(4408),
 
   /// Another socket took over this session. Terminal: do not retry.
-  superseded(4409);
+  superseded(4409),
+
+  /// 1008: the upgrade itself was refused (an unknown `client=` or `media=`,
+  /// or a bad session id; the close reason says which). Terminal: the same
+  /// upgrade is refused again and a fresh token does not change it. This
+  /// build sends something this server does not speak.
+  invalidUpgrade(1008),
+
+  /// 1011: the server could not run the station handler. Retryable, but
+  /// [boundsRetries]: a server that is up and broken, not a network drop.
+  internalError(1011);
 
   const StationCloseCode(this.code);
   final int code;
@@ -1115,11 +1145,17 @@ enum StationCloseCode {
     4404 => sessionGone,
     4408 => heartbeatTimeout,
     4409 => superseded,
+    1008 => invalidUpgrade,
+    1011 => internalError,
     _ => null,
   };
 
-  /// Whether the session is over for this socket (no retry on it).
-  bool get isTerminal => this == sessionGone || this == superseded;
+  /// Whether to stop: no retry on this socket's session or upgrade.
+  bool get isTerminal => this == sessionGone || this == superseded || this == invalidUpgrade;
+
+  /// Whether a retry is in order but must be capped: give up after a few of
+  /// these in a row rather than retrying forever.
+  bool get boundsRetries => this == internalError;
 }
 
 // ─── Client frames ──────────────────────────────────────────────────────────

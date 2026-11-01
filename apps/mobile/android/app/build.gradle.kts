@@ -6,11 +6,17 @@ plugins {
 }
 
 // Release signing comes from android/key.properties (never committed), written by CI from
-// secrets; without it a release build falls back to the debug key so local builds still run.
+// secrets. A release build without a complete one fails (see the check at the end), so a
+// debug-signed APK is never mistaken for a release; -PallowDebugSigning=true (or
+// ORG_GRADLE_PROJECT_allowDebugSigning=true in front of `flutter build`) signs it with the
+// debug key on purpose. Debug builds never need key.properties.
+val keyPropertiesFile = rootProject.file("key.properties")
 val keyProperties = Properties().apply {
-    val file = rootProject.file("key.properties")
-    if (file.exists()) file.inputStream().use { load(it) }
+    if (keyPropertiesFile.exists()) keyPropertiesFile.inputStream().use { load(it) }
 }
+val signingKeys = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+val missingSigningKeys = signingKeys.filter { keyProperties.getProperty(it).isNullOrBlank() }
+val allowDebugSigning = providers.gradleProperty("allowDebugSigning").orNull == "true"
 
 android {
     namespace = "com.magickagency.agent"
@@ -66,7 +72,7 @@ android {
     }
 
     signingConfigs {
-        if (keyProperties.isNotEmpty()) {
+        if (missingSigningKeys.isEmpty()) {
             create("release") {
                 storeFile = file(keyProperties.getProperty("storeFile"))
                 storePassword = keyProperties.getProperty("storePassword")
@@ -97,4 +103,25 @@ dependencies {
 
 flutter {
     source = "../.."
+}
+
+// Fails release builds (every flavour) before anything is compiled when release signing is
+// not set up, instead of silently signing them with the debug key.
+if (missingSigningKeys.isNotEmpty() && !allowDebugSigning) {
+    val problem = if (keyPropertiesFile.exists()) {
+        "${keyPropertiesFile.path} is missing ${missingSigningKeys.joinToString()}"
+    } else {
+        "${keyPropertiesFile.path} does not exist"
+    }
+    // Only this string is captured by the task action (configuration-cache safe).
+    val message = "Release signing is not set up: $problem. It needs ${signingKeys.joinToString()} " +
+        "(storeFile relative to android/app). To sign a release build with the debug key on " +
+        "purpose, pass -PallowDebugSigning=true (with flutter: " +
+        "ORG_GRADLE_PROJECT_allowDebugSigning=true flutter build apk --release ...)."
+    val checkReleaseSigning = tasks.register("checkReleaseSigning") {
+        doLast { throw GradleException(message) }
+    }
+    tasks.matching { it.name.startsWith("pre") && it.name.endsWith("ReleaseBuild") }.configureEach {
+        dependsOn(checkReleaseSigning)
+    }
 }

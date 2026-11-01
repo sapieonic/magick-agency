@@ -11,6 +11,7 @@ import 'banners.dart';
 import 'callback_picker.dart';
 import 'layouts.dart';
 import 'notes_field.dart';
+import 'on_call_view.dart' show QueuedBreakChip;
 import 'sheets.dart';
 
 /// Wrap-up: pick the outcome, a callback time when it needs one, notes, save.
@@ -43,6 +44,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
       }),
     );
     final saving = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.savingDisposition));
+    final attemptId = ref.watch(stationViewProvider.select((v) => v?.call?.attemptId));
     final text = Theme.of(context).textTheme;
     final selected = findDisposition(options, _form.code);
     final locked = saved != null || saving;
@@ -64,6 +66,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
           LinkGate(
             child: CallbackPicker(
               form: _form,
+              // The pickers close with this wrap-up.
+              attemptId: attemptId,
               enabled: !locked,
               onPick: (at, choice) => setState(() => _form = _form.withCallback(at, choice)),
             ),
@@ -71,6 +75,8 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
         ],
         const SizedBox(height: Space.lg),
         StationNotesField(controller: widget.notes, required: selected?.requiresNote ?? false),
+        const SizedBox(height: Space.md),
+        const LinkGate(child: QueuedBreakChip(offer: false)),
       ],
       bottom: LinkGate(
         child: _SaveArea(form: _form, notes: widget.notes, onSave: _save),
@@ -92,6 +98,9 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
     final option = findDisposition(view.dispositions, submit.code)!;
     if (option.suppresses) {
       final call = view.call;
+      // About this call's wrap-up: it closes when the wrap-up ends or another
+      // call arrives, and a "yes" that lands after that saves nothing.
+      final scope = sameCall(call?.attemptId, const {AgentPhase.wrapup});
       final ok = await confirmDialog(
         context,
         title: StationCopy.suppressConfirmTitle,
@@ -102,8 +111,9 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
         ),
         confirm: StationCopy.suppressConfirmAction,
         danger: true,
+        scope: scope,
       );
-      if (!ok || !mounted) return;
+      if (!ok || !mounted || !scope(ref.read(stationViewProvider))) return;
     }
     await ref.read(stationActionsProvider).submitDisposition(submit.code, notes: submit.notes, callbackAt: submit.callbackAt);
   }

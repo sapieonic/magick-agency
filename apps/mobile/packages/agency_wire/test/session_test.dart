@@ -13,7 +13,8 @@ void main() {
       final b = SessionBootstrap.fromJson(json);
       expect(b.state, AgentState.offline);
       expect(b.campaignStatus, CampaignStatus.running);
-      expect(b.stationWsUrl, startsWith('/proxy/agency/station?token='));
+      // The real shape: the session id in the path, the token in the query.
+      expect(b.stationWsUrl, startsWith('/proxy/agency/station/${b.sessionId}?token='));
       expect(b.stationTokenExpiresAt, DateTime.utc(2026, 11, 1, 6, 2));
       expect(b.dispositionCatalog.map((d) => d.code), [
         'interested',
@@ -31,19 +32,29 @@ void main() {
       expect(b.dispositionFor('do_not_call')!.noteRequired, isTrue);
       expect(b.dispositionFor('gone'), isNull);
       expect(b.breakReasons.map((r) => (r.code, r.isPaid)), [('tea', true), ('lunch', false), ('training', null)]);
+      // A mobile join's intervals: the 10 s phone grace and the 8 s deferred hangup.
       expect(b.intervals.heartbeat, const Duration(seconds: 10));
-      expect(b.intervals.heartbeatGrace, const Duration(seconds: 30));
+      expect(b.intervals.heartbeatGrace, const Duration(seconds: 10));
       expect(b.intervals.countdown, const Duration(seconds: 3));
-      expect(b.intervals.deferredHangup, const Duration(seconds: 15));
+      expect(b.intervals.deferredHangup, const Duration(seconds: 8));
       expect(b.intervals.toJson(), json['intervals']);
       expect(b.recordCalls, isTrue);
       expect(b.retryContext, isNull);
+      expect(b.breakReason, isNull, reason: 'offline: no break to name');
       expect(() => b.dispositionCatalog.add(b.dispositionCatalog.first), throwsUnsupportedError);
     });
 
     test('a retry campaign carries its banner, and a rehydrated session lands on break', () {
       final b = SessionBootstrap.fromJson(fixture('session.json', 'bootstrap_retry_rehydrated'));
       expect(b.state, AgentState.onBreak);
+      // Killed by the OS while paused for leaving the app: the reason survives the cold start.
+      expect(b.breakReason, 'device_away');
+      expect(ReservedBreakCode.tryFromWire(b.breakReason), ReservedBreakCode.deviceAway);
+      expect(
+        SessionBootstrap.fromJson(without(fixture('session.json', 'bootstrap_retry_rehydrated'), 'break_reason'))
+            .breakReason,
+        isNull,
+      );
       expect(b.retryContext!.generation, 1);
       expect(b.retryContext!.parentCampaignName, 'Q3 Winback');
       expect(b.wrapupSeconds, 0);
@@ -58,11 +69,11 @@ void main() {
       expect(c.intervals.deferredHangup, isNull);
     });
 
-    test('mobile heartbeat grace (10 s) is read, not assumed', () {
-      final intervals = {...json['intervals']! as Map<String, Object?>, 'heartbeat_grace_ms': 10000};
+    test('the heartbeat grace is read, not assumed', () {
+      final intervals = {...json['intervals']! as Map<String, Object?>, 'heartbeat_grace_ms': 30000};
       expect(
         SessionBootstrap.fromJson({...json, 'intervals': intervals}).intervals.heartbeatGrace,
-        const Duration(seconds: 10),
+        const Duration(seconds: 30),
       );
     });
 
@@ -121,7 +132,7 @@ void main() {
   test('StationTokenResponse', () {
     final t = StationTokenResponse.fromJson(fixture('session.json', 'station_token'));
     expect(t.expiresAt, DateTime.utc(2026, 11, 1, 6, 14));
-    expect(t.stationWsUrl, startsWith('/proxy/agency/station?token='));
+    expect(t.stationWsUrl, startsWith('/proxy/agency/station/${t.sessionId}?token='));
   });
 
   group('SessionStateResponse', () {
@@ -150,12 +161,11 @@ void main() {
   });
 
   group('requests', () {
-    test('join sends only what is set', () {
+    test('join sends only what is set, and never the client kind (that is the X-Client header)', () {
       expect(const CreateSessionRequest(campaignId: 'c').toJson(), {'campaign_id': 'c'});
-      expect(const CreateSessionRequest(campaignId: 'c', sessionId: 's', clientKind: ClientKind.mobile).toJson(), {
+      expect(const CreateSessionRequest(campaignId: 'c', sessionId: 's').toJson(), {
         'campaign_id': 'c',
         'session_id': 's',
-        'client_kind': 'mobile',
       });
     });
 

@@ -132,8 +132,13 @@ class _NotificationSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final prefs = ref.watch(notificationPreferencesProvider);
-    final controller = ref.read(notificationPreferencesProvider.notifier);
+    final workspace = ref.watch(agentWorkspaceProvider);
+    if (workspace == null) return const SizedBox.shrink();
+    // Per workspace: another account or agent starts from nothing, never from
+    // the previous one's settings.
+    final provider = notificationPreferencesProvider(workspace);
+    final prefs = ref.watch(provider);
+    final controller = ref.read(provider.notifier);
     final text = Theme.of(context).textTheme;
     final intro = Padding(
       padding: const EdgeInsets.only(bottom: Space.sm),
@@ -184,7 +189,8 @@ class _NotificationSection extends ConsumerWidget {
               ],
           ],
         ),
-      AsyncValue(:final error?) => AppCard(
+      // "Try again" after a failure: the spinner, not the old error.
+      AsyncValue(:final error?) when !prefs.isLoading => AppCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -194,7 +200,7 @@ class _NotificationSection extends ConsumerWidget {
               ),
               const SizedBox(height: Space.sm),
               OutlinedButton(
-                onPressed: () => ref.invalidate(notificationPreferencesProvider),
+                onPressed: () => ref.invalidate(provider),
                 child: const Text('Try again'),
               ),
             ],

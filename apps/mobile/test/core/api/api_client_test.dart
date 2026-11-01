@@ -9,6 +9,7 @@ import 'package:magick_agency_agent/core/api/api_client.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/api/client_identity.dart';
 import 'package:magick_agency_agent/core/env.dart';
+import 'package:magick_agency_agent/core/telemetry/log.dart';
 
 class _Tokens implements IdTokenSource {
   int calls = 0;
@@ -206,5 +207,22 @@ void main() {
   test('malformed JSON is a decode error, not a crash', () async {
     final api = client((req) async => http.Response('{nope', 200, headers: {'content-type': 'application/json'}));
     await expectLater(api.get('/x'), throwsA(isA<ApiDecodeError>()));
+  });
+
+  test('an invitation token never reaches the exportable log', () async {
+    Log.clear();
+    final api = client((req) async => switch (req.url.path) {
+          '/invites/secret-tok' => _json(200, {'status': 'pending'}),
+          '/invites/secret-tok/claim' => _json(503, {'message': 'down'}),
+          _ => http.Response('{nope', 200, headers: {'content-type': 'application/json'}),
+        });
+    await api.getPublic('/invites/secret-tok');
+    await expectLater(api.post('/invites/secret-tok/claim', authenticated: false), throwsA(isA<ApiHttpError>()));
+    final lines = Log.recent().map((r) => r.toString()).join('\n');
+    expect(lines, contains('GET /invites/<token> → 200'));
+    expect(lines, contains('POST /invites/<token>/claim failed'));
+    expect(lines, isNot(contains('secret-tok')));
+    expect(const ApiDecodeError('/invites/secret-tok', FormatException('x')).toString(), isNot(contains('secret-tok')));
+    expect(loggableApiPath('/proxy/agency/my-assignments'), '/proxy/agency/my-assignments');
   });
 }

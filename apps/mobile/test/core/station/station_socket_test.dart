@@ -145,6 +145,56 @@ void main() {
       });
     });
 
+    test('1008: the upgrade was refused — terminal, no retry, reported with its code', () {
+      fakeAsync((async) {
+        final h = _Harness(async)..openFirst();
+        h.connector.last.serverClose(1008, 'invalid_client');
+        async.elapse(const Duration(minutes: 2));
+        expect(h.state, StationConnection.disconnected);
+        expect(h.connections.last, (StationConnection.disconnected, 1008));
+        expect(h.socket.gaveUpCause, 'refused');
+        expect(h.connector.attempts, 1);
+        expect(h.mints, 0);
+        expect(async.pendingTimers, isEmpty);
+      });
+    });
+
+    test('1011: retried, but ${StationSocket.serverErrorLimit} in a row give up; a pong in between resets the count', () {
+      fakeAsync((async) {
+        final h = _Harness(async)..openFirst();
+        h.dropAndMeasure(1011);
+        async.flushMicrotasks();
+        h.connector.last.serverPong();
+        // The pong proved the server healthy again: the count starts over.
+        h.dropAndMeasure(1011);
+        async.flushMicrotasks();
+        h.dropAndMeasure(1011);
+        async.flushMicrotasks();
+        expect(h.state, isNot(StationConnection.disconnected));
+        final attempts = h.connector.attempts;
+        h.connector.last.serverClose(1011);
+        async.elapse(const Duration(minutes: 2));
+        expect(h.state, StationConnection.disconnected);
+        expect(h.connections.last, (StationConnection.disconnected, 1011));
+        expect(h.socket.gaveUpCause, 'server_error');
+        expect(h.connector.attempts, attempts, reason: 'no retry after the give-up');
+        expect(async.pendingTimers, isEmpty);
+      });
+    });
+
+    test('1011 on a live call: the server holds the call, so the socket keeps trying', () {
+      fakeAsync((async) {
+        final h = _Harness(async)..openFirst();
+        h.callLive = true;
+        for (var i = 0; i < StationSocket.serverErrorLimit + 2; i++) {
+          h.dropAndMeasure(1011);
+          async.flushMicrotasks();
+        }
+        expect(h.state, StationConnection.open);
+        h.socket.dispose();
+      });
+    });
+
     for (final code in [4401, 4408, 1006, null]) {
       test('$code: re-mint and retry on the ladder', () {
         fakeAsync((async) {
@@ -450,6 +500,28 @@ void main() {
         expect(h.state, StationConnection.open);
         h.socket.dispose();
       });
+    });
+  });
+
+  test('park: the socket closes now, retries nothing while away, and connects again on return', () {
+    fakeAsync((async) {
+      final h = _Harness(async)..openFirst();
+      final t = h.connector.last;
+      h.socket.setKeepAlive(false);
+      h.socket.park();
+      expect(t.closed, isTrue);
+      expect(t.closedWith, 1000);
+      expect(h.state, StationConnection.reconnecting);
+      expect(async.pendingTimers, isEmpty);
+      h.socket.networkChanged([ConnectivityResult.wifi]);
+      h.socket.networkChanged([ConnectivityResult.mobile]);
+      async.elapse(const Duration(minutes: 5));
+      expect(h.connector.attempts, 1, reason: 'parked: not even a network change reconnects it');
+      h.socket.setKeepAlive(true);
+      async.flushMicrotasks();
+      expect(h.connector.attempts, 2);
+      expect(h.state, StationConnection.open);
+      h.socket.dispose();
     });
   });
 

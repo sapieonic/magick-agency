@@ -107,6 +107,9 @@ class AgentAudioPlugin :
     private var metering = false
     private var pendingLoopback: Result? = null
     private var pendingServiceStart: Result? = null
+
+    /** The app asked for the on-duty service to stop, so its end is not news to Dart. */
+    private var serviceStopRequested = false
     private val restarts = ArrayDeque<Long>()
 
     private val loopbackTimeout = Runnable {
@@ -143,7 +146,10 @@ class AgentAudioPlugin :
             },
             queue,
         )
-        OnDutyBridge.listener = serviceListener
+        // The bridge is process-wide: a second Flutter engine (a background isolate) must not
+        // take it from the one that runs the station. The instance that starts the service
+        // claims it (startService).
+        if (OnDutyBridge.listener == null) OnDutyBridge.listener = serviceListener
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -153,10 +159,16 @@ class AgentAudioPlugin :
         session = null
         phase = Phase.IDLE
         format = null
-        if (OnDutyBridge.running) context.stopService(Intent(context, OnDutyService::class.java))
         pendingServiceStart = null
         main.removeCallbacks(serviceStartTimeout)
-        if (OnDutyBridge.listener === serviceListener) OnDutyBridge.listener = null
+        // Only the instance driving the service stops it, and only it lets go of the bridge.
+        if (OnDutyBridge.listener === serviceListener) {
+            if (OnDutyBridge.running) {
+                serviceStopRequested = true
+                context.stopService(Intent(context, OnDutyService::class.java))
+            }
+            OnDutyBridge.listener = null
+        }
         methods.setMethodCallHandler(null)
         events.setStreamHandler(null)
         messenger.setMessageHandler(AgentAudioChannels.DOWNLINK, null)
@@ -256,6 +268,7 @@ class AgentAudioPlugin :
             }
             "stop" -> {
                 val keepWarm = call.argument<Boolean>("keepWarm") ?: true
+                val endsCall = phase == Phase.ARMED || phase == Phase.STREAMING
                 cancelLoopback("Stopped")
                 stopEngine()
                 muted = false
@@ -265,6 +278,8 @@ class AgentAudioPlugin :
                     phase = Phase.IDLE
                 } else if (phase != Phase.IDLE) {
                     phase = Phase.PREPARED
+                    // A route chosen for this call (the speaker above all) is not the next one's.
+                    if (endsCall) session?.callEnded()
                 }
                 result.success(null)
             }
@@ -312,6 +327,7 @@ class AgentAudioPlugin :
                 result.success(null)
             }
             "stopOnDutyService" -> {
+                serviceStopRequested = true
                 context.stopService(Intent(context, OnDutyService::class.java))
                 result.success(null)
             }
@@ -349,7 +365,7 @@ class AgentAudioPlugin :
             throw ex
         }
         engine = e
-        session?.onEngineRunning(true)
+        session?.onEngineRunning(true, call = loopback == null)
     }
 
     private fun stopEngine() {
@@ -461,6 +477,8 @@ class AgentAudioPlugin :
         if (!isInForeground()) throw EngineException("not_in_foreground", "Start the on-duty service while the app is on screen")
         OnDutyNotifications.ensureChannel(context, spec.channelName)
         OnDutyBridge.spec = spec
+        OnDutyBridge.listener = serviceListener
+        serviceStopRequested = false
         if (OnDutyBridge.running) {
             context.getSystemService(NotificationManager::class.java)
                 .notify(OnDutyNotifications.NOTIFICATION_ID, OnDutyNotifications.build(context, spec))
@@ -507,7 +525,14 @@ class AgentAudioPlugin :
             pendingServiceStart = null
         }
 
-        override fun onServiceStopped() = Unit
+        /** The service ended. Unless the app asked for that, Android stopped it (or it could not
+         * start): tell Dart, which shows the "keep the app on screen" problem and starts it
+         * again when the app comes back on screen. */
+        override fun onServiceStopped() {
+            val requested = serviceStopRequested
+            serviceStopRequested = false
+            if (!requested) emit(mapOf("type" to "service", "running" to false))
+        }
 
         override fun onNotificationAction(action: String, muted: Boolean?) {
             when (action) {

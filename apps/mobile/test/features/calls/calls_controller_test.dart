@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/api/api_error.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/features/calls/calls_controller.dart';
 import 'package:magick_agency_agent/features/calls/logic/attempt_filters.dart';
 
@@ -185,5 +187,35 @@ void main() {
     await controller().ensureLoaded();
     await controller().applyFilters(const AttemptFilters(campaignId: 'c1'));
     expect(api.queries, hasLength(1));
+  });
+
+  group('a 401 is handed to the gate (which signs out), not only shown', () {
+    List<Object> reported() => (container.read(appGateProvider.notifier) as RecordingGate).reported;
+
+    test('on the first page', () async {
+      final f = controller().ensureLoaded();
+      api.fail(0, const ApiUnauthorized());
+      await f;
+      await Future<void>.delayed(Duration.zero);
+      expect(state().error, const ApiUnauthorized().userMessage);
+      expect(reported(), [isA<ApiUnauthorized>()]);
+    });
+
+    test('on a "more" page', () async {
+      await firstPage();
+      final more = controller().loadMore();
+      api.fail(1, const ApiUnauthorized());
+      await more;
+      await Future<void>.delayed(Duration.zero);
+      expect(reported(), [isA<ApiUnauthorized>()]);
+    });
+
+    test('an offline page is the tab\'s own to show', () async {
+      final f = controller().ensureLoaded();
+      api.fail(0);
+      await f;
+      await Future<void>.delayed(Duration.zero);
+      expect(reported(), isEmpty);
+    });
   });
 }

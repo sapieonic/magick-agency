@@ -131,6 +131,11 @@ String switchFailureCopy(SwitchStage stage, String campaignName, String? detail)
           : 'Left $campaignName, but couldn’t join this campaign. Try again.',
     };
 
+/// A server older than the conflict's `session_id` / `account_id`: the app
+/// cannot tell which session to leave, or in which account.
+String leaveOtherUnknownCopy(String campaignName) =>
+    'We can’t close $campaignName from here. Leave it where it’s open (the console or your other phone), then come back here.';
+
 const notStaffedCopy = 'You’re not on this campaign’s team. Ask your supervisor to add you.';
 const featureDisabledCopy = 'Calling is switched off for your workspace right now. Ask your supervisor.';
 const joinFailedCopy = 'Could not join the campaign.';
@@ -179,6 +184,19 @@ String dncOutcomeCopy(DncResponse response) => response.dncRecorded
         'this campaign’s Do Not Call list — until that lands a new upload could bring the number back, so check the list.';
 
 const dncNeedsCallCopy = 'Available while you are on a call';
+
+/// Mark DNC confirmed for a call that is no longer the live one.
+const dncCallChangedCopy = 'That call has ended. Nothing was marked.';
+
+// ─── The station link ───────────────────────────────────────────────────────
+
+/// 1008: the server refuses this app's station connection outright.
+const upgradeRefusedCopy =
+    'This version of the app can’t connect to the station any more. Update the app, then go on duty again.';
+
+/// Leave with no connection: the station was closed on this phone only.
+const leftOfflineCopy =
+    'You’ve left the station on this phone. You’re offline, so the server will take you off duty on its own in a few seconds.';
 
 // ─── Disposition ────────────────────────────────────────────────────────────
 

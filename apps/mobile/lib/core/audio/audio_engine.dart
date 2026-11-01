@@ -4,8 +4,8 @@ import 'package:agent_audio/agent_audio.dart';
 
 /// The native voice engine as the station core uses it: a facade over
 /// `agent_audio` so the orchestration is tested against a fake
-/// ([FakeAudioEngine] in `fake_audio_engine.dart`) and the plugin stays the
-/// only thing that touches platform channels.
+/// (`FakeAudioEngine`, in `test/core/audio/fake_audio_engine.dart`) and the
+/// plugin stays the only thing that touches platform channels.
 abstract interface class AudioEngine {
   /// Encoded 20 ms uplink frames while streaming, ready to send as they are.
   Stream<Uint8List> get uplink;

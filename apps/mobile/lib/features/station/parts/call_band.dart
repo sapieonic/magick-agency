@@ -14,10 +14,6 @@ import '../widgets/drain_bar.dart';
 import '../widgets/status_band.dart';
 import '../widgets/ticking.dart';
 
-/// How long the server holds a live call while the socket comes back. Only
-/// the ring's scale: the digits count to the core's real deadline.
-const _reconnectWindow = Duration(seconds: 8);
-
 /// The band at the top of a call screen.
 ///
 /// One band, and its priority is the console rail's: a connection problem
@@ -40,6 +36,7 @@ class CallBand extends ConsumerWidget {
           countdown: v?.call?.countdownSeconds,
           bridgedAt: v?.call?.bridgedAt,
           deadline: v?.reconnectDeadline,
+          window: v?.reconnectWindow,
           release: v?.release,
           wrapup: v?.wrapup,
           busy: v?.busy ?? StationBusy.none,
@@ -52,6 +49,9 @@ class CallBand extends ConsumerWidget {
 
     if (s.link == StationLink.reconnecting) {
       final deadline = s.deadline;
+      // The ring's full scale is the window the server granted (the digits
+      // count to its deadline either way).
+      final windowMs = s.window?.inMilliseconds ?? 0;
       return StatusBand(
         key: const Key('band-reconnecting'),
         title: StationCopy.reconnecting,
@@ -69,7 +69,7 @@ class CallBand extends ConsumerWidget {
                   return CountdownRing(
                     key: const Key('reconnect-ring'),
                     value: left,
-                    fraction: ms / _reconnectWindow.inMilliseconds,
+                    fraction: windowMs <= 0 ? (ms > 0 ? 1.0 : 0.0) : ms / windowMs,
                     color: t.ember,
                     semanticsLabel: '$left seconds to reconnect',
                   );
@@ -91,7 +91,7 @@ class CallBand extends ConsumerWidget {
           alignment: AlignmentDirectional.centerStart,
           child: FilledButton(
             onPressed: s.busy != StationBusy.none ? null : () => ref.read(stationActionsProvider).reconnect(),
-            style: FilledButton.styleFrom(backgroundColor: t.danger, foregroundColor: t.onAccent),
+            style: FilledButton.styleFrom(backgroundColor: t.dangerDeep, foregroundColor: t.onAccent),
             child: const Text(StationCopy.reconnect),
           ),
         ),

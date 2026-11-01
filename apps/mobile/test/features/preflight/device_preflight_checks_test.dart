@@ -149,9 +149,69 @@ void main() {
   });
 
   test('the whole network check fits inside the screen\'s per-check deadline', () {
-    final worst = DevicePreflightChecks.roundTripTimeout * 2 + const Duration(seconds: 5);
-    expect(worst, lessThan(PreflightScreen.checkTimeout));
+    final worst = DevicePreflightChecks.firstReadTimeout + DevicePreflightChecks.roundTripTimeout + const Duration(seconds: 5);
+    expect(DevicePreflightChecks.networkBudget, worst);
+    // A second to spare for the link check and scheduling.
+    expect(worst + const Duration(seconds: 1), lessThanOrEqualTo(PreflightScreen.checkTimeout));
+    // The cold read gets the larger share: it also pays for DNS, TCP and TLS.
+    expect(DevicePreflightChecks.firstReadTimeout, greaterThan(DevicePreflightChecks.roundTripTimeout));
     expect(DevicePreflightChecks.probeBytes * 8 / 5000, lessThan(minUploadKbps));
+  });
+
+  test('a slow cold connection (4 s to the first answer) is graded on the warm round trip, not as offline', () {
+    fakeAsync((async) {
+      NetworkSample? n;
+      var gets = 0;
+      checks((req) async {
+        if (req.url.path == '/client-config' && gets++ == 0) {
+          await Future<void>.delayed(const Duration(seconds: 4)); // DNS + TCP + TLS on a waking radio
+        }
+        return ok({'received_bytes': req.bodyBytes.length});
+      }).network().then((v) => n = v);
+      async.elapse(const Duration(seconds: 5));
+      expect(n, isNotNull);
+      expect(n!.online, isTrue);
+      expect(n!.noAnswer, isFalse);
+      expect(n!.latencyMs, lessThan(100));
+      expect(gradeNetwork(n!).status, CheckStatus.ok);
+    });
+  });
+
+  test('a server that never answers is too slow for calls, said honestly, inside the deadline', () {
+    fakeAsync((async) {
+      NetworkSample? n;
+      checks((req) async {
+        await Future<void>.delayed(const Duration(seconds: 60));
+        return ok({});
+      }).network().then((v) => n = v);
+      async.elapse(DevicePreflightChecks.firstReadTimeout + const Duration(milliseconds: 100));
+      expect(n, isNotNull);
+      expect(n!.online, isTrue);
+      expect(n!.noAnswer, isTrue);
+      expect(n!.transport, 'Wi-Fi');
+      final graded = gradeNetwork(n!);
+      expect(graded.status, CheckStatus.fail); // still blocks: no call can run on it
+      expect(graded.detail, startsWith('Too slow for calls'));
+      expect(graded.detail, contains('Wi-Fi'));
+      expect(graded.detail, isNot(contains('No connection')));
+      // No upload probe on a link that could not answer a read.
+      expect(paths, ['GET /client-config']);
+    });
+  });
+
+  test('a warm round trip past its limit is too slow, not offline', () {
+    fakeAsync((async) {
+      NetworkSample? n;
+      var gets = 0;
+      checks((req) async {
+        if (req.url.path == '/client-config' && gets++ == 1) await Future<void>.delayed(const Duration(seconds: 10));
+        return ok({});
+      }).network().then((v) => n = v);
+      async.elapse(const Duration(seconds: 3));
+      expect(n, isNotNull);
+      expect(n!.online, isTrue);
+      expect(n!.noAnswer, isTrue);
+    });
   });
 
   test('a server without the probe (404) reports no upload figure', () async {

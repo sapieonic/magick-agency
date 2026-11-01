@@ -18,7 +18,7 @@ ThemeData buildTheme(AppTokens t, Brightness brightness) {
     onPrimaryContainer: t.textPrimary,
     secondary: t.ember,
     onSecondary: t.onAccent,
-    error: t.danger,
+    error: t.dangerDeep,
     onError: t.onAccent,
     errorContainer: t.dangerSubtle,
     onErrorContainer: t.danger,

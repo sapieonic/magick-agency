@@ -4,11 +4,11 @@ import 'package:agent_audio/agent_audio.dart' as audio;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/audio/audio_orchestrator.dart';
-import 'package:magick_agency_agent/core/audio/fake_audio_engine.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/telemetry/log.dart';
 
 import '../station/controller_harness.dart';
+import 'fake_audio_engine.dart';
 
 const _note = audio.OnDutyNotification(title: 'On duty', text: 'Waiting for calls', channelName: 'On duty');
 const _earpiece = audio.AudioRoute(kind: audio.AudioRouteKind.earpiece, id: 'ear', name: '');
@@ -232,6 +232,37 @@ void main() {
       });
     });
 
+    test('Android stopping the running on-duty service is a mic problem, and it is started again on return', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        async.flushMicrotasks();
+        r.sync(_bridged);
+        expect(r.orchestrator.view.micProblem, MicProblem.none);
+        r.orchestrator.resumed();
+        async.flushMicrotasks();
+        expect(r.engine.calls.where((c) => c == 'fgs.start'), hasLength(1), reason: 'running: not restarted');
+        r.event(const audio.OnDutyServiceStopped());
+        expect(r.orchestrator.view.micProblem, MicProblem.serviceStopped);
+        r.orchestrator.resumed();
+        async.flushMicrotasks();
+        expect(r.engine.calls.where((c) => c == 'fgs.start'), hasLength(2));
+        expect(r.orchestrator.view.micProblem, MicProblem.none);
+      });
+    });
+
+    test('a stop event while the service is not up (its start failed) changes nothing', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.engine.fail['fgs.start'] = const audio.AgentAudioException(audio.AgentAudioErrorCode.permissionDenied);
+        r.orchestrator.open(_note);
+        async.flushMicrotasks();
+        expect(r.orchestrator.view.micProblem, MicProblem.permissionDenied);
+        r.event(const audio.OnDutyServiceStopped());
+        expect(r.orchestrator.view.micProblem, MicProblem.permissionDenied, reason: 'the start failure names the cause');
+      });
+    });
+
     test('a lost microphone is shown until the plugin recovers it', () {
       fakeAsync((async) {
         final r = _Rig(async);
@@ -268,6 +299,18 @@ void main() {
         r.event(const audio.CallSystemAction(kind: audio.CallActionKind.end, source: audio.CallActionSource.callKit, callId: 'att-1'));
         r.event(const audio.CallSystemReset());
         expect(r.hangUps, 2);
+      });
+    });
+
+    test('a notification hang-up (no call id) with no call on this phone hangs up nothing', () {
+      fakeAsync((async) {
+        final r = _Rig(async);
+        r.orchestrator.open(_note);
+        r.sync(_bridged);
+        // The call ended here, or moved to another device.
+        r.sync(AudioTarget.idle);
+        r.event(const audio.CallSystemAction(kind: audio.CallActionKind.end, source: audio.CallActionSource.notification));
+        expect(r.hangUps, 0);
       });
     });
   });
@@ -330,7 +373,8 @@ void main() {
         app.onCall('att-1');
         app.socket.serverClose(4409);
         async.flushMicrotasks();
-        expect(app.engine.lifecycle.skip(6), ['endCall', 'stop']);
+        // The call ends here, then the session and the on-duty service go at once.
+        expect(app.engine.lifecycle.skip(6), ['endCall', 'stop', 'release', 'fgs.stop']);
         app.dispose();
       });
     });

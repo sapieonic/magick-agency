@@ -8,11 +8,11 @@ import '../api/api_error.dart';
 import '../telemetry/log.dart';
 import 'station_view.dart';
 
-/// Where unsent notes survive a process death until the server has them.
+/// Where notes survive a process death: unsent text until the server has it,
+/// then the saved text until [sweep] drops it.
 abstract interface class NotesStore {
   Future<String?> read(String attemptId);
   Future<void> write(String attemptId, String notes, DateTime at);
-  Future<void> delete(String attemptId);
 
   /// Drops entries older than [maxAge]: a day of calls must not accumulate forever.
   Future<void> sweep(DateTime now, {Duration maxAge});
@@ -45,9 +45,6 @@ final class SecureNotesStore implements NotesStore {
       );
 
   @override
-  Future<void> delete(String attemptId) => _storage.delete(key: '$_prefix$attemptId');
-
-  @override
   Future<void> sweep(DateTime now, {Duration maxAge = const Duration(hours: 24)}) async {
     final all = await _storage.readAll();
     for (final e in all.entries) {
@@ -65,24 +62,6 @@ final class SecureNotesStore implements NotesStore {
   }
 }
 
-/// In memory only (tests, and builds without a keystore).
-final class MemoryNotesStore implements NotesStore {
-  final Map<String, ({String notes, DateTime at})> entries = {};
-
-  @override
-  Future<String?> read(String attemptId) async => entries[attemptId]?.notes;
-
-  @override
-  Future<void> write(String attemptId, String notes, DateTime at) async => entries[attemptId] = (notes: notes, at: at);
-
-  @override
-  Future<void> delete(String attemptId) async => entries.remove(attemptId);
-
-  @override
-  Future<void> sweep(DateTime now, {Duration maxAge = const Duration(hours: 24)}) async =>
-      entries.removeWhere((_, v) => now.difference(v.at) >= maxAge);
-}
-
 /// The notes field's autosave (port of the console's `useAgencyNotes` and the
 /// status rules of `agencyNotes.ts`), keyed by attempt throughout.
 ///
@@ -94,7 +73,13 @@ final class MemoryNotesStore implements NotesStore {
 ///   two seconds of typing are the outcome being written down.
 /// * Unsent text stays in memory and in [NotesStore] until the server has it
 ///   (written when the debounce fires, and on [persistNow] when the app leaves
-///   the foreground), then is cleared.
+///   the foreground). Once the server confirms it, it is kept as the
+///   attempt's last saved text, in memory and in the store until the store's
+///   24 h sweep (as the console keeps its localStorage copy): the same attempt
+///   can come back on screen (a `released` without a wrap-up, then its
+///   `wrapup` frame; or a restart rejoined into `active_wrapup`), and the
+///   field must show what the server holds, never `''` (a save is a REPLACE,
+///   so the next keystroke would wipe the server's copy).
 /// * Nothing saves before the attempt's text is hydrated: a save racing the
 ///   restore would send `''`, which clears the server's copy wholesale.
 /// * Mobile addition: a network failure is retried ([retryDelays]) before it
@@ -122,6 +107,10 @@ class NotesAutosave {
   /// Text not yet confirmed saved, per attempt.
   final Map<String, String> _unsent = {};
 
+  /// The last text the server confirmed, per attempt (what the field shows if
+  /// that attempt comes back with nothing unsent).
+  final Map<String, String> _confirmed = {};
+
   String? _attemptId;
   String _text = '';
   bool _hydrated = false;
@@ -140,9 +129,6 @@ class NotesAutosave {
   NotesView get view => _view;
   String get text => _text;
   String? get attemptId => _attemptId;
-
-  /// Whether the agent has typed anything the server does not have yet.
-  bool get hasUnsent => _unsent.isNotEmpty;
 
   /// The attempt on screen and whether its notes route takes writes now.
   void attemptChanged(String? attemptId, {required bool accepting}) {
@@ -171,8 +157,8 @@ class NotesAutosave {
     if (attemptId == null) {
       _text = '';
       _hydrated = false;
-    } else if (_unsent.containsKey(attemptId)) {
-      _text = _unsent[attemptId]!;
+    } else if (_unsent.containsKey(attemptId) || _confirmed.containsKey(attemptId)) {
+      _text = _unsent[attemptId] ?? _confirmed[attemptId]!;
       _hydrated = true;
     } else {
       _text = '';
@@ -243,7 +229,15 @@ class NotesAutosave {
     if (_unsent[attemptId] != sent) return;
     _unsent.remove(attemptId);
     _retryTimers.remove(attemptId)?.cancel();
-    unawaited(_deleteStored(attemptId));
+    _keepConfirmed(attemptId, sent);
+  }
+
+  /// The server has [value] for [attemptId]: remember it, and leave it in the
+  /// store (written now: the debounce may never have persisted it) for the
+  /// sweep to drop.
+  void _keepConfirmed(String attemptId, String value) {
+    _confirmed[attemptId] = value;
+    unawaited(_persist(attemptId, value));
   }
 
   /// The station is closing: sends what the debounce is holding, and what is
@@ -288,12 +282,6 @@ class NotesAutosave {
     }
   }
 
-  Future<void> _deleteStored(String attemptId) async {
-    try {
-      await _store.delete(attemptId);
-    } catch (_) {}
-  }
-
   Future<void> _flush(({String attemptId, String value}) pending, {int attempt = 0}) async {
     if (_disposed) return;
     final attemptId = pending.attemptId;
@@ -306,10 +294,10 @@ class NotesAutosave {
     try {
       final response = await _save(attemptId, pending.value);
       if (_disposed) return;
-      // Cleared only when nothing newer was typed since this was sent.
+      // No longer unsent only when nothing newer was typed since this was sent.
       if (_unsent[attemptId] == pending.value) {
         _unsent.remove(attemptId);
-        unawaited(_deleteStored(attemptId));
+        _keepConfirmed(attemptId, pending.value);
       }
       if (current()) {
         _lastSaveSucceededAt = _now();

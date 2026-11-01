@@ -15,11 +15,12 @@ import 'package:meta/meta.dart';
 ///   campaign is not dialling ("no calls will come through").
 /// * `ready` drops `agentStateSince` / `breakReasonCode` when it reports a
 ///   DIFFERENT state from the one they were stated for. Those two describe a
-///   transition, and `ready` carries neither; a phone whose socket died while
-///   it was in the background (the common mobile case) would otherwise show a
-///   break timer anchored to a state it left long ago. [SessionStateAction]
-///   fills them back in from the HTTP answer of the request that caused the
-///   transition.
+///   transition, and `ready` carries no `since`; a phone whose socket died
+///   while it was in the background (the common mobile case) would otherwise
+///   show a break timer anchored to a state it left long ago. A `ready` on
+///   break then states its own `break_reason` when the server sends one, and
+///   [SessionStateAction] fills the rest back in from the HTTP answer of the
+///   request that caused the transition.
 
 /// The socket, as the reducer tracks it. Mirrors the console's `StationConnection`.
 enum StationConnection { idle, connecting, open, reconnecting, sessionGone, superseded, disconnected }
@@ -258,10 +259,14 @@ final class MissedPingsAction extends StationAction {
 }
 
 /// [wrapup]: the anchor opened from `frame.activeWrapup`, when it carried one.
+/// [breakReason]: why the agent is on break, when [frame] is `break`: the
+/// frame's own `break_reason`, or the caller's fallback (the bootstrap's) when
+/// a server older than the field sent none.
 final class ReadyAction extends StationAction {
-  const ReadyAction(this.frame, {this.wrapup});
+  const ReadyAction(this.frame, {this.wrapup, this.breakReason});
   final ReadyFrame frame;
   final WrapupAnchor? wrapup;
+  final String? breakReason;
 }
 
 final class AgentStateAction extends StationAction {
@@ -319,7 +324,7 @@ final class ManualCallAction extends StationAction {
 
 /// The HTTP answer to a session transition (`break`, `available`,
 /// `break/cancel`). Reconciliation only: it never changes the state, it only
-/// supplies the `since` / break reason a `ready` snapshot cannot carry, and
+/// supplies the `since` (and a break reason) a `ready` snapshot may lack, and
 /// only while the station is in that same state and knows no anchor of its own.
 final class SessionStateAction extends StationAction {
   const SessionStateAction(this.response);
@@ -344,7 +349,7 @@ StationState stationReducer(StationState state, StationAction action) {
     case MissedPingsAction(:final count):
       return count == state.missedPings ? state : state._with(missedPings: count);
 
-    case ReadyAction(:final frame, wrapup: final anchor):
+    case ReadyAction(:final frame, wrapup: final anchor, :final breakReason):
       // A full-state SNAPSHOT, not a set of additions: replace or clear, field
       // by field, and never merely add.
       final previous = state.agentState;
@@ -361,6 +366,10 @@ StationState stationReducer(StationState state, StationAction action) {
         // Mobile addition: these described the state that was left.
         next = next._with(agentStateSince: null, breakReasonCode: null);
       }
+      // The break's reason, when the server states it: what tells a pause for
+      // leaving the app (`device_away`) from a break the agent chose, even
+      // after the app was killed and remembers nothing of its own.
+      if (frame.state == AgentState.onBreak && breakReason != null) next = next._with(breakReasonCode: breakReason);
       if (frame.state == AgentState.wrapup) {
         // A deadline only when this replica still owns the timer; absent, the
         // anchor already held is kept and none is invented.

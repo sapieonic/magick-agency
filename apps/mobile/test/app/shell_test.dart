@@ -3,10 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/app.dart';
+import 'package:magick_agency_agent/app/router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/shell.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/station/station_view_mapper.dart';
@@ -18,29 +20,43 @@ const onBreak = StationSignals(onDuty: true, onBreak: true, campaignId: 'c1');
 
 Widget at(GoRouterState s) => Scaffold(body: Text('at ${s.uri}'));
 
-/// The app's shell over stand-in tab screens, routed as `router.dart` routes it.
+const ready = GateReady(userId: 'u1', displayName: 'Meera', email: null, tenantId: 't1', accountId: 'a1', accountName: 'Chennai');
+
+class _Gate extends AppGateNotifier {
+  @override
+  AppGate build() => ready;
+  void put(AppGate gate) => state = gate;
+}
+
+/// The app's router (its redirect and refresh) and shell over stand-in
+/// screens, routed as `router.dart` routes them.
 Future<GoRouter> pumpShell(WidgetTester tester, ProviderContainer c, {String initial = Routes.home}) async {
-  final router = GoRouter(
-    initialLocation: initial,
-    routes: [
-      StatefulShellRoute.indexedStack(
-        builder: (context, state, shell) => AppShell(shell: shell),
-        branches: [
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: Routes.home,
-              builder: (_, s) => at(s),
-              routes: [GoRoute(path: 'station/:campaignId', builder: (_, s) => at(s))],
-            ),
-          ]),
-          StatefulShellBranch(routes: [GoRoute(path: Routes.performance, builder: (_, s) => at(s))]),
-          StatefulShellBranch(routes: [GoRoute(path: Routes.calls, builder: (_, s) => at(s))]),
-          StatefulShellBranch(routes: [GoRoute(path: Routes.me, builder: (_, s) => at(s))]),
-        ],
-      ),
-    ],
+  final routerProvider = Provider<GoRouter>(
+    (ref) => buildAppRouter(
+      ref,
+      initialLocation: initial,
+      routes: [
+        for (final path in [Routes.splash, Routes.signIn, Routes.accounts, Routes.updateRequired, Routes.invitePattern, Routes.preflightPattern])
+          GoRoute(path: path, builder: (_, s) => at(s)),
+        StatefulShellRoute.indexedStack(
+          builder: (context, state, shell) => AppShell(shell: shell),
+          branches: [
+            StatefulShellBranch(routes: [
+              GoRoute(
+                path: Routes.home,
+                builder: (_, s) => at(s),
+                routes: [GoRoute(path: 'station/:campaignId', builder: (_, s) => at(s))],
+              ),
+            ]),
+            StatefulShellBranch(routes: [GoRoute(path: Routes.performance, builder: (_, s) => at(s))]),
+            StatefulShellBranch(routes: [GoRoute(path: Routes.calls, builder: (_, s) => at(s))]),
+            StatefulShellBranch(routes: [GoRoute(path: Routes.me, builder: (_, s) => at(s))]),
+          ],
+        ),
+      ],
+    ),
   );
-  addTearDown(router.dispose);
+  final router = c.read(routerProvider);
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: c,
@@ -58,7 +74,10 @@ void main() {
   late ProviderContainer c;
 
   setUp(() {
-    c = ProviderContainer.test(overrides: [stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider))]);
+    c = ProviderContainer.test(overrides: [
+      stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider)),
+      appGateProvider.overrideWith(_Gate.new),
+    ]);
   });
 
   group('the tab bar while on duty', () {
@@ -113,6 +132,100 @@ void main() {
       c.read(testSignalsProvider.notifier).set(const StationSignals());
       await tester.pumpAndSettle();
       expect(tabEnabled(tester, 'Me'), isTrue);
+    });
+  });
+
+  group('the station rules hold on every route', () {
+    const onCall = StationSignals(onDuty: true, callActive: true, campaignId: 'c1');
+    final invite = Routes.invite('tok');
+
+    testWidgets('an invite link while on a call opens the call, with the tab bar hidden', (tester) async {
+      c.read(testSignalsProvider.notifier).set(onCall);
+      final router = await pumpShell(tester, c, initial: Routes.station('c1'));
+      router.go(invite);
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+    });
+
+    testWidgets('an invite link while available keeps the agent on the station', (tester) async {
+      c.read(testSignalsProvider.notifier).set(available);
+      final router = await pumpShell(tester, c, initial: Routes.station('c1'));
+      router.go(invite);
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+    });
+
+    testWidgets('an invite link on a break opens the invitation', (tester) async {
+      c.read(testSignalsProvider.notifier).set(onBreak);
+      final router = await pumpShell(tester, c, initial: Routes.station('c1'));
+      router.go(invite);
+      await tester.pumpAndSettle();
+      expect(find.text('at /agency/join/tok'), findsOneWidget);
+    });
+
+    testWidgets('a call already live when the shell is built: straight to the call', (tester) async {
+      c.read(testSignalsProvider.notifier).set(onCall);
+      await pumpShell(tester, c);
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+    });
+
+    testWidgets('back to the campaign list while on a call goes back to the call', (tester) async {
+      c.read(testSignalsProvider.notifier).set(onCall);
+      final router = await pumpShell(tester, c, initial: Routes.station('c1'));
+      router.go(Routes.home);
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+    });
+
+    testWidgets('a call arriving while the agent is on another tab takes the screen', (tester) async {
+      c.read(testSignalsProvider.notifier).set(onBreak);
+      await pumpShell(tester, c, initial: Routes.performance);
+      expect(find.text('at /performance'), findsOneWidget);
+      c.read(testSignalsProvider.notifier).set(onCall);
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+      expect(find.byType(NavigationBar), findsNothing);
+    });
+
+    testWidgets('on a break, the Station tab opens the station, not the campaign list', (tester) async {
+      c.read(testSignalsProvider.notifier).set(onBreak);
+      await pumpShell(tester, c, initial: Routes.me);
+      await tester.tap(find.text('Station'));
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+    });
+
+    testWidgets('pre-flight finishing the join stays open; any other pre-flight does not', (tester) async {
+      c.read(testSignalsProvider.notifier).set(const StationSignals());
+      final router = await pumpShell(tester, c, initial: Routes.preflight('c1'));
+      c.read(testSignalsProvider.notifier).set(available);
+      await tester.pumpAndSettle();
+      expect(find.text('at /preflight/c1'), findsOneWidget);
+      router.go(Routes.preflight('c2'));
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/station/c1'), findsOneWidget);
+    });
+
+    testWidgets('the disabled tabs say why', (tester) async {
+      c.read(testSignalsProvider.notifier).set(available);
+      await pumpShell(tester, c, initial: Routes.station('c1'));
+      expect(find.byTooltip(AppShell.heldReason), findsNWidgets(3));
+      c.read(testSignalsProvider.notifier).set(onBreak);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip(AppShell.heldReason), findsNothing);
+    });
+
+    test('appRedirect: the gate\'s own screens come first; the station only once ready', () {
+      expect(appRedirect(const GateUpdateRequired(storeUrl: null, minSupported: '9.0.0'), onCall, Routes.home), Routes.updateRequired);
+      expect(appRedirect(const GateUpdateRequired(storeUrl: null, minSupported: '9.0.0'), onCall, Routes.updateRequired), isNull);
+      expect(appRedirect(const GateSignedOut(), available, Routes.signIn), isNull);
+      expect(appRedirect(ready, available, Routes.signIn), Routes.station('c1'));
+      expect(appRedirect(ready, available, Routes.station('c1')), isNull);
+      expect(appRedirect(ready, onBreak, Routes.me), isNull);
+      expect(appRedirect(ready, const StationSignals(), Routes.me), isNull);
+      expect(appRedirect(ready, onCall, Routes.preflight('c1')), Routes.station('c1'));
     });
   });
 

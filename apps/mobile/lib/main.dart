@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -22,7 +21,7 @@ final _log = Log('main');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final env = Env.fromDefines();
+  var env = Env.fromDefines();
 
   FlutterError.onError = (details) {
     _log.error('Flutter error', {'library': details.library}, details.exception, details.stack);
@@ -33,11 +32,13 @@ Future<void> main() async {
     return true;
   };
 
-  // Both reads hit platform channels; run them together.
-  final identityFuture = ClientIdentity.load();
-  final firebaseFuture = env.hasFirebase ? _initFirebase(env) : Future<void>.value();
+  // Both reads hit platform channels; run them together. Neither may keep
+  // the app on the native launch screen: a failure is logged and the app
+  // starts anyway (a generic client header, or signed out without Firebase).
+  final identityFuture = loadIdentity(ClientIdentity.load);
+  final firebaseReady = env.hasFirebase ? startFirebase(() => _initFirebase(env)) : Future.value(false);
   final identity = await identityFuture;
-  await firebaseFuture;
+  if (env.hasFirebase && !await firebaseReady) env = env.withoutFirebase();
 
   _log.info('Starting', {'flavor': env.flavor, 'client': identity.header});
 
@@ -61,11 +62,35 @@ Future<void> main() async {
   );
 }
 
+/// The client identity, or a generic one when the platform reads fail.
+@visibleForTesting
+Future<ClientIdentity> loadIdentity(Future<ClientIdentity> Function() load) async {
+  try {
+    return await load();
+  } catch (e, st) {
+    _log.error('Reading the app version and device failed; starting with a generic identity', const {}, e, st);
+    return ClientIdentity.unknown;
+  }
+}
+
+/// Initialises Firebase; false (logged) when it cannot, so the app starts
+/// signed out rather than hanging on the launch screen.
+@visibleForTesting
+Future<bool> startFirebase(Future<void> Function() init) async {
+  try {
+    await init();
+    return true;
+  } catch (e, st) {
+    _log.error('Firebase did not start; running without sign-in', const {}, e, st);
+    return false;
+  }
+}
+
 Future<void> _initFirebase(Env env) => Firebase.initializeApp(
       options: FirebaseOptions(
         apiKey: env.firebaseApiKey,
         projectId: env.firebaseProjectId,
-        appId: Platform.isIOS ? env.firebaseAppIdIos : env.firebaseAppIdAndroid,
+        appId: env.firebaseAppId,
         messagingSenderId: env.firebaseMessagingSenderId,
         iosClientId: env.googleIosClientId.isEmpty ? null : env.googleIosClientId,
       ),

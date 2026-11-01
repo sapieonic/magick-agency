@@ -7,20 +7,27 @@ import '../../app/providers.dart';
 import '../../core/api/api_error.dart';
 import '../../core/auth/app_gate.dart';
 
-/// The agent's email preferences for the current workspace
-/// (`GET/PUT /notifications/preferences`). The server serves the catalog with
-/// the values, so whatever events arrive are rendered; nothing is hard-coded.
+/// The agent's email preferences for one workspace ([agentWorkspaceProvider]
+/// key: `user:tenant:account`), `GET/PUT /notifications/preferences`. The
+/// server serves the catalog with the values, so whatever events arrive are
+/// rendered; nothing is hard-coded.
+///
+/// Keyed by the workspace, so another account or another agent gets a fresh
+/// instance: it never starts from the previous one's list, and a save can
+/// only ever send this workspace's own values.
 ///
 /// A toggle saves at once (a phone has no "Save changes" bar), optimistically:
 /// the switch moves immediately and moves back, with the reason, if the
 /// server refuses.
 class NotificationPreferencesController extends AsyncNotifier<List<NotificationEventPreference>> {
+  NotificationPreferencesController(this.workspace);
+
+  final String workspace;
+
   static const _path = '/notifications/preferences';
 
   @override
   Future<List<NotificationEventPreference>> build() async {
-    final account = ref.watch(readyAccountProvider);
-    if (account == null) return const [];
     final body = await _guard(() => ref.read(apiClientProvider).get(_path));
     if (body is! Map<String, Object?>) throw const ApiDecodeError(_path, FormatException('expected an object'));
     try {
@@ -33,9 +40,8 @@ class NotificationPreferencesController extends AsyncNotifier<List<NotificationE
   Future<T> _guard<T>(Future<T> Function() call) async {
     try {
       return await call();
-    } on ApiUnauthorized catch (e) {
-      final gate = ref.read(appGateProvider.notifier);
-      unawaited(Future.microtask(() => gate.reportError(e)));
+    } catch (e) {
+      reportToGate(ref, e);
       rethrow;
     }
   }
@@ -49,8 +55,10 @@ class NotificationPreferencesController extends AsyncNotifier<List<NotificationE
       _save(key, (e) => _with(e, enabled: true, frequency: frequency));
 
   Future<String?> _save(String key, NotificationEventPreference Function(NotificationEventPreference) change) async {
-    final before = state.value;
-    if (before == null) return null;
+    // Only a settled list of this workspace, read while it is still the one
+    // the requests go to: never a list still loading, failed, or left behind.
+    final before = state is AsyncData<List<NotificationEventPreference>> ? state.value : null;
+    if (before == null || ref.read(agentWorkspaceProvider) != workspace) return null;
     final index = before.indexWhere((e) => e.key == key);
     if (index < 0) return null;
     final next = change(before[index]);
@@ -102,8 +110,8 @@ class NotificationPreferencesController extends AsyncNotifier<List<NotificationE
       );
 }
 
-final notificationPreferencesProvider =
-    AsyncNotifierProvider<NotificationPreferencesController, List<NotificationEventPreference>>(
+final notificationPreferencesProvider = AsyncNotifierProvider.autoDispose
+    .family<NotificationPreferencesController, List<NotificationEventPreference>, String>(
   NotificationPreferencesController.new,
   retry: (_, _) => null,
 );

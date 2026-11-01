@@ -250,7 +250,7 @@ describe('runDeviceAway', () => {
     expect(res.ok && BREAK_UNCHANGED_KEY in res.body).toBe(false);
   });
 
-  it('a state that never holds still: 503-able (ok: false), and nothing written', async () => {
+  it('a state that never holds still: refused (ok: false; the route answers 409 state_changing), and nothing written', async () => {
     const w = world('available');
     w.transition.mockResolvedValue(false);
     const res = await runDeviceAway(w.runtime, session());

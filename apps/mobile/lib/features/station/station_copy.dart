@@ -103,7 +103,6 @@ abstract final class StationCopy {
   // ── On call ──
   static const recording = 'Recording';
   static const mute = 'Mute';
-  static const unmute = 'Unmute';
   static const muted = 'Muted';
   static const audio = 'Audio';
   static const audioSheetTitle = 'Where to hear the call';
@@ -112,7 +111,6 @@ abstract final class StationCopy {
   static const detailsTitle = 'Contact details';
   static const markDnc = 'Mark DNC';
   static const markingDnc = 'Marking…';
-  static const close = 'Close';
 
   // ── Hang up ──
   static const holdToHangUp = 'Hold to hang up';
@@ -128,6 +126,7 @@ abstract final class StationCopy {
   // ── Mark DNC (agencyDncCopy) ──
   static const dncTitle = 'Stop calling this number?';
   static const dncAction = 'Don’t call in this campaign';
+  static const dncNotMarked = 'The call ended before Do Not Call was marked, so nothing was recorded.';
   static String dncMessage(String phone, String campaign) =>
       '$phone won’t be called again by ${campaign.trim().isEmpty ? 'this campaign' : campaign}. Other campaigns in this workspace can still reach them. You can’t undo this from the app — an admin has to remove it.';
 
@@ -212,8 +211,6 @@ abstract final class StationCopy {
   // ── Link states (StateRail) ──
   static const reconnecting = 'Reconnecting…';
   static const reconnectingMidCall = 'Stay on the line. The customer is still there.';
-  static String reconnectWindow(int seconds) =>
-      'Your call is held for up to $seconds second${seconds == 1 ? '' : 's'} while we reconnect you.';
   static const reconnectingIdle = 'Stay on this screen — we’re reconnecting you.';
   static const disconnected = 'Disconnected — you are not receiving calls';
   static const disconnectedDetail = 'Reconnect, then go available to start taking calls.';

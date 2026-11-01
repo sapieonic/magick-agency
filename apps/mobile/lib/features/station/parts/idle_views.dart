@@ -53,15 +53,16 @@ class WaitingView extends ConsumerWidget {
                 ),
         ),
       ],
-      actions: LinkGate(
-        child: ButtonPair(
-          first: OutlinedButton(
+      // Leave is plain HTTP: it stays offered while the socket is down.
+      actions: ButtonPair(
+        first: LinkGate(
+          child: OutlinedButton(
             key: const Key('take-break'),
-            onPressed: busy == StationBusy.none ? () => showBreakSheet(context, ref, queued: false) : null,
+            onPressed: busy == StationBusy.none ? () => showBreakSheet(context, queued: false) : null,
             child: BusyLabel(label: StationCopy.takeBreak, busy: busy == StationBusy.takingBreak),
           ),
-          second: _LeaveButton(busy: busy),
         ),
+        second: LeaveStationButton(busy: busy),
       ),
     );
   }
@@ -84,12 +85,12 @@ class OfflineView extends ConsumerWidget {
           detail: StationCopy.offlineHint,
         ),
       ],
-      actions: LinkGate(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FilledButton(
+      actions: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinkGate(
+            child: FilledButton(
               key: const Key('go-available'),
               onPressed: busy == StationBusy.none ? () => ref.read(stationActionsProvider).goAvailable() : null,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
@@ -98,10 +99,10 @@ class OfflineView extends ConsumerWidget {
                 busy: busy == StationBusy.goingAvailable,
               ),
             ),
-            const SizedBox(height: Space.sm),
-            _LeaveButton(busy: busy),
-          ],
-        ),
+          ),
+          const SizedBox(height: Space.sm),
+          LeaveStationButton(busy: busy),
+        ],
       ),
     );
   }
@@ -142,21 +143,21 @@ class BreakView extends ConsumerWidget {
                 ),
         ),
       ],
-      actions: LinkGate(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            FilledButton(
+      actions: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinkGate(
+            child: FilledButton(
               key: const Key('end-break'),
               onPressed: busy == StationBusy.none ? () => ref.read(stationActionsProvider).endBreak() : null,
               style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
               child: BusyLabel(label: ending ? StationCopy.endingBreak : StationCopy.endBreak, busy: ending),
             ),
-            const SizedBox(height: Space.sm),
-            _LeaveButton(busy: busy),
-          ],
-        ),
+          ),
+          const SizedBox(height: Space.sm),
+          LeaveStationButton(busy: busy),
+        ],
       ),
     );
   }
@@ -221,29 +222,31 @@ class AwayView extends ConsumerWidget {
           ),
         ),
       ],
-      actions: LinkGate(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            EmberButton(
+      actions: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          LinkGate(
+            child: EmberButton(
               key: const Key('resume'),
               label: resuming ? StationCopy.goingAvailable : StationCopy.resume,
               icon: Icons.play_arrow_rounded,
               // "Resume" is the end of the away break, which is `/available`.
               onPressed: busy == StationBusy.none ? () => ref.read(stationActionsProvider).endBreak() : null,
             ),
-            const SizedBox(height: Space.sm),
-            ButtonPair(
-              first: OutlinedButton(
+          ),
+          const SizedBox(height: Space.sm),
+          ButtonPair(
+            first: LinkGate(
+              child: OutlinedButton(
                 key: const Key('break-instead'),
-                onPressed: busy == StationBusy.none ? () => showBreakSheet(context, ref, queued: false) : null,
+                onPressed: busy == StationBusy.none ? () => showBreakSheet(context, queued: false) : null,
                 child: const Text(StationCopy.breakInstead, textAlign: TextAlign.center),
               ),
-              second: _LeaveButton(busy: busy),
             ),
-          ],
-        ),
+            second: LeaveStationButton(busy: busy),
+          ),
+        ],
       ),
     );
   }
@@ -313,8 +316,12 @@ class _StateCard extends StatelessWidget {
   }
 }
 
-class _LeaveButton extends ConsumerWidget {
-  const _LeaveButton({required this.busy});
+/// "Leave". Never behind [LinkGate]: leaving is plain HTTP, and with the tabs
+/// held while on duty it is the agent's only way off a station whose socket is
+/// down. Only a leave already in flight disables it (another action in flight
+/// does not: the core runs a leave alongside it).
+class LeaveStationButton extends ConsumerWidget {
+  const LeaveStationButton({super.key, required this.busy});
 
   final StationBusy busy;
 
@@ -323,7 +330,7 @@ class _LeaveButton extends ConsumerWidget {
     final leaving = busy == StationBusy.leaving;
     return TextButton(
       key: const Key('leave'),
-      onPressed: busy == StationBusy.none ? () => leaveStation(context, ref) : null,
+      onPressed: leaving ? null : () => leaveStation(context),
       child: BusyLabel(label: leaving ? StationCopy.leaving : StationCopy.leave, busy: leaving),
     );
   }

@@ -10,16 +10,16 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:magick_agency_agent/app/providers.dart';
 import 'package:magick_agency_agent/core/api/api_client.dart';
-import 'package:magick_agency_agent/core/audio/fake_audio_engine.dart';
 import 'package:magick_agency_agent/core/env.dart';
 import 'package:magick_agency_agent/core/lifecycle/app_lifecycle.dart';
-import 'package:magick_agency_agent/core/station/notes_autosave.dart';
 import 'package:magick_agency_agent/core/station/station_controller.dart';
 import 'package:magick_agency_agent/core/station/station_deps.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
+import '../audio/fake_audio_engine.dart';
 import 'fake_transport.dart';
 import 'fixtures.dart';
+import 'memory_notes_store.dart';
 
 const testEnv = Env(
   flavor: 'test',

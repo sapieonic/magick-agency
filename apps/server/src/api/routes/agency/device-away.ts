@@ -66,12 +66,12 @@ export function takeBreakUnchanged(body: unknown): boolean {
   return unchanged;
 }
 
-/** How many times a lost CAS is re-decided before answering 503 (nothing changed). */
+/** How many times a lost CAS is re-decided before answering 409 state_changing (nothing changed). */
 const DEVICE_AWAY_PASSES = 3;
 
 export type DeviceAwayResult =
   | { ok: true; body: AgencySessionStateResponse & { [BREAK_UNCHANGED_KEY]?: true } }
-  /** The state kept moving under every pass: nothing changed; the caller answers 503. */
+  /** The state kept moving under every pass: nothing changed; the caller answers 409 state_changing. */
   | { ok: false };
 
 /**
@@ -146,7 +146,7 @@ export async function runDeviceAway(
     };
     return { ok: true, body };
   }
-  // A `queue` on the last pass is still a queued break: answer it rather than 503.
+  // A `queue` on the last pass is still a queued break: answer it rather than 409.
   if (queuedHere && runtime.breaks.peek(session.id)?.code === DEVICE_AWAY_BREAK_REASON) {
     const live = await runtime.agents.get(session.id);
     return {

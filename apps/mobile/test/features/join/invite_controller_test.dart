@@ -148,7 +148,7 @@ void main() {
       await ctl.submitPassword('three unrelated words');
       expect(c.read(provider).phase, InvitePhase.done);
       expect(h.auth.currentUser!.email, 'meera.k@acmecollect.in');
-      expect(jsonDecode(h.server.calls('POST', '/invites/$token/claim').single.body), {'id_token': 'token-uid-meera.k@acmecollect.in'});
+      expect(jsonDecode(h.server.calls('POST', '/invites/$token/claim').single.body), {'id_token': 'token-uid-meera.k@acmecollect.in!'}); // minted for the claim
     });
 
     test('an address that already has a password → the form becomes a sign-in', () async {

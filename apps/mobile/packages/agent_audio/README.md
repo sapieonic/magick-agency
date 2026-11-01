@@ -105,7 +105,8 @@ to main) and events run on main. The two render threads (sink and source nodes) 
 samples under an `os_unfair_lock` (no allocation, no Objective-C messaging). A serial
 user-interactive I/O queue with a 10 ms timer drains the capture ring, converts, frames,
 meters and encodes; uplink `Data` and events hop to main (one small allocation per frame,
-which `sendOnChannel` copies anyway). Downlink messages arrive on Flutter's background task
+which `sendOnChannel` copies anyway). At most 8 uplink frames (160 ms) wait for main; beyond
+that frames are dropped and counted (`JitterStats.uplinkDrops`), as on Android. Downlink messages arrive on Flutter's background task
 queue. Stopping cancels the timer and fences the queue (`ioQueue.sync {}`) before anything is
 torn down. Engine configuration changes (e.g. a Bluetooth HFP route switching the hardware to
 16 kHz) reconnect the graph with the new format and a new converter; a media-services reset
@@ -158,10 +159,14 @@ types it does not know.
 | `callAction`   | `action`: end / mute, `callId`, `muted`, `source`: callKit / notification                           |
 | `session`      | `active` (iOS: CallKit activated / deactivated the audio session)                                   |
 | `callReset`    | — (iOS: CallKit provider reset)                                                                     |
+| `service`      | `running`: false (Android: the on-duty service stopped without `stopOnDutyService`)                 |
 
 Route `name` is the headset's product name; built-in earpiece and speaker have an empty name
 (the app labels them by `kind`). Audio never moves to the loudspeaker on its own: when the
-headset in use goes, it falls back to a wired headset, then the earpiece.
+headset in use goes, it falls back to a wired headset, then the earpiece. A route chosen
+during a call (the speaker above all) lasts for that call only: `stop` after a call puts the
+session back on the default route (Bluetooth, then wired, then the earpiece). The proximity
+screen-off is held only for a call on the earpiece, never during the loopback test.
 
 ## Interruptions
 
@@ -175,7 +180,11 @@ headset in use goes, it falls back to a wired headset, then the earpiece.
 - **iOS**: `AVAudioSession.interruptionNotification` (reason `phoneCall` when CallKit's call
   observer shows another call, `microphoneSilenced` for `builtInMicMuted`). With CallKit, a
   cellular call arriving mid-call shows the system's "End & Accept"; ending ours that way
-  arrives as `CallSystemAction(end)`.
+  arrives as `CallSystemAction(end)`. iOS does not promise an `.ended` for every `.began`, so
+  an interruption still open when CallKit activates the session, or at `prepare` / `stop`, is
+  closed with an `ended` event; a `.began` for a suspended app (`appWasSuspended`) is ignored.
+- **Android**, a permanent focus loss gets no GAIN back: while a call runs the plugin asks for
+  focus again (at once when a cellular call ends, otherwise after 1, 2, 5, then every 10 s).
 
 ## What the app must add
 
@@ -196,7 +205,9 @@ The app must:
 - call `startOnDutyService` at "Go on duty" while the app is on screen (Android 14 refuses a
   microphone foreground service from the background: `notInForeground`), `updateOnDutyService`
   when a call starts / mute changes / the call ends, and `stopOnDutyService` at "Go off duty";
-- handle `CallSystemAction(source: notification)` (Mute / Hang up on the notification).
+- handle `CallSystemAction(source: notification)` (Mute / Hang up on the notification);
+- handle `OnDutyServiceStopped` (Android stopped the service): tell the agent and call
+  `startOnDutyService` again when the app is back on screen.
 
 ### iOS
 

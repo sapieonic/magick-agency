@@ -136,6 +136,40 @@ internal class LevelMeter(private val framesPerReport: Int = 5) {
 }
 
 /**
+ * When to ask for audio focus again while a call's engine runs without it. Android sends no
+ * GAIN after a permanent `AUDIOFOCUS_LOSS` (another app took focus; some phones do this for a
+ * cellular call too), so without asking again the interruption would last the rest of the
+ * call while audio actually flows. The session asks at once when a cellular call ends (the
+ * mode leaves telephony) and otherwise after a backoff (1, 2, 5, then every 10 s), so it does
+ * not fight another app every second. A request during a cellular call is simply refused.
+ * The backoff restarts with the next call's engine. Main thread only.
+ */
+internal class FocusRecovery(private val delaysMs: LongArray = DELAYS_MS) {
+    private var attempts = 0
+
+    /** Focus is not held (lost for good, or a request was refused). Returns the delay before
+     * asking again, or null when no call's engine runs (the next engine start asks). */
+    fun notHeld(engineRunning: Boolean): Long? {
+        if (!engineRunning) return null
+        return delaysMs[minOf(attempts, delaysMs.lastIndex)].also { attempts++ }
+    }
+
+    /** The audio mode changed: true when focus should be asked for now (a cellular call just
+     * ended while a call's engine runs without focus). */
+    fun askOnModeChange(telephony: Boolean, engineRunning: Boolean, focusHeld: Boolean): Boolean =
+        !telephony && engineRunning && !focusHeld
+
+    /** The engine stopped or the session was released. */
+    fun reset() {
+        attempts = 0
+    }
+
+    companion object {
+        val DELAYS_MS = longArrayOf(1_000, 2_000, 5_000, 10_000)
+    }
+}
+
+/**
  * Folds the three Android interruption signals (audio focus, a cellular call seen through the
  * audio mode, the capture policy silencing our mic) into one began/ended pair, so the app sees
  * one interruption however many signals fire. Main thread only.

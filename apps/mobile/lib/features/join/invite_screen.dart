@@ -57,7 +57,11 @@ class InviteScreen extends ConsumerWidget {
           title: wrongAppTitle,
           eyebrow: const StatusPill('Invitation', tone: Tone.accent),
           showLogo: false,
-          children: [Text(wrongAppBody(roleLabel(state.invite!)), style: Theme.of(context).textTheme.bodyMedium)],
+          children: [
+            Text(wrongAppBody(roleLabel(state.invite!)), style: Theme.of(context).textTheme.bodyMedium),
+            const SizedBox(height: Space.xl),
+            const InviteExit(),
+          ],
         ),
       InvitePhase.done => const _Loading(message: 'Signing you in…'),
       InvitePhase.pending => _InviteCard(token: token, state: state),
@@ -99,14 +103,9 @@ class _Unavailable extends StatelessWidget {
         showLogo: false,
         children: [
           Text(copy.body, style: Theme.of(context).textTheme.bodyMedium),
-          if (copy.offersSignIn) ...[
-            const SizedBox(height: Space.xl),
-            FilledButton(
-              onPressed: () => context.go(Routes.signIn),
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: const Text('Go to sign in'),
-            ),
-          ],
+          const SizedBox(height: Space.xl),
+          // Signing in is the remedy for some; every one of them needs a way out.
+          InviteExit(primary: copy.offersSignIn),
         ],
       );
 }
@@ -130,8 +129,35 @@ class _Unreachable extends StatelessWidget {
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
             child: const Text('Try again'),
           ),
+          const SizedBox(height: Space.sm),
+          const InviteExit(),
         ],
       );
+}
+
+/// The way off the invite page (a deep link has no back, and iOS no back
+/// button): to sign-in when nobody is signed in, else back into the app (the
+/// gate takes it from there: the campaigns, the account picker, ...).
+class InviteExit extends ConsumerWidget {
+  const InviteExit({super.key, this.primary = false});
+
+  /// A filled button when leaving is the page's main action.
+  final bool primary;
+
+  static const signInLabel = 'Go to sign in';
+  static const backLabel = 'Back to the app';
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final gate = ref.watch(appGateProvider);
+    final signedOut = gate is GateSignedOut || gate is GateLoading;
+    final label = signedOut ? signInLabel : backLabel;
+    void leave() => context.go(signedOut ? Routes.signIn : Routes.home);
+    const size = Size.fromHeight(52);
+    return primary
+        ? FilledButton(onPressed: leave, style: FilledButton.styleFrom(minimumSize: size), child: Text(label))
+        : OutlinedButton(onPressed: leave, style: OutlinedButton.styleFrom(minimumSize: size), child: Text(label));
+  }
 }
 
 class _InviteCard extends ConsumerWidget {
@@ -144,7 +170,8 @@ class _InviteCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final invite = state.invite!;
     final controller = ref.read(inviteControllerProvider(token).notifier);
-    final onDuty = ref.watch(stationSignalsProvider.select((s) => s.onDuty));
+    // The live station's campaign while on duty, else null.
+    final onDuty = ref.watch(stationSignalsProvider.select((s) => s.onDuty ? s.campaignId : null));
     final text = Theme.of(context).textTheme;
     final t = context.tokens;
     final busy = state.busy != InviteBusy.none;
@@ -174,9 +201,15 @@ class _InviteCard extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: Space.xl),
-        if (onDuty)
-          const FormMessage('You’re on duty. Leave the station before accepting an invitation.', tone: Tone.warn)
-        else if (state.addressRequired)
+        if (onDuty != null) ...[
+          const FormMessage('You’re on duty. Leave the station before accepting an invitation.', tone: Tone.warn),
+          const SizedBox(height: Space.md),
+          FilledButton(
+            onPressed: () => context.go(Routes.station(onDuty)),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+            child: const Text('Back to your station'),
+          ),
+        ] else if (state.addressRequired)
           _AddressRequired(
             invitedAs: invite.email,
             signedInAs: state.addressRequiredSignedInAs,

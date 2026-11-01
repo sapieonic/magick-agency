@@ -21,6 +21,16 @@ class FakeStationActions implements StationActions {
   /// When set, actions call it with their name (to change the view, say).
   void Function(String name)? onCall;
 
+  /// What [leave] does after [onCall], as the real runtime does it: drop the
+  /// station (the view goes null, so the screen swaps its body and the button
+  /// that asked is gone), then finish closing it a moment later (audio, notes).
+  /// [pumpStation] wires it; a refusal set by [onCall] (an `actionError`) keeps
+  /// the station, as the real one does, and answers [LeaveOutcome.stayed].
+  Future<LeaveOutcome> Function()? afterLeave;
+
+  /// How a leave that went through ended ([LeaveOutcome.leftOffline]: no network).
+  LeaveOutcome leaveOutcome = LeaveOutcome.left;
+
   Future<void> _rec(String name, [List<Object?> a = const []]) async {
     calls.add(name);
     args[name] = a;
@@ -49,13 +59,19 @@ class FakeStationActions implements StationActions {
   Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt}) =>
       _rec('submitDisposition', [code, notes, callbackAt]);
   @override
-  Future<void> markDnc({String? reason}) => _rec('markDnc', [reason]);
+  Future<void> markDnc({String? reason, String? attemptId}) => _rec('markDnc', [reason, attemptId]);
   @override
-  Future<void> leave() => _rec('leave');
+  Future<LeaveOutcome> leave() async {
+    await _rec('leave');
+    return await afterLeave?.call() ?? leaveOutcome;
+  }
+
   @override
   Future<void> reconnect() => _rec('reconnect');
   @override
   Future<void> useThisDevice() => _rec('useThisDevice');
+  @override
+  Future<void> dismiss() => _rec('dismiss');
   @override
   void dismissActionError() => _rec('dismissActionError');
   @override
@@ -97,6 +113,25 @@ class StationHarness {
 
   Future<void> setView(StationView? v) async {
     container.read(holder.notifier).set(v);
+    await settle(tester);
+  }
+
+  /// The call on screen ends, as the server says it: the stage moves to
+  /// wrap-up for the same call (the on-call widgets are gone after this).
+  Future<void> endCall() async {
+    final v = view!;
+    await setView(
+      station(
+        link: v.link,
+        phase: AgentPhase.wrapup,
+        call: v.call,
+        release: hungUpRelease,
+        wrapup: wrapup(),
+        queuedBreak: v.queuedBreak,
+        audio: v.audio,
+      ),
+    );
+    // A dialog over the old screen closes itself on the frame after the switch.
     await settle(tester);
   }
 
@@ -167,6 +202,14 @@ Future<StationHarness> pumpStation(
   );
   addTearDown(container.dispose);
   h = StationHarness(tester, container, holder, actions, clock, platformCalls, announcements);
+  actions.afterLeave = () async {
+    if (container.read(holder)?.actionError != null) return LeaveOutcome.stayed;
+    container.read(holder.notifier).set(null);
+    // The audio close and the notes flush (up to 2 s): the screen has rebuilt,
+    // and finished its switch, before leave() returns.
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    return actions.leaveOutcome;
+  };
 
   final router = GoRouter(
     initialLocation: Routes.station(campaignId),
@@ -217,9 +260,17 @@ const dispositions = [
   DispositionOption(code: 'dnc', label: 'Do not call', suppresses: true),
 ];
 
-CallView call({DateTime? bridgedAt, int? countdown, bool recording = false, String? name = 'Priya Raman', int otherFields = 6}) => CallView(
-  attemptId: 'a1',
-  phoneE164: '+919840012345',
+CallView call({
+  DateTime? bridgedAt,
+  int? countdown,
+  bool recording = false,
+  String? name = 'Priya Raman',
+  int otherFields = 6,
+  String attemptId = 'a1',
+  String phone = '+919840012345',
+}) => CallView(
+  attemptId: attemptId,
+  phoneE164: phone,
   attemptNumber: 2,
   callerId: '+918047182200',
   campaignName: 'Q4 Card Renewals',
@@ -258,6 +309,7 @@ StationView station({
   AudioView audio = const AudioView(),
   MissedReleaseView? missedRelease,
   DateTime? reconnectDeadline,
+  Duration? reconnectWindow,
   bool weak = false,
   StationBusy busy = StationBusy.none,
   String? actionError,
@@ -283,6 +335,7 @@ StationView station({
   audio: audio,
   missedRelease: missedRelease,
   reconnectDeadline: reconnectDeadline,
+  reconnectWindow: reconnectWindow,
   weakConnection: weak,
   busy: busy,
   actionError: actionError,

@@ -136,7 +136,10 @@ export const STATION_HEARTBEAT_GRACE_MS = 30_000;
  * suspended still holds a live lease, and under early binding a customer can be
  * bridged to a sleeping phone and recorded as connected, which the abandonment
  * guardrail never sees. The app sends the device-away break the moment it is
- * backgrounded; this is the backstop for when it could not.
+ * backgrounded. This grace is the backstop for a SUSPENDED or unreachable phone (its
+ * WebSocket stack stops answering); a phone that is alive but whose break did not land
+ * keeps answering pongs, so the app itself retries the break and, after 10 s, closes
+ * its station socket.
  *
  * Affordable because a mobile station's liveness does not wait on the app's own
  * 10s `ping`: the server sends it an RFC 6455 ping every {@link MOBILE_STATION_PROBE_MS}

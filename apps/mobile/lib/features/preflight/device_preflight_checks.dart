@@ -32,10 +32,17 @@ class DevicePreflightChecks implements PreflightChecks {
         _isAndroid = isAndroid ?? Platform.isAndroid,
         _microphoneGranted = microphoneGranted ?? (() => ph.Permission.microphone.isGranted);
 
-  /// Each round trip's limit. Two round trips plus [uploadTimeout] stay inside the
-  /// screen's 12 s per-check deadline (3 + 3 + 5 s), so a slow network is graded as slow
-  /// rather than timing out as "couldn't tell". A round trip over 3 s is no call link.
-  static const roundTripTimeout = Duration(seconds: 3);
+  /// The first read's limit. It also pays for DNS and the TCP and TLS handshakes
+  /// (and, on mobile data, waking the radio), so it gets most of the budget.
+  static const firstReadTimeout = Duration(milliseconds: 4500);
+
+  /// The timed (warm) round trip's limit. A round trip this slow is no call link.
+  static const roundTripTimeout = Duration(milliseconds: 1500);
+
+  /// The whole network check: both reads plus the upload probe stay inside the
+  /// screen's 12 s per-check deadline with a second to spare (4.5 + 1.5 + 5 s), so a
+  /// slow network is graded as slow rather than timing out as "couldn't tell".
+  static Duration get networkBudget => firstReadTimeout + roundTripTimeout + const Duration(seconds: 5);
 
   final AgentAudio _audio;
   final ApiClient _api;
@@ -175,16 +182,20 @@ class DevicePreflightChecks implements PreflightChecks {
                 : null;
 
     // Round trip: the public client config, the cheapest read the server has. Any HTTP
-    // answer proves the server is reachable; only a transport failure means offline.
-    // Read twice and time the second: the first also pays for DNS and the TCP and TLS
-    // handshakes on an idle connection, which a call's media (one long-lived socket)
-    // does not, and would mark good 4G "Weak".
+    // answer proves the server is reachable; a transport failure (no route, refused,
+    // no DNS) means offline. Read twice and time the second: the first also pays for
+    // DNS and the TCP and TLS handshakes on an idle connection, which a call's media
+    // (one long-lived socket) does not, and would mark good 4G "Weak".
+    //
+    // Running out of time is not "offline": the phone has a link and the server did
+    // not answer in time. That is a link too slow for calls, and said as such.
     var latencyMs = 0;
     for (var i = 0; i < 2; i++) {
       final rtt = Stopwatch()..start();
       try {
-        await _api.getPublic('/client-config', timeout: roundTripTimeout);
-      } on ApiNetworkError {
+        await _api.getPublic('/client-config', timeout: i == 0 ? firstReadTimeout : roundTripTimeout);
+      } on ApiNetworkError catch (e) {
+        if (e.timedOut) return NetworkSample(online: true, transport: transport, noAnswer: true);
         return NetworkSample(online: false, transport: transport);
       } on ApiError {
         // Reachable.

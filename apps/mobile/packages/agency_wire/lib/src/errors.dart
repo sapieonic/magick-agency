@@ -16,8 +16,8 @@ import 'json.dart';
 /// `message` for [unknown].
 ///
 /// Contract: `AgencyActionErrorCode` / `AGENCY_ACTION_ERROR_CODES`, plus the
-/// join refusals the app can hit: `session_on_softphone`
-/// (`AgencySoftphoneErrorCode`) and `not_staffed` (server addition, 403).
+/// one soft-phone refusal the app's join can hit: `session_on_softphone`
+/// (`AgencySoftphoneErrorCode`).
 enum AgencyErrorCode implements WireEnum {
   missingActor('missing_actor'),
   notYourAttempt('not_your_attempt'),
@@ -51,8 +51,13 @@ enum AgencyErrorCode implements WireEnum {
   /// 409 on join: the live session is a soft-phone one. See [SessionOnSoftphoneRefusal].
   sessionOnSoftphone('session_on_softphone'),
 
-  /// 403 on join: not staffed on that campaign (server addition).
+  /// 403 on join: not staffed on that campaign.
   notStaffed('not_staffed'),
+
+  /// 409 on the `device_away` break: the agent's state kept changing under
+  /// the request. Nothing changed; ask again (the app retries for 10 s, then
+  /// closes its station socket so the server takes the agent out of the pool).
+  stateChanging('state_changing'),
   unknown('');
 
   const AgencyErrorCode(this.wire);
@@ -172,6 +177,9 @@ final class SessionCampaignConflict {
     required this.state,
     String? stateRaw,
     this.message,
+    this.sessionId,
+    this.accountId,
+    this.accountName,
   }) : stateRaw = stateRaw ?? state.wire;
 
   factory SessionCampaignConflict.fromJson(Map<String, Object?> j) {
@@ -182,6 +190,9 @@ final class SessionCampaignConflict {
       state: AgentState.fromWire(state),
       stateRaw: state,
       message: j.strOrNull('message'),
+      sessionId: j.strOrNull('session_id'),
+      accountId: j.strOrNull('account_id'),
+      accountName: j.strOrNull('account_name'),
     );
   }
 
@@ -194,16 +205,35 @@ final class SessionCampaignConflict {
   final String stateRaw;
   final String? message;
 
+  /// The live session to leave (`POST /sessions/:id/leave`). Null only from a
+  /// server older than the field.
+  final String? sessionId;
+
+  /// The account that session is in, often a sibling of the current one:
+  /// `leave` is scoped to the session's account, so send this as the account
+  /// scope. Null only from a server older than the field.
+  final String? accountId;
+
+  /// That account's name, for copy. Best effort: null when the server could
+  /// not read it (or is older than the field).
+  final String? accountName;
+
+  /// Whether this body names everything needed to leave that session.
+  bool get canLeave => sessionId != null && accountId != null;
+
   @override
   bool operator ==(Object other) =>
       other is SessionCampaignConflict &&
       other.campaignId == campaignId &&
       other.campaignName == campaignName &&
       other.stateRaw == stateRaw &&
-      other.message == message;
+      other.message == message &&
+      other.sessionId == sessionId &&
+      other.accountId == accountId &&
+      other.accountName == accountName;
 
   @override
-  int get hashCode => Object.hash(campaignId, campaignName, stateRaw, message);
+  int get hashCode => Object.hash(campaignId, campaignName, stateRaw, message, sessionId, accountId, accountName);
 }
 
 /// 409 `session_on_softphone`: the agent's live session is a soft-phone one.

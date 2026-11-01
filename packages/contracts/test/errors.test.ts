@@ -17,8 +17,8 @@ import type { Equals } from './type-equals';
 /**
  * SNAPSHOT — written out by hand, deliberately not derived from the list under test.
  *
- * 19 members: 16 before `session_on_other_campaign` and `agent_on_live_call`, 18 before
- * `not_staffed`.
+ * 20 members: 16 before `session_on_other_campaign` and `agent_on_live_call`, 18 before
+ * `not_staffed`, 19 before `state_changing`.
  */
 const CORE_FIXTURE_ACTION_ERROR_CODES = [
   'missing_actor',
@@ -40,6 +40,7 @@ const CORE_FIXTURE_ACTION_ERROR_CODES = [
   'campaign_not_running',
   'feature_disabled',
   'not_staffed',
+  'state_changing',
 ];
 
 // ── Type-level: the lists are exactly their unions (the runtime twin of the
@@ -71,8 +72,8 @@ describe('action error codes', () => {
     expect([...AGENCY_ACTION_ERROR_CODES]).toEqual(CORE_FIXTURE_ACTION_ERROR_CODES);
   });
 
-  it('has 19 members, all distinct', () => {
-    expect(AGENCY_ACTION_ERROR_CODES).toHaveLength(19);
+  it('has 20 members, all distinct', () => {
+    expect(AGENCY_ACTION_ERROR_CODES).toHaveLength(20);
     expectUnique(AGENCY_ACTION_ERROR_CODES);
   });
 

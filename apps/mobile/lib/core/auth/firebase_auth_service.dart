@@ -4,9 +4,11 @@ import 'dart:io' show Platform;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../api/api_error.dart';
 import '../env.dart';
 import '../telemetry/log.dart';
 import 'auth_service.dart';
+import 'firebase_token_source.dart';
 
 /// [AuthService] on Firebase Auth, with Google through `google_sign_in` 7
 /// (the system account sheet, then its ID token exchanged for a Firebase
@@ -87,16 +89,18 @@ class FirebaseAuthService implements AuthService {
   @override
   AuthUser? get currentUser => _map(_auth.currentUser);
 
+  /// Null when nobody is signed in or Firebase says the sign-in itself is
+  /// over ([FirebaseIdTokenSource.signInEndedCodes]): the gate signs out.
+  /// Any other failure (offline, a stalled refresh) throws [ApiNetworkError],
+  /// which start-up retries with the splash's offline notice: losing the
+  /// network must never cost the agent their sign-in.
   @override
   Future<String?> idToken({bool forceRefresh = false}) async {
-    final user = _auth.currentUser;
-    if (user == null) return null;
     try {
-      return await user.getIdToken(forceRefresh);
-    } on FirebaseAuthException catch (e) {
-      // A revoked or disabled account: no token, so the call becomes a 401.
-      _log.warn('ID token refresh failed', {'code': e.code});
-      return null;
+      return await FirebaseIdTokenSource(_auth).idToken(forceRefresh: forceRefresh);
+    } catch (e) {
+      _log.warn('ID token unavailable', {'error': e is FirebaseAuthException ? e.code : e.runtimeType.toString()});
+      throw ApiNetworkError(e);
     }
   }
 

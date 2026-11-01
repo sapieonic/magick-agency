@@ -23,16 +23,20 @@ class CampaignsScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final assignments = ref.watch(myAssignmentsProvider);
+    // Per workspace: another account or agent starts from nothing, never
+    // from the previous one's list.
+    final workspace = ref.watch(agentWorkspaceProvider);
+    final assignments = workspace == null ? null : ref.watch(myAssignmentsProvider(workspace));
     final signals = ref.watch(stationSignalsProvider);
     final onDutyCampaign = signals.onDuty ? signals.campaignId : null;
 
     Future<void> refresh() async {
+      if (workspace == null) return;
       try {
-        final _ = await ref.refresh(myAssignmentsProvider.future);
+        final _ = await ref.refresh(myAssignmentsProvider(workspace).future);
       } catch (e) {
         // With a list already on screen it stays; say why it did not update.
-        if (context.mounted && ref.read(myAssignmentsProvider).hasValue) {
+        if (context.mounted && ref.read(myAssignmentsProvider(workspace)).hasValue) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(e is ApiError ? e.userMessage : 'Could not check your campaigns.')),
           );
@@ -41,12 +45,15 @@ class CampaignsScreen extends ConsumerWidget {
     }
 
     final List<Widget> body = switch (assignments) {
+      // Signed out, or between accounts: nobody's list.
+      null => const [],
       AsyncValue(:final value?) => _list(context, value, onDutyCampaign),
-      AsyncValue(:final error?) => [
+      // "Try again" after a failure: the spinner, not the old error.
+      AsyncValue(:final error?, :final isLoading) when !isLoading => [
           _Centred(
             title: 'We couldn’t check your campaigns',
             body: error is ApiError ? error.userMessage : 'Could not check your campaigns.',
-            action: OutlinedButton(onPressed: () => ref.invalidate(myAssignmentsProvider), child: const Text('Try again')),
+            action: OutlinedButton(onPressed: () => ref.invalidate(myAssignmentsProvider(workspace!)), child: const Text('Try again')),
           ),
         ],
       _ => [
@@ -69,7 +76,7 @@ class CampaignsScreen extends ConsumerWidget {
               const _Header(),
               const SizedBox(height: Space.lg),
               if (onDutyCampaign != null) ...[
-                _OnDutyBanner(campaignId: onDutyCampaign, name: _nameFor(assignments.value, onDutyCampaign)),
+                _OnDutyBanner(campaignId: onDutyCampaign, name: _nameFor(assignments?.value, onDutyCampaign)),
                 const SizedBox(height: Space.lg),
               ],
               ...body,

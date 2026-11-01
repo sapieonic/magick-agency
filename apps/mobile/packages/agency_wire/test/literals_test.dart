@@ -3,6 +3,12 @@
 // extracted from packages/contracts/src by tooling/contracts-literals.mjs
 // (`--check` fails when it is stale), so a literal added on the TypeScript
 // side fails this suite instead of decoding as `unknown` on an agent's phone.
+//
+// And the other way: a value the app SENDS (`client=mobile`, `media=alaw8`, a
+// DNC `scope`, a stats `bucket`, an `outcome` filter, `device_away`) or a
+// value of an enum that mirrors its vocabulary one to one must still be a
+// TypeScript literal, so a rename on that side fails here rather than as a
+// 1008 or a 400 in production.
 
 import 'package:agency_wire/agency_wire.dart';
 import 'package:test/test.dart';
@@ -30,6 +36,44 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'roles': Role.values,
   'invite_unavailable_statuses': InviteStatus.values,
   'invite_claim_refusal_statuses': InviteStatus.values,
+  'client_kinds': ClientKind.values,
+  'station_media_formats': MediaFormat.values,
+  'stats_bucket_units': StatsBucketUnit.values,
+  'session_refusal_codes': SessionRefusalCode.values,
+  'user_statuses': UserStatus.values,
+  'tenant_statuses': TenantStatus.values,
+  'membership_statuses': MembershipStatus.values,
+  'notification_cadences': NotificationCadence.values,
+  'notification_frequencies': NotificationFrequency.values,
+};
+
+/// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
+/// Dart → TypeScript direction is checked by its own test below instead.
+const notOneToOne = {
+  // `AgencyErrorCode` adds the soft-phone join refusal `session_on_softphone`.
+  'action_error_codes',
+  // `InviteStatus` is `pending` plus both of these.
+  'invite_unavailable_statuses',
+  'invite_claim_refusal_statuses',
+};
+
+/// Every value the app puts on the wire, by the vocabulary that must still
+/// declare it. A TypeScript rename of any of these is a refused upgrade (1008)
+/// or a 400 on a phone, so it must fail here.
+final Map<String, List<WireEnum>> appSends = {
+  'client_kinds': [ClientKind.mobile],
+  'station_media_formats': [MediaFormat.alaw8],
+  'dnc_scopes': [DncScope.campaign],
+  'stats_bucket_units': [
+    for (final u in StatsBucketUnit.values)
+      if (!u.isUnknown) u,
+  ],
+  // `AttemptsQuery.outcomes` can filter on any of them.
+  'attempt_outcomes': [
+    for (final o in AttemptOutcome.values)
+      if (!o.isUnknown) o,
+  ],
+  'reserved_break_codes': [ReservedBreakCode.deviceAway],
 };
 
 String _camel(String screaming) {
@@ -49,8 +93,11 @@ void main() {
     expect(vocabularies.keys.toSet(), {
       ...dartVocabularies.keys,
       'station_close_codes',
+      'softphone_error_codes',
     }, reason: 'a vocabulary was added to tooling/contracts-literals.mjs: map it to a Dart enum here');
   });
+
+  List<String> ts(String name) => (vocabularies[name]!['values']! as List<Object?>).cast<String>();
 
   for (final MapEntry(key: name, value: dartValues) in dartVocabularies.entries) {
     test('$name: every TypeScript literal is a known Dart value', () {
@@ -68,6 +115,55 @@ void main() {
     });
   }
 
+  for (final MapEntry(key: name, value: dartValues) in dartVocabularies.entries) {
+    if (notOneToOne.contains(name)) continue;
+    test('$name: every Dart value is still a TypeScript literal', () {
+      final declared = ts(name).toSet();
+      final stale = [
+        for (final v in dartValues)
+          if (!v.isUnknown && !declared.contains(v.wire)) v.wire,
+      ];
+      expect(
+        stale,
+        isEmpty,
+        reason: '${dartValues.first.runtimeType} has $stale, which ${vocabularies[name]!['source']} no longer declares',
+      );
+    });
+  }
+
+  for (final MapEntry(key: name, value: sent) in appSends.entries) {
+    test('$name: every value the app sends is still declared', () {
+      expect(sent, isNotEmpty);
+      final declared = ts(name).toSet();
+      for (final v in sent) {
+        expect(
+          declared,
+          contains(v.wire),
+          reason: 'the app sends "${v.wire}"; ${vocabularies[name]!['source']} must declare it',
+        );
+      }
+    });
+  }
+
+  test('AgencyErrorCode: every Dart value is an action or soft-phone code the server declares', () {
+    final declared = {...ts('action_error_codes'), ...ts('softphone_error_codes')};
+    final stale = [
+      for (final v in AgencyErrorCode.values)
+        if (!v.isUnknown && !declared.contains(v.wire)) v.wire,
+    ];
+    expect(stale, isEmpty);
+    // The join's soft-phone refusal is the soft phone's, not an action code.
+    expect(ts('softphone_error_codes'), contains(AgencyErrorCode.sessionOnSoftphone.wire));
+  });
+
+  test('InviteStatus: every Dart value is pending or a declared unavailable/refusal status', () {
+    final declared = {'pending', ...ts('invite_unavailable_statuses'), ...ts('invite_claim_refusal_statuses')};
+    expect([
+      for (final v in InviteStatus.values)
+        if (!v.isUnknown && !declared.contains(v.wire)) v.wire,
+    ], isEmpty);
+  });
+
   test('station_close_codes: every TypeScript code is a StationCloseCode, by name and number', () {
     final ts = (vocabularies['station_close_codes']!['values']! as Map<String, Object?>).cast<String, int>();
     expect(ts, isNotEmpty);
@@ -75,6 +171,10 @@ void main() {
       final dart = StationCloseCode.fromCode(code);
       expect(dart, isNotNull, reason: 'AGENCY_STATION_CLOSE.$name ($code) is not a StationCloseCode');
       expect(dart!.name, _camel(name));
+    }
+    // And the other way: every code the app acts on is one the server declares.
+    for (final c in StationCloseCode.values) {
+      expect(ts.values, contains(c.code), reason: '$c is not in AGENCY_STATION_CLOSE');
     }
   });
 

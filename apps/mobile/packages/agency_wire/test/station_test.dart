@@ -24,7 +24,20 @@ void main() {
       expect(f.activeWrapup, isNull);
       expect(f.missedRelease, isNull);
       expect(f.pendingState, isNull);
+      expect(f.breakReason, isNull);
       expect(f.event, StationEvent.ready);
+    });
+
+    test('ready onto a break names it: device_away after the app was killed while paused', () {
+      final f = sample<ReadyFrame>('ready_device_away');
+      expect(f.state, AgentState.onBreak);
+      expect(f.breakReason, 'device_away');
+      expect(ReservedBreakCode.tryFromWire(f.breakReason), ReservedBreakCode.deviceAway);
+      expect(f.pendingState, isNull);
+      // An older server sends no reason: still a plain break.
+      final old = decodeAs<ReadyFrame>('{"event":"ready","session_id":"s","state":"break"}');
+      expect(old.breakReason, isNull);
+      expect(old, isNot(f));
     });
 
     test('ready on a reconnect onto a live call restores the panel and the queued break', () {
@@ -314,9 +327,27 @@ void main() {
       expect(StationCloseCode.fromCode(4408)!.isTerminal, isFalse);
       expect(StationCloseCode.fromCode(4409)!.isTerminal, isTrue);
       expect(StationCloseCode.tokenRejected.isTerminal, isFalse);
+      // A refused upgrade: the same upgrade is refused again, so stop.
+      expect(StationCloseCode.fromCode(1008), StationCloseCode.invalidUpgrade);
+      expect(StationCloseCode.invalidUpgrade.isTerminal, isTrue);
+      expect(StationCloseCode.invalidUpgrade.boundsRetries, isFalse);
+      // An internal error: retry, but not forever.
+      expect(StationCloseCode.fromCode(1011), StationCloseCode.internalError);
+      expect(StationCloseCode.internalError.isTerminal, isFalse);
+      expect(StationCloseCode.internalError.boundsRetries, isTrue);
+      for (final c in [StationCloseCode.tokenRejected, StationCloseCode.heartbeatTimeout]) {
+        expect(c.boundsRetries, isFalse, reason: '$c');
+      }
       // Unknown or absent: an ordinary drop.
       expect(StationCloseCode.fromCode(1006), isNull);
+      expect(StationCloseCode.fromCode(1000), isNull);
       expect(StationCloseCode.fromCode(null), isNull);
+    });
+
+    test('every code decodes back to itself', () {
+      for (final c in StationCloseCode.values) {
+        expect(StationCloseCode.fromCode(c.code), c);
+      }
     });
   });
 }

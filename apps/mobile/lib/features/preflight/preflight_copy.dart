@@ -9,7 +9,6 @@ abstract final class PreflightCopy {
   static const joining = 'Joining…';
   static const finishingSoundCheck = 'Finishing the sound check…';
   static const checkAgain = 'Check again';
-  static const back = 'Back';
 
   static const pillOk = 'OK';
   static const pillGood = 'Good';
@@ -46,6 +45,8 @@ abstract final class PreflightCopy {
   static const network = 'Network';
   static const offline = 'No connection — you can’t take calls offline.';
   static const unreachable = 'We couldn’t reach Magick Agency.';
+  static String noAnswer(String? transport) =>
+      'Too slow for calls — you’re connected${transport == null ? '' : ' ($transport)'}, but Magick Agency took too long to answer. Move to better signal or Wi-Fi.';
   static String upload(double kbps) => kbps >= 1000 ? '${(kbps / 1000).toStringAsFixed(1)} Mbps up' : '${kbps.round()} kbps up';
   static String tooSlow(String measured) => 'Too slow for calls${measured.isEmpty ? '' : ' ($measured)'}. Move to better signal or Wi-Fi.';
   static String mayStutter(String measured) => '${measured.isEmpty ? 'Slow connection' : measured}. Calls may break up.';
@@ -93,5 +94,4 @@ abstract final class PreflightCopy {
   static const startFailed = 'Couldn’t open the station. Check your connection and try again.';
   static const backToCampaigns = 'Back to campaigns';
   static const cancel = 'Cancel';
-  static const thisCampaign = 'this campaign';
 }

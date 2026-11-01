@@ -2,7 +2,7 @@ import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'agent_workspace.dart';
+import '../../core/auth/app_gate.dart';
 import 'logic/stats_windows.dart';
 import 'performance_api.dart';
 
@@ -174,6 +174,7 @@ class PerformanceController extends Notifier<PerformanceState> {
       state = state.withSlot(key, StatsSlot(stats: stats));
     } on Exception catch (e) {
       if (stale()) return;
+      reportToGate(ref, e); // a 401 here is the end of the sign-in, as anywhere
       final slot = state.slots[key] ?? StatsSlot.empty;
       state = state.withSlot(key, slot.copyWith(error: errorMessage(e, 'Could not load these numbers.'), loading: false));
     }

@@ -63,6 +63,18 @@ void main() {
     expect(c.read(appGateProvider), const GateSignedOut());
   });
 
+  testWidgets('a sign-out held for a call does not leave the button stuck on "Signing out…"', (tester) async {
+    final c = await started(tester);
+    await pumpScreen(tester, c, const AccountPickerScreen());
+    c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, callActive: true, campaignId: 'c1'));
+    await tapVisible(tester, find.text('Sign out'));
+    await tester.pump();
+    await tester.pump();
+    expect(c.read(appGateProvider.notifier).signOutDeferred, isTrue);
+    expect(find.text('Signing out…'), findsNothing);
+    expect(tester.widget<TextButton>(find.widgetWithText(TextButton, 'Sign out')).onPressed, isNotNull);
+  });
+
   group('switcher sheet', () {
     Future<ProviderContainer> ready(WidgetTester tester) async {
       await tester.runAsync(() => SessionStore(h.store).writeLastAccount(const LastAccount(tenantId: 't1', accountId: 'a1')));

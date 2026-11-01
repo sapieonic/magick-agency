@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
-import 'package:magick_agency_agent/features/performance/agent_workspace.dart';
+import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/features/performance/logic/stats_windows.dart';
 import 'package:magick_agency_agent/features/performance/performance_api.dart';
 import 'package:magick_agency_agent/features/performance/performance_controller.dart';
@@ -126,7 +126,19 @@ class TestWorkspace extends Notifier<String?> {
 
 final testWorkspaceProvider = NotifierProvider<TestWorkspace, String?>(TestWorkspace.new);
 
+/// The gate, reduced to what these tabs tell it: the errors they report.
+class RecordingGate extends AppGateNotifier {
+  final List<Object> reported = [];
+
+  @override
+  AppGate build() => const GateLoading();
+
+  @override
+  void reportError(Object error) => reported.add(error);
+}
+
 List<Override> perfOverrides(FakePerformanceApi api, {DateTime? now, LocalCalendar calendar = ist}) => [
+      appGateProvider.overrideWith(RecordingGate.new),
       agentWorkspaceProvider.overrideWith((ref) => ref.watch(testWorkspaceProvider)),
       performanceApiProvider.overrideWithValue(api),
       statsClockProvider.overrideWithValue(() => now ?? fixedNow),

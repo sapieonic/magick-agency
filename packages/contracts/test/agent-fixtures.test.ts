@@ -104,6 +104,7 @@ const STATION = {
   ready_reconnect_live: fits<Core.AgencyStationReadyFrame>()(station.ready_reconnect_live),
   ready_reconnect_wrapup: fits<Core.AgencyStationReadyFrame>()(station.ready_reconnect_wrapup),
   ready_missed_release: fits<Core.AgencyStationReadyFrame>()(station.ready_missed_release),
+  ready_device_away: fits<Core.AgencyStationReadyFrame>()(station.ready_device_away),
   reserved: fits<Core.AgencyStationReservedFrame>()(station.reserved),
   countdown: fits<Core.AgencyStationCountdownFrame>()(station.countdown),
   bridged: fits<Core.AgencyStationBridgedFrame>()(station.bridged),
@@ -218,6 +219,8 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['station', 'ready_reconnect_live', 'active_attempt.state', 'attempt_states'],
   ['station', 'ready_reconnect_live', 'active_attempt.prior_attempts.0.outcome', 'attempt_outcomes'],
   ['station', 'ready_missed_release', 'missed_release.reason', 'release_reasons'],
+  ['station', 'ready_device_away', 'state', 'agent_states'],
+  ['station', 'ready_device_away', 'break_reason', 'reserved_break_codes'],
   ['station', 'reserved', 'attempt.prior_attempts.0.outcome', 'attempt_outcomes'],
   ['station', 'released_completed', 'reason', 'release_reasons'],
   ['station', 'released_no_answer', 'reason', 'release_reasons'],
@@ -233,6 +236,7 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['session', 'bootstrap_first_join', 'state', 'agent_states'],
   ['session', 'bootstrap_first_join', 'campaign_status', 'campaign_statuses'],
   ['session', 'bootstrap_retry_rehydrated', 'state', 'agent_states'],
+  ['session', 'bootstrap_retry_rehydrated', 'break_reason', 'reserved_break_codes'],
   ['session', 'session_state_break_queued', 'kind', 'session_kinds'],
   ['session', 'session_state_break_queued', 'pending_state', 'agent_states'],
   ['session', 'session_state_device_away', 'state', 'agent_states'],
@@ -302,7 +306,14 @@ describe('fixtures/agent/literals.json', () => {
 
   it('extracts the station close codes the console switches on', () => {
     expect(buildLiterals()['station_close_codes']).toMatchObject({
-      values: { TOKEN_REJECTED: 4401, SESSION_GONE: 4404, HEARTBEAT_TIMEOUT: 4408, SUPERSEDED: 4409 },
+      values: {
+        TOKEN_REJECTED: 4401,
+        SESSION_GONE: 4404,
+        HEARTBEAT_TIMEOUT: 4408,
+        SUPERSEDED: 4409,
+        INVALID_UPGRADE: 1008,
+        INTERNAL_ERROR: 1011,
+      },
     });
   });
 });

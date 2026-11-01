@@ -192,6 +192,18 @@ export interface AgencyStationReadyFrame {
   event: 'ready';
   session_id: string;
   state: AgencyAgentState;
+  /**
+   * The break's code when `state` is `break`, with the same meaning as
+   * {@link AgencyStationAgentStateFrame.break_reason}. Absent when not on break, or on a
+   * break with no recorded reason (a rehydrate after a restart).
+   *
+   * Without it a reconnect could say only "on break": the `agent_state` frame that named
+   * the reason is gone by then. That matters most for the mobile app, which is paused
+   * with `device_away` when it leaves the foreground and is often killed by the OS while
+   * paused: on relaunch this is how it knows to say "you left the app" rather than show
+   * a generic break.
+   */
+  break_reason?: string;
   /** Set when the socket reconnected onto an attempt that is still live. */
   active_attempt?: AgencyActiveAttempt;
   /**
@@ -573,13 +585,17 @@ export interface AgencyStationTokenResponse {
 }
 
 /**
- * Close codes the dialer runtime uses on the station socket, in the private-use range.
- * The one declaration: the server closes with these names and the console
- * switches on them.
+ * Close codes the dialer runtime uses on the station socket: its own in the private-use
+ * range, and the two standard ones it also sends. The one declaration: the server
+ * closes with these names and the clients switch on them.
  *
  * The distinction that matters to the console is **re-mint and retry** versus
  * **re-bootstrap**: retrying a dead session forever looks identical to a network
  * problem from the agent's side, and gives them nothing to act on.
+ *
+ * The two RFC 6455 codes the station also closes with (1008, 1011) are listed too, so a
+ * client can tell them from an ordinary drop. Any code not listed here is an ordinary
+ * drop: re-mint and retry.
  */
 export const AGENCY_STATION_CLOSE = {
   /** Token missing, expired, already used, or wrong. Re-mint and retry. */
@@ -601,6 +617,20 @@ export const AGENCY_STATION_CLOSE = {
   HEARTBEAT_TIMEOUT: 4408,
   /** Superseded by a newer socket for the same session. Do not retry. */
   SUPERSEDED: 4409,
+  /**
+   * RFC 6455 policy violation: the upgrade itself was refused before the station
+   * handler ran. A `client=` or `media=` this server does not speak (the close reason
+   * says which: `invalid_client` / `invalid_media`), or a session id that would escape
+   * the station path. **Do not retry**: the same upgrade is refused again, and a fresh
+   * token does not change it (the token is not consumed).
+   */
+  INVALID_UPGRADE: 1008,
+  /**
+   * RFC 6455 internal error: the server could not run the station handler (no agency
+   * runtime). Retryable, but a client should BOUND its retries on this code: unlike a
+   * network drop it says the server is up and broken, and retrying forever hides that.
+   */
+  INTERNAL_ERROR: 1011,
 } as const;
 
 /** One of {@link AGENCY_STATION_CLOSE}'s codes. */

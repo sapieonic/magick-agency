@@ -133,6 +133,15 @@ export interface AgencySessionConflict {
   /** Their state on that other campaign, so the copy can say whether they are mid-call. */
   state: AgencyAgentState;
   /**
+   * The live session to leave, the account it is in (often a sibling of this one;
+   * `leave` is scoped to the session's account) and that account's name (NULL when the
+   * read failed). Optional here only because a server older than these fields omits
+   * them.
+   */
+  session_id?: string;
+  account_id?: string;
+  account_name?: string | null;
+  /**
    * The dialer runtime's own sentence.
    *
    * The console does **not** render it on the ordinary path: it composes better

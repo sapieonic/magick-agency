@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:magick_agency_agent/core/station/station_copy.dart' show leftOfflineCopy;
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
 import 'station_harness.dart';
@@ -92,6 +93,18 @@ void main() {
       tea.onTap!();
       await settle(tester);
       expect(h.actions.calls, isNot(contains('takeBreak')));
+    });
+
+    testWidgets('Leave with no network: off the station here, and told so plainly', (tester) async {
+      final h = await pumpStation(tester, station());
+      h.actions.leaveOutcome = LeaveOutcome.leftOffline;
+      await tester.tap(find.byKey(const Key('leave')));
+      await settle(tester);
+      await tester.tap(find.widgetWithText(FilledButton, 'Leave station'));
+      await settle(tester);
+      expect(find.text('campaigns-home'), findsOneWidget);
+      expect(find.byKey(const Key('left-offline')), findsOneWidget);
+      expect(find.text(leftOfflineCopy), findsOneWidget);
     });
 
     testWidgets('a refused leave keeps the agent here, with the reason', (tester) async {
@@ -359,6 +372,7 @@ void main() {
       await tester.tap(find.text('Don’t call in this campaign'));
       await settle(tester);
       expect(h.actions.calls, contains('markDnc'));
+      expect(h.actions.args['markDnc'], [null, 'a1'], reason: 'the call the dialog named');
     });
 
     testWidgets('Break after this call queues a break; the queued pill cancels it', (tester) async {

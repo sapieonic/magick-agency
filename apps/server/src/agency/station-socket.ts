@@ -5,11 +5,13 @@ import { agencyAgentSessionRepository } from '../db/repositories/agency.reposito
 import type { AgencyRuntime } from './runtime.js';
 import { AGENT_LEASE_MS } from './agent-state-machine.js';
 import type {
+  AgencyAgentState,
   AgencyStationClientFrame,
   AgencyStationMediaFormat,
   AgencyStationPingFrame,
 } from '@magick-agency/contracts/agency';
-import { AGENCY_STATION_CLOSE } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/contracts/agency';
+import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
 import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
 
@@ -19,15 +21,36 @@ import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQ
  *
  * The console's station socket is served at `/proxy/agency/station/:sessionId` by
  * `proxyAgencyStationRoutes` (`api/routes/proxy-agency-station.routes.ts`), which makes
- * its two refusals — a tokenless upgrade (4401) and a path-escaping session id (1008)
- * — and then calls `handleStationSocket` from this module.
+ * its refusals — a tokenless upgrade (4401), a path-escaping session id and an unknown
+ * `client=` / `media=` (1008, `INVALID_UPGRADE`) — and then calls `handleStationSocket`
+ * from this module.
  *
  * `runtime` may be `null` when the app is built without a context (the routing-only
- * test builds `buildApp({ ctx: null })`); such a socket is closed with 1011 rather
- * than dereferencing a missing runtime.
+ * test builds `buildApp({ ctx: null })`); such a socket is closed with 1011
+ * (`INTERNAL_ERROR`) rather than dereferencing a missing runtime.
  */
 
 const log = createChildLogger({ component: 'agency-routes' });
+
+/**
+ * The break's code to tell a client beside `state` (`ready.break_reason`, the bootstrap's
+ * `break_reason`): the session row's reason when `state` is `break`, else nothing.
+ *
+ * `row` is the session as it was read for this attach or join, BEFORE the rehydrate that
+ * produced `state`. Redis holds no reason, so the row is the only record of it, and every
+ * write of a `break` with a reason (`setState(…, 'break', code)`: the break route, the
+ * device-away pause, a queued break applied at the end of wrap-up) puts it there. A
+ * soft-phone session's only break is `soft_phone`. A row with no reason (a rehydrate
+ * after a restart) gives none: the client then shows a plain break.
+ */
+export function breakReasonFor(
+  state: AgencyAgentState,
+  row: Pick<AgencyAgentSessionRecord, 'kind' | 'break_reason'>,
+): string | undefined {
+  if (state !== 'break') return undefined;
+  if (row.kind === 'softphone') return SOFTPHONE_BREAK_REASON;
+  return row.break_reason ?? undefined;
+}
 
 /**
  * Register `GET /station/:sessionId` (`websocket: true`) on `app`, handing each
@@ -46,13 +69,13 @@ export function registerStationSocket(app: FastifyInstance, runtime: AgencyRunti
     Querystring: { token?: string; media?: string };
   }>) => {
     if (!runtime) {
-      try { socket.close(1011, 'agency_runtime_unavailable'); } catch { /* ignore */ }
+      try { socket.close(AGENCY_STATION_CLOSE.INTERNAL_ERROR, 'agency_runtime_unavailable'); } catch { /* ignore */ }
       return;
     }
     // The same refusal as the served path (`proxyAgencyStationRoutes`): 1008 before attach.
     const upgrade = parseStationUpgradeQuery(request.query);
     if (!upgrade.ok) {
-      try { socket.close(1008, upgrade.reason); } catch { /* ignore */ }
+      try { socket.close(AGENCY_STATION_CLOSE.INVALID_UPGRADE, upgrade.reason); } catch { /* ignore */ }
       return;
     }
     void handleStationSocket(socket, request.params.sessionId, request.query?.token, runtime, upgrade.query);
@@ -499,10 +522,14 @@ export async function handleStationSocket(
   // `bridged` handler plays the audible connect cue, and a page reload starts with
   // an empty dedupe set, so it would fire mid-conversation. `active_attempt`
   // carries `bridged_at`, which is the authority for a resumed panel.
+  // The break's code beside the state, so a client that lost the `agent_state` frame
+  // naming it (the mobile app relaunched after the OS killed it while paused) can say why.
+  const breakReason = breakReasonFor(resumedState, session);
   runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,
     state: resumedState,
+    ...(breakReason ? { break_reason: breakReason } : {}),
     ...(activeAttempt ? { active_attempt: activeAttempt } : {}),
     ...(activeWrapup ? { active_wrapup: activeWrapup } : {}),
     // Only meaningful when nothing was resumed: an attempt that ended while the

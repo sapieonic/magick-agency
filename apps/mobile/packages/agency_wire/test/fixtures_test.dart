@@ -21,6 +21,7 @@ final Map<String, Map<String, Decoder>> decoders = {
       'ready_reconnect_live',
       'ready_reconnect_wrapup',
       'ready_missed_release',
+      'ready_device_away',
       'reserved',
       'countdown',
       'bridged',

@@ -86,12 +86,6 @@ class AudioOrchestrator {
 
   AudioView get view => _view;
 
-  /// The attempt the engine is set up for, if any.
-  String? get callId => _callId;
-
-  /// Completes when every queued lifecycle call has run (tests).
-  Future<void> get settled => _tail;
-
   /// The station opened (the app is on screen): start the on-duty service
   /// first (Android refuses it from the background), then pre-warm.
   void open(audio.OnDutyNotification notification) {
@@ -312,13 +306,24 @@ class AudioOrchestrator {
           _setView(_copy(micProblem: _baseline));
         }
       case audio.CallSystemAction(kind: audio.CallActionKind.end, :final callId):
-        if (callId == null || callId == _callId) _onSystemHangUp();
+        // Android's notification names no call: it is this call only while
+        // there is one. With none (ended, or moved to another device) there is
+        // nothing here to hang up.
+        if (_callId != null && (callId == null || callId == _callId)) _onSystemHangUp();
       case audio.CallSystemAction(kind: audio.CallActionKind.mute, :final muted):
         // The plugin already applied it to the uplink; mirror it.
         _autoMuted = false;
         _setView(_copy(muted: muted ?? !_view.muted));
       case audio.CallSystemReset():
         if (_callId != null) _onSystemHangUp();
+      case audio.OnDutyServiceStopped():
+        // Android stopped the service behind the app's back: say so, and start it
+        // again on the next return to the app ([resumed]). While a start is in
+        // flight its own result decides.
+        if (!_opened || !_serviceUp) break;
+        _serviceUp = false;
+        _serviceProblem = MicProblem.serviceStopped;
+        if (_view.micProblem == MicProblem.none) _setView(_copy(micProblem: _serviceProblem));
       case audio.AudioSessionActivation() || audio.InputLevel() || audio.JitterStats():
         break;
     }

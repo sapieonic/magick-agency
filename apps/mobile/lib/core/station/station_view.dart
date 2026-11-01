@@ -487,14 +487,37 @@ abstract interface class StationActions {
   /// Debounced and saved by the core; call on every keystroke.
   void updateNotes(String text);
   Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt});
-  Future<void> markDnc({String? reason});
-  Future<void> leave();
+  /// Marks the live call Do Not Call. [attemptId] is the call the agent
+  /// confirmed for: when the live call is another one by then, nothing is
+  /// marked and [StationView.actionError] says so.
+  Future<void> markDnc({String? reason, String? attemptId});
+
+  /// Leaves the station. [LeaveOutcome.stayed] (the refusal is in
+  /// [StationView.actionError]) keeps the agent on it.
+  Future<LeaveOutcome> leave();
   Future<void> reconnect();
 
   /// After 4409: take the station back on this device.
   Future<void> useThisDevice();
+
+  /// The agent is leaving a station that is over on this phone (4404, 4409,
+  /// or one that cannot open): forget it here. Nothing is sent.
+  Future<void> dismiss();
   void dismissActionError();
   void dismissMissedRelease();
+}
+
+/// How [StationActions.leave] ended.
+enum LeaveOutcome {
+  /// The server took the agent off the station.
+  left,
+
+  /// The server could not be reached: the station was closed on this phone
+  /// anyway (its socket closing is what takes the agent off duty server-side).
+  leftOffline,
+
+  /// Refused, or a call is live: still on the station.
+  stayed,
 }
 
 /// How starting a station ended. The preflight screen shows the conflicts as

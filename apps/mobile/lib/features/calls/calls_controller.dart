@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
-import '../performance/agent_workspace.dart';
+import '../../core/auth/app_gate.dart';
 import '../performance/performance_api.dart';
 import '../performance/performance_controller.dart';
 import 'logic/attempt_filters.dart';
@@ -167,6 +167,7 @@ class AttemptsController extends Notifier<AttemptsState> {
       state = AttemptsState(filters: filters, status: AttemptsStatus.ready, rows: page.rows, nextCursor: page.nextCursor);
     } on Exception catch (e) {
       if (!ref.mounted || mine != _generation) return;
+      reportToGate(ref, e); // a 401 here is the end of the sign-in, as anywhere
       final message = errorMessage(e, 'We couldn’t load these calls.');
       state = keepRows
           // The rows on screen are still good: keep them, say the refresh failed.
@@ -199,6 +200,7 @@ class AttemptsController extends Notifier<AttemptsState> {
       );
     } on Exception catch (e) {
       if (!ref.mounted || mine != _generation) return;
+      reportToGate(ref, e);
       state = state.copyWith(loadingMore: false, moreError: errorMessage(e, 'We couldn’t load any more calls.'));
     }
   }

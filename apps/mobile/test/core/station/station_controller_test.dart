@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show SocketException;
 
+import 'package:agent_audio/agent_audio.dart' as audio;
 import 'package:fake_async/fake_async.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,7 @@ import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
 import 'controller_harness.dart';
+import 'fixtures.dart';
 
 void main() {
   group('join', () {
@@ -19,7 +21,7 @@ void main() {
         final app = App(async);
         expect(app.start(), isA<StationStarted>());
         final join = app.requests('POST', '/proxy/agency/sessions').single;
-        expect(join.body, {'campaign_id': 'camp-1', 'client_kind': 'mobile'});
+        expect(join.body, {'campaign_id': 'camp-1'});
         expect(app.socket.url.toString(), 'wss://api.test/proxy/agency/station?token=boot&client=mobile&media=alaw8');
         expect(app.view!.link, StationLink.open);
         expect(app.view!.campaignName, 'Renewals');
@@ -59,8 +61,32 @@ void main() {
           expect(r.campaignName, 'Q3 Winback');
           expect(r.stateLabel, label);
           expect(r.canLeave, canLeave);
+          expect(r.sessionId, '', reason: 'an older server names no session');
           expect(app.view, isNull);
         }
+        app.dispose();
+      });
+    });
+
+    test('409 session_on_other_campaign names the session and its account: both are carried to the leave', () {
+      fakeAsync((async) {
+        final app = App(async);
+        app.routes['POST /proxy/agency/sessions'] = (_) => json(409, {
+              'error': 'Conflict',
+              'code': 'session_on_other_campaign',
+              'campaign_id': 'camp-9',
+              'campaign_name': 'Q3 Winback',
+              'state': 'break',
+              'session_id': 'other-1',
+              'account_id': 'acc-2',
+              'account_name': 'North',
+            });
+        final r = app.start() as StationElsewhere;
+        expect((r.sessionId, r.accountId, r.accountName, r.canLeave), ('other-1', 'acc-2', 'North', true));
+        app.routes['POST /proxy/agency/sessions/other-1/leave'] = (_) => json(200, stateBody('offline'));
+        app.routes['POST /proxy/agency/sessions'] = (_) => json(200, bootstrapJson());
+        expect(app.run(app.controller.leaveOtherAndStart(r, 'camp-1', campaignName: 'Renewals')), isA<StationStarted>());
+        expect(app.requests('POST', '/proxy/agency/sessions/other-1/leave').single.headers['x-account-id'], 'acc-2');
         app.dispose();
       });
     });
@@ -125,18 +151,14 @@ void main() {
       });
     });
 
-    test('leaveOtherAndStart finds the session id by rejoining the other campaign, and stops if it is mid-call', () {
+    test('leaveOtherAndStart with no session named (an older server): says so, never rejoins in the wrong account', () {
       fakeAsync((async) {
         final app = App(async);
-        app.routes['POST /proxy/agency/sessions'] = (r) => (r.body! as Map)['campaign_id'] == 'camp-9'
-            ? json(200, {...bootstrapJsonFor('camp-9'), 'state': 'on_call'})
-            : json(200, bootstrapJsonFor('camp-1'));
         const other = StationElsewhere(sessionId: '', campaignId: 'camp-9', campaignName: 'Q3 Winback', stateLabel: 'On break', canLeave: true);
         final r = app.run(app.controller.leaveOtherAndStart(other, 'camp-1', campaignName: 'Renewals'));
-        expect(r, isA<StationElsewhere>());
-        expect((r as StationElsewhere).canLeave, isFalse);
-        expect(r.sessionId, 'sess-camp-9');
-        expect(app.sent.where((s) => s.path.endsWith('/leave')), isEmpty);
+        expect(r, isA<StationRefused>());
+        expect((r as StationRefused).message, leaveOtherUnknownCopy('Q3 Winback'));
+        expect(app.sent, isEmpty, reason: 'no join of the other campaign, no leave');
         app.dispose();
       });
     });
@@ -317,6 +339,147 @@ void main() {
       });
     });
 
+    test('4409 mid-call: the notification drops Mute / Hang up, and nothing here can hang up the call that moved', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        app.routes['POST /proxy/agency/attempts/att-1/hangup'] =
+            (_) => json(200, {'campaign_id': 'camp-1', 'attempt_id': 'att-1', 'state': 'bridged'});
+        expect(app.engine.notification!.call, isNotNull);
+        app.socket.serverClose(4409);
+        async.flushMicrotasks();
+        // The last word to the notification before the service stopped had no call in it.
+        expect(app.engine.notifications.last.call, isNull);
+        expect(app.engine.calls.last, 'fgs.stop');
+        // Android's notification Hang up names no call; the button and the action are both dead here.
+        app.engine.emitEvent(const audio.CallSystemAction(kind: audio.CallActionKind.end, source: audio.CallActionSource.notification));
+        async.flushMicrotasks();
+        app.run(app.controller.hangUp());
+        expect(app.requests('POST', '/proxy/agency/attempts/att-1/hangup'), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('4409: the on-duty service and the audio go at once; Use this phone starts them again', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.socket.serverClose(4409);
+        async.flushMicrotasks();
+        expect(app.engine.lifecycle.skip(2), ['release', 'fgs.stop']);
+        expect(app.engine.notification, isNull);
+        expect(app.wakeLock.on, isFalse);
+        expect(app.view!.link, StationLink.superseded, reason: 'the screen still says why');
+        app.run(app.controller.useThisDevice());
+        async.flushMicrotasks();
+        expect(app.engine.lifecycle.skip(4), ['fgs.start', 'prepare']);
+        expect(app.view!.link, StationLink.open);
+        app.dispose();
+      });
+    });
+
+    test('4404: closed on this phone at once (socket, service, audio, listeners); the screen says why until dismissed', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.socket.serverClose(4404);
+        async.flushMicrotasks();
+        expect(app.engine.lifecycle.skip(2), ['release', 'fgs.stop']);
+        expect(app.wakeLock.on, isFalse);
+        expect(app.view!.link, StationLink.sessionGone);
+        app.lifecycle.hide();
+        app.lifecycle.show();
+        async.elapse(const Duration(minutes: 1));
+        expect(app.connector.attempts, 1, reason: 'nothing reconnects a session that is gone');
+        expect(app.sent.where((r) => r.path.endsWith('/break')), isEmpty);
+        app.run(app.controller.dismiss());
+        expect(app.view, isNull);
+        expect(async.pendingTimers.where((t) => t.duration > Duration.zero), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('1008: the server refuses this app’s socket — no retry, a terminal message, off duty, the session left', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.routes['POST /proxy/agency/sessions/sess-1/leave'] = (_) => json(200, stateBody('offline'));
+        app.socket.serverClose(1008, 'invalid_client');
+        async.elapse(const Duration(minutes: 1));
+        expect(app.connector.attempts, 1);
+        expect(app.view!.fatal, upgradeRefusedCopy);
+        expect(app.container.read(stationSignalsProvider), const StationSignals());
+        expect(app.engine.calls, contains('fgs.stop'));
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-1/leave'), hasLength(1));
+        app.run(app.controller.dismiss());
+        expect(app.view, isNull);
+        app.dispose();
+      });
+    });
+
+    test('1011 three times running: the station gives up, and coming back to the app leaves that to the agent', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        for (var i = 0; i < 3; i++) {
+          app.socket.serverClose(1011);
+          async.elapse(const Duration(seconds: 3));
+        }
+        expect(app.view!.link, StationLink.disconnected);
+        final attempts = app.connector.attempts;
+        app.lifecycle.hide();
+        app.lifecycle.show();
+        async.elapse(const Duration(seconds: 30));
+        expect(app.connector.attempts, attempts, reason: 'a give-up is the agent’s to undo');
+        app.run(app.controller.reconnect());
+        async.flushMicrotasks();
+        expect(app.view!.link, StationLink.open);
+        app.dispose();
+      });
+    });
+
+    test('ready on break states its reason: the server’s device_away is the away pause, a chosen break is not', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('break', extra: {'break_reason': 'device_away'});
+        expect(app.view!.onBreak!.isDeviceAway, isTrue);
+        app.socket.serverClose(1006);
+        async.elapse(const Duration(seconds: 1));
+        app.readyFrame('break', extra: {'break_reason': 'tea'});
+        expect(app.view!.onBreak!.isDeviceAway, isFalse);
+        expect(app.view!.onBreak!.label, 'Tea break');
+        app.dispose();
+      });
+    });
+
+    test('a restart on a device_away break: the join’s break_reason stands in for a ready that states none', () {
+      fakeAsync((async) {
+        final app = App(async);
+        app.routes['POST /proxy/agency/sessions'] = (_) => json(200, {...bootstrapJson(state: 'break'), 'break_reason': 'device_away'});
+        app.start();
+        app.readyFrame('break');
+        expect(app.view!.onBreak!.isDeviceAway, isTrue);
+        app.dispose();
+      });
+    });
+
+    test('a pong that moves the clock estimate a little does not rewrite the call notification', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        app.socket.serverPong();
+        async.flushMicrotasks();
+        final updates = app.engine.calls.where((c) => c == 'fgs.update').length;
+        app.socket.serverPong(serverOffsetMs: 60);
+        app.socket.serverPong(serverOffsetMs: 120);
+        async.flushMicrotasks();
+        expect(app.controller.stationState.clockOffsetMs, greaterThan(0), reason: 'the estimate did move');
+        expect(app.engine.calls.where((c) => c == 'fgs.update').length, updates,
+            reason: 'the call timer follows the view’s offset, which moves in 200 ms steps');
+        app.dispose();
+      });
+    });
+
     test('weak connection after two missed pings', () {
       fakeAsync((async) {
         final app = App(async)..start();
@@ -452,6 +615,38 @@ void main() {
       });
     });
 
+    test('DNC confirmed for a call that is no longer the live one marks nothing, and says so', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-2');
+        app.run(app.controller.markDnc(attemptId: 'att-1'));
+        expect(app.sent.where((r) => r.path.endsWith('/dnc')), isEmpty);
+        expect(app.view!.actionError, dncCallChangedCopy);
+        app.dispose();
+      });
+    });
+
+    test('an answer that lands after its station closed never shows in the next one', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('offline');
+        final answer = Completer<http.Response>();
+        app.routes['POST /proxy/agency/sessions/sess-1/available'] = (_) => answer.future;
+        final going = app.controller.goAvailable();
+        async.flushMicrotasks();
+        app.socket.serverClose(4404);
+        app.run(app.controller.reconnect());
+        async.flushMicrotasks();
+        expect(app.view!.link, StationLink.open);
+        answer.complete(json(409, {'code': 'no_station', 'message': 'Open the station socket before going available.'}));
+        app.run(going);
+        app.readyFrame('offline'); // anything that re-renders the new station
+        expect(app.view!.actionError, isNull);
+        expect(app.view!.busy, StationBusy.none);
+        app.dispose();
+      });
+    });
+
     test('DNC: campaign scope, only on a live call, failures in words', () {
       fakeAsync((async) {
         final app = App(async)..start();
@@ -519,7 +714,7 @@ void main() {
         });
       });
 
-      test('saved: marks the call, sends the notes typed so far, clears them from the device', () {
+      test('saved: marks the call, sends the notes typed so far, keeps the saved text on the device', () {
         fakeAsync((async) {
           final app = App(async)..start();
           app.inWrapup('att-1');
@@ -543,7 +738,7 @@ void main() {
           async.elapse(const Duration(seconds: 3));
           expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes'), isEmpty,
               reason: 'the disposition carried the notes; the pending autosave is dropped');
-          expect(app.store.entries, isEmpty);
+          expect(app.store.entries['att-1']?.notes, 'Wants a quote', reason: 'kept until the sweep, as the server has it');
           app.dispose();
         });
       });
@@ -573,7 +768,7 @@ void main() {
           expect(app.controller.stationState.currentAttemptId, 'att-1');
           async.elapse(const Duration(seconds: 2));
           expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').single.body, {'notes': 'Wants a quote, call after 6'});
-          expect(app.store.entries, isEmpty);
+          expect(app.store.entries['att-1']?.notes, 'Wants a quote, call after 6');
           app.dispose();
         });
       });
@@ -637,7 +832,7 @@ void main() {
     });
 
     group('notes autosave', () {
-      test('saving → saved after a 2 s pause, and the device copy is cleared once the server has it', () {
+      test('saving → saved after a 2 s pause; the device copy becomes the saved text', () {
         fakeAsync((async) {
           final app = App(async)..start();
           app.onCall('att-1');
@@ -656,7 +851,7 @@ void main() {
           expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').single.body, {'notes': 'Asked about EMI'});
           expect(app.view!.notes.status, NotesStatus.saved);
           expect(app.view!.notes.savedAt, app.now());
-          expect(app.store.entries, isEmpty);
+          expect(app.store.entries['att-1']?.notes, 'Asked about EMI');
           app.dispose();
         });
       });
@@ -677,7 +872,7 @@ void main() {
           fail = false;
           async.elapse(const Duration(seconds: 3));
           expect(app.view!.notes.status, NotesStatus.saved);
-          expect(app.store.entries, isEmpty);
+          expect(app.store.entries['att-1']?.notes, 'x');
           app.dispose();
         });
       });
@@ -718,6 +913,61 @@ void main() {
           app.dispose();
         });
       });
+
+      void notesRoute(App app, String id) => app.routes['POST /proxy/agency/attempts/$id/notes'] =
+          (r) => json(200, {'attempt_id': id, 'notes': (r.body! as Map)['notes'], 'updated_at': '2026-11-01T09:00:30.000Z'});
+
+      test('the same call back on screen (released, then its wrap-up) shows the saved notes, and the next keystroke keeps them', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.onCall('att-1');
+          notesRoute(app, 'att-1');
+          app.controller.updateNotes('Asked about EMI');
+          async.elapse(const Duration(seconds: 2));
+          expect(app.view!.notes.status, NotesStatus.saved);
+          // Released with no disposition owed: nothing on screen for a moment…
+          app.releasedFrame('att-1', requiresDisposition: false);
+          expect(app.controller.stationState.currentAttemptId, isNull);
+          expect(app.view!.notes.text, '');
+          // …then the wrap-up frame brings the same call back.
+          app.agentStateFrame('wrapup');
+          app.wrapupFrame('att-1');
+          async.flushMicrotasks();
+          expect(app.view!.notes.text, 'Asked about EMI');
+          app.controller.updateNotes('Asked about EMI, call after 6');
+          async.elapse(const Duration(seconds: 2));
+          expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').last.body, {'notes': 'Asked about EMI, call after 6'});
+          app.dispose();
+        });
+      });
+
+      test('a restart rejoined into the wrap-up shows the notes the server already has', () {
+        fakeAsync((async) {
+          final app = App(async)..start();
+          app.onCall('att-1');
+          notesRoute(app, 'att-1');
+          app.controller.updateNotes('Asked about EMI');
+          async.elapse(const Duration(seconds: 2));
+          // A new session, with nothing in memory: as after the app was killed.
+          app.socket.serverClose(4404);
+          app.run(app.controller.reconnect());
+          async.flushMicrotasks();
+          app.readyFrame('wrapup', extra: {
+            'active_wrapup': {
+              'attempt_id': 'att-1',
+              'ends_at': '2026-11-01T09:01:00.000Z',
+              'seconds_total': 30,
+              'auto_return': true,
+              'requires_disposition': true,
+              'disposition_submitted': false,
+            },
+          });
+          async.flushMicrotasks();
+          expect(app.controller.stationState.currentAttemptId, 'att-1');
+          expect(app.view!.notes.text, 'Asked about EMI');
+          app.dispose();
+        });
+      });
     });
 
     test('leaving sends the notes the autosave was still holding, rather than dropping them', () {
@@ -733,7 +983,7 @@ void main() {
         async.flushMicrotasks();
         expect(app.view, isNull);
         expect(app.requests('POST', '/proxy/agency/attempts/att-1/notes').single.body, {'notes': 'Call back after 6'});
-        expect(app.store.entries, isEmpty);
+        expect(app.store.entries['att-1']?.notes, 'Call back after 6');
         expect(async.pendingTimers.where((t) => t.duration > Duration.zero), isEmpty);
         app.dispose();
       });
@@ -849,12 +1099,39 @@ void main() {
       });
     });
 
+    test('leave with no network: closed on this phone anyway, and the agent is told', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.routes['POST /proxy/agency/sessions/sess-1/leave'] = (_) => throw const SocketException('offline');
+        expect(app.run(app.controller.leave()), LeaveOutcome.leftOffline);
+        async.flushMicrotasks();
+        expect(app.view, isNull);
+        expect(app.socket.closedWith, 1000);
+        expect(app.engine.calls, contains('fgs.stop'));
+        app.dispose();
+      });
+    });
+
+    test('...but never with a call on: the station stays, and says why', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        app.routes['POST /proxy/agency/sessions/sess-1/leave'] = (_) => throw const SocketException('offline');
+        expect(app.run(app.controller.leave()), LeaveOutcome.stayed);
+        expect(app.view, isNotNull);
+        expect(app.view!.actionError, isNotNull);
+        expect(app.engine.calls, isNot(contains('fgs.stop')));
+        app.dispose();
+      });
+    });
+
     test('a refused leave stays on duty and says why', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.routes['POST /proxy/agency/sessions/sess-1/leave'] =
             (_) => json(409, {'code': 'agent_on_live_call', 'message': 'Finish the call first.'});
-        app.run(app.controller.leave());
+        expect(app.run(app.controller.leave()), LeaveOutcome.stayed);
         expect(app.view!.actionError, 'Finish the call first.');
         app.dispose();
       });

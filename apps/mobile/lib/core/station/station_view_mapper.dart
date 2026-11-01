@@ -80,8 +80,9 @@ class StationViewMapper {
 
     BreakInfo? onBreak;
     if (phase == AgentPhase.onBreak) {
-      // `ready` cannot say why the agent is on break; a pause this app asked
-      // for while away is the honest reading until a frame says otherwise.
+      // The server's reason first (it survives the app being killed). Only
+      // when it sent none (a server older than the field) is a pause this app
+      // asked for while away the honest reading.
       final code = s.breakReasonCode ?? (awayPauseRequested ? wire.ReservedBreakCode.deviceAway.wire : '');
       onBreak = BreakInfo(code: code, label: breakLabel(code, breakReasons), since: phaseSince);
     }
@@ -290,13 +291,16 @@ class StationViewMapper {
   }
 }
 
-/// The shell's facts, from the view. A session the server ended (4404) or
-/// another device took (4409) holds nothing here: no duty and no call, even
-/// when the last phase seen was mid-call (the call moved with the session).
-/// The station screen still shows why; the tab bar, sign-out and account
-/// switch are free again.
+/// The shell's facts, from the view. A session the server ended (4404),
+/// another device took (4409) or that cannot open here ([StationView.fatal])
+/// holds nothing: no duty and no call, even when the last phase seen was
+/// mid-call (the call moved with the session). The station screen still shows
+/// why; the tab bar, sign-out and account switch are free again.
 StationSignals signalsOf(StationView? view) {
-  if (view == null || view.link == StationLink.sessionGone || view.link == StationLink.superseded) {
+  if (view == null ||
+      view.link == StationLink.sessionGone ||
+      view.link == StationLink.superseded ||
+      view.fatal != null) {
     return const StationSignals();
   }
   return StationSignals(

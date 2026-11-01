@@ -54,7 +54,13 @@ class _AccountPickerScreenState extends ConsumerState<AccountPickerScreen> {
 
   Future<void> _signOut() async {
     setState(() => _signingOut = true);
-    await _gate.signOut();
+    try {
+      await _gate.signOut();
+    } finally {
+      // Signed out, this screen is gone; a sign-out held for a call (or one
+      // that failed) must not leave the button stuck on "Signing out…".
+      if (mounted) setState(() => _signingOut = false);
+    }
   }
 
   @override

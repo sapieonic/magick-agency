@@ -86,7 +86,7 @@ class IdleLinkBanner extends ConsumerWidget {
           body: StationCopy.disconnectedDetail,
           action: FilledButton(
             onPressed: busy ? null : () => ref.read(stationActionsProvider).reconnect(),
-            style: FilledButton.styleFrom(backgroundColor: t.danger, foregroundColor: t.onAccent),
+            style: FilledButton.styleFrom(backgroundColor: t.dangerDeep, foregroundColor: t.onAccent),
             child: Text(StationCopy.reconnect, style: text.labelLarge!.copyWith(color: t.onAccent)),
           ),
         );

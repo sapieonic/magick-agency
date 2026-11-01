@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:agency_wire/agency_wire.dart';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:magick_agency_agent/core/lifecycle/lifecycle_policy.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
@@ -100,18 +103,108 @@ void main() {
       });
     });
 
-    test('even if the pause request never lands, ready reports the break as the away pause', () {
+    test('a pause that fails is asked for again while away, and stops once it lands', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.readyFrame('available');
-        app.routes['POST $_breakPath'] = (_) => json(503, {'message': 'down'});
+        app.agentStateFrame('available');
+        var replies = <Reply>[
+          (_) => json(409, {'code': 'state_changing', 'message': 'Try again.'}),
+          (_) => json(503, {'message': 'down'}),
+          (_) => json(200, stateBody('break', breakReason: 'device_away')),
+        ];
+        app.routes['POST $_breakPath'] = (r) => replies.removeAt(0)(r);
         app.lifecycle.hide();
         async.flushMicrotasks();
-        app.socket.serverClose(4408);
+        expect(app.requests('POST', _breakPath), hasLength(1));
+        async.elapse(const Duration(seconds: 1));
+        expect(app.requests('POST', _breakPath), hasLength(2));
+        async.elapse(const Duration(seconds: 2));
+        expect(app.requests('POST', _breakPath), hasLength(3));
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('POST', _breakPath), hasLength(3), reason: 'landed: no more asks');
+        expect(app.socket.closed, isFalse, reason: 'it landed, so the station stays open');
+        replies = [];
+        app.dispose();
+      });
+    });
+
+    test('a pause that never lands: within 10 s the station socket is closed, and opens again on return', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(503, {'message': 'down'});
+        final first = app.socket;
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        async.elapse(const Duration(seconds: 9));
+        expect(first.closed, isFalse);
+        async.elapse(const Duration(seconds: 1));
+        // The server's close handler now takes the agent out of the pool.
+        expect(first.closed, isTrue);
+        expect(first.closedWith, 1000);
+        final asked = app.requests('POST', _breakPath).length;
+        expect(asked, greaterThan(1));
+        async.elapse(const Duration(minutes: 5));
+        expect(app.connector.attempts, 1, reason: 'nothing reconnects while away');
+        expect(app.requests('POST', _breakPath), hasLength(asked), reason: 'nor asks again');
+        expect(app.notifier.calls.last, 'paused');
+
         app.lifecycle.show();
         async.flushMicrotasks();
-        app.readyFrame('break');
-        expect(app.view!.onBreak!.isDeviceAway, isTrue);
+        expect(app.connector.attempts, 2);
+        app.readyFrame('offline');
+        expect(app.view!.phase, AgentPhase.offline);
+        app.dispose();
+      });
+    });
+
+    test('a pause refused outright closes the station at once', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(400, {'code': 'bad_request', 'message': 'no'});
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath), hasLength(1));
+        expect(app.socket.closed, isTrue);
+        app.dispose();
+      });
+    });
+
+    test('back before the bound with the pause never confirmed: available is said again, so the agent really rings', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(503, {'message': 'down'});
+        app.routes['POST /proxy/agency/sessions/sess-1/available'] = (_) => json(200, stateBody('available'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        async.elapse(const Duration(milliseconds: 1500));
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-1/available'), hasLength(1));
+        expect(app.socket.closed, isFalse);
+        final asked = app.requests('POST', _breakPath).length;
+        async.elapse(const Duration(seconds: 30));
+        expect(app.requests('POST', _breakPath), hasLength(asked), reason: 'back: no more asks');
+        app.dispose();
+      });
+    });
+
+    test('back after a pause that landed: nothing is re-asserted (the agent resumes from the Away card)', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        app.routes['POST $_breakPath'] = (_) => json(200, stateBody('break', breakReason: 'device_away'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', '/proxy/agency/sessions/sess-1/available'), isEmpty);
         app.dispose();
       });
     });
@@ -134,6 +227,49 @@ void main() {
         expect(app.engine.calls, isNot(contains('stop')), reason: 'the audio keeps running');
 
         app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', '$_breakPath/cancel'), hasLength(1));
+        expect(app.view!.queuedBreak, isNull);
+        app.dispose();
+      });
+    });
+
+    test('a pause asked for at once that the server queued (a call came in) is cancelled on return too', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        final answer = Completer<http.Response>();
+        app.routes['POST $_breakPath'] = (_) => answer.future;
+        app.routes['POST $_breakPath/cancel'] = (_) => json(200, stateBody('on_call'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        // A call was reserved while the pause was on its way: the server queues it.
+        app.reserved('att-1');
+        app.agentStateFrame('reserved');
+        answer.complete(json(200, stateBody('reserved', breakReason: 'device_away', pending: 'break')));
+        async.flushMicrotasks();
+        expect(app.view!.queuedBreak?.code, 'device_away');
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', '$_breakPath/cancel'), hasLength(1));
+        app.dispose();
+      });
+    });
+
+    test('a queued pause still in flight when the agent comes back is cancelled when it lands', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        final answer = Completer<http.Response>();
+        app.routes['POST $_breakPath'] = (_) => answer.future;
+        app.routes['POST $_breakPath/cancel'] = (_) => json(200, stateBody('on_call'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        app.lifecycle.show();
+        async.flushMicrotasks();
+        expect(app.requests('POST', '$_breakPath/cancel'), isEmpty, reason: 'nothing queued yet to cancel');
+        answer.complete(json(200, stateBody('on_call', breakReason: 'device_away', pending: 'break')));
         async.flushMicrotasks();
         expect(app.requests('POST', '$_breakPath/cancel'), hasLength(1));
         expect(app.view!.queuedBreak, isNull);

@@ -120,7 +120,9 @@
       "TOKEN_REJECTED": 4401,
       "SESSION_GONE": 4404,
       "HEARTBEAT_TIMEOUT": 4408,
-      "SUPERSEDED": 4409
+      "SUPERSEDED": 4409,
+      "INVALID_UPGRADE": 1008,
+      "INTERNAL_ERROR": 1011
     }
   },
   "station_server_events": {
@@ -191,7 +193,8 @@
       "attempt_not_live",
       "campaign_not_running",
       "feature_disabled",
-      "not_staffed"
+      "not_staffed",
+      "state_changing"
     ]
   },
   "roles": {
@@ -220,6 +223,102 @@
     "values": [
       "identity_in_use",
       "address_required"
+    ]
+  },
+  "client_kinds": {
+    "source": "packages/contracts/src/agency/station.ts#AGENCY_CLIENT_KINDS",
+    "values": [
+      "web",
+      "mobile"
+    ]
+  },
+  "station_media_formats": {
+    "source": "packages/contracts/src/agency/station.ts#AGENCY_STATION_MEDIA_FORMATS",
+    "values": [
+      "pcm16",
+      "alaw8"
+    ]
+  },
+  "stats_bucket_units": {
+    "source": "packages/contracts/src/primitives.ts#STATS_BUCKET_UNITS",
+    "values": [
+      "day",
+      "week",
+      "month"
+    ]
+  },
+  "softphone_error_codes": {
+    "source": "packages/contracts/src/errors.ts#AGENCY_SOFTPHONE_ERROR_CODES",
+    "values": [
+      "softphone_disabled",
+      "invalid_number",
+      "caller_id_not_allowed",
+      "campaign_not_taggable",
+      "dnc_listed",
+      "dnc_unavailable",
+      "outside_calling_hours",
+      "override_note_invalid",
+      "contact_in_flight",
+      "session_on_campaign",
+      "session_on_softphone",
+      "session_not_found",
+      "wrong_session_kind",
+      "not_on_softphone",
+      "manual_call_live",
+      "outcome_pending",
+      "concurrency_limit",
+      "station_unavailable",
+      "dial_failed",
+      "call_not_found",
+      "call_settled",
+      "disposition_invalid",
+      "fields_invalid",
+      "settings_invalid"
+    ]
+  },
+  "session_refusal_codes": {
+    "source": "packages/contracts/src/api/platform/auth.ts#SESSION_REFUSAL_CODES",
+    "values": [
+      "email_unverified",
+      "no_membership"
+    ]
+  },
+  "user_statuses": {
+    "source": "packages/contracts/src/api/platform/auth.ts#User.status",
+    "values": [
+      "active",
+      "inactive",
+      "deleted"
+    ]
+  },
+  "tenant_statuses": {
+    "source": "packages/contracts/src/api/platform/auth.ts#Tenant.status",
+    "values": [
+      "active",
+      "suspended",
+      "deleted"
+    ]
+  },
+  "membership_statuses": {
+    "source": "packages/contracts/src/api/platform/auth.ts#Membership.status",
+    "values": [
+      "active",
+      "inactive",
+      "revoked"
+    ]
+  },
+  "notification_cadences": {
+    "source": "packages/contracts/src/api/platform/notifications.ts#NotificationCadence",
+    "values": [
+      "immediate",
+      "digest"
+    ]
+  },
+  "notification_frequencies": {
+    "source": "packages/contracts/src/api/platform/notifications.ts#NotificationFrequency",
+    "values": [
+      "daily",
+      "weekly"
     ]
   }
 }

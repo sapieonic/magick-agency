@@ -87,6 +87,7 @@ class ApiClient {
   }) async {
     final uri = _env.apiBase.replace(path: path, queryParameters: (query == null || query.isEmpty) ? null : query);
     final requestId = _newRequestId();
+    final logged = loggableApiPath(path);
     // A Uint8List goes as raw octets (the pre-flight upload probe); anything else as JSON.
     final bytesBody = body is Uint8List ? body : null;
     final encodedBody = body == null || bytesBody != null ? null : jsonEncode(body);
@@ -109,7 +110,7 @@ class ApiClient {
           // Firebase failing to mint (`network-request-failed`, a stalled
           // refresh) is a request that never left: every caller handles an
           // ApiNetworkError, none handles a FirebaseAuthException.
-          _log.warn('$method $path: no ID token', {'error': e.runtimeType.toString(), 'request_id': requestId});
+          _log.warn('$method $logged: no ID token', {'error': e.runtimeType.toString(), 'request_id': requestId});
           throw ApiNetworkError(e);
         }
         if (token == null) throw const ApiUnauthorized();
@@ -138,7 +139,7 @@ class ApiClient {
     } on ApiError {
       rethrow;
     } on TimeoutException catch (e) {
-      _log.warn('$method $path timed out', {'request_id': requestId});
+      _log.warn('$method $logged timed out', {'request_id': requestId});
       throw ApiNetworkError(e, timedOut: true);
     } on SocketException catch (e) {
       throw ApiNetworkError(e);
@@ -150,7 +151,7 @@ class ApiClient {
 
     final ms = DateTime.now().difference(started).inMilliseconds;
     final status = response.statusCode;
-    _log.debug('$method $path → $status in ${ms}ms', {'request_id': requestId});
+    _log.debug('$method $logged → $status in ${ms}ms', {'request_id': requestId});
 
     final decoded = _decode(response, path);
     if (status >= 200 && status < 300) return decoded;
@@ -167,7 +168,7 @@ class ApiClient {
       requestId: response.headers['x-request-id'] ?? requestId,
     );
     if (error.isServerError) {
-      _log.error('$method $path failed', {'status': status, 'request_id': error.requestId});
+      _log.error('$method $logged failed', {'status': status, 'request_id': error.requestId});
     }
     throw error;
   }

@@ -173,6 +173,14 @@ export interface AgencySessionBootstrap {
    * request, but it IS the state a rehydrated session lands in.
    */
   state: AgencyAgentState;
+  /**
+   * The break's code when `state` is `break`, as on {@link AgencyStationAgentStateFrame}:
+   * a campaign's `break_reasons` code or a reserved one (`device_away`, `soft_phone`).
+   * Absent when not on break, or on a break that has no recorded reason (a rehydrate
+   * after a restart). It is what lets a client that was killed while paused (the mobile
+   * app, backgrounded: `device_away`) say why when it comes back.
+   */
+  break_reason?: string;
   campaign_status: AgencyCampaignStatus;
 
   /**
@@ -335,6 +343,22 @@ export interface AgencySessionCampaignConflict extends AgencyActionErrorResponse
    * safe right now: `on_call` means finish the call, `break` means one click.
    */
   state: AgencyAgentState;
+  /**
+   * The live session itself, so the client can leave it (`POST /sessions/:id/leave`)
+   * without a second read. Always the CALLER's own session: the join names the agent
+   * from the authenticated user, and the session that refused it is that agent's one live
+   * session in the tenant.
+   */
+  session_id: string;
+  /**
+   * The account that session is in. Often a SIBLING of the one the join was made in
+   * (the one-live-session rule spans the tenant), and `leave` is scoped to the session's
+   * account, so the client sends this as its account scope to leave it. As on
+   * `session_on_softphone`.
+   */
+  account_id: string;
+  /** That account's name, for copy. Best effort: NULL when the read failed. */
+  account_name: string | null;
 }
 
 export interface AgencyStationIntervals {

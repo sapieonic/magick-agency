@@ -735,10 +735,12 @@ final class NotificationPreferenceUpdate {
   int get hashCode => Object.hash(eventKey, channel, enabled, frequency);
 }
 
-// ─── Client config (server addition) ───────────────────────────────────────
+// ─── Client config ─────────────────────────────────────────────────────────
 
-/// `GET /client-config`: the app's update gate. Server addition:
+/// `GET /client-config`: the app's update gate,
 /// `{ mobile: { min_supported, latest, store_urls?: {ios?, android?} } }`.
+///
+/// Contract: `ClientConfigResponse` (`api/platform/client-config.ts`).
 @immutable
 final class ClientConfig {
   const ClientConfig({required this.mobile});

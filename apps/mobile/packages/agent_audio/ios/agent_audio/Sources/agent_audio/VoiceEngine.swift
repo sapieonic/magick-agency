@@ -66,6 +66,13 @@ final class VoiceEngine {
   private let flagsLock = UnfairLock()
   private var flags = UplinkFlags()
 
+  /// Uplink frames posted to main and not yet handed to Flutter, and frames dropped because
+  /// main fell `maxUplinkInFlight` frames (160 ms) behind. Guarded by `uplinkLock`.
+  private let uplinkLock = UnfairLock()
+  private var uplinkInFlight = 0
+  private var uplinkDrops = 0
+  private static let maxUplinkInFlight = 8
+
   // I/O queue state. Only touched on `ioQueue` (or on main while the timer is stopped).
   private let ioQueue = DispatchQueue(label: "com.magickagency.agent_audio.io", qos: .userInteractive)
   private var ioTimer: DispatchSourceTimer?
@@ -115,6 +122,7 @@ final class VoiceEngine {
     }
     phase = .prepared
     lastRoute = nil
+    clearStaleInterruption()
     emitRoute(reason: "other")
   }
 
@@ -172,15 +180,26 @@ final class VoiceEngine {
       flags.open = false
       flags.muted = false
     }
+    clearStaleInterruption()
+    let endsCall = phase == .armed || phase == .streaming
     if keepWarm {
       if phase != .idle { phase = .prepared }
+      // A route choice (the speaker above all) belongs to the call it was made in: the next
+      // call starts on the default route (headset, else the earpiece), never on the
+      // loudspeaker by itself.
+      if endsCall && (speakerOverride || session.preferredInput != nil) {
+        speakerOverride = false
+        try? session.overrideOutputAudioPort(.none)
+        try? session.setPreferredInput(nil)
+        emitRoute(reason: "other")
+      }
     } else {
+      speakerOverride = false
       if sessionActive && !(useCallKit && callKitCallActive) {
         try? session.setActive(false, options: .notifyOthersOnDeactivation)
         sessionActive = false
       }
       teardownEngine()
-      speakerOverride = false
       phase = .idle
       format = nil
       lastRoute = nil
@@ -220,6 +239,8 @@ final class VoiceEngine {
         emitError(code: "unknown", message: error.localizedDescription, recovered: false)
       }
     }
+    // CallKit handing us the session means audio is ours again.
+    clearStaleInterruption()
   }
 
   /// CallKit's `provider(_:didDeactivate:)`.
@@ -446,6 +467,7 @@ final class VoiceEngine {
     ring.reset()
     playout.reset()
     downlink.reset(format: format)
+    uplinkLock.withLock { uplinkDrops = 0 }
     try ioQueue.sync { try makeConverter(inputRate: hardware.sampleRate, format: format) }
 
     // Capture: a sink node gets render-thread buffers at the I/O size (10 ms); a tap is the
@@ -661,13 +683,14 @@ final class VoiceEngine {
     ticks += 1
     if ticks % 100 == 0 {
       let snap = playout.snapshot
+      let drops = uplinkLock.withLock { uplinkDrops }
       DispatchQueue.main.async { [weak self] in
         guard let self else { return }
         self.delegate?.voiceEngine(self, emit: [
           "type": "jitter", "depth": snap.depthFrames, "target": snap.targetFrames,
           "underruns": snap.underruns, "concealed": snap.concealedFrames, "silent": snap.silentFrames,
           "overflowDrops": snap.overflowDrops, "latencyDrops": snap.latencyDrops,
-          "received": snap.receivedFrames, "played": snap.playedFrames, "uplinkDrops": 0,
+          "received": snap.receivedFrames, "played": snap.playedFrames, "uplinkDrops": drops,
         ])
       }
     }
@@ -699,10 +722,22 @@ final class VoiceEngine {
       return
     }
     guard f.open else { return }
+    // If main has fallen behind, drop and count rather than queue: a backlog would reach the
+    // customer as a burst of stale audio.
+    let admitted = uplinkLock.withLock { () -> Bool in
+      if uplinkInFlight >= Self.maxUplinkInFlight {
+        uplinkDrops += 1
+        return false
+      }
+      uplinkInFlight += 1
+      return true
+    }
+    guard admitted else { return }
     let bytes = encode(format: format, muted: f.muted)
     let data = Data(bytes: wire, count: bytes)
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      self.uplinkLock.withLock { self.uplinkInFlight -= 1 }
       self.delegate?.voiceEngine(self, uplinkFrame: data)
     }
   }
@@ -786,13 +821,22 @@ final class VoiceEngine {
     else { return }
     let rawOptions = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
     var micMuted = false
+    var appWasSuspended = false
     if #available(iOS 14.5, *), let rawReason = info[AVAudioSessionInterruptionReasonKey] as? UInt {
-      micMuted = AVAudioSession.InterruptionReason(rawValue: rawReason) == .builtInMicMuted
+      let reason = AVAudioSession.InterruptionReason(rawValue: rawReason)
+      micMuted = reason == .builtInMicMuted
+      appWasSuspended = reason == .appWasSuspended
     }
+    // A late notice that the session was interrupted while the app was suspended: nothing is
+    // interrupted now, and no `.ended` will follow it.
+    if type == .began && appWasSuspended { return }
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
       switch type {
       case .began:
+        // Apple does not promise an `.ended` for every `.began` (e.g. "End & Accept" of a
+        // cellular call), so `clearStaleInterruption()` also clears this when the session is
+        // ours again (CallKit activation, prepare, stop).
         self.interrupted = true
         if self.running { self.stopEngine() }
         let reason = micMuted ? "microphoneSilenced" : (self.cellularCallActive() ? "phoneCall" : "system")
@@ -894,9 +938,20 @@ final class VoiceEngine {
     delegate?.voiceEngine(self, emit: ["type": "error", "code": code, "message": message, "recovered": recovered])
   }
 
-  /// Screen off at the ear: engine running and audio on the receiver.
+  /// Closes an interruption whose `.ended` never came, so engine restarts (e.g. on a
+  /// Bluetooth rate change) work again and the app drops its banner.
+  private func clearStaleInterruption() {
+    guard interrupted else { return }
+    interrupted = false
+    delegate?.voiceEngine(self, emit: [
+      "type": "interruption", "phase": "ended", "reason": "system", "shouldResume": running,
+    ])
+  }
+
+  /// Screen off at the ear: a call's engine running and audio on the receiver. Not during the
+  /// loopback check, when the phone is held in front of the agent.
   private func updateProximity() {
-    let want = running && session.currentRoute.outputs.first?.portType == .builtInReceiver
+    let want = running && loopback == nil && session.currentRoute.outputs.first?.portType == .builtInReceiver
     if UIDevice.current.isProximityMonitoringEnabled != want {
       UIDevice.current.isProximityMonitoringEnabled = want
     }

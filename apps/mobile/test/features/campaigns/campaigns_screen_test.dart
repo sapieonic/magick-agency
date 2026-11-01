@@ -1,6 +1,12 @@
+import 'dart:async';
+
 import 'package:agency_wire/agency_wire.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:magick_agency_agent/app/theme/app_theme.dart';
+import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/auth/fake_auth_service.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
@@ -106,6 +112,44 @@ void main() {
     await tapVisible(tester, find.text('Back to your station').first);
     await tester.pumpAndSettle();
     expect(find.text('at /home/station/c1'), findsOneWidget);
+  });
+
+  testWidgets('another agent signing in on this phone never sees the previous agent\'s list', (tester) async {
+    assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+    final c = await started(tester);
+    await pumpScreen(tester, c, const CampaignsScreen());
+    expect(find.text('Q4 Card Renewals'), findsOneWidget);
+
+    // Signed out: the shell (and this screen) leave the tree.
+    await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const SizedBox()));
+    await tester.runAsync(() => c.read(appGateProvider.notifier).signOut());
+    expect(c.read(appGateProvider), const GateSignedOut());
+
+    // Ravi signs in to the same account; his list is still on its way.
+    final ravisList = Completer<http.Response>();
+    h.server.on('GET', '/proxy/agency/my-assignments', (_) => ravisList.future);
+    h.server.json('POST', '/auth/session', sessionJson(
+      user: userJson(id: 'u2', email: 'ravi.s@acmecollect.in', name: 'Ravi S'),
+      tenants: [tenantJson('t1', 'Acme Collections')],
+      memberships: [membershipJson('t1', accountId: 'a1')],
+    ));
+    h.auth.addPasswordAccount('ravi.s@acmecollect.in', 'pw-123456', uid: 'fb-u2');
+    await tester.runAsync(() => c.read(appGateProvider.notifier).signInWithEmail('ravi.s@acmecollect.in', 'pw-123456'));
+    expect(c.read(appGateProvider), isA<GateReady>().having((g) => g.userId, 'user', 'u2'));
+
+    // Its first frame (no settling: the scripted request would time out).
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: c,
+      child: MaterialApp(theme: buildTheme(AppTokens.dark, Brightness.dark), home: const CampaignsScreen()),
+    ));
+    expect(find.text('Q4 Card Renewals'), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    ravisList.complete(jsonResponse({'assignments': [assignment('c9', 'Gold Loans', 'running')]}));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Gold Loans'), findsOneWidget);
+    expect(find.text('Q4 Card Renewals'), findsNothing);
   });
 
   testWidgets('a 401 on the list signs the agent out', (tester) async {

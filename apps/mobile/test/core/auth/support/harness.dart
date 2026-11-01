@@ -182,9 +182,12 @@ class Harness {
   final FakeServer server;
   final MemoryStore store;
 
+  /// The app's identity (a test may make its version unreadable).
+  ClientIdentity identity = testIdentity;
+
   List<Override> get overrides => [
         envProvider.overrideWithValue(testEnv),
-        clientIdentityProvider.overrideWithValue(testIdentity),
+        clientIdentityProvider.overrideWithValue(identity),
         idTokenSourceProvider.overrideWithValue(auth),
         httpClientProvider.overrideWithValue(server.client),
         authServiceProvider.overrideWithValue(auth),

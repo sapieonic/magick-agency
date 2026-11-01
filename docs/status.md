@@ -241,16 +241,27 @@ regression test. The worst were:
 - notes typed while saving, or in the last 2 s before leaving, being dropped;
 - the previous agent's call history surviving an account switch.
 
-Counts on 2026-11-01:
+A second review of the whole branch (six reviewers, one per area) then found and fixed, each with
+a test that fails without it: a silent phone left dialable for 30 s (closed with `terminate` now,
+idle as well as on a call), routes outside the tab shell escaping the station rules (an invite
+link mid-call), an offline cold start signing the agent out, another account's or agent's data
+on screen after a switch, a failed device-away never retried, saved notes coming back blank, the
+`session_on_other_campaign` 409 missing the ids the app needs, `ready` and the bootstrap missing
+the break reason, close codes 1008/1011 retried forever, a stale notification hang-up after
+4409, the station socket upgrade on the shared IP bucket, the super-admin login limit doubled by
+a bogus bearer, iOS engine restarts disabled by an unmatched interruption, and light-theme
+contrast below AA.
+
+Counts on 2026-11-01, after that pass:
 
 - lint clean in every package;
-- server: 7305 unit + 4 expected fail; 1492 integration + 10 expected fail, with the 8 failures of that run (one suite predating the staffing check) fixed and re-run green;
-- db: 502 integration;
-- contracts: 167;
+- server: 7330 unit + 4 expected fail; 1500 integration + 10 expected fail;
+- db: 427 unit, 502 integration;
+- contracts: 171;
 - console: 4818;
 - `test:release` 10, `test:grafana` 31;
-- the mobile app: 598, `agency_wire` 196, `agent_audio` 105 Dart and 18 Kotlin tests;
-- `flutter analyze` clean; the dev debug APK builds.
+- the mobile app: 733, `agency_wire` 243, `agent_audio` 106 Dart and 22 Kotlin tests;
+- `flutter analyze` clean; the dev debug APK builds; a release build fails without `key.properties`.
 
 ## Test counts
 
@@ -403,7 +414,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | B15 roster supersede | Build it, or leave replace and clear refused |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
-| Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox; store accounts and signing |
+| Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 
 ## Deployment invariants

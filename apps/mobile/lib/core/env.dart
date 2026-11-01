@@ -48,11 +48,34 @@ class Env {
   final String firebaseMessagingSenderId;
   final String googleIosClientId;
   final String googleServerClientId;
+  /// Reserved for product analytics (`POSTHOG_*` in `env/*.json`); nothing
+  /// reads them yet.
   final String posthogKey;
   final String posthogHost;
 
-  bool get isProduction => flavor == 'prod';
-  bool get hasFirebase => firebaseApiKey.isNotEmpty && firebaseProjectId.isNotEmpty;
+  /// This platform's Firebase app id (iOS and Android each register their own).
+  String get firebaseAppId => defaultTargetPlatform == TargetPlatform.iOS ? firebaseAppIdIos : firebaseAppIdAndroid;
+
+  /// Enough Firebase config to initialise on this platform. Without the app
+  /// id `Firebase.initializeApp` throws, so a build missing it runs signed
+  /// out instead (`UnconfiguredAuthService`).
+  bool get hasFirebase => firebaseApiKey.isNotEmpty && firebaseProjectId.isNotEmpty && firebaseAppId.isNotEmpty;
+
+  /// This config with Firebase taken out: what the app runs on when
+  /// initialising Firebase failed at start-up.
+  Env withoutFirebase() => Env(
+        flavor: flavor,
+        apiOrigin: apiOrigin,
+        firebaseApiKey: '',
+        firebaseProjectId: '',
+        firebaseAppIdAndroid: '',
+        firebaseAppIdIos: '',
+        firebaseMessagingSenderId: '',
+        googleIosClientId: googleIosClientId,
+        googleServerClientId: googleServerClientId,
+        posthogKey: posthogKey,
+        posthogHost: posthogHost,
+      );
 
   Uri get apiBase => Uri.parse(apiOrigin);
 

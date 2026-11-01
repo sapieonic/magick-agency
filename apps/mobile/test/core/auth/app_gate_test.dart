@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/app/providers.dart';
 import 'package:magick_agency_agent/core/api/api_error.dart';
+import 'package:magick_agency_agent/core/api/client_identity.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/auth/auth_service.dart';
 import 'package:magick_agency_agent/core/auth/fake_auth_service.dart';
@@ -62,6 +63,15 @@ void main() {
         expect(gate, isA<GateReady>());
       });
     }
+
+    test('a version that could not be read is not judged: no update gate, straight in', () async {
+      h.server.standard(minSupported: '99.0.0');
+      signedIn();
+      h.identity = ClientIdentity.unknown;
+      final c = h.container();
+      expect(await startGate(c), isA<GateReady>());
+      expect(h.server.calls('GET', '/client-config'), isEmpty);
+    });
 
     test('restored user with one account → ready; scope set and remembered', () async {
       signedIn();
@@ -134,6 +144,51 @@ void main() {
       c.read(appGateProvider.notifier).retryNow();
       await settle();
       expect(c.read(appGateProvider), isA<GateReady>());
+    });
+  });
+
+  group('offline ID token (Firebase cannot mint one)', () {
+    const offline = ApiNetworkError('network-request-failed');
+
+    test('at start-up: not signed out; the splash notice, then a retry gets in', () async {
+      signedIn();
+      h.auth.idTokenErrors.add(offline);
+      final c = h.container();
+      final gate = await startGate(c);
+      expect(gate, isA<GateLoading>().having((g) => g.notice, 'notice', offline.userMessage));
+      expect(h.auth.signOuts, 0);
+      expect(h.auth.currentUser, meera);
+      c.read(appGateProvider.notifier).retryNow();
+      await settle();
+      expect(c.read(appGateProvider), isA<GateReady>());
+    });
+
+    test('checking the email link offline: the error goes back to the screen, still signed in', () async {
+      h.server.json('POST', '/auth/session', {'code': 'email_unverified', 'message': 'x'}, status: 403);
+      h = Harness(
+        auth: FakeAuthService(signedIn: const AuthUser(uid: 'fb-u1', email: 'meera.k@acmecollect.in', usesPassword: true)),
+        server: h.server,
+      );
+      final c = h.container();
+      await startGate(c);
+      h.auth.verifyOnReload = true;
+      h.auth.idTokenErrors.add(offline);
+      await expectLater(c.read(appGateProvider.notifier).checkEmailVerified(), throwsA(isA<ApiNetworkError>()));
+      expect(c.read(appGateProvider), isA<GateEmailUnverified>());
+      expect(h.auth.signOuts, 0);
+    });
+
+    test('claiming an invite offline: a network error, the credential still held, nobody signed out', () async {
+      h.auth.googleUser = meera;
+      final c = h.container();
+      await startGate(c);
+      final gate = c.read(appGateProvider.notifier);
+      await gate.establishInviteCredential(const InviteViaGoogle());
+      h.auth.idTokenErrors.add(offline);
+      await expectLater(gate.claimInvite('tok'), throwsA(isA<ApiNetworkError>()));
+      expect(gate.holdsInviteCredential, isTrue);
+      expect(h.auth.signOuts, 0);
+      expect(h.server.calls('POST', '/invites/tok/claim'), isEmpty);
     });
   });
 
@@ -443,6 +498,60 @@ void main() {
         expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
       });
 
+      test('a held sign-out whose call ended unseen (no signal ever changes) goes ahead on the re-check', () async {
+        final was = AppGateNotifier.deferredSignOutRecheck;
+        AppGateNotifier.deferredSignOutRecheck = const Duration(milliseconds: 20);
+        addTearDown(() => AppGateNotifier.deferredSignOutRecheck = was);
+        signedIn();
+        final c = withStation();
+        final ready = await startGate(c);
+        c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+        // A dial the app never saw is live: the leave is refused, and the
+        // station's signals say nothing about it, before or after.
+        answers = [false];
+        await c.read(appGateProvider.notifier).signOut();
+        await settle();
+        expect(teardowns, hasLength(1));
+        expect(c.read(appGateProvider), ready);
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        await settle();
+        expect(teardowns, hasLength(2), reason: 'looked again with no signal change');
+        expect(c.read(appGateProvider), const GateSignedOut());
+      });
+
+      test('a 401 while a sign-out is held still signs out, with its notice, once nothing is live', () async {
+        signedIn();
+        final c = withStation();
+        final ready = await startGate(c);
+        final signals = c.read(testSignalsProvider.notifier)
+          ..set(const StationSignals(onDuty: true, callActive: true, campaignId: 'c1'));
+        await c.read(appGateProvider.notifier).signOut();
+        await settle();
+        expect(c.read(appGateProvider.notifier).signOutDeferred, isTrue);
+        c.read(appGateProvider.notifier).reportUnauthorized();
+        await settle();
+        expect(c.read(appGateProvider), ready, reason: 'still a call on');
+        expect(teardowns, isEmpty);
+        signals.set(const StationSignals(onDuty: true, campaignId: 'c1'));
+        await settle();
+        expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+      });
+
+      test('a 401 while a sign-out is held for an unseen dial tries again at once', () async {
+        signedIn();
+        final c = withStation();
+        final ready = await startGate(c);
+        c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+        answers = [false];
+        await c.read(appGateProvider.notifier).signOut();
+        await settle();
+        expect(c.read(appGateProvider), ready);
+        c.read(appGateProvider.notifier).reportUnauthorized();
+        await settle();
+        expect(teardowns, hasLength(2));
+        expect(c.read(appGateProvider), const GateSignedOut(notice: sessionExpiredNotice));
+      });
+
       test('a teardown that fails never keeps the agent signed in', () async {
         signedIn();
         final c = h.container(extra: [stationTeardownProvider.overrideWithValue(() async => throw StateError('boom'))]);
@@ -493,7 +602,8 @@ void main() {
       // The invited workspace wins over the remembered one.
       expect(c.read(appGateProvider), isA<GateReady>().having((g) => g.accountId, 'account', 'b1'));
       expect(gate.holdsInviteCredential, isFalse);
-      expect(jsonDecode(h.server.calls('POST', '/invites/tok/claim').single.body), {'id_token': 'token-fb-u1'});
+      // Minted for the claim, not a cached one: the agent may have paused for a long time.
+      expect(jsonDecode(h.server.calls('POST', '/invites/tok/claim').single.body), {'id_token': 'token-fb-u1!'});
     });
 
     test('invitedTenantId: the only workspace, else the one with the invited role and name, else null', () {

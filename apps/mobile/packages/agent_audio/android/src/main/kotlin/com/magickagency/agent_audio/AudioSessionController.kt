@@ -53,7 +53,13 @@ internal class AudioSessionController(
     private val interruptions = InterruptionTracker()
     private var focusRequest: AudioFocusRequest? = null
     private var focusHeld = false
+    private val focusRecovery = FocusRecovery()
+    private val refocus = Runnable { if (prepared && engineRunning && !focusHeld) requestFocus() }
     private var engineRunning = false
+
+    /** The running engine carries a call (not the pre-flight loopback, when the phone is held
+     * in front of the agent): only then may the proximity sensor blank the screen. */
+    private var callAudio = false
     private var proximity: PowerManager.WakeLock? = null
     private var lastRoute: Pair<Route?, List<Route>>? = null
     private var knownHeadsets = emptySet<Int>()
@@ -73,11 +79,16 @@ internal class AudioSessionController(
     private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
         when (change) {
             AudioManager.AUDIOFOCUS_LOSS, AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                if (change == AudioManager.AUDIOFOCUS_LOSS) focusHeld = false
+                if (change == AudioManager.AUDIOFOCUS_LOSS) {
+                    // No GAIN follows a permanent loss: ask again ourselves.
+                    focusHeld = false
+                    scheduleRefocus()
+                }
                 apply(interruptions.update(focusLost = true, telephony = isTelephonyMode(am.mode)))
             }
             AudioManager.AUDIOFOCUS_GAIN -> {
                 focusHeld = true
+                main.removeCallbacks(refocus)
                 apply(interruptions.update(focusLost = false, telephony = isTelephonyMode(am.mode)))
             }
             // Ducking requests are ignored: a call should not get quieter for a notification.
@@ -130,7 +141,15 @@ internal class AudioSessionController(
     }
 
     private val modeListener: Any? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        AudioManager.OnModeChangedListener { mode -> apply(interruptions.update(telephony = isTelephonyMode(mode))) }
+        AudioManager.OnModeChangedListener { mode ->
+            val telephony = isTelephonyMode(mode)
+            apply(interruptions.update(telephony = telephony))
+            // A cellular call that took focus for good has ended: take it back now.
+            if (prepared && focusRecovery.askOnModeChange(telephony, engineRunning, focusHeld)) {
+                main.removeCallbacks(refocus)
+                requestFocus()
+            }
+        }
     } else {
         null
     }
@@ -172,6 +191,9 @@ internal class AudioSessionController(
         if (!prepared) return
         prepared = false
         engineRunning = false
+        callAudio = false
+        main.removeCallbacks(refocus)
+        focusRecovery.reset()
         updateProximity()
         unregister()
         focusRequest?.let { am.abandonAudioFocusRequest(it) }
@@ -184,9 +206,14 @@ internal class AudioSessionController(
     }
 
     /** The engine started or stopped: re-take focus if it was lost for good, and update the
-     * proximity lock. */
-    fun onEngineRunning(running: Boolean) {
+     * proximity lock. [call] is false for the pre-flight loopback (no proximity lock then). */
+    fun onEngineRunning(running: Boolean, call: Boolean = running) {
         engineRunning = running
+        callAudio = running && call
+        if (!running) {
+            main.removeCallbacks(refocus)
+            focusRecovery.reset()
+        }
         if (running && prepared) {
             if (!focusHeld) requestFocus()
             if (am.mode != AudioManager.MODE_IN_COMMUNICATION && !isTelephonyMode(am.mode)) {
@@ -227,6 +254,14 @@ internal class AudioSessionController(
         return available.firstOrNull { it.kind == kind }
     }
 
+    /** A call ended: the next one starts on the default route (headset, else the earpiece),
+     * not on whatever this one chose. A speaker choice never carries over to the next call. */
+    fun callEnded() {
+        if (!prepared) return
+        selectDefault()
+        emitRoute("other")
+    }
+
     /** Selects [id] (from [availableRoutes]). Returns false if it is not available. */
     fun setRoute(id: String): Boolean {
         if (!prepared) return false
@@ -252,8 +287,16 @@ internal class AudioSessionController(
             .build()
             .also { focusRequest = it }
         focusHeld = am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (focusHeld) main.removeCallbacks(refocus) else scheduleRefocus()
         // Refused focus means something else (usually a cellular call) owns audio right now.
         apply(interruptions.update(focusLost = !focusHeld, telephony = isTelephonyMode(am.mode)))
+    }
+
+    /** Focus is not held: ask again later while a call's engine runs ([FocusRecovery]). */
+    private fun scheduleRefocus() {
+        main.removeCallbacks(refocus)
+        val delay = focusRecovery.notHeld(prepared && engineRunning) ?: return
+        main.postDelayed(refocus, delay)
     }
 
     private fun apply(transition: InterruptionTracker.Transition?) {
@@ -430,9 +473,9 @@ internal class AudioSessionController(
         updateProximity()
     }
 
-    /** Screen off when the phone is at the ear: engine running and audio on the earpiece. */
+    /** Screen off when the phone is at the ear: a call's engine running and audio on the earpiece. */
     private fun updateProximity() {
-        val want = engineRunning && prepared && currentRoute()?.kind == "earpiece"
+        val want = engineRunning && callAudio && prepared && currentRoute()?.kind == "earpiece"
         val lock = proximity ?: run {
             if (!want || !pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) return
             pm.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "agent_audio:proximity")

@@ -67,6 +67,12 @@
       "ended_at": "2026-11-01T06:33:02.877Z"
     }
   },
+  "ready_device_away": {
+    "event": "ready",
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "state": "break",
+    "break_reason": "device_away"
+  },
   "reserved": {
     "event": "reserved",
     "attempt": {

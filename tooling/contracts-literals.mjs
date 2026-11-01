@@ -6,7 +6,10 @@
  * The mobile app is Dart and cannot import the contract, so its wire package
  * (`apps/mobile/packages/agency_wire`) has a test asserting every literal in that JSON is
  * a value its enums know. A literal added on the TypeScript side therefore fails the Dart
- * suite instead of decoding as `unknown` in the field.
+ * suite instead of decoding as `unknown` in the field. For the vocabularies whose Dart enum
+ * mirrors it one to one, and for every value the app sends (`client=mobile`,
+ * `media=alaw8`, a DNC `scope`, a stats `bucket`, an `outcome` filter, `device_away`), the
+ * suite also checks the other way, so a value renamed or removed here fails it too.
  *
  *   node tooling/contracts-literals.mjs           write the JSON
  *   node tooling/contracts-literals.mjs --check   exit 1 when the committed JSON is stale
@@ -207,6 +210,38 @@ const VOCABULARIES = {
   invite_claim_refusal_statuses: [
     'api/platform/invite.ts#InviteClaimRefusalStatus',
     () => typeUnion('api/platform/invite.ts', 'InviteClaimRefusalStatus'),
+  ],
+  // Values the app SENDS as well as reads: the Dart suite checks these both ways, so a
+  // rename on this side fails it rather than a phone's upgrade (1008) or request (400).
+  client_kinds: ['agency/station.ts#AGENCY_CLIENT_KINDS', () => constList('agency/station.ts', 'AGENCY_CLIENT_KINDS')],
+  station_media_formats: [
+    'agency/station.ts#AGENCY_STATION_MEDIA_FORMATS',
+    () => constList('agency/station.ts', 'AGENCY_STATION_MEDIA_FORMATS'),
+  ],
+  stats_bucket_units: ['primitives.ts#STATS_BUCKET_UNITS', () => constList('primitives.ts', 'STATS_BUCKET_UNITS')],
+  // The soft phone's refusals: the app models only the ones its routes can answer
+  // (`session_on_softphone` on the join), so the Dart suite checks those are still here.
+  softphone_error_codes: [
+    'errors.ts#AGENCY_SOFTPHONE_ERROR_CODES',
+    () => constList('errors.ts', 'AGENCY_SOFTPHONE_ERROR_CODES'),
+  ],
+  session_refusal_codes: [
+    'api/platform/auth.ts#SESSION_REFUSAL_CODES',
+    () => constList('api/platform/auth.ts', 'SESSION_REFUSAL_CODES'),
+  ],
+  user_statuses: ['api/platform/auth.ts#User.status', () => fieldUnion('api/platform/auth.ts', 'User', 'status')],
+  tenant_statuses: ['api/platform/auth.ts#Tenant.status', () => fieldUnion('api/platform/auth.ts', 'Tenant', 'status')],
+  membership_statuses: [
+    'api/platform/auth.ts#Membership.status',
+    () => fieldUnion('api/platform/auth.ts', 'Membership', 'status'),
+  ],
+  notification_cadences: [
+    'api/platform/notifications.ts#NotificationCadence',
+    () => typeUnion('api/platform/notifications.ts', 'NotificationCadence'),
+  ],
+  notification_frequencies: [
+    'api/platform/notifications.ts#NotificationFrequency',
+    () => typeUnion('api/platform/notifications.ts', 'NotificationFrequency'),
   ],
 };
 

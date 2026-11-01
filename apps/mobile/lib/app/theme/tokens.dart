@@ -12,6 +12,16 @@ import 'package:flutter/material.dart';
 /// pulse, reconnecting). Ember always moves; [warning] never does. Under
 /// reduced motion an ember indicator keeps a static ring, so "in flight" and
 /// "needs attention" stay distinguishable without animation.
+///
+/// Contrast (WCAG AA, 4.5:1 for text): a few values are darker here than in
+/// global.css, where the web's pair failed on a phone. Each state colour is
+/// read as text on its own subtle tint (the call bands, the queued break, the
+/// banners), so in the light theme [success], [warning], [danger] and [ember]
+/// are one step deeper than the web's while their tints keep the web's values:
+/// worst case over [bgPrimary]/[bgSecondary] is 4.5:1 or more. White on a
+/// filled [danger] was 3.0:1 in the dark theme, so filled destructive buttons
+/// use [dangerDeep] (as filled ember buttons use [emberDeep]); the dark
+/// [accent] is a shade deeper so white on the primary button passes too.
 @immutable
 class AppTokens extends ThemeExtension<AppTokens> {
   const AppTokens({
@@ -33,6 +43,7 @@ class AppTokens extends ThemeExtension<AppTokens> {
     required this.warning,
     required this.warningSubtle,
     required this.danger,
+    required this.dangerDeep,
     required this.dangerSubtle,
     required this.info,
     required this.infoSubtle,
@@ -60,6 +71,10 @@ class AppTokens extends ThemeExtension<AppTokens> {
   final Color warning;
   final Color warningSubtle;
   final Color danger;
+
+  /// The danger FILL, for white text on it: [danger] is tuned as text on the
+  /// background and is too light a ground for [onAccent] in the dark theme.
+  final Color dangerDeep;
   final Color dangerSubtle;
   final Color info;
   final Color infoSubtle;
@@ -79,7 +94,8 @@ class AppTokens extends ThemeExtension<AppTokens> {
     textPrimary: Color(0xFFF1F1F5),
     textSecondary: Color(0xFFB4B4C2),
     textMuted: Color(0xFF8A8A9C),
-    accent: Color(0xFF7C5CFC),
+    // global.css #7c5cfc gives white text 4.38:1; this is 4.74:1.
+    accent: Color(0xFF7656F6),
     accentHover: Color(0xFF9B82FF),
     accentSubtle: Color(0x1F7C5CFC),
     ember: Color(0xFFFA8231),
@@ -92,6 +108,8 @@ class AppTokens extends ThemeExtension<AppTokens> {
     warning: Color(0xFFE8A63F),
     warningSubtle: Color(0x1FE8A63F),
     danger: Color(0xFFEF6B6B),
+    // White on it 5.04:1 (on `danger` 3.01:1).
+    dangerDeep: Color(0xFFC83C3C),
     dangerSubtle: Color(0x1FEF6B6B),
     info: Color(0xFF56B8F0),
     infoSubtle: Color(0x1F56B8F0),
@@ -112,14 +130,20 @@ class AppTokens extends ThemeExtension<AppTokens> {
     accent: Color(0xFF6A4DE4),
     accentHover: Color(0xFF5A40CE),
     accentSubtle: Color(0x1A6A4DE4),
-    ember: Color(0xFFBD4F05),
+    // Text on its tint: 4.57:1 (global.css #bd4f05: 3.95:1). The tints keep
+    // the web's values.
+    ember: Color(0xFFAD4804),
     emberDeep: Color(0xFFA33F04),
     emberSubtle: Color(0x1ABD4F05),
-    success: Color(0xFF0F9B80),
+    // 4.74:1 on its tint (#0f9b80: 2.90:1).
+    success: Color(0xFF077461),
     successSubtle: Color(0x1A0F9B80),
-    warning: Color(0xFFB8801C),
+    // 4.67:1 on its tint (#b8801c: 2.86:1).
+    warning: Color(0xFF8C5F0E),
     warningSubtle: Color(0x1AB8801C),
-    danger: Color(0xFFD03F4B),
+    // 4.57:1 on its tint (#d03f4b: 3.82:1); white on it 5.59:1.
+    danger: Color(0xFFBE3440),
+    dangerDeep: Color(0xFFBE3440),
     dangerSubtle: Color(0x17D03F4B),
     info: Color(0xFF0B8FD4),
     infoSubtle: Color(0x1A0B8FD4),
@@ -155,6 +179,7 @@ class AppTokens extends ThemeExtension<AppTokens> {
       warning: c(warning, other.warning),
       warningSubtle: c(warningSubtle, other.warningSubtle),
       danger: c(danger, other.danger),
+      dangerDeep: c(dangerDeep, other.dangerDeep),
       dangerSubtle: c(dangerSubtle, other.dangerSubtle),
       info: c(info, other.info),
       infoSubtle: c(infoSubtle, other.infoSubtle),

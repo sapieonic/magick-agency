@@ -61,5 +61,25 @@ class ClientIdentity {
     return String.fromCharCodes(raw.codeUnits.where((c) => c >= 0x20 && c < 0x7f));
   }
 
+  /// The version when it could not be read; see [unknown].
+  static const unknownVersion = 'unknown';
+
+  /// Whether [version] was read (the update gate judges only a known one).
+  bool get versionKnown => version != unknownVersion;
+
+  /// When the platform reads fail at start-up: the app still starts, and the
+  /// server still sees which app and platform are calling.
+  static ClientIdentity get unknown => ClientIdentity(
+        version: unknownVersion,
+        build: '0',
+        platform: switch (defaultTargetPlatform) {
+          TargetPlatform.iOS => 'ios',
+          TargetPlatform.android => 'android',
+          _ => 'unknown',
+        },
+        osVersion: '',
+        model: '',
+      );
+
   static const test = ClientIdentity(version: '0.1.0', build: '1', platform: 'unknown', osVersion: '', model: 'test');
 }

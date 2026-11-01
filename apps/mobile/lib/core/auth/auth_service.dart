@@ -68,7 +68,9 @@ class AuthFailure implements Exception {
 /// Everything the app does with Firebase Auth (and Google), behind one
 /// interface so the gate and the screens are tested with a fake.
 ///
-/// Every method throws [AuthFailure] and nothing else.
+/// Every method throws [AuthFailure] and nothing else, except [idToken]:
+/// null when the sign-in is over, `ApiNetworkError` when a token could not be
+/// minted (offline), never a reason to sign out.
 abstract interface class AuthService implements IdTokenSource {
   /// The user Firebase restored from its own storage at start-up (null when
   /// nobody is signed in). Completes once Firebase has finished restoring.

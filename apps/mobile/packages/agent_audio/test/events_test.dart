@@ -45,6 +45,12 @@ void main() {
     expect(AudioEvent.decode({'type': 'callReset'}), const CallSystemReset());
   });
 
+  test('on-duty service stopped', () {
+    expect(AudioEvent.decode({'type': 'service', 'running': false}), const OnDutyServiceStopped());
+    expect(AudioEvent.decode({'type': 'service', 'running': true}), isNull, reason: 'a start is a method result');
+    expect(AudioEvent.decode({'type': 'service'}), isNull);
+  });
+
   test('error', () {
     expect(
       AudioEvent.decode({'type': 'error', 'code': 'media_services_reset', 'message': 'reset', 'recovered': true}),
