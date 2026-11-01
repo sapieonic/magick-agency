@@ -213,7 +213,7 @@ cp env/dev.json env/dev.local.json
 | `FIREBASE_APP_ID_ANDROID`, `FIREBASE_APP_ID_IOS` | Register an Android app (`com.magickagency.agent.dev`) and an iOS app (`com.magickagency.agent`) in that project, then copy each App ID |
 | `GOOGLE_SERVER_CLIENT_ID` | The project's **Web** OAuth client id (Firebase › Authentication › Google › Web SDK configuration). Google sign-in on Android needs it |
 | `GOOGLE_IOS_CLIENT_ID` | The iOS OAuth client id. Google sign-in on iOS also needs its reversed form as a URL scheme in `ios/Runner/Info.plist` (`CFBundleURLTypes`). The committed scheme is this repo's Firebase project's; with another project, replace it with yours |
-| `POSTHOG_*` | Leave empty (reserved; nothing reads them yet) |
+| `POSTHOG_KEY`, `POSTHOG_HOST` | Optional. A PostHog project key turns telemetry on (failures and call events, `docs/mobile.md` "Logs and telemetry"); empty means none. The host defaults to PostHog's US cloud |
 
 For **Google sign-in on Android**, add your debug keystore's SHA-1 to the Android app in Firebase.
 Print it with:
