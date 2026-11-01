@@ -70,6 +70,13 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      # The app compiles against API 37 (permission_handler_android requires it). The SDK
+      # installs that platform as `android-37.0`, which AGP 9.1 looks up as `android-37`:
+      # install it, then give it the name AGP asks for.
+      - name: Android platform 37
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0" > /dev/null
+          [ -e "$ANDROID_HOME/platforms/android-37" ] || ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
       # Store build numbers come from the CI run, never from pubspec.yaml (release-please owns that).
       - run: >-
           flutter build apk --debug --flavor dev

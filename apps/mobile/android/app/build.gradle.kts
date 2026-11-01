@@ -14,8 +14,15 @@ val keyProperties = Properties().apply {
 
 android {
     namespace = "com.magickagency.agent"
-    compileSdk = flutter.compileSdkVersion
+    // permission_handler_android's AAR requires apps that use it to compile against API 37.
+    // Compile SDK only decides which APIs compile; runtime behaviour follows targetSdk below.
+    compileSdk = maxOf(flutter.compileSdkVersion, 37)
     ndkVersion = flutter.ndkVersion
+
+    buildFeatures {
+        // AGP 9 turns resValue off by default; the flavours below name the app with it.
+        resValues = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
