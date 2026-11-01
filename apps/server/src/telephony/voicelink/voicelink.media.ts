@@ -7,6 +7,8 @@ import { pcmToAlaw } from '../../utils/audio.js';
 export const voicelinkMedia: CarrierMediaProtocol = {
   formatLabel: 'A-law 8kHz',
   negotiatesOnStart: true,
+  // `parseStart` refuses any other format, so on a live stream this always holds.
+  wireFormat: 'alaw8',
 
   parseStart(frame: unknown): CarrierStartResult {
     const data = (frame ?? {}) as Record<string, any>;

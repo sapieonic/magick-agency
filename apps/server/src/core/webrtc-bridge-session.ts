@@ -3,6 +3,8 @@ import { createChildLogger } from '@magick-agency/observability';
 import type { WebRtcCallStatus } from '@magick-agency/db/models/agency-call.model';
 import type { CarrierMediaCodec, CarrierModule } from '../telephony/carrier-module.js';
 import { findCarrierModule } from '../telephony/carrier-modules.js';
+import { VoicelinkTranscoder } from '../utils/audio-fir.js';
+import { AlawFramer, browserLegMediaFormatOf, type BrowserLegMediaFormat } from './bridge/browser-leg-media.js';
 
 /**
  * In-memory state for a single WebRTC human-bridge call. Holds the two media
@@ -261,6 +263,31 @@ export class WebRtcBridgeSession {
    */
   readonly codec: CarrierMediaCodec | null;
 
+  /**
+   * The attached browser socket's media format (`bridge/browser-leg-media.ts`), read off
+   * the socket at every attach — so a re-attach onto a reconnected socket that chose
+   * another format switches the relay with it. `pcm16` until a socket is attached.
+   */
+  browserMediaFormat: BrowserLegMediaFormat = 'pcm16';
+
+  /** Cuts carrier → browser `alaw8` audio into 20 ms messages. Reset at every attach. */
+  readonly browserAlawFramer = new AlawFramer();
+
+  /**
+   * A-law 8 kHz ⇄ PCM16 16 kHz for an `alaw8` browser leg on a carrier whose wire audio
+   * is NOT A-law: the browser side of the transcode, chained to {@link codec}. Created on
+   * first use, so a passthrough call never builds one. (`VoicelinkTranscoder` is the
+   * repo's stateful A-law ⇄ PCM16 16 kHz pair; nothing about it is VoiceLink's.)
+   */
+  private browserAlawTranscoder: VoicelinkTranscoder | null = null;
+
+  /**
+   * Browser media frames in the other format than this leg's (a binary frame on a
+   * `pcm16` leg, a JSON `media` frame on an `alaw8` one) or of an unacceptable size,
+   * dropped. Reported on the call's end line.
+   */
+  ignoredBrowserMediaFrames: number = 0;
+
   private maxDurationTimer: NodeJS.Timeout | null = null;
   private readonly log;
 
@@ -312,6 +339,20 @@ export class WebRtcBridgeSession {
    */
   remoteEndStatus(): WebRtcCallStatus {
     return this.answeredAt ? 'completed' : 'no_answer';
+  }
+
+  /**
+   * True when the browser leg speaks the carrier's own wire audio (`alaw8` on VoiceLink):
+   * media is relayed byte for byte, with no codec in either direction.
+   */
+  get browserMediaPassthrough(): boolean {
+    return this.browserMediaFormat === 'alaw8' && this.carrier?.media.wireFormat === 'alaw8';
+  }
+
+  /** The browser-side A-law transcoder for a non-passthrough `alaw8` leg (created on first use). */
+  browserAlawCodec(): VoicelinkTranscoder {
+    this.browserAlawTranscoder ??= new VoicelinkTranscoder();
+    return this.browserAlawTranscoder;
   }
 
   /** True once both legs' WebSockets are open and audio can flow. */
@@ -427,6 +468,11 @@ export class WebRtcBridgeSession {
     // Every borrowed attach — dial-time, late bind, re-attach — comes through
     // here, so this is the one place {@link browserLegBound} cannot be forgotten.
     this.browserLegBound = true;
+    // And the one place the leg's format is learned: the socket's own, so a reconnect
+    // that chose another format switches the relay. A tail held back for the previous
+    // socket is not this one's to receive.
+    this.browserMediaFormat = browserLegMediaFormatOf(ws);
+    this.browserAlawFramer.reset();
   }
 
   /**

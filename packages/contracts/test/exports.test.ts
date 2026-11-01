@@ -10,7 +10,10 @@ import {
   AGENCY_OUR_FAULT_REDIAL_BOUND,
   AGENCY_OUR_FAULT_RETRY_DEFAULT,
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+  AGENCY_STATION_ALAW8_FRAME_BYTES,
+  AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
   AGENCY_STATION_CLOSE,
+  AGENCY_STATION_MEDIA_FORMATS,
   AGENCY_CAMPAIGN_STATS_FIELDS,
   AGENCY_STATS_ROUTE_FIELDS,
 } from '../src/agency';
@@ -34,6 +37,7 @@ import {
   type AgencyManualCallOutcome,
   type AgencyManualCallState,
   type AgencySessionStateResponse,
+  type AgencyStationMediaFormat,
   type AgencyStationManualCallFrame,
   type AgencyStationServerFrame,
 } from '../src/agency';
@@ -96,6 +100,17 @@ describe('package surface', () => {
     });
     // The console layer re-exports the same object rather than a copy that could drop a code.
     expect(AgencyApi.AGENCY_STATION_CLOSE).toBe(AGENCY_STATION_CLOSE);
+  });
+
+  it('declares the station media formats and the alaw8 framing once (SNAPSHOT, written out by hand)', () => {
+    // The list is exactly the union, default first.
+    const exact: Equals<(typeof AGENCY_STATION_MEDIA_FORMATS)[number], AgencyStationMediaFormat> = true;
+    void exact;
+    expect([...AGENCY_STATION_MEDIA_FORMATS]).toEqual(['pcm16', 'alaw8']);
+    // 20 ms of A-law at 8 kHz, and a 1 s ceiling that is a whole number of frames.
+    expect(AGENCY_STATION_ALAW8_FRAME_BYTES).toBe(160);
+    expect(AGENCY_STATION_ALAW8_MAX_FRAME_BYTES).toBe(8000);
+    expect(AGENCY_STATION_ALAW8_MAX_FRAME_BYTES % AGENCY_STATION_ALAW8_FRAME_BYTES).toBe(0);
   });
 
   it('declares the session refusals agency answers with', () => {

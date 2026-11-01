@@ -121,6 +121,37 @@ describe('station WebSocket proxy', () => {
     client.close();
   });
 
+  // The agent leg's media format (contracts `AgencyStationMediaFormat`).
+  it('hands the station handler the media format: pcm16 by default, alaw8 when asked', async () => {
+    const plain = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=a`);
+    await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler (default)');
+    const compact = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=b&media=alaw8`);
+    await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 2, 'station handler (alaw8)');
+
+    const byToken = new Map(mocks.handleStationSocket.mock.calls.map((c) => {
+      const args = c as unknown as [unknown, string, string, unknown, string];
+      return [args[2], args[4]] as const;
+    }));
+    expect(byToken.get('a')).toBe('pcm16');
+    expect(byToken.get('b')).toBe('alaw8');
+    plain.close();
+    compact.close();
+  });
+
+  it.each([
+    ['an unknown format', 'media=opus'],
+    ['a different case', 'media=ALAW8'],
+    ['an empty value', 'media='],
+    ['the parameter twice', 'media=alaw8&media=pcm16'],
+  ])('refuses %s with 1008 before the station handler (the token is not spent)', async (_what, query) => {
+    const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t&${query}`);
+    const closed = await client.waitForClose();
+
+    expect(closed.code).toBe(STATION_CLOSE_CODES.INVALID_MEDIA_FORMAT);
+    expect(closed.code).toBe(1008);
+    expect(mocks.handleStationSocket).not.toHaveBeenCalled();
+  });
+
   // The refusal for "nothing to hand the socket to".
   it('closes 1011 when the app has no agency runtime', async () => {
     mocks.runtime = null;

@@ -43,6 +43,7 @@ import {
 } from './bridge/bridge-types.js';
 import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
+import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
 
 export {
   WebRtcCallError,
@@ -103,7 +104,10 @@ const PROVIDER_START_TIMEOUT_SECONDS = 30;
  * shorter timeout.
  */
 const CARRIER_END_CONFIRM_TIMEOUT_SECONDS = 45;
-/** Max accepted decoded media frame bytes (~1s of PCM16 16k) — abusive frames are dropped. */
+/**
+ * Max accepted decoded media frame bytes (~1s of PCM16 16k) — abusive frames are dropped.
+ * An `alaw8` leg's binary frames have their own 1 s ceiling (`ALAW8_MAX_FRAME_BYTES`).
+ */
 const MAX_MEDIA_FRAME_BYTES = 64000;
 
 /**
@@ -691,7 +695,10 @@ export class WebRtcBridgeManager {
     session.browserLegGraceMs = graceMs;
     session.setBrowserLegTeardown(this.registerBrowserLegHandlers(session, ws, hangupOutcome, graceMs));
     this.disableNagle(ws, callId);
-    log.info({ callId, status: session.status }, 'Borrowed browser leg attached');
+    log.info(
+      { callId, status: session.status, mediaFormat: session.browserMediaFormat, passthrough: session.browserMediaPassthrough },
+      'Borrowed browser leg attached',
+    );
     this.notifyBrowser(session, { event: 'status', status: session.status });
   }
 
@@ -1002,7 +1009,15 @@ export class WebRtcBridgeManager {
   ): () => void {
     const callId = session.callId;
 
-    const onMessage = (data: Buffer | string): void => {
+    // Routed on `isBinary`, never by trying `JSON.parse`: on an `alaw8` leg every audio
+    // frame is binary, and parsing raw A-law as text 50 times a second costs a thrown
+    // exception per frame and can, by chance, succeed. Only `ws`'s own `true` means
+    // binary: a caller that emits a bare string or Buffer is speaking JSON text.
+    const onMessage = (data: Buffer | ArrayBuffer | Buffer[] | string, isBinary?: boolean): void => {
+      if (isBinary === true && typeof data !== 'string') {
+        this.onBrowserBinary(session, rawDataToBuffer(data));
+        return;
+      }
       this.onBrowserMessage(session, typeof data === 'string' ? data : data.toString());
     };
     const hangUpForBrowserClose = (): void => {
@@ -1184,6 +1199,11 @@ export class WebRtcBridgeManager {
       return; // non-JSON control frame
     }
     if (data?.event === 'media' && typeof data.media?.payload === 'string') {
+      // An `alaw8` leg's audio is binary; a JSON media frame on it is not its format.
+      if (session.browserMediaFormat !== 'pcm16') {
+        this.noteIgnoredBrowserMedia(session, 'json media frame on an alaw8 leg');
+        return;
+      }
       // Drop until both legs are live AND the provider stream is negotiated — no
       // one to hear it yet (avoids buffering / sending before VoiceLink `start`).
       if (session.pstnWs?.readyState !== 1 || !session.providerMediaReady) return;
@@ -1211,6 +1231,74 @@ export class WebRtcBridgeManager {
       }
     }
     // 'start'/'connected'/'stop' from the browser are informational here.
+  }
+
+  /**
+   * A binary frame from the browser leg: raw A-law 8 kHz on an `alaw8` leg
+   * (contracts `AgencyStationMediaFormat`), ignored on a `pcm16` one.
+   *
+   * Passthrough when the carrier's wire audio is A-law too (VoiceLink): the bytes go
+   * out as they came, base64 inside the carrier's frame — no decode, no resample, no
+   * encode. Any other carrier transcodes A-law → PCM16 16 kHz → its codec, the same
+   * path a `pcm16` leg takes from the middle on. Same gates as the JSON path, in the
+   * same order: nothing is relayed before the carrier stream is live, and a bad frame
+   * is dropped before any work is done on it.
+   */
+  private onBrowserBinary(session: WebRtcBridgeSession, alaw: Buffer): void {
+    const t0 = process.hrtime.bigint();
+    if (session.browserMediaFormat !== 'alaw8') {
+      this.noteIgnoredBrowserMedia(session, 'binary frame on a pcm16 leg');
+      return;
+    }
+    if (session.pstnWs?.readyState !== 1 || !session.providerMediaReady) return;
+    if (!isAcceptableAlawMessage(alaw.length)) {
+      this.noteIgnoredBrowserMedia(session, 'alaw8 frame not a whole number of 20 ms frames, or over 1 s', alaw.length);
+      return;
+    }
+    const carrier = session.carrier;
+    if (!carrier) return;
+    try {
+      const wire = session.browserMediaPassthrough
+        ? alaw
+        : session.codec!.pcm16kToCarrier(session.browserAlawCodec().alawToPcm16k(alaw));
+      this.send(session.pstnWs, carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
+      this.recordRelayFrame(session, 'b2p', t0);
+    } catch (err) {
+      log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
+    }
+  }
+
+  /**
+   * Carrier wire audio → an `alaw8` browser leg, as binary 20 ms messages. Passthrough
+   * when the carrier speaks A-law (the decoded payload IS the audio); otherwise the
+   * carrier codec to PCM16 16 kHz, then A-law. The caller has already gated on both legs
+   * being live and bounded the payload.
+   */
+  private relayCarrierToAlawBrowser(session: WebRtcBridgeSession, payloadBase64: string, t0: bigint): void {
+    const browserWs = session.browserWs;
+    if (!browserWs) return;
+    const wire = Buffer.from(payloadBase64, 'base64');
+    let alaw: Buffer;
+    if (session.browserMediaPassthrough) {
+      alaw = wire;
+    } else if (session.codec) {
+      alaw = session.browserAlawCodec().pcm16kToAlaw(session.codec.carrierToPcm16k(wire));
+    } else {
+      return;
+    }
+    session.browserAlawFramer.push(alaw, (frame) => this.sendBinary(browserWs, frame));
+    this.recordRelayFrame(session, 'p2b', t0);
+  }
+
+  /**
+   * Count a browser media frame this leg does not take, logging only the first per call
+   * (at debug): a client in the wrong mode sends 50 a second, and one line says it.
+   */
+  private noteIgnoredBrowserMedia(session: WebRtcBridgeSession, why: string, bytes?: number): void {
+    if (session.ignoredBrowserMediaFrames++ === 0) {
+      log.debug({ callId: session.callId, mediaFormat: session.browserMediaFormat, why, bytes },
+        'Ignoring browser media frame not in this leg\'s format (further ones counted, not logged)');
+    }
   }
 
   private onPstnMessage(session: WebRtcBridgeSession, raw: string): void {
@@ -1241,7 +1329,9 @@ export class WebRtcBridgeManager {
       // Guard the decode/transcode (see onBrowserMessage): a malformed payload from
       // the PSTN leg must never throw out of this ws listener and crash the replica.
       try {
-        if (session.codec) {
+        if (session.browserMediaFormat === 'alaw8') {
+          this.relayCarrierToAlawBrowser(session, data.media.payload, t0);
+        } else if (session.codec) {
           // Carrier wire audio → browser PCM16 16kHz (stateful transcode).
           const wire = Buffer.from(data.media.payload, 'base64');
           const pcm = session.codec.carrierToPcm16k(wire);
@@ -1767,6 +1857,8 @@ export class WebRtcBridgeManager {
       browserToPstnFrames: session.browserToPstnFrames,
       pstnToBrowserFrames: session.pstnToBrowserFrames,
       maxRelayDwellMicros: Math.round(session.maxRelayDwellMicros),
+      browserMediaFormat: session.browserMediaFormat,
+      ignoredBrowserMediaFrames: session.ignoredBrowserMediaFrames,
     }, 'WebRTC call ended');
   }
 
@@ -1828,6 +1920,18 @@ export class WebRtcBridgeManager {
       if (ws.readyState === 1) ws.send(JSON.stringify(payload));
     } catch (err) {
       log.warn({ err }, 'Error sending WebRTC frame');
+    }
+  }
+
+  /**
+   * Send one binary message. The Buffer goes to `ws` as is — server frames are not
+   * masked, so `ws` writes the header and this payload without copying it.
+   */
+  private sendBinary(ws: WebSocket, frame: Buffer): void {
+    try {
+      if (ws.readyState === 1) ws.send(frame, { binary: true });
+    } catch (err) {
+      log.warn({ err }, 'Error sending WebRTC binary frame');
     }
   }
 

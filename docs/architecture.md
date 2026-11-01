@@ -191,7 +191,10 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Stations** (`station-registry.ts`, `station-socket.ts`, `station-token.ts`). The browser opens a
   WebSocket at `/proxy/agency/station/:sessionId` with a single-use token (2 min TTL, consumed in
   Lua) minted over authenticated HTTP. Heartbeat grace 30 s, sweep every 10 s
-  (`packages/domain/src/timers.ts`). Only the session's own agent can mint its token (Q8).
+  (`packages/domain/src/timers.ts`). Only the session's own agent can mint its token (Q8). The
+  upgrade's `media=pcm16|alaw8` (default `pcm16`, anything else closed 1008 before the token is
+  spent; `station-media-format.ts`) picks the agent leg's audio format for the socket's life; the
+  handler routes frames on `ws`'s `isBinary` (binary is audio, text is JSON control).
 - **Pacing** (`pacing-engine.ts`, with `pacing/`: leader lease, caller-ID pool, campaign announcer,
   in-flight tracking). One leader per campaign via a Redis lease (15 s, renewed every
   5 s; a supervise pass every 2 s takes leadership); the leader ticks each campaign it leads every
@@ -232,6 +235,21 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Bridge** (`core/webrtc-bridge-manager.ts`, `core/webrtc-bridge-session.ts`, with `core/bridge/`:
   admission, the exported types, the per-call WS tokens). Bridges the agent's browser leg (the
   station) to the carrier's PSTN leg. Its constructor takes the `TelephonyGuardHost`.
+- **Browser leg media** (`core/bridge/browser-leg-media.ts`, contracts `AgencyStationMediaFormat`).
+  The station socket says how the agent leg speaks: `pcm16` (JSON `media` frames, base64 PCM16
+  16 kHz, the console) or `alaw8` (binary messages of raw G.711 A-law 8 kHz, the mobile app: any
+  whole number of 20 ms / 160-byte frames up to 1 s in, exactly one 160-byte frame per message
+  out). The station handler tags its socket with the format at upgrade; the session reads the tag
+  at every attach (`adoptBorrowedBrowserLeg`: dial-time, late bind, re-attach), so it is a
+  synchronous field read on the bind path and a reconnect that chose another format switches the
+  relay with it. The bridge's borrowed-socket listener routes on `isBinary`; media in the other
+  format is dropped and counted (`ignoredBrowserMediaFrames` on the call's end line). When the
+  carrier module's `wireFormat` matches (`alaw8` on VoiceLink) the relay is **passthrough**: the
+  agent's bytes go out base64 in the carrier's frame and the carrier's decoded bytes go to the
+  agent as `Buffer` views, with no codec either way. A carrier with another wire format transcodes
+  through A-law ⇄ PCM16 16 kHz and its own codec. Nothing else reads the browser leg's audio:
+  recordings are the carrier's, analysis reads the recording, and the abandon clip
+  (`playClipToCarrierThenHangUp`) and any other playback go to the carrier leg only.
 - **Concurrency guard** (`core/telephony-guard-host.ts`, `core/concurrency-guard.ts`,
   `account-concurrency-guard.ts`, `provider-concurrency-guard.ts`). Global, account and provider
   scopes in Redis; startup and demand-driven self-heal reconcile; a stale-call sweep. Limits come
@@ -244,7 +262,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   call end for late recording posts (Q6). `voicelink-carrier.fixture.json` pins the carrier's
   payload shapes.
 - **Carrier modules** (`telephony/carrier-modules.ts`). Each carrier declares its media-stream
-  protocol (start negotiation, codec, framing, clip encoding) and hangup style; the bridge asks
+  protocol (start negotiation, codec, wire format, framing, clip encoding) and hangup style; the bridge asks
   the session's module rather than branching on a provider name (B18).
 - **Tenant carrier credentials** (`telephony/credentials/`, B18–B22). A tenant may dial on its own
   carrier account (Plivo). Super-admins add the credential; it is checked with the carrier, then

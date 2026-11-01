@@ -38,7 +38,7 @@ vi.hoisted(() => {
 
 import { createRng, LOAD_SEED, scaled } from '../../helpers/load-scale.js';
 import {
-  bits, carrierScripts, isLoudAlaw, isLoudPcm16, pcm16kFrame, type CallScript, type CarrierCall, type LeadRequest,
+  alawFrame, bits, carrierScripts, isLoudAlaw, isLoudPcm16, pcm16kFrame, type CallScript, type CarrierCall, type LeadRequest,
 } from '../../mocks/voicelink/index.js';
 import {
   LoadStationSocket, assertNoLeaks, callRows, closeLoadDb, dialBridged, endedCounts, initLoadDb,
@@ -60,8 +60,13 @@ function numberFor(i: number): string {
  * The agent's side of a call: once the bridge says media is live (`in_progress`), send
  * `pattern` as paced PCM16 frames (`frameMs` 0 = back to back).
  */
-function talkingStation(pattern: boolean[], frameMs = 20, frameFor: (k: number, loud: boolean) => Buffer = pcm16kFrame): LoadStationSocket {
-  const station = new LoadStationSocket();
+function talkingStation(
+  pattern: boolean[],
+  frameMs = 20,
+  frameFor: (k: number, loud: boolean) => Buffer = pcm16kFrame,
+  format: 'pcm16' | 'alaw8' = 'pcm16',
+): LoadStationSocket {
+  const station = new LoadStationSocket(format);
   let started = false;
   station.onSent((frame) => {
     if (started || frame['event'] !== 'status' || frame['status'] !== 'in_progress') return;
@@ -161,6 +166,52 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
       expect(events.indexOf('status:in_progress'), ctx(i, p)).toBeLessThan(events.indexOf('media'));
       expect(events.at(-1), ctx(i, p)).toBe('ended');
       expect(row.recording_url, ctx(i, p)).toBe(plan.outcome.recordingUrl);
+    }
+    await assertNoLeaks(r, plans.map((p) => p.station));
+  }, 120_000);
+
+  it('alaw8 stations beside pcm16 ones: A-law passes through byte for byte both ways, in 20 ms binary messages, with no cross-talk', async () => {
+    // The mobile app's compact media (contracts `AgencyStationMediaFormat`). VoiceLink is
+    // A-law on the wire, so an `alaw8` leg has no codec at all: what the agent sends is
+    // exactly what the carrier receives, and the reverse. That is a stronger check than
+    // the loudness patterns the transcoded legs need, so it is asserted on the bytes.
+    // Every other plan is a pcm16 station on the same floor at the same time.
+    const r = rig!;
+    const plans: Array<Plan & { agentPattern: boolean[]; format: 'pcm16' | 'alaw8' }> = Array.from({ length: CALLS }, (_, i) => {
+      const format = i % 2 === 0 ? 'alaw8' as const : 'pcm16' as const;
+      const agentPattern = carrierScripts.framePattern(rng, FRAMES);
+      const outcome = carrierScripts.answered({
+        pattern: carrierScripts.framePattern(rng, FRAMES),
+        ending: rng.pick(['webhook_then_close', 'close_then_webhook', 'stop_frame'] as const),
+        beforeEnding: [{ do: 'waitFor', what: 'agent audio at the carrier', until: (c) => c.mediaReceived.length >= FRAMES }],
+      });
+      const station = talkingStation(agentPattern, 20, format === 'alaw8' ? alawFrame : pcm16kFrame, format);
+      return { number: numberFor(i), station, script: outcome.script, agentPattern, format };
+    });
+
+    await dialAll(r, plans);
+    await r.carrier.settled();
+    const rows = await waitAllTerminal(r, plans.map((p) => p.callId!));
+
+    for (const [i, p] of plans.entries()) {
+      const call = carrierCallOf(r, p);
+      const row = rows.get(p.callId!)!;
+      expect(call.errors, ctx(i, p)).toEqual([]);
+      expect(row.status, ctx(i, p)).toBe('completed');
+      if (p.format === 'alaw8') {
+        const agentSent = Buffer.concat(p.agentPattern.map((loud, k) => alawFrame(k, loud)));
+        const carrierSent = Buffer.concat(call.mediaSentPattern.map((loud, k) => alawFrame(k, loud)));
+        expect(Buffer.concat(call.mediaReceived).equals(agentSent), `${ctx(i, p)}: agent → carrier bytes`).toBe(true);
+        expect(Buffer.concat(p.station.binary).equals(carrierSent), `${ctx(i, p)}: carrier → agent bytes`).toBe(true);
+        expect(p.station.binary.every((m) => m.length === 160), ctx(i, p)).toBe(true);
+        // Audio only as binary: no JSON media frame reached an alaw8 station.
+        expect(p.station.media, ctx(i, p)).toEqual([]);
+      } else {
+        expect(heardByAgent(p.station), `${ctx(i, p)}: carrier → agent`).toBe(bits(call.mediaSentPattern));
+        expect(heardByCarrier(call), `${ctx(i, p)}: agent → carrier`).toBe(bits(p.agentPattern));
+        expect(p.station.binary, ctx(i, p)).toEqual([]);
+      }
+      expect(p.station.events().at(-1), ctx(i, p)).toBe('ended');
     }
     await assertNoLeaks(r, plans.map((p) => p.station));
   }, 120_000);

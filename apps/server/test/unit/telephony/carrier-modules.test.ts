@@ -45,6 +45,7 @@ describe('carrier-module registry', () => {
       expect(typeof m.mediaUrlInDialRequest).toBe('boolean');
       expect(typeof m.media.negotiatesOnStart).toBe('boolean');
       expect(m.media.formatLabel.length).toBeGreaterThan(0);
+      expect([null, 'alaw8']).toContain(m.media.wireFormat);
     }
   });
 });
@@ -78,6 +79,16 @@ describe('voicelink carrier module', () => {
     [null, '', ''],
   ])('refuses an unsupported or missing format (%j)', (frame, encoding, rate) => {
     expect(vl.media.parseStart(frame)).toEqual({ ok: false, encoding, rate });
+  });
+
+  it('declares A-law 8 kHz as its wire format, so an alaw8 station leg relays without a codec', () => {
+    // The claim `wireFormat` makes: a `start` it accepts is A-law 8 kHz, and a frame's
+    // payload is the raw bytes, base64 — what `frameOutbound` carries unchanged.
+    expect(vl.media.wireFormat).toBe('alaw8');
+    expect(vl.media.parseStart({ start: { media_format: { encoding: 'audio/alaw', sample_rate: '8000' } } }).ok).toBe(true);
+    const raw = Buffer.from([0xd5, 0x55, 0x2a]);
+    expect(Buffer.from((vl.media.frameOutbound(raw.toString('base64'), null).media as { payload: string }).payload, 'base64'))
+      .toEqual(raw);
   });
 
   it('frames outbound audio as a plain media frame, with no stream id', () => {
