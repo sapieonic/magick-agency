@@ -15,6 +15,7 @@ import 'package:magick_agency_agent/core/api/client_identity.dart';
 import 'package:magick_agency_agent/core/env.dart';
 import 'package:magick_agency_agent/features/preflight/device_preflight_checks.dart';
 import 'package:magick_agency_agent/features/preflight/preflight_checks.dart';
+import 'package:magick_agency_agent/features/preflight/preflight_screen.dart';
 import 'package:mocktail/mocktail.dart';
 
 class _Audio extends Mock implements AgentAudio {}
@@ -133,17 +134,24 @@ void main() {
       NetworkSample? n;
       checks((req) async {
         if (req.url.path == '/client-config/uplink-probe') {
-          await Future<void>.delayed(const Duration(seconds: 30)); // under 32 kbps: never finishes in 8 s
+          await Future<void>.delayed(const Duration(seconds: 30)); // never finishes in 5 s
         }
         return ok({});
       }).network().then((v) => n = v);
-      async.elapse(const Duration(seconds: 20));
+      // Settles within the screen's deadline, as a figure rather than "couldn't tell".
+      async.elapse(const Duration(seconds: 6));
       expect(n, isNotNull);
       expect(n!.online, isTrue);
-      // 32 KB not through in 8 s: under 32768 × 8 / 8000 ≈ 32.8 kbps.
-      expect(n!.uploadKbps, 32.0);
+      // 32 KB not through in 5 s: under 32768 × 8 / 5000 ≈ 52.4 kbps, below the 64 kbps floor.
+      expect(n!.uploadKbps, 52.0);
       expect(gradeNetwork(n!).status, CheckStatus.fail);
     });
+  });
+
+  test('the whole network check fits inside the screen\'s per-check deadline', () {
+    final worst = DevicePreflightChecks.roundTripTimeout * 2 + const Duration(seconds: 5);
+    expect(worst, lessThan(PreflightScreen.checkTimeout));
+    expect(DevicePreflightChecks.probeBytes * 8 / 5000, lessThan(minUploadKbps));
   });
 
   test('a server without the probe (404) reports no upload figure', () async {

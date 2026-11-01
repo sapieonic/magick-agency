@@ -25,12 +25,17 @@ class DevicePreflightChecks implements PreflightChecks {
     Connectivity? connectivity,
     Battery? battery,
     bool? isAndroid,
-    this.uploadTimeout = const Duration(seconds: 8),
+    this.uploadTimeout = const Duration(seconds: 5),
     Future<bool> Function()? microphoneGranted,
   })  : _connectivity = connectivity ?? Connectivity(),
         _battery = battery ?? Battery(),
         _isAndroid = isAndroid ?? Platform.isAndroid,
         _microphoneGranted = microphoneGranted ?? (() => ph.Permission.microphone.isGranted);
+
+  /// Each round trip's limit. Two round trips plus [uploadTimeout] stay inside the
+  /// screen's 12 s per-check deadline (3 + 3 + 5 s), so a slow network is graded as slow
+  /// rather than timing out as "couldn't tell". A round trip over 3 s is no call link.
+  static const roundTripTimeout = Duration(seconds: 3);
 
   final AgentAudio _audio;
   final ApiClient _api;
@@ -178,7 +183,7 @@ class DevicePreflightChecks implements PreflightChecks {
     for (var i = 0; i < 2; i++) {
       final rtt = Stopwatch()..start();
       try {
-        await _api.getPublic('/client-config', timeout: const Duration(seconds: 5));
+        await _api.getPublic('/client-config', timeout: roundTripTimeout);
       } on ApiNetworkError {
         return NetworkSample(online: false, transport: transport);
       } on ApiError {
@@ -198,7 +203,7 @@ class DevicePreflightChecks implements PreflightChecks {
   /// Times an upload to the API's probe.
   ///
   /// A probe that runs out of time WAS measured: fewer than [probeBytes] went up in
-  /// [uploadTimeout], so the uplink is below that ceiling (32 kbps for 32 KB in 8 s),
+  /// [uploadTimeout], so the uplink is below that ceiling (52 kbps for 32 KB in 5 s),
   /// and the ceiling is reported, which blocks like any figure under 64 kbps. Null only
   /// when there is no figure at all (an older server without the probe, a refusal, a
   /// dropped connection): the grade then says "may stutter" rather than inventing one.
