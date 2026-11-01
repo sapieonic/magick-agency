@@ -5,12 +5,15 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/misc.dart' show Override;
 
 import 'app/app.dart';
 import 'app/providers.dart';
+import 'core/api/api_client.dart' show IdTokenSource;
 import 'core/api/client_identity.dart';
 import 'core/auth/firebase_token_source.dart';
 import 'core/env.dart';
+import 'core/softphone/softphone_controller.dart';
 import 'core/station/station_controller.dart';
 import 'core/station/station_deps.dart';
 import 'core/telemetry/log.dart';
@@ -44,23 +47,39 @@ Future<void> main() async {
 
   runApp(
     ProviderScope(
-      overrides: [
-        envProvider.overrideWithValue(env),
-        clientIdentityProvider.overrideWithValue(identity),
-        idTokenSourceProvider.overrideWithValue(
-          env.hasFirebase ? FirebaseIdTokenSource(FirebaseAuth.instance) : const NoIdTokenSource(),
-        ),
-        // The station core behind the screens' seam (station_view.dart).
-        ...stationOverrides,
-        // Pre-flight measures with the station's own voice engine instance, never a second one.
-        preflightChecksProvider.overrideWith(
-          (ref) => DevicePreflightChecks(audio: ref.watch(agentAudioPluginProvider), api: ref.watch(apiClientProvider)),
-        ),
-      ],
+      overrides: appOverrides(
+        env: env,
+        identity: identity,
+        idTokens: env.hasFirebase ? FirebaseIdTokenSource(FirebaseAuth.instance) : const NoIdTokenSource(),
+      ),
       child: const AgentApp(),
     ),
   );
 }
+
+/// What the app's `ProviderScope` overrides: the real environment, identity
+/// and sign-in, and the cores behind the screens' seams. A function, so a test
+/// can check that each core is plugged in.
+///
+/// Each core's app-lifecycle source is its own provider's default (a real
+/// `FlutterAppLifecycleSource`, one per core: one source keeps one listener).
+@visibleForTesting
+List<Override> appOverrides({required Env env, required ClientIdentity identity, required IdTokenSource idTokens}) => [
+      envProvider.overrideWithValue(env),
+      clientIdentityProvider.overrideWithValue(identity),
+      idTokenSourceProvider.overrideWithValue(idTokens),
+      // The station core behind the screens' seam (station_view.dart); it also
+      // hosts the soft-phone session (softphone_host.dart).
+      ...stationOverrides,
+      // The soft phone's call domain behind the Phone tab's and the panel's
+      // seam (softphone_view.dart), and the Phone tab's availability.
+      ...softphoneOverrides,
+      // Pre-flight measures with the station's own voice engine instance, never
+      // a second one. The soft phone asks it for the microphone permission too.
+      preflightChecksProvider.overrideWith(
+        (ref) => DevicePreflightChecks(audio: ref.watch(agentAudioPluginProvider), api: ref.watch(apiClientProvider)),
+      ),
+    ];
 
 /// The client identity, or a generic one when the platform reads fail.
 @visibleForTesting

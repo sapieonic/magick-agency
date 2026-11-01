@@ -8,12 +8,21 @@ import '../../core/session/account_choice.dart';
 import '../../core/station/station_signals.dart';
 
 /// Why switching account is refused right now, or null when it is not. The
-/// station belongs to the account it was opened in.
+/// station, and the soft phone, belong to the account they were opened in.
 String? switchBlockedReason(StationSignals signals) {
-  if (signals.callActive) return 'Finish this call first — this call is still on your screen.';
-  if (signals.onDuty) return 'You’re on duty in this account. Leave the station before switching.';
+  if (signals.callActive) return switchBlockedOnCall;
+  final softphone = signals.sessionKind == StationSessionKind.softphone;
+  if (signals.outcomeOwed) return softphone ? switchBlockedOwedSoftphone : switchBlockedOwedStation;
+  if (signals.onDuty) return softphone ? switchBlockedSoftphone : switchBlockedOnDuty;
   return null;
 }
+
+const switchBlockedOnCall = 'Finish this call first — this call is still on your screen.';
+const switchBlockedOnDuty = 'You’re on duty in this account. Leave the station before switching.';
+const switchBlockedSoftphone = 'Your soft phone is open in this account. Close the soft phone before switching.';
+const switchBlockedOwedSoftphone =
+    'Save this call’s outcome first, then close the soft phone before switching.';
+const switchBlockedOwedStation = 'Save this call’s outcome first, then leave the station before switching.';
 
 /// One account row: account name over its workspace, a tick on the current one.
 class AccountTile extends StatelessWidget {

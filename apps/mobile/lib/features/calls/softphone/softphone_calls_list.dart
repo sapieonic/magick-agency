@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/routes.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/auth/app_gate.dart';
 import '../../../core/softphone/call_labels.dart';
@@ -21,7 +22,7 @@ import 'softphone_calls_controller.dart';
 /// Takes the agent to the Phone screen, where an unsettled call is finished.
 /// A seam, so a test can see the hand-off without the app's router.
 final softphoneCallsOpenPhoneProvider = Provider<void Function(BuildContext context)>(
-  (ref) => (context) => context.go('/phone'),
+  (ref) => (context) => context.go(Routes.phone),
 );
 
 /// The count line above the list ("Showing 50 calls — there are more"), or

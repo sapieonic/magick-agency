@@ -15,6 +15,10 @@ abstract final class Routes {
 
   // Tabs.
   static const home = '/home';
+
+  /// The soft phone. A tab only while the soft phone is available to the
+  /// agent (`softphoneAvailabilityProvider`); otherwise the router sends it home.
+  static const phone = '/phone';
   static const performance = '/performance';
   static const calls = '/calls';
   static const me = '/me';

@@ -286,6 +286,28 @@ void main() {
     expect(onBreak, isNot(contains('dialing pool')));
   });
 
+  test('signOutBlockedReason: the soft phone\'s own sentences; an owed outcome before the open session', () {
+    const softphone = StationSessionKind.softphone;
+    expect(
+      signOutBlockedReason(const StationSignals(onDuty: true, onBreak: true, sessionKind: softphone)),
+      'Your soft phone is still open on this phone — close the soft phone first, then sign out.',
+    );
+    expect(
+      signOutBlockedReason(const StationSignals(onDuty: true, onBreak: true, sessionKind: softphone, outcomeOwed: true)),
+      'Save this call’s outcome first — then close the soft phone and sign out.',
+    );
+    expect(
+      signOutBlockedReason(const StationSignals(onDuty: true, onBreak: true, sessionKind: softphone, callActive: true)),
+      signOutBlockedOnCall,
+    );
+    // A campaign station on the soft phone owing an outcome.
+    expect(
+      signOutBlockedReason(const StationSignals(onDuty: true, onBreak: true, campaignId: 'c1', onSoftphone: true, outcomeOwed: true),
+          phase: AgentPhase.onBreak),
+      'Save this call’s outcome first — then leave the station and sign out.',
+    );
+  });
+
   test('categoryLabel: known names, else title-cased', () {
     expect(categoryLabel('agency'), 'Agency dialer');
     expect(categoryLabel('team_updates'), 'Team updates');

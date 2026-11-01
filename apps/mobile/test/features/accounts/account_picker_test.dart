@@ -114,4 +114,17 @@ void main() {
     expect(switchBlockedReason(const StationSignals(onDuty: true, callActive: true)), startsWith('Finish this call first'));
     expect(switchBlockedReason(const StationSignals(onDuty: true)), contains('Leave the station'));
   });
+
+  test('switchBlockedReason: the soft phone belongs to its account too; an owed outcome first', () {
+    const softphone = StationSessionKind.softphone;
+    expect(switchBlockedReason(const StationSignals(onDuty: true, onBreak: true, sessionKind: softphone)),
+        'Your soft phone is open in this account. Close the soft phone before switching.');
+    expect(switchBlockedReason(const StationSignals(onDuty: true, onBreak: true, sessionKind: softphone, outcomeOwed: true)),
+        'Save this call’s outcome first, then close the soft phone before switching.');
+    expect(switchBlockedReason(const StationSignals(onDuty: true, onBreak: true, sessionKind: softphone, callActive: true)),
+        startsWith('Finish this call first'));
+    expect(
+        switchBlockedReason(const StationSignals(onDuty: true, onBreak: true, campaignId: 'c1', onSoftphone: true, outcomeOwed: true)),
+        'Save this call’s outcome first, then leave the station before switching.');
+  });
 }

@@ -114,6 +114,28 @@ void main() {
     expect(find.text('at /home/station/c1'), findsOneWidget);
   });
 
+  testWidgets('a soft-phone session: the list says the soft phone is open, with the way back; joining is still offered', (tester) async {
+    assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+    final c = await started(tester);
+    c.read(testSignalsProvider.notifier).set(
+          const StationSignals(onDuty: true, onBreak: true, sessionKind: StationSessionKind.softphone),
+        );
+    await pumpScreen(tester, c, const CampaignsScreen(), extraRoutes: const ['/phone', '/preflight/:campaignId']);
+    expect(find.text('Your soft phone is open'), findsOneWidget);
+    expect(find.text('Enter station'), findsOneWidget);
+    expect(find.text('You’re on duty'), findsNothing);
+    await tapVisible(tester, find.text(SoftphoneOpenBanner.action));
+    await tester.pumpAndSettle();
+    expect(find.text('at /phone'), findsOneWidget);
+  });
+
+  testWidgets('no banner for the soft phone without a soft-phone session', (tester) async {
+    assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+    final c = await started(tester);
+    await pumpScreen(tester, c, const CampaignsScreen());
+    expect(find.byKey(const Key('softphone-open-banner')), findsNothing);
+  });
+
   testWidgets('another agent signing in on this phone never sees the previous agent\'s list', (tester) async {
     assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
     final c = await started(tester);

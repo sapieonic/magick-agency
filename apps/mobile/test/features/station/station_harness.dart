@@ -1,3 +1,4 @@
+import 'package:agency_wire/agency_wire.dart' show ManualCall;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,9 +7,13 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
+import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/station/station_providers.dart';
 import 'package:magick_agency_agent/features/station/station_screen.dart';
+
+import '../softphone/softphone_harness.dart' show FakeSoftphoneActions;
 
 /// Test doubles and a pump helper for the station screen.
 
@@ -78,6 +83,83 @@ class FakeStationActions implements StationActions {
   void dismissMissedRelease() => _rec('dismissMissedRelease');
 }
 
+/// The session host's soft-phone actions the station calls (SP7: switch to the
+/// soft phone, withdraw a queued switch). Records each, and answers with the
+/// result the test set.
+class FakeSoftphoneHost implements SoftphoneHostActions {
+  final calls = <String>[];
+  SoftphoneSwitchResult switchResult = const SoftphoneSwitchApplied();
+  SoftphoneSwitchResult cancelResult = const SoftphoneSwitchApplied();
+
+  int count(String name) => calls.where((c) => c == name).length;
+
+  @override
+  Future<SoftphoneSwitchResult> switchToSoftphone() async {
+    calls.add('switchToSoftphone');
+    return switchResult;
+  }
+
+  @override
+  Future<SoftphoneSwitchResult> cancelSwitch() async {
+    calls.add('cancelSwitch');
+    return cancelResult;
+  }
+
+  @override
+  Future<SoftphoneSwitchResult> returnToCampaign() async {
+    calls.add('returnToCampaign');
+    return const SoftphoneSwitchApplied();
+  }
+
+  @override
+  Future<SoftphoneOpenResult> openSoftphone() => throw UnimplementedError();
+  @override
+  Future<SoftphoneCloseResult> closeSoftphone({String? sessionId, String? accountId}) => throw UnimplementedError();
+  @override
+  void adoptManualCall(ManualCall call) => calls.add('adoptManualCall');
+  @override
+  void retireManualCall(String versionKey) => calls.add('retireManualCall');
+  @override
+  void setRingMuted(bool muted) => calls.add('setRingMuted');
+  @override
+  void setCallDisplayName(String callId, String? name) => calls.add('setCallDisplayName');
+  @override
+  Future<void> hangUpManual() async => calls.add('hangUpManual');
+  @override
+  Future<void> setMuted(bool muted) async => calls.add('setMuted');
+  @override
+  Future<void> setRoute(AudioRouteOption route) async => calls.add('setRoute');
+  @override
+  Future<void> reconnect() async => calls.add('reconnect');
+  @override
+  Future<void> useThisDevice() async => calls.add('useThisDevice');
+  @override
+  Future<void> dismiss() async => calls.add('dismiss');
+}
+
+class SoftphoneHolder extends Notifier<SoftphoneView> {
+  SoftphoneHolder(this.initial);
+  final SoftphoneView initial;
+
+  @override
+  SoftphoneView build() => initial;
+
+  void set(SoftphoneView v) => state = v;
+}
+
+class AvailabilityHolder extends Notifier<SoftphoneAvailability> {
+  AvailabilityHolder(this.initial);
+  final SoftphoneAvailability initial;
+
+  @override
+  SoftphoneAvailability build() => initial;
+
+  void set(SoftphoneAvailability a) => state = a;
+}
+
+/// The soft phone may start calls here.
+const softphoneOn = SoftphoneAvailability(visible: true, startAllowed: true, loaded: true);
+
 class ViewHolder extends Notifier<StationView?> {
   ViewHolder(this.initial);
   final StationView? initial;
@@ -99,6 +181,18 @@ final t0 = DateTime(2026, 10, 31, 11, 20);
 
 class StationHarness {
   StationHarness(this.tester, this.container, this.holder, this.actions, this.clock, this.platformCalls, this.announcements);
+
+  /// The soft phone's seams: the host's actions, the panel's actions, its view
+  /// and its availability.
+  final host = FakeSoftphoneHost();
+  final softphoneActions = FakeSoftphoneActions();
+  late final NotifierProvider<SoftphoneHolder, SoftphoneView> softphone;
+  late final NotifierProvider<AvailabilityHolder, SoftphoneAvailability> availability;
+
+  Future<void> setSoftphone(SoftphoneView v) async {
+    container.read(softphone.notifier).set(v);
+    await settle(tester);
+  }
 
   final WidgetTester tester;
   final ProviderContainer container;
@@ -170,6 +264,8 @@ Future<StationHarness> pumpStation(
   bool supportsAnnounce = false,
   String campaignId = 'c1',
   Brightness brightness = Brightness.dark,
+  SoftphoneAvailability availability = SoftphoneAvailability.hidden,
+  SoftphoneView softphone = const SoftphoneView(),
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
@@ -189,6 +285,8 @@ Future<StationHarness> pumpStation(
   addTearDown(() => tester.binding.defaultBinaryMessenger.setMockDecodedMessageHandler<Object?>(SystemChannels.accessibility, null));
 
   final holder = NotifierProvider<ViewHolder, StationView?>(() => ViewHolder(view));
+  final softphoneHolder = NotifierProvider<SoftphoneHolder, SoftphoneView>(() => SoftphoneHolder(softphone));
+  final availabilityHolder = NotifierProvider<AvailabilityHolder, SoftphoneAvailability>(() => AvailabilityHolder(availability));
   final actions = FakeStationActions();
   final clock = TestClock(now ?? t0);
   late final StationHarness h;
@@ -198,10 +296,16 @@ Future<StationHarness> pumpStation(
       stationActionsProvider.overrideWithValue(actions),
       stationClockProvider.overrideWithValue(clock.call),
       stationOpenSettingsProvider.overrideWithValue(() async => h.settingsOpened++),
+      softphoneHostActionsProvider.overrideWith((ref) => h.host),
+      softphoneActionsProvider.overrideWith((ref) => h.softphoneActions),
+      softphoneViewProvider.overrideWith((ref) => ref.watch(softphoneHolder)),
+      softphoneAvailabilityProvider.overrideWith((ref) => ref.watch(availabilityHolder)),
     ],
   );
   addTearDown(container.dispose);
-  h = StationHarness(tester, container, holder, actions, clock, platformCalls, announcements);
+  h = StationHarness(tester, container, holder, actions, clock, platformCalls, announcements)
+    ..softphone = softphoneHolder
+    ..availability = availabilityHolder;
   actions.afterLeave = () async {
     if (container.read(holder)?.actionError != null) return LeaveOutcome.stayed;
     container.read(holder.notifier).set(null);

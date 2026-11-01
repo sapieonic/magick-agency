@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/routes.dart';
 import '../../../app/theme/tokens.dart';
+import '../../../core/softphone/softphone_host.dart';
+import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../../../core/station/station_copy.dart' show leftOfflineCopy;
 import '../../../core/station/station_view.dart';
 import '../logic/format.dart';
@@ -150,8 +152,16 @@ Future<bool> confirmHangUp(BuildContext context, {required bool ringing}) {
   );
 }
 
+/// The break sheet's answer for "Switch to soft phone" (the soft phone's own
+/// reserved break code, never one of the campaign's reasons).
+const switchToSoftphoneChoice = 'soft_phone';
+
 /// Break reasons. While a call is on screen the break is queued ("Break after
 /// this call"); otherwise it starts now.
+///
+/// While the soft phone may start calls (`softphoneAvailabilityProvider`'s
+/// `startAllowed`), the sheet also offers "Switch to soft phone" (SP7): queued
+/// the same way while a call is on screen, at once otherwise.
 ///
 /// "After this call" stays a valid answer after the call ends: the sheet stays
 /// open through wrap-up, and a break picked there is still sent (the server
@@ -162,9 +172,13 @@ Future<void> showBreakSheet(BuildContext context, {required bool queued}) async 
   final actions = container.read(stationActionsProvider);
   final view = container.read(stationViewProvider);
   final options = (view?.breakOptions ?? const <BreakOption>[])
-      // The app's own pause is not a break an agent picks.
-      .where((o) => o.code != 'device_away')
+      // The app's own pause and the soft phone are not breaks an agent picks
+      // from the campaign's reasons.
+      .where((o) => o.code != 'device_away' && o.code != switchToSoftphoneChoice)
       .toList(growable: false);
+  final softphone = container.read(softphoneAvailabilityProvider).startAllowed;
+  final host = softphone ? container.read(softphoneHostActionsProvider) : null;
+  final messenger = ScaffoldMessenger.maybeOf(context);
   final scope = queued ? untilNextCall(view?.call?.attemptId) : noCallOnScreen;
   final code = await showModalBottomSheet<String>(
     context: context,
@@ -202,6 +216,19 @@ Future<void> showBreakSheet(BuildContext context, {required bool queued}) async 
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => Navigator.of(context).pop(o.code),
                   ),
+              if (softphone) ...[
+                const Divider(height: Space.lg),
+                ListTile(
+                  key: const Key('break-switch-softphone'),
+                  minTileHeight: Space.touch + 8,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: Space.sm),
+                  leading: const Icon(Icons.dialpad),
+                  title: const Text(StationCopy.switchToSoftphone),
+                  subtitle: Text(queued ? StationCopy.switchAfterCallHint : StationCopy.switchHint),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).pop(switchToSoftphoneChoice),
+                ),
+              ],
               if (!queued) ...[
                 const SizedBox(height: Space.sm),
                 Text(StationCopy.breakSheetOnCallNote, style: text.labelSmall, textAlign: TextAlign.center),
@@ -218,7 +245,39 @@ Future<void> showBreakSheet(BuildContext context, {required bool queued}) async 
   // Picked in the same instant a call arrived: a break "now" is no longer what
   // the sheet offered. The call screen offers one after the call instead.
   if (!queued && now.callActive) return;
+  if (code == switchToSoftphoneChoice) {
+    // The server queues it behind the call or wrap-up exactly like a break.
+    if (host != null) await _switchToSoftphone(host, messenger);
+    return;
+  }
   await actions.takeBreak(code);
+}
+
+/// Switches this campaign station to the soft phone (SP7): at once while
+/// waiting or on a break, queued behind a call or wrap-up (the pill then says
+/// "Switching after this call"). A refusal is said in a snackbar; nothing
+/// changed.
+Future<void> switchStationToSoftphone(BuildContext context) => _switchToSoftphone(
+      ProviderScope.containerOf(context, listen: false).read(softphoneHostActionsProvider),
+      ScaffoldMessenger.maybeOf(context),
+    );
+
+Future<void> _switchToSoftphone(SoftphoneHostActions host, ScaffoldMessengerState? messenger) async {
+  final result = await host.switchToSoftphone();
+  if (result case SoftphoneSwitchRefused(:final message)) {
+    messenger?.showSnackBar(SnackBar(key: const Key('switch-refused'), content: Text(message)));
+  }
+}
+
+/// Withdraws a switch to the soft phone still queued behind this call (the
+/// pill's ✕). A refusal (it already applied, say) is said in a snackbar.
+Future<void> cancelSoftphoneSwitch(BuildContext context) async {
+  final container = ProviderScope.containerOf(context, listen: false);
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  final result = await container.read(softphoneHostActionsProvider).cancelSwitch();
+  if (result case SoftphoneSwitchRefused(:final message)) {
+    messenger?.showSnackBar(SnackBar(key: const Key('cancel-switch-refused'), content: Text(message)));
+  }
 }
 
 /// Leave: refused while a call is on screen; otherwise confirmed, and then

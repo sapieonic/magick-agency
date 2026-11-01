@@ -1,83 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/app.dart';
 import 'package:magick_agency_agent/app/router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/shell.dart';
-import 'package:magick_agency_agent/app/theme/app_theme.dart';
-import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/station/station_view_mapper.dart';
 
 import '../core/auth/support/harness.dart';
+import 'shell_harness.dart';
 
 const available = StationSignals(onDuty: true, campaignId: 'c1');
 const onBreak = StationSignals(onDuty: true, onBreak: true, campaignId: 'c1');
-
-Widget at(GoRouterState s) => Scaffold(body: Text('at ${s.uri}'));
-
-const ready = GateReady(userId: 'u1', displayName: 'Meera', email: null, tenantId: 't1', accountId: 'a1', accountName: 'Chennai');
-
-class _Gate extends AppGateNotifier {
-  @override
-  AppGate build() => ready;
-  void put(AppGate gate) => state = gate;
-}
-
-/// The app's router (its redirect and refresh) and shell over stand-in
-/// screens, routed as `router.dart` routes them.
-Future<GoRouter> pumpShell(WidgetTester tester, ProviderContainer c, {String initial = Routes.home}) async {
-  final routerProvider = Provider<GoRouter>(
-    (ref) => buildAppRouter(
-      ref,
-      initialLocation: initial,
-      routes: [
-        for (final path in [Routes.splash, Routes.signIn, Routes.accounts, Routes.updateRequired, Routes.invitePattern, Routes.preflightPattern])
-          GoRoute(path: path, builder: (_, s) => at(s)),
-        StatefulShellRoute.indexedStack(
-          builder: (context, state, shell) => AppShell(shell: shell),
-          branches: [
-            StatefulShellBranch(routes: [
-              GoRoute(
-                path: Routes.home,
-                builder: (_, s) => at(s),
-                routes: [GoRoute(path: 'station/:campaignId', builder: (_, s) => at(s))],
-              ),
-            ]),
-            StatefulShellBranch(routes: [GoRoute(path: Routes.performance, builder: (_, s) => at(s))]),
-            StatefulShellBranch(routes: [GoRoute(path: Routes.calls, builder: (_, s) => at(s))]),
-            StatefulShellBranch(routes: [GoRoute(path: Routes.me, builder: (_, s) => at(s))]),
-          ],
-        ),
-      ],
-    ),
-  );
-  final router = c.read(routerProvider);
-  await tester.pumpWidget(
-    UncontrolledProviderScope(
-      container: c,
-      child: MaterialApp.router(theme: buildTheme(AppTokens.dark, Brightness.dark), routerConfig: router),
-    ),
-  );
-  await tester.pumpAndSettle();
-  return router;
-}
-
-bool tabEnabled(WidgetTester tester, String label) =>
-    tester.widget<NavigationDestination>(find.widgetWithText(NavigationDestination, label)).enabled;
 
 void main() {
   late ProviderContainer c;
 
   setUp(() {
-    c = ProviderContainer.test(overrides: [
-      stationSignalsProvider.overrideWith((ref) => ref.watch(testSignalsProvider)),
-      appGateProvider.overrideWith(_Gate.new),
-    ]);
+    c = shellContainer();
   });
 
   group('the tab bar while on duty', () {

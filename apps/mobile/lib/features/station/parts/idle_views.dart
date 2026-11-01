@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
+import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
 import '../logic/format.dart';
@@ -54,15 +55,68 @@ class WaitingView extends ConsumerWidget {
         ),
       ],
       // Leave is plain HTTP: it stays offered while the socket is down.
-      actions: ButtonPair(
-        first: LinkGate(
-          child: OutlinedButton(
-            key: const Key('take-break'),
-            onPressed: busy == StationBusy.none ? () => showBreakSheet(context, queued: false) : null,
-            child: BusyLabel(label: StationCopy.takeBreak, busy: busy == StationBusy.takingBreak),
+      actions: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SwitchToSoftphoneButton(busy: busy),
+          ButtonPair(
+            first: LinkGate(
+              child: OutlinedButton(
+                key: const Key('take-break'),
+                onPressed: busy == StationBusy.none ? () => showBreakSheet(context, queued: false) : null,
+                child: BusyLabel(label: StationCopy.takeBreak, busy: busy == StationBusy.takingBreak),
+              ),
+            ),
+            second: LeaveStationButton(busy: busy),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Switch to soft phone" (SP7) on the waiting and break screens, while the
+/// soft phone may start calls; nothing otherwise. It applies at once here (no
+/// call is on screen), and the station then shows the soft phone in place.
+/// Followed by a gap, so it sits above the screen's other actions.
+class SwitchToSoftphoneButton extends ConsumerStatefulWidget {
+  const SwitchToSoftphoneButton({super.key, required this.busy});
+
+  final StationBusy busy;
+
+  @override
+  ConsumerState<SwitchToSoftphoneButton> createState() => _SwitchToSoftphoneButtonState();
+}
+
+class _SwitchToSoftphoneButtonState extends ConsumerState<SwitchToSoftphoneButton> {
+  bool _switching = false;
+
+  Future<void> _switch() async {
+    setState(() => _switching = true);
+    try {
+      await switchStationToSoftphone(context);
+    } finally {
+      if (mounted) setState(() => _switching = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allowed = ref.watch(softphoneAvailabilityProvider.select((a) => a.startAllowed));
+    if (!allowed) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.sm),
+      child: LinkGate(
+        child: OutlinedButton.icon(
+          key: const Key('switch-softphone'),
+          onPressed: widget.busy == StationBusy.none && !_switching ? _switch : null,
+          icon: const Icon(Icons.dialpad),
+          label: BusyLabel(
+            label: _switching ? StationCopy.switchingToSoftphone : StationCopy.switchToSoftphone,
+            busy: _switching,
           ),
         ),
-        second: LeaveStationButton(busy: busy),
       ),
     );
   }
@@ -156,6 +210,7 @@ class BreakView extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: Space.sm),
+          SwitchToSoftphoneButton(busy: busy),
           LeaveStationButton(busy: busy),
         ],
       ),

@@ -457,13 +457,13 @@ void main() {
       });
     });
 
-    test('an owed outcome in the background: "Save the outcome by …", cleared on return; pings go on', () {
+    test('an owed outcome in the background: "Save the outcome by …" titled for the soft phone, cleared on return; pings go on', () {
       fakeAsync((async) {
         final app = _softphone(async);
         app.manualCallFrame(_owed);
         app.lifecycle.hide();
         async.flushMicrotasks();
-        expect(app.notifier.calls.last, 'wrapup:2026-11-01T09:30:00.000Z');
+        expect(app.notifier.calls.last, 'outcome:2026-11-01T09:30:00.000Z');
         final pings = app.socket.pings.length;
         async.elapse(const Duration(seconds: 30));
         expect(app.socket.pings.length, greaterThan(pings));

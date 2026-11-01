@@ -29,6 +29,7 @@ class CampaignsScreen extends ConsumerWidget {
     final assignments = workspace == null ? null : ref.watch(myAssignmentsProvider(workspace));
     final signals = ref.watch(stationSignalsProvider);
     final onDutyCampaign = signals.onDuty ? signals.campaignId : null;
+    final softphoneOpen = signals.onDuty && signals.sessionKind == StationSessionKind.softphone;
 
     Future<void> refresh() async {
       if (workspace == null) return;
@@ -77,6 +78,9 @@ class CampaignsScreen extends ConsumerWidget {
               const SizedBox(height: Space.lg),
               if (onDutyCampaign != null) ...[
                 _OnDutyBanner(campaignId: onDutyCampaign, name: _nameFor(assignments?.value, onDutyCampaign)),
+                const SizedBox(height: Space.lg),
+              ] else if (softphoneOpen) ...[
+                const SoftphoneOpenBanner(),
                 const SizedBox(height: Space.lg),
               ],
               ...body,
@@ -183,6 +187,38 @@ class _OnDutyBanner extends StatelessWidget {
             onPressed: () => context.go(Routes.station(campaignId)),
             child: const Text('Back to your station'),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The agent's soft-phone session is open on this phone. Joining a campaign is
+/// still offered: the pre-flight's join asks to close the soft phone first (and
+/// refuses while a call there is unfinished).
+class SoftphoneOpenBanner extends StatelessWidget {
+  const SoftphoneOpenBanner({super.key});
+
+  static const title = 'Your soft phone is open';
+  static const body = 'You can have one session at a time. Joining a campaign closes the soft phone first.';
+  static const action = 'Back to the soft phone';
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    return AppCard(
+      key: const Key('softphone-open-banner'),
+      color: t.accentSubtle,
+      borderColor: t.borderFocus,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(title, style: text.titleMedium),
+          const SizedBox(height: Space.xs),
+          Text(body, style: text.bodySmall),
+          const SizedBox(height: Space.md),
+          FilledButton(onPressed: () => context.go(Routes.phone), child: const Text(action)),
         ],
       ),
     );

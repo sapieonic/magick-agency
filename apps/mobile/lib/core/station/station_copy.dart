@@ -283,4 +283,7 @@ const notesChangedElsewhereCopy = 'These notes were also changed elsewhere.';
 const pausedNotificationTitle = 'You’re paused';
 const pausedNotificationBody = "You're paused. Open the app to take calls again.";
 const wrapupNotificationTitle = 'Wrap-up';
+
+/// The owed-outcome notice for a soft-phone call (its body is [wrapupNotificationBody]'s).
+const softphoneOutcomeNotificationTitle = 'Soft phone · outcome needed';
 String wrapupNotificationBody(String hhmm) => 'Save the outcome by $hhmm';

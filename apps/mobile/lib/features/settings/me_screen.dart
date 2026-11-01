@@ -24,9 +24,15 @@ import 'notification_preferences.dart';
 /// break": the console lets an agent on a break exit, but this phone keeps the
 /// station open until the agent leaves it, so a break is no way out here and
 /// the sentence on a break says so.
+///
+/// A soft-phone call that owes its outcome, and an open soft phone, get the
+/// soft phone's own sentences.
 String? signOutBlockedReason(StationSignals signals, {AgentPhase? phase}) {
   if (signals.callActive) return signOutBlockedOnCall;
+  final softphone = signals.sessionKind == StationSessionKind.softphone;
+  if (signals.outcomeOwed) return softphone ? signOutBlockedOwedSoftphone : signOutBlockedOwedStation;
   if (!signals.onDuty) return null;
+  if (softphone) return signOutBlockedSoftphone;
   return switch (phase) {
     AgentPhase.available => signOutBlockedAvailable,
     AgentPhase.onBreak => signOutBlockedOnBreak,
@@ -39,6 +45,10 @@ const signOutBlockedAvailable =
     'You’re still in the dialing pool — leave the station first, or a call could be sent to an empty screen.';
 const signOutBlockedOnBreak = 'You’re on a break, but your station is still open on this phone — leave the station first, then sign out.';
 const signOutBlockedOpen = 'Your station is still open on this phone — leave the station first, then sign out.';
+const signOutBlockedSoftphone = 'Your soft phone is still open on this phone — close the soft phone first, then sign out.';
+const signOutBlockedOwedSoftphone =
+    'Save this call’s outcome first — then close the soft phone and sign out.';
+const signOutBlockedOwedStation = 'Save this call’s outcome first — then leave the station and sign out.';
 
 /// The Me tab: who and where the agent is, their email preferences, this
 /// phone's theme, sound and vibration, diagnostics for support, and sign-out.

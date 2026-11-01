@@ -56,8 +56,13 @@ abstract interface class StationNotifier {
   /// "You're paused. Open the app to take calls again."
   Future<void> showPaused();
 
-  /// "Save the outcome by 11:28" ([deadline] on this device's clock).
+  /// "Save the outcome by 11:28" ([deadline] on this device's clock), titled
+  /// for the campaign call's wrap-up.
   Future<void> showWrapupDeadline(DateTime deadline);
+
+  /// The same for a soft-phone call that owes its outcome, titled for the soft
+  /// phone (it is no campaign wrap-up).
+  Future<void> showSoftphoneOutcomeDeadline(DateTime deadline);
   Future<void> cancel();
 }
 
@@ -113,6 +118,10 @@ final class LocalStationNotifier implements StationNotifier {
   @override
   Future<void> showWrapupDeadline(DateTime deadline) =>
       _show(wrapupNotificationTitle, wrapupNotificationBody(DateFormat.Hm().format(deadline.toLocal())));
+
+  @override
+  Future<void> showSoftphoneOutcomeDeadline(DateTime deadline) =>
+      _show(softphoneOutcomeNotificationTitle, wrapupNotificationBody(DateFormat.Hm().format(deadline.toLocal())));
 
   @override
   Future<void> cancel() async {

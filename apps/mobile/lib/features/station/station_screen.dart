@@ -5,7 +5,9 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/softphone/softphone_view.dart';
 import '../../core/station/station_view.dart';
+import '../softphone/softphone_panel.dart';
 import 'parts/idle_views.dart';
 import 'parts/link_screens.dart';
 import 'parts/on_call_view.dart';
@@ -15,7 +17,32 @@ import 'station_copy.dart';
 
 /// Which whole screen the station shows. Only a change of stage swaps the
 /// body; everything inside a stage updates in place from its own slice.
-enum StationStage { notHere, fatal, connecting, superseded, sessionGone, offline, available, onBreak, away, reserved, onCall, wrapup }
+///
+/// [softphone] is the station switched to the soft phone (SP7, the
+/// `soft_phone` break): the soft-phone panel in place, on the same socket and
+/// microphone, with Return to campaign as its way back. The break's own End
+/// break and break menu are not offered there.
+enum StationStage {
+  notHere,
+  fatal,
+  connecting,
+  superseded,
+  sessionGone,
+  offline,
+  available,
+  onBreak,
+  away,
+  softphone,
+  reserved,
+  onCall,
+  wrapup,
+}
+
+/// The `soft_phone` break: the station is on the soft phone.
+bool onSoftphoneBreak(StationView? v) => v?.phase == AgentPhase.onBreak && v?.onBreak?.code == softphoneBreakCode;
+
+/// The reserved break code of the soft phone (`AgencyReservedBreakCode`).
+const softphoneBreakCode = 'soft_phone';
 
 /// Pure, so the precedence is testable: a session-level failure outranks the
 /// agent's phase (an agent whose station moved must not be told they are
@@ -36,6 +63,7 @@ StationStage stationStageOf(StationView? v, String campaignId) {
   return switch (v.phase) {
     AgentPhase.offline => StationStage.offline,
     AgentPhase.available => StationStage.available,
+    AgentPhase.onBreak when onSoftphoneBreak(v) => StationStage.softphone,
     AgentPhase.onBreak => (v.onBreak?.isDeviceAway ?? false) ? StationStage.away : StationStage.onBreak,
     AgentPhase.reserved => StationStage.reserved,
     AgentPhase.onCall => StationStage.onCall,
@@ -110,14 +138,22 @@ class _StationScreenState extends ConsumerState<StationScreen> {
       StationStage.available => const WaitingView(),
       StationStage.onBreak => const BreakView(),
       StationStage.away => const AwayView(),
+      // Its own header (Return to campaign), rail, announcer and pinned action;
+      // it needs the bounded height the stage gives it.
+      StationStage.softphone => const SoftphonePanel(surface: SoftphoneSurface.station),
       StationStage.reserved => const RingingView(),
       StationStage.onCall => OnCallView(notes: notes),
       StationStage.wrapup => WrapupPhaseView(key: ValueKey('wrapup-$attemptId'), notes: notes),
     };
 
-    final onCall = stage == StationStage.reserved || stage == StationStage.onCall || stage == StationStage.wrapup;
+    final softphoneCall = ref.watch(softphoneViewProvider.select((v) => v.callOnScreen));
+    final onCall = stage == StationStage.reserved ||
+        stage == StationStage.onCall ||
+        stage == StationStage.wrapup ||
+        (stage == StationStage.softphone && softphoneCall);
     // Mid-call the system back gesture must not take the call screen away;
-    // the way off it is finishing the call.
+    // the way off it is finishing the call (a soft-phone call included, until
+    // its outcome is saved).
     return PopScope(
       canPop: !onCall,
       child: Scaffold(

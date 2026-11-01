@@ -1,4 +1,5 @@
 import '../../core/station/station_view.dart';
+import '../softphone/softphone_copy.dart';
 import 'logic/disposition_form.dart';
 
 /// Every sentence the station screen says, in one place so it can be
@@ -79,6 +80,17 @@ abstract final class StationCopy {
   static const breakAfterCall = 'Break after this call';
   static String breakQueued(String label) => 'Break after this call — $label';
   static const cancelQueuedBreak = 'Cancel queued break';
+
+  // ── Switch to the soft phone (SP7) ──
+  // The Phone tab's words, so both places name it the same.
+  static const switchToSoftphone = SoftphoneCopy.switchToSoftphone;
+  static const switchingToSoftphone = SoftphoneCopy.switching;
+  static const switchHint = 'Dial customers yourself. You stay on this campaign and can return to it.';
+  static const switchAfterCallHint = 'Switches when you finish this call.';
+
+  /// The queued switch's pill (the console's words).
+  static const switchQueued = SoftphoneCopy.switchQueued;
+  static const cancelSwitch = 'Cancel the switch';
 
   // ── Ringing ──
   static const beingDialled = 'Customer is being dialled';

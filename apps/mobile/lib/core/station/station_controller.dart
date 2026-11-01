@@ -137,6 +137,7 @@ class StationController extends Notifier<StationView?>
   Timer? _awayDeadline;
   AwayNotice _notice = AwayNotice.none;
   DateTime? _noticeDeadline;
+  bool _noticeSoftphone = false;
   bool? _wakeLockOn;
 
   late final StationApi _api = StationApi(
@@ -992,11 +993,12 @@ class StationController extends Notifier<StationView?>
             wrapupDeadline: _station.wrapup?.deadline,
             outcomeDueAt: outcomeDue,
           );
+    // Not in wrap-up, the deadline is the soft-phone call's outcome.
+    final wrapup = st == AgentState.wrapup;
     _setNotice(
       notice,
-      notice == AwayNotice.wrapupDeadline
-          ? (st == AgentState.wrapup ? _station.wrapup?.deadline : outcomeDue)
-          : null,
+      notice == AwayNotice.wrapupDeadline ? (wrapup ? _station.wrapup?.deadline : outcomeDue) : null,
+      softphoneOutcome: notice == AwayNotice.wrapupDeadline && !wrapup,
     );
   }
 
@@ -1122,13 +1124,15 @@ class StationController extends Notifier<StationView?>
     }));
   }
 
-  void _setNotice(AwayNotice notice, DateTime? deadline) {
-    if (notice == _notice && deadline == _noticeDeadline) return;
+  void _setNotice(AwayNotice notice, DateTime? deadline, {bool softphoneOutcome = false}) {
+    if (notice == _notice && deadline == _noticeDeadline && softphoneOutcome == _noticeSoftphone) return;
     _notice = notice;
     _noticeDeadline = deadline;
+    _noticeSoftphone = softphoneOutcome;
     unawaited(switch (notice) {
       AwayNotice.none => _notifier.cancel(),
       AwayNotice.paused => _notifier.showPaused(),
+      AwayNotice.wrapupDeadline when softphoneOutcome => _notifier.showSoftphoneOutcomeDeadline(deadline!),
       AwayNotice.wrapupDeadline => _notifier.showWrapupDeadline(deadline!),
     });
   }

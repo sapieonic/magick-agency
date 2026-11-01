@@ -103,6 +103,9 @@ class FakeNotifier implements StationNotifier {
 
   @override
   Future<void> showWrapupDeadline(DateTime deadline) async => calls.add('wrapup:${deadline.toIso8601String()}');
+
+  @override
+  Future<void> showSoftphoneOutcomeDeadline(DateTime deadline) async => calls.add('outcome:${deadline.toIso8601String()}');
 }
 
 class FakeNetwork implements NetworkMonitor {

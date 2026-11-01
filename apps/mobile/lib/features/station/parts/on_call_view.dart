@@ -260,6 +260,9 @@ class ControlTile extends StatelessWidget {
 /// With [offer] false (wrap-up) only a queued break shows: one picked on the
 /// call, or in its sheet after the call ended, stays visible and cancellable
 /// until it starts.
+///
+/// A queued switch to the soft phone (the `soft_phone` break, SP7) is the same
+/// queue and reads "Switching after this call"; its ✕ withdraws the switch.
 class QueuedBreakChip extends ConsumerWidget {
   const QueuedBreakChip({super.key, this.offer = true});
 
@@ -284,6 +287,7 @@ class QueuedBreakChip extends ConsumerWidget {
       );
     }
     final cancelling = busy == StationBusy.cancellingBreak;
+    final toSoftphone = queued.code == switchToSoftphoneChoice;
     return Align(
       alignment: AlignmentDirectional.centerStart,
       child: DecoratedBox(
@@ -294,15 +298,22 @@ class QueuedBreakChip extends ConsumerWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.free_breakfast_outlined, size: 18, color: t.warning),
+              Icon(toSoftphone ? Icons.dialpad : Icons.free_breakfast_outlined, size: 18, color: t.warning),
               const SizedBox(width: Space.sm),
               Flexible(
-                child: Text(StationCopy.breakQueued(queued.label), style: text.labelMedium!.copyWith(color: t.warning)),
+                child: Text(
+                  toSoftphone ? StationCopy.switchQueued : StationCopy.breakQueued(queued.label),
+                  style: text.labelMedium!.copyWith(color: t.warning),
+                ),
               ),
               IconButton(
                 key: const Key('cancel-queued-break'),
-                tooltip: StationCopy.cancelQueuedBreak,
-                onPressed: cancelling ? null : () => ref.read(stationActionsProvider).cancelQueuedBreak(),
+                tooltip: toSoftphone ? StationCopy.cancelSwitch : StationCopy.cancelQueuedBreak,
+                onPressed: cancelling
+                    ? null
+                    : toSoftphone
+                        ? () => cancelSoftphoneSwitch(context)
+                        : () => ref.read(stationActionsProvider).cancelQueuedBreak(),
                 icon: cancelling
                     ? SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2, color: t.warning))
                     : Icon(Icons.close, color: t.warning),
