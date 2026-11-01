@@ -487,6 +487,30 @@ void main() {
       expect(find.text('2026-11-15'), findsOneWidget);
       expect(find.text('This app can’t edit this detail.'), findsOneWidget);
     });
+
+    testWidgets('a yes/no detail nobody has answered says so, rather than reading as No', (tester) async {
+      SoftphoneView withConsent(Object? value) => callView(
+        SoftphonePhase.onCall,
+        fieldViews: [
+          SoftphoneFieldView(key: 'consent', label: 'Consent given', type: SoftphoneFieldType.boolean, required: true, value: value),
+        ],
+      );
+      // The plain texts under the switch (the label is rich text).
+      List<String?> said() => [
+        for (final t in tester.widgetList<Text>(find.descendant(of: find.byKey(const Key('call-field-consent')), matching: find.byType(Text))))
+          if (t.data != null) t.data,
+      ];
+
+      final h = await pumpSoftphone(tester, withConsent(null));
+      await tester.ensureVisible(find.byKey(const Key('call-field-consent')));
+      expect(said(), contains('Not answered'));
+      expect(said(), isNot(contains('No')));
+      await h.setView(withConsent(false));
+      expect(said(), contains('No'));
+      expect(said(), isNot(contains('Not answered')));
+      await h.setView(withConsent(true));
+      expect(said(), contains('Yes'));
+    });
   });
 
   group('Mark DNC', () {

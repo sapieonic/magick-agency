@@ -63,6 +63,9 @@ Widget _label(BuildContext context, SoftphoneFieldView f) {
   );
 }
 
+/// What a yes/no detail nobody has answered says, in the console's words.
+const _notAnswered = 'Not answered';
+
 class _FieldInput extends ConsumerStatefulWidget {
   const _FieldInput({super.key, required this.field, required this.enabled});
 
@@ -163,6 +166,9 @@ class _FieldInputState extends ConsumerState<_FieldInput> {
         );
       case SoftphoneFieldType.boolean:
         final on = f.value == true;
+        // Unset is not No: a required yes/no nobody has answered blocks Save,
+        // and reading "No" the agent would not see why.
+        final answer = f.value == null ? _notAnswered : (on ? SoftphoneCopy.yes : SoftphoneCopy.no);
         return InputDecorator(
           decoration: InputDecoration(
             errorText: f.error,
@@ -179,7 +185,7 @@ class _FieldInputState extends ConsumerState<_FieldInput> {
               key: Key('call-field-${f.key}'),
               contentPadding: EdgeInsets.zero,
               title: _label(context, f),
-              subtitle: Text(on ? SoftphoneCopy.yes : SoftphoneCopy.no),
+              subtitle: Text(answer),
               value: on,
               onChanged: enabled ? _set : null,
             ),
