@@ -123,7 +123,29 @@ describe('session create — who is joining', () => {
     });
 
     expect(res.statusCode).toBe(200);
-    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: AGENT_USER });
+    // `client_kind` is from `X-Client` (none here: `web`); it picks the intervals served.
+    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: AGENT_USER, client_kind: 'web' });
+    await app.close();
+  });
+
+  it('sends client_kind mobile for the mobile app\'s X-Client, and web for anything else', async () => {
+    const app = await buildApp({ role: 'agent' });
+    const cases: Array<[string | undefined, 'web' | 'mobile']> = [
+      ['magick-agency-mobile/1.4.0+212 (android 14; Pixel 8)', 'mobile'],
+      ['magick-agency-mobile/0.9.1+7 (ios 17.5; iPhone15,2)', 'mobile'],
+      ['Mozilla/5.0 (X11; Linux x86_64)', 'web'],
+      ['magick-agency-mobil/1.0.0', 'web'],
+      [undefined, 'web'],
+    ];
+    for (const [header, kind] of cases) {
+      mocks.proxyToCore.mockClear();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/sessions`, payload: { campaign_id: CAMPAIGN },
+        headers: header === undefined ? {} : { 'x-client': header },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(sentBody()['client_kind'], String(header)).toBe(kind);
+    }
     await app.close();
   });
 
@@ -152,7 +174,7 @@ describe('session create — who is joining', () => {
       method: 'POST', url: `${PREFIX}/sessions`, payload: { campaign_id: CAMPAIGN },
     });
 
-    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: 'user-supervisor' });
+    expect(sentBody()).toEqual({ campaign_id: CAMPAIGN, agent_user_id: 'user-supervisor', client_kind: 'web' });
     await app.close();
   });
 

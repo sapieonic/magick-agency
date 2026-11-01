@@ -121,6 +121,36 @@ describe('station WebSocket proxy', () => {
     client.close();
   });
 
+  it('hands the parsed client and media on: the defaults when the upgrade names neither', async () => {
+    const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t`);
+    await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler');
+    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[4]).toEqual({ client: 'web', media: 'pcm16' });
+    client.close();
+  });
+
+  it('hands client=mobile and media=alaw8 on as named', async () => {
+    const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t&client=mobile&media=alaw8`);
+    await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler');
+    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[4]).toEqual({ client: 'mobile', media: 'alaw8' });
+    client.close();
+  });
+
+  it.each([
+    ['client=ios', 'invalid_client'],
+    ['client=', 'invalid_client'],
+    ['client=Mobile', 'invalid_client'],
+    ['client=web&client=mobile', 'invalid_client'],
+    ['media=opus', 'invalid_media'],
+    ['client=mobile&media=', 'invalid_media'],
+  ])('refuses %s with 1008 before the station handler (and before the token is consumed)', async (query, reason) => {
+    const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t&${query}`);
+    const closed = await client.waitForClose();
+    expect(closed.code).toBe(STATION_CLOSE_CODES.INVALID_UPGRADE_QUERY);
+    expect(closed.code).toBe(1008);
+    expect(closed.reason).toBe(reason);
+    expect(mocks.handleStationSocket).not.toHaveBeenCalled();
+  });
+
   // The refusal for "nothing to hand the socket to".
   it('closes 1011 when the app has no agency runtime', async () => {
     mocks.runtime = null;

@@ -29,7 +29,7 @@ import type {
 } from './enums';
 import type { AgencyContextDisplay, AgencyDisposition, AgencyStationIntervals } from './session';
 import type { AgencyKeysetPage } from './spine';
-import type { AgencyPriorAttempt, AgencyReleaseReason } from './station';
+import type { AgencyClientKind, AgencyPriorAttempt, AgencyReleaseReason } from './station';
 
 // ─── The break, and the session kind ────────────────────────────────────────
 
@@ -545,6 +545,8 @@ export interface AgencySoftphoneBootstrap {
 export interface AgencySoftphoneCreateSessionRequest {
   /** Filled by the public API layer from the authenticated session, never by the browser. */
   agent_user_id: string;
+  /** As on the campaign join (`AgencyCreateSessionRequest.client_kind`): picks the `intervals` served. */
+  client_kind?: AgencyClientKind;
 }
 
 /**

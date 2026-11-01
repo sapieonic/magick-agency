@@ -11,6 +11,12 @@ import {
   AGENCY_OUR_FAULT_RETRY_DEFAULT,
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
   AGENCY_STATION_CLOSE,
+  AGENCY_CLIENT_KINDS,
+  AGENCY_STATION_MEDIA,
+  DEVICE_AWAY_BREAK_REASON,
+  DEVICE_AWAY_BREAK_REASON_LABEL,
+  RESERVED_BREAK_REASONS,
+  RESERVED_BREAK_REASON_LABELS,
   AGENCY_CAMPAIGN_STATS_FIELDS,
   AGENCY_STATS_ROUTE_FIELDS,
 } from '../src/agency';
@@ -168,6 +174,19 @@ describe('package surface', () => {
     expect(AgencyApi.SOFTPHONE_BREAK_REASON).toBe(SOFTPHONE_BREAK_REASON);
     expect(AgencyApi.AGENCY_MANUAL_CALL_STATES).toBe(AGENCY_MANUAL_CALL_STATES);
     expect(AgencyApi.SOFTPHONE_CALL_FIELD_KEY_PATTERN).toBe(SOFTPHONE_CALL_FIELD_KEY_PATTERN);
+  });
+
+  it('declares the reserved break codes, the client kinds and the station media once (SNAPSHOT)', () => {
+    expect(DEVICE_AWAY_BREAK_REASON).toBe('device_away');
+    expect(DEVICE_AWAY_BREAK_REASON_LABEL).toBe('Away (app in background)');
+    expect([...RESERVED_BREAK_REASONS]).toEqual(['soft_phone', 'device_away']);
+    expect(RESERVED_BREAK_REASON_LABELS).toEqual({ soft_phone: 'Soft phone', device_away: 'Away (app in background)' });
+    expect(Object.isFrozen(RESERVED_BREAK_REASON_LABELS)).toBe(true);
+    expect([...AGENCY_CLIENT_KINDS]).toEqual(['web', 'mobile']);
+    expect([...AGENCY_STATION_MEDIA]).toEqual(['pcm16', 'alaw8']);
+    // The console wire layer re-exports the same values rather than copies.
+    expect(AgencyApi.DEVICE_AWAY_BREAK_REASON).toBe(DEVICE_AWAY_BREAK_REASON);
+    expect(AgencyApi.RESERVED_BREAK_REASON_LABELS).toBe(RESERVED_BREAK_REASON_LABELS);
   });
 
   it('declares both rate floors, side by side and different on purpose', () => {

@@ -5,7 +5,7 @@ under [Later migrations](#later-migrations). This file is their inventory: the r
 they follow, every table with its purpose and columns, the unique indexes that carry invariants, the
 triggers and functions, how it is tested, and the schema questions still open. Read it before
 writing a repository, a migration or an import script. Column lists are generated from the SQL;
-the SQL is the authority. As of 2026-10-30.
+the SQL is the authority. As of 2026-11-01.
 
 ## Rules
 
@@ -162,9 +162,9 @@ Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provi
 
 Columns: `id`, `campaign_id`, `tenant_id`, `account_id`, `phone_e164`, `context`, `source_row_number`, `timezone`, `state`, `attempt_count`, `last_outcome`, `last_disposition`, `next_attempt_at`, `suppressed_reason`, `created_at`, `updated_at`, `our_fault_attempts`, `row_fingerprint`, `csv_line_number`, `source_contact_id`, `root_contact_id`.
 
-**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below).
+**`agency_agent_sessions`**. An agent's session on a campaign: state mirror, break reason, owning replica, heartbeat. One live session per agent per tenant (`uq_agency_agent_live_tenant`). 0005 adds `kind` and makes `campaign_id` nullable (a soft-phone session; see below). 0006 adds `client_kind` (`web | mobile`, the app the station last attached from).
 
-Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state`, `break_reason`, `state_since`, `owner_replica`, `last_heartbeat`, `joined_at`, `left_at`, `created_at`, `updated_at`, `kind`.
+Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state`, `break_reason`, `state_since`, `owner_replica`, `last_heartbeat`, `joined_at`, `left_at`, `created_at`, `updated_at`, `kind`, `client_kind`.
 
 **`agency_agent_session_events`**. Agent state transitions, for seat-time reporting. `campaign_id` is nullable since 0005.
 
@@ -417,6 +417,20 @@ typed number outside pacing, optionally logged ("tagged") to one of their campai
   vocabulary against the contract's list, the unsettled-call index, the FKs, the index definitions
   and three plans) and the baseline suites (table set, triggers, the down → up inventory, and the
   Down refusal while a soft-phone session or a switched campaign session's manual call exists).
+
+### 0006 — `migrations/0006_agent_session_client_kind.sql`
+
+The agent mobile app. **`agency_agent_sessions.client_kind`** `VARCHAR(16) NOT NULL DEFAULT 'web'`,
+CHECK `ck_agency_agent_session_client_kind` (`web | mobile`, the contract's `AGENCY_CLIENT_KINDS`):
+which app the session's station socket last attached from. Written by every station attach
+(`AgencyAgentSessionRepository.readForStationAttach`, folded into the attach's own session read, and
+only when it changes), so a session continued on another device follows the device. Read by the
+supervisor's floor (a phone marker); station liveness reads the in-memory station entry, never this
+column. Client-declared and never verified, so nothing security-relevant reads it. Every existing row
+is `web`. No index (nothing filters on it). Adding a column with a constant DEFAULT does not rewrite
+the table. **Down** drops the CHECK and the column. **Tests**:
+`test/integration/db/agent-session-client-kind-migration.test.ts` (the column, its default, the
+CHECK against the contract's list) and the down → up inventory suite.
 
 ## Tests
 

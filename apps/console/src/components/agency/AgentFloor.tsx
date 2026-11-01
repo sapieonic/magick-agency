@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, WifiOff } from 'lucide-react';
+import { AlertTriangle, Smartphone, WifiOff } from 'lucide-react';
 import {
   handledShare,
   perAgentLabel,
@@ -300,6 +300,20 @@ function AgentRow({
             Actions cell would otherwise be the only place the dropped station
             could show and it is already taken.
           */}
+          {/*
+            The station last attached from the mobile app (`client_kind`). A plain
+            marker, not a warning: it tells a supervisor why this agent may go
+            "Away (app in background)" and why a silent station drops sooner.
+          */}
+          {agent.client_kind === 'mobile' && (
+            <span
+              className={styles.mobileIcon}
+              title="On the mobile app"
+              data-testid={`floor-mobile-${agent.session_id}`}
+            >
+              <Smartphone size={13} role="img" aria-label="On the mobile app" />
+            </span>
+          )}
           {agent.connected === false && (
             <WifiOff
               size={13}

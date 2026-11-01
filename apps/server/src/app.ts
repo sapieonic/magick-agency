@@ -11,6 +11,7 @@ import { analysisPlugin } from './api/analysis.plugin.js';
 import { registerRateLimit } from './api/middleware/rate-limit.middleware.js';
 import { agencyErrorHandler } from './api/middleware/agency-error-handler.js';
 import { errorMaskHook } from './api/middleware/error-mask.middleware.js';
+import { clientLogContextHook } from './api/middleware/client-log-context.js';
 
 export interface BuildAppOptions {
   /** Null in tests that only exercise routing; lanes must cope or require it. */
@@ -74,6 +75,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   });
 
   if (opts.onRoute) app.addHook('onRoute', opts.onRoute);
+
+  // Which app sent the request (`X-Client`), on every log line it produces as `client`.
+  // First, so even the rate limiter's and the auth layer's lines carry it. Logging only.
+  app.addHook('onRequest', clientLogContextHook);
 
   // The rate limiter, at APP scope, so every route below — including `POST /auth/session`,
   // the agency API and the super-admin tree — is charged to a bucket, not only the carrier

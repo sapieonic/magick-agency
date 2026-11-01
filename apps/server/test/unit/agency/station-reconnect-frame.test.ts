@@ -62,7 +62,11 @@ const { repos } = vi.hoisted(() => ({
     attempt: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     campaign: { findById: vi.fn() },
     contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn() },
-    session: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn() },
+    session: {
+      findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn(),
+      // The station attach's session read (it also records `client_kind`): the row `findById` gives.
+      readForStationAttach: vi.fn((id: string) => repos.session.findById(id)),
+    },
   },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({

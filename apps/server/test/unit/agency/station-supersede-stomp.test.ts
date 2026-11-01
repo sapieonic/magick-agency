@@ -77,6 +77,8 @@ const { repos } = vi.hoisted(() => ({
     contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn() },
     session: {
       findById: vi.fn(),
+      // The station attach's session read (it also records `client_kind`): the row `findById` gives.
+      readForStationAttach: vi.fn((id: string) => repos.session.findById(id)),
       setState: vi.fn().mockResolvedValue(undefined),
       leave: vi.fn(),
     },

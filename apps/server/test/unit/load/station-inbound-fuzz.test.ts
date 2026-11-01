@@ -45,6 +45,8 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn() },
   agencyAgentSessionRepository: {
     findById: vi.fn(async (id: string) => sessions.get(id) ?? null),
+    // The station attach's session read (it also records `client_kind`).
+    readForStationAttach: vi.fn(async (id: string) => sessions.get(id) ?? null),
     setState: vi.fn(async (id: string, state: string) => {
       const row = sessions.get(id);
       if (row) row['state'] = state;

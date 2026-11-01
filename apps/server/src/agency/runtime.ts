@@ -13,7 +13,7 @@ import {
   SOFTPHONE_BREAK_REASON,
   type AgencyAgentState,
 } from '@magick-agency/contracts/agency';
-import { StationRegistry } from './station-registry.js';
+import { StationRegistry, stationGraceFor } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
 import { LocalDialDispatcher } from './dial-dispatcher.js';
@@ -23,7 +23,7 @@ import { refreshAbandonmentWindow, startAbandonmentMetricsRefresh } from './aban
 import { refreshLiveConcurrency, startLiveConcurrencyRefresh } from './live-concurrency-metrics.js';
 import {
   ABANDONMENT_REFRESH_MS, AGENCY_LIVE_CONCURRENCY_REFRESH_MS,
-  STATION_HEARTBEAT_GRACE_MS, STATION_HEARTBEAT_SWEEP_MS,
+  STATION_HEARTBEAT_SWEEP_MS,
   STATION_SWEEP_IDLE_PASSES_BEFORE_DORMANT,
 } from '@magick-agency/domain/timers';
 import { StationTokenStore } from './station-token.js';
@@ -369,8 +369,36 @@ export class AgencyRuntime {
    * `ws` emits `close` off its own closing timeout even when the peer never
    * answers, so a wedged socket still reaches its handler and the CLOSED arm stays
    * a backstop.
+   *
+   * ── The grace is per station ──────────────────────────────────────────────
+   *
+   * Each entry is held to its own client kind's grace ({@link stationGraceFor}): 30s
+   * for the web console, unchanged, and `MOBILE_STATION_HEARTBEAT_GRACE_MS` (10s) for
+   * the mobile app, whose `lastSeen` is also renewed by protocol pongs (the registry's
+   * probe). A number passed in applies to every entry, as it always did.
+   *
+   * ── How the mobile probe and rule 1 interact ──────────────────────────────
+   *
+   * Rule 1 exists because on the web "silent" can be a lie: the console's heartbeat is
+   * an app timer, audio does not renew `lastSeen`, so a socket can be carrying a live
+   * conversation while it looks silent. On a mobile station that lie is much rarer:
+   * the pong is answered by the client's WebSocket stack whenever the transport and
+   * the process are alive, so a mobile station mid-call that is silent past 10s is
+   * almost certainly a dead transport or a suspended app, not a stalled timer.
+   *
+   * Rule 1 is kept for it anyway, deliberately, and the probe makes it cheaper rather
+   * than different. A live attempt's outcome belongs to the bridge's deferred hangup
+   * and the reaper (this sweep must not decide a conversation is over on a liveness
+   * guess), and an unbound dial still gets its pre-bind grace armed here, exactly as on
+   * the web: that is the case that otherwise becomes an abandoned call. What the probe
+   * changes is everything outside an attempt: an `available` phone that stops answering
+   * leaves the pool within 10–15s instead of 30–40s, which is the window in which a
+   * customer could be bridged to it.
    */
-  sweepSilentStations(graceMs = STATION_HEARTBEAT_GRACE_MS, now = Date.now()): number {
+  sweepSilentStations(
+    graceMs: number | ((entry: Parameters<typeof stationGraceFor>[0]) => number) = stationGraceFor,
+    now = Date.now(),
+  ): number {
     let acted = 0;
     for (const entry of this.stations.silentSince(graceMs, now)) {
       // Rule 1, and it guards the detach arm as well as the close arm: an attempt
@@ -423,6 +451,7 @@ export class AgencyRuntime {
       log.warn({
         sessionId: entry.sessionId,
         campaignId: entry.campaignId,
+        clientKind: entry.clientKind,
         silentForMs: now - entry.lastSeen,
       }, 'Station heartbeat lapsed past its grace — closing the socket');
       // 4408: re-mint and retry, exactly as 4401 is. The console must come back.

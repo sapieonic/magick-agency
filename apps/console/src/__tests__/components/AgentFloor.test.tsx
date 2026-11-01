@@ -48,6 +48,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
     connected: true,
     break_reason: null,
     calls_handled: 3,
+    client_kind: 'web',
     ...over,
   };
 }
@@ -557,6 +558,28 @@ describe('the floor as a table', () => {
     expect(row.textContent).not.toContain('Long break');
     fireEvent.click(screen.getByRole('button', { name: 'Priya' }));
     expect(screen.getByTestId('agent-drawer-state').textContent).toBe('Soft phone');
+  });
+
+  it('shows the device-away break as "Away (app in background)", flagged once it runs long', () => {
+    renderFloor({ stats: stats([agent({ session_id: 'away', agent_name: 'Meera', state: 'break', break_reason: 'device_away', client_kind: 'mobile', state_since: ago(31 * 60) })]) });
+    const row = screen.getByTestId('floor-row-away');
+    expect(row.textContent).toContain('Away (app in background)');
+    expect(row.textContent).not.toContain('device_away');
+    expect(row.textContent).not.toContain('On break');
+    expect(row.textContent).toContain('Long break');
+    fireEvent.click(screen.getByRole('button', { name: 'Meera' }));
+    expect(screen.getByTestId('agent-drawer-state').textContent).toBe('Away (app in background)');
+  });
+
+  it('marks an agent on the mobile app with a phone, and only them', () => {
+    renderFloor({ stats: stats([
+      agent({ session_id: 'phone', agent_name: 'Meera', client_kind: 'mobile' }),
+      agent({ session_id: 'desk', agent_name: 'Ravi', client_kind: 'web' }),
+    ]) });
+    const marker = screen.getByTestId('floor-mobile-phone');
+    expect(marker.getAttribute('title')).toBe('On the mobile app');
+    expect(screen.getByRole('img', { name: 'On the mobile app' })).toBeTruthy();
+    expect(screen.queryByTestId('floor-mobile-desk')).toBeNull();
   });
 
   it('keeps the break reason beside the state', () => {

@@ -671,4 +671,28 @@ describe('break_reasons at the write', () => {
     expect(validate({ break_reasons: [{ code: 'lunch', label: 'Lunch' }] })).toEqual([]);
     expect(validate({ break_reasons: [] })).toEqual([]);
   });
+
+  it('refuses the mobile app\'s device_away like the soft phone\'s, one issue per reserved code', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    expect(validate({ break_reasons: [{ code: 'device_away', label: 'Away' }] }))
+      .toEqual([{ field: 'break_reasons', message: expect.stringContaining('"device_away": it is reserved for the mobile app') }]);
+    expect(validate({ break_reasons: [{ code: 'soft_phone', label: 'S' }, { code: 'device_away', label: 'A' }, { code: 'lunch', label: 'L' }] }))
+      .toEqual([
+        { field: 'break_reasons', message: expect.stringContaining('"soft_phone"') },
+        { field: 'break_reasons', message: expect.stringContaining('"device_away"') },
+      ]);
+    // A malformed entry is not a reserved one (the column's own shape checks own it).
+    expect(validate({ break_reasons: [null, 'device_away', { label: 'no code' }] })).toEqual([]);
+  });
+
+  it('a PATCH listing device_away is a 400 and writes nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { break_reasons: [{ code: 'device_away', label: 'Away (app in background)' }] },
+    });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.body).toContain('device_away');
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
 });

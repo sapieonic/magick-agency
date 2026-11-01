@@ -24,8 +24,10 @@ import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { requestAuditActor, resolvedUserAuditActor, type AuditActorFields } from '../../audit/platform/audit-actor.js';
 import { auditSoftphoneEnded } from '../../agency/softphone/softphone-audit.js';
 import { takeSoftphoneSessionAudit } from './agency/softphone-answer.js';
+import { takeBreakUnchanged } from './agency/device-away.js';
 import { sendCoreRefusal } from './proxy-agency-softphone/shared.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
+import { parseClientHeader } from '../../utils/client-header.js';
 
 const log = createChildLogger({ component: 'proxy-agency-agent' });
 
@@ -256,7 +258,13 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     const result = await callCore({
       method: 'POST',
       path: '/agency/sessions',
-      body: { ...parsed.data, agent_user_id: actor.actor.agent_user_id },
+      // `client_kind` from `X-Client` picks the intervals served (a mobile station's
+      // shorter heartbeat grace) and nothing else: it is client-declared.
+      body: {
+        ...parsed.data,
+        agent_user_id: actor.actor.agent_user_id,
+        client_kind: parseClientHeader(request.headers['x-client']).kind,
+      },
       tenantId: request.tenantId!,
       accountId: request.accountId,
     });
@@ -385,7 +393,11 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
     });
     // A break with another reason, taken from the soft phone's, ends the soft phone too.
     auditSoftphoneExit(request, result, resolvedUserAuditActor(request, actor.agent_user_id));
-    if (result.status < 400) {
+    // The device-away break's no-ops (already on it, another break already chosen,
+    // offline, a soft-phone session) changed nothing and are not a break: no row. Always
+    // taken off, so the client never sees the marker.
+    const unchanged = takeBreakUnchanged(result.body);
+    if (result.status < 400 && !unchanged) {
       const campaignId = stringField(result.body, 'campaign_id');
       platformAuditLogger.log({
         ...accountAudit(request),

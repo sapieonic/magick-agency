@@ -62,6 +62,7 @@ function agent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervisorAgent
     connected: true,
     break_reason: null,
     calls_handled: 3,
+    client_kind: 'web',
     ...over,
   };
 }
@@ -164,6 +165,12 @@ describe('floorRisk — the thresholds', () => {
     expect(floorRisk(hours, NOW, THRESHOLDS)).toBe('none');
     // A dropped station still says so: the exemption is the break's, nothing else's.
     expect(floorRisk({ ...hours, connected: false }, NOW, THRESHOLDS)).toBe('disconnected');
+  });
+
+  it('rank 3 DOES fire for the mobile app\'s device-away break: half an hour away from the app is worth a look', () => {
+    const away = agent({ state: 'break', break_reason: 'device_away', client_kind: 'mobile', state_since: ago(LONG_BREAK_SECONDS + 1) });
+    expect(floorRisk(away, NOW, THRESHOLDS)).toBe('long_break');
+    expect(floorRisk({ ...away, state_since: ago(LONG_BREAK_SECONDS - 1) }, NOW, THRESHOLDS)).toBe('none');
   });
 
   it('rank 4 fires on `connected: false`', () => {
@@ -654,6 +661,12 @@ describe('Overview and the Agents tab agree about who is on shift', () => {
 describe('floorStateLabel — the state as a supervisor reads it', () => {
   it('names the soft phone for what it is, not as an idle break with a raw code', () => {
     expect(floorStateLabel({ state: 'break', break_reason: 'soft_phone' })).toBe('Soft phone');
+  });
+
+  it('names the mobile app\'s device-away break, never as "On break · device_away"', () => {
+    expect(floorStateLabel({ state: 'break', break_reason: 'device_away' })).toBe('Away (app in background)');
+    // Only while on break: a stale reason beside another state is not read.
+    expect(floorStateLabel({ state: 'available', break_reason: 'device_away' })).toBe(AGENCY_FLOOR_STATE_LABELS.available);
   });
 
   it('keeps any other break reason beside the state, and a plain state alone', () => {
