@@ -7,5 +7,5 @@
   "packages/domain": "0.2.0",
   "packages/observability": "0.2.0",
   "packages/web-ui": "0.1.0",
-  "apps/mobile": "0.2.0"
+  "apps/mobile": "0.2.1"
 }
