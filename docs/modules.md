@@ -1331,6 +1331,7 @@ Files: `agency/AgencyRetryDialog.module.css`, `agency/AgencyRetryDialog.tsx`, `a
 | `apps/console/src/__tests__/components/BreakMenu.test.tsx` | 26 |
 | `apps/console/src/__tests__/components/CallDetailSections.analysis.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CallDetailView.test.tsx` | 21 |
+| `apps/console/src/__tests__/components/CallFieldsForm.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
@@ -1749,6 +1750,7 @@ Files: `main.dart`, `app/app.dart`, `app/providers.dart`, `app/router.dart`, `ap
 | Test file | Cases |
 |---|---|
 | `apps/mobile/test/app/shell_test.dart` | ~19 |
+| `apps/mobile/test/app/softphone_navigation_test.dart` | ~26 |
 | `apps/mobile/test/app/splash_screen_test.dart` | ~2 |
 | `apps/mobile/test/core/foundation_test.dart` | ~20 |
 
@@ -1779,18 +1781,21 @@ notes autosave; audio orchestration by phase; the foreground rules (`device_away
 local notifications. The controller hosts a campaign station or a soft-phone session
 (`hosted_session.dart`: `HostedSession`, `StationHost`, `stationHostProvider`), implements the soft
 phone's host actions, and closes a soft-phone session without closing over its call
-(`close_softphone.dart`, a port of the console's `closeSoftphoneSession`).
+(`close_softphone.dart`, a port of the console's `closeSoftphoneSession`). After a reconnect it
+checks a soft-phone call it still holds against the server itself (the bootstrap, with backoff), so
+a call that ended while the socket was down lets go of ringback, CallKit and the hold, and it
+carries a failed system hang-up to the soft phone (`SoftphoneHostView.hangupFailure`).
 
 Files: `station/close_softphone.dart`, `station/contact_context.dart`, `station/disposition_rules.dart`, `station/hosted_session.dart`, `station/liveness.dart`, `station/notes_autosave.dart`, `station/server_clock.dart`, `station/station_api.dart`, `station/station_controller.dart`, `station/station_copy.dart`, `station/station_deps.dart`, `station/station_signals.dart`, `station/station_socket.dart`, `station/station_state.dart`, `station/station_transport.dart`, `station/station_view.dart`, `station/station_view_mapper.dart`, `audio/audio_engine.dart`, `audio/audio_orchestrator.dart`, `audio/fake_audio_engine.dart`, `lifecycle/app_lifecycle.dart`, `lifecycle/lifecycle_policy.dart`
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/core/audio/audio_orchestration_test.dart` | ~27 |
+| `apps/mobile/test/core/audio/audio_orchestration_test.dart` | ~29 |
 | `apps/mobile/test/core/lifecycle/lifecycle_test.dart` | ~23 |
 | `apps/mobile/test/core/station/clock_and_liveness_test.dart` | ~18 |
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
 | `apps/mobile/test/core/station/station_controller_test.dart` | ~49 |
-| `apps/mobile/test/core/station/softphone_host_test.dart` | ~31 |
+| `apps/mobile/test/core/station/softphone_host_test.dart` | ~41 |
 | `apps/mobile/test/core/station/station_reducer_test.dart` | ~28 |
 | `apps/mobile/test/core/station/station_socket_test.dart` | ~27 |
 
@@ -1803,9 +1808,11 @@ UI seam (`softphone_view.dart`: `SoftphoneView`, `SoftphoneActions`, the Phone t
 and availability), and `SoftphoneController`, a port of the console's `useSoftphone`, per
 workspace (`softphoneOverrides`). Pure helpers with the console's tables: call state and labels,
 phone input, call fields, overrides, refusal copy, and the debounced autosave (`manual:<id>`).
+`hosted_here.dart` remembers, per workspace, the session this phone hosts, so only that one resumes
+on its own.
 Test helpers: `manual_calls.dart` (rows shared with the console's tests), `fake_softphone_host.dart`.
 
-Files: `call_fields.dart`, `call_labels.dart`, `call_state.dart`, `manual_autosave.dart`, `overrides.dart`, `phone_input.dart`, `refusal_copy.dart`, `softphone_api.dart`, `softphone_controller.dart`, `softphone_copy.dart`, `softphone_host.dart`, `softphone_view.dart`
+Files: `call_fields.dart`, `call_labels.dart`, `call_state.dart`, `hosted_here.dart`, `manual_autosave.dart`, `overrides.dart`, `phone_input.dart`, `refusal_copy.dart`, `softphone_api.dart`, `softphone_controller.dart`, `softphone_copy.dart`, `softphone_host.dart`, `softphone_view.dart`
 
 | Test file | Cases |
 |---|---|
@@ -1817,7 +1824,7 @@ Files: `call_fields.dart`, `call_labels.dart`, `call_state.dart`, `manual_autosa
 | `apps/mobile/test/core/softphone/phone_input_test.dart` | ~20 |
 | `apps/mobile/test/core/softphone/refusal_copy_test.dart` | ~7 |
 | `apps/mobile/test/core/softphone/softphone_api_test.dart` | ~15 |
-| `apps/mobile/test/core/softphone/softphone_controller_test.dart` | ~73 |
+| `apps/mobile/test/core/softphone/softphone_controller_test.dart` | ~98 |
 | `apps/mobile/test/core/softphone/softphone_seams_test.dart` | ~14 |
 
 ### `apps/mobile/lib/features/` (`auth/`, `join/`, `accounts/`, `campaigns/`, `settings/`)
@@ -1832,11 +1839,11 @@ Files: `auth/auth_widgets.dart`, `auth/no_membership_screen.dart`, `auth/sign_in
 |---|---|
 | `apps/mobile/test/features/auth/auth_screens_test.dart` | ~13 |
 | `apps/mobile/test/features/join/invite_controller_test.dart` | ~22 |
-| `apps/mobile/test/features/join/invite_redirect_test.dart` | ~2 |
+| `apps/mobile/test/features/join/invite_redirect_test.dart` | ~5 |
 | `apps/mobile/test/features/join/invite_screen_test.dart` | ~13 |
-| `apps/mobile/test/features/accounts/account_picker_test.dart` | ~7 |
-| `apps/mobile/test/features/campaigns/campaigns_screen_test.dart` | ~13 |
-| `apps/mobile/test/features/settings/me_screen_test.dart` | ~17 |
+| `apps/mobile/test/features/accounts/account_picker_test.dart` | ~8 |
+| `apps/mobile/test/features/campaigns/campaigns_screen_test.dart` | ~15 |
+| `apps/mobile/test/features/settings/me_screen_test.dart` | ~18 |
 
 ### `apps/mobile/lib/features/` (`performance/`, `calls/`)
 
@@ -1880,8 +1887,9 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_contrast_test.dart` | ~2 |
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
-| `apps/mobile/test/features/station/station_modals_test.dart` | ~20 |
-| `apps/mobile/test/features/station/station_phases_test.dart` | ~37 |
+| `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
+| `apps/mobile/test/features/station/station_phases_test.dart` | ~38 |
+| `apps/mobile/test/features/station/station_softphone_test.dart` | ~19 |
 
 ### `apps/mobile/lib/features/softphone/`
 
@@ -1896,9 +1904,9 @@ Files: `phone_screen.dart`, `softphone_copy.dart`, `softphone_panel.dart`, `part
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/features/softphone/phone_screen_test.dart` | ~19 |
-| `apps/mobile/test/features/softphone/softphone_a11y_test.dart` | ~15 |
-| `apps/mobile/test/features/softphone/softphone_panel_test.dart` | ~51 |
+| `apps/mobile/test/features/softphone/phone_screen_test.dart` | ~30 |
+| `apps/mobile/test/features/softphone/softphone_a11y_test.dart` | ~18 |
+| `apps/mobile/test/features/softphone/softphone_panel_test.dart` | ~54 |
 
 ### `apps/mobile/packages/agency_wire/`
 
@@ -1925,8 +1933,9 @@ Files: `lib/src/actions.dart`, `lib/src/enums.dart`, `lib/src/equality.dart`, `l
 The native voice engine as a Flutter plugin: the Dart API and reference models (A-law codec,
 half-band filter, jitter buffer, loopback, the soft phone's ringback tone), with the Kotlin
 (`android/`) and Swift (`ios/`) engines, the Android on-duty service and iOS CallKit. Kotlin tests
-on 2026-11-01, as Gradle printed them: 29, `RingbackTest.kt` 7 of them (the shared golden vectors
-in `test/support/ringback_vectors.dart`).
+on 2026-11-01, as Gradle printed them: 33, `RingbackTest.kt` 11 of them (the shared golden vectors
+in `test/support/ringback_vectors.dart`, and the plugin's `EngineSlot`: the ringback request is
+applied when an engine starts, never to a loopback, kept across a restart and cleared on stop).
 
 Files: `lib/agent_audio.dart`, `lib/reference.dart`, `lib/src/agent_audio.dart`, `lib/src/codec/alaw.dart`, `lib/src/codec/half_band.dart`, `lib/src/events.dart`, `lib/src/jitter/jitter_buffer.dart`, `lib/src/loopback.dart`, `lib/src/tone/ringback.dart`, `lib/src/types.dart`, `lib/src/util.dart`
 

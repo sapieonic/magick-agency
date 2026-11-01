@@ -7,7 +7,7 @@ updates the roster contact when the number is on that campaign's roster. This pa
 the code implements: the data model, the runtime, the API, the console, the agent app and the
 rules. Read it before changing anything under `apps/server/src/agency/softphone/`, the
 `softphone` routes, the console's soft-phone screens or the app's (`apps/mobile`).
-Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"); the app's are M2–M5 of
+Rulings are Manas's of 2026-10-30 (`decisions.md`, "Soft phone"); the app's are M2–M6 of
 2026-11-01. Written 2026-10-30; §4.1, §6 and §7 updated to the code as built the same day; §4.1,
 §7 and §8 updated 2026-11-01 for the agent app.
 
@@ -392,7 +392,8 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   are left out. An
   unsettled call blocks the next dial; the dial-pad column shows "Without one, it closes in m:ss" from
   `outcome_due_at` before the call lapses to `no_disposition`.
-- **Call details.** The fields form is hydrated from the call and saved debounced (700 ms). Until
+- **Call details.** A yes/no field nobody has answered reads "Not answered", never "No". The
+  fields form is hydrated from the call and saved debounced (700 ms). Until
   the field set has loaded (for example a reload where the `manual_call` frame beats the
   bootstrap) the console sends no `fields`, so stored values are never wiped; on the server an
   omitted `fields` is "unchanged", and `{}` clears only when the account has call fields.
@@ -496,13 +497,15 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
 
 The agent mobile app (`apps/mobile`, [`mobile.md`](mobile.md), "The soft phone") has the agent's
 soft phone, on the same routes and the same `manual_call` frame; the server has nothing of its own
-for it. Rulings M2–M5 (`decisions.md`, 2026-11-01).
+for it. Rulings M2–M6 (`decisions.md`, 2026-11-01).
 
 - **The Phone tab** shows when the bootstrap answers 200 and `softphone_enabled` is on, or there is
   a session or call to finish there, or the phone hosts a soft-phone session or a campaign on the
   soft phone. A 403 hides it. "Open the soft phone" is an explicit tap that asks for the microphone
-  and notifications first; an existing session, or a campaign on the soft phone with an unsettled
-  call, is resumed without one. The open is the same `POST /softphone/sessions`; the app's
+  and notifications first; the session this phone hosts, or its campaign on the soft phone with
+  an unsettled call, is resumed without one. A session open on another device (the console, or
+  another phone) is never taken silently: the app offers "Use it on this phone", since taking it
+  moves the station socket, and any live call's audio, to the phone. The open is the same `POST /softphone/sessions`; the app's
   `X-Client` gets the mobile station intervals and its socket `client=mobile&media=alaw8`.
 - **Parity with the console.** Everything above that an agent uses: the rail, the pad, paste
   cleaning, one dial in flight, redial that fills, "Log to" and "Call from" locked once placed,

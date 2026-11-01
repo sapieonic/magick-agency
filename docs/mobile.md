@@ -149,7 +149,8 @@ relative to the API origin; the app resolves it against `API_ORIGIN` (`Env.resol
     "Use this phone" starts them again and takes the session back; going back to the campaigns
     forgets the station here.
   - 1008: the server refused the upgrade (`invalid_client` / `invalid_media`): terminal, never
-    retried. The station says to update the app, leaves the session (best effort) and closes here.
+    retried. The station says to update the app, leaves the session (best effort; not while a
+    soft-phone call owes its outcome, which would lapse) and closes here.
   - 1011: the server could not run the station: retried on the ladder, but three in a row with no
     `pong` between give up like a flapping socket (held while a call is live).
   - A give-up (silence, flapping, 1011) is the agent's to undo with Reconnect; returning to the app
@@ -187,8 +188,12 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
 - **The frames are the authority.** The station core reduces `manual_call` frames
   (`newerCall`; the frame wins a tie) and adopts HTTP answers into the same copy. On a reconnect
   the soft phone re-reads the bootstrap, and a `call: null` there retires the copy held when it
-  asked, by its version key (`id@updated_at`), so a newer frame survives. The router's hold and
-  the audio never depend on the soft-phone controller.
+  asked, by its version key (`id@updated_at`), so a newer frame survives. The station core checks
+  too: after a reconnect `ready` with an unsettled call held and no `manual_call` frame within 2 s
+  (the server re-sends one only for a call still unsettled), it reads the bootstrap itself,
+  retrying with backoff (2, 4, 8, 16, then every 30 s) while the socket is open, and lets go of a
+  call the server no longer holds. So the router's hold and the audio never depend on the
+  soft-phone controller.
 - **Where the Phone tab shows (M3).** The bootstrap (`GET /softphone/bootstrap`) answered 200 and
   the flag is on, or there is a session or call to finish here; or this phone hosts a soft-phone
   session or a campaign switched to the soft phone. A 403 (no `agency.softphone.dial`) or no
@@ -201,10 +206,16 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   life, titled "Soft phone" ("Ready to dial", "Calling…", "On a call", "Outcome needed"), with
   Mute and Hang up while a call is on the line. "Close soft phone" leaves the session, never
   while its call is live or owes its outcome.
-- **Auto-resume.** At the bootstrap's first read in a workspace, in the foreground: a soft-phone
-  session in this account is opened again (the server rehydrates it even with the flag off), and
-  a campaign session here on the soft phone with an unsettled call has its station started. In
-  the background the resume waits for the return.
+- **Auto-resume, only for this phone's own session.** The phone remembers, per workspace, the
+  session it hosts (`hosted_here.dart`), and forgets it when the session ends or another device
+  takes it over (4409). At the bootstrap's first read in a workspace, in the foreground, the
+  session it remembers is opened again (the server rehydrates it even with the flag off), and a
+  campaign session it remembers, on the soft phone with an unsettled call, has its station
+  started. A resume put off in the background asks the server again on return rather than
+  trusting the earlier answer. A session this phone did not host (the web console mid-call, or
+  another phone) is never taken silently: the Phone screen says "Your soft phone is open on
+  another device" and offers "Use it on this phone", which moves it and any call on it here, and
+  "Close it" when nothing there is unfinished.
 - **Finish mode.** With `softphone_enabled` off (the bootstrap says so, or a dial was refused
   `softphone_disabled`), typing, paste, redial and Call do nothing. The call, hang-up, the
   outcome, the notes and Close or Return still work: the server keeps the routes that finish work
@@ -236,7 +247,9 @@ routes and the `manual_call` station frame; the app adds no server route. Agent-
   (the ringback only, reset for each call); otherwise it is the microphone, and answering with the
   microphone muted is announced assertively. A campaign attempt always wins the audio. CallKit and
   the notification's Hang up end a soft-phone call at once; in the app hang-up is
-  hold-to-confirm, with the SP3 warning while ringing.
+  hold-to-confirm, with the SP3 warning while ringing. A system hang-up the server refused shows on
+  the soft phone, and a call CallKit already ended on its side is reported to it again. CallKit
+  names the call by the matched contact, else the number.
 - **My calls.** A "Soft-phone calls" segment shows where the Phone tab shows, or when a `limit=1`
   read finds any of the agent's soft-phone calls: keyset pages, number and status filters, rows
   with "Logged to <campaign>" or "Not logged". The detail shows the record, the outcome and who

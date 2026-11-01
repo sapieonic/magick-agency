@@ -263,11 +263,11 @@ Counts on 2026-11-01, after that pass:
 - the mobile app: 733, `agency_wire` 243, `agent_audio` 106 Dart and 22 Kotlin tests;
 - `flutter analyze` clean; the dev debug APK builds; a release build fails without `key.properties`.
 
-### Soft phone on the agent app 2026-11-01 (M2–M5)
+### Soft phone on the agent app 2026-11-01 (M2–M6)
 
 Manas asked on 2026-11-01 for the soft phone in the agent app. The design is in
 [`mobile.md`](mobile.md), "The soft phone", and [`softphone.md`](softphone.md) §7, "The agent
-app"; rulings M2–M5 in [`decisions.md`](decisions.md), and M1 amended. The server's soft phone is
+app"; rulings M2–M6 in [`decisions.md`](decisions.md), and M1 amended. The server's soft phone is
 unchanged apart from M1: the app uses the console's routes and the `manual_call` frame.
 
 | Area | What changed |
@@ -280,13 +280,41 @@ unchanged apart from M1: the app uses the console's routes and the `manual_call`
 | Wire and drift guards | `agency_wire` models the soft phone (rows, bootstrap, requests, answers, refusals as typed `ErrorBody` accessors; a `manual_call` frame whose row does not read stays a frame with no call). `softphone.json` (22 samples) and four station samples, type-checked in TS and decoded in Dart. `literals.json` 29 → 38 vocabularies, and `fieldUnion` reads optional fields. `AgencySoftphoneDispositionInvalidRefusal` declares the `reason` the server already sent |
 | Server: M1 | A phone silent past its grace on a live soft-phone call is dropped with `terminate` (log label `on_manual_call`); the bridge's rule for a manual leg then decides. The web console is unchanged |
 
-Counts on 2026-11-01, from inside each package, before the navigation work package landed (the
-app's count changes with it):
+**Review.** Five independent reviews (server and wire, the session host, the soft-phone
+controller, the UI and navigation, ringback and docs) found no critical or high defects; every
+medium and low finding was fixed with a regression test that failed first and a mutation check:
 
-- server unit: 7334 passed + 4 expected fail + 42 skipped (352 files); `station-mobile-liveness` 20;
+- a ringing call the server ended while the socket was down could keep ringback, CallKit and the
+  hold: the station core now checks a held call against the server itself after a reconnect;
+- a failed CallKit or notification hang-up was silent: it shows on the soft phone, and CallKit is
+  told the call goes on;
+- a resume put off in the background acted on an old answer, and could take a session live on
+  another device: only this phone's own session resumes (M6);
+- the bootstrap was not re-read when a session started (a stale "Log to" list, a new required
+  field the agent could not see), and the station's tag carried into a later Phone-tab session;
+- the number could be edited while a dial was in flight, so an override could redial a different
+  number; the override prompt survived finish mode;
+- at 200% text with the keyboard up the panel's column collapsed: the action area now takes at
+  most half the panel and scrolls inside itself past that, checked at 1.0–2.0 text with and
+  without a keyboard, on both surfaces;
+- smaller: a 1008 left a session owing an outcome, CallKit never showed the contact's name, the
+  number field showed characters it would not dial, an unanswered yes/no read "No" (also on the
+  console), the station announced the switch as a break, fixtures that were not the server's
+  output, and a Kotlin test that did not guard the plugin's wiring.
+
+Counts on 2026-11-01, from inside each package, after the review fixes:
+
+- server unit: 7333 passed + 4 expected fail + 42 skipped (352 files), the one failure the
+  branding guard on an uncommitted local `apps/mobile/env/staging.json`; `station-mobile-liveness` 20;
 - contracts: 248 (8 files; `agent-fixtures.test.ts` 152);
-- the mobile app: 1103; `agency_wire` 325; `agent_audio` 124 Dart and 29 Kotlin tests;
-- `flutter analyze` clean; `contracts-literals.mjs --check` up to date (38 vocabularies).
+- console: 4822 (247 files);
+- the mobile app: 1232; `agency_wire` 325; `agent_audio` 124 Dart and 33 Kotlin tests;
+- `pnpm lint` clean; `flutter analyze` clean; `contracts-literals.mjs --check` up to date (38
+  vocabularies); the debug APK builds.
+
+**On the emulator against staging** (2026-11-01): the Phone tab shows, the soft phone opens
+(`POST /softphone/sessions` 201, the socket ready, the account's caller ID), and closes (the
+bootstrap read first, then `leave`). No number was dialled.
 
 **Not verified:** nothing has run on a phone. iOS is not compiled: the Swift ringback (written to
 the shared vectors) and CallKit for soft-phone calls are reviewed only. Without a carrier a dial
