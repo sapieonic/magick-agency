@@ -1,0 +1,15 @@
+{
+  "ping": {
+    "event": "ping",
+    "ts": 1793428800123
+  },
+  "ping_without_ts": {
+    "event": "ping"
+  },
+  "media": {
+    "event": "media",
+    "media": {
+      "payload": "AAABAAIAAwAEAAUABgAHAAgACQAKAAsADAANAA4ADwAQABEAEgATABQAFQAWABcAGAAZABoAGwAcAB0AHgAfAA=="
+    }
+  }
+}

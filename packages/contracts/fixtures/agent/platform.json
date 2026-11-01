@@ -1,0 +1,142 @@
+{
+  "session_request": {
+    "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.eyJzdWIiOiJ0ZXN0In0.c2ln"
+  },
+  "session_response": {
+    "user": {
+      "id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "firebase_uid": "kH3vQ9xZ2bTcY7mN1pR4sW6uA8dE",
+      "email": "ravi.kulkarni@example.in",
+      "display_name": "Ravi Kulkarni",
+      "avatar_url": null,
+      "status": "active",
+      "created_at": "2026-10-01T05:00:00.000Z",
+      "updated_at": "2026-10-20T05:00:00.000Z"
+    },
+    "tenants": [
+      {
+        "id": "t-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "name": "Sahyadri Insurance Brokers",
+        "slug": "sahyadri",
+        "settings": {},
+        "status": "active",
+        "created_at": "2026-01-10T05:00:00.000Z",
+        "updated_at": "2026-09-01T05:00:00.000Z"
+      }
+    ],
+    "memberships": [
+      {
+        "id": "m-2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+        "user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+        "tenant_id": "t-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "role": "agent",
+        "status": "active",
+        "invited_by": "u-0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e",
+        "created_at": "2026-10-01T05:00:00.000Z",
+        "updated_at": "2026-10-01T05:10:00.000Z"
+      }
+    ],
+    "is_new": false,
+    "settings": {
+      "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f": {
+        "tenant_id": "t-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+        "account_id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "allow_recording": true,
+        "analyze_calls": false,
+        "max_concurrent_calls": 40,
+        "webrtc_max_duration_seconds": 1800,
+        "updated_at": "2026-09-15T05:00:00.000Z"
+      }
+    }
+  },
+  "me_response": {
+    "user": {
+      "id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
+      "firebase_uid": "kH3vQ9xZ2bTcY7mN1pR4sW6uA8dE",
+      "email": "ravi.kulkarni@example.in",
+      "display_name": null,
+      "avatar_url": null,
+      "status": "active",
+      "created_at": "2026-10-01T05:00:00.000Z",
+      "updated_at": "2026-10-20T05:00:00.000Z"
+    },
+    "tenants": [],
+    "memberships": [],
+    "settings": {}
+  },
+  "session_refusal": {
+    "error": "Forbidden",
+    "code": "no_membership",
+    "message": "This sign-in isn't linked to a workspace. Ask whoever invited you to send the invitation again."
+  },
+  "my_accounts": {
+    "accounts": [
+      {
+        "id": "acc-3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+        "name": "Pune Branch",
+        "tenant_id": "t-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+      },
+      {
+        "id": "acc-4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a",
+        "name": "Nashik Branch",
+        "tenant_id": "t-1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+      }
+    ]
+  },
+  "invite_lookup_pending": {
+    "status": "pending",
+    "invite": {
+      "email": "ravi.kulkarni@example.in",
+      "role": "agent",
+      "tenant_name": "Sahyadri Insurance Brokers",
+      "inviter_name": "Meera Joshi",
+      "product_name": "Magick Agency Dialer",
+      "expires_at": "2026-11-08T05:00:00.000Z",
+      "requires_matching_address": false
+    }
+  },
+  "invite_lookup_expired": {
+    "status": "expired"
+  },
+  "invite_claim_request": {
+    "id_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6InRlc3QifQ.eyJzdWIiOiJ0ZXN0In0.c2ln"
+  },
+  "invite_claim_refusal": {
+    "error": "Conflict",
+    "message": "This invitation must be accepted with meera.admin@example.in. Sign out of the account you used and sign in with that address.",
+    "status": "address_required",
+    "email": "meera.admin@example.in"
+  },
+  "feature_flags": {
+    "agency_dialer_enabled": true,
+    "agency_call_analysis": false,
+    "agency_softphone_enabled": false
+  },
+  "notification_preferences": {
+    "events": [
+      {
+        "key": "agency.campaign.completed",
+        "label": "Campaign completed",
+        "description": "When a campaign you supervise finishes its list.",
+        "category": "agency",
+        "cadence": "immediate",
+        "channel": "email",
+        "enabled": true,
+        "frequency": null,
+        "default_enabled": true,
+        "default_frequency": null,
+        "is_default": true
+      }
+    ]
+  },
+  "notification_update": {
+    "event_key": "agency.campaign.completed",
+    "channel": "email",
+    "enabled": false
+  },
+  "error_generic": {
+    "error": "Not Found",
+    "message": "Membership not found"
+  }
+}
