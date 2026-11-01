@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:agency_wire/agency_wire.dart';
 import 'package:agent_audio/agent_audio.dart' as audio;
 import 'package:fake_async/fake_async.dart';
@@ -675,18 +677,28 @@ void main() {
       });
     });
 
-    test('no reads while the socket is away, and none once the session is gone', () {
+    test('no reads while the socket is away again (the next ready starts over), and none once the session is gone', () {
       fakeAsync((async) {
         final app = _softphone(async);
         app.manualCallFrame(_ringing);
         app.routes['GET $_bootstrap'] = (_) => json(503, {'error': 'Unavailable', 'message': 'down'});
         reconnect(app);
         async.elapse(const Duration(seconds: 3));
-        final before = app.requests('GET', _bootstrap).length;
-        expect(before, greaterThan(0));
+        expect(app.requests('GET', _bootstrap), hasLength(1));
+        // Down again, and held down: the retry due meanwhile is not sent.
+        final gate = app.connector.gate = Completer<void>();
+        app.socket.serverClose(1006);
+        async.elapse(const Duration(minutes: 1));
+        expect(app.requests('GET', _bootstrap), hasLength(1));
+        app.connector.gate = null;
+        gate.complete();
+        async.elapse(const Duration(seconds: 1));
+        _ready(app);
+        async.elapse(const Duration(seconds: 3));
+        expect(app.requests('GET', _bootstrap), hasLength(2));
         app.socket.serverClose(4404);
         async.elapse(const Duration(minutes: 2));
-        expect(app.requests('GET', _bootstrap), hasLength(before));
+        expect(app.requests('GET', _bootstrap), hasLength(2));
         app.dispose();
       });
     });
