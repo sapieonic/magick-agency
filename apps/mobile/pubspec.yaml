@@ -23,8 +23,13 @@ dependencies:
   flutter_riverpod: ^3.4.3
   go_router: ^18.1.2
   http: ^1.6.0
-  firebase_core: ^5.1.0
-  firebase_auth: ^7.0.1
+  # Held on the Firebase iOS SDK 12 line (firebase_core 4.x, firebase_auth 6.x). SDK 13
+  # (firebase_core 5 / firebase_auth 7) needs gtm-session-fetcher >=4, and google_sign_in_ios
+  # pins GoogleSignIn-iOS 9, which needs gtm-session-fetcher <4: the iOS Swift packages do not
+  # resolve. Move both up together once a google_sign_in_ios release takes GoogleSignIn-iOS
+  # >=10.1 (docs/mobile.md, "Builds and releases", "iOS dependency pin").
+  firebase_core: ^4.15.2
+  firebase_auth: ^6.7.1
   google_sign_in: ^7.2.0
   shared_preferences: ^2.5.6
   flutter_secure_storage: ^11.2.0

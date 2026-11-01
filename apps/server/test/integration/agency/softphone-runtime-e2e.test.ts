@@ -50,7 +50,7 @@ import { buildApp } from '../../../src/app.js';
 import type { AppContext } from '../../../src/app-context.js';
 import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../../../src/bootstrap/agency.js';
 import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
-import { agencyAgentSessionRepository, agencyContactRepository, agencyManualCallRepository } from '../../../src/db/repositories/agency.repository.js';
+import { agencyAgentSessionRepository, agencyCampaignRepository, agencyContactRepository, agencyManualCallRepository } from '../../../src/db/repositories/agency.repository.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import type { SoftphoneActor } from '../../../src/agency/softphone/types.js';
 import { setAvailableGuarded } from '../../../src/agency/softphone/session-guard.js';
@@ -764,6 +764,13 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
 
     const outcome = await runtime.softphone.submitDisposition(actor(agent), placed.call.id, { code: 'voicemail' });
     expect(outcome.ok).toBe(true);
+    // Back in the pool, the agent is pacing's to reserve on its next tick: the roster
+    // still holds the contact added above, so the state read after the return raced
+    // a reservation. Pause the campaign first, and wait for the tick that announces
+    // the pause: ticks for one campaign never overlap, so no later tick reserves.
+    await agencyCampaignRepository.transitionStatus(campaign.id, ['running'], 'paused');
+    await waitFor('pause announced', () => station.frames.some((f) =>
+      f['event'] === 'campaign_state' && f['status'] === 'paused'));
     const back = await runtime.softphone.returnFromSoftphone(session.id, actor(agent));
     if (!back.ok) throw new Error(back.refusal.code);
     expect(back.response.state).toBe('available');

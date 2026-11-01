@@ -11,7 +11,7 @@ and [`docs/mobile.md`](../../docs/mobile.md).
 | Flutter | **3.47.7** (Dart 3.13) | The pinned SDK; CI uses the same (`.github/workflows/mobile.yml`) |
 | JDK | **17** | Gradle and the Android Gradle Plugin (AGP 9.1, Gradle 9.3.1, from the wrapper) |
 | Android SDK | platform-tools, platform 37, and an emulator image or a phone | The app compiles against API 37; minSdk is 28 (Android 9) |
-| Xcode (macOS only) | Xcode 16 or newer, with an iOS 16+ simulator | The iOS app; deployment target 16.0 |
+| Xcode (macOS only) | Xcode 16.3 or newer, with an iOS 16+ simulator | The iOS app; deployment target 16.0 |
 | CocoaPods (macOS only) | any recent | Usually not needed: the plugins resolve through Swift Package Manager. Flutter asks for CocoaPods if a plugin needs it |
 | Node 22, pnpm 10, Docker | as in the root [`README.md`](../../README.md) | The local server the app talks to |
 
