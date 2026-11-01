@@ -195,7 +195,7 @@
           { "code": "callback", "label": "Call back later", "requires_datetime": true },
           { "code": "do_not_call", "label": "Do not call", "suppress": true }
         ],
-        "calling_window": { "start": "10:00", "end": "18:00", "days": [1, 2, 3, 4, 5], "timezone": "Asia/Kolkata" },
+        "calling_window": { "start": "10:00:00", "end": "18:00:00", "days": [1, 2, 3, 4, 5], "timezone": "Asia/Kolkata" },
         "calling_window_open": false,
         "record_calls": false,
         "analysis_profile": null,
@@ -267,8 +267,19 @@
         "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
         "state": "pending",
         "claimed": true,
-        "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931" },
-        "prior_attempts": []
+        "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931", "City": "Pune", "internal_ref": "X-9" },
+        "prior_attempts": [
+          {
+            "attempt_number": 1,
+            "outcome": "no_answer",
+            "disposition_code": null,
+            "notes": null,
+            "ended_at": "2026-10-30T05:12:44.120Z",
+            "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+            "campaign_name": "Q4 Renewals — Pune",
+            "dialed_at": "2026-10-30T05:12:13.004Z"
+          }
+        ]
       },
       "state": "ended",
       "outcome": "connected",

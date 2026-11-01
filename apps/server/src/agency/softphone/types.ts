@@ -13,6 +13,7 @@
 import type {
   AgencyCallingWindow,
   AgencyManualCall,
+  AgencySoftphoneDispositionInvalidRefusal,
   AgencySoftphoneDncListedRefusal,
   AgencySoftphoneErrorCode,
 } from '@magick-agency/contracts/agency';
@@ -62,7 +63,7 @@ export type SoftphoneRefusal =
   | {
     code: 'disposition_invalid';
     /** Which rule refused: the code is not in the catalog, or its note / callback is missing or invalid. */
-    reason: 'unknown_code' | 'note_required' | 'datetime_required' | 'invalid_callback_at';
+    reason: AgencySoftphoneDispositionInvalidRefusal['reason'];
     /** `unknown_code`: the codes the call's catalog accepts. */
     allowed_codes?: string[];
   };

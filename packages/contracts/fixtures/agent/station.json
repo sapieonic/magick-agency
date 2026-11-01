@@ -284,7 +284,7 @@
       "id": "2e3d4c5b-6f70-4b8c-9dae-1f2a3b4c5d6e",
       "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
       "agent_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
-      "agent_name": "Meera Krishnan",
+      "agent_name": null,
       "destination_e164": "+919876501234",
       "caller_id": "+912071239999",
       "tag": null,
