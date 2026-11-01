@@ -1,0 +1,40 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'router.dart';
+import 'theme/app_theme.dart';
+import 'theme/tokens.dart';
+
+/// The root widget. Theme follows the system light/dark setting; dark is the
+/// product's default look.
+class AgentApp extends ConsumerWidget {
+  const AgentApp({super.key});
+
+  static final _dark = buildTheme(AppTokens.dark, Brightness.dark);
+  static final _light = buildTheme(AppTokens.light, Brightness.light);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return MaterialApp.router(
+      title: 'Magick Agency',
+      debugShowCheckedModeBanner: false,
+      theme: _light,
+      darkTheme: _dark,
+      themeMode: ThemeMode.system,
+      routerConfig: ref.watch(routerProvider),
+      locale: const Locale('en', 'IN'),
+      supportedLocales: const [Locale('en', 'IN'), Locale('en')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
+      builder: (context, child) {
+        // Large accessibility text is honoured, but capped where the call
+        // controls would stop fitting a phone screen.
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(textScaler: mq.textScaler.clamp(minScaleFactor: 1, maxScaleFactor: 2)),
+          child: child!,
+        );
+      },
+    );
+  }
+}
