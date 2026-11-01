@@ -5,7 +5,7 @@ import 'package:meta/meta.dart';
 import '../../performance/logic/en_in_format.dart';
 import '../../performance/logic/stats_windows.dart';
 
-/// The filters "My calls" applies, ported from the console's
+/// The filters "My calls" applies, matching the console's
 /// `agencyAttemptFilters.ts` and the filter card in `AgentAttemptsPanel`.
 ///
 /// Immutable and applied as a whole: changing any of them starts a new

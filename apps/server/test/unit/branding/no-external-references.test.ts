@@ -78,9 +78,17 @@ const SELF_TEST: Record<string, { hits: string[]; misses: string[] }> = {
 };
 
 const repoRoot = dirname(dirname(dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))))));
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'coverage', '.git', '.vite', '.turbo']);
+// Build output, tool caches and local agent worktrees: never committed, and full of
+// third-party text (a Flutter build embeds the SDK's own doc comments).
+const SKIP_DIRS = new Set([
+  'node_modules', 'dist', 'coverage', '.git', '.vite', '.turbo',
+  'build', '.dart_tool', '.gradle', 'Pods', '.symlinks', '.claude',
+]);
 const TEXT_EXT = new Set([
   '.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.md', '.sql', '.css', '.html', '.yml', '.yaml', '.sh', '.example', '.txt', '',
+  // The agent mobile app (apps/mobile): Dart, the Android and iOS hosts, the audio plugin.
+  '.dart', '.kt', '.kts', '.swift', '.xml', '.plist', '.podspec', '.entitlements', '.properties', '.pbxproj',
+  '.xcconfig', '.gradle',
 ]);
 /** Files that must spell the patterns out to enforce them. */
 const ALLOWED = new Set([

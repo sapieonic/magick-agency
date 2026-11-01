@@ -3,7 +3,7 @@ import 'package:meta/meta.dart';
 
 import 'en_in_format.dart';
 
-/// The agent's own figures and readouts, ported from the console's
+/// The agent's own figures and readouts, matching the console's
 /// `agentReadouts.ts` and `agencyAgentPerformance.ts` with their wording.
 ///
 /// The rule the module is built around: **a null rate is NOT MEASURED YET

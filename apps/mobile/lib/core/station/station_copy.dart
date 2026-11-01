@@ -4,7 +4,7 @@ import 'package:meta/meta.dart';
 import '../api/api_error.dart';
 import 'station_view.dart' show NotesStatus, ReleaseTone;
 
-/// The station's words, ported from the console so both clients speak alike:
+/// The station's words, kept identical to the console's so both clients speak alike:
 /// `agencyReleaseCopy.ts`, `agencyJoinConflict.ts`, `agencyDncCopy.ts`,
 /// `agencyDispositionForm.ts`, `agencyNotes.ts`, `BreakMenu`, `DispositionPad`,
 /// `SoftphoneJoinScreen` and the presence/break handlers. Plain, from the

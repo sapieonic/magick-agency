@@ -2,7 +2,7 @@ import 'package:meta/meta.dart';
 
 import 'en_in_format.dart';
 
-/// The agent stats windows, ported from the console's `agentWindows.ts`: the
+/// The agent stats windows, matching the console's `agentWindows.ts`: the
 /// three to-date periods plus the two completed ones, cut on the READER's
 /// calendar, weeks starting Monday.
 ///

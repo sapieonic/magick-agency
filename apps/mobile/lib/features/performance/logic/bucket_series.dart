@@ -5,7 +5,7 @@ import 'package:meta/meta.dart';
 
 import 'en_in_format.dart';
 
-/// The day-by-day series behind the chart, ported from the console's
+/// The day-by-day series behind the chart, matching the console's
 /// `buckets.ts` and `AgentBucketChart.tsx` (`niceCeiling`, the label
 /// thinning, the single-bucket rule), plus the one thing the phone adds:
 /// marking the bars that can be partial days.
