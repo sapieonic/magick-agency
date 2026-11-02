@@ -7,12 +7,6 @@
 // reattachBorrowedBrowserLeg, forceEndWithOutcome, playClipToCarrierThenHangUp,
 // getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
 // `test/unit/core/webrtc-bridge-seam-contract.test.ts`.
-import { buildCarrierUrls } from './bridge/carrier-urls.js';
-
-/** A change in the telephony slots this process holds (`WebRtcBridgeManager.observeLeases`). */
-export type LeaseChange =
-  | { op: 'held'; lease: { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string } }
-  | { op: 'released'; concurrencyKey: string };
 import crypto from 'node:crypto';
 import { releaseTelephonyLease } from './telephony-release.js';
 import type Redis from 'ioredis';
@@ -55,6 +49,12 @@ import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
+import { buildCarrierUrls } from './bridge/carrier-urls.js';
+
+/** A change in the telephony slots this process holds (`WebRtcBridgeManager.observeLeases`). */
+export type LeaseChange =
+  | { op: 'held'; lease: { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string } }
+  | { op: 'released'; concurrencyKey: string };
 
 export {
   WebRtcCallError,

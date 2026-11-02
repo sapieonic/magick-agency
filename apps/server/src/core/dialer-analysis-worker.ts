@@ -332,8 +332,8 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
       return 0;
     }
 
-    this.breaker.onStarted(claimed.length);
-    claimed.forEach((job, i) => this.startJob(job, leases[i]!));
+    const probe = this.breaker.onStarted(claimed.length);
+    claimed.forEach((job, i) => this.startJob(job, leases[i]!, probe));
 
     if (claimed.length < asked) {
       // Nothing more is runnable now: come back when the next queued job is due.
@@ -384,17 +384,17 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
     });
   }
 
-  private startJob(job: DialerAnalysisJobRecord, lease: RecordingLease): void {
+  private startJob(job: DialerAnalysisJobRecord, lease: RecordingLease, probe: boolean): void {
     this.active++;
     this.inFlight.set(job.id, job.claim_generation);
     this.publishSlots();
-    const done = this.runJob(job, lease);
+    const done = this.runJob(job, lease, probe);
     this.running.add(done);
     void done.finally(() => this.running.delete(done));
   }
 
   /** One slot's run; never rejects. Frees the slot and refills it when the job ends. */
-  private async runJob(job: DialerAnalysisJobRecord, lease: RecordingLease): Promise<void> {
+  private async runJob(job: DialerAnalysisJobRecord, lease: RecordingLease, probe: boolean): Promise<void> {
     const startedAt = Date.now();
     let outcome: DialerAnalysisOutcome | undefined;
     try {
@@ -410,7 +410,7 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
       // Only this claim's entry: a recovered-and-reclaimed job may hold a newer generation.
       if (this.inFlight.get(job.id) === job.claim_generation) this.inFlight.delete(job.id);
       this.active--;
-      this.breaker.onFinished();
+      this.breaker.onFinished(probe);
       if (outcome === 'completed') this.breaker.recordSuccess(startedAt);
       this.publishSlots();
       // The slot is free: take the next job now, not at the next poll.

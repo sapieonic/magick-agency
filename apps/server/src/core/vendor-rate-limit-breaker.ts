@@ -78,14 +78,26 @@ export class VendorRateLimitBreaker {
     }
   }
 
-  /** The worker started `count` jobs it was admitted for. */
-  onStarted(count: number): void {
-    if (count > 0 && this.state === 'half_open') this.probeInFlight = true;
+  /**
+   * The worker started `count` jobs it was admitted for. True when they are the half-open
+   * probe (admitted one at a time): the caller hands that back to {@link onFinished}.
+   */
+  onStarted(count: number): boolean {
+    if (count > 0 && this.state === 'half_open') {
+      this.probeInFlight = true;
+      return true;
+    }
+    return false;
   }
 
-  /** A job finished (any outcome). Frees the half-open probe. */
-  onFinished(): void {
-    this.probeInFlight = false;
+  /**
+   * A job finished (any outcome). Only the probe frees the half-open slot: a job that
+   * started before the breaker opened (still in flight from the closed state) finishing
+   * says nothing about the probe, and freeing the slot then would let a second probe run
+   * beside the first.
+   */
+  onFinished(wasProbe: boolean): void {
+    if (wasProbe) this.probeInFlight = false;
   }
 
   /**

@@ -1,6 +1,7 @@
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { buildResourceAttributes, processInstanceSuffix } from '../../../src/utils/otel-sdk-config.js';
+import { buildResourceAttributes, envFlagTrue, processInstanceSuffix } from '../../../src/utils/otel-sdk-config.js';
+import { isEnvTrue } from '../../../src/config/env.js';
 import { forwardLines } from '../../../src/cluster/fork.js';
 
 /*
@@ -25,6 +26,15 @@ describe('service.instance.id per process', () => {
     // Analysis children only count when analysis is on (the block exists only then).
     expect(processInstanceSuffix({ ANALYSIS_WORKERS: '2' })).toBeNull();
     expect(processInstanceSuffix({ ANALYSIS_WORKERS: '2', DIALER_ANALYSIS_ENABLED: 'true' })).toBe('primary');
+    // The same truthiness as the config's (`isEnvTrue`), so the primary forks children
+    // exactly when its series get the suffix: `1` and `yes` are on, `false` and `0` off.
+    expect(processInstanceSuffix({ ANALYSIS_WORKERS: '2', DIALER_ANALYSIS_ENABLED: '1' })).toBe('primary');
+    expect(processInstanceSuffix({ ANALYSIS_WORKERS: '2', DIALER_ANALYSIS_ENABLED: 'yes' })).toBe('primary');
+    expect(processInstanceSuffix({ ANALYSIS_WORKERS: '2', DIALER_ANALYSIS_ENABLED: 'false' })).toBeNull();
+    expect(processInstanceSuffix({ ANALYSIS_WORKERS: '2', DIALER_ANALYSIS_ENABLED: '0' })).toBeNull();
+    for (const v of [undefined, '', ' ', 'true', 'TRUE', '1', 'yes', 'on', 'false', 'False', '0', 'no', 'NO ', ' false ']) {
+      expect(envFlagTrue(v), JSON.stringify(v)).toBe(isEnvTrue(v));
+    }
   });
 
   it('a child: its role and slot, not its pid', () => {
