@@ -135,7 +135,7 @@ production.
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. Caller IDs are per campaign (`caller_ids`), not env. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
 | `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one). Back it up separately from the database: losing it makes every stored credential unopenable |
 | `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
-| `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; worker every 60 s, concurrency 2. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
+| `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; 8 analysis slots (`DIALER_ANALYSIS_CONCURRENCY`; sizing below), a 512 MiB recording memory budget, a sweep every 60 s. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
 | `POSTHOG_ENABLED=true` + `POSTHOG_API_KEY` | Product analytics | Host default `https://us.i.posthog.com` |
 | `OTEL_ENABLED=true` + `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_SERVICE_NAME` | Traces, metrics and logs over OTLP (http/protobuf) | All three or nothing starts (the server warns when only the name is missing). `OTEL_SERVICE_NAME`: `magick-agency` = production, `magick-agency-Staging`, `magick-agency-Dedicated`; anything else (e.g. `agency-dev-<you>`) is not alerted on. Grafana Cloud also needs `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64 id:token>`. `OTEL_METRICS_EXPORT_INTERVAL_MS` default 60000. Alert rules and dashboard: `grafana/README.md` |
@@ -158,6 +158,8 @@ production.
 | `STALE_CALL_SWEEP_MINUTES` | `30` | Stale bridged-call sweep |
 | `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 200, 1000, 600, 1000, `1 minute` | Rate-limit buckets |
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |
+| `DIALER_ANALYSIS_CONCURRENCY` | `8` (1-256) | Analysis jobs in flight in this process; see "Sizing the analysis worker" |
+| `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` | `536870912` (512 MiB) | Recording bytes the analysis slots may hold; at least 2 × `DIALER_MAX_RECORDING_BYTES` |
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |
 | `RETENTION_PURGE_INTERVAL_MS` | 1 day | Purge cadence (also runs 60 s after boot) |
@@ -170,6 +172,54 @@ production.
 
 `apps/server/.env.example` carries the reasoning for the proxy, TLS, recording-host, retention and
 Redis settings.
+
+### Sizing the analysis worker
+
+The analysis worker keeps up to `DIALER_ANALYSIS_CONCURRENCY` jobs in flight in this process
+and starts the next one the moment a slot frees, so its throughput is slots ÷ minutes per job.
+Size it as:
+
+**slots ≈ calls ending per minute × minutes per job**, then cap it by the vendors' rate limits.
+
+- *Calls ending per minute*: only analysed calls count (the `agency_call_analysis` flag on, talk
+  time ≥ `DIALER_ANALYSIS_MIN_TALK_TIME_SECONDS`). A floor of N agents on ~3-minute calls ends
+  about N ÷ 3 calls a minute; 500 simultaneous calls end ~167 a minute.
+- *Minutes per job*: the `dialer_analysis_duration_seconds` stages added up (fetch + transcribe +
+  analyze; the *Dialer Analysis Latency* panel). Measure it; the default below assumes 2 minutes.
+  Audio input adds a second upload.
+- *Vendor limits*: each slot makes about one transcription request per 10 minutes of audio
+  (`DIALER_TRANSCRIBE_WINDOW_SECONDS`) and one analysis request (two uploads with audio input).
+  Keep slots × requests per job ÷ minutes per job under the key's requests-per-minute quota, with
+  headroom for retries. Use a dedicated `DIALER_TRANSCRIBE_API_KEY`.
+- *Postgres*: a slot holds a pool connection only for a claim, a heartbeat or the final
+  transaction, but it shares `DB_POOL_MAX` (default 10) with HTTP; raise it with large slot counts.
+
+The default of 8 covers about 4 analysed calls a minute at 2 minutes a job (a floor of ~12 agents
+on 3-minute calls). At the 500-call target (~167 calls a minute) and 2 minutes a job the queue
+needs ~330 slots, more than one process allows (`DIALER_ANALYSIS_CONCURRENCY` accepts 1-256) and
+past most single-key quotas: raise the quotas and run more than one analysis process (claims are
+`FOR UPDATE SKIP LOCKED`, so processes share the queue safely), or accept a backlog that drains
+off-peak.
+
+**Memory.** Each slot may buffer a whole recording (up to `DIALER_MAX_RECORDING_BYTES`, 50 MiB)
+and upload it, which copies it once more. A slot reserves 2 × that cap on the recording memory
+budget (`DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`, default 512 MiB) before it claims a job, and drops
+to 2 × the real size once the recording is fetched (to zero once a transcript-only job has its
+transcript). A slot that finds the budget spent waits without a claim. The default fits five
+worst-case recordings at once, or hundreds of ordinary ones (a 3-minute mono MP3 is 1-3 MB),
+next to everything else in a 4 GB heap. The server refuses to start with a budget below
+2 × `DIALER_MAX_RECORDING_BYTES`.
+
+**Rate limits.** A vendor rate limit (HTTP 429 / `RESOURCE_EXHAUSTED`) requeues the job without
+using an attempt and pauses all new claims in this process for 30 s, doubling with each
+consecutive pause up to 15 min. After a pause one probe job runs; slots fill again only when it
+completes. A rate-limited job is requeued no earlier than the pause.
+
+**What to watch** (dashboard row *Analysis*): `dialer_analysis_slot_utilization` pinned at 1
+while `dialer_analysis_queue_depth{status="queued"}` grows means too few slots;
+`dialer_analysis_budget_waits_total` rising means the memory budget, not the slots, is the limit;
+`dialer_analysis_rate_limit_pauses_total` rising means the vendor quota is. `dialer_analysis_in_flight`
+and `dialer_analysis_memory_reserved_bytes` show the pool itself.
 
 ## Deployment invariants
 

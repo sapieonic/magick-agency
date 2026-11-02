@@ -11,6 +11,11 @@
  *  - graceful shutdown re-queues in-flight claims (decrement) and stops the poll.
  *  - dormancy after N empty sweeps + re-arm on wake.
  *  - registers itself through the worker handle.
+ *  - the slot pool: a slot refills the moment its job ends, N slots stay full under a deep
+ *    queue, throughput is not bounded by the poll interval, the recording byte budget
+ *    holds slots back, shutdown mid-flight requeues exactly the in-flight jobs and starts
+ *    nothing, and a vendor rate limit pauses claims (one probe after the pause).
+ *    `sweepOnce` no longer waits for the jobs it starts; `idle()` does.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
@@ -33,6 +38,7 @@ const { mockJobRepo } = vi.hoisted(() => ({
     recoverStale: vi.fn().mockResolvedValue([]),
     gracefulRequeue: vi.fn().mockResolvedValue(0),
     queueDepthByStatus: vi.fn().mockResolvedValue([]),
+    msUntilNextRunnable: vi.fn().mockResolvedValue(null),
   },
 }));
 vi.mock('@magick-agency/db/repositories/dialer-analysis-job.repository', () => ({
@@ -55,6 +61,10 @@ vi.mock('@magick-agency/observability/metrics/analysis', () => ({
   dialerAnalysisDurationSeconds: { observe: vi.fn() },
   dialerTranscriptionAudioSeconds: { observe: vi.fn() },
   setDialerAnalysisQueueDepth: mockSetQueueDepth,
+  setDialerAnalysisSlots: vi.fn(),
+  setDialerAnalysisMemoryReserved: vi.fn(),
+  dialerAnalysisBudgetWaitsTotal: { inc: vi.fn() },
+  dialerAnalysisRateLimitPausesTotal: { inc: vi.fn() },
 }));
 
 // ── Worker handle ───────────────────────────────────────────────────────────
@@ -64,7 +74,8 @@ vi.mock('../../../src/core/dialer-analysis-worker-handle.js', () => ({
 }));
 
 import { DialerAnalysisWorker, initDialerAnalysisWorker } from '../../../src/core/dialer-analysis-worker.js';
-import type { DialerAnalysisConfig } from '../../../src/core/dialer-analysis-runner.js';
+import type { DialerAnalysisConfig, DialerAnalysisRunContext } from '../../../src/core/dialer-analysis-runner.js';
+import { VendorRateLimitBreaker } from '../../../src/core/vendor-rate-limit-breaker.js';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
 
 const CFG: DialerAnalysisConfig = {
@@ -101,6 +112,7 @@ beforeEach(() => {
   mockJobRepo.claimRunnable.mockResolvedValue([]);
   mockJobRepo.recoverStale.mockResolvedValue([]);
   mockJobRepo.queueDepthByStatus.mockResolvedValue([]);
+  mockJobRepo.msUntilNextRunnable.mockResolvedValue(null);
   mockRunnerRun.mockResolvedValue(undefined);
 });
 
@@ -142,9 +154,12 @@ describe('DialerAnalysisWorker.sweepOnce ordering', () => {
   });
 
   it('claims runnable jobs and runs each through the runner', async () => {
-    mockJobRepo.claimRunnable.mockResolvedValue([makeJob({ id: 'a', claim_generation: 1 }), makeJob({ id: 'b', claim_generation: 2 })]);
-    await makeWorker().sweepOnce();
-    expect(mockJobRepo.claimRunnable).toHaveBeenCalledWith(CFG.concurrency);
+    // Once: the slots refill as jobs finish, so a mock that always returns rows never drains.
+    mockJobRepo.claimRunnable.mockResolvedValueOnce([makeJob({ id: 'a', claim_generation: 1 }), makeJob({ id: 'b', claim_generation: 2 })]);
+    const w = makeWorker();
+    await w.sweepOnce();
+    await w.idle();
+    expect(mockJobRepo.claimRunnable).toHaveBeenNthCalledWith(1, CFG.concurrency);
     expect(mockRunnerRun).toHaveBeenCalledTimes(2);
   });
 
@@ -196,7 +211,7 @@ describe('poll lifecycle', () => {
     w.stop();
   });
 
-  it('does not mistake overlapping ticks during a long job for idle sweeps', async () => {
+  it('does not mistake ticks during a long job for idle sweeps, and the free slot keeps claiming meanwhile', async () => {
     vi.useFakeTimers();
     let releaseFirst!: () => void;
     mockRunnerRun
@@ -208,16 +223,18 @@ describe('poll lifecycle', () => {
       .mockResolvedValue([]);
 
     const w = makeWorker();
-    w.wake();
-    await vi.advanceTimersByTimeAsync(1000); // claim slow-1
-    await vi.advanceTimersByTimeAsync(2000); // two overlapping ticks
-    expect(w.isArmed()).toBe(true);
+    w.wake(); // fills at once: claims slow-1
+    await vi.advanceTimersByTimeAsync(0);
     expect(mockRunnerRun).toHaveBeenCalledTimes(1);
 
-    releaseFirst();
-    await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(1000); // the next tick can claim queued retry-1
+    await vi.advanceTimersByTimeAsync(1000); // the tick fills the free slot: retry-1 runs beside slow-1
     expect(mockRunnerRun).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(2000); // empty queue, but slow-1 is in flight: not idle
+    expect(w.isArmed()).toBe(true);
+
+    releaseFirst();
+    await vi.advanceTimersByTimeAsync(2000); // now two truly idle sweeps
+    expect(w.isArmed()).toBe(false);
     w.stop();
   });
 });
@@ -254,5 +271,258 @@ describe('initDialerAnalysisWorker', () => {
   it('registers the worker through the handle', () => {
     const w = initDialerAnalysisWorker({ transcriber: { provider: 'gemini' } as never, analysisService: {} as never, config: CFG });
     expect(mockSetHandle).toHaveBeenCalledWith(w);
+  });
+});
+
+// ── Slot pool ───────────────────────────────────────────────────────────────
+
+/** Settle every pending promise chain without moving the (fake) clock. */
+async function flush(): Promise<void> {
+  for (let i = 0; i < 50; i++) await Promise.resolve();
+}
+
+/** A FIFO queue behind `claimRunnable`, honouring the limit like SKIP LOCKED does. */
+function queueOf(n: number): { remaining: () => number; limits: number[] } {
+  const ids = Array.from({ length: n }, (_, i) => `j${i}`);
+  const limits: number[] = [];
+  mockJobRepo.claimRunnable.mockImplementation(async (limit: number) => {
+    limits.push(limit);
+    return ids.splice(0, limit).map((id) => makeJob({ id, claim_generation: 1 }));
+  });
+  return { remaining: () => ids.length, limits };
+}
+
+/** Runs that end only when the test says so; records each run's context. */
+function heldRuns() {
+  const pending = new Map<string, (outcome?: string) => void>();
+  const contexts = new Map<string, DialerAnalysisRunContext>();
+  let maxConcurrent = 0;
+  mockRunnerRun.mockImplementation((job: DialerAnalysisJobRecord, ctx: DialerAnalysisRunContext) => {
+    contexts.set(job.id, ctx);
+    return new Promise((resolve) => {
+      pending.set(job.id, resolve);
+      maxConcurrent = Math.max(maxConcurrent, pending.size);
+    });
+  });
+  return {
+    running: () => [...pending.keys()],
+    ctx: (id: string) => contexts.get(id)!,
+    maxConcurrent: () => maxConcurrent,
+    finish(id: string, outcome = 'completed') {
+      const resolve = pending.get(id);
+      if (!resolve) throw new Error(`${id} is not running`);
+      pending.delete(id);
+      resolve(outcome);
+    },
+  };
+}
+
+function poolWorker(over: Partial<DialerAnalysisConfig> = {}, extra: { breaker?: VendorRateLimitBreaker; pollIntervalMs?: number } = {}) {
+  return new DialerAnalysisWorker({
+    transcriber: { provider: 'gemini' } as never,
+    analysisService: {} as never,
+    config: { ...CFG, pollIntervalMs: 60_000, ...over } as DialerAnalysisConfig,
+    ...extra,
+  });
+}
+
+describe('slot pool', () => {
+  it('a slot refills as soon as its job finishes, without waiting for the interval or its sibling', async () => {
+    vi.useFakeTimers();
+    queueOf(5);
+    const runs = heldRuns();
+    const w = poolWorker({ concurrency: 2 });
+    w.wake();
+    await flush();
+    expect(runs.running()).toEqual(['j0', 'j1']);
+
+    runs.finish('j0');
+    await flush(); // no timer moved: the refill is driven by the job ending
+    expect(runs.running()).toEqual(['j1', 'j2']);
+    expect(mockJobRepo.claimRunnable).toHaveBeenLastCalledWith(1);
+
+    runs.finish('j2'); // j1, the older sibling, is still running
+    await flush();
+    expect(runs.running()).toEqual(['j1', 'j3']);
+    await w.gracefulShutdown();
+  });
+
+  it('N slots stay full under a deep queue and never claim more than the free slots', async () => {
+    vi.useFakeTimers();
+    const q = queueOf(60);
+    const runs = heldRuns();
+    const w = poolWorker({ concurrency: 4 });
+    w.wake();
+    await flush();
+    let finished = 0;
+    while (q.remaining() > 0) {
+      expect(runs.running()).toHaveLength(4);
+      expect(w.inFlightCount).toBe(4);
+      // Finish out of order: alternately the newest and the oldest.
+      const r = runs.running();
+      runs.finish(finished % 2 ? r[0]! : r[r.length - 1]!);
+      finished++;
+      await flush();
+    }
+    expect(runs.maxConcurrent()).toBe(4);
+    expect(Math.max(...q.limits)).toBeLessThanOrEqual(4);
+    expect(mockRunnerRun).toHaveBeenCalledTimes(60);
+    await w.gracefulShutdown();
+  });
+
+  it('throughput is not bounded by the poll interval: 200 one-second jobs on 8 slots drain in 25 s of a 60 s interval', async () => {
+    vi.useFakeTimers();
+    const q = queueOf(200);
+    mockRunnerRun.mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('completed'), 1000)));
+    const w = poolWorker({ concurrency: 8 });
+    w.wake();
+    await vi.advanceTimersByTimeAsync(25_000);
+    expect(q.remaining()).toBe(0);
+    expect(mockRunnerRun).toHaveBeenCalledTimes(200);
+    expect(w.inFlightCount).toBe(0);
+    // The poll never fired: every claim came from wake() or a finishing job.
+    expect(mockJobRepo.promoteRecordingReady).not.toHaveBeenCalled();
+    await w.gracefulShutdown();
+  });
+
+  it('respects the recording byte budget: slots wait for it without a claim, and a shrunk lease lets the next one start', async () => {
+    vi.useFakeTimers();
+    queueOf(10);
+    const runs = heldRuns();
+    // Worst case per slot = 100 × 2 = 200 bytes; the 500-byte budget holds two.
+    const w = poolWorker({ concurrency: 4, maxRecordingBytes: 100, memoryBudgetBytes: 500 });
+    w.wake();
+    await flush();
+    expect(runs.running()).toEqual(['j0', 'j1']);
+    expect(mockJobRepo.claimRunnable).toHaveBeenCalledTimes(1);
+    expect(mockJobRepo.claimRunnable).toHaveBeenCalledWith(2); // never claims a job it has no memory for
+    const held = () => runs.running().reduce((sum, id) => sum + runs.ctx(id).lease!.bytes, 0);
+    expect(held()).toBe(400);
+
+    // j0 fetched a 30-byte recording: its lease shrinks to 60 (260 held), room for one more slot.
+    runs.ctx('j0').lease!.shrinkTo(60);
+    await flush();
+    expect(runs.running()).toEqual(['j0', 'j1', 'j2']);
+    expect(held()).toBe(460);
+
+    // A finishing job hands its whole lease back.
+    runs.finish('j1');
+    await flush();
+    expect(runs.running()).toEqual(['j0', 'j2', 'j3']);
+    expect(held()).toBe(460);
+    await w.gracefulShutdown();
+  });
+
+  it('shutdown mid-flight requeues exactly the in-flight jobs, including a claim that lands during shutdown, and starts nothing new', async () => {
+    vi.useFakeTimers();
+    const runs = heldRuns();
+    let landClaim!: (jobs: DialerAnalysisJobRecord[]) => void;
+    mockJobRepo.claimRunnable
+      .mockResolvedValueOnce([makeJob({ id: 'a', claim_generation: 4 }), makeJob({ id: 'b', claim_generation: 5 }), makeJob({ id: 'c', claim_generation: 6 })])
+      .mockImplementationOnce(() => new Promise((resolve) => { landClaim = resolve; }))
+      .mockResolvedValue([makeJob({ id: 'never' })]);
+    const w = poolWorker({ concurrency: 3 });
+    w.wake();
+    await flush();
+    expect(runs.running()).toEqual(['a', 'b', 'c']);
+
+    runs.finish('a'); // its slot's refill claim is now on its way to the database
+    await flush();
+    const shutdown = w.gracefulShutdown();
+    landClaim([makeJob({ id: 'd', claim_generation: 9 })]);
+    await shutdown;
+
+    expect(mockJobRepo.gracefulRequeue).toHaveBeenCalledOnce();
+    const requeued = mockJobRepo.gracefulRequeue.mock.calls[0]![0] as Array<{ id: string; generation: number }>;
+    expect([...requeued].sort((x, y) => x.id.localeCompare(y.id))).toEqual([
+      { id: 'b', generation: 5 }, { id: 'c', generation: 6 }, { id: 'd', generation: 9 },
+    ]);
+    expect(runs.running()).toEqual(['b', 'c']); // d was claimed but never started
+    expect(w.isArmed()).toBe(false);
+
+    // Jobs finishing after shutdown do not claim again; wake() is a no-op.
+    const claims = mockJobRepo.claimRunnable.mock.calls.length;
+    runs.finish('b');
+    w.wake();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(mockJobRepo.claimRunnable.mock.calls.length).toBe(claims);
+    expect(mockRunnerRun).toHaveBeenCalledTimes(3);
+  });
+
+  it('dormant after idle sweeps; wake() re-arms the poll and fills free slots at once', async () => {
+    vi.useFakeTimers();
+    const w = poolWorker({ concurrency: 2 }, { pollIntervalMs: 1000 });
+    w.wake();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(w.isArmed()).toBe(false);
+
+    queueOf(1);
+    const runs = heldRuns();
+    w.wake();
+    await flush(); // no tick needed
+    expect(w.isArmed()).toBe(true);
+    expect(runs.running()).toEqual(['j0']);
+    await w.gracefulShutdown();
+  });
+
+  it('a just-promoted job starts when its settle delay ends, not at the next poll', async () => {
+    vi.useFakeTimers();
+    mockJobRepo.promoteRecordingReady.mockResolvedValueOnce(1);
+    mockJobRepo.claimRunnable.mockResolvedValueOnce([]).mockResolvedValueOnce([makeJob({ id: 'settled' })]).mockResolvedValue([]);
+    mockJobRepo.msUntilNextRunnable.mockResolvedValueOnce(15_000).mockResolvedValue(null);
+    const w = poolWorker({ concurrency: 2 });
+    await w.sweepOnce();
+    expect(mockRunnerRun).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(mockRunnerRun).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mockRunnerRun).toHaveBeenCalledOnce();
+    await w.gracefulShutdown();
+  });
+
+  it('a rate limit pauses every slot, backs the job off by the pause, then probes one job before filling again', async () => {
+    vi.useFakeTimers();
+    queueOf(50);
+    const runs = heldRuns();
+    const breaker = new VendorRateLimitBreaker({ random: () => 0.5 }); // no jitter: 30 s, then 60 s
+    const w = poolWorker({ concurrency: 4 }, { breaker });
+    w.wake();
+    await flush();
+    expect(runs.running()).toEqual(['j0', 'j1', 'j2', 'j3']);
+
+    // j0 is rate-limited: the runner asks the breaker for the pause to back the job off by.
+    expect(runs.ctx('j0').onRateLimited!()).toBe(30);
+    runs.finish('j0', 'rate_limited');
+    // Its siblings, already in flight when the limit hit, hit it too: one opening, not four.
+    for (const id of ['j1', 'j2', 'j3']) {
+      expect(runs.ctx(id).onRateLimited!()).toBeLessThanOrEqual(30);
+      runs.finish(id, 'rate_limited');
+    }
+    await flush();
+    expect(breaker.state).toBe('open');
+    expect(runs.running()).toEqual([]); // no slot claims while paused
+    const claimsWhilePaused = mockJobRepo.claimRunnable.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(mockJobRepo.claimRunnable.mock.calls.length).toBe(claimsWhilePaused);
+
+    // Pause over: exactly one probe.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runs.running()).toEqual(['j4']);
+    expect(mockJobRepo.claimRunnable).toHaveBeenLastCalledWith(1);
+
+    // The probe is rate-limited too: the pause doubles.
+    expect(runs.ctx('j4').onRateLimited!()).toBe(60);
+    runs.finish('j4', 'rate_limited');
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(runs.running()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(runs.running()).toEqual(['j5']);
+
+    // The probe completes: the breaker closes and every slot fills.
+    runs.finish('j5');
+    await flush();
+    expect(breaker.state).toBe('closed');
+    expect(runs.running()).toEqual(['j6', 'j7', 'j8', 'j9']);
+    await w.gracefulShutdown();
   });
 });

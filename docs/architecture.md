@@ -272,8 +272,17 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 
 ## Call analysis and transcripts
 
-- **Worker** (`core/dialer-analysis-worker.ts`): promote → expire → claim → recover, every 60 s,
-  concurrency 2 by default; jobs in `dialer_analysis_jobs`, claimed with `FOR UPDATE SKIP LOCKED`.
+- **Worker** (`core/dialer-analysis-worker.ts`): a slot pool. Up to `DIALER_ANALYSIS_CONCURRENCY`
+  (default 8) jobs run at once; when one finishes its slot claims the next at once, a short
+  claim arms a timer for the next due job (settle delay, backoff), and `wake()` fills free slots.
+  A sweep every 60 s (self-dormant when idle) promotes → expires → fills slots → recovers stale
+  claims, and is the safety net. Jobs in `dialer_analysis_jobs`, claimed with
+  `FOR UPDATE SKIP LOCKED`, so several processes can share the queue. Before claiming, a slot
+  reserves a worst-case recording on the recording byte budget
+  (`core/recording-byte-budget.ts`, `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`); the runner shrinks
+  it to the real size. A vendor rate limit opens a process-wide pause with one probe after it
+  (`core/vendor-rate-limit-breaker.ts`). Shutdown stops new claims, then requeues the jobs in
+  flight, generation-matched.
 - **Runner** (`core/dialer-analysis-runner.ts`): load the call, take config from the job's profile
   snapshot, resume an existing transcript or fetch and transcribe the recording, persist, run the
   LLM analysis, complete in one transaction.

@@ -13,6 +13,9 @@ import { insertWebrtcCall } from '../../../../../packages/db/test/integration/se
  * backoff on real rows, `analysis_audio_seconds` recorded, off-list recording host a
  * permanent failure. "One real recording transcribed and analysed on the pilot account" is
  * NOT attempted (no vendor account; see docs/seams.md).
+ *
+ * The sweep starts jobs in the worker's slots and returns without waiting for them, so
+ * each case waits with `idle()` (the `sweep` helper) before reading the rows.
  */
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
@@ -57,6 +60,12 @@ async function newCall(over: Record<string, unknown> = {}) {
   return { call, job };
 }
 const callRow = async (id: string) => (await getTestPool().query(`SELECT * FROM agency_calls WHERE id = $1`, [id])).rows[0]!;
+/** One sweep, then wait for the jobs it started (the sweep itself no longer waits for them). */
+async function sweep(w: InstanceType<typeof DialerAnalysisWorker>): Promise<boolean> {
+  const acted = await w.sweepOnce();
+  await w.idle();
+  return acted;
+}
 const stubAudio = () => vi.stubGlobal('fetch', vi.fn(async () => new Response(Buffer.from('mp3'), { status: 200, headers: { 'content-type': 'audio/mpeg' } })));
 
 describe('dialer analysis pipeline over real Postgres', () => {
@@ -69,7 +78,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     const { call, job } = await newCall();
     const { w, transcriber, svc } = worker();
 
-    expect(await w.sweepOnce()).toBe(true);
+    expect(await sweep(w)).toBe(true);
 
     const done = (await jobs.findById(job.id))!;
     // analysis_audio_seconds = min(recording duration 100, transcriber duration 95).
@@ -97,7 +106,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     await getTestPool().query(`UPDATE agency_calls SET recording_url = $2 WHERE id = $1`, [call.id, URL_OK]);
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET created_at = now() - interval '2 hours' WHERE id = $1`, [job.id]);
     const { w } = worker();
-    await w.sweepOnce();
+    await sweep(w);
     expect((await jobs.findById(job.id))!.status).toBe('completed');
     await w.gracefulShutdown();
   });
@@ -105,7 +114,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
   it('SKIP: a silent recording is skipped, not failed, and nothing is retried', async () => {
     const { call, job } = await newCall();
     const { w, svc } = worker(makeTranscriber({ entries: [], durationSeconds: 0 }));
-    await w.sweepOnce();
+    await sweep(w);
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'skipped', error_code: 'TRANSCRIPTION_EMPTY' });
     expect((await callRow(call.id)).analysis_status).toBe('skipped');
     expect(svc.analyze).not.toHaveBeenCalled();
@@ -116,7 +125,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     const { call, job } = await newCall();
     await getTestPool().query(`UPDATE agency_calls SET analysis_status = 'completed' WHERE id = $1`, [call.id]);
     const { w, transcriber } = worker();
-    await w.sweepOnce();
+    await sweep(w);
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'skipped', error_code: 'ALREADY_ANALYSED' });
     expect(transcriber.transcribe).not.toHaveBeenCalled();
     await w.gracefulShutdown();
@@ -129,7 +138,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
       [call.id, JSON.stringify(ENTRIES(90)), JSON.stringify({ provider: 'gemini', model: 'prior', detected_language: 'en', duration_seconds: 90, turn_count: 2, latency_ms: 1, transcribed_at: new Date().toISOString() })],
     );
     const { w, transcriber } = worker();
-    await w.sweepOnce();
+    await sweep(w);
     expect(transcriber.transcribe).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
     // min(recording 100, transcript meta 90)
@@ -141,7 +150,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     const { call, job } = await newCall();
     const short = makeTranscriber({ entries: ENTRIES(40), durationSeconds: 40 });
     const { w } = worker(short);
-    await w.sweepOnce();
+    await sweep(w);
     const retried = (await jobs.findById(job.id))!;
     expect(retried).toMatchObject({ status: 'queued', attempts: 1, attempts_total: 1, error_code: 'AUDIO_TOO_SHORT' });
     expect(retried.next_attempt_at!.getTime()).toBeGreaterThan(Date.now() + 10_000);
@@ -149,12 +158,12 @@ describe('dialer analysis pipeline over real Postgres', () => {
     expect((await callRow(call.id)).conversation_log).toBeNull();
 
     // Not due yet: another sweep claims nothing.
-    await w.sweepOnce();
+    await sweep(w);
     expect((await jobs.findById(job.id))!.attempts).toBe(1);
 
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 second' WHERE id = $1`, [job.id]);
     short.transcribe.mockResolvedValue({ entries: ENTRIES(98), detectedLanguage: 'en', durationSeconds: 98, model: 'fake', diarizationFailed: false });
-    await w.sweepOnce();
+    await sweep(w);
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'completed', attempts: 2, analysis_audio_seconds: 98 });
     await w.gracefulShutdown();
   });
@@ -165,7 +174,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     bad.transcribe.mockRejectedValue(new Error('boom'));
     const { w } = worker(bad);
     for (let i = 0; i < 3; i++) {
-      await w.sweepOnce();
+      await sweep(w);
       await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 second' WHERE id = $1 AND status = 'queued'`, [job.id]);
     }
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'failed', attempts: 3, error_code: 'ANALYSIS_FAILED' });
@@ -179,7 +188,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     const limited = makeTranscriber();
     limited.transcribe.mockRejectedValue(new TranscriptionError('RATE_LIMITED', '429'));
     const { w } = worker(limited);
-    await w.sweepOnce();
+    await sweep(w);
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'queued', attempts: 0, error_code: 'RATE_LIMITED' });
     await w.gracefulShutdown();
   });
@@ -187,7 +196,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
   it('an off-list recording host is a PERMANENT failure with a clear error, and nothing is fetched', async () => {
     const { call, job } = await newCall({ recording_url: 'https://evil.example/r/a.mp3' });
     const { w, transcriber } = worker();
-    await w.sweepOnce();
+    await sweep(w);
     const failed = (await jobs.findById(job.id))!;
     expect(failed).toMatchObject({ status: 'failed', attempts: 1, error_code: 'TRANSCRIPTION_FAILED' });
     expect(failed.error_message).toContain('allow-list');
@@ -202,7 +211,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'https://169.254.169.254/latest/meta-data/' } }));
     vi.stubGlobal('fetch', fetchMock);
     const { w } = worker();
-    await w.sweepOnce();
+    await sweep(w);
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'failed', attempts: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await w.gracefulShutdown();
@@ -211,7 +220,7 @@ describe('dialer analysis pipeline over real Postgres', () => {
   it('with no allow-list configured every fetch is refused (fail closed)', async () => {
     const { job } = await newCall();
     const { w } = worker(makeTranscriber(), analysisService(), []);
-    await w.sweepOnce();
+    await sweep(w);
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'failed', error_code: 'TRANSCRIPTION_FAILED' });
     expect(fetch).not.toHaveBeenCalled();
     await w.gracefulShutdown();
@@ -222,9 +231,9 @@ describe('dialer analysis pipeline over real Postgres', () => {
     await jobs.claimRunnable(1);
     await getTestPool().query(`UPDATE dialer_analysis_jobs SET heartbeat_at = now() - interval '1 hour' WHERE id = $1`, [job.id]);
     const { w } = worker();
-    await w.sweepOnce(); // recovers -> queued (attempts 0)
+    await sweep(w); // recovers -> queued (attempts 0)
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'queued', attempts: 0, attempts_total: 1 });
-    await w.sweepOnce(); // claims and completes
+    await sweep(w); // claims and completes
     expect(await jobs.findById(job.id)).toMatchObject({ status: 'completed', attempts: 1 });
     await w.gracefulShutdown();
   });
