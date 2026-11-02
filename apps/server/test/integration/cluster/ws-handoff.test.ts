@@ -29,6 +29,13 @@ let app: FastifyInstance;
 let supervisor: ChildSupervisor;
 let port = 0;
 
+/**
+ * Upgrades the primary's hook holds until the test releases them (`x-test-hold: <id>`):
+ * the test learns the primary is inside its hook (`entered`), so a frame it writes then is
+ * provably in flight while the primary holds the socket.
+ */
+const holds = new Map<string, { entered: () => void; released: Promise<void> }>();
+
 beforeAll(async () => {
   supervisor = new ChildSupervisor({
     role: 'media',
@@ -51,6 +58,11 @@ beforeAll(async () => {
   // Stands in for the Redis rate limiter: async, before routing, can answer the upgrade.
   app.addHook('onRequest', async (request, reply) => {
     await new Promise((r) => setTimeout(r, 3));
+    const hold = holds.get(String(request.headers['x-test-hold'] ?? ''));
+    if (hold) {
+      hold.entered();
+      await hold.released;
+    }
     if (request.headers['x-test-limit'] === '1') return reply.code(429).send({ error: 'rate_limited' });
   });
   registerWsHandoff(app, { target: () => target });
@@ -81,7 +93,13 @@ function maskedFrame(opcode: number, payload: Buffer): Buffer {
   return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), mask, Buffer.from(payload.map((b, i) => b ^ mask[i % 4]!))]);
 }
 
-/** A raw upgrade whose first frame goes out before the 101 is read: in the request's own write, or 1 ms later (during the primary's hook). */
+/**
+ * A raw upgrade whose first frame goes out before the 101 is read: in the request's own
+ * write, or while the primary is provably inside its async hook (the hook signals it has
+ * entered, the frame is written and flushed, the primary's loop is given time to read it
+ * if its handle were still reading, and only then is the hook released). Nagle off, so the
+ * frame is on the wire when the write calls back.
+ */
 async function earlyFrameArrives(sameWrite: boolean): Promise<boolean> {
   const id = randomUUID();
   const pstn = await open(`/api/v1/webrtc-call/${id}/pstn-stream?token=p&w=${slotFor(id, WORKERS)}`);
@@ -90,21 +108,40 @@ async function earlyFrameArrives(sameWrite: boolean): Promise<boolean> {
       const f = JSON.parse(d.toString()) as { event?: string; media?: { payload: string } };
       if (f.event === 'media' && Buffer.from(f.media!.payload, 'base64').length === 100) r(true);
     });
-    setTimeout(() => r(false), 2_000);
+    setTimeout(() => r(false), 5_000);
   });
+  const holdId = randomUUID();
+  let entered!: () => void;
+  let release!: () => void;
+  const inHook = new Promise<void>((r) => { entered = r; });
+  if (!sameWrite) holds.set(holdId, { entered, released: new Promise<void>((r) => { release = r; }) });
+
   const sock = net.connect(port, '127.0.0.1');
+  sock.setNoDelay(true);
+  const handshake = new Promise<string>((r) => sock.once('data', (d) => r(d.toString())));
   const key = randomBytes(16).toString('base64');
-  const request = Buffer.from(`GET /proxy/agency/station/${id}?token=t HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
+  const request = Buffer.from(`GET /proxy/agency/station/${id}?token=t HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n${sameWrite ? '' : `X-Test-Hold: ${holdId}\r\n`}\r\n`);
   const frame = maskedFrame(0x2, Buffer.alloc(100, 0x55));
-  if (sameWrite) sock.write(Buffer.concat([request, frame]));
-  else { sock.write(request); setTimeout(() => sock.write(frame), 1); }
+  const write = (b: Buffer): Promise<void> => new Promise((r, j) => sock.write(b, (err) => (err ? j(err) : r())));
+  if (sameWrite) {
+    await write(Buffer.concat([request, frame]));
+  } else {
+    await write(request);
+    await inHook;
+    await write(frame);
+    // The frame is in the primary's kernel buffer. Give its loop turns to pull it in, as it
+    // would if the socket's reads had not been stopped at the upgrade; then let the hook go.
+    await new Promise((r) => setTimeout(r, 100));
+    release();
+    holds.delete(holdId);
+  }
   // And the 101 the worker wrote is a real one.
   const accept = createHash('sha1').update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
-  const handshake = await new Promise<string>((r) => sock.once('data', (d) => r(d.toString())));
+  const answer = await handshake;
   const ok = await relayed;
   sock.destroy();
   pstn.ws.close();
-  return ok && handshake.startsWith('HTTP/1.1 101') && handshake.includes(accept);
+  return ok && answer.startsWith('HTTP/1.1 101') && answer.includes(accept);
 }
 
 describe('WebSocket upgrade handoff to forked workers', () => {
