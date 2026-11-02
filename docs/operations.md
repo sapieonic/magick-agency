@@ -340,10 +340,11 @@ the 500-call layout (`MEDIA_WORKERS=3`, `ANALYSIS_WORKERS=2`) is 30 + 3 × 10 + 
 plan can allow fewer than 100: check it before raising any of the three. The pools start empty
 and grow under load, so a host over the limit boots and runs normally and is refused
 connections (`53300 too_many_connections`) only at a peak. So the primary checks the sum at
-boot when workers are configured: past the limit it logs an error (it still starts; a default
-pending Manas, `decisions.md`), and exports `db_connections_planned` (the sum plus the
-headroom) and `db_connections_allowed`; `/readyz?detail=1` shows the numbers on the primary's
-entry (`db`).
+boot when workers are configured, before it forks any: past the limit it **refuses to start**
+(exit 1; decision D12), and the log line names both numbers and the settings to lower. When it
+fits it exports `db_connections_planned` (the sum plus the headroom) and
+`db_connections_allowed`; `/readyz?detail=1` shows the numbers on the primary's entry (`db`).
+Raise `max_connections` before raising `MEDIA_WORKERS`, `ANALYSIS_WORKERS` or a pool.
 
 **What to watch.** The *Processes* dashboard row shows event-loop utilisation by instance
 (`:primary`, `:media0`, …): a worker pinned near 1 needs another core. It also shows child

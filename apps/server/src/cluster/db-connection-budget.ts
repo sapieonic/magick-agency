@@ -9,10 +9,10 @@
  * connections are refused (`53300 too_many_connections`) in whichever process asked last.
  * The primary therefore adds the pools up at boot and compares the sum with the server.
  *
- * It does not refuse to boot (a default pending Manas, `docs/decisions.md`): the limit
- * belongs to the database, which can be raised without a deploy, and a server that refuses
- * to start is a worse outage than one that may queue at a peak. It logs an error, exports
- * both numbers as gauges and shows them in `/readyz?detail=1`.
+ * It refuses to boot when the sum does not fit (D12, Manas, `docs/decisions.md`): a host
+ * that would fail at its first peak fails at deploy instead, before any worker is forked.
+ * When it fits, both numbers are exported as gauges and shown in `/readyz?detail=1`. When
+ * the server's limits cannot be read, there is no verdict and the boot goes on.
  */
 import type { AppConfig } from '../config/index.js';
 
@@ -82,4 +82,22 @@ export async function readDbConnectionBudget(query: Query, plan: DbConnectionPla
   const reserved = Number(rows[0]?.['reserved'] ?? 0);
   if (!Number.isFinite(max) || max <= 0) return null;
   return judgeDbConnectionBudget(plan, max, Number.isFinite(reserved) ? reserved : 0);
+}
+
+/** Thrown at boot when the host's pools cannot fit the server (D12): the process exits 1. */
+export class DbConnectionBudgetExceededError extends Error {
+  constructor(readonly budget: DbConnectionBudget) {
+    super(
+      `The host's Postgres pools can open ${budget.total} connections (+${DB_CONNECTION_HEADROOM} headroom) but the server allows `
+      + `${budget.maxConnections - budget.reserved} (max_connections ${budget.maxConnections} less ${budget.reserved} reserved): `
+      + 'lower DB_POOL_MAX, MEDIA_WORKER_DB_POOL_MAX, MEDIA_WORKERS or ANALYSIS_WORKERS, or raise max_connections',
+    );
+    this.name = 'DbConnectionBudgetExceededError';
+  }
+}
+
+/** D12: a budget that does not fit refuses the boot; null (no verdict) and a fit pass through. */
+export function enforceDbConnectionBudget(budget: DbConnectionBudget | null): DbConnectionBudget | null {
+  if (budget && !budget.fits) throw new DbConnectionBudgetExceededError(budget);
+  return budget;
 }

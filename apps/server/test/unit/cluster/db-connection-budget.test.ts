@@ -1,8 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseConfig } from '../../../src/config/load.js';
 import {
   DB_CONNECTION_HEADROOM,
+  DbConnectionBudgetExceededError,
   analysisChildDbPoolMax,
+  enforceDbConnectionBudget,
   judgeDbConnectionBudget,
   planDbConnections,
   readDbConnectionBudget,
@@ -11,7 +15,7 @@ import {
 /*
  * Every process on the host opens its own pg pool, so the host's connections are the sum.
  * The primary adds them up at boot and compares them with the server's max_connections
- * (logged and reported, never refused: docs/decisions.md).
+ * (a sum that does not fit refuses the boot: D12, docs/decisions.md).
  */
 const env = {
   DATABASE_URL: 'postgresql://u:p@localhost:5436/magick_agency',
@@ -65,5 +69,24 @@ describe('the host\'s Postgres connection budget', () => {
     const budget = await readDbConnectionBudget(async () => ({ rows: [{ max: 100, reserved: 3 }] }), plan);
     expect(budget).toMatchObject({ total: 40, maxConnections: 100, reserved: 3, fits: true });
     expect(await readDbConnectionBudget(async () => ({ rows: [] }), plan)).toBeNull();
+  });
+
+  it('D12: a host whose pools do not fit refuses to boot, naming the numbers and the settings', () => {
+    const plan = planDbConnections(parse({ MEDIA_WORKER_DB_POOL_MAX: '30' }), { mediaWorkers: 3, analysisWorkers: 0 });
+    const over = judgeDbConnectionBudget(plan, 100, 3);
+    expect(() => enforceDbConnectionBudget(over)).toThrow(DbConnectionBudgetExceededError);
+    expect(() => enforceDbConnectionBudget(over)).toThrow(/120 connections \(\+5 headroom\) but the server allows 97 .*MEDIA_WORKER_DB_POOL_MAX/);
+    const fits = judgeDbConnectionBudget(plan, 200, 3);
+    expect(enforceDbConnectionBudget(fits)).toBe(fits);
+    // Limits that could not be read are no verdict: the boot goes on.
+    expect(enforceDbConnectionBudget(null)).toBeNull();
+  });
+
+  it('D12: index.ts enforces the budget before it forks a worker', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/index.ts'), 'utf8');
+    const enforce = source.indexOf('enforceDbConnectionBudget(dbBudget)');
+    expect(enforce).toBeGreaterThan(source.indexOf('await readDbConnectionBudget('));
+    expect(enforce).toBeLessThan(source.indexOf('startMediaWorkers(media)'));
+    expect(enforce).toBeLessThan(source.indexOf('plan.drains.push(await startAnalysis(ctx))'));
   });
 });

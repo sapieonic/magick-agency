@@ -22,7 +22,7 @@ import { prepareMediaPrimary, startMediaWorkers } from './cluster/primary.js';
 import { createLoopSampler } from './cluster/loop-sampler.js';
 import { clusterReadiness } from './cluster/readiness.js';
 import { runShutdownPlan, type ShutdownPlan } from './cluster/shutdown-order.js';
-import { DB_CONNECTION_HEADROOM, planDbConnections, readDbConnectionBudget, type DbConnectionBudget } from './cluster/db-connection-budget.js';
+import { DB_CONNECTION_HEADROOM, enforceDbConnectionBudget, planDbConnections, readDbConnectionBudget, type DbConnectionBudget } from './cluster/db-connection-budget.js';
 import { setDbConnectionBudgetProvider } from '@magick-agency/observability/metrics/shared';
 
 /**
@@ -77,20 +77,18 @@ async function main(): Promise<void> {
   });
 
   // With worker processes the host's pools add up: compare the sum with the server's limit
-  // once, now (`cluster/db-connection-budget.ts`). Logged and reported, never refused.
+  // once, now, before any worker is forked (`cluster/db-connection-budget.ts`). A sum that
+  // does not fit refuses the boot (D12); limits that cannot be read give no verdict.
   const analysisWorkers = config.dialerAnalysis?.enabled ? config.dialerAnalysis.processes : 0;
   let dbBudget: DbConnectionBudget | null = null;
   if (media || analysisWorkers > 0) {
     const plan = planDbConnections(config, { mediaWorkers: media?.count ?? 0, analysisWorkers });
     dbBudget = await readDbConnectionBudget((sql) => pool.query(sql), plan)
       .catch((err: unknown) => { logger.warn({ err, plan }, 'Could not read Postgres max_connections to check the host\'s pools'); return null; });
+    enforceDbConnectionBudget(dbBudget);
     if (dbBudget) {
       const budget = dbBudget;
       setDbConnectionBudgetProvider(() => ({ planned: budget.total + DB_CONNECTION_HEADROOM, allowed: budget.maxConnections - budget.reserved }));
-      if (!budget.fits) {
-        logger.error({ db: budget },
-          'The host\'s Postgres pools can open more connections than the server allows (max_connections): lower DB_POOL_MAX / MEDIA_WORKER_DB_POOL_MAX or raise max_connections');
-      }
     }
   }
 
