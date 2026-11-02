@@ -3,7 +3,7 @@ import { TEST_DB_URL } from '../../../../../packages/db/test/helpers/test-db.js'
 
 /**
  * The pool the PRODUCT runs on in the load suites, sized like production's
- * (`poolMax` 10, `config/blocks/base.ts`). The 5-connection test pool would make
+ * (`poolMax` 30, `DB_POOL_MAX`'s default in `config/blocks/base.ts`). The 5-connection test pool would make
  * the pool itself the bottleneck of a hundred-agent floor and turn every latency
  * in the run into a queueing artefact.
  *
@@ -15,7 +15,7 @@ import { TEST_DB_URL } from '../../../../../packages/db/test/helpers/test-db.js'
 let pool: pg.Pool | null = null;
 
 export function floorPool(): pg.Pool {
-  if (!pool) pool = new pg.Pool({ connectionString: TEST_DB_URL, max: 10 });
+  if (!pool) pool = new pg.Pool({ connectionString: TEST_DB_URL, max: 30 });
   return pool;
 }
 

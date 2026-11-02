@@ -1009,7 +1009,7 @@ _No dedicated test files._
 
 ### `packages/db/src/`
 
-pg pool and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
+pg pool (default 30 connections; every acquire timed into `db_pool_acquire_seconds` and the `db_pool_clients_*` gauges fed) and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
 
 Files: `connection.ts`, `index.ts`, `migrations-dir.ts`, `pg-errors.ts`
 
@@ -1095,6 +1095,7 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |

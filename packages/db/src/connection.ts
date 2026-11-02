@@ -1,6 +1,7 @@
 import pg from 'pg';
 import { logger } from '@magick-agency/observability';
 import { bindPoolConnectContext } from '@magick-agency/observability/trace-context';
+import { observeDbPoolAcquire, setDbPoolStatsProvider } from '@magick-agency/observability/metrics/shared';
 
 /**
  * Takes its settings as an argument instead of importing the app config, because
@@ -9,6 +10,12 @@ import { bindPoolConnectContext } from '@magick-agency/observability/trace-conte
  * (initDbPool / getPool / closePool) means repositories just call `getPool()`.
  */
 const { Pool } = pg;
+
+/**
+ * Pool size when the caller passes none. The server passes `DB_POOL_MAX` (the base config
+ * block's default is the same 30, with the sizing); the migration CLI and scripts take this.
+ */
+export const DEFAULT_DB_POOL_MAX = 30;
 
 export interface DbPoolOptions {
   url: string;
@@ -53,7 +60,7 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
   pool = new Pool({
     connectionString: opts.url,
     min: opts.poolMin ?? 2,
-    max: opts.poolMax ?? 10,
+    max: opts.poolMax ?? DEFAULT_DB_POOL_MAX,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
     // Decision Q1: verified by default; see `buildSslOption`.
@@ -61,6 +68,10 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
   });
   // Keeps a query that waited for a connection in its own trace; see bindPoolConnectContext.
   bindPoolConnectContext(pool);
+  timePoolAcquire(pool);
+  const max = pool.options.max ?? DEFAULT_DB_POOL_MAX;
+  const p = pool;
+  setDbPoolStatsProvider(() => ({ total: p.totalCount, idle: p.idleCount, waiting: p.waitingCount, max }));
 
   pool.on('error', (err) => {
     logger.error({ err }, 'Unexpected database pool error');
@@ -73,6 +84,31 @@ export function initDbPool(opts: DbPoolOptions): pg.Pool {
   return pool;
 }
 
+/**
+ * Time every acquire (`db_pool_acquire_seconds`): `pool.query` and `withTransaction` both go
+ * through `pool.connect`, so wrapping the instance's `connect` (already the trace-binding
+ * wrapper above) sees them all. Callback and promise forms, as pg calls both.
+ */
+function timePoolAcquire(target: pg.Pool): void {
+  type Connect = (this: pg.Pool, cb?: (err: Error | undefined, client?: pg.PoolClient, done?: unknown) => void) => unknown;
+  const inner = (target as unknown as { connect: Connect }).connect;
+  const timed: Connect = function connect(this: pg.Pool, cb) {
+    const startedAt = performance.now();
+    const seconds = () => (performance.now() - startedAt) / 1000;
+    if (typeof cb === 'function') {
+      return inner.call(this, (err, client, done) => {
+        observeDbPoolAcquire(seconds(), err ? 'error' : 'ok');
+        cb(err, client, done);
+      });
+    }
+    return (inner.call(this) as Promise<pg.PoolClient>).then(
+      (client) => { observeDbPoolAcquire(seconds(), 'ok'); return client; },
+      (err: unknown) => { observeDbPoolAcquire(seconds(), 'error'); throw err; },
+    );
+  };
+  (target as unknown as { connect: Connect }).connect = timed;
+}
+
 export function getPool(): pg.Pool {
   if (!pool) throw new Error('Database pool not initialized. Call initDbPool first.');
   return pool;
@@ -80,6 +116,7 @@ export function getPool(): pg.Pool {
 
 export async function closePool(): Promise<void> {
   if (pool) {
+    setDbPoolStatsProvider(null);
     await pool.end();
     pool = null;
     logger.info('Database pool closed');

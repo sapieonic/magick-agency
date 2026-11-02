@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 /**
  * ─── Running out: a tiny Postgres pool, a starved pool, Redis going away ────────
  *
- * The app is built with a pool of {@link POOL_MAX} connections (production defaults to 10;
+ * The app is built with a pool of {@link POOL_MAX} connections (production defaults to 30;
  * `connectionTimeoutMillis` stays the production 5 s) and with a Redis client made exactly
  * as `src/index.ts` makes it (`new Redis(url, redisClientOptions(config.redis))`: a 2 s
  * command timeout, one retry, a 2 s connect timeout), but pointed at a TCP forwarder in

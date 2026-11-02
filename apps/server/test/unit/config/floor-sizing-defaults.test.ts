@@ -25,4 +25,10 @@ describe('floor-sizing defaults', () => {
     expect(parseConfig({ ...env, MAX_CONCURRENT_CALLS: '0' }).ok).toBe(false);
     expect(parseConfig({ ...env, MAX_CONCURRENT_CALLS: '12.5' }).ok).toBe(false);
   });
+
+  it('DB_POOL_MAX: 30 by default, env-configurable', () => {
+    expect(parse().db.poolMax).toBe(30);
+    expect(parse({ DB_POOL_MAX: '20' }).db.poolMax).toBe(20);
+    expect(parseConfig({ ...env, DB_POOL_MAX: '0' }).ok).toBe(false);
+  });
 });

@@ -101,7 +101,19 @@ export const baseConfigSchema = z.object({
         + 'the verified TLS settings. Remove them and use DB_SSL_CA / DB_SSL_REJECT_UNAUTHORIZED.',
     })),
     poolMin: z.coerce.number().int().min(0).default(2),
-    poolMax: z.coerce.number().int().positive().default(10),
+    /**
+     * `DB_POOL_MAX`: the one pg pool every area queries through (`packages/db`
+     * `initDbPool`). Default 30, sized for a 500-agent floor: the hot paths hold a
+     * connection for a few ms each (a disposition, a settle, a contact claim, a campaign
+     * page poll every 10 s per open console), and at ~550 consoles plus ~510 dials and
+     * ~170 settles a minute that is a few hundred short statements a second, which 10
+     * connections queue behind as soon as one transaction or a slow report holds several.
+     * 30 stays well inside Postgres's default `max_connections` (100), leaving room for
+     * migrations, the super-admin CLI and an operator's session; a managed database with a
+     * lower limit needs this lowered to fit. Saturation shows in `db_pool_clients_waiting`
+     * and `db_pool_acquire_seconds` (`metrics/shared.ts`).
+     */
+    poolMax: z.coerce.number().int().positive().default(30),
     /**
      * Decision Q1: when TLS is on (`NODE_ENV=production`, `src/index.ts`), the server
      * certificate is VERIFIED unless this is exactly `false`. Strict on purpose: only `true` / `false` parse, so a blank
