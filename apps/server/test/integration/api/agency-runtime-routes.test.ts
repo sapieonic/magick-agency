@@ -57,7 +57,8 @@ import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertA
 import { config } from '../../../src/config/index.js';
 import { buildApp } from '../../../src/app.js';
 import type { AppContext } from '../../../src/app-context.js';
-import { resetAgencyRuntimeForTests } from '../../../src/bootstrap/agency.js';
+import { getAgencyRuntime, resetAgencyRuntimeForTests } from '../../../src/bootstrap/agency.js';
+import { StationTokenUnavailableError } from '../../../src/agency/station-token.js';
 import { resetVoiceEngineForTests } from '../../../src/bootstrap/voice.js';
 import { DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
 
@@ -358,6 +359,22 @@ describe('runtime routes through the real app (integration)', () => {
       const res = await post(`/proxy/agency/sessions/${w.sessionB}/${action}`, w.agentA, body);
       expect(res.statusCode, res.body).toBe(404);
       expect(await sessionRow(w.sessionB)).toEqual(before);
+    });
+
+    it('D9: a token that cannot be stored is a 503 station_token_unavailable through the public layer, never a URL', async () => {
+      const mint = vi.spyOn(getAgencyRuntime()!.tokens, 'mint')
+        .mockRejectedValueOnce(new StationTokenUnavailableError(w.sessionB));
+      try {
+        const res = await post(`/proxy/agency/sessions/${w.sessionB}/station-token`, w.agentB);
+        expect(res.statusCode, res.body).toBe(503);
+        expect(res.json()).toMatchObject({ code: 'station_token_unavailable' });
+        expect(res.body).not.toContain('token=');
+        // The retry the client makes is served normally.
+        const again = await post(`/proxy/agency/sessions/${w.sessionB}/station-token`, w.agentB);
+        expect(again.statusCode, again.body).toBe(200);
+      } finally {
+        mint.mockRestore();
+      }
     });
 
     it("the owner mints their own token, and it opens their own station socket (ready)", async () => {

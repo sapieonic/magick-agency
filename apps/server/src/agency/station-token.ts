@@ -11,6 +11,18 @@ const log = createChildLogger({ component: 'agency-station-token' });
 export const STATION_TOKEN_TTL_MS = 120_000;
 
 /**
+ * The token could not be stored, so it could never verify (D9, Manas, 2026-11-02). The
+ * routes that mint answer `503 station_token_unavailable` and the client retries, rather
+ * than being handed a token whose upgrade is certain to be refused 4401.
+ */
+export class StationTokenUnavailableError extends Error {
+  constructor(readonly sessionId: string, options?: { cause?: unknown }) {
+    super('Station token could not be stored', options);
+    this.name = 'StationTokenUnavailableError';
+  }
+}
+
+/**
  * Consume the token only if it matches, so a token is single-use. Doing this in
  * Lua rather than GET-then-DEL matters: two upgrades racing the same stolen URL
  * would both pass a read-then-delete check.
@@ -38,7 +50,7 @@ return 1
  * a bearer on. That is why there is no `reauth` frame and no long-lived secret.
  */
 export class StationTokenStore {
-  /** Fallback when Redis is unavailable: in-process, single-replica only. */
+  /** The store when no Redis is configured at all (tests, a bare dev run): in-process. */
   private readonly local = new Map<string, { token: string; expiresAt: number }>();
 
   constructor(
@@ -50,17 +62,24 @@ export class StationTokenStore {
     return `${this.keyPrefix}agency:station-token:${sessionId}`;
   }
 
-  /** Mint a fresh token, replacing any unused one for this session. */
+  /**
+   * Mint a fresh token, replacing any unused one for this session.
+   *
+   * With Redis configured, a failed `SET` throws {@link StationTokenUnavailableError} (D9):
+   * {@link verifyAndConsume} only ever asks Redis then, so a token kept anywhere else could
+   * never verify. Without Redis the in-process map is the store for both.
+   */
   async mint(sessionId: string): Promise<{ token: string; expiresAt: Date }> {
     const token = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + STATION_TOKEN_TTL_MS);
     if (this.redis) {
       try {
         await this.redis.set(this.key(sessionId), token, 'PX', STATION_TOKEN_TTL_MS);
-        return { token, expiresAt };
       } catch (err) {
-        log.warn({ err, sessionId }, 'Redis unavailable for station token — using local store');
+        log.warn({ err, sessionId }, 'Redis unavailable for station token — answering 503');
+        throw new StationTokenUnavailableError(sessionId, { cause: err });
       }
+      return { token, expiresAt };
     }
     this.local.set(sessionId, { token, expiresAt: expiresAt.getTime() });
     return { token, expiresAt };

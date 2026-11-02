@@ -646,7 +646,8 @@ until Redis answers. Across processes nothing changes: the mint and the verify m
 different processes, but the local map never mattered with Redis present. Cluster mode
 **requires** Redis at boot (no Redis ⇒ refuse to fork workers). The build should make `mint`
 answer 503 `station_token_unavailable` on a failed `SET` in every mode, rather than hand out a
-token that cannot work. That is a behaviour change, so it is decision D9.
+token that cannot work. That is a behaviour change, so it is decision D9 (decided and built:
+`StationTokenUnavailableError`, `decisions.md` D9).
 
 ### 5.5 Sweeps: who runs them, and leader-only
 
@@ -1046,5 +1047,5 @@ service containers.
 | Readiness detail (§6.6) | Per-process view | As designed, plus each process's p99 loop delay and the primary's own loop sample. One process also answers `?detail=1` with its own loop; plain `/readyz` is unchanged |
 | Analysis crash loop | Same as media | Analysis children are re-forked with backoff and never make the primary exit: analysis does not serve calls |
 | Remote rate-limit pause (D10) | Each process half-opens when the pause ends | Also: a job here that slipped into a pause relayed from another process (its claim already on its way) cannot close that pause early. Found by a flaky multi-process run |
-| D9 (station token mint) | Answer 503 on a failed `SET` | Not built (open decision) |
+| D9 (station token mint) | Answer 503 on a failed `SET` | Built (decided): `503 station_token_unavailable` on every minting route, let through the error mask; the clients retry |
 | Mobile stations (`docs/mobile.md`) | Unchanged by the handoff; untested (every multi-process test was `client=web`) | Unchanged, now tested: no defect found. The worker that holds a `client=mobile` station probes it every 3 s on the adopted socket, sees the pongs and sweeps it; M1's terminate and 8 s deferred hangup run there, and a phone back in time lands on the same worker (by hash) and resumes the call; `device_away` is forwarded to it. `cluster/mobile-stations.test.ts` (forked tree, public API, `alaw8` both ways) and `cluster/ws-handoff.test.ts` (the probe's timer and listeners go with an adopted socket). The load harness takes `--client web\|mobile\|<ratio>` |

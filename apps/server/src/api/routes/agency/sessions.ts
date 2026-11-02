@@ -27,7 +27,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { isCampaignSession } from '../../../db/models/agency.model.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
-import { accountNameInTenant, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
+import { accountNameInTenant, mintStationTokenOr503, requireOwnedSession, resolveRetryContext, stationIntervalsFor } from './helpers.js';
 import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './softphone-answer.js';
 import { runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
@@ -233,7 +233,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // was killed while paused needs to say why on its way back.
     const breakReason = breakReasonFor(state, session);
 
-    const minted = await runtime.tokens.mint(session.id);
+    const minted = await mintStationTokenOr503(runtime, session.id, reply);
+    if (!minted) return reply;
 
     // Campaign-CONSTANT, which is why it belongs on this payload and not on the
     // `reserved` frame: putting it there would repeat it once per dial for the
@@ -281,7 +282,8 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // this one.
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
-    const minted = await runtime.tokens.mint(session.id);
+    const minted = await mintStationTokenOr503(runtime, session.id, reply);
+    if (!minted) return reply;
     const body: AgencyStationTokenResponse = {
       session_id: session.id,
       station_ws_url: `/api/v1/agency/station/${session.id}?token=${minted.token}`,

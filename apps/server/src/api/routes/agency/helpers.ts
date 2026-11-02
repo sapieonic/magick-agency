@@ -18,6 +18,7 @@ import {
 import { dispositionErrorMessage } from '../../../agency/disposition.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { AGENT_LEASE_MS } from '../../../agency/agent-state-machine.js';
+import { StationTokenUnavailableError, type StationTokenStore } from '../../../agency/station-token.js';
 import { DEFERRED_HANGUP_MS, STATION_HEARTBEAT_GRACE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
 import { resolveCallingWindow, scheduleCallbackInWindow } from '../../../agency/calling-hours.js';
 import type {
@@ -321,6 +322,27 @@ export async function accountNameInTenant(accountId: string, tenantId: string): 
     return (await accountRepository.findByIdInTenant(accountId, tenantId))?.name ?? null;
   } catch (err) {
     log.warn({ err, accountId }, 'Could not resolve the live session\'s account name');
+    return null;
+  }
+}
+
+/**
+ * Mint a station token for a route's response, or answer `503 station_token_unavailable`
+ * when it cannot be stored (D9): null means the reply has been sent. Both clients retry a
+ * 503 (the console's re-mint, the app's retry ladder).
+ */
+export async function mintStationTokenOr503(
+  runtime: { tokens: StationTokenStore },
+  sessionId: string,
+  reply: FastifyReply,
+): Promise<{ token: string; expiresAt: Date } | null> {
+  try {
+    return await runtime.tokens.mint(sessionId);
+  } catch (err) {
+    if (!(err instanceof StationTokenUnavailableError)) throw err;
+    await reply.code(503).send({
+      error: 'Service Unavailable', code: 'station_token_unavailable', message: 'Try again in a moment.',
+    });
     return null;
   }
 }

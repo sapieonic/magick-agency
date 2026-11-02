@@ -5,7 +5,7 @@ vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
-import { StationTokenStore, STATION_TOKEN_TTL_MS } from '../../../src/agency/station-token.js';
+import { StationTokenStore, StationTokenUnavailableError, STATION_TOKEN_TTL_MS } from '../../../src/agency/station-token.js';
 
 /** Minimal Redis double with the GET/SET/DEL semantics the Lua script relies on. */
 function fakeRedis() {
@@ -64,6 +64,16 @@ describe('StationTokenStore', () => {
     // Unlike the per-call browser leg's accept-on-missing-key fallback, an
     // unverifiable credential on an 8-hour agent socket must refuse the upgrade.
     expect(await tokens.verifyAndConsume('s1', token)).toBe(false);
+  });
+
+  it('D9: a failed SET throws StationTokenUnavailableError instead of handing out a token that cannot verify', async () => {
+    const redis = fakeRedis();
+    const tokens = new StationTokenStore(redis as any, '');
+    redis.set.mockRejectedValueOnce(new Error('redis down'));
+    await expect(tokens.mint('s1')).rejects.toBeInstanceOf(StationTokenUnavailableError);
+    // Nothing was kept anywhere: the next mint, with Redis back, is the only valid token.
+    const { token } = await tokens.mint('s1');
+    expect(await tokens.verifyAndConsume('s1', token)).toBe(true);
   });
 
   it('works without Redis (single replica), still single-use', async () => {
