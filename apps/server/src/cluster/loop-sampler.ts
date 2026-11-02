@@ -12,7 +12,8 @@ export interface LoopSample {
 
 export function createLoopSampler(): () => LoopSample {
   let last = performance.eventLoopUtilization();
-  const delay = monitorEventLoopDelay({ resolution: 10 });
+  // 1 ms: a coarser resolution adds itself to every sample (10 ms read ~12 ms p99 at idle).
+  const delay = monitorEventLoopDelay({ resolution: 1 });
   delay.enable();
   return () => {
     const elu = performance.eventLoopUtilization(last);
