@@ -21,6 +21,7 @@ import http from 'node:http';
 import type net from 'node:net';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { createChildLogger } from '@magick-agency/observability';
+import { trackWsHandoff } from '@magick-agency/observability/metrics/voice';
 import { IPC_PROTOCOL_VERSION, type WsHandoff } from './ipc-protocol.js';
 import { detachFromServer, stopSocketReads } from './socket-pause.js';
 
@@ -78,6 +79,7 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
         warnedNoReadStop = true;
         log.warn('Cannot stop a socket reading on this Node — refusing WebSocket upgrades instead of handing them off');
       }
+      trackWsHandoff('unknown', 'unsupported');
       refuse(socket, 503, 2);
       return;
     }
@@ -118,7 +120,9 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
         (request.params ?? {}) as Record<string, string | undefined>,
         (request.query ?? {}) as Record<string, unknown>,
       ) ?? null;
+      const route = owner.by === 'session' ? 'station' : 'pstn';
       if (!target || slot === null) {
+        trackWsHandoff(route, 'no_owner');
         refuse(socket, 503, 2);
         return;
       }
@@ -126,13 +130,14 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
         // Should be unreachable with reads stopped at the upgrade: refuse rather than
         // hand off a socket whose bytes would stay behind.
         log.warn({ url: request.url, buffered: socket.readableLength }, 'Upgrade socket has bytes buffered in the primary — refusing');
+        trackWsHandoff(route, 'buffered');
         refuse(socket, 503, 1);
         return;
       }
       const msg: WsHandoff = {
         v: IPC_PROTOCOL_VERSION,
         kind: 'handoff',
-        route: owner.by === 'session' ? 'station' : 'pstn',
+        route,
         method: 'GET',
         url: raw.url ?? request.url,
         httpVersion: raw.httpVersion,
@@ -141,14 +146,18 @@ export function registerWsHandoff(app: FastifyInstance, opts: WsHandoffOptions):
         requestId: String(request.id),
       };
       if (!detachFromServer(socket)) {
+        trackWsHandoff(route, 'unsupported');
         refuse(socket, 503, 2);
         return;
       }
       raw[kHandedOff] = true;
       if (!target.handoff(slot, msg, socket)) {
         log.warn({ slot, url: request.url }, 'Upgrade handoff could not be sent — closing the socket');
+        trackWsHandoff(route, 'not_sent');
         socket.destroy();
+        return;
       }
+      trackWsHandoff(route, 'handed_off');
     };
   });
 }
