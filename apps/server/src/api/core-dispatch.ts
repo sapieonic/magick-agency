@@ -90,6 +90,52 @@ export function getCoreHandlers(): FastifyInstance | null {
  *
  * Throws when the handler table was never built (a wiring defect).
  */
+/**
+ * One internal request as `callCore` hands it to the internal instance: everything it
+ * built (the URL with its query, the tenancy headers it wrote, the JSON payload). Plain
+ * data, so it can be run in another process (`docs/scaling.md` §3.4).
+ */
+export interface CoreInjectArgs {
+  method: CoreCallRequest['method'];
+  url: string;
+  headers: Record<string, string>;
+  payload?: string;
+}
+
+export interface CoreInjectResult {
+  statusCode: number;
+  headers: Record<string, string | string[] | number | undefined>;
+  rawPayload: Buffer;
+}
+
+/**
+ * Decides where an internal request runs. `local` runs it on this process's instance.
+ * Unset (one process): every request runs locally, exactly as `app.inject` always did.
+ * With media workers, the primary installs one that forwards a session-owned request to
+ * the worker that owns the session (`core-owners.ts`).
+ */
+export type CoreInjector = (
+  args: CoreInjectArgs,
+  local: (args: CoreInjectArgs) => Promise<CoreInjectResult>,
+) => Promise<CoreInjectResult>;
+
+let coreInjector: CoreInjector | null = null;
+
+export function setCoreInjector(injector: CoreInjector | null): void {
+  coreInjector = injector;
+}
+
+/** Run an internal request on `app` (this process's internal instance). */
+export async function injectLocal(app: FastifyInstance, args: CoreInjectArgs): Promise<CoreInjectResult> {
+  const res = await app.inject({
+    method: args.method,
+    url: args.url,
+    headers: args.headers,
+    ...(args.payload !== undefined ? { payload: args.payload } : {}),
+  });
+  return { statusCode: res.statusCode, headers: res.headers, rawPayload: res.rawPayload };
+}
+
 export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
   if (isUnsafeCorePath(req.path)) {
     log.warn({ path: req.path, tenantId: req.tenantId }, 'Rejected path-escaping core path');
@@ -142,12 +188,14 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
     }
   }
 
-  const res = await app.inject({
+  const args: CoreInjectArgs = {
     method: req.method,
     url: `/api/v1${req.path}${queryString}`,
     headers,
     ...(payload !== undefined ? { payload } : {}),
-  });
+  };
+  const local = (a: CoreInjectArgs): Promise<CoreInjectResult> => injectLocal(app, a);
+  const res = coreInjector ? await coreInjector(args, local) : await local(args);
 
   const outHeaders = new Headers();
   for (const [name, value] of Object.entries(res.headers)) {
@@ -160,9 +208,9 @@ export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
   if (req.rawResponse) {
     body = res.rawPayload;
   } else if (outHeaders.get('content-type')?.includes('application/json')) {
-    body = res.json();
+    body = JSON.parse(res.rawPayload.toString('utf8'));
   } else {
-    body = res.payload;
+    body = res.rawPayload.toString('utf8');
   }
   return { status: res.statusCode, body, headers: outHeaders };
 }

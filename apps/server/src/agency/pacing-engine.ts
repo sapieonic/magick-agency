@@ -8,7 +8,39 @@ import {
   agencyContactRepository,
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
-import type { StationRegistry } from './station-registry.js';
+import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+
+/**
+ * What pacing needs from wherever the agents' station sockets are held: whether a
+ * session's station is attached where this engine can have it dialled, which replica owns
+ * it, its campaign, and a frame to every station on a campaign. `StationRegistry`
+ * satisfies it in a single process. With media workers (`docs/scaling.md` §3.1) the
+ * primary's directory of the workers' stations does: "locally owned" then means "attached
+ * to a live worker", and the broadcast goes to every worker.
+ */
+export interface PacingStations {
+  isLocallyOwned(sessionId: string): boolean;
+  ownerOf(sessionId: string): Promise<string | null>;
+  get(sessionId: string): { campaignId: string | null } | undefined;
+  broadcast(campaignId: string, frame: AgencyStationServerFrame): number;
+}
+
+/**
+ * How a reserved agent pacing could not use goes back: to the pool, or to the break they
+ * queued meanwhile. In a single process the engine does it itself from the registered
+ * {@link PacingEngine.registerQueuedBreakRelease}; with media workers the queued break
+ * lives in the worker holding the agent, so the primary hands the whole decision there.
+ */
+export interface ReservedReturn {
+  returnReserved(sessionId: string): Promise<void>;
+}
+
+/**
+ * Told when the engine withdraws dial authority: one campaign's leadership given up
+ * (`campaignId`, every grant up to `upTo`), or the engine stopping (`campaignId` null).
+ * A media worker's synchronous `stillAuthorised` is built from these.
+ */
+export type AuthorisationRevokedListener = (campaignId: string | null, upTo: number) => void;
 import type { AgentStateMachine } from './agent-state-machine.js';
 import type { DialDispatcher } from './dial-dispatcher.js';
 import { campaignChangeReasonFor } from './outcome-classifier.js';
@@ -234,7 +266,7 @@ export class PacingEngine {
     private readonly redis: Redis | null,
     private readonly keyPrefix: string,
     private readonly replicaId: string,
-    private readonly stations: StationRegistry,
+    private readonly stations: PacingStations,
     private readonly agents: AgentStateMachine,
     private readonly dispatcher: DialDispatcher,
     /**
@@ -330,7 +362,18 @@ export class PacingEngine {
    * the ordinary surplus return stays the one Redis write the tick has always made
    * (see the note in {@link dialUpTo} on why reservations are not mirrored).
    */
+  private reservedReturn: ReservedReturn | null = null;
+
+  /** Hand every reserved-agent return to `r` instead (media workers: the agent's own worker). */
+  registerReservedReturn(r: ReservedReturn | null): void {
+    this.reservedReturn = r;
+  }
+
   private async returnReserved(sessionId: string): Promise<void> {
+    if (this.reservedReturn) {
+      await this.reservedReturn.returnReserved(sessionId);
+      return;
+    }
     if (this.queuedBreakRelease?.hasQueuedBreak(sessionId)) {
       await this.queuedBreakRelease.release(sessionId);
       return;
@@ -396,6 +439,33 @@ export class PacingEngine {
     return !this.stopped && !this.revoked.has(campaignId);
   }
 
+  /**
+   * Leadership grants: a number per campaign, new each time leadership is taken. A dial
+   * sent to another process carries the grant it was issued under, and the listeners
+   * below hear every withdrawal, so that process can answer `stillAuthorised`
+   * synchronously from a value it was pushed (`docs/scaling.md` §3.1). Nothing in a single
+   * process reads them: `stillAuthorised` there is `mayDial` itself.
+   */
+  private grantSeq = 0;
+  private readonly grants = new Map<string, number>();
+  private readonly revokeListeners = new Set<AuthorisationRevokedListener>();
+
+  /** The grant the campaign is led under now; null when this engine does not lead it. */
+  leadershipGrant(campaignId: string): number | null {
+    return this.mayDial(campaignId) ? this.grants.get(campaignId) ?? null : null;
+  }
+
+  onAuthorisationRevoked(listener: AuthorisationRevokedListener): () => void {
+    this.revokeListeners.add(listener);
+    return () => { this.revokeListeners.delete(listener); };
+  }
+
+  private announceRevoked(campaignId: string | null, upTo: number): void {
+    for (const listener of [...this.revokeListeners]) {
+      try { listener(campaignId, upTo); } catch (err) { log.warn({ err, campaignId }, 'Authorisation-revoked listener threw'); }
+    }
+  }
+
   start(): void {
     if (this.superviseTimer) return;
     this.stopped = false;
@@ -409,6 +479,7 @@ export class PacingEngine {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.announceRevoked(null, this.grantSeq);
     if (this.superviseTimer) clearInterval(this.superviseTimer);
     this.superviseTimer = null;
     for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
@@ -639,6 +710,7 @@ export class PacingEngine {
     log.info({ campaignId: campaign.id, name: campaign.name }, 'Took agency campaign leadership');
     // We hold the lease again, so ticks are authorised again.
     this.revoked.delete(campaign.id);
+    this.grants.set(campaign.id, ++this.grantSeq);
     this.armRounds();
 
     // Dirty, so the first round ticks it in full whatever happened before.
@@ -705,6 +777,7 @@ export class PacingEngine {
     // leadership would make every such call a no-op. `beginLeading` clears the mark,
     // so a re-led campaign ticks normally.
     this.revoked.add(campaignId);
+    this.announceRevoked(campaignId, this.grants.get(campaignId) ?? this.grantSeq);
     const timers = this.led.get(campaignId);
     if (timers) {
       clearInterval(timers.renew);
@@ -857,7 +930,7 @@ export class PacingEngine {
   }
 
   private localCampaignOf(sessionId: string): string | null {
-    const stations = this.stations as Partial<Pick<StationRegistry, 'get'>>;
+    const stations = this.stations as Partial<Pick<PacingStations, 'get'>>;
     return typeof stations.get === 'function' ? stations.get.call(this.stations, sessionId)?.campaignId ?? null : null;
   }
 

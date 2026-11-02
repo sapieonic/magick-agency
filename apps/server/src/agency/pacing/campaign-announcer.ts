@@ -8,13 +8,13 @@
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyCampaignChangeReason } from '@magick-agency/contracts/agency';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
-import type { StationRegistry } from '../station-registry.js';
+import type { PacingStations } from '../pacing-engine.js';
 import { campaignMessageFor, isDialingStatus } from '../outcome-classifier.js';
 
 const log = createChildLogger({ component: 'agency-pacing-engine' });
 
 export class CampaignAnnouncer {
-  constructor(private readonly stations: Pick<StationRegistry, 'broadcast'>) {}
+  constructor(private readonly stations: Pick<PacingStations, 'broadcast'>) {}
 
   /**
    * Whether the flag has already been reported as off for a campaign.

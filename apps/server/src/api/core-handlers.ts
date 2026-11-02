@@ -4,6 +4,7 @@ import { agencyCampaignRoutes, type AgencyCampaignRouteDeps } from './routes/age
 import { agencyAgentRoutes } from './routes/agency-agents.routes.js';
 import { agencyRoutes } from './routes/agency.routes.js';
 import type { AgencyRuntime } from '../agency/runtime.js';
+import { assertCoreRouteClassified } from './core-owners.js';
 
 /**
  * The internal handler instance: the agency handler modules on a private Fastify instance
@@ -41,6 +42,9 @@ export interface CoreHandlerDeps {
 export async function buildCoreHandlers(deps: CoreHandlerDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, routerOptions: { maxParamLength: 200 } });
   app.setErrorHandler(agencyErrorHandler);
+  // Every agency handler must say which process it runs in once there are media workers
+  // (`core-owners.ts`); an unclassified one fails here, at boot.
+  app.addHook('onRoute', (route) => assertCoreRouteClassified(route.method, route.url));
   if (deps.onRoute) app.addHook('onRoute', deps.onRoute);
   // Each plugin takes its own `authMiddleware` hook.
   if (deps.agency) {
