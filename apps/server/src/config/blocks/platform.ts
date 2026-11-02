@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { envBoolean, type Env } from '../env.js';
+import { DEFAULT_RATE_LIMIT_USER_MAX } from '../../api/middleware/rate-limit-defaults.js';
 
 /**
  * Platform config: identity, tenancy, invites, super-admin, notifications.
@@ -83,11 +84,13 @@ const auditPartitionsSchema = z.object({
 
 /**
  * Decision Q9 (amended 2026-11-01): one bucket per verified user, so agents behind one
- * carrier-grade NAT each get their own budget. 300/min is ~5 requests a second sustained,
- * well above a station's steady traffic (its pings ride the socket, not HTTP).
+ * carrier-grade NAT each get their own budget. 600/min is 10 requests a second sustained:
+ * a supervisor on the campaigns home with ~40 active campaigns in two tabs, far above an
+ * agent's traffic (a station's pings ride the socket, not HTTP). Sizing:
+ * `api/middleware/rate-limit-defaults.ts`.
  */
 const userRateLimitSchema = z.object({
-  max: z.coerce.number().int().min(1).default(300),
+  max: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_USER_MAX),
 });
 
 /**

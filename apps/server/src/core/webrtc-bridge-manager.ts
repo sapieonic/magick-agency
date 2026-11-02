@@ -44,6 +44,11 @@ import {
 import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
+import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
+import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import {
+  CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
+} from '../utils/ws-backpressure.js';
 
 export {
   WebRtcCallError,
@@ -647,19 +652,29 @@ export class WebRtcBridgeManager {
     } catch (err) {
       // (rejection of telephony init is reported as a completed `failed` call via
       // endCall below — not a pre-flight rejection.)
-      log.error({ err, callId: record.id }, 'WebRTC outbound initiation failed');
+      //
+      // A dial whose outcome is unknown (an `add_lead` that timed out, or a 2xx whose body
+      // could not be read: the carrier may have queued the lead) fails the same way, so the
+      // agent and the slots are released and the media token is cleared (a late carrier
+      // connect is refused and closed, which hangs it up). Its own error code, and the
+      // adapter's error as `cause`, let the caller defer the contact's redial
+      // (`carrier-errors.ts`).
+      const outcomeUnknown = isDialOutcomeUnknown(err);
+      log.error({ err, callId: record.id, outcomeUnknown }, 'WebRTC outbound initiation failed');
       await this.endCall(record.id, {
         status: 'failed',
         outcome: 'telephony_init_failed',
-        errorCode: 'TELEPHONY_INIT_FAILED',
+        errorCode: outcomeUnknown ? 'TELEPHONY_INIT_OUTCOME_UNKNOWN' : 'TELEPHONY_INIT_FAILED',
         errorMessage: err instanceof Error ? err.message : String(err),
         hangupProvider: false,
       });
-      throw new WebRtcCallError(
+      const refusal = new WebRtcCallError(
         err instanceof Error ? err.message : 'Telephony initiation failed',
         'telephony_init_failed',
         502,
       );
+      refusal.cause = err;
+      throw refusal;
     }
 
     trackWebrtcCallInitiated(record);
@@ -1223,8 +1238,10 @@ export class WebRtcBridgeManager {
           // the way the carrier expects.
           const pcm = Buffer.from(data.media.payload, 'base64');
           const wire = session.codec.pcm16kToCarrier(pcm);
-          this.send(session.pstnWs, session.carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
-          this.recordRelayFrame(session, 'b2p', t0);
+          if (this.mayRelayToPstn(session)) {
+            this.send(session.pstnWs, session.carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
+            this.recordRelayFrame(session, 'b2p', t0);
+          }
         }
       } catch (err) {
         log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
@@ -1261,8 +1278,10 @@ export class WebRtcBridgeManager {
       const wire = session.browserMediaPassthrough
         ? alaw
         : session.codec!.pcm16kToCarrier(session.browserAlawCodec().alawToPcm16k(alaw));
-      this.send(session.pstnWs, carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
-      this.recordRelayFrame(session, 'b2p', t0);
+      if (this.mayRelayToPstn(session)) {
+        this.send(session.pstnWs, carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
+        this.recordRelayFrame(session, 'b2p', t0);
+      }
     } catch (err) {
       log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
     }
@@ -1286,7 +1305,9 @@ export class WebRtcBridgeManager {
     } else {
       return;
     }
-    session.browserAlawFramer.push(alaw, (frame) => this.sendBinary(browserWs, frame));
+    session.browserAlawFramer.push(alaw, (frame) => {
+      if (this.mayRelayToBrowser(session, browserWs)) this.sendBinary(browserWs, frame);
+    });
     this.recordRelayFrame(session, 'p2b', t0);
   }
 
@@ -1335,8 +1356,10 @@ export class WebRtcBridgeManager {
           // Carrier wire audio → browser PCM16 16kHz (stateful transcode).
           const wire = Buffer.from(data.media.payload, 'base64');
           const pcm = session.codec.carrierToPcm16k(wire);
-          this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
-          this.recordRelayFrame(session, 'p2b', t0);
+          if (this.mayRelayToBrowser(session, session.browserWs)) {
+            this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
+            this.recordRelayFrame(session, 'p2b', t0);
+          }
         }
       } catch (err) {
         log.warn({ err, callId: session.callId }, 'Dropped malformed PSTN media frame');
@@ -1859,6 +1882,8 @@ export class WebRtcBridgeManager {
       maxRelayDwellMicros: Math.round(session.maxRelayDwellMicros),
       browserMediaFormat: session.browserMediaFormat,
       ignoredBrowserMediaFrames: session.ignoredBrowserMediaFrames,
+      droppedBrowserMediaFrames: session.droppedBrowserMediaFrames,
+      droppedPstnMediaFrames: session.droppedPstnMediaFrames,
     }, 'WebRTC call ended');
   }
 
@@ -1974,7 +1999,69 @@ export class WebRtcBridgeManager {
     );
   }
 
+  /**
+   * A control frame for the browser leg (`status`, `ended`): never dropped for back-pressure,
+   * but a station whose backlog is past its hard cap is closed instead (see
+   * {@link mayRelayToBrowser}).
+   */
   private notifyBrowser(session: WebRtcBridgeSession, payload: unknown): void {
-    if (session.browserWs) this.send(session.browserWs, payload);
+    const ws = session.browserWs;
+    if (!ws) return;
+    if (sendVerdict(ws, { media: false }, this.browserLegLimits(session)) === 'over_cap') {
+      this.closeBrowserForBacklog(session, ws);
+      return;
+    }
+    this.send(ws, payload);
+  }
+
+  // ─── Send back-pressure (`utils/ws-backpressure.ts`) ─────────────────────
+
+  /** The browser leg's limits: its own format's soft limit, the station's hard cap. */
+  private browserLegLimits(session: WebRtcBridgeSession) {
+    return session.browserMediaFormat === 'alaw8' ? STATION_ALAW8_LIMITS : STATION_PCM16_LIMITS;
+  }
+
+  /**
+   * May one more carrier → browser media frame be written? No when the station console
+   * has stopped reading: past the soft limit (about 3 s of this leg's audio) the frame is
+   * dropped and counted, because audio heard that late is worthless; past the hard cap
+   * the station is closed 4408 `station_send_backlog`, and the call gets the usual
+   * station-close grace while the console reconnects.
+   */
+  private mayRelayToBrowser(session: WebRtcBridgeSession, ws: WebSocket): boolean {
+    switch (sendVerdict(ws, { media: true }, this.browserLegLimits(session))) {
+      case 'send': return true;
+      case 'drop':
+        session.droppedBrowserMediaFrames++;
+        trackWebsocketSendBackpressure('station', 'media_dropped');
+        return false;
+      case 'over_cap':
+        this.closeBrowserForBacklog(session, ws);
+        return false;
+      case 'not_open': return false;
+    }
+  }
+
+  /**
+   * May one more browser → carrier media frame be written? Past the carrier's soft limit
+   * the frame is dropped and counted. There is no hard cap: closing the carrier's media
+   * stream would hang the call up.
+   */
+  private mayRelayToPstn(session: WebRtcBridgeSession): boolean {
+    const ws = session.pstnWs;
+    if (!ws) return false;
+    const verdict = sendVerdict(ws, { media: true }, CARRIER_MEDIA_LIMITS);
+    if (verdict === 'drop') {
+      session.droppedPstnMediaFrames++;
+      trackWebsocketSendBackpressure('carrier', 'media_dropped');
+    }
+    return verdict === 'send';
+  }
+
+  private closeBrowserForBacklog(session: WebRtcBridgeSession, ws: WebSocket): void {
+    if (!closeForSendBacklog(ws)) return;
+    trackWebsocketSendBackpressure('station', 'closed');
+    log.warn({ callId: session.callId, bufferedAmount: ws.bufferedAmount, mediaFormat: session.browserMediaFormat },
+      'Station console stopped reading mid-call: send backlog past its cap, closing 4408');
   }
 }

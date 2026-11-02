@@ -3,11 +3,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 /**
  * ─── Running out: a tiny Postgres pool, a starved pool, Redis going away ────────
  *
- * The app is built with a pool of {@link POOL_MAX} connections (production defaults to 10;
+ * The app is built with a pool of {@link POOL_MAX} connections (production defaults to 30;
  * `connectionTimeoutMillis` stays the production 5 s) and with a Redis client made exactly
- * as `src/index.ts` makes it (`new Redis(url, { keyPrefix })`, ioredis defaults), but
- * pointed at a TCP forwarder in front of this worktree's Redis db, so the suite can cut
- * Redis off and bring it back.
+ * as `src/index.ts` makes it (`new Redis(url, redisClientOptions(config.redis))`: a 2 s
+ * command timeout, one retry, a 2 s connect timeout), but pointed at a TCP forwarder in
+ * front of this worktree's Redis db, so the suite can cut Redis off, stall it, and bring it
+ * back.
  *
  * What it pins:
  *  1. **Far more concurrent requests than connections** (a floor joining, marking DNC in
@@ -23,7 +24,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *     `401 Invalid or expired token`); fixed there — reverting it reds case 2.
  *  3. **Redis unavailable**: `/healthz` stays 200, `/readyz` reports 503, API requests fail
  *     with the masked 5xx (bounded, never hanging, never 401); when Redis comes back the
- *     client reconnects on its own and everything answers 200.
+ *     client reconnects on its own and everything answers 200. With ioredis's defaults
+ *     this took about 10 s to show on `/readyz` and some requests waited about 30 s; with
+ *     the command timeout every answer lands within {@link REDIS_OUTAGE_BOUND_MS}.
+ *  4. **Redis stalled** (TCP up, no replies: hung, swapping, a one-way partition): the same,
+ *     bounded by the command timeout. Without it nothing ever answers.
  */
 
 const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
@@ -38,6 +43,7 @@ import { getPool } from '@magick-agency/db';
 import { getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import { TEST_REDIS_URL } from '../../helpers/test-redis.js';
 import { config } from '../../../src/config/index.js';
+import { redisClientOptions } from '../../../src/utils/redis-options.js';
 import { createRng, scaled } from '../../helpers/load-scale.js';
 import {
   call, expectHealthy, expectMasked, scalar, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
@@ -45,6 +51,12 @@ import {
 } from './load-harness.js';
 
 const POOL_MAX = 3;
+/**
+ * Every request answers within this while Redis is gone or stalled: a few sequential Redis
+ * calls (rate limiter, session cache) at the 2 s command timeout each, plus margin. ioredis's
+ * defaults needed ~10 s for `/readyz` and up to ~30 s for a request.
+ */
+const REDIS_OUTAGE_BOUND_MS = 10_000;
 const AGENTS = scaled(25);
 const rng = createRng();
 
@@ -52,11 +64,18 @@ const rng = createRng();
 class Forwarder {
   private server: net.Server | null = null;
   private readonly sockets = new Set<net.Socket>();
+  private stalled = false;
   port = 0;
   constructor(private readonly target: { host: string; port: number }) {}
 
   async start(): Promise<void> {
     this.server = net.createServer((client) => {
+      if (this.stalled) {
+        this.sockets.add(client);
+        client.on('error', () => undefined).on('close', () => this.sockets.delete(client));
+        client.pause();
+        return;
+      }
       const upstream = net.connect(this.target);
       this.sockets.add(client).add(upstream);
       const drop = () => { client.destroy(); upstream.destroy(); this.sockets.delete(client); this.sockets.delete(upstream); };
@@ -68,7 +87,17 @@ class Forwarder {
     this.port = (this.server.address() as net.AddressInfo).port;
   }
 
+  /**
+   * Keep every connection open but stop moving bytes either way: a Redis that is up at TCP
+   * and answers nothing. New connections are accepted and held the same way.
+   */
+  stall(): void {
+    this.stalled = true;
+    for (const s of this.sockets) { s.unpipe(); s.pause(); }
+  }
+
   async stop(): Promise<void> {
+    this.stalled = false;
     for (const s of this.sockets) s.destroy();
     this.sockets.clear();
     await new Promise<void>((resolve) => (this.server ? this.server.close(() => resolve()) : resolve()));
@@ -88,7 +117,7 @@ beforeAll(async () => {
   mocks.verifyIdToken.mockImplementation(verifyTestToken);
   await forwarder.start();
   // As `src/index.ts` builds it, at this worktree's db index, through the forwarder.
-  redis = new Redis(`redis://127.0.0.1:${forwarder.port}${target.pathname}`, { keyPrefix: config.redis.keyPrefix || undefined });
+  redis = new Redis(`redis://127.0.0.1:${forwarder.port}${target.pathname}`, redisClientOptions(config.redis));
   loaded = await startLoadApp({
     poolMax: POOL_MAX,
     redis,
@@ -217,7 +246,7 @@ describe('resource exhaustion (integration, load)', () => {
     try {
       const healthz = await settleWithin(2_000, app().inject({ method: 'GET', url: '/healthz' }), 'healthz without Redis');
       expect(healthz.statusCode).toBe(200);
-      during = await settleWithin(40_000, Promise.all([
+      during = await settleWithin(REDIS_OUTAGE_BOUND_MS, Promise.all([
         app().inject({ method: 'GET', url: '/readyz' }),
         ...floor.agents.slice(0, 4).map((a) => call(app(), 'GET', '/proxy/agency/my-campaigns', a, floor)),
         call(app(), 'POST', '/proxy/agency/sessions', floor.agents[5]!, floor, { campaign_id: floor.campaigns[0] }),
@@ -225,7 +254,9 @@ describe('resource exhaustion (integration, load)', () => {
     } finally {
       await forwarder.start();
     }
-    console.log(`[resource-exhaustion] Redis outage answered in ${Date.now() - t0} ms`);
+    const elapsed = Date.now() - t0;
+    console.log(`[resource-exhaustion] Redis outage answered in ${elapsed} ms`);
+    expect(elapsed).toBeLessThan(REDIS_OUTAGE_BOUND_MS);
     const [readyz, ...api] = during;
     expect(readyz!.statusCode).toBe(503);
     for (const res of api) {
@@ -234,6 +265,45 @@ describe('resource exhaustion (integration, load)', () => {
       expectMasked(res, 'no redis');
     }
     // Recovery: ioredis reconnects by itself; no restart, no manual reconnect.
+    const deadline = Date.now() + 30_000;
+    let ready = 0;
+    while (Date.now() < deadline) {
+      ready = (await app().inject({ method: 'GET', url: '/readyz' })).statusCode;
+      if (ready === 200) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    expect(ready).toBe(200);
+    const after = await Promise.all(floor.agents.slice(0, 4).map((a) => call(app(), 'GET', '/proxy/agency/my-campaigns', a, floor)));
+    for (const res of after) expect(res.statusCode, res.body).toBe(200);
+  }, 90_000);
+
+  it('4. Redis stalled (connected, answering nothing): readiness and the API fail within the command timeout, and recover', async () => {
+    expect((await authedGet()).statusCode).toBe(200);
+    forwarder.stall();
+    let during: LightMyRequestResponse[];
+    const t0 = Date.now();
+    try {
+      const healthz = await settleWithin(2_000, app().inject({ method: 'GET', url: '/healthz' }), 'healthz with Redis stalled');
+      expect(healthz.statusCode).toBe(200);
+      during = await settleWithin(REDIS_OUTAGE_BOUND_MS, Promise.all([
+        app().inject({ method: 'GET', url: '/readyz' }),
+        ...floor.agents.slice(0, 4).map((a) => call(app(), 'GET', '/proxy/agency/my-campaigns', a, floor)),
+      ]), 'requests with Redis stalled');
+    } finally {
+      // Drop the stalled connections and serve again: the client reconnects by itself.
+      await forwarder.stop();
+      await forwarder.start();
+    }
+    const elapsed = Date.now() - t0;
+    console.log(`[resource-exhaustion] stalled Redis answered in ${elapsed} ms`);
+    expect(elapsed).toBeLessThan(REDIS_OUTAGE_BOUND_MS);
+    const [readyz, ...api] = during;
+    expect(readyz!.statusCode).toBe(503);
+    for (const res of api) {
+      expectHealthy(res, 'stalled redis', { allow5xx: true });
+      expect(res.statusCode, `answered ${res.statusCode}: ${res.body}`).toBeGreaterThanOrEqual(500);
+      expectMasked(res, 'stalled redis');
+    }
     const deadline = Date.now() + 30_000;
     let ready = 0;
     while (Date.now() < deadline) {

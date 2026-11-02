@@ -36,6 +36,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 | `apps/server/test/integration/app/trust-proxy.test.ts` | ~4 |
 | `apps/server/test/unit/app/max-param-length.test.ts` | 2 |
 | `apps/server/test/unit/app/request-id.test.ts` | 2 |
+| `apps/server/test/unit/app/websocket-max-payload.test.ts` | 4 |
 | `apps/server/test/unit/deploy/migrate.test.ts` | 9 |
 
 ### `apps/server/src/agency/`
@@ -361,7 +362,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, and the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request).
 
-Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
+Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit-defaults.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
 | Test file | Cases |
 |---|---|
@@ -540,6 +541,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 |---|---|
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
+| `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
 | `apps/server/test/unit/config/config.test.ts` | 3 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
@@ -594,6 +596,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webhook-url-builder.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-answer-anchor.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-alaw8-media.test.ts` | 16 |
+| `apps/server/test/unit/core/webrtc-bridge-backpressure.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-borrowed-socket-soak.test.ts` | 2 |
 | `apps/server/test/unit/core/webrtc-bridge-credential-hangup.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
@@ -769,9 +772,9 @@ Files: `s3.ts`
 
 ### `apps/server/src/telephony/`
 
-Telephony provider factory and types; the carrier modules (each carrier's media-stream protocol and hangup style, which the bridge asks instead of branching on a provider name); the VoiceLink adapter, media protocol, webhook normaliser, token manager and carrier fixture. `factory.ts` builds the service's own adapters from env and BYOC adapters from tenant credentials (`getForCredentialId`, decisions B18–B22): it peeks the credential row on every use and refuses another tenant or provider before any secret is opened, calls `resolve` only on a cache miss (keyed by peek's version list), and drops cached adapters only on `CredentialUnavailableError`, rethrowing transient errors unchanged.
+Telephony provider factory and types; the carrier REST errors whose dial outcome is unknown (`carrier-errors.ts`: a timed-out or unreadable `add_lead`, read by the bridge and the dialer to defer the redial); the carrier modules (each carrier's media-stream protocol and hangup style, which the bridge asks instead of branching on a provider name); the VoiceLink adapter, media protocol, webhook normaliser, token manager and carrier fixture. `factory.ts` builds the service's own adapters from env and BYOC adapters from tenant credentials (`getForCredentialId`, decisions B18–B22): it peeks the credential row on every use and refuses another tenant or provider before any secret is opened, calls `resolve` only on a cache miss (keyed by peek's version list), and drops cached adapters only on `CredentialUnavailableError`, rethrowing transient errors unchanged.
 
-Files: `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `webhook-grace.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.media.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
+Files: `carrier-errors.ts`, `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `webhook-grace.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.media.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
 
 | Test file | Cases |
 |---|---|
@@ -827,9 +830,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter (`audio-fir.ts`: the bridge's A-law 8k ⇄ PCM16 16k transcoder, allocation-free per frame and pinned byte for byte to a frozen pre-rewrite copy, `test/helpers/reference-audio-fir.ts`; `scripts/bench-transcoder.ts` times both), the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter (`audio-fir.ts`: the bridge's A-law 8k ⇄ PCM16 16k transcoder, allocation-free per frame and pinned byte for byte to a frozen pre-rewrite copy, `test/helpers/reference-audio-fir.ts`; `scripts/bench-transcoder.ts` times both), the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), the Redis client options (`redis-options.ts`: command, connect and retry bounds, used by `index.ts`), WebSocket send back-pressure (`ws-backpressure.ts`: stale media dropped past a soft limit, a station closed 4408 past the hard cap), abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `redis-options.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-backpressure.ts`, `ws-limits.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -838,6 +841,7 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/audio-fir.reference.test.ts` | 14 |
 | `apps/server/test/unit/utils/audio.test.ts` | 41 |
 | `apps/server/test/unit/utils/concurrency.core.test.ts` | 9 |
+| `apps/server/test/unit/utils/redis-options.test.ts` | 5 |
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
 | `apps/server/test/unit/utils/decode-gate.test.ts` | 23 |
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
@@ -892,12 +896,12 @@ a WebSocket *client*, which a stub server cannot be.
 |---|---|---|
 | `apps/server/test/unit/load/load-scale.test.ts` | 3 | The shared PRNG is deterministic and in bounds |
 | `apps/server/test/unit/load/mock-voicelink-carrier.test.ts` | 6 | The mock carrier itself: URL rewrite, auth and 422, fault ordering, a `start` the product parses, audio surviving the real codec |
-| `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 18 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; 2 `it.fails` (no REST timeout) |
+| `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 21 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; a hung `add_lead` or login is abandoned at its timeout (the former 2 `it.fails`), a timed-out or unreadable `add_lead` is outcome-unknown and never retried |
 | `apps/server/test/unit/load/bridge-row-write-order.test.ts` | 1 | No live status lands over a terminal one, 200 calls with shuffled ringing / answered / terminal |
 | `apps/server/test/unit/load/station-storm.test.ts` | 4 | 150 consoles across 3 tenants: registered once, no cross-talk, tab races leave one live station (4409 for the rest) |
 | `apps/server/test/unit/load/station-heartbeat-scale.test.ts` | 1 | Exactly the silent consoles are reaped 4408 after grace; the sweep stops when the floor empties |
-| `apps/server/test/unit/load/station-backpressure.test.ts` | 2 | Stalled consoles do not hold up broadcasts; 1 `it.fails` (unbounded send buffer) |
-| `apps/server/test/unit/load/station-inbound-fuzz.test.ts` | 4 | About 2,800 seeded hostile frames never throw or disturb bystanders (the `null` frame crash); 1 `it.fails` (no frame-size limit) |
+| `apps/server/test/unit/load/station-backpressure.test.ts` | 3 | Stalled consoles do not hold up broadcasts; their media past the soft limit is dropped, control frames never; past the hard cap a console is closed 4408 `station_send_backlog` (the former `it.fails`, unbounded send buffer, is fixed) |
+| `apps/server/test/unit/load/station-inbound-fuzz.test.ts` | 5 | About 2,800 seeded hostile frames never throw or disturb bystanders (the `null` frame crash); a frame past `maxPayload` (64 KiB) is refused 1009, text or binary (the former `it.fails`, no frame-size limit, is fixed) |
 | `apps/server/test/unit/load/wrapup-manager-interleavings.test.ts` | 2 | Seeded interleavings of enter / disposition / force / cancel / timer: each wrap-up closes once, no early `auto_return` |
 | `apps/server/test/unit/load/in-flight-contention.test.ts` | 2 | `InFlight.settle` waits only on work tracked at drain start |
 | `apps/server/test/unit/load/audit-buffer-drain-under-load.test.ts` | 4 | Both audit buffers drain fully when shutdown lands mid-flush |
@@ -929,7 +933,7 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/roster-ingest-concurrency.test.ts` | ~3 | Concurrent ingests: totals exact, chunk idempotency keys honoured |
 | `apps/server/test/integration/load/rate-limit-bursts.test.ts` | ~5 | Exact ceilings, 429 body and headers, per-client buckets, probes and webhooks unaffected |
 | `apps/server/test/integration/load/rate-limit-user-bucket.test.ts` | ~3 | A floor behind one NAT address: a per-user budget each, an exact per-user ceiling under a burst, the bearer IP bucket apart from the unauthenticated one |
-| `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~3 | A tiny and a starved pg pool, Redis cut and restored: probes correct, no 401 sign-outs, recovery |
+| `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~4 | A tiny and a starved pg pool, Redis cut, and Redis stalled (TCP up, no replies), with the client built as `index.ts` builds it: probes correct, answers within 10 s, no 401 sign-outs, recovery |
 | `apps/server/test/integration/load/hostile-input-fuzz.test.ts` | ~5 | Seeded fuzz over every route from `onRoute`: 4xx per contract, never a 500 or a stack; 1 `it.fails` (headerless multipart part hangs) |
 
 Harnesses beside them: `integration/load/floor-harness.ts` and `floor-pool.ts` (multi-tenant world
@@ -1015,7 +1019,7 @@ _No dedicated test files._
 
 ### `packages/db/src/`
 
-pg pool and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
+pg pool (default 30 connections; every acquire timed into `db_pool_acquire_seconds` and the `db_pool_clients_*` gauges fed) and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
 
 Files: `connection.ts`, `index.ts`, `migrations-dir.ts`, `pg-errors.ts`
 
@@ -1101,6 +1105,7 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |

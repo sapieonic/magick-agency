@@ -564,8 +564,9 @@ export const agencyPacingMissedWakeupsTotal = counter(meter, 'agency_pacing_miss
  * **Known residual:** the contact-policy writes and `releaseAgent` that follow the
  * settle are real seat time and are counted by neither series. In-process that is
  * a few awaited statements; on a degraded pool it is unbounded, and it would show
- * up here as nothing at all. Worth an explicit series if the pool ever becomes the
- * suspect; not worth pretending this one covers it.
+ * up here as nothing at all. The pool now has its own series for that
+ * (`db_pool_acquire_seconds`, `db_pool_clients_waiting`, `metrics/shared.ts`); this
+ * one does not pretend to cover it.
  *
  * **Buckets.** The lower range is sized for the unanswered outcomes, whose upper
  * bound is the carrier's own terminal report — the two candidate figures for it

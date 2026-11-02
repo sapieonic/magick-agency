@@ -288,6 +288,15 @@ export class WebRtcBridgeSession {
    */
   ignoredBrowserMediaFrames: number = 0;
 
+  /**
+   * Media frames for the browser leg (`droppedBrowserMediaFrames`) and the carrier
+   * (`droppedPstnMediaFrames`) thrown away because the peer was not reading: its send
+   * backlog was past the leg's soft limit (`utils/ws-backpressure.ts`). Reported on the
+   * call's end line.
+   */
+  droppedBrowserMediaFrames: number = 0;
+  droppedPstnMediaFrames: number = 0;
+
   private maxDurationTimer: NodeJS.Timeout | null = null;
   private readonly log;
 

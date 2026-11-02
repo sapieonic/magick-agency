@@ -12,6 +12,7 @@ import { registerRateLimit, registerUserRateLimit } from './api/middleware/rate-
 import { agencyErrorHandler } from './api/middleware/agency-error-handler.js';
 import { errorMaskHook } from './api/middleware/error-mask.middleware.js';
 import { clientLogContextHook } from './api/middleware/client-log-context.js';
+import { websocketPluginOptions, WS_MAX_PAYLOAD_DEFAULT_BYTES } from './utils/ws-limits.js';
 
 export interface BuildAppOptions {
   /** Null in tests that only exercise routing; lanes must cope or require it. */
@@ -137,7 +138,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // One `@fastify/websocket` for the whole app, registered once, globally: a second
   // registration in another plugin scope would compete for the server's upgrade event.
   // The PSTN leg and the agency station socket both use it.
-  await app.register(websocket);
+  //
+  // `maxPayload` bounds every inbound message on every WebSocket route (one `ws` server
+  // serves them all): 64 KiB by default (`WS_MAX_PAYLOAD_BYTES`), sized against the largest
+  // legitimate message per route in `utils/ws-limits.ts`. Without it `ws` allows 100 MiB,
+  // buffered and parsed on the event loop; past it the socket is closed with 1009.
+  await app.register(websocket, websocketPluginOptions(
+    opts.ctx?.config.server.wsMaxPayloadBytes ?? WS_MAX_PAYLOAD_DEFAULT_BYTES,
+  ));
 
   await app.register(platformPlugin, { ctx: opts.ctx });
   await app.register(agencyPlugin, { ctx: opts.ctx });

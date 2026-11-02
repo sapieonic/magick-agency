@@ -105,7 +105,7 @@ server, so `TRUST_PROXY_HOPS=2` (the value in `docker/.env.example`). Both direc
 this wrong are silent:
 
 - **Set to 1 behind a terminator:** every client resolves to the terminator's address and shares
-  one 200/min bucket.
+  one `ip_auth` bucket and one unauthenticated `ip` bucket (the per-user bucket still holds).
 - **:8080 reachable without going through the terminator:** a client chooses its own
   `request.ip` by sending `X-Forwarded-For`.
 
@@ -187,17 +187,20 @@ production.
 | `PORT`, `HOST` | `3021`, `0.0.0.0` | Listen address. See the proxy invariant before leaving `0.0.0.0` |
 | `NODE_ENV` | `development` | `production` turns on Postgres TLS and makes Firebase and VoiceLink mandatory |
 | `TRUST_PROXY_HOPS` | `1` (min 1) | Number of reverse proxies in front (Q9) |
-| `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `10` | pg pool |
+| `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
+| `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool, one for every area. 30 for a 500-agent floor, inside Postgres's default `max_connections` (100) with room for migrations and an operator; lower it on a managed database with a smaller limit. Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
 | `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Only `true` / `false` parse; `false` is the one opt-out |
 | `REDIS_KEY_PREFIX` | empty | Prefix on every Redis key |
-| `MAX_CONCURRENT_CALLS` | `200` | Global guard ceiling (per-account limits come from super-admin settings, default 5) |
+| `REDIS_COMMAND_TIMEOUT_MS`, `REDIS_MAX_RETRIES_PER_REQUEST`, `REDIS_CONNECT_TIMEOUT_MS` | `2000`, `1`, `2000` | Redis client bounds: a Redis that is gone or stalled fails each command within the timeout (a rejection, so call tokens fail open per Q6, and the agent lease renewer keeps renewing through it). ioredis's defaults took ~10 s to show on `/readyz` and held some requests ~30 s |
+| `MAX_CONCURRENT_CALLS` | `1000` | Global guard ceiling: call legs holding a slot, ringing and `ending` included (a 500-call floor holds ~860 at peak; sizing in `config/blocks/voice.ts`). Per-account limits come from super-admin settings, default 5 |
+| `VOICELINK_LOGIN_TIMEOUT_MS`, `VOICELINK_ADD_LEAD_TIMEOUT_MS` | `10000`, `15000` | VoiceLink REST timeouts. A timed-out `add_lead` fails the dial (agent and slots released at once) but may have queued the lead: never retried, the contact's redial deferred 15 min, a late carrier media connect refused and hung up (`voicelink.adapter.ts`, `post`) |
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
 | `CONCURRENCY_RECONCILE_INTERVAL_MS` | `300000` | Self-heal reconcile cadence |
 | `STALE_CALL_SWEEP_MINUTES` | `30` | Stale bridged-call sweep |
-| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 200, 1000, 600, 1000, `1 minute` | Rate-limit buckets (`architecture.md`, "Rate limiting and client IP") |
-| `RATE_LIMIT_IP_AUTH_MAX` | 3000 | Per-IP bucket for requests carrying a bearer: a call floor behind one NAT (Q9, amended 2026-11-01) |
-| `RATE_LIMIT_USER_MAX` | 300 | Per verified user, charged by the session middleware; the bucket that binds signed-in traffic |
+| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_STATION_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 2000, 5000, 2000, 3600, 1000, `1 minute` | Rate-limit buckets (`architecture.md`, "Rate limiting and client IP"), sized for ~550 users behind one NAT and ~510 dials a minute (`apps/server/src/api/middleware/rate-limit-defaults.ts`) |
+| `RATE_LIMIT_IP_AUTH_MAX` | 20000 | Per-IP bucket for requests carrying a bearer: a call floor behind one NAT (Q9, amended 2026-11-01), the whole signed-in floor's traffic |
+| `RATE_LIMIT_USER_MAX` | 600 | Per verified user, charged by the session middleware; the bucket that binds signed-in traffic |
 | `MOBILE_MIN_SUPPORTED_VERSION`, `MOBILE_LATEST_VERSION` | `0.1.0`, `0.1.0` | `GET /client-config`; `MAJOR.MINOR.PATCH`, and the minimum may not be newer than the latest (boot refuses) |
 | `MOBILE_IOS_STORE_URL`, `MOBILE_ANDROID_STORE_URL` | unset | Store links on `GET /client-config`; https only |
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |

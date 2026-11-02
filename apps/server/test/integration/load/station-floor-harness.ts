@@ -78,6 +78,8 @@ export async function createFloorWorld(opts: FloorWorldOptions): Promise<FloorWo
   const { AgencyRuntime } = await import('../../../src/agency/runtime.js');
   const { agencyRoutes } = await import('../../../src/api/routes/agency.routes.js');
   const { proxyAgencyStationRoutes } = await import('../../../src/api/routes/proxy-agency-station.routes.js');
+  // The bound production registers (`app.ts`), so this tier sees the same 1009 a real one would.
+  const { websocketPluginOptions } = await import('../../../src/utils/ws-limits.js');
 
   const rng = opts.rng ?? createRng();
   const redis = new Redis(TEST_REDIS_URL, { keyPrefix: KEY_PREFIX, maxRetriesPerRequest: 3 });
@@ -119,7 +121,7 @@ export async function createFloorWorld(opts: FloorWorldOptions): Promise<FloorWo
   }
 
   const app = Fastify({ logger: false });
-  await app.register(websocket);
+  await app.register(websocket, websocketPluginOptions());
   await app.register(async (scope) => agencyRoutes(scope, runtime), { prefix: '/api/v1/agency' });
   await app.register(proxyAgencyStationRoutes, { prefix: '/proxy/agency/station', getRuntime: () => runtime });
   await app.listen({ port: 0, host: '127.0.0.1' });

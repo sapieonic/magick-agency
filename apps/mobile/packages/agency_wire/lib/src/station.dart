@@ -1130,7 +1130,9 @@ enum StationCloseCode {
   /// Session unknown or left. Terminal: re-bootstrap, never retry this session.
   sessionGone(4404),
 
-  /// No `ping` within the grace window. Re-mint and retry.
+  /// No `ping` within the grace window, or (reason `station_send_backlog`) the
+  /// station stopped reading and its unread backlog passed the server's cap.
+  /// Re-mint and retry.
   heartbeatTimeout(4408),
 
   /// Another socket took over this session. Terminal: do not retry.

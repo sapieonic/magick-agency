@@ -423,15 +423,30 @@ export class AgentStateMachine {
     }
   }
 
-  /** Renew a lease the caller is responsible for. False ⇒ the lease is gone. */
+  /**
+   * Renew a lease the caller is responsible for. False ⇒ not renewed: the lease is gone, or
+   * Redis failed. A caller that must tell those apart uses {@link renewLease}.
+   */
   async renew(sessionId: string, expectedState: AgencyAgentState, leaseMs: number): Promise<boolean> {
-    if (!this.redis) return false;
+    return (await this.renewLease(sessionId, expectedState, leaseMs)) === 'renewed';
+  }
+
+  /**
+   * Renew a lease, saying WHY when it was not renewed: `lost` when Redis answered and the
+   * lease is gone or in another state (the CAS missed), `unknown` when Redis failed (an
+   * error, or the client's command timeout: `REDIS_COMMAND_TIMEOUT_MS`). The difference
+   * matters to a renewer that runs for a whole call: `lost` is final, `unknown` is a
+   * moment, and the lease (15 s, renewed every 5 s) outlives two failed renewals. Same
+   * shape as the pacing leader lease's `renew`.
+   */
+  async renewLease(sessionId: string, expectedState: AgencyAgentState, leaseMs: number): Promise<'renewed' | 'lost' | 'unknown'> {
+    if (!this.redis) return 'lost';
     try {
       const res = await this.redis.eval(RENEW_SCRIPT, 1, this.key(sessionId), expectedState, leaseMs);
-      return res === 1;
+      return res === 1 ? 'renewed' : 'lost';
     } catch (err) {
       log.warn({ err, sessionId }, 'Agent lease renew failed');
-      return false;
+      return 'unknown';
     }
   }
 

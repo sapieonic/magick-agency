@@ -190,6 +190,8 @@ export interface StationWorld {
 export async function createStationWorld(opts: StationWorldOptions): Promise<StationWorld> {
   const { AgencyRuntime } = await import('../../../src/agency/runtime.js');
   const { proxyAgencyStationRoutes } = await import('../../../src/api/routes/proxy-agency-station.routes.js');
+  // The bound production registers (`app.ts`), so this tier sees the same 1009 a real one would.
+  const { websocketPluginOptions } = await import('../../../src/utils/ws-limits.js');
 
   const rng = opts.rng ?? createRng();
   const redis = new MemoryRedis();
@@ -206,7 +208,7 @@ export async function createStationWorld(opts: StationWorldOptions): Promise<Sta
   });
 
   const app = Fastify({ logger: false });
-  await app.register(websocket);
+  await app.register(websocket, websocketPluginOptions());
   await app.register(proxyAgencyStationRoutes, { prefix: '/proxy/agency/station', getRuntime: () => runtime });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const { port } = app.server.address() as AddressInfo;

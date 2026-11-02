@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SERVICE_NAME } from '@magick-agency/observability/service';
 import type { Env } from '../env.js';
 import { resolveMetricsExportIntervalMs } from '../../utils/otel-sdk-config.js';
+import { WS_LARGEST_LEGITIMATE_MESSAGE_BYTES, WS_MAX_PAYLOAD_DEFAULT_BYTES } from '../../utils/ws-limits.js';
 
 /**
  * Base block: process (`config.server`), Postgres (`config.db`), Redis (`config.redis`),
@@ -72,6 +73,18 @@ export const baseConfigSchema = z.object({
      * 200/min bucket.
      */
     trustProxyHops: z.coerce.number().int().min(1, 'TRUST_PROXY_HOPS must be at least 1 (0 buckets every client under the proxy IP)').default(1),
+    /**
+     * `WS_MAX_PAYLOAD_BYTES`: the largest inbound WebSocket message, on every WebSocket route
+     * (`ws`'s `maxPayload`, set where `app.ts` registers `@fastify/websocket`). A bigger one
+     * closes the socket with 1009. Default 64 KiB; the derivation per route is in
+     * `src/utils/ws-limits.ts`. Never below the largest legitimate message (a 1 s `pcm16`
+     * station frame), or a legitimate client would be disconnected; `ws`'s own default is
+     * 100 MiB, buffered and parsed on the event loop.
+     */
+    wsMaxPayloadBytes: z.coerce.number().int()
+      .min(WS_LARGEST_LEGITIMATE_MESSAGE_BYTES, `WS_MAX_PAYLOAD_BYTES must be at least ${WS_LARGEST_LEGITIMATE_MESSAGE_BYTES} (the largest legitimate WebSocket message)`)
+      .max(16 * 1024 * 1024)
+      .default(WS_MAX_PAYLOAD_DEFAULT_BYTES),
   }),
   db: z.object({
     /**
@@ -88,7 +101,19 @@ export const baseConfigSchema = z.object({
         + 'the verified TLS settings. Remove them and use DB_SSL_CA / DB_SSL_REJECT_UNAUTHORIZED.',
     })),
     poolMin: z.coerce.number().int().min(0).default(2),
-    poolMax: z.coerce.number().int().positive().default(10),
+    /**
+     * `DB_POOL_MAX`: the one pg pool every area queries through (`packages/db`
+     * `initDbPool`). Default 30, sized for a 500-agent floor: the hot paths hold a
+     * connection for a few ms each (a disposition, a settle, a contact claim, a campaign
+     * page poll every 10 s per open console), and at ~550 consoles plus ~510 dials and
+     * ~170 settles a minute that is a few hundred short statements a second, which 10
+     * connections queue behind as soon as one transaction or a slow report holds several.
+     * 30 stays well inside Postgres's default `max_connections` (100), leaving room for
+     * migrations, the super-admin CLI and an operator's session; a managed database with a
+     * lower limit needs this lowered to fit. Saturation shows in `db_pool_clients_waiting`
+     * and `db_pool_acquire_seconds` (`metrics/shared.ts`).
+     */
+    poolMax: z.coerce.number().int().positive().default(30),
     /**
      * Decision Q1: when TLS is on (`NODE_ENV=production`, `src/index.ts`), the server
      * certificate is VERIFIED unless this is exactly `false`. Strict on purpose: only `true` / `false` parse, so a blank
@@ -113,6 +138,17 @@ export const baseConfigSchema = z.object({
   redis: z.object({
     url: z.string().url(),
     keyPrefix: z.string().default(''),
+    /**
+     * `REDIS_COMMAND_TIMEOUT_MS`: every command rejects after this long (`Command timed
+     * out`), so a Redis that is gone or stalled surfaces in seconds and each caller takes
+     * its Redis-error branch (decision Q6: a call token is then accepted, never refused).
+     * Default 2 s. `src/utils/redis-options.ts` has the reasoning.
+     */
+    commandTimeoutMs: z.coerce.number().int().min(100).max(60_000).default(2_000),
+    /** `REDIS_MAX_RETRIES_PER_REQUEST`: retries of a command caught by a dropped connection. Default 1 (ioredis: 20). */
+    maxRetriesPerRequest: z.coerce.number().int().min(0).max(20).default(1),
+    /** `REDIS_CONNECT_TIMEOUT_MS`: default 2 s (ioredis: 10 s). */
+    connectTimeoutMs: z.coerce.number().int().min(500).max(60_000).default(2_000),
   }),
   /**
    * The OpenTelemetry SDK's settings, as `src/instrumentation.ts` resolves them. That file
@@ -155,6 +191,7 @@ export function readBaseEnv(env: Env) {
       env: env['NODE_ENV'],
       logLevel: env['LOG_LEVEL'],
       trustProxyHops: env['TRUST_PROXY_HOPS'],
+      wsMaxPayloadBytes: env['WS_MAX_PAYLOAD_BYTES'],
     },
     db: {
       url: env['DATABASE_URL'],
@@ -166,6 +203,9 @@ export function readBaseEnv(env: Env) {
     redis: {
       url: env['REDIS_URL'],
       keyPrefix: env['REDIS_KEY_PREFIX'],
+      commandTimeoutMs: env['REDIS_COMMAND_TIMEOUT_MS'],
+      maxRetriesPerRequest: env['REDIS_MAX_RETRIES_PER_REQUEST'],
+      connectTimeoutMs: env['REDIS_CONNECT_TIMEOUT_MS'],
     },
     otel: {
       enabled: env['OTEL_ENABLED'],

@@ -44,6 +44,7 @@ import {
   LoadStationSocket, assertNoLeaks, callRows, closeLoadDb, dialBridged, endedCounts, initLoadDb,
   startLoadRig, stopLoadRig, waitAllTerminal, waitFor, type CallRow, type LoadRig,
 } from './voicelink-load-harness.js';
+import { CARRIER_MEDIA_LIMITS } from '../../../src/utils/ws-backpressure.js';
 
 const CALLS = scaled(50);
 const FRAMES = 25;
@@ -114,6 +115,13 @@ function carrierCallOf(r: LoadRig, p: Plan): CarrierCall {
   const c = r.carrier.calls.get(p.callId!);
   if (!c) throw new Error(`no carrier call for ${p.callId}`);
   return c;
+}
+
+/** Whether `sub` is `full` with characters deleted, in order (frames dropped, none reordered). */
+function isSubsequence(sub: string, full: string): boolean {
+  let j = 0;
+  for (let k = 0; k < full.length && j < sub.length; k++) if (full[k] === sub[j]) j++;
+  return j === sub.length;
 }
 
 function ctx(i: number, p: Plan): string {
@@ -307,7 +315,8 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
       '{"event":"media"}',
       '{"event":"media","media":{"payload":12345}}',
       '{"event":"media","media":{"payload":null}}',
-      JSON.stringify({ event: 'media', media: { payload: 'A'.repeat(200_000) } }), // oversized: dropped before decode
+      // (An oversized frame is no longer here: past `maxPayload`, 64 KiB, the transport closes
+      // the stream with 1009 before the bridge sees it. Pinned by its own case below.)
       '{"event":"mark","mark":{"name":"x"}}',
       '{"event":"dtmf","dtmf":{"digit":"5"}}',
       Buffer.from([0xff, 0x00, 0xfe, 0x01]),
@@ -371,7 +380,45 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
     await assertNoLeaks(r, plans.map((p) => p.station));
   }, 120_000);
 
-  it('a stalled carrier (slow reader) while the agent keeps talking: the bridge buffers, loses and reorders nothing, and its neighbours are unaffected', async () => {
+  // The transport bound (`maxPayload`, `src/utils/ws-limits.ts`) applies to the carrier's
+  // stream too: one `ws` server serves every route. A frame past it (the 200 KB media frame
+  // that used to reach the bridge's own 128 000-character drop) is refused by `ws` with 1009,
+  // which closes the stream; for VoiceLink that is the hang-up, so the answered call ends
+  // `pstn_stream_closed`, once. No legitimate carrier frame is near it: VoiceLink sends 20 ms
+  // of A-law, 216 base64 characters.
+  it('a carrier frame past the transport bound closes the stream with 1009 and settles the call once', async () => {
+    const r = rig!;
+    const plans: Plan[] = [];
+    for (let i = 0; i < 3; i++) {
+      const steps: CallScript['steps'] = [
+        { do: 'connect' },
+        { do: 'start' },
+        { do: 'raw', frames: [JSON.stringify({ event: 'media', media: { payload: 'A'.repeat(200_000) } })] },
+        { do: 'waitForServerClose' },
+        { do: 'webhook', spec: carrierScripts.webhooks.endedAnswered(new Date().toISOString(), 1) },
+      ];
+      plans.push({ number: numberFor(i), station: new LoadStationSocket(), script: { name: 'oversized', steps } });
+    }
+    await dialAll(r, plans);
+    await r.carrier.settled();
+    const rows = await waitAllTerminal(r, plans.map((p) => p.callId!));
+    for (const [i, p] of plans.entries()) {
+      const call = carrierCallOf(r, p);
+      expect(call.errors, ctx(i, p)).toEqual([]);
+      expect(call.close, ctx(i, p)).toMatchObject({ by: 'server', code: 1009 });
+      expect(p.station.media, ctx(i, p)).toHaveLength(0);
+      expect(rows.get(p.callId!)!.outcome, ctx(i, p)).toBe('pstn_stream_closed');
+    }
+    expect([...endedCounts(r).values()].every((v) => v === 1)).toBe(true);
+    await assertNoLeaks(r, plans.map((p) => p.station));
+  }, 120_000);
+
+  // Send back-pressure (`src/utils/ws-backpressure.ts`): the agent's audio to a carrier that
+  // has stopped reading is stale, so past the carrier's soft limit (~3 s of its audio) the
+  // bridge DROPS it and counts it, instead of buffering it for the rest of the call. The
+  // carrier's stream is never closed for it (that would hang the call up). What reaches the
+  // carrier stays in order; neighbours lose nothing.
+  it('a stalled carrier (slow reader) while the agent keeps talking: the bridge buffers up to its soft limit, drops (and counts) the stale rest, reorders nothing, and its neighbours are unaffected', async () => {
     const r = rig!;
     const SLOW = scaled(2);
     const NORMAL = scaled(12);
@@ -385,6 +432,14 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
       return Buffer.from(pcm.buffer);
     };
     const maxBuffered = new Map<string, number>();
+    const dropped = new Map<string, number>();
+    const noteSession = (callId: string): void => {
+      const session = r.bridge.getSession(callId);
+      if (!session) return;
+      const ws = session.pstnWs as unknown as { bufferedAmount?: number } | null | undefined;
+      maxBuffered.set(callId, Math.max(maxBuffered.get(callId) ?? 0, ws?.bufferedAmount ?? 0));
+      dropped.set(callId, Math.max(dropped.get(callId) ?? 0, session.droppedPstnMediaFrames));
+    };
     const plans: Array<Plan & { slow: boolean; agentPattern: boolean[]; agentDone: () => boolean }> = [];
     for (let i = 0; i < SLOW + NORMAL; i++) {
       const slow = i < SLOW;
@@ -399,13 +454,16 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
             {
               do: 'waitFor', what: 'the agent to finish talking into a stalled carrier', timeoutMs: 60_000,
               until: (c) => {
-                const ws = r.bridge.getSession(c.callId)?.pstnWs as unknown as { bufferedAmount?: number } | null | undefined;
-                maxBuffered.set(c.callId, Math.max(maxBuffered.get(c.callId) ?? 0, ws?.bufferedAmount ?? 0));
+                noteSession(c.callId);
                 return agentDone();
               },
             },
             { do: 'resumeReading' },
-            { do: 'waitFor', what: 'the backlog to drain', timeoutMs: 60_000, until: (c) => c.mediaReceived.length >= BIG_FRAMES },
+            {
+              // Every frame the agent sent is accounted for: received, or dropped by the bridge.
+              do: 'waitFor', what: 'the backlog to drain', timeoutMs: 60_000,
+              until: (c) => { noteSession(c.callId); return c.mediaReceived.length + (dropped.get(c.callId) ?? 0) >= BIG_FRAMES; },
+            },
           ],
         }).script.steps
         : carrierScripts.answered({
@@ -422,11 +480,23 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
     for (const [i, p] of plans.entries()) {
       const call = carrierCallOf(r, p);
       expect(call.errors, ctx(i, p)).toEqual([]);
-      expect(heardByCarrier(call), `${ctx(i, p)}: agent → carrier`).toBe(bits(p.agentPattern));
       expect(heardByAgent(p.station), `${ctx(i, p)}: carrier → agent`).toBe(bits(call.mediaSentPattern));
       expect(rows.get(p.callId!)!.status, ctx(i, p)).toBe('completed');
-      // The stall really reached the bridge's own send buffer (not just the kernel's).
-      if (p.slow) expect(maxBuffered.get(p.callId!) ?? 0, ctx(i, p)).toBeGreaterThan(0);
+      if (!p.slow) {
+        expect(heardByCarrier(call), `${ctx(i, p)}: agent → carrier`).toBe(bits(p.agentPattern));
+        continue;
+      }
+      // The stall really reached the bridge's own send buffer (not just the kernel's) …
+      expect(maxBuffered.get(p.callId!) ?? 0, ctx(i, p)).toBeGreaterThan(0);
+      // … which stayed within one frame of the carrier's soft limit (a 0.5 s frame here is
+      // ~5.4 KB on the wire), where before it held the whole backlog;
+      expect(maxBuffered.get(p.callId!)!, ctx(i, p)).toBeLessThanOrEqual(CARRIER_MEDIA_LIMITS.mediaSoftLimitBytes + 8 * 1024);
+      // the rest was dropped and counted, every frame accounted for;
+      const lost = dropped.get(p.callId!) ?? 0;
+      expect(lost, ctx(i, p)).toBeGreaterThan(0);
+      expect(call.mediaReceived.length + lost, ctx(i, p)).toBe(BIG_FRAMES);
+      // and what did arrive is in order: an in-order subsequence of what the agent said.
+      expect(isSubsequence(heardByCarrier(call), bits(p.agentPattern)), `${ctx(i, p)}: agent → carrier in order`).toBe(true);
     }
     await assertNoLeaks(r, plans.map((p) => p.station));
   }, 120_000);

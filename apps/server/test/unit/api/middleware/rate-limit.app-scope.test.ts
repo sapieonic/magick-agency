@@ -11,7 +11,8 @@ import type { FastifyInstance } from 'fastify';
  *  - `GET /invites/:token` and `POST /invites/:token/claim`: `PUBLIC_INVITE_RATE_LIMIT`,
  *    20/minute per IP — the 21st is a 429, each route its own counter;
  *  - `POST /auth/session` (no per-route limit; the voice plugin's limiter is plugin-scoped)
- *    is charged to the app-wide bucket (`x-ratelimit-limit: 200`, the default ceiling);
+ *    is charged to the app-wide bucket (`x-ratelimit-limit`: the default `ip` ceiling,
+ *    `DEFAULT_RATE_LIMIT_MAX`);
  *  - the probes `/healthz`, `/readyz` are exempt (`EXEMPT_PATHS`).
  * Mutation-checked: dropping `registerRateLimit` from `app.ts` reds every case but the probes'.
  *
@@ -35,6 +36,7 @@ vi.mock('@magick-agency/observability', async (importOriginal) => ({
 }));
 
 import { buildApp } from '../../../../src/app.js';
+import { DEFAULT_RATE_LIMIT_MAX } from '../../../../src/api/middleware/rate-limit-defaults.js';
 
 let app: FastifyInstance;
 
@@ -78,8 +80,8 @@ describe('the app-scope limiter honours the per-route limits (real app)', () => 
 
   it('POST /auth/session is charged to the app-wide bucket (it had none before the hoist)', async () => {
     const res = await app.inject({ method: 'POST', url: '/auth/session', payload: {} });
-    expect(res.headers['x-ratelimit-limit']).toBe('200');
-    expect(Number(res.headers['x-ratelimit-remaining'])).toBe(199);
+    expect(res.headers['x-ratelimit-limit']).toBe(String(DEFAULT_RATE_LIMIT_MAX));
+    expect(Number(res.headers['x-ratelimit-remaining'])).toBe(DEFAULT_RATE_LIMIT_MAX - 1);
   });
 
   it('the probes are exempt', async () => {
@@ -124,9 +126,9 @@ describe('client headers cannot rotate the bucket (the deleted API-key bucket)',
     expect(statuses[5]).toBe(429);
   });
 
-  it('POST /auth/session: rotating the headers still exhausts the one IP budget (200) — the 201st is a 429', async () => {
+  it('POST /auth/session: rotating the headers still exhausts the one IP budget — the one past RATE_LIMIT_MAX is a 429', async () => {
     let last = 0;
-    for (let i = 0; i < 201; i += 1) {
+    for (let i = 0; i < DEFAULT_RATE_LIMIT_MAX + 1; i += 1) {
       const res = await app.inject({
         method: 'POST',
         url: '/auth/session',
@@ -134,7 +136,7 @@ describe('client headers cannot rotate the bucket (the deleted API-key bucket)',
         payload: {},
       });
       last = res.statusCode;
-      if (i < 200) expect(res.statusCode, `request ${i + 1}`).not.toBe(429);
+      if (i < DEFAULT_RATE_LIMIT_MAX) expect(res.statusCode, `request ${i + 1}`).not.toBe(429);
     }
     expect(last).toBe(429);
   });
@@ -147,6 +149,6 @@ describe('client headers cannot rotate the bucket (the deleted API-key bucket)',
       payload: {},
     });
     expect(res.statusCode).not.toBe(500);
-    expect(res.headers['x-ratelimit-limit']).toBe('200');
+    expect(res.headers['x-ratelimit-limit']).toBe(String(DEFAULT_RATE_LIMIT_MAX));
   });
 });
