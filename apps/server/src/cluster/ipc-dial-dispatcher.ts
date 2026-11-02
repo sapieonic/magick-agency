@@ -25,7 +25,12 @@ import { IpcRequestError, type IpcChannel } from './ipc-channel.js';
 
 const log = createChildLogger({ component: 'ipc-dial-dispatcher' });
 
-/** Deadline for a dial: VoiceLink login 10 s + `add_lead` 15 s + the database around them. */
+/**
+ * Deadline for a dial: VoiceLink login 10 s + `add_lead` 15 s + the database around them.
+ * A 401 retry (a second login and `add_lead`) can run to ~50 s, past it; that is safe, because
+ * a timeout is not a failure here: the primary logs and resolves, and the worker still owns
+ * and settles the attempt (below).
+ */
 export const DIAL_EXECUTE_DEADLINE_MS = 40_000;
 
 export class DispatchRefusedError extends Error {

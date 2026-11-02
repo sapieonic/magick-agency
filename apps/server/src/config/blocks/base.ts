@@ -155,18 +155,6 @@ export const baseConfigSchema = z.object({
     connectTimeoutMs: z.coerce.number().int().min(500).max(60_000).default(2_000),
   }),
   /**
-   * The OpenTelemetry SDK's settings, as `src/instrumentation.ts` resolves them. That file
-   * cannot read this block: it runs before any other module, and this config's module body can
-   * `process.exit(1)` (see the `src/utils/otel-sdk-config.ts` header). It reads the same
-   * variables itself, with the same lenient parsing (an unusable interval falls back to the
-   * default rather than failing boot), and `test/unit/config/otel-config.test.ts` pins that the
-   * two agree. Not modelled here, though the SDK side reads them: `OTEL_EXPORTER_OTLP_HEADERS`
-   * (it carries the Grafana Cloud token), `OTEL_ENVIRONMENT`, `OTEL_SERVICE_INSTANCE_ID`,
-   * `OTEL_LOG_LEVEL`, and the SDK's own standard variables (`OTEL_RESOURCE_ATTRIBUTES`,
-   * `OTEL_LOGS_EXPORTER`, …). `serviceName` / `serviceInstanceIdEnabled` are what the code sets;
-   * NodeSDK still merges `OTEL_RESOURCE_ATTRIBUTES` over them.
-   */
-  /**
    * How many processes the server runs on its host (`docs/scaling.md` §8, D8). With
    * `mediaWorkers` 0 (the default) it is one process, exactly as before. With N > 0 the
    * process the operator starts is the primary: it accepts every request and upgrade and
@@ -201,6 +189,18 @@ export const baseConfigSchema = z.object({
      */
     mediaSnapshotRefreshMs: z.coerce.number().int().min(0).max(600_000).default(5_000),
   }).default({}),
+  /**
+   * The OpenTelemetry SDK's settings, as `src/instrumentation.ts` resolves them. That file
+   * cannot read this block: it runs before any other module, and this config's module body can
+   * `process.exit(1)` (see the `src/utils/otel-sdk-config.ts` header). It reads the same
+   * variables itself, with the same lenient parsing (an unusable interval falls back to the
+   * default rather than failing boot), and `test/unit/config/otel-config.test.ts` pins that the
+   * two agree. Not modelled here, though the SDK side reads them: `OTEL_EXPORTER_OTLP_HEADERS`
+   * (it carries the Grafana Cloud token), `OTEL_ENVIRONMENT`, `OTEL_SERVICE_INSTANCE_ID`,
+   * `OTEL_LOG_LEVEL`, and the SDK's own standard variables (`OTEL_RESOURCE_ATTRIBUTES`,
+   * `OTEL_LOGS_EXPORTER`, …). `serviceName` / `serviceInstanceIdEnabled` are what the code sets;
+   * NodeSDK still merges `OTEL_RESOURCE_ATTRIBUTES` over them.
+   */
   otel: z.object({
     /** Only the exact string `true`. */
     enabled: z.string().optional().transform((v) => v === 'true'),

@@ -421,7 +421,12 @@ ignore SIGTERM and SIGINT. HTTP closes first, then:
    the analysis children requeue their jobs and exit (15 s, then killed).
 3. Agency stops, then voice, then platform (the audit buffers flush last).
 
-Worst case about 5 s + 30 s plus a few seconds, inside the compose file's 45 s grace.
+Typical worst case about 5 s + 30 s plus a few seconds, inside the compose file's 45 s grace.
+Before step 1, closing HTTP waits for requests in flight; one forwarded to a media worker is
+bounded at 15 s (`core.inject`) and a forwarded carrier webhook at 10 s. Only when such a request
+is in flight at SIGTERM AND a worker needs its full 30 s drain can the total pass 45 s; the
+container is then killed, which costs what a crash costs (the next boot's startup reap settles
+what was left).
 
 The multi-process end-to-end suite (`test/integration/cluster/media-workers.test.ts`) pins that
 the whole tree exits 0 inside 45 s, including with live calls on a worker. A worker whose primary dies hangs its calls up within 5 s and exits.

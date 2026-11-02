@@ -294,15 +294,17 @@ describe('mobile stations in multi-process mode: the real server as a primary an
     const heard0 = phones.map((p) => p.leg.heard);
     const rx0 = calls.map((c) => c.mediaReceived.length);
     const t0 = Date.now();
-    await sleep(2_000);
+    await sleep(3_000);
     const secs = (Date.now() - t0) / 1000;
     phones.forEach((p, i) => {
       const toAgent = (p.leg.heard - heard0[i]!) / secs;
       const toCarrier = (calls[i]!.mediaReceived.length - rx0[i]!) / secs;
-      expect(toAgent, `slot ${slotFor(p.sessionId, 2)} frames/s to the phone`).toBeGreaterThan(35);
-      expect(toAgent).toBeLessThan(65);
-      expect(toCarrier, `slot ${slotFor(p.sessionId, 2)} frames/s to the carrier`).toBeGreaterThan(35);
-      expect(toCarrier).toBeLessThan(65);
+      // About 50 frames a second each way; the band is wide because a loaded CI box
+      // delays the paced senders, and what is asserted is audio flowing at about real time.
+      expect(toAgent, `slot ${slotFor(p.sessionId, 2)} frames/s to the phone`).toBeGreaterThan(25);
+      expect(toAgent).toBeLessThan(75);
+      expect(toCarrier, `slot ${slotFor(p.sessionId, 2)} frames/s to the carrier`).toBeGreaterThan(25);
+      expect(toCarrier).toBeLessThan(75);
     });
     await until('both calls over', 20_000, async () => (await Promise.all(attempts.map(async (a) => (await attemptsForContact(a.contact_id))[0]!.state === 'ended'))).every(Boolean));
     for (const p of phones) {

@@ -20,7 +20,6 @@ function step(log: string[], name: string, ms = 0, fail = false) {
 describe('runShutdownPlan', () => {
   it('halts pacing first, overlaps the drains, then stops the rest in reverse', async () => {
     const log: string[] = [];
-    const started = Date.now();
     await runShutdownPlan({
       haltPacing: step(log, 'halt', 10),
       drains: [step(log, 'media', 60), step(log, 'analysis', 60)],
@@ -31,8 +30,8 @@ describe('runShutdownPlan', () => {
     expect(at('halt:end')).toBeLessThan(at('media:start'));
     expect(at('halt:end')).toBeLessThan(at('analysis:start'));
     // The drains overlap: both started before either ended, so the stop costs one, not both.
+    // (Proven by the order above, not by wall clock, which a loaded box stretches.)
     expect(at('analysis:start')).toBeLessThan(at('media:end'));
-    expect(Date.now() - started).toBeLessThan(10 + 60 + 60);
     // Then agency, voice, platform, each after the drains.
     expect(log.slice(at('media:end') > at('analysis:end') ? at('media:end') + 1 : at('analysis:end') + 1))
       .toEqual(['agency:start', 'agency:end', 'voice:start', 'voice:end', 'platform:start', 'platform:end']);

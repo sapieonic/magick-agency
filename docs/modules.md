@@ -236,7 +236,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 4 |
 | `apps/server/test/unit/agency/station-registry.test.ts` | 29 |
 | `apps/server/test/unit/agency/station-supersede-stomp.test.ts` | 10 |
-| `apps/server/test/unit/agency/station-token.test.ts` | 5 |
+| `apps/server/test/unit/agency/station-token.test.ts` | 6 |
 | `apps/server/test/unit/agency/station-upgrade.test.ts` | 13 |
 | `apps/server/test/unit/agency/supervisor-stats.test.ts` | 26 |
 | `apps/server/test/unit/agency/wrapup-manager.test.ts` | 34 |
@@ -298,7 +298,7 @@ Files: `analysis.service.ts`, `bridge-analysis-hooks.ts`, `dimension-presets.ts`
 | `apps/server/test/integration/analysis/pipeline.test.ts` | ~12 |
 | `apps/server/test/integration/analysis/worker-pool.test.ts` | ~2 |
 | `apps/server/test/unit/analysis/analysis.service.test.ts` | 22 |
-| `apps/server/test/unit/analysis/bootstrap-analysis.test.ts` | 10 |
+| `apps/server/test/unit/analysis/bootstrap-analysis.test.ts` | 17 |
 | `apps/server/test/unit/analysis/bridge-analysis-hooks.test.ts` | 30 |
 | `apps/server/test/unit/analysis/dimension-presets.test.ts` | 10 |
 | `apps/server/test/unit/analysis/index.test.ts` | 9 |
@@ -332,7 +332,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-performance-access.test.ts` | ~16 |
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
 | `apps/server/test/integration/api/agency-join-staffing.test.ts` | ~4 |
-| `apps/server/test/integration/api/agency-runtime-routes.test.ts` | ~19 |
+| `apps/server/test/integration/api/agency-runtime-routes.test.ts` | 38 |
 | `apps/server/test/integration/api/agency-mobile-presence.test.ts` | 11 |
 | `apps/server/test/integration/api/agency-session-conflict-forward.test.ts` | ~13 |
 | `apps/server/test/integration/api/agency-spine-export.e2e.test.ts` | ~4 |
@@ -369,7 +369,7 @@ Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`,
 |---|---|
 | `apps/server/test/unit/api/middleware/error-handler.middleware.test.ts` | 11 |
 | `apps/server/test/unit/api/middleware/error-mask.integration.test.ts` | 5 |
-| `apps/server/test/unit/api/middleware/error-mask.middleware.test.ts` | 17 |
+| `apps/server/test/unit/api/middleware/error-mask.middleware.test.ts` | 21 |
 | `apps/server/test/unit/api/middleware/headers.test.ts` | 2 |
 | `apps/server/test/unit/api/middleware/rate-limit.app-scope.test.ts` | 8 |
 | `apps/server/test/unit/api/middleware/rate-limit.middleware.test.ts` | 43 |
@@ -429,7 +429,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
 | `apps/server/test/unit/agency/device-away-break.test.ts` | 35 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 49 |
-| `apps/server/test/integration/api/softphone-routes.test.ts` | 20 |
+| `apps/server/test/integration/api/softphone-routes.test.ts` | 21 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 
 ### `apps/server/src/api/validators/`
@@ -558,8 +558,8 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/integration/cluster/ws-handoff.test.ts` | 8 |
 | `apps/server/test/unit/cluster/analysis-children.test.ts` | 3 |
 | `apps/server/test/unit/cluster/child-mains.test.ts` | 3 |
-| `apps/server/test/unit/cluster/child-supervisor.test.ts` | 5 |
-| `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 6 |
+| `apps/server/test/unit/cluster/child-supervisor.test.ts` | 6 |
+| `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 15 |
 | `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 10 |
@@ -1516,7 +1516,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 31 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.cueVisual.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.renders.test.tsx` | 5 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 14 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 47 |
@@ -1608,7 +1608,7 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyDispositionForm.test.ts` | 26 |
 | `apps/console/src/__tests__/utils/agencyDispositionSubmit.test.ts` | 34 |
 | `apps/console/src/__tests__/utils/agencyDncCopy.test.ts` | 20 |
-| `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 4 |
+| `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyFieldFilter.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 46 |
 | `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 27 |

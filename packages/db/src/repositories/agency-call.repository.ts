@@ -304,20 +304,6 @@ export class WebRtcCallRepository {
   }
 
   /**
-   * Fail stuck WebRTC rows: any active call older than `olderThan` is a row that
-   * never settled. Atomically marks it `failed` (error_code='STUCK_ACTIVE_CALL')
-   * and returns the updated rows so the caller can dispatch the credit-releasing
-   * settlement exactly once. `excludeIds` are the calls this replica is actively
-   * bridging in memory; the age threshold guards live long calls on other replicas.
-   * Uses `FOR UPDATE SKIP LOCKED` so concurrent sweeps do not double-claim a row.
-   *
-   * The pick is a MATERIALIZED CTE, run once, so the sweep fails at most `limit`
-   * rows. As `WHERE id IN (SELECT … LIMIT $3 FOR UPDATE SKIP LOCKED)` it could be
-   * planned as a nested-loop semi join that re-runs the locking subquery for every
-   * outer row, each re-run skipping the rows already updated, and fail every stuck
-   * row at once (`test/integration/repositories/claim-limit.test.ts`).
-   */
-  /**
    * Fail these calls if they are still live: the media worker that held them exited
    * (`docs/scaling.md` §6.1), so nothing will ever finalise them. Terminal rows are left
    * alone, so a call that ended meanwhile keeps its own outcome.
@@ -340,6 +326,20 @@ export class WebRtcCallRepository {
     return result.rows;
   }
 
+  /**
+   * Fail stuck WebRTC rows: any active call older than `olderThan` is a row that
+   * never settled. Atomically marks it `failed` (error_code='STUCK_ACTIVE_CALL')
+   * and returns the updated rows so the caller can dispatch the credit-releasing
+   * settlement exactly once. `excludeIds` are the calls this replica is actively
+   * bridging in memory; the age threshold guards live long calls on other replicas.
+   * Uses `FOR UPDATE SKIP LOCKED` so concurrent sweeps do not double-claim a row.
+   *
+   * The pick is a MATERIALIZED CTE, run once, so the sweep fails at most `limit`
+   * rows. As `WHERE id IN (SELECT … LIMIT $3 FOR UPDATE SKIP LOCKED)` it could be
+   * planned as a nested-loop semi join that re-runs the locking subquery for every
+   * outer row, each re-run skipping the rows already updated, and fail every stuck
+   * row at once (`test/integration/repositories/claim-limit.test.ts`).
+   */
   async failStaleActive(olderThan: Date, excludeIds: string[] = [], limit = 1000): Promise<WebRtcCallRecord[]> {
     const pool = getPool();
     const exclude = excludeIds.length > 0 ? excludeIds : null;
