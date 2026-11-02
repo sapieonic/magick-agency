@@ -825,9 +825,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), WebSocket send back-pressure (`ws-backpressure.ts`: stale media dropped past a soft limit, a station closed 4408 past the hard cap), abort errors.
+Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), the Redis client options (`redis-options.ts`: command, connect and retry bounds, used by `index.ts`), WebSocket send back-pressure (`ws-backpressure.ts`: stale media dropped past a soft limit, a station closed 4408 past the hard cap), abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-backpressure.ts`, `ws-limits.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `redis-options.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-backpressure.ts`, `ws-limits.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -835,6 +835,7 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concur
 | `apps/server/test/unit/utils/audio-fir.test.ts` | 24 |
 | `apps/server/test/unit/utils/audio.test.ts` | 41 |
 | `apps/server/test/unit/utils/concurrency.core.test.ts` | 9 |
+| `apps/server/test/unit/utils/redis-options.test.ts` | 5 |
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
 | `apps/server/test/unit/utils/decode-gate.test.ts` | 23 |
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
@@ -924,7 +925,7 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/roster-ingest-concurrency.test.ts` | ~3 | Concurrent ingests: totals exact, chunk idempotency keys honoured |
 | `apps/server/test/integration/load/rate-limit-bursts.test.ts` | ~5 | Exact ceilings, 429 body and headers, per-client buckets, probes and webhooks unaffected |
 | `apps/server/test/integration/load/rate-limit-user-bucket.test.ts` | ~3 | A floor behind one NAT address: a per-user budget each, an exact per-user ceiling under a burst, the bearer IP bucket apart from the unauthenticated one |
-| `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~3 | A tiny and a starved pg pool, Redis cut and restored: probes correct, no 401 sign-outs, recovery |
+| `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~4 | A tiny and a starved pg pool, Redis cut, and Redis stalled (TCP up, no replies), with the client built as `index.ts` builds it: probes correct, answers within 10 s, no 401 sign-outs, recovery |
 | `apps/server/test/integration/load/hostile-input-fuzz.test.ts` | ~5 | Seeded fuzz over every route from `onRoute`: 4xx per contract, never a 500 or a stack; 1 `it.fails` (headerless multipart part hangs) |
 
 Harnesses beside them: `integration/load/floor-harness.ts` and `floor-pool.ts` (multi-tenant world

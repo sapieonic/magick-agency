@@ -93,7 +93,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 import { AgencyDialer, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../../src/agency/agency-dialer.js';
 import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
-import { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
+import { AgentStateMachine, AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import { collectMetric } from '../../helpers/otel-metric-reader.js';
 import { AGENCY_ABANDON_REASONS } from '@magick-agency/contracts/agency';
@@ -868,6 +868,48 @@ describe('seat time on the paths that never reach the settle site', () => {
     expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
     const nextAt = (repos.contact.unclaim.mock.calls[0]![1] as Date).getTime();
     expect(nextAt).toBeLessThanOrEqual(Date.now());
+  });
+
+  /**
+   * The dial's lease renewer stops only when the lease is LOST (Redis answered: the CAS
+   * missed). A renew that failed (`unknown`: a Redis error, or the client's command
+   * timeout) keeps it going: the lease outlives two missed renewals, and one slow Redis
+   * reply must not let a live call's lease lapse and free the agent for a second customer.
+   * Mutation-checked: stopping on anything but `renewed` reds this.
+   */
+  it('keeps renewing a live dial\'s lease through a failed renew, and stops only when it is lost', async () => {
+    vi.useFakeTimers();
+    try {
+      const bridge = fakeBridge();
+      const stations = new StationRegistry(null, '', 'r1');
+      const agents = new AgentStateMachine(null, '');
+      vi.spyOn(agents, 'transition').mockResolvedValue(true);
+      const renewLease = vi.spyOn(agents, 'renewLease')
+        .mockResolvedValueOnce('unknown')
+        .mockResolvedValueOnce('unknown')
+        .mockResolvedValueOnce('renewed')
+        .mockResolvedValueOnce('lost')
+        .mockResolvedValue('renewed');
+      const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+      dialer.start();
+      await stations.attach({
+        sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
+        agentUserId: 'user-1', ws: fakeWs() as any,
+      });
+      await dialer.executeDial(makeCmd());
+
+      // unknown, unknown, renewed: still renewing after two failures in a row.
+      await vi.advanceTimersByTimeAsync(3 * AGENT_LEASE_MS.renew_interval);
+      expect(renewLease).toHaveBeenCalledTimes(3);
+      // lost: the renewer stops, and nothing renews after it.
+      await vi.advanceTimersByTimeAsync(AGENT_LEASE_MS.renew_interval);
+      expect(renewLease).toHaveBeenCalledTimes(4);
+      await vi.advanceTimersByTimeAsync(5 * AGENT_LEASE_MS.renew_interval);
+      expect(renewLease).toHaveBeenCalledTimes(4);
+      dialer.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('observes NOTHING when the dial never went out at all', async () => {

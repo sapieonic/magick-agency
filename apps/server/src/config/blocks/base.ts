@@ -126,6 +126,17 @@ export const baseConfigSchema = z.object({
   redis: z.object({
     url: z.string().url(),
     keyPrefix: z.string().default(''),
+    /**
+     * `REDIS_COMMAND_TIMEOUT_MS`: every command rejects after this long (`Command timed
+     * out`), so a Redis that is gone or stalled surfaces in seconds and each caller takes
+     * its Redis-error branch (decision Q6: a call token is then accepted, never refused).
+     * Default 2 s. `src/utils/redis-options.ts` has the reasoning.
+     */
+    commandTimeoutMs: z.coerce.number().int().min(100).max(60_000).default(2_000),
+    /** `REDIS_MAX_RETRIES_PER_REQUEST`: retries of a command caught by a dropped connection. Default 1 (ioredis: 20). */
+    maxRetriesPerRequest: z.coerce.number().int().min(0).max(20).default(1),
+    /** `REDIS_CONNECT_TIMEOUT_MS`: default 2 s (ioredis: 10 s). */
+    connectTimeoutMs: z.coerce.number().int().min(500).max(60_000).default(2_000),
   }),
   /**
    * The OpenTelemetry SDK's settings, as `src/instrumentation.ts` resolves them. That file
@@ -180,6 +191,9 @@ export function readBaseEnv(env: Env) {
     redis: {
       url: env['REDIS_URL'],
       keyPrefix: env['REDIS_KEY_PREFIX'],
+      commandTimeoutMs: env['REDIS_COMMAND_TIMEOUT_MS'],
+      maxRetriesPerRequest: env['REDIS_MAX_RETRIES_PER_REQUEST'],
+      connectTimeoutMs: env['REDIS_CONNECT_TIMEOUT_MS'],
     },
     otel: {
       enabled: env['OTEL_ENABLED'],

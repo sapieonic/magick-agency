@@ -9,6 +9,7 @@ import { config } from './config/index.js';
 import { buildApp } from './app.js';
 import type { AppContext } from './app-context.js';
 import { dbTlsOptions } from './db-tls.js';
+import { redisClientOptions } from './utils/redis-options.js';
 import { startPlatform } from './bootstrap/platform.js';
 import { startAgency } from './bootstrap/agency.js';
 import { startVoice } from './bootstrap/voice.js';
@@ -28,7 +29,9 @@ async function main(): Promise<void> {
     // TLS on in production, verified (decision Q1); shared with dist/migrate.js (`db-tls.ts`).
     ...dbTlsOptions(config),
   });
-  const redis = new Redis(config.redis.url, { keyPrefix: config.redis.keyPrefix || undefined });
+  // Bounded (command, connect and retry limits): a Redis that is gone fails each command in
+  // seconds instead of queueing it. `utils/redis-options.ts`.
+  const redis = new Redis(config.redis.url, redisClientOptions(config.redis));
   const ctx: AppContext = { config, pool, redis };
 
   // PostHog first: before any background work starts and before the server listens, so

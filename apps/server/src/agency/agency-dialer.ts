@@ -1867,9 +1867,13 @@ export class AgencyDialer {
   private startLeaseRenewal(attemptId: string, sessionId: string, state: 'reserved' | 'on_call'): void {
     this.stopLeaseRenewal(attemptId);
     const leaseMs = state === 'on_call' ? AGENT_LEASE_MS.on_call : AGENT_LEASE_MS.reserved_dialing;
+    // Stops only on `lost` (Redis answered: the lease is gone or moved on). A failed renew
+    // (`unknown`: a Redis error or command timeout) keeps the renewer going: the lease
+    // outlives two missed renewals, and a single slow Redis reply must not let a live
+    // call's lease lapse and free the agent for a second customer.
     const timer = setInterval(() => {
-      void this.agents.renew(sessionId, state, leaseMs).then((ok) => {
-        if (!ok) {
+      void this.agents.renewLease(sessionId, state, leaseMs).then((result) => {
+        if (result === 'lost') {
           log.warn({ attemptId, sessionId, state }, 'Agent lease renewal lost — stopping renewer');
           this.stopLeaseRenewal(attemptId);
         }

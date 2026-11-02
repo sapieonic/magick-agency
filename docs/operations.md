@@ -192,6 +192,7 @@ production.
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
 | `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Only `true` / `false` parse; `false` is the one opt-out |
 | `REDIS_KEY_PREFIX` | empty | Prefix on every Redis key |
+| `REDIS_COMMAND_TIMEOUT_MS`, `REDIS_MAX_RETRIES_PER_REQUEST`, `REDIS_CONNECT_TIMEOUT_MS` | `2000`, `1`, `2000` | Redis client bounds: a Redis that is gone or stalled fails each command within the timeout (a rejection, so call tokens fail open per Q6, and the agent lease renewer keeps renewing through it). ioredis's defaults took ~10 s to show on `/readyz` and held some requests ~30 s |
 | `MAX_CONCURRENT_CALLS` | `200` | Global guard ceiling (per-account limits come from super-admin settings, default 5) |
 | `VOICELINK_LOGIN_TIMEOUT_MS`, `VOICELINK_ADD_LEAD_TIMEOUT_MS` | `10000`, `15000` | VoiceLink REST timeouts. A timed-out `add_lead` fails the dial (agent and slots released at once) but may have queued the lead: never retried, the contact's redial deferred 15 min, a late carrier media connect refused and hung up (`voicelink.adapter.ts`, `post`) |
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
