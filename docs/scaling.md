@@ -756,19 +756,28 @@ Children ignore SIGTERM and SIGINT and log them. A dev Ctrl-C signals the whole 
 group, and the order must stay the primary's. They stop only on the IPC `shutdown` request,
 or on `disconnect`.
 
+As built (`index.ts`, `cluster/shutdown-order.ts`):
+
 | t | Primary | Media workers | Analysis workers |
 |---|---|---|---|
-| 0 | SIGTERM. `app.close()`: no new connections or upgrades. In-flight HTTP finishes; forwards are bounded by their deadlines | serving | serving |
-| ≤ 5 s | `pacing.stop()` (ticks drained, `TICK_DRAIN_TIMEOUT_MS`), broadcast `pacing.revoke {campaignId: null}`, reaper stop | revoked: no dial in preparation goes out | — |
-| then, **concurrently** | completion-notice drain (≤ 30 s) | `shutdown {graceMs: 30000}`: worker `app.close()` (station and media sockets close, as today's HTTP close does), `runtime.stop()` (shard: dialer, wrap-up, manual dialer timers), `bridge.gracefulShutdown()` (hang up live calls, release slots), guard host, audit flush, Redis and pool close, OTel flush, `exit 0` | `shutdown`: stop claims, requeue in flight (generation-matched), audit flush, `exit 0` |
-| | waits for every child's `exit` (bound 30 s, then SIGKILL and `reapSlot` for any killed media slot) | | |
-| ≤ ~37 s | voice stop (guard host, its self-heal wait bounded at 15 s, runs inside the window above), platform (audit buffers last), Redis, pool, OTel, `exit 0` | | |
+| 0 | SIGTERM. `app.close()`: no new connections or upgrades. In-flight HTTP finishes (normally ms; a request forwarded to a worker is bounded by its deadline, 15 s at most) | serving | serving |
+| ≤ 5 s | **pacing halts** before anything drains: no new tick, leases given up, `pacing.revoke {campaignId: null}` to every worker, ticks in flight waited for (`TICK_DRAIN_TIMEOUT_MS`) | revoked: no dial in preparation goes out | serving (no new job is enqueued by a dial) |
+| then, **concurrently** | completion-notice drain (≤ 30 s) | `shutdown {graceMs: 30000}`: worker `app.close()` (station and media sockets close), `stopShard()` (dialer, wrap-up, manual dialer timers), `bridge.gracefulShutdown()` (hang up live calls, release slots), guard host, PostHog and audit flush, Redis and pool close, OTel flush, `exit 0` | `shutdown {graceMs: 15000}`: stop claims, requeue in flight (generation-matched), PostHog and audit flush, `exit 0` |
+| | waits for every child's `exit` (30 s media, 15 s analysis); a media worker still running is SIGKILLed and its slot reaped (§6.1: slots released, attempts ended and requeued, agents offline) before the stop goes on | | |
+| ≤ ~37 s | agency stop (reaper and runtime; pacing already halted, notices drained), voice stop (guard host; its self-heal wait is bounded at 15 s and only waits when a sweep is mid-flight), platform (audit buffers last), Redis, pool, OTel, `exit 0` | | |
 
-Worst case is 5 s + 30 s + a few seconds, inside 45 s. Today's sequence runs the stops one
-after another. In cluster mode the agency drain and the children's drains overlap, so adding
-processes does not lengthen shutdown. The order inside each worker matches today's order
-inside one process. `runtime-boot-order.test.ts` keeps pinning single-process mode, and a
-cluster twin pins the table above.
+The bounds that add up in the normal worst case are 5 s + 30 s plus a few seconds, inside the
+45 s `stop_grace_period` of `docker/docker-compose.prod.yml`. The analysis stop runs beside the
+media drain rather than before pacing halts (it used to run first, so pacing kept dialing for
+up to 15 s with HTTP already closed, and its 15 s added to the rest). Two rarely-hit bounds
+are not covered if both stack on a 30 s worker drain: an internal request forwarded at the
+instant of SIGTERM (up to 15 s) and a self-heal sweep in flight (up to 15 s); one process has
+the same tail (5 + 30 + 15 s). The order inside each worker matches the order inside one
+process. Pinned by `test/unit/cluster/shutdown-order.test.ts` (halt first, drains together,
+the rest in reverse), `child-supervisor.test.ts` (a worker killed at stop is reaped before
+the stop resolves), `runtime-boot-order.test.ts` (single-process order) and
+`test/integration/cluster/media-workers.test.ts` (the whole tree exits 0 inside 45 s with
+live calls on both workers).
 
 ### 6.5 Deploys
 

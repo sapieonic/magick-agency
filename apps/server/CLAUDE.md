@@ -29,7 +29,8 @@ runtime, voice engine, analysis), `docs/seams.md` (where files go, the seams), `
   through the client factory in `src/ai/` (`openai_compatible`, `azure_openai`, `gemini`).
 
 **Start order** (`src/index.ts`): platform → voice → agency → analysis, then listen. Shutdown
-closes HTTP first, then stops them in reverse. Voice starts before agency so the bridge's startup
+closes HTTP first, halts pacing, runs the drains together (media workers, analysis), then stops the
+rest in reverse (`src/cluster/shutdown-order.ts`). Voice starts before agency so the bridge's startup
 self-heal finishes before any pacing tick.
 
 **`src/app.ts`** (`buildApp`) registers the app-wide pieces once (rate limiter, error handler and

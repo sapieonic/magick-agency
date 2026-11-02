@@ -123,16 +123,25 @@ describe('ChildSupervisor', () => {
   });
 
   it('stop asks each child to shut down and waits; one that does not exit in its grace is killed', async () => {
-    const { sup, forks } = harness();
+    let reaped = false;
+    const exitHandler = vi.fn(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+      reaped = true;
+    });
+    const { sup, forks } = harness({ onExit: exitHandler });
     await sup.start();
     forks[1]!.answerShutdown = false;
-    const exitHandler = vi.fn();
     const started = Date.now();
     await sup.stop(50);
     expect(Date.now() - started).toBeGreaterThanOrEqual(45);
     expect(forks[0]!.sent.some((m) => (m as { type?: string }).type === 'shutdown')).toBe(true);
     expect(forks.every((f) => !f.connected)).toBe(true);
-    expect(exitHandler).not.toHaveBeenCalled();
+    // The child that exited in its grace closed its own work: no exit handling for it. The
+    // one that had to be killed did not, so its exit is handled like a crash (a media
+    // slot's reap), and the stop resolves only once that is done.
+    expect(exitHandler).toHaveBeenCalledTimes(1);
+    expect(exitHandler).toHaveBeenCalledWith(expect.objectContaining({ slot: 1, signal: 'SIGKILL', expected: false }));
+    expect(reaped).toBe(true);
     expect(forks).toHaveLength(2); // nothing restarted during a stop
   });
 

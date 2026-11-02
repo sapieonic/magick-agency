@@ -380,10 +380,11 @@ gives the same per-process view on the host.
 
 ## Shutdown and grace period
 
-On SIGTERM or SIGINT the server closes HTTP first, then stops analysis, agency (pacing first,
-waiting up to 5 s for ticks in flight; in-flight campaign-completion mails get up to 30 s), voice (the bridge hangs up live calls and
-releases their slots) and platform (audit buffers flushed), then closes Redis and Postgres
-(`apps/server/src/index.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
+On SIGTERM or SIGINT the server closes HTTP first, then halts pacing (waiting up to 5 s for
+ticks in flight), stops analysis, then agency (in-flight campaign-completion mails get up to
+30 s), voice (the bridge hangs up live calls and releases their slots) and platform (audit
+buffers flushed), then closes Redis and Postgres (`apps/server/src/index.ts`,
+`cluster/shutdown-order.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
 so the production compose file sets `stop_grace_period: 45s` on the server. On any other runtime,
 give the container at least 45 s. `http closed` is logged once the HTTP close has succeeded, so
 the order can be read from the logs. Read it from each line's `time` field rather than the line
@@ -410,11 +411,15 @@ choose to go available.
 **With media workers** (`MEDIA_WORKERS > 0`), the primary orders the shutdown; the workers
 ignore SIGTERM and SIGINT. HTTP closes first, then:
 
-1. Pacing halts: ticks are drained, leases are given up, and every worker is told no dial may
-   go out.
-2. The workers drain alongside the completion-notice drain. Each worker closes its sockets,
-   stops the shard, ends its live calls and exits; one still running after 30 s is killed.
-3. The analysis children requeue their jobs, voice stops, the audit buffers flush.
+1. Pacing halts, before anything drains: ticks are drained (up to 5 s), leases are given up,
+   and every worker is told no dial may go out.
+2. Together: the media workers drain alongside the completion-notice drain (each worker
+   closes its sockets, stops the shard, ends its live calls and exits; one still running
+   after 30 s is killed and its slot reaped, so its calls' slots are released at once), and
+   the analysis children requeue their jobs and exit (15 s, then killed).
+3. Agency stops, then voice, then platform (the audit buffers flush last).
+
+Worst case about 5 s + 30 s plus a few seconds, inside the compose file's 45 s grace.
 
 The multi-process end-to-end suite (`test/integration/cluster/media-workers.test.ts`) pins that
 the whole tree exits 0 inside 45 s, including with live calls on a worker. A worker whose primary dies hangs its calls up within 5 s and exits.
