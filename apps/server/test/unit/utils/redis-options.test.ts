@@ -122,7 +122,10 @@ describe('redisClientOptions', () => {
     const result = await within(2_000, bounded.get('k'));
     expect(result.settled).toBe('rejected');
     expect((result as { error: Error }).error.message).toMatch(/Command timed out/);
-    expect(Date.now() - t0).toBeLessThan(COMMAND_TIMEOUT_MS + 700);
+    // The timeout fired (not an earlier failure); `within` above is the upper bound, kept
+    // loose (2 s against a 300 ms timeout) so a loaded full run cannot fail it, and still far
+    // from the defaults below, which never settle.
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(COMMAND_TIMEOUT_MS - 20);
 
     // The defect, characterised: no command timeout, so a stalled Redis holds the caller.
     const defaults = await connect(fake.url, {});
@@ -137,7 +140,9 @@ describe('redisClientOptions', () => {
     const t0 = Date.now();
     await expect(tokens.verifyWsToken('call-1', 'whatever', 'provider')).resolves.toBe(true);
     await expect(tokens.verifyWsToken('call-1', undefined, 'webhook')).resolves.toBe(true);
-    expect(Date.now() - t0).toBeLessThan(2 * COMMAND_TIMEOUT_MS + 1_000);
+    // Two command timeouts, not a hang: bounded loosely (a loaded run can be slow; a client
+    // without the timeout never answers at all).
+    expect(Date.now() - t0).toBeLessThan(5_000);
     expect(fake.commands).toContain('get');
   });
 

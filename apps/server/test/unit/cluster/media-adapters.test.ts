@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { StationDirectory } from '../../../src/cluster/station-directory.js';
 import { DialGrants, DispatchRefusedError, IpcDialDispatcher } from '../../../src/cluster/ipc-dial-dispatcher.js';
 import { IpcRequestError, type IpcChannel } from '../../../src/cluster/ipc-channel.js';
@@ -168,8 +168,14 @@ describe('record codecs', () => {
 });
 
 describe('warnIfMoreProcessesThanCores', () => {
-  it('warns once, with the counts, only when workers are configured and the processes outnumber the cores', async () => {
-    const { warnIfMoreProcessesThanCores } = await import('../../../src/cluster/primary.js');
+  // `primary.js` pulls in the agency runtime's module graph: imported once, with a timeout
+  // of its own, rather than inside a test's 5 s budget (it hit it under full-suite load).
+  let warnIfMoreProcessesThanCores: typeof import('../../../src/cluster/primary.js')['warnIfMoreProcessesThanCores'];
+  beforeAll(async () => {
+    ({ warnIfMoreProcessesThanCores } = await import('../../../src/cluster/primary.js'));
+  }, 60_000);
+
+  it('warns once, with the counts, only when workers are configured and the processes outnumber the cores', () => {
     const warn = vi.fn();
     expect(warnIfMoreProcessesThanCores(0, 0, 1, warn)).toBe(false);
     expect(warnIfMoreProcessesThanCores(1, 0, 2, warn)).toBe(false);

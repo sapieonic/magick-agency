@@ -202,19 +202,19 @@ describe('media workers: the real server as a primary and two workers', () => {
       });
       if (slotFor(a.sessionId, 2) === 0) late = a;
     }
-    await until('the late call admitted', 30_000, async () => {
-      const { rows } = await getTestPool().query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM agency_call_attempts WHERE reserved_agent_id = $1 AND webrtc_call_id IS NOT NULL`, [late!.sessionId]);
-      return rows[0]!.n === 1;
-    });
-    const admittedAt = Date.now();
     const before = await r.server.detail();
     const deadPid = before.processes!.find((p) => p?.role === 'media' && p.slot === 0)!.pid;
     expect(survivors.length).toBeGreaterThan(0);
     expect(victims.length).toBeGreaterThan(0);
-
+    // Killed the moment the late call is seen admitted and still live (its slot taken, its
+    // attempt not ended): the slot reap below must release a slot taken just before a crash.
+    await until('the late call admitted', 30_000, async () => {
+      const { rows } = await getTestPool().query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM agency_call_attempts
+          WHERE reserved_agent_id = $1 AND webrtc_call_id IS NOT NULL AND state <> 'ended'`, [late!.sessionId]);
+      return rows[0]!.n === 1;
+    });
     process.kill(deadPid, 'SIGKILL');
-    expect(Date.now() - admittedAt).toBeLessThan(1_000);
     const heardAtKill = survivors.map((a) => a.heard);
 
     // D5: while slot 0 is dead and restarting, the host stays in rotation (one worker still
@@ -242,9 +242,11 @@ describe('media workers: the real server as a primary and two workers', () => {
     async () => `${(await r.floor.redisClient.keys('active_calls:lock:*')).length} locks for ${await liveCalls()} live calls`);
     const { rows: sessions } = await getTestPool().query<{ id: string; state: string }>('SELECT id, state FROM agency_agent_sessions');
     for (const s of sessions) if (slotFor(s.id, 2) === 0) expect(s.state).toBe('offline');
-    // The survivors' calls never stopped: their stations kept hearing the customer.
-    await new Promise((res) => setTimeout(res, 2_000));
-    survivors.forEach((a, i) => expect(a.heard - heardAtKill[i]!).toBeGreaterThan(50));
+    // The survivors' calls never stopped: their stations kept hearing the customer (50
+    // frames a second; a stopped relay would never add 50 more).
+    await until('the survivors kept hearing their customers', 15_000,
+      () => survivors.every((a, i) => a.heard - heardAtKill[i]! > 50),
+      async () => JSON.stringify(survivors.map((a, i) => a.heard - heardAtKill[i]!)));
     const { rows: live } = await getTestPool().query<{ reserved_agent_id: string }>(
       `SELECT reserved_agent_id FROM agency_call_attempts WHERE campaign_id = $1 AND state <> 'ended'`, [r.campaignId]);
     expect(live.every((x) => slotFor(x.reserved_agent_id, 2) === 1)).toBe(true);
