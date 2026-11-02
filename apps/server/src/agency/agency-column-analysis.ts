@@ -5,6 +5,7 @@ import {
   AgencyIngestError,
   EncodingGuard,
   dedupeHeaders,
+  dedupeKey,
   AGENCY_MAX_COLUMNS,
 } from './agency-csv-ingest.js';
 
@@ -71,6 +72,13 @@ export interface AgencyColumnStat {
   non_empty: number;
   /** Proportion of NON-EMPTY sampled values that parse to E.164, 0..1. */
   phone_score: number;
+  /**
+   * Distinct non-empty sampled values, keyed as the ingest's duplicate-column
+   * check keys them ({@link dedupeKey}). Against `non_empty` it says how unique
+   * the column is, which is what the operator needs to pick a duplicate column.
+   * Bounded by the row sample, so the memory is too.
+   */
+  distinct: number;
 }
 
 export interface AgencyColumnAnalysis {
@@ -143,6 +151,7 @@ export async function analyzeAgencyCsvColumns(options: AnalyzeOptions): Promise<
   const samples: string[][] = [];
   const nonEmpty: number[] = [];
   const phoneParsed: number[] = [];
+  const distinctKeys: Set<string>[] = [];
   let rowsSampled = 0;
   let truncated = false;
 
@@ -174,6 +183,7 @@ export async function analyzeAgencyCsvColumns(options: AnalyzeOptions): Promise<
           samples.push([]);
           nonEmpty.push(0);
           phoneParsed.push(0);
+          distinctKeys.push(new Set());
         }
         continue;
       }
@@ -189,6 +199,7 @@ export async function analyzeAgencyCsvColumns(options: AnalyzeOptions): Promise<
         if (value === '') continue;
         nonEmpty[i] = (nonEmpty[i] ?? 0) + 1;
         if (samples[i]!.length < SAMPLE_VALUES_PER_COLUMN) samples[i]!.push(value);
+        distinctKeys[i]!.add(dedupeKey(value));
         if (normalizePhoneToE164(value, defaultCountryCode ? { defaultCountryCode } : {}) !== null) {
           phoneParsed[i] = (phoneParsed[i] ?? 0) + 1;
         }
@@ -213,6 +224,7 @@ export async function analyzeAgencyCsvColumns(options: AnalyzeOptions): Promise<
     // Scored over non-empty values only: a column that is 90% blank but always
     // holds a valid number when populated is still a phone column.
     phone_score: (nonEmpty[index] ?? 0) === 0 ? 0 : (phoneParsed[index] ?? 0) / (nonEmpty[index] ?? 1),
+    distinct: distinctKeys[index]?.size ?? 0,
   }));
 
   const suggestion = suggestPhoneColumn(columns);

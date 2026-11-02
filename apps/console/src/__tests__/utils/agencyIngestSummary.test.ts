@@ -26,6 +26,7 @@ function job(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
     status: 'completed',
     dry_run: false,
     file_name: 'collections_aug.csv',
+    dedupe_column: null,
     progress_pct: 100,
     rows_read: 0,
     accepted: 0,
@@ -186,6 +187,16 @@ describe('rejection groups', () => {
     );
     expect(summary.groups).toHaveLength(1);
     expect(summary.groups[0]!.label).toBe('Rejected for another reason');
+  });
+
+  it('names the duplicate column the operator chose', () => {
+    const summary = buildIngestSummary(
+      job({ rows_read: 2, accepted: 1, rejected: 1, duplicates: 1, dedupe_column: 'Loan No', rejected_by_reason: { duplicate_key: 1 } }),
+    );
+    expect(summary.groups[0]!.label).toBe('Duplicate Loan No of an earlier row');
+    // Without the column on the job, the generic label.
+    expect(buildIngestSummary(job({ rows_read: 1, rejected: 1, rejected_by_reason: { duplicate_key: 1 } })).groups[0]!.label)
+      .toBe(REJECTION_LABELS.duplicate_key);
   });
 
   it('drops zero-count reasons', () => {

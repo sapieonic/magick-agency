@@ -2,14 +2,18 @@ import {
   MAPPING_BLOCK_COPY,
   ROLE_LABELS,
   countryCodeError,
+  dedupeColumnOptions,
   heroLimitReached,
   mappingBlockReason,
   phoneColumn,
   phoneValidityLine,
+  setDedupe,
   setDefaultCountryCode,
   setRole,
   timezoneColumn,
+  uniquenessLine,
   type ColumnRole,
+  type DedupeChoice,
   type MappingState,
 } from '../../../utils/agencyColumnMapping';
 import type { AgencyColumnAnalysis } from '../../../types/agency-campaign';
@@ -27,6 +31,39 @@ import styles from './ColumnMapper.module.css';
  */
 
 const ROLES: ColumnRole[] = ['phone', 'timezone', 'hero', 'detail', 'ignore'];
+
+/**
+ * The duplicate select's option values. A column is prefixed so a header that is
+ * literally called `phone` or `none` cannot be mistaken for the other two choices.
+ */
+const COLUMN_PREFIX = 'column:';
+
+function dedupeValue(choice: DedupeChoice): string {
+  return choice.mode === 'column' ? `${COLUMN_PREFIX}${choice.column}` : choice.mode;
+}
+
+function dedupeChoice(value: string): DedupeChoice {
+  if (value.startsWith(COLUMN_PREFIX)) return { mode: 'column', column: value.slice(COLUMN_PREFIX.length) };
+  return value === 'none' ? { mode: 'none' } : { mode: 'phone' };
+}
+
+/** Why the choice matters, under the select. */
+function dedupeNote(analysis: AgencyColumnAnalysis, state: MappingState, phone: string | null): string {
+  switch (state.dedupe.mode) {
+    case 'phone':
+      return [
+        uniquenessLine(analysis, phone),
+        'A row whose number already appeared earlier in the file is dropped. If one person can have several rows (two loans, two policies), check duplicates on that number instead.',
+      ].filter(Boolean).join(' ');
+    case 'column':
+      return [
+        uniquenessLine(analysis, state.dedupe.column),
+        'Rows that share a phone number are all kept. The dialer never calls one number twice at the same time.',
+      ].filter(Boolean).join(' ');
+    case 'none':
+      return 'Every row is kept. The dialer never calls one number twice at the same time.';
+  }
+}
 
 export interface ColumnMapperProps {
   analysis: AgencyColumnAnalysis;
@@ -48,6 +85,7 @@ export function ColumnMapper({
   const validity = phoneValidityLine(analysis, phone);
   const heroFull = heroLimitReached(state);
   const countryError = countryCodeError(state.defaultCountryCode);
+  const dedupeOptions = dedupeColumnOptions(analysis, state);
 
   return (
     <div className={styles.mapper}>
@@ -169,6 +207,32 @@ export function ColumnMapper({
               : 'Numbers already written with a + keep their own country. Everything else gets the platform default — India (+91) — so set this if your list is not Indian.'}
           </p>
         )}
+      </div>
+
+      {/*
+        What counts as a duplicate. Phone by default, which is what every upload
+        did before this control. A loan book needs the loan number: one borrower
+        with two loans is two rows on one number, and both loans must be called.
+      */}
+      <div className={`form-group ${styles.dedupe}`}>
+        <label htmlFor="ingest-dedupe">Check duplicates on</label>
+        <select
+          id="ingest-dedupe"
+          value={dedupeValue(state.dedupe)}
+          disabled={disabled}
+          onChange={(event) => onChange(setDedupe(state, dedupeChoice(event.target.value)))}
+        >
+          <option value="phone">Phone number</option>
+          {dedupeOptions.map((name) => (
+            <option key={name} value={`${COLUMN_PREFIX}${name}`}>
+              {name}
+            </option>
+          ))}
+          <option value="none">Don&apos;t remove duplicates</option>
+        </select>
+        <p className={styles.dedupeNote} data-testid="dedupe-note">
+          {dedupeNote(analysis, state, phone)}
+        </p>
       </div>
 
       {/*

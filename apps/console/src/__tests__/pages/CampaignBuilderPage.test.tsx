@@ -66,10 +66,10 @@ vi.mock('../../api/agencyCampaigns', () => ({
 const ANALYSIS: AgencyColumnAnalysis = {
   headers: ['Cust Mobile', 'Full Name', 'TZ', 'Internal Score'],
   columns: [
-    { name: 'Cust Mobile', index: 0, samples: ['9820041772'], non_empty: 100, phone_score: 0.95 },
-    { name: 'Full Name', index: 1, samples: ['Priya Menon'], non_empty: 100, phone_score: 0 },
-    { name: 'TZ', index: 2, samples: ['Asia/Kolkata'], non_empty: 100, phone_score: 0 },
-    { name: 'Internal Score', index: 3, samples: ['0.82'], non_empty: 100, phone_score: 0 },
+    { name: 'Cust Mobile', index: 0, samples: ['9820041772'], non_empty: 100, phone_score: 0.95, distinct: 100 },
+    { name: 'Full Name', index: 1, samples: ['Priya Menon'], non_empty: 100, phone_score: 0, distinct: 100 },
+    { name: 'TZ', index: 2, samples: ['Asia/Kolkata'], non_empty: 100, phone_score: 0, distinct: 100 },
+    { name: 'Internal Score', index: 3, samples: ['0.82'], non_empty: 100, phone_score: 0, distinct: 100 },
   ],
   rows_sampled: 100,
   truncated: true,
@@ -85,6 +85,7 @@ function job(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
     status: 'completed',
     dry_run: false,
     file_name: 'collections_aug.csv',
+    dedupe_column: null,
     progress_pct: 100,
     rows_read: 12_481,
     accepted: 11_712,
@@ -155,6 +156,7 @@ beforeEach(() => {
   mocks.uploadRosterCsv.mockResolvedValue({
     s3_key: 'agency-ingest/t1/u1/collections_aug.csv',
     file_name: 'collections_aug.csv',
+    dedupe_column: null,
     file_size_bytes: 4096,
   });
   mocks.analyzeRosterColumns.mockResolvedValue(ANALYSIS);

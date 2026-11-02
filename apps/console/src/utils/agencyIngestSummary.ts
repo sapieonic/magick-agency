@@ -55,6 +55,7 @@ export const REJECTION_LABELS: Record<AgencyIngestReasonCode, string> = {
   missing_phone_value: 'Empty phone number',
   invalid_phone: 'Not a valid phone number',
   duplicate_phone: 'Duplicate of an earlier row',
+  duplicate_key: 'Duplicate of an earlier row (same value in the duplicate column)',
   ragged_row: 'Row does not match the header',
   value_too_large: 'A value is too large',
   row_too_large: 'The row is too large',
@@ -111,7 +112,11 @@ export interface IngestSummaryModel {
   highRejectionWarning: string | null;
 }
 
-function labelFor(code: string): string {
+function labelFor(code: string, dedupeColumn: string | null): string {
+  // Names the column the operator chose, so "Duplicate Loan No of an earlier row"
+  // says which rule dropped the row. Falls back to the static label for a job
+  // served without the column.
+  if (code === 'duplicate_key' && dedupeColumn) return `Duplicate ${dedupeColumn} of an earlier row`;
   return (REJECTION_LABELS as Record<string, string>)[code] ?? 'Rejected for another reason';
 }
 
@@ -132,7 +137,7 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
 
   const groups: RejectionGroup[] = Object.entries(byReason)
     .filter(([, count]) => typeof count === 'number' && count > 0)
-    .map(([code, count]) => ({ code, label: labelFor(code), count: count as number }))
+    .map(([code, count]) => ({ code, label: labelFor(code, job.dedupe_column ?? null), count: count as number }))
     // Largest first, then by code so the order is stable between polls — a list
     // that reorders while an operator is reading it looks like the numbers moved.
     .sort((a, b) => b.count - a.count || a.code.localeCompare(b.code));

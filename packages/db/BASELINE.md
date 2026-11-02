@@ -432,6 +432,16 @@ the table. **Down** drops the CHECK and the column. **Tests**:
 `test/integration/db/agent-session-client-kind-migration.test.ts` (the column, its default, the
 CHECK against the contract's list) and the down → up inventory suite.
 
+### 0007 — `migrations/0007_ingest_dedupe_column.sql`
+
+Roster upload, choosing the duplicate column. **`agency_ingest_jobs.dedupe_column`** `TEXT NULL`:
+the header whose value marks a duplicate row in the file (for example a loan number, so one
+borrower with two loans on one phone keeps both rows). Compared trimmed and case-insensitive; a
+blank value is never a duplicate. NULL keeps the earlier behaviour, which `dedupe_phones` decides
+(normalised phone, or none). Written by `POST /proxy/agency/ingest/jobs` (`dedupe_column`), read by
+the ingest service. No index, no rewrite. **Down** drops the column. **Tests**:
+`test/integration/db/ingest-dedupe-column-migration.test.ts` and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

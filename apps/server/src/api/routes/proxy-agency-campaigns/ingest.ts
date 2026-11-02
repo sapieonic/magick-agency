@@ -39,6 +39,11 @@ const columnMappingSchema = z.object({
   // numbers would otherwise silently normalise to +91 and get dialed.
   default_country_code: z.string().regex(/^\+?\d{1,3}$/).optional(),
   dedupe_phones: z.boolean().optional(),
+  // The column whose value marks a duplicate row (a loan number, a policy
+  // number). Checked against the file's headers when the ingest reads them,
+  // like `phone_column`: a name the file does not have fails the job
+  // `dedupe_column_missing`.
+  dedupe_column: z.string().trim().min(1).max(200).optional(),
 });
 
 /**
@@ -245,6 +250,14 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
         message: 'campaign_id is required unless dry_run is true.',
       });
     }
+    // "Check duplicates on Loan No" and "do not check duplicates" cannot both be
+    // what the operator meant, and guessing either way changes which rows are dialled.
+    if (input.dedupe_column !== undefined && input.dedupe_phones === false) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: 'dedupe_column cannot be combined with dedupe_phones: false.',
+      });
+    }
 
     if (input.mode === 'replace') {
       /**
@@ -325,6 +338,7 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       ignore_columns: input.ignore_columns ?? [],
       default_country_code: input.default_country_code?.replace(/^\+/, '') ?? null,
       dedupe_phones: input.dedupe_phones ?? true,
+      ...(input.dedupe_column !== undefined ? { dedupe_column: input.dedupe_column } : {}),
       dry_run: input.dry_run ?? false,
       ...(input.mode ? { mode: input.mode } : {}),
       // A person, or nobody. `sessionMiddleware` has no API-key branch, so
@@ -805,6 +819,7 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
      */
     replace_superseded_uncertain: Boolean(job.replace_superseded_uncertain ?? false),
     file_name: job.file_name,
+    dedupe_column: job.dedupe_column ?? null,
     // Determinate where the file size is known, and honestly 100 only when the
     // job is actually terminal — a progress bar that sits at 100% while work
     // continues is worse than one that sits at 97%.

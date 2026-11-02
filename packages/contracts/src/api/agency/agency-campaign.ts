@@ -47,13 +47,16 @@ export type AgencyIngestJobStatus = 'pending' | 'running' | 'completed' | 'faile
 /**
  * Why one row was not ingested.
  *
- * `duplicate_phone` and `dnc_suppressed` are **breakdowns of `rejected`**, not
- * separate outcomes — see `AgencyIngestJob` below.
+ * `duplicate_phone`, `duplicate_key` and `dnc_suppressed` are **breakdowns of
+ * `rejected`**, not separate outcomes — see `AgencyIngestJob` below.
+ * `duplicate_key` is a repeat in the operator's chosen duplicate column
+ * (`AgencyIngestRequest.dedupe_column`); `duplicate_phone` a repeat of the number.
  */
 export type AgencyIngestReasonCode =
   | 'missing_phone_value'
   | 'invalid_phone'
   | 'duplicate_phone'
+  | 'duplicate_key'
   | 'ragged_row'
   | 'value_too_large'
   | 'row_too_large'
@@ -64,6 +67,7 @@ export type AgencyIngestFailureCode =
   | 'malformed_csv'
   | 'phone_column_missing'
   | 'timezone_column_missing'
+  | 'dedupe_column_missing'
   | 'too_many_columns'
   | 'too_many_rows'
   | 'unsupported_encoding'
@@ -94,6 +98,12 @@ export interface AgencyColumnStat {
   non_empty: number;
   /** Proportion of NON-EMPTY sampled values that parse to E.164, 0..1. */
   phone_score: number;
+  /**
+   * Distinct NON-EMPTY sampled values, compared as the duplicate check compares
+   * them (trimmed, case-insensitive). `distinct / non_empty` is how unique the
+   * column is in the sample: the operator's evidence for which column to dedupe on.
+   */
+  distinct: number;
 }
 
 export interface AgencyColumnAnalysis {
@@ -115,7 +125,19 @@ export interface AgencyIngestRequest {
   timezone_column?: string;
   ignore_columns?: string[];
   default_country_code?: string;
+  /**
+   * `false` keeps every row (no duplicate check). Ignored when `dedupe_column` is
+   * set. Omitted means `true`: dedupe on the normalised phone number.
+   */
   dedupe_phones?: boolean;
+  /**
+   * The header (as `AgencyColumnAnalysis.headers` names it) whose value marks a
+   * duplicate row, for example a loan number. Trimmed, case-insensitive; a blank
+   * value is never a duplicate. Naming the phone column dedupes on the normalised
+   * number. Omitted: `dedupe_phones` decides. Not combinable with
+   * `dedupe_phones: false` (400).
+   */
+  dedupe_column?: string;
   campaign_id?: string;
   dry_run?: boolean;
 }
@@ -140,6 +162,8 @@ export interface AgencyIngestJob {
   status: AgencyIngestJobStatus;
   dry_run: boolean;
   file_name: string;
+  /** The request's `dedupe_column`, so the summary can name it. Null: phone or none. */
+  dedupe_column: string | null;
   /** Byte-based; null when the file size is unknown. 100 only when terminal. */
   progress_pct: number | null;
   rows_read: number;

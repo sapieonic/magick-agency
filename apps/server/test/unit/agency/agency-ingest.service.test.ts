@@ -447,6 +447,16 @@ describe('AgencyIngestService', () => {
     expect(mocks.sendRosterChunk.mock.calls[0]![0].contacts).toHaveLength(2);
   });
 
+  it('dedupes on the job\'s dedupe_column, and counts a duplicate_key as a duplicate', async () => {
+    csvStream('Mobile,Loan No\n+919876543210,LN-1\n+919876543210,LN-2\n+919800000003,LN-1\n');
+    await service.run({ job: job({ dedupe_column: 'Loan No' }) });
+
+    expect(mocks.sendRosterChunk.mock.calls[0]![0].contacts.map((c: { context: Record<string, string> }) => c.context['Loan No']))
+      .toEqual(['LN-1', 'LN-2']);
+    const { progress } = mocks.repo.complete.mock.calls[0]![1];
+    expect(progress).toMatchObject({ accepted: 2, rejected: 1, duplicates: 1 });
+  });
+
   // ── DNC suppression at ingest ──────────────────────────────
 
   describe('DNC suppression', () => {

@@ -549,6 +549,56 @@ describe('agency ingest routes', () => {
     await app.close();
   });
 
+  describe('dedupe_column', () => {
+    const base = {
+      s3_key: `agency-ingest/${TENANT}/u/roster.csv`,
+      file_name: 'roster.csv',
+      phone_column: 'Mobile',
+      campaign_id: '11111111-2222-3333-4444-555555555555',
+    };
+
+    it('stores the chosen column, trimmed, on the job', async () => {
+      mocks.repo.create.mockResolvedValue(job());
+      const app = await buildApp();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...base, dedupe_column: ' Loan No ' },
+      });
+      expect(res.statusCode).toBe(202);
+      expect(mocks.repo.create.mock.calls[0]![0]).toMatchObject({ dedupe_column: 'Loan No', dedupe_phones: true });
+      await app.close();
+    });
+
+    it('an older request without it creates the same job as before', async () => {
+      mocks.repo.create.mockResolvedValue(job());
+      const app = await buildApp();
+      await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: base });
+      expect(mocks.repo.create.mock.calls[0]![0]).not.toHaveProperty('dedupe_column');
+      expect(mocks.repo.create.mock.calls[0]![0].dedupe_phones).toBe(true);
+      await app.close();
+    });
+
+    it('refuses 400 with dedupe_phones: false, before any job exists', async () => {
+      const app = await buildApp();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/ingest/jobs`,
+        payload: { ...base, dedupe_column: 'Loan No', dedupe_phones: false },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(mocks.repo.create).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('refuses 400 for a blank column name', async () => {
+      const app = await buildApp();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...base, dedupe_column: '   ' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(mocks.repo.create).not.toHaveBeenCalled();
+      await app.close();
+    });
+  });
+
   it('returns 202 immediately rather than holding the request for minutes', async () => {
     // A 1M-row file takes minutes; the wizard polls the job.
     mocks.repo.create.mockResolvedValue(job({ status: 'pending' }));
@@ -1008,6 +1058,16 @@ describe('agency ingest routes', () => {
       // Never a fourth addend — an operator adds these against their spreadsheet.
       expect(body.duplicates).toBe(30);
       expect(body.rejected_by_reason).toEqual({ invalid_phone: 70, duplicate_phone: 30 });
+      // Null for a job from before 0007 (no key on the row) as for one that chose none.
+      expect(body.dedupe_column).toBeNull();
+      await app.close();
+    });
+
+    it('serves the job\'s dedupe_column so the summary can name it', async () => {
+      mocks.repo.findById.mockResolvedValue(job({ dedupe_column: 'Loan No' }));
+      const app = await buildApp();
+      const body = (await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001` })).json();
+      expect(body.dedupe_column).toBe('Loan No');
       await app.close();
     });
 

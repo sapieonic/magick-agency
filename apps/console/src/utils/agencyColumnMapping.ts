@@ -25,6 +25,9 @@ import type { AgencyContextDisplay } from '../types/agency';
  *  - **The country code is a mapping decision too.** A bare 10-digit number in
  *    the file has no country in it; the API supplies one, and until now nothing
  *    let the operator say which. See {@link countryCodeError}.
+ *  - **So is what counts as a duplicate.** One borrower with two loans is two
+ *    rows on one number; deduping on the phone drops a loan nobody then calls.
+ *    See {@link DedupeChoice}.
  */
 
 export type ColumnRole = 'phone' | 'timezone' | 'hero' | 'detail' | 'ignore';
@@ -62,7 +65,18 @@ export interface MappingState {
    * differs. Empty is the only value that is provably a no-op.
    */
   defaultCountryCode: string;
+  /** Which rows the ingest drops as duplicates. Starts at `phone`, the old behaviour. */
+  dedupe: DedupeChoice;
 }
+
+/**
+ * "Check duplicates on": the phone number (the default, and what every upload did
+ * before this existed), another column such as a loan number, or nothing.
+ */
+export type DedupeChoice =
+  | { mode: 'phone' }
+  | { mode: 'column'; column: string }
+  | { mode: 'none' };
 
 /**
  * Seed a mapping from the API's analysis.
@@ -83,7 +97,7 @@ export function initialMapping(analysis: AgencyColumnAnalysis): MappingState {
   if (suggested !== null && suggested in roles) {
     roles[suggested] = 'phone';
   }
-  return { roles, heroOrder: [], defaultCountryCode: '' };
+  return { roles, heroOrder: [], defaultCountryCode: '', dedupe: { mode: 'phone' } };
 }
 
 /**
@@ -115,7 +129,51 @@ export function setRole(state: MappingState, column: string, role: ColumnRole): 
   }
 
   roles[column] = role;
-  return { ...state, roles, heroOrder };
+  // The duplicate column made the phone column is the phone dedupe; saying so
+  // keeps the control and the request in step.
+  const dedupe: DedupeChoice =
+    state.dedupe.mode === 'column' && roles[state.dedupe.column] === 'phone' ? { mode: 'phone' } : state.dedupe;
+  return { ...state, roles, heroOrder, dedupe };
+}
+
+/** Set what the ingest treats as a duplicate row. An unknown column is ignored. */
+export function setDedupe(state: MappingState, choice: DedupeChoice): MappingState {
+  if (choice.mode === 'column') {
+    if (!(choice.column in state.roles)) return state;
+    if (state.roles[choice.column] === 'phone') return { ...state, dedupe: { mode: 'phone' } };
+  }
+  return { ...state, dedupe: choice };
+}
+
+/**
+ * The columns offered under "Check duplicates on", besides the phone number and
+ * "don't": every column except the phone one, ignored ones included (the check
+ * reads the file, not the contact record, so an internal reference number is a
+ * fair key), in file order.
+ */
+export function dedupeColumnOptions(analysis: AgencyColumnAnalysis, state: MappingState): string[] {
+  return analysis.columns.map((c) => c.name).filter((name) => state.roles[name] !== 'phone');
+}
+
+/**
+ * How unique a column is in the sampled rows, as the duplicate check compares
+ * values: "Loan No: 100% unique in the rows we sampled". Helps the operator pick
+ * the right key before the import rather than learn it from the rejected count.
+ * `null` when there is nothing to say (no column, or no values).
+ */
+export function uniquenessLine(analysis: AgencyColumnAnalysis, column: string | null): string | null {
+  if (column === null) return null;
+  const stat = analysis.columns.find((c) => c.name === column);
+  if (!stat || stat.non_empty === 0) return null;
+  const pct = Math.floor((stat.distinct / stat.non_empty) * 100);
+  const repeats = stat.non_empty - stat.distinct;
+  const scope = analysis.truncated ? 'in the rows we sampled' : 'in this file';
+  const blank = stat.non_empty < analysis.rows_sampled
+    ? ` ${(analysis.rows_sampled - stat.non_empty).toLocaleString()} blank, and a blank value is never a duplicate.`
+    : '';
+  return repeats === 0
+    ? `${column}: 100% unique ${scope}.${blank}`
+    : `${column}: ${pct}% unique ${scope}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier value and will be dropped.${blank}`;
 }
 
 /**
@@ -213,7 +271,6 @@ export interface BuildIngestOptions {
   fileName: string;
   campaignId?: string;
   dryRun?: boolean;
-  dedupePhones?: boolean;
 }
 
 /**
@@ -247,7 +304,10 @@ export function buildIngestRequest(
   // The key is OMITTED when empty, so an untouched control produces a request
   // byte-for-byte identical to the one before this control existed.
   if (state.defaultCountryCode) request.default_country_code = state.defaultCountryCode;
-  if (options.dedupePhones !== undefined) request.dedupe_phones = options.dedupePhones;
+  // The same rule for the duplicate check: `phone` sends nothing, which is the
+  // request every upload made before the control existed.
+  if (state.dedupe.mode === 'none') request.dedupe_phones = false;
+  if (state.dedupe.mode === 'column' && state.dedupe.column !== phone) request.dedupe_column = state.dedupe.column;
   if (options.campaignId) request.campaign_id = options.campaignId;
   if (options.dryRun) request.dry_run = true;
 

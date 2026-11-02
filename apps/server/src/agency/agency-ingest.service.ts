@@ -391,6 +391,8 @@ export class AgencyIngestService {
         ignoreColumns: job.ignore_columns ?? [],
         ...(job.default_country_code ? { defaultCountryCode: job.default_country_code } : {}),
         dedupePhones: job.dedupe_phones,
+        // NULL, or no key on a row read before 0007: `dedupe_phones` decides.
+        ...(job.dedupe_column ? { dedupeColumn: job.dedupe_column } : {}),
         batchSize: AGENCY_INGEST_BATCH_SIZE,
 
         onBatch: async (contacts, streamProgress) => {
@@ -456,7 +458,9 @@ export class AgencyIngestService {
 
         onRejected: async (rejection: AgencyIngestRejection) => {
           progress.rejected += 1;
-          if (rejection.reason_code === 'duplicate_phone') progress.duplicates += 1;
+          if (rejection.reason_code === 'duplicate_phone' || rejection.reason_code === 'duplicate_key') {
+            progress.duplicates += 1;
+          }
 
           if (retainedRejections.length < MAX_EXPORT_ROWS) {
             retainedRejections.push(rejection);
