@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/sapieonic/magick-agency/compare/console-v0.2.0...console-v0.3.0) (2026-11-02)
+
+
+### Features
+
+* **server,console:** choose the column a roster upload checks for duplicates ([#27](https://github.com/sapieonic/magick-agency/issues/27)) ([1cf6327](https://github.com/sapieonic/magick-agency/commit/1cf6327200c3fd8be0c4328e17cde83ac54bab93))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.3.0
+
 ## [0.2.0](https://github.com/sapieonic/magick-agency/compare/console-v0.1.0...console-v0.2.0) (2026-11-01)
 
 
