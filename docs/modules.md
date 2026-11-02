@@ -809,7 +809,7 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter (`audio-fir.ts`: the bridge's A-law 8k ⇄ PCM16 16k transcoder, allocation-free per frame and pinned byte for byte to a frozen pre-rewrite copy, `test/helpers/reference-audio-fir.ts`; `scripts/bench-transcoder.ts` times both), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
 
 Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
 
@@ -817,6 +817,7 @@ Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `concurrency.ts`, `decode-g
 |---|---|
 | `apps/server/test/unit/utils/audio-downmix.test.ts` | 11 |
 | `apps/server/test/unit/utils/audio-fir.test.ts` | 24 |
+| `apps/server/test/unit/utils/audio-fir.reference.test.ts` | 14 |
 | `apps/server/test/unit/utils/audio.test.ts` | 41 |
 | `apps/server/test/unit/utils/concurrency.core.test.ts` | 9 |
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
