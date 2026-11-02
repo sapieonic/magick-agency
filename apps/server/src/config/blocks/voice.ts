@@ -7,7 +7,24 @@ import { envBoolean, type Env } from '../env.js';
  */
 
 const concurrencySchema = z.object({
-  maxConcurrentCalls: z.coerce.number().default(200),
+  /**
+   * `MAX_CONCURRENT_CALLS`: the process-wide ceiling on call legs holding a concurrency slot
+   * (the global guard). Per-account limits and the carrier allocation (super-admin settings)
+   * are the business limits; this one guards the process, so it must sit above what a full
+   * floor legitimately holds, or the bridge refuses dials the pacing tick placed.
+   *
+   * A slot is held from admission until the leg is finalised, which is longer than talk
+   * time. Sized for 500 agents, ~170 answered calls a minute at ~3 dials per answer
+   * (~510 dials a minute):
+   *  - unanswered dials hold a slot until VoiceLink's terminal report, dial + 45–75 s:
+   *    ~340 a minute × ~60 s ≈ 340 legs;
+   *  - answered calls ring first: ~170 × ~15 s ≈ 40 legs;
+   *  - live talk: ~170 a minute × ~2.3 min ≈ 390 legs;
+   *  - `ending`: an answered hangup waits up to 45 s for the carrier's `call.ended`:
+   *    ~170 × ~30 s ≈ 85 legs.
+   * ≈ 860 at peak; 1000 leaves ~15% headroom. (It was 200: a ~70-agent floor.)
+   */
+  maxConcurrentCalls: z.coerce.number().int().min(1).default(1000),
   callTimeoutSeconds: z.coerce.number().positive().default(300),
   /**
    * How often the background self-heal sweep runs (reconcile concurrency
