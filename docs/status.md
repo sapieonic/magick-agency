@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-01.
+"is it done". As of 2026-11-02.
 
 ## Summary
 
@@ -73,7 +73,9 @@ re-running plan (`apps/server/test/integration/agency/agency-contact-claim-limit
 
 - Pacing reading agent states only after headroom: the `no_agents` vs `no_slots` telemetry needs
   the reads.
-- Caching `getMaxConcurrentCalls`: it would defeat cross-replica invalidation.
+- Caching `getMaxConcurrentCalls`: it would defeat cross-replica invalidation. Superseded
+  2026-11-02: pacing caches it with event invalidation and a 2 s TTL, and never feeds the guard's
+  Redis cache (scaling phase A).
 - Throttling `countOutstanding`: it changes which tick finalizes.
 - One per-campaign `LeadState` map in pacing: the collections have different lifetimes.
 - Splitting the bridge's media relay, carrier events and teardown, and pacing's `maybeFinalize`:
@@ -133,7 +135,9 @@ the morning rush).
 | `src/db/repositories/agency/agent-session.repository.ts` | Racing first joins each logged a `NULL → break` "session started" event |
 
 **Defects found and left open**, each pinned by an `it.fails` (flip it to `it` with the fix). All
-need Manas or a deliberate change to a shared file:
+need Manas or a deliberate change to a shared file. The first three (frame size, send buffer,
+VoiceLink timeouts) were fixed on 2026-11-02 ("Scaling for 500 simultaneous calls"); their rows
+stay for the record:
 
 | Defect | Pinned in | What deciding it needs |
 |---|---|---|
@@ -151,9 +155,9 @@ need Manas or a deliberate change to a shared file:
 | A multipart part with no headers makes `request.file()` never settle; the request hangs | `integration/load/hostile-input-fuzz.test.ts` | A parse deadline that also tears down the socket |
 
 **Observed, not pinned:** the per-IP rate-limit bucket (200/min default) is shared by a whole floor
-behind one office NAT, so `RATE_LIMIT_MAX` needs sizing for such a deployment; with the
+behind one office NAT, so `RATE_LIMIT_MAX` needs sizing for such a deployment (sized 2026-11-02); with the
 production ioredis defaults a Redis outage takes about 10 s to surface on `/readyz` and some
-requests wait about 30 s (no command timeout); the PSTN socket refuses a bad token with a bare
+requests wait about 30 s (no command timeout; bounded at 2 s on 2026-11-02); the PSTN socket refuses a bad token with a bare
 close (1005), not a 44xx code; a 200 `add_lead` with a non-JSON body fails the dial though the lead
 may be queued; `StationTokenStore.mint`'s local fallback during a Redis error is never consulted by
 `verifyAndConsume`, so it fails closed and is dead code; `nextWindowOpen` returns up to an hour late
@@ -349,9 +353,55 @@ Then, so the next failure on a tester's phone can be read without their logs:
   the rules each turn a test red.
 - Tab labels that would wrap on a narrow phone take a short name ("Stats", "Calls").
 
+### Scaling for 500 simultaneous calls 2026-11-02 (phase A)
+
+Manas asked on 2026-11-02 for the changes that let one host carry 400–500 simultaneous calls,
+without bigger or more infrastructure. A relay bench on real `ws` sockets with the bridge's own
+per-frame steps showed the audio relay as the binding constraint: one event loop carried ~55
+console calls at 70% busy (the console's `pcm16` path decodes, resamples and re-encodes every
+20 ms frame) and ~200 on binary A-law. Phase A is the work inside the current single-process
+design; phase B (media and analysis worker processes over IPC) is the structural
+step to 500.
+
+| Area | Change | Evidence |
+|---|---|---|
+| Bridge transcoder (`utils/audio-fir.ts`, `audio.ts`) | Allocation-free per frame; `encodeAlaw` table-driven (64 KiB, built at load from the per-sample encoder) | Byte-identical to a frozen pre-rewrite copy (`audio-fir.reference.test.ts`, every A-law value exhaustively); ~38→8 µs down, ~80→10 µs up per frame (`scripts/bench-transcoder.ts`) |
+| Console call audio | Binary A-law on the station socket (`media=alaw8`), relayed by VoiceLink with no transcode; the 16→8 kHz conversion is in the capture worklet. `pcm16` stays per tenant (`agency_console_alaw8`, default on) and as an automatic fallback (1008 `invalid_media`, or JSON media on an `alaw8` socket) | Codec pinned to the mobile app's cross-language checksums and the server's tables; headless Chromium tone check (1 kHz within 0.1 dB, 5 kHz −62 dB). Chromium only |
+| Console frame bound | `pcm16` uplink payloads capped at the server's 64 KiB message bound less the JSON envelope (65 496 characters; was 128 000) | `agencyMedia.test.ts` |
+| WebSocket frames | `maxPayload` 64 KiB on every WebSocket route (`WS_MAX_PAYLOAD_BYTES`, `utils/ws-limits.ts`, sized per route from `onRoute`) | `station-inbound-fuzz` `it.fails` flipped |
+| Send back-pressure (`utils/ws-backpressure.ts`) | Media dropped past ~3 s of backlog (per format), control frames never; a station past 1 MiB closed 4408 `station_send_backlog`; the carrier stream has a soft limit only | `station-backpressure` `it.fails` flipped; `websocket_send_backpressure_total` |
+| VoiceLink REST | Login 10 s, `add_lead` 15 s (`VOICELINK_LOGIN_TIMEOUT_MS`, `VOICELINK_ADD_LEAD_TIMEOUT_MS`). An outcome-unknown `add_lead` (timeout, or a 200 with a non-JSON body) fails and releases at once, is never retried, and the contact's redial is deferred 15 min; a late carrier media connect for it is refused | Two `voicelink-adapter-mock-carrier` `it.fails` flipped |
+| Redis client (`utils/redis-options.ts`) | 2 s command timeout, 1 retry, 2 s connect timeout. A timeout is an error, never a nil, so Q6 tokens fail open on it. The agent lease renewer now stops only on `lost`, not on an `unknown` renew (it used to stop on any failure) | Stalled-Redis and nil-Redis cases, unit and integration |
+| Ceilings | `MAX_CONCURRENT_CALLS` 1000 (slots are held from admission to the carrier's final report: ~860 at 500 agents); `DB_POOL_MAX` 30 with pool metrics (`db_pool_acquire_seconds`, `db_pool_clients_*`); rate limits sized for 500 agents behind one NAT, all in `api/middleware/rate-limit-defaults.ts` | Arithmetic in that module |
+| Analysis worker | A slot pool (`DIALER_ANALYSIS_CONCURRENCY`, default 8) refilled as each job finishes; a recording byte budget (`DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`, 512 MiB); a process-wide vendor rate-limit breaker (30 s doubling to 15 min, one probe) | Was ≤ 2 jobs a minute; 40 jobs on 4 slots drain in 0.7 s on real Postgres; two workers sharing a queue never double-claim. 500 calls needs ~330 slots: several analysis processes (phase B) |
+| Pacing | One 250 ms round for every led campaign; a campaign that could reserve nothing is skipped until an event (`PacingInvalidationBus`, JSON events, in-process now, IPC-ready) or the 1 s safety tick; account limit and live calls read once per account per round; campaign row and limit cached with generation guard, event invalidation and a 2 s TTL | 50 campaigns × 10 agents: Postgres 592→128 statements/s idle, 996→191 busy (`load/pacing-statements.test.ts`); every floor suite re-run on the scheduled path (`FLOOR_SCHEDULED=1`) |
+
+Still open from the load suites: eight integration `it.fails` (the provider-share pacing cap needs a
+per-provider live-call count, which attempts do not carry). Not exercised: Firefox, Safari and Edge
+on the console's A-law path, and anything against a real VoiceLink call.
+
 ## Test counts
 
-Latest run, 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
+Latest run, 2026-11-02, after the scaling phase A merges, from inside each package (`pnpm lint`
+clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7430 passed + 42 skipped (360 files) | 1511 passed + 10 expected fail (161 files) |
+| `packages/db` | 427 | 506 (46 files) |
+| `apps/console` | 4917 (251 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 249 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+
+The baseline before it, the same day: server 7334 unit + 4 expected fail + 42 skipped (352 files).
+`flows/concurrency-guards.test.ts` ("costs exactly ONE Redis eval") counts evals with Redis's
+server-wide `INFO commandstats`, so it fails when another suite shares the Redis instance; it
+passes on a Redis of its own.
+
+Run of 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
 test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
 `pnpm test:release` 10 pass):
 
@@ -498,6 +548,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused |
+| Scaling defaults (2026-11-02) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial, Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
@@ -544,6 +595,8 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       with strong passwords on every admin (`DEPLOYMENT.md` 8.4 lists the costs).
 - [ ] Host memory: the server may grow to a 4 GB heap (`docker/entrypoint.sh`). On a 4 GB VM (the
       `aws/terraform` default) that is all of the RAM; lower the heap or size up before load.
+- [ ] Postgres allows the pool: `DB_POOL_MAX` is 30 by default; lower it on a managed database
+      with a small connection limit, and leave room for migrations and admin sessions.
 - [ ] `NODE_ENV=production` (the image sets it); `DATABASE_URL` without TLS parameters; `DB_SSL_CA`
       if the database uses a private CA.
 - [ ] First boot logs `migrations complete` before `magick-agency v<version> listening` (the entrypoint runs

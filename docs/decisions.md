@@ -216,6 +216,22 @@ Rulings of 2026-11-01 (agent mobile app, [`mobile.md`](mobile.md)):
 | M5 | Ringback and hang-up on the app | The ringback is made natively in `agent_audio` (`setRingback`), to the console's tone and cadence, mixed into the playout frames after the jitter buffer: a Dart timer pushing frames through the jitter buffer would glitch and is fragile in the background. While ringing, Mute is "Mute ring" (the ringback only); the microphone's mute is separate. In the app hang-up is hold-to-confirm, with the SP3 warning while ringing; CallKit and the notification's Hang up act at once | **Decided** |
 | M6 | Resuming a soft phone on the app | The app resumes on its own only the session this phone hosts (remembered per workspace, forgotten when the session ends or another device takes it over with 4409). A session open on another device, the console mid-call or another phone, is never taken silently: the Phone screen says so and offers "Use it on this phone", because taking it moves the station socket and any live call's audio to the phone. A resume put off while the app was in the background asks the server again on return | **Decided** |
 
+Rulings of 2026-11-02 (scaling for 500 simultaneous calls; [`status.md`](status.md), "Scaling for
+500 simultaneous calls"). Manas approved the plan; the values below are the defaults chosen in
+building it:
+
+| Topic | Default used | Status |
+|---|---|---|
+| Console call audio | `media=alaw8` (binary A-law 8 kHz) by default; `pcm16` per tenant with `agency_console_alaw8` off (the only default-on flag: it is a way back, not a capability), and automatically after a 1008 `invalid_media` or JSON media on an `alaw8` socket. The console's A-law code is console-local (`apps/console/src/utils/alaw8/g711.js`), pinned to the mobile app's checksums | **default, pending Manas** |
+| WebSocket frame bound | `maxPayload` 64 KiB on every WebSocket route (`WS_MAX_PAYLOAD_BYTES`, never below the largest legitimate frame). An oversized carrier frame now closes the call's stream with 1009, where the bridge used to drop it | **default, pending Manas** |
+| Send back-pressure | Media dropped past ~3 s of backlog (128 KiB `pcm16`, 24 KiB `alaw8`, 40 KiB to the carrier); control frames never dropped; a station past 1 MiB is closed with 4408 `station_send_backlog` (reused: both clients re-mint and reconnect on it) and terminated 5 s later if still open; the carrier stream has no hard cap, since closing it hangs up | **default, pending Manas** |
+| VoiceLink timeouts | Login 10 s, `add_lead` 15 s per request. An outcome-unknown `add_lead` (timeout, or a 200 with a non-JSON body) fails the dial and releases the agent and slots at once, is never retried, and defers the contact's redial by 15 min (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`); a late carrier media connect for it is refused, which hangs that call up | **default, pending Manas** |
+| Redis client bounds | 2 s command timeout, 1 retry per request, 2 s connect timeout. A timeout is a rejection, so Q6 tokens fail open on it; the agent lease renewer stops only on `lost` | **default, pending Manas** |
+| Ceilings | `MAX_CONCURRENT_CALLS` 1000 (a slot is held from admission until the leg is finalised: ~860 at 500 agents); `DB_POOL_MAX` 30 | **default, pending Manas** |
+| Rate limits (amends Q9's numbers) | `RATE_LIMIT_MAX` 2000, `RATE_LIMIT_IP_AUTH_MAX` 20 000, `RATE_LIMIT_USER_MAX` 600, `RATE_LIMIT_WEBHOOK_MAX` 5000, `RATE_LIMIT_CARRIER_MEDIA_MAX` 2000, `RATE_LIMIT_STATION_MAX` 3600, per minute, sized for 500 agents and 50 supervisors behind one IP (arithmetic in `api/middleware/rate-limit-defaults.ts`). The public invite routes keep 20/min per IP | **default, pending Manas** |
+| Analysis worker | A slot pool, `DIALER_ANALYSIS_CONCURRENCY` 8 (1–256), refilled as each job finishes; `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` 512 MiB (at least 2 × `DIALER_MAX_RECORDING_BYTES`), reserved before a claim; a vendor rate-limit breaker (30 s doubling to 15 min, ±20 % jitter, one probe, closed only by a completed job). Rate-limited jobs still never burn an attempt | **default, pending Manas** |
+| Pacing skips and caches | A campaign whose last full tick could reserve nothing is skipped until an invalidation event or the 1 s safety tick (`PACING_SAFETY_TICK_MS`); the account limit and live-call count are read once per account per round and shared through a headroom budget (the guard's Redis count is not used); the campaign row and account limit are cached in pacing with a generation guard, event invalidation and a 2 s TTL. Events travel on `PacingInvalidationBus` (JSON, in-process; an IPC bus replaces it for worker processes, never Redis pub/sub, per Manas 2026-11-02) | **default, pending Manas** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
@@ -227,6 +243,7 @@ Rulings of 2026-11-01 (agent mobile app, [`mobile.md`](mobile.md)):
 | — | Display locale and rounding | Built, pending ratification: `en-IN` for dates and numbers on the analytics surfaces; live timers round down, aggregate durations round (Rulings of 2026-10-16/17). Other pages still use the reader's locale (`status.md` follow-ups) | Manas (ratify) |
 | 1, 3–6 | Launch defaults | Built, pending ratification (§2) | Manas |
 | — | Tidy-up defaults | Built, pending ratification: the **default, pending Manas** rows of the 2026-10-16/17 rulings (§4) | Manas (ratify) |
+| — | Scaling defaults | Built, pending ratification: the **default, pending Manas** rows of the 2026-11-02 scaling rulings (§4) | Manas (ratify) |
 | 2, 7, 8 | Launch open items | Existing numbers, launch style, domain / freeze / rollback window | Manas, at launch |
 | 9 | Metering | Out of v1; design not started | Manas |
 | B15 | Roster supersede | Three schema changes plus a replace lock; `AGENCY_ROSTER_REPLACE_ENABLED` stays off until then | Manas |
