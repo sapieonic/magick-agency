@@ -5,6 +5,8 @@ import { AgencyRuntime } from '../agency/runtime.js';
 import { ensureVoiceEngine } from './voice.js';
 import { agencyIngestJobRepository } from '../agency/agency-ingest-job.repository.js';
 import { startAgencyIngestReaper } from '../agency/agency-ingest.service.js';
+import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurrency-control.js';
+import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -73,6 +75,13 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   }
   agencyIngestReapInterval = startAgencyIngestReaper();
 
+  // A concurrency-limit write invalidates the pacing engine's cached limit as well as
+  // the guards' (`agency/pacing/limit-invalidation.ts`). Voice starts first and has
+  // registered the seam's implementation; this wraps it, and the stop unwraps it.
+  const undecorated = getConcurrencyControl();
+  const decorated = withPacingInvalidation(undecorated);
+  setConcurrencyControl(decorated);
+
   // The startup reaper runs BEFORE the pacing supervisor. A crash leaves attempts non-terminal and contacts `in_flight`, and those count
   // against the tick's occupancy — a supervisor started first would compute a fabricated
   // occupancy from dead rows and quietly dial nothing forever.
@@ -84,6 +93,7 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
     // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents
     // are NOT returned to the pool: they rehydrate into `break`.
     await agencyRuntime.stop();
+    if (getConcurrencyControl() === decorated) setConcurrencyControl(undecorated);
   };
   activeStop = stop;
   return stop;

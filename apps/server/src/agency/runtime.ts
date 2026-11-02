@@ -33,6 +33,7 @@ import { WrapupManager } from './wrapup-manager.js';
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { ManualDialer } from './softphone/manual-dialer.js';
 import { SoftphoneService } from './softphone/softphone-service.js';
+import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
 
@@ -144,6 +145,19 @@ export class AgencyRuntime {
     this.pacing.registerQueuedBreakRelease({
       hasQueuedBreak: (sessionId) => this.breaks.peek(sessionId) !== null,
       release: (sessionId) => this.dialer.releaseAgent(sessionId),
+    });
+    // The pacing engine skips a campaign whose last tick found no available agent
+    // until something can change that (`pacing/invalidation-bus.ts`). These are the
+    // two ways an agent becomes dialable: a state write into `available` (a join,
+    // a wrap-up or break ending, a reservation handed back) and a station attaching
+    // over a lease that is still `available`. The campaign is resolved HERE, where
+    // the station lives, so the event means the same to an engine in another process.
+    this.agents.onAvailable((sessionId) => publishPacingInvalidation({
+      type: 'agent_available', sessionId, campaignId: this.stations.get(sessionId)?.campaignId ?? null,
+    }));
+    this.stations.onAttached(({ sessionId, campaignId }) => {
+      // A soft-phone session (no campaign) is never `available`; nothing to wake.
+      if (campaignId) publishPacingInvalidation({ type: 'agent_available', sessionId, campaignId });
     });
   }
 

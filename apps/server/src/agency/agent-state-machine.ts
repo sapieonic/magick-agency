@@ -256,6 +256,31 @@ export class AgentStateMachine {
     private readonly keyPrefix: string,
   ) {}
 
+  private readonly availableListeners = new Set<(sessionId: string) => void>();
+
+  /**
+   * Be told, after the write, every time a session ENTERS `available` through
+   * {@link set} or {@link transition}: a join, the end of a wrap-up or a break, a
+   * reservation handed back. The pacing engine's wake-up for an idle campaign
+   * (`pacing/invalidation-bus.ts`, wired by the runtime). Synchronous and total: a
+   * listener that throws is logged, never surfaced to the writer. Returns the
+   * unsubscribe.
+   */
+  onAvailable(listener: (sessionId: string) => void): () => void {
+    this.availableListeners.add(listener);
+    return () => { this.availableListeners.delete(listener); };
+  }
+
+  private announceAvailable(sessionId: string): void {
+    for (const listener of this.availableListeners) {
+      try {
+        listener(sessionId);
+      } catch (err) {
+        log.warn({ err, sessionId }, 'Agent availability listener threw');
+      }
+    }
+  }
+
   private key(sessionId: string): string {
     return `${this.keyPrefix}agency:agent:${sessionId}:state`;
   }
@@ -298,6 +323,7 @@ export class AgentStateMachine {
         CAS_SCRIPT, 1, this.key(sessionId),
         from, to, opts.attemptId ?? '', opts.leaseMs, Date.now().toString(),
       );
+      if (res === 1 && to === 'available') this.announceAvailable(sessionId);
       return res === 1;
     } catch (err) {
       log.error({ err, sessionId, from, to }, 'Agent state CAS failed');
@@ -324,6 +350,7 @@ export class AgentStateMachine {
       );
       const result = setResultFrom(res);
       if (result !== 'ok') log.info({ sessionId, state, result }, 'Agent state set refused');
+      else if (state === 'available') this.announceAvailable(sessionId);
       return result;
     } catch (err) {
       log.error({ err, sessionId, state }, 'Agent state set failed');

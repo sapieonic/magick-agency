@@ -450,6 +450,30 @@ export const agencyTickIdleTotal = counter<'campaign_id' | 'reason'>(meter, 'age
   description: 'Ticks that dialed nothing, by benign reason (no agents, no slots, no contacts)',
 });
 
+// ─── Agency dialer: pacing ticks skipped and woken ──────────────────────────
+//
+// A scheduled tick on a campaign whose last full tick could reserve nothing (no
+// agent available, no account slot, no caller IDs, not running) is SKIPPED, with
+// no database or Redis work, until an event wakes it or the safety tick comes due
+// (`pacing-engine.ts`, `PACING_SAFETY_TICK_MS`). `mode` is `full` or `skipped`;
+// `cause` says why a full tick ran: `event` (an invalidation woke it), `active` (its
+// last tick had work), `safety` (the bounded backstop), `first` (newly led), `forced`
+// (`tickOnce`); a skipped tick is `none`. No campaign label: the ratio is a property of the floor. A skipped
+// tick still counts in `agency_tick_idle_total` with the reason its last full tick
+// found, so that series keeps meaning "idle ticks".
+export const agencyPacingTicksTotal = counter<'mode' | 'cause'>(meter, 'agency_pacing_ticks_total', {
+  description: 'Scheduled pacing ticks, full or skipped, by the cause of a full tick',
+});
+
+// A SAFETY tick that found work: a campaign was skipped as having nothing to do, no
+// event woke it, and the periodic backstop found an agent and a slot. Each one is a
+// wake-up the invalidation bus missed (an unpublished write, a lost event, Redis
+// recovering) and cost up to one safety interval of dialing. Should stay at or near
+// zero; a steady rate means a writer that does not publish.
+export const agencyPacingMissedWakeupsTotal = counter(meter, 'agency_pacing_missed_wakeups_total', {
+  description: 'Pacing safety ticks that found work no invalidation event announced',
+});
+
 // ─── Agency dialer: SEAT TIME, so pacing decisions stop being arguments ──────
 //
 // Added 2026-09-10. Every number in the pacing recommendation — the 5-agent
