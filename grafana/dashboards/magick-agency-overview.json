@@ -1628,12 +1628,182 @@
       "description": "`stage` is fetch | transcribe | analyze — which third of the dialer analysis pipeline is slow."
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "slot utilization"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 84
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Dialer Analysis Slots",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(dialer_analysis_in_flight{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "jobs in flight",
+          "refId": "A"
+        },
+        {
+          "expr": "max(dialer_analysis_slot_utilization{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "slot utilization",
+          "refId": "B"
+        }
+      ],
+      "description": "Analysis jobs running, and the share of DIALER_ANALYSIS_CONCURRENCY in use. Utilization pinned at 1 while the queued depth grows means the slots are the bottleneck: raise the concurrency (within the vendors' rate limits) or run another analysis process.",
+      "id": 109
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "recording bytes reserved"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 84
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Dialer Analysis Back-pressure",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(dialer_analysis_budget_waits_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "memory budget waits /s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(dialer_analysis_rate_limit_pauses_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "vendor rate-limit pauses /s",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(dialer_analysis_memory_reserved_bytes{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "recording bytes reserved",
+          "refId": "C"
+        }
+      ],
+      "description": "Why free analysis slots are not claiming: waits for the recording memory budget (DIALER_ANALYSIS_MEMORY_BUDGET_BYTES), and pauses after an AI vendor rate limit. Reserved bytes are the recordings the slots hold.",
+      "id": 110
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 92
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -1670,7 +1840,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 85
+        "y": 93
       },
       "id": 106,
       "options": {
@@ -1734,7 +1904,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 85
+        "y": 93
       },
       "id": 107,
       "options": {
@@ -1792,7 +1962,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 85
+        "y": 93
       },
       "id": 108,
       "options": {
@@ -1852,7 +2022,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 93
+        "y": 101
       },
       "id": 87,
       "options": {
@@ -1909,7 +2079,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 93
+        "y": 101
       },
       "id": 74,
       "options": {
@@ -1967,7 +2137,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 101
+        "y": 109
       },
       "id": 50,
       "options": {

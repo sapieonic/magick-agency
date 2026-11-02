@@ -88,6 +88,7 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: mockAuditLog
 
 import { DialerAnalysisRunner, toAnalysisEntries, type DialerAnalysisConfig } from '../../../src/core/dialer-analysis-runner.js';
 import { TranscriptionError } from '../../../src/transcription/types.js';
+import { RecordingByteBudget } from '../../../src/core/recording-byte-budget.js';
 import { AiError } from '../../../src/ai/index.js';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
 import type { WebRtcCallRecord } from '@magick-agency/db/models/agency-call.model';
@@ -638,7 +639,111 @@ describe('DialerAnalysisRunner.run', () => {
     mockJobRepo.completeWithAnalysis.mockRejectedValue(new Error('db down'));
     const runner = new DialerAnalysisRunner({ transcriber: makeTranscriber() as never, analysisService: makeAnalysisService() as never, config: CFG });
 
-    await expect(runner.run(makeJob())).resolves.toBeUndefined();
+    // Never throws: it requeues and reports a retry.
+    await expect(runner.run(makeJob())).resolves.toBe('retry');
+  });
+});
+
+describe('DialerAnalysisRunner outcome, recording lease and rate-limit pause', () => {
+  const runnerWith = (over: { transcriber?: unknown; analysisService?: unknown; config?: DialerAnalysisConfig } = {}) =>
+    new DialerAnalysisRunner({
+      transcriber: (over.transcriber ?? makeTranscriber()) as never,
+      analysisService: (over.analysisService ?? makeAnalysisService()) as never,
+      config: over.config ?? CFG,
+    });
+
+  it('reports how each run ended', async () => {
+    expect(await runnerWith().run(makeJob())).toBe('completed');
+
+    mockWebrtcRepo.findById.mockResolvedValueOnce(makeCall({ recording_url: null }));
+    expect(await runnerWith().run(makeJob())).toBe('skipped');
+
+    mockJobRepo.persistTranscript.mockResolvedValueOnce(false);
+    expect(await runnerWith().run(makeJob())).toBe('abandoned');
+
+    const failing = makeTranscriber({ transcribe: vi.fn().mockRejectedValue(new Error('boom')) });
+    expect(await runnerWith({ transcriber: failing }).run(makeJob({ attempts: 1 }))).toBe('retry');
+    expect(await runnerWith({ transcriber: failing }).run(makeJob({ attempts: 3 }))).toBe('failed');
+
+    const limited = makeTranscriber({ transcribe: vi.fn().mockRejectedValue(new TranscriptionError('RATE_LIMITED', '429')) });
+    expect(await runnerWith({ transcriber: limited }).run(makeJob())).toBe('rate_limited');
+  });
+
+  it('transcript analysis: the lease shrinks to the recording once fetched, and to zero once transcribed', async () => {
+    const budget = new RecordingByteBudget(1000 * 1024 * 1024);
+    const lease = budget.tryAcquire(CFG.maxRecordingBytes * 2)!;
+    const seen: number[] = [];
+    const transcriber = makeTranscriber();
+    transcriber.transcribe.mockImplementationOnce(async (...args: unknown[]) => {
+      seen.push(lease.bytes);
+      return (makeTranscriber().transcribe as (...a: unknown[]) => unknown)(...args);
+    });
+    const analysisService = { analyze: vi.fn(async () => { seen.push(lease.bytes); return analysisResult(); }) };
+
+    expect(await runnerWith({ transcriber, analysisService }).run(makeJob(), { lease })).toBe('completed');
+    // 'audio' is 5 bytes: two copies while it is transcribed, nothing while the transcript is analysed.
+    expect(seen).toEqual([10, 0]);
+  });
+
+  it('audio analysis: the lease keeps the recording until the analysis has it', async () => {
+    const budget = new RecordingByteBudget(1000 * 1024 * 1024);
+    const lease = budget.tryAcquire(CFG.maxRecordingBytes * 2)!;
+    let atAnalyze = -1;
+    const analysisService = { needsAudio: true, analyze: vi.fn(async () => { atAnalyze = lease.bytes; return analysisResult(); }) };
+    await runnerWith({ analysisService }).run(makeJob(), { lease });
+    expect(atAnalyze).toBe(10);
+  });
+
+  it('a transcript-only RESUME gives the whole reservation back at once', async () => {
+    mockWebrtcRepo.findById.mockResolvedValue(makeCall({
+      conversation_log: [{ role: 'agent', content: 'x', start_seconds: 0, end_seconds: 90 }],
+      transcript_meta: { provider: 'gemini', model: 'm', detected_language: 'en', duration_seconds: 90, turn_count: 1, latency_ms: 1, transcribed_at: new Date().toISOString() },
+    }));
+    const budget = new RecordingByteBudget(1000 * 1024 * 1024);
+    const lease = budget.tryAcquire(CFG.maxRecordingBytes * 2)!;
+    let atAnalyze = -1;
+    const analysisService = { analyze: vi.fn(async () => { atAnalyze = lease.bytes; return analysisResult(); }) };
+    await runnerWith({ analysisService }).run(makeJob(), { lease });
+    expect(atAnalyze).toBe(0);
+    expect(mockFetchRecordingBytes).not.toHaveBeenCalled();
+  });
+
+  it('a truncated-recording re-fetch takes the worst case again before fetching', async () => {
+    const cfg = { ...CFG, recordingFetchRetries: 1, recordingFetchRetryDelaySeconds: 0 } as DialerAnalysisConfig;
+    const budget = new RecordingByteBudget(1000 * 1024 * 1024);
+    const lease = budget.tryAcquire(cfg.maxRecordingBytes * 2)!;
+    const atFetch: number[] = [];
+    mockFetchRecordingBytes.mockImplementation(async () => {
+      atFetch.push(lease.bytes);
+      return { bytes: Buffer.from('audio'), mimeType: 'audio/wav' };
+    });
+    const transcribe = vi.fn()
+      .mockResolvedValueOnce({ entries: [{ role: 'agent', content: 'hi', start_seconds: 0, end_seconds: 40 }], detectedLanguage: 'en', durationSeconds: 40, model: 'm', diarizationFailed: false })
+      .mockResolvedValueOnce({ entries: [{ role: 'agent', content: 'all', start_seconds: 0, end_seconds: 98 }], detectedLanguage: 'en', durationSeconds: 98, model: 'm', diarizationFailed: false });
+    try {
+      expect(await runnerWith({ transcriber: makeTranscriber({ transcribe }), config: cfg }).run(makeJob(), { lease })).toBe('completed');
+    } finally {
+      mockFetchRecordingBytes.mockReset();
+      mockFetchRecordingBytes.mockResolvedValue({ bytes: Buffer.from('audio'), mimeType: 'audio/wav' });
+    }
+    expect(atFetch).toEqual([cfg.maxRecordingBytes * 2, cfg.maxRecordingBytes * 2]);
+  });
+
+  it('a rate-limited job is requeued no earlier than the shared pause', async () => {
+    const limited = makeTranscriber({ transcribe: vi.fn().mockRejectedValue(new TranscriptionError('RATE_LIMITED', '429')) });
+    const onRateLimited = vi.fn(() => 900);
+    await runnerWith({ transcriber: limited }).run(makeJob({ attempts: 1 }), { onRateLimited });
+    expect(onRateLimited).toHaveBeenCalledOnce();
+    // Its own backoff would be ~120 s (60 × 2^1); the pause wins.
+    expect(mockJobRepo.requeueRateLimited).toHaveBeenCalledWith('job-1', 5, 900);
+  });
+
+  it('without a pause the job keeps its own rate-limit backoff', async () => {
+    const limited = makeTranscriber({ transcribe: vi.fn().mockRejectedValue(new TranscriptionError('RATE_LIMITED', '429')) });
+    await runnerWith({ transcriber: limited }).run(makeJob({ attempts: 1 }), { onRateLimited: () => 0 });
+    const backoff = mockJobRepo.requeueRateLimited.mock.calls[0]![2] as number;
+    expect(backoff).toBeGreaterThanOrEqual(108);
+    expect(backoff).toBeLessThanOrEqual(132);
   });
 });
 

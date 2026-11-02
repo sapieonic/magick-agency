@@ -294,6 +294,7 @@ Files: `analysis.service.ts`, `bridge-analysis-hooks.ts`, `dimension-presets.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/analysis/pipeline.test.ts` | ~12 |
+| `apps/server/test/integration/analysis/worker-pool.test.ts` | ~2 |
 | `apps/server/test/unit/analysis/analysis.service.test.ts` | 22 |
 | `apps/server/test/unit/analysis/bootstrap-analysis.test.ts` | 10 |
 | `apps/server/test/unit/analysis/bridge-analysis-hooks.test.ts` | 30 |
@@ -541,7 +542,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/config.test.ts` | 3 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
-| `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 11 |
+| `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
 
 ### `apps/server/src/config/blocks/`
 
@@ -563,9 +564,9 @@ Files: `csv-parser.ts`
 
 ### `apps/server/src/core/`
 
-The voice engine: WebRTC bridge manager and session, the telephony guard host and the global / account / provider concurrency guards, concurrency control for the seam, telephony release, paced audio streamer and pace schedule, webhook URL builder; and the dialer analysis worker, its handle, runner and transcript-quality checks.
+The voice engine: WebRTC bridge manager and session, the telephony guard host and the global / account / provider concurrency guards, concurrency control for the seam, telephony release, paced audio streamer and pace schedule, webhook URL builder; and the dialer analysis worker (a slot pool), its handle, runner, recording byte budget, vendor rate-limit breaker and transcript-quality checks.
 
-Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-runner.ts`, `dialer-analysis-worker-handle.ts`, `dialer-analysis-worker.ts`, `pace-schedule.ts`, `paced-audio-streamer.ts`, `provider-concurrency-guard.ts`, `telephony-concurrency.ts`, `telephony-guard-host.ts`, `telephony-release.ts`, `transcript-quality.ts`, `voice-concurrency-control.ts`, `webhook-url-builder.ts`, `webrtc-bridge-manager.ts`, `webrtc-bridge-session.ts`
+Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-runner.ts`, `dialer-analysis-worker-handle.ts`, `dialer-analysis-worker.ts`, `pace-schedule.ts`, `paced-audio-streamer.ts`, `provider-concurrency-guard.ts`, `recording-byte-budget.ts`, `telephony-concurrency.ts`, `telephony-guard-host.ts`, `telephony-release.ts`, `transcript-quality.ts`, `vendor-rate-limit-breaker.ts`, `voice-concurrency-control.ts`, `webhook-url-builder.ts`, `webrtc-bridge-manager.ts`, `webrtc-bridge-session.ts`
 
 | Test file | Cases |
 |---|---|
@@ -575,17 +576,19 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/concurrency-extend-lock.test.ts` | 21 |
 | `apps/server/test/unit/core/concurrency-guard.test.ts` | 25 |
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
-| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` | 32 |
+| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` | 39 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
-| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 13 |
+| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 21 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
 | `apps/server/test/unit/core/pace-schedule.test.ts` | 15 |
 | `apps/server/test/unit/core/paced-audio-streamer.test.ts` | 15 |
 | `apps/server/test/unit/core/provider-concurrency-guard.test.ts` | 19 |
+| `apps/server/test/unit/core/recording-byte-budget.test.ts` | 6 |
 | `apps/server/test/unit/core/telephony-concurrency-group.test.ts` | 1 |
 | `apps/server/test/unit/core/telephony-guard-host.test.ts` | 31 |
 | `apps/server/test/unit/core/telephony-release-wiring.test.ts` | 2 |
 | `apps/server/test/unit/core/telephony-release.test.ts` | 41 |
+| `apps/server/test/unit/core/vendor-rate-limit-breaker.test.ts` | 5 |
 | `apps/server/test/unit/core/voice-concurrency-control.test.ts` | 8 |
 | `apps/server/test/unit/core/webhook-url-builder.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-answer-anchor.test.ts` | 3 |
@@ -1051,7 +1054,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/audit.repository.test.ts` | ~12 |
 | `packages/db/test/integration/repositories/call-analysis-profile.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/claim-limit.test.ts` | 5 |
-| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~9 |
+| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~10 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~6 |

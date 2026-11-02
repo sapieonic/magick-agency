@@ -22,6 +22,8 @@ import type {
 } from '@magick-agency/db/models/agency-call.model';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
 import { auditLogger } from '../audit/audit-logger.js';
+import { RECORDING_COPIES } from '../config/blocks/analysis.js';
+import { UNBUDGETED_LEASE, type RecordingLease } from './recording-byte-budget.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { Traced } from '@magick-agency/observability';
 import {
@@ -60,6 +62,29 @@ class StaleAnalysisClaimError extends Error {
   }
 }
 
+/**
+ * How a run ended, for the worker's slot pool and rate-limit breaker:
+ * `completed` and `skipped` are terminal successes, `failed` terminal, `retry` requeued
+ * with backoff (an attempt used), `rate_limited` requeued without using one, and
+ * `abandoned` means the claim was fenced out (another generation owns the job).
+ */
+export type DialerAnalysisOutcome = 'completed' | 'skipped' | 'failed' | 'retry' | 'rate_limited' | 'abandoned';
+
+/** Per-run context the worker hands each job. Both optional, so a bare `run(job)` still works. */
+export interface DialerAnalysisRunContext {
+  /**
+   * This slot's hold on the recording byte budget, taken by the worker for the worst
+   * case before the claim. The runner shrinks it to what it really holds and grows it
+   * back before a re-fetch; the worker releases it when the run ends.
+   */
+  lease?: RecordingLease;
+  /**
+   * Called when a vendor rate-limits this run; returns the seconds the worker will not
+   * claim for (the shared breaker's pause). The job is requeued no earlier than that.
+   */
+  onRateLimited?: () => number;
+}
+
 export interface DialerAnalysisRunnerDeps {
   transcriber: Transcriber;
   analysisService: PostCallAnalysisService;
@@ -81,8 +106,8 @@ export interface DialerAnalysisRunnerDeps {
  * `run` **never throws** — the whole body is a try/catch. On error it classifies
  * retryable vs not, applies exponential backoff via the repo's requeue helpers, and
  * only marks the job `failed` when attempts are exhausted or the error is permanent.
- * That containment is what lets the worker loop over a batch of claimed jobs without
- * one failure taking down the sweep.
+ * That containment is what lets the worker's slots run side by side without one
+ * failure taking down another. It returns a {@link DialerAnalysisOutcome}.
  */
 export class DialerAnalysisRunner {
   private readonly transcriber: Transcriber;
@@ -108,8 +133,9 @@ export class DialerAnalysisRunner {
       'analysis.job_id': job.id,
     }),
   })
-  async run(job: DialerAnalysisJobRecord): Promise<void> {
+  async run(job: DialerAnalysisJobRecord, ctx: DialerAnalysisRunContext = {}): Promise<DialerAnalysisOutcome> {
     const span = Traced.getSpan(this);
+    const lease = ctx.lease ?? UNBUDGETED_LEASE;
     span?.setAttribute('analysis.transcriber', this.transcriber.provider);
     const { id: jobId, call_id: callId, tenant_id: tenantId, account_id: accountId, claim_generation: generation } = job;
 
@@ -119,18 +145,18 @@ export class DialerAnalysisRunner {
       if (!call) {
         await dialerAnalysisJobRepository.markSkipped(jobId, callId, generation, 'CALL_NOT_FOUND', 'call row missing');
         this.countTerminal(tenantId, 'skipped');
-        return;
+        return 'skipped';
       }
       // Already analysed (a duplicate/reprocessed job) or erased — nothing to do.
       if (call.analysis_status === 'completed' || call.analysis_status === 'deleted') {
         await dialerAnalysisJobRepository.markSkipped(jobId, callId, generation, 'ALREADY_ANALYSED', `analysis_status=${call.analysis_status}`);
         this.countTerminal(tenantId, 'skipped');
-        return;
+        return 'skipped';
       }
       if (!call.recording_url) {
         await dialerAnalysisJobRepository.markSkipped(jobId, callId, generation, 'NO_RECORDING', 'call has no recording_url');
         this.countTerminal(tenantId, 'skipped');
-        return;
+        return 'skipped';
       }
 
       // ── 2. analyticsConfig from the SNAPSHOT (never a live profile lookup). ─
@@ -155,6 +181,8 @@ export class DialerAnalysisRunner {
         transcriberModel = call.transcript_meta?.model ?? 'unknown';
         transcriberDurationSeconds = call.transcript_meta?.duration_seconds ?? recordingDurationSeconds ?? 0;
         log.info({ callId, jobId, turns: entries.length }, 'Resuming dialer analysis from persisted transcript');
+        // No recording bytes on this path unless the analysis fetches them (below).
+        if (!this.analysisService.needsAudio) lease.shrinkTo(0);
       } else {
         // ── 4-6. Fetch + transcribe, with bounded in-attempt retries for the
         //   pre-finalization race (a URL served before the carrier finalized the
@@ -166,19 +194,20 @@ export class DialerAnalysisRunner {
           recordingUrl: call.recording_url,
           recordingDurationSeconds: recordingDurationSeconds ?? null,
           languageHint: job.analysis_language ?? snapshot?.language_hint ?? undefined,
-        });
+        }, lease);
 
         // Empty transcript ⇒ a silent / hold-music recording: a legitimate no-op.
         // Skip (do NOT retry) rather than fail.
         if (result.entries.length === 0) {
           await dialerAnalysisJobRepository.markSkipped(jobId, callId, generation, 'TRANSCRIPTION_EMPTY', 'transcript was empty (silent/hold-music recording)');
           this.countTerminal(tenantId, 'skipped');
-          return;
+          return 'skipped';
         }
 
         entries = result.entries;
         // Held only when the analysis needs the recording; otherwise released here.
         if (this.analysisService.needsAudio) analysisAudio = audio;
+        else lease.shrinkTo(0);
         transcriberProvider = this.transcriber.provider;
         transcriberModel = result.model;
         transcriberDurationSeconds = result.durationSeconds;
@@ -203,7 +232,7 @@ export class DialerAnalysisRunner {
         if (!persisted) {
           // Fence rejected — a recovered run owns this job now. Abandon quietly.
           log.warn({ callId, jobId, generation }, 'Transcript persist fenced out (stale claim generation); abandoning run');
-          return;
+          return 'abandoned';
         }
 
         // Cost-proxy metric — audio actually transcribed.
@@ -224,7 +253,7 @@ export class DialerAnalysisRunner {
       const marked = await dialerAnalysisJobRepository.markAnalyzing(jobId, generation);
       if (!marked) {
         log.warn({ callId, jobId, generation }, 'markAnalyzing fenced out (stale claim generation); abandoning run');
-        return;
+        return 'abandoned';
       }
       await this.assertClaimActive(jobId, generation);
 
@@ -238,6 +267,7 @@ export class DialerAnalysisRunner {
           timeoutMs: this.cfg.transcribeTimeoutMs,
           allowedHosts: this.recordingHosts,
         });
+        lease.shrinkTo(fetched.bytes.length * RECORDING_COPIES);
         analysisAudio = { bytes: fetched.bytes, mimeType: fetched.mimeType };
         await this.assertClaimActive(jobId, generation);
       }
@@ -264,7 +294,7 @@ export class DialerAnalysisRunner {
       });
       if (!completed) {
         log.warn({ callId, jobId, generation }, 'completeWithAnalysis fenced out (stale claim generation); abandoning run');
-        return;
+        return 'abandoned';
       }
 
       // ── 11. Metrics · PostHog · audit. ───────────────────────────────────────
@@ -295,16 +325,19 @@ export class DialerAnalysisRunner {
       });
 
       log.info({ callId, jobId, audioSeconds: analysisAudioSeconds, turns: entries.length }, 'Dialer analysis completed');
+      return 'completed';
     } catch (err) {
       if (err instanceof StaleAnalysisClaimError) {
         // Recovery or graceful shutdown already transferred ownership. Do not
         // requeue/fail/count this stale run; its successor owns the lifecycle.
         log.warn({ callId, jobId, generation }, 'Dialer analysis claim fenced out; abandoning stale run');
-        return;
+        return 'abandoned';
       }
-      await this.handleError(job, err).catch((handlerErr) => {
+      return await this.handleError(job, err, ctx.onRateLimited).catch((handlerErr): DialerAnalysisOutcome => {
         // Even the failure-handling must not throw out of run().
         log.error({ err: handlerErr, callId, jobId }, 'Dialer analysis error-handler failed');
+        // Whatever state the row is in, the stale-claim sweep recovers it.
+        return 'retry';
       });
     }
   }
@@ -334,7 +367,7 @@ export class DialerAnalysisRunner {
     recordingUrl: string;
     recordingDurationSeconds: number | null;
     languageHint: string | undefined;
-  }): Promise<{ result: TranscriptionResult; audio: AnalysisAudio }> {
+  }, lease: RecordingLease): Promise<{ result: TranscriptionResult; audio: AnalysisAudio }> {
     const {
       callId, jobId, generation, recordingUrl,
       recordingDurationSeconds, languageHint,
@@ -355,6 +388,9 @@ export class DialerAnalysisRunner {
           recordingTruncated: lastTruncation != null,
         }, 'Re-fetching dialer recording (previous fetch failed or was truncated)');
         await sleep(delayMs);
+        // The last fetch shrank the lease to its size; a re-fetch can be longer (the
+        // last one was likely truncated), so take the worst case again first.
+        await lease.growTo(this.cfg.maxRecordingBytes * RECORDING_COPIES);
         await this.assertClaimActive(jobId, generation);
       }
 
@@ -365,6 +401,8 @@ export class DialerAnalysisRunner {
         allowedHosts: this.recordingHosts,
       });
       this.observeStage('fetch', (Date.now() - fetchStart) / 1000);
+      // Hold what this recording really takes rather than the worst case.
+      lease.shrinkTo(fetched.bytes.length * RECORDING_COPIES);
 
       await this.assertClaimActive(jobId, generation);
 
@@ -435,7 +473,11 @@ export class DialerAnalysisRunner {
    *   - retryable + attempts left → requeue with exponential backoff.
    *   - retryable + exhausted  → fail.
    */
-  private async handleError(job: DialerAnalysisJobRecord, err: unknown): Promise<void> {
+  private async handleError(
+    job: DialerAnalysisJobRecord,
+    err: unknown,
+    onRateLimited?: () => number,
+  ): Promise<DialerAnalysisOutcome> {
     const { id: jobId, call_id: callId, tenant_id: tenantId, claim_generation: generation, attempts } = job;
     const isTx = err instanceof TranscriptionError;
     const code = isTx ? (err as TranscriptionError).code : 'ANALYSIS_FAILED';
@@ -444,11 +486,16 @@ export class DialerAnalysisRunner {
     const isAi = err instanceof AiError;
 
     // Rate limit: retry with a longer jittered backoff and DON'T burn an attempt.
+    // `attempts` is restored on every rate-limited requeue, so this job's own backoff
+    // does not grow; the worker's shared breaker does, and the job waits at least as
+    // long as the breaker's pause so another process does not pick it straight back up.
     if ((isTx && (err as TranscriptionError).code === 'RATE_LIMITED') || (isAi && err.kind === 'rate_limited')) {
-      const backoff = jitter(Math.min(RATE_LIMIT_BACKOFF_BASE_SECONDS * Math.pow(2, attempts), RETRY_BACKOFF_CAP_SECONDS));
+      const own = jitter(Math.min(RATE_LIMIT_BACKOFF_BASE_SECONDS * Math.pow(2, attempts), RETRY_BACKOFF_CAP_SECONDS));
+      const pause = onRateLimited?.() ?? 0;
+      const backoff = Math.max(own, pause);
       await dialerAnalysisJobRepository.requeueRateLimited(jobId, generation, backoff);
-      log.warn({ callId, jobId, backoff }, 'Dialer analysis rate-limited; requeued without consuming an attempt');
-      return;
+      log.warn({ callId, jobId, backoff, breakerPauseSeconds: pause }, 'Dialer analysis rate-limited; requeued without consuming an attempt');
+      return 'rate_limited';
     }
 
     const retryable = isTx
@@ -467,12 +514,13 @@ export class DialerAnalysisRunner {
         eventData: { error_code: code, error: message, attempts, retryable, exhausted: attemptsExhausted },
       });
       log.error({ callId, jobId, code, retryable, attempts }, 'Dialer analysis failed (terminal)');
-      return;
+      return 'failed';
     }
 
     const backoff = jitter(Math.min(RETRY_BACKOFF_BASE_SECONDS * Math.pow(2, attempts - 1), RETRY_BACKOFF_CAP_SECONDS));
     await dialerAnalysisJobRepository.requeueForRetry(jobId, generation, backoff, code, message);
     log.warn({ callId, jobId, code, backoff, attempts }, 'Dialer analysis failed; requeued for retry');
+    return 'retry';
   }
 
   private observeStage(stage: 'fetch' | 'transcribe' | 'analyze', seconds: number): void {
