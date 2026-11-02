@@ -463,7 +463,8 @@ describe('src/instrumentation.ts wiring (source audit)', () => {
       const flush = index.indexOf('await shutdownOtelSdk();');
       expect(flush).toBeGreaterThan(index.indexOf('await closePool();'));
       expect(flush).toBeGreaterThan(index.lastIndexOf('await stop()'));
-      expect(flush).toBeLessThan(index.indexOf('process.exit(0);'));
+      // `exitCode`: 0 on a signal, 1 when a media worker crash loop shuts the primary down.
+      expect(flush).toBeLessThan(index.indexOf('process.exit(exitCode);'));
       // In a `finally`, so a rejected step above cannot skip it.
       expect(index.slice(index.lastIndexOf('} finally {', flush) + '} finally {'.length, flush)).not.toMatch(/[{}]/);
       // And a failed boot flushes before exiting.

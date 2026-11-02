@@ -536,6 +536,8 @@ export class AgencyManualCallRepository {
   async reapOrphaned(input: {
     liveIds: readonly string[];
     createdBefore?: Date | null;
+    /** Only these sessions' calls (a dead media worker's slot); absent = every session. */
+    sessionIds?: readonly string[] | null;
   }): Promise<AgencyManualCallRecord[]> {
     const { rows } = await getPool().query<AgencyManualCallRecord>(
       `UPDATE agency_manual_calls
@@ -548,8 +550,9 @@ export class AgencyManualCallRepository {
         WHERE state <> 'ended'
           AND NOT (id = ANY($1::uuid[]))
           AND ($2::timestamptz IS NULL OR created_at < $2::timestamptz)
+          AND ($3::uuid[] IS NULL OR session_id = ANY($3::uuid[]))
       RETURNING *`,
-      [[...input.liveIds], input.createdBefore ?? null],
+      [[...input.liveIds], input.createdBefore ?? null, input.sessionIds ? [...input.sessionIds] : null],
     );
     const accounts = new Map(rows.map((r) => [`${r.tenant_id}:${r.account_id}`, r]));
     for (const r of accounts.values()) {

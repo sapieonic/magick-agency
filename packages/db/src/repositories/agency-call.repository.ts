@@ -317,6 +317,29 @@ export class WebRtcCallRepository {
    * outer row, each re-run skipping the rows already updated, and fail every stuck
    * row at once (`test/integration/repositories/claim-limit.test.ts`).
    */
+  /**
+   * Fail these calls if they are still live: the media worker that held them exited
+   * (`docs/scaling.md` §6.1), so nothing will ever finalise them. Terminal rows are left
+   * alone, so a call that ended meanwhile keeps its own outcome.
+   */
+  async failActiveByIds(ids: readonly string[], reason: 'worker_exited'): Promise<WebRtcCallRecord[]> {
+    if (ids.length === 0) return [];
+    const result = await getPool().query<WebRtcCallRecord>(
+      `UPDATE agency_calls SET
+         status = 'failed',
+         outcome = 'stuck_active_call',
+         error_code = 'STUCK_ACTIVE_CALL',
+         error_message = $2,
+         ended_at = now(),
+         duration_seconds = COALESCE(duration_seconds, EXTRACT(EPOCH FROM (now() - created_at))::int),
+         talk_time_seconds = COALESCE(talk_time_seconds, 0)
+       WHERE id = ANY($1::uuid[]) AND status IN ('initiating','ringing','in_progress')
+       RETURNING *`,
+      [[...ids], `stuck active call: ${reason}`],
+    );
+    return result.rows;
+  }
+
   async failStaleActive(olderThan: Date, excludeIds: string[] = [], limit = 1000): Promise<WebRtcCallRecord[]> {
     const pool = getPool();
     const exclude = excludeIds.length > 0 ? excludeIds : null;

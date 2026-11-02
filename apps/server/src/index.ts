@@ -17,6 +17,8 @@ import { startAnalysis } from './bootstrap/analysis.js';
 import { initAnalytics } from './analytics/posthog.js';
 import { processIdentityFromEnv } from './cluster/roles.js';
 import { runAnalysisChildProcess } from './cluster/analysis-child-main.js';
+import { runMediaChildProcess } from './cluster/media-child-main.js';
+import { prepareMediaPrimary, startMediaWorkers } from './cluster/primary.js';
 
 /**
  * One process, single replica. Start order: storage, PostHog, the app, each area's
@@ -32,7 +34,8 @@ async function main(): Promise<void> {
       await runAnalysisChildProcess({ slot: identity.slot, flushTelemetry: shutdownOtelSdk });
       return;
     }
-    throw new Error(`no ${identity.role} child process in this build`);
+    await runMediaChildProcess({ slot: identity.slot, flushTelemetry: shutdownOtelSdk });
+    return;
   }
 
   const pool = initDbPool({
@@ -52,9 +55,33 @@ async function main(): Promise<void> {
   // not exist yet. No-op unless analytics is enabled.
   initAnalytics();
 
-  const app = await buildApp({ ctx, logger: false });
-
   const stops: Array<() => Promise<void>> = [];
+  // Set below; a media crash loop shuts the process down with exit code 1 (D4).
+  let shutdownWith: ((signal: string, code: number) => Promise<void>) | null = null;
+
+  // MEDIA_WORKERS > 0 (docs/scaling.md): this process is the primary. Its adapters are
+  // installed before `buildApp` builds the agency runtime; null = one process, as always.
+  const media = await prepareMediaPrimary(ctx, {
+    onFatal: (why) => {
+      logger.fatal({ why }, 'media workers cannot be kept running — shutting down');
+      void shutdownWith?.('crash-loop', 1);
+    },
+  });
+
+  const app = await buildApp({
+    ctx,
+    logger: false,
+    ...(media
+      ? {
+        wsTransport: 'handoff' as const,
+        wsHandoffTarget: () => media,
+        readiness: async () => {
+          const health = await media.health();
+          return { ready: health.every((h) => h !== null && !h.draining), detail: health };
+        },
+      }
+      : {}),
+  });
 
   // Signal handlers before any background work starts (in particular before the agency
   // runtime's startup reap): a SIGTERM during a slow startup then runs the stops collected so
@@ -64,7 +91,7 @@ async function main(): Promise<void> {
   // and before the audit buffers are flushed, so no request can buffer an audit row after the
   // platform stop has flushed the loggers; then the background stops run in reverse.
   let shuttingDown = false;
-  const shutdown = async (signal: string) => {
+  const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info({ signal }, 'shutting down');
@@ -85,9 +112,10 @@ async function main(): Promise<void> {
       // carries what the stops above recorded. No-op with OTel off. In a `finally`, so a rejected
       // `closePool()` cannot skip the flush and leave the process alive with the shutdown latched.
       await shutdownOtelSdk();
-      process.exit(0);
+      process.exit(exitCode);
     }
   };
+  shutdownWith = shutdown;
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
@@ -97,6 +125,10 @@ async function main(): Promise<void> {
   // bridge drains, so no pacing tick can dial while calls are being torn down.
   stops.push(await startVoice(ctx));
   stops.push(await startAgency(ctx));
+  // After the startup reap (no worker existed, so "every non-terminal row is dead" held),
+  // the media workers. Their stop runs before agency's: pacing halts, then the workers
+  // drain beside the completion-notice drain (docs/scaling.md §6.4).
+  if (media) stops.push(await startMediaWorkers(media));
   stops.push(await startAnalysis(ctx));
 
   // Listen only after the bootstraps (the startup reaper and the agency runtime's

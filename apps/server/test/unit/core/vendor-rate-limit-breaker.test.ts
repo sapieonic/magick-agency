@@ -132,6 +132,18 @@ describe('VendorRateLimitBreaker', () => {
       b.recordRateLimit(startedBefore);
       expect(b.reopensInMs()).toBe(left);
     });
+  
+    it('a job here that slipped into a remote pause and completes does not close it before its end', () => {
+      const { b, advance, now } = breaker();
+      b.applyRemotePause(now() + 30_000, 1);
+      b.recordSuccess(now()); // a claim already on its way
+      expect(b.state).toBe('open');
+      advance(30_000);
+      expect(b.state).toBe('half_open');
+      b.onStarted(1);
+      b.recordSuccess(now()); // the probe after the pause closes it
+      expect(b.state).toBe('closed');
+    });
   });
 });
 

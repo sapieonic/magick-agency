@@ -162,6 +162,21 @@ export const baseConfigSchema = z.object({
    * `OTEL_LOGS_EXPORTER`, …). `serviceName` / `serviceInstanceIdEnabled` are what the code sets;
    * NodeSDK still merges `OTEL_RESOURCE_ATTRIBUTES` over them.
    */
+  /**
+   * How many processes the server runs on its host (`docs/scaling.md` §8, D8). With
+   * `mediaWorkers` 0 (the default) it is one process, exactly as before. With N > 0 the
+   * process the operator starts is the primary: it accepts every request and upgrade and
+   * hands each station and carrier socket to one of N forked media workers, which hold
+   * the agents' runtime state and relay the audio.
+   */
+  processes: z.object({
+    /** `MEDIA_WORKERS`: 0-64. On 2 vCPUs more than 1 buys little (`docs/scaling.md` §8.1). */
+    mediaWorkers: z.coerce.number().int().min(0).max(64).default(0),
+    /** `MEDIA_WORKER_HEAP_MB`: each media worker's `--max-old-space-size`. */
+    mediaWorkerHeapMb: z.coerce.number().int().min(128).max(65_536).default(768),
+    /** `WORKER_CRASH_LOOP_MAX`: more exits of one media slot in 5 minutes makes the primary exit (D4). */
+    crashLoopMax: z.coerce.number().int().min(1).max(100).default(5),
+  }).default({}),
   otel: z.object({
     /** Only the exact string `true`. */
     enabled: z.string().optional().transform((v) => v === 'true'),
@@ -206,6 +221,11 @@ export function readBaseEnv(env: Env) {
       commandTimeoutMs: env['REDIS_COMMAND_TIMEOUT_MS'],
       maxRetriesPerRequest: env['REDIS_MAX_RETRIES_PER_REQUEST'],
       connectTimeoutMs: env['REDIS_CONNECT_TIMEOUT_MS'],
+    },
+    processes: {
+      mediaWorkers: env['MEDIA_WORKERS'],
+      mediaWorkerHeapMb: env['MEDIA_WORKER_HEAP_MB'],
+      crashLoopMax: env['WORKER_CRASH_LOOP_MAX'],
     },
     otel: {
       enabled: env['OTEL_ENABLED'],

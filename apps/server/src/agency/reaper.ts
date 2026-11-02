@@ -113,6 +113,22 @@ export interface AgencyReaperDeps {
     activeIds: () => string[];
     onClosed: (rows: readonly AgencyManualCallRecord[]) => Promise<void>;
   };
+  /**
+   * Run before each periodic pass; false skips the pass. With media workers the primary
+   * refreshes the workers' liveness here (`reaper.snapshot`), and a worker that does not
+   * answer skips the pass: its live calls must not look orphaned (`docs/scaling.md` §5.5).
+   * Absent (one process): every pass runs.
+   */
+  beforeSweep?: () => Promise<boolean>;
+  /** Clear an agent's Redis lease, so they rehydrate into `break` ({@link AgencyReaper.reapSessions}). */
+  clearAgent?: (sessionId: string) => Promise<void>;
+}
+
+/** What {@link AgencyReaper.reapSessions} closed. */
+export interface SessionReapReport {
+  attempts: number;
+  manualCalls: number;
+  sessions: number;
 }
 
 /**
@@ -173,10 +189,43 @@ export class AgencyReaper {
     return { attempts: attempts.length, agents };
   }
 
+  /**
+   * A media worker exited (`docs/scaling.md` §6.1, §5.7): close everything its sessions
+   * owned. The startup rule narrowed to one slot: its process is dead, so every
+   * non-terminal attempt reserved to one of `isDead`'s sessions, and every live soft-phone
+   * call of one, is dead by definition, whatever its age. Agents are written `offline`
+   * and their leases cleared, so a reconnect rehydrates them into `break`, as after a
+   * restart. The caller re-forks the slot only after this resolves, so nothing new can be
+   * owned by it meanwhile. Every write is state-guarded, so a racing path cannot
+   * double-settle.
+   */
+  async reapSessions(isDead: (sessionId: string) => boolean): Promise<SessionReapReport> {
+    const live = await agencyAttemptRepository.findNonTerminalOlderThan(new Date(Date.now() + 60_000));
+    const ids = live.filter((a) => a.reserved_agent_id && isDead(a.reserved_agent_id)).map((a) => a.id);
+    const reaped = ids.length > 0 ? await agencyAttemptRepository.reapByIds(ids) : [];
+    for (const attempt of reaped) {
+      await this.requeueOrphanedContact(attempt.contact_id, 'startup', {
+        tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
+      });
+    }
+    const sessionIds = (await agencyAgentSessionRepository.findLiveIds()).filter(isDead);
+    let manual: AgencyManualCallRecord[] = [];
+    if (sessionIds.length > 0) {
+      manual = await agencyManualCallRepository.reapOrphaned({ liveIds: [], sessionIds });
+      await this.closeManualRows(manual, 'orphaned');
+    }
+    for (const sessionId of sessionIds) {
+      await this.deps.clearAgent?.(sessionId).catch((err) => log.warn({ err, sessionId }, 'Could not clear a dead worker\'s agent lease'));
+      await agencyAgentSessionRepository.setState(sessionId, 'offline')
+        .catch((err) => log.warn({ err, sessionId }, 'Could not write a dead worker\'s agent offline'));
+    }
+    return { attempts: reaped.length, manualCalls: manual.length, sessions: sessionIds.length };
+  }
+
   /** Periodic sweeps: leaked attempts, lapsed wrap-ups and stranded contacts. */
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => {
+    const pass = (): void => {
       // Independently caught. One sweep throwing must not skip the other — they
       // repair unrelated damage, and a failing leak sweep silently disabling the
       // auto-disposition sweep is how the 5pm-laptop case comes back.
@@ -187,6 +236,20 @@ export class AgencyReaper {
         log.error({ err }, 'Agency stranded-contact sweep failed'));
       void this.sweepManualCalls().catch((err) =>
         log.error({ err }, 'Agency soft-phone sweep failed'));
+    };
+    this.timer = setInterval(() => {
+      const before = this.deps.beforeSweep;
+      if (!before) {
+        pass();
+        return;
+      }
+      void before().then(
+        (ok) => {
+          if (ok) pass();
+          else log.warn('Agency reaper pass skipped: not every media worker reported what it is driving');
+        },
+        (err: unknown) => log.error({ err }, 'Agency reaper pre-sweep failed — pass skipped'),
+      );
     }, SWEEP_INTERVAL_MS);
     this.timer.unref?.();
   }

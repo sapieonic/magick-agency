@@ -11,7 +11,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { createChildLogger } from '@magick-agency/observability';
 import { IpcChannel, childProcessTransport } from './ipc-channel.js';
-import type { HealthBody, IpcEventMap, IpcEventType } from './ipc-protocol.js';
+import type { HealthBody, IpcEventMap, IpcEventType, WsHandoff } from './ipc-protocol.js';
 import type { ChildRole } from './roles.js';
 
 const log = createChildLogger({ component: 'child-supervisor' });
@@ -112,6 +112,13 @@ export class ChildSupervisor {
       if (s.channel.emit(type, body)) sent++;
     }
     return sent;
+  }
+
+  /** Hand an upgraded socket to a READY slot. False when it could not be sent. */
+  sendHandoff(slot: number, msg: WsHandoff, socket: unknown): boolean {
+    const s = this.slots[slot];
+    if (!s || !s.ready || !s.channel) return false;
+    return s.channel.sendHandoff(msg, socket);
   }
 
   /** Every slot's health, null for a slot that is not ready or did not answer in time. */

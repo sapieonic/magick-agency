@@ -205,7 +205,27 @@ export class TelephonyGuardHost {
    * and on every call end. No-op while shutting down. The timer is unref'd
    * (never holds the process open) and goes dormant on its own when idle.
    */
+  /**
+   * A media worker (`docs/scaling.md` §5.5): the self-heal (counters vs locks, stale rows)
+   * is the primary's alone, so a wake here is sent there instead of arming a poll.
+   */
+  private selfHealDelegate: (() => void) | null = null;
+
+  delegateSelfHeal(wake: (() => void) | null): void {
+    this.selfHealDelegate = wake;
+  }
+
+  /** D6: with N media workers each admits `ceil(limit / N)` while Redis is down. */
+  setDegradedShare(processes: number): void {
+    this.concurrencyGuard.setDegradedShare(processes);
+    this.accountConcurrencyGuard.setDegradedShare(processes);
+  }
+
   wakeSelfHeal(): void {
+    if (this.selfHealDelegate) {
+      this.selfHealDelegate();
+      return;
+    }
     this.selfHealEmptySweeps = 0;
     if (this.selfHealTimer || this.shuttingDown) return;
     this.armSelfHealTimer();

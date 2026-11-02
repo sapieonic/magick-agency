@@ -11,6 +11,25 @@ import type { WebRtcBridgeManager } from '../../core/webrtc-bridge-manager.js';
 
 const log = createChildLogger({ component: 'webhooks-routes' });
 
+/**
+ * With media workers (`docs/scaling.md` §3.2): run a status post in the worker its URL's
+ * `w` names, where the call (and the Q6 memo of its token) lives. Returns null to handle
+ * it here instead (no hint, or the worker is gone: the late-terminal path). Unset in one
+ * process.
+ */
+export type VoicelinkWebhookForwarder = (input: {
+  callId: string;
+  token: string | undefined;
+  hint: string | undefined;
+  body: unknown;
+}) => Promise<VoicelinkWebhookAnswer | null>;
+
+let webhookForwarder: VoicelinkWebhookForwarder | null = null;
+
+export function setVoicelinkWebhookForwarder(forwarder: VoicelinkWebhookForwarder | null): void {
+  webhookForwarder = forwarder;
+}
+
 export async function webhooksRoutes(
   app: FastifyInstance,
   opts: { webrtcBridge?: WebRtcBridgeManager | null },
@@ -43,12 +62,15 @@ export async function webhooksRoutes(
   // optional post-call analysis.
   // POST /api/v1/webhooks/voicelink/webrtc-status/:callId?token=<webhook token>
   app.post('/voicelink/webrtc-status/:callId', async (
-    request: FastifyRequest<{ Params: { callId: string }; Querystring: { token?: string } }>,
+    request: FastifyRequest<{ Params: { callId: string }; Querystring: { token?: string; w?: string } }>,
     reply: FastifyReply,
   ) => {
     const { callId } = request.params;
     if (!webrtcBridge) return reply.send({ status: true });
-    const answer = await handleVoicelinkStatusWebhook(webrtcBridge, callId, request.query?.token, request.body);
+    const forwarded = webhookForwarder
+      ? await webhookForwarder({ callId, token: request.query?.token, hint: request.query?.w, body: request.body })
+      : null;
+    const answer = forwarded ?? await handleVoicelinkStatusWebhook(webrtcBridge, callId, request.query?.token, request.body);
     return reply.code(answer.statusCode).send(answer.body);
   });
 }

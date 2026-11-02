@@ -70,7 +70,7 @@ describe('body decoders', () => {
   it('shutdown and health', () => {
     expect(parseShutdownBody({ graceMs: 30_000 })).toEqual({ graceMs: 30_000 });
     expect(parseShutdownBody({ graceMs: 0 })).toBeNull();
-    const health = { role: 'media', slot: 1, pid: 9, elu: 0.4, inFlight: 12, pausedForMs: 0, draining: false };
+    const health = { role: 'media', slot: 1, pid: 9, elu: 0.4, inFlight: 12, pausedForMs: 0, loopDelayP99Ms: 0, draining: false };
     expect(parseHealthBody(health)).toEqual(health);
     expect(parseHealthBody({ ...health, elu: 1.5 })).toBeNull();
     expect(parseHealthBody({ ...health, elu: Number.NaN })).toBeNull();
@@ -98,6 +98,14 @@ describe('body decoders', () => {
       'analysis.wake': {},
       'analysis.rate_paused': { untilMs: 5, consecutive: 1 },
       'pacing.invalidate': { type: 'account_capacity_freed', tenantId: 't', accountId: 'a' },
+      'pacing.revoke': { campaignId: null, upTo: 7 },
+      'station.attached': { sessionId: 's', campaignId: null, replicaId: 'h:mw0:1' },
+      'station.detached': { sessionId: 's' },
+      'station.snapshot': { replicaId: 'h:mw0:1', sessions: [{ sessionId: 's', campaignId: 'c' }] },
+      'station.broadcast': { campaignId: 'c', frame: { event: 'campaign_state', campaign_id: 'c' } },
+      'concurrency.invalidate': { tenantId: 't', accountId: 'a' },
+      'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
+      'voice.wake_self_heal': {},
     };
     for (const [type, decode] of Object.entries(IPC_EVENT_DECODERS)) {
       const sample = samples[type];

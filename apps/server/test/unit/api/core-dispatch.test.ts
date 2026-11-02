@@ -172,6 +172,9 @@ describe('callCore — static resolution against the private internal handler in
       'api/routes/proxy-agency-softphone/settings.ts',
       'api/routes/proxy-agency-softphone/shared.ts', // the `CoreCallResult` type only; calls nothing
       'api/routes/proxy-agency-staffing/my.ts', // the batched campaign-label read
+      'cluster/media-child.ts', // a media worker runs a forwarded internal request (`injectLocal`); calls nothing
+      'cluster/media-cluster.ts', // the primary's injector (the `CoreInjector` type); calls nothing
+      'cluster/primary.ts', // installs the injector (`setCoreInjector`); calls nothing
     ]);
     expect(sites.length).toBeGreaterThanOrEqual(30);
     expect(coreRoutes.length).toBeGreaterThanOrEqual(20);

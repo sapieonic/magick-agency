@@ -29,7 +29,9 @@ export async function webrtcCallRoutes(
   // PSTN leg — the provider connects here. VoiceLink connects to the URL we baked
   // into its add_lead request, which carries a purpose-bound `token` — verify it
   // so a leaked call id alone can't hijack the provider socket.
-  app.get('/:id/pstn-stream', { websocket: true }, (socket: WebSocket, request: FastifyRequest<{
+  // With media workers, the primary hands this upgrade to the slot its URL's `w` names
+  // (`core/bridge/carrier-urls.ts`, `docs/scaling.md` §2.5); in one process it is unused.
+  app.get('/:id/pstn-stream', { websocket: true, config: { wsOwner: { by: 'carrier_hint', param: 'id' } } }, (socket: WebSocket, request: FastifyRequest<{
     Params: { id: string };
     Querystring: { token?: string };
   }>) => {

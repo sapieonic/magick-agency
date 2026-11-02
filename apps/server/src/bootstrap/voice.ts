@@ -39,10 +39,11 @@ let engine: VoiceEngine | null = null;
 /** How often revoked credentials are shredded and expired secret versions dropped. */
 const CREDENTIAL_SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
-export function ensureVoiceEngine(redis: Redis | null): VoiceEngine {
+export function ensureVoiceEngine(redis: Redis | null, opts: { carrierRouteHint?: string } = {}): VoiceEngine {
   if (engine) return engine;
   const guardHost = new TelephonyGuardHost(redis);
-  const bridge = new WebRtcBridgeManager(guardHost, redis);
+  // A media worker's slot rides in the carrier's URLs (`core/bridge/carrier-urls.ts`).
+  const bridge = new WebRtcBridgeManager(guardHost, redis, opts.carrierRouteHint ? { carrierRouteHint: opts.carrierRouteHint } : {});
   // The stale sweep must never fail a call this replica is bridging.
   guardHost.registerWebrtcActiveIdsProvider(() => bridge.getActiveCallIds());
   // The super-admin concurrency writes reach the guards through this seam.
