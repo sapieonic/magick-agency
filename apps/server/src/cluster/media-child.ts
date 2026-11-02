@@ -103,6 +103,9 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
     runtime.stations.broadcast(campaignId, frame);
   });
 
+  // ── Telephony slots: every take and give-back, as it happens ──────────────
+  bridge.observeLeases((change) => { channel.emit('call.lease', change); });
+
   // ── Dials ────────────────────────────────────────────────────────────────
   channel.onEvent('pacing.revoke', ({ campaignId, upTo }) => grants.revoke(campaignId, upTo));
   channel.handle('dial.execute', async ({ cmd, grant }) => {

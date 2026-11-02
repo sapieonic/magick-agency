@@ -8,7 +8,7 @@ repo; see [Routing](#routing-managed-outside-this-repo).
 | Path | What it is |
 |---|---|
 | [`terraform/`](terraform/) | The root module: the folder **Magick Agency Alerts** (uid `magick-agency-alerts`), the alert rules, the dashboard |
-| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 13 `agy-*` rules, as data |
+| [`terraform/alert-rules.tf`](terraform/alert-rules.tf) | The 14 `agy-*` rules, as data (`agy-cluster-child-crash`, the newest, watches the media and analysis worker processes, `docs/scaling.md`) |
 | [`terraform/alerting.tf`](terraform/alerting.tf) | The folder, `local.agency` (the selector), the routing labels, and the one `grafana_rule_group` resource |
 | [`terraform/dashboard.tf`](terraform/dashboard.tf) | The dashboard resource (app-platform `grafana_apps_dashboard_dashboard_v1beta1`) |
 | [`dashboards/magick-agency-overview.json`](dashboards/magick-agency-overview.json) | The dashboard (uid `magick-agency-overview`, classic model) |

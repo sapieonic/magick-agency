@@ -15,7 +15,9 @@
  *    is counted; the message is still queued by Node, never dropped here.
  */
 import type { ChildProcess } from 'node:child_process';
+import { performance } from 'node:perf_hooks';
 import { createChildLogger } from '@magick-agency/observability';
+import { trackIpcDropped, trackIpcRequest } from '@magick-agency/observability/metrics/voice';
 import {
   IPC_DEFAULT_DEADLINES_MS,
   IPC_EVENT_DECODERS,
@@ -239,7 +241,8 @@ export class IpcChannel {
     }
     const deadlineMs = opts.deadlineMs ?? IPC_DEFAULT_DEADLINES_MS[type];
     const id = this.nextId++;
-    return new Promise<IpcRequestMap[K]['res']>((resolve, reject) => {
+    const sentAt = performance.now();
+    const settled = new Promise<IpcRequestMap[K]['res']>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new IpcRequestError('timeout', type, `no answer within ${deadlineMs} ms`));
@@ -248,6 +251,14 @@ export class IpcChannel {
       this.pending.set(id, { type, resolve: resolve as (b: unknown) => void, reject, timer });
       this.write({ v: IPC_PROTOCOL_VERSION, kind: 'req', id, type, body, deadlineMs });
     });
+    settled.then(
+      () => trackIpcRequest(type, 'ok', (performance.now() - sentAt) / 1000),
+      (err: unknown) => {
+        const code = err instanceof IpcRequestError ? err.code : 'handler_error';
+        trackIpcRequest(type, code === 'timeout' || code === 'gone' || code === 'refused' ? code : 'error');
+      },
+    );
+    return settled;
   }
 
   /** Handle every event of `type`. Returns the unsubscribe. */
@@ -289,7 +300,10 @@ export class IpcChannel {
 
   private write(envelope: unknown): void {
     this.counters.sent++;
-    if (!this.transport.send(envelope)) this.counters.backlogged++;
+    if (!this.transport.send(envelope)) {
+      this.counters.backlogged++;
+      trackIpcDropped('backlogged');
+    }
   }
 
   private receive(raw: unknown, handle?: unknown): void {
@@ -382,6 +396,7 @@ export class IpcChannel {
     const p = this.pending.get(env.id);
     if (!p) {
       this.counters.late++;
+      trackIpcDropped('late');
       return;
     }
     this.pending.delete(env.id);
@@ -401,6 +416,7 @@ export class IpcChannel {
 
   private noteMalformed(what: string, raw: unknown, why = 'did not decode'): void {
     if (why === 'did not decode') this.counters.malformed++;
+    trackIpcDropped(why === 'did not decode' ? 'malformed' : 'unsupported');
     const now = Date.now();
     const last = this.lastMalformedLogAt.get(what) ?? 0;
     if (now - last < MALFORMED_LOG_WINDOW_MS) return;

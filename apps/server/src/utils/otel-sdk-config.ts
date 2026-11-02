@@ -117,6 +117,20 @@ export function resolveMetricsExportTimeoutMs(intervalMs: number): number {
  * trade-off accepted: two processes sharing a hostname (host networking,
  * `hostname:` pinned identically) would collapse again — pin distinct ids there.
  */
+/**
+ * This process's place in a multi-process server, for its instance id: the child's role
+ * and slot (`media0`), `primary` for the process that forks them, or null for a server
+ * that runs as one process (no workers configured). Read from the environment because
+ * the SDK starts before the config module.
+ */
+export function processInstanceSuffix(env: Env): string | null {
+  const role = env['MA_PROCESS_ROLE'];
+  if (role) return `${role}${env['MA_WORKER_SLOT'] ?? ''}`;
+  const positive = (v: string | undefined): boolean => /^\d+$/.test(v ?? '') && Number(v) > 0;
+  const analysisChildren = env['DIALER_ANALYSIS_ENABLED'] === 'true' && positive(env['ANALYSIS_WORKERS']);
+  return positive(env['MEDIA_WORKERS']) || analysisChildren ? 'primary' : null;
+}
+
 export function buildResourceAttributes(
   env: Env,
   opts: { version: string; hostname: () => string },
@@ -127,9 +141,15 @@ export function buildResourceAttributes(
     [ATTR_SERVICE_VERSION]: opts.version,
     [SEMRESATTRS_DEPLOYMENT_ENVIRONMENT]: env['OTEL_ENVIRONMENT'] || env['NODE_ENV'] || 'development',
   };
-  if (env['OTEL_SERVICE_INSTANCE_ID_ENABLED'] === 'true') {
+  // D7 (docs/scaling.md §7): with worker processes every process exports the same series
+  // names, so each must have its own instance or counters from several processes
+  // interleave into one series. Forced on then, the base id suffixed with the process:
+  // `:primary`, `:media0`, `:analysis1`. Stable across a child's restarts (its slot, not its
+  // pid), so a crash loop does not churn series.
+  const suffix = processInstanceSuffix(env);
+  if (env['OTEL_SERVICE_INSTANCE_ID_ENABLED'] === 'true' || suffix) {
     const id = env['OTEL_SERVICE_INSTANCE_ID']?.trim() || opts.hostname().trim();
-    if (id) attrs[ATTR_SERVICE_INSTANCE_ID] = id;
+    if (id) attrs[ATTR_SERVICE_INSTANCE_ID] = suffix ? `${id}:${suffix}` : id;
   }
   return attrs;
 }

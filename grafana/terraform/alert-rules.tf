@@ -69,6 +69,22 @@ locals {
       },
     ]
 
+    "processes" = [
+      {
+        uid  = "agy-cluster-child-crash"
+        name = "A media or analysis worker process crashed"
+        # Unexpected exits only (`expected="false"`): a stop the primary ordered is not a crash.
+        expr          = "sum by (service_name, role) (increase(cluster_child_exits_total{expected=\"false\",${local.agency}}[10m]))"
+        op            = "gt"
+        threshold     = 0
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "A server child process exited unexpectedly"
+        description   = "cluster_child_exits_total{expected=\"false\"} rose on {{ $labels.service_name }} (role={{ $labels.role }}). A media worker crash ends the live calls of the agents it held (about 1/MEDIA_WORKERS of the floor): the primary reaps its slot (attempts ended `orphaned`, contacts requeued, agents written offline) and re-forks it, and the agents reconnect in `break`. An analysis crash leaves its jobs to the stale recovery. More than WORKER_CRASH_LOOP_MAX media exits of one slot in 5 minutes makes the primary exit and the container restart. Read the logs around the exit (component=child-supervisor) for the code or signal; an OOM kill shows as SIGKILL: check MEDIA_WORKER_HEAP_MB against the host's RAM. Design: docs/scaling.md §6."
+      },
+    ]
+
     "concurrency" = [
       {
         uid  = "agy-telephony-lease-release-failure"

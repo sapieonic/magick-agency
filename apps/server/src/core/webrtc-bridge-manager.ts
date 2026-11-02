@@ -8,6 +8,11 @@
 // getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
 // `test/unit/core/webrtc-bridge-seam-contract.test.ts`.
 import { buildCarrierUrls } from './bridge/carrier-urls.js';
+
+/** A change in the telephony slots this process holds (`WebRtcBridgeManager.observeLeases`). */
+export type LeaseChange =
+  | { op: 'held'; lease: { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string } }
+  | { op: 'released'; concurrencyKey: string };
 import crypto from 'node:crypto';
 import { releaseTelephonyLease } from './telephony-release.js';
 import type Redis from 'ioredis';
@@ -203,6 +208,25 @@ export class WebRtcBridgeManager {
 
   /** The per-call credentials — `bridge/ws-tokens.ts`. */
   private readonly tokens: BridgeWsTokens;
+
+  /**
+   * Told the moment this process takes or gives back a call's telephony slots
+   * (`docs/scaling.md` §6.1): a media worker forwards each change to the primary, so a
+   * worker that dies has its slots released exactly, including a call admitted a moment
+   * before. `held` is told right after admission, before the call has a row, so its
+   * `callId` is the concurrency key until then (log correlation only); `released` after
+   * the release went out. One observer; null clears it.
+   */
+  private leaseObserver: ((change: LeaseChange) => void) | null = null;
+
+  observeLeases(observer: ((change: LeaseChange) => void) | null): void {
+    this.leaseObserver = observer;
+  }
+
+  private noteLease(change: LeaseChange): void {
+    if (!this.leaseObserver) return;
+    try { this.leaseObserver(change); } catch { /* an observer never fails a call */ }
+  }
 
   /**
    * The telephony slots each live call holds: what the primary must release if this
@@ -489,6 +513,7 @@ export class WebRtcBridgeManager {
     await admitBridgeCall(this.guardHost, {
       concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, slotTtlSeconds,
     });
+    this.noteLease({ op: 'held', lease: { callId: concurrencyKey, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider } });
 
     // 2. Persist the call (status initiating). Every call dials on the service's own
     // VoiceLink account. The INSERT stays inside the same try so a failure still
@@ -1942,6 +1967,7 @@ export class WebRtcBridgeManager {
       concurrencyKey: key, tenantId, accountId, provider, source: 'webrtc',
       ...(callId ? { callId } : {}),
     });
+    this.noteLease({ op: 'released', concurrencyKey: key });
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────

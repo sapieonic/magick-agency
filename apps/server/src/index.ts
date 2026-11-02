@@ -19,6 +19,7 @@ import { processIdentityFromEnv } from './cluster/roles.js';
 import { runAnalysisChildProcess } from './cluster/analysis-child-main.js';
 import { runMediaChildProcess } from './cluster/media-child-main.js';
 import { prepareMediaPrimary, startMediaWorkers } from './cluster/primary.js';
+import { createLoopSampler } from './cluster/loop-sampler.js';
 
 /**
  * One process, single replica. Start order: storage, PostHog, the app, each area's
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
 
   // MEDIA_WORKERS > 0 (docs/scaling.md): this process is the primary. Its adapters are
   // installed before `buildApp` builds the agency runtime; null = one process, as always.
+  const primaryLoop = createLoopSampler();
   const media = await prepareMediaPrimary(ctx, {
     onFatal: (why) => {
       logger.fatal({ why }, 'media workers cannot be kept running — shutting down');
@@ -71,16 +73,16 @@ async function main(): Promise<void> {
   const app = await buildApp({
     ctx,
     logger: false,
-    ...(media
-      ? {
-        wsTransport: 'handoff' as const,
-        wsHandoffTarget: () => media,
-        readiness: async () => {
-          const health = await media.health();
-          return { ready: health.every((h) => h !== null && !h.draining), detail: health };
-        },
-      }
-      : {}),
+    ...(media ? { wsTransport: 'handoff' as const, wsHandoffTarget: () => media } : {}),
+    // `/readyz?detail=1`: this process's own loop first (the number the media split exists
+    // to keep low), then each media worker's. One process: ready as before (Postgres and
+    // Redis), and the detail is its own loop alone.
+    readiness: async () => {
+      const self = { role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop(), inFlight: 0, draining: shuttingDown };
+      if (!media) return { ready: true, detail: [self] };
+      const health = await media.health();
+      return { ready: health.every((h) => h !== null && !h.draining), detail: [self, ...health] };
+    },
   });
 
   // Signal handlers before any background work starts (in particular before the agency

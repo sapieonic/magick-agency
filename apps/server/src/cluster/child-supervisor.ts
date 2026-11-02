@@ -10,6 +10,7 @@
  */
 import type { ChildProcess } from 'node:child_process';
 import { createChildLogger } from '@magick-agency/observability';
+import { trackChildExit } from '@magick-agency/observability/metrics/voice';
 import { IpcChannel, childProcessTransport } from './ipc-channel.js';
 import type { HealthBody, IpcEventMap, IpcEventType, WsHandoff } from './ipc-protocol.js';
 import type { ChildRole } from './roles.js';
@@ -208,6 +209,7 @@ export class ChildSupervisor {
   }
 
   private async onChildExit(s: Slot, exit: ChildExit): Promise<void> {
+    trackChildExit(this.opts.role, exit.expected);
     if (exit.expected) {
       log.info({ ...exit, role: this.opts.role }, 'Child process exited');
       return;

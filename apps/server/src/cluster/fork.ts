@@ -7,6 +7,8 @@
  * would also claim that heap.
  */
 import { fork, type ChildProcess } from 'node:child_process';
+import { createInterface } from 'node:readline';
+import type { Readable, Writable } from 'node:stream';
 import { PROCESS_ROLE_ENV, WORKER_SLOT_ENV, type ChildRole } from './roles.js';
 
 /** `execArgv` with any heap limit replaced by `heapMb` (or left alone when it is undefined). */
@@ -36,13 +38,27 @@ export interface ForkServerChildOptions {
 export function forkServerChild(opts: ForkServerChildOptions): ChildProcess {
   const entry = opts.entry ?? process.argv[1];
   if (!entry) throw new Error('cannot fork a child: this process has no entry script (process.argv[1])');
-  return fork(entry, [], {
+  const child = fork(entry, [], {
     env: { ...(opts.env ?? process.env), [PROCESS_ROLE_ENV]: opts.role, [WORKER_SLOT_ENV]: String(opts.slot) },
     execArgv: execArgvWithHeap(opts.execArgv ?? process.execArgv, opts.heapMb),
-    // stdout and stderr are the container's, like the primary's own lines.
-    stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     serialization: 'json',
   });
+  if (child.stdout) forwardLines(child.stdout, process.stdout);
+  if (child.stderr) forwardLines(child.stderr, process.stderr);
+  return child;
+}
+
+/**
+ * A child's output reaches the container's stdout through the primary, a whole line at a
+ * time (docs/scaling.md §7). Several processes writing to one pipe interleave any write
+ * longer than `PIPE_BUF` (4 KiB) mid-line, and a JSON log line with an error's stack is
+ * longer than that; one writer of whole lines cannot interleave. The cost is the
+ * primary's, in proportion to log volume, which is small.
+ */
+export function forwardLines(from: Readable, to: Writable): void {
+  const lines = createInterface({ input: from, crlfDelay: Infinity });
+  lines.on('line', (line) => { to.write(`${line}\n`); });
 }
 
 /**

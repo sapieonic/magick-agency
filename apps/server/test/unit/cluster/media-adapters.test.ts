@@ -166,3 +166,15 @@ describe('record codecs', () => {
     expect(decodeManualCallRecord({ id: 'm1', session_id: 's1', settled_at: at })!.settled_at).toEqual(new Date(at));
   });
 });
+
+describe('warnIfMoreProcessesThanCores', () => {
+  it('warns once, with the counts, only when workers are configured and the processes outnumber the cores', async () => {
+    const { warnIfMoreProcessesThanCores } = await import('../../../src/cluster/primary.js');
+    const warn = vi.fn();
+    expect(warnIfMoreProcessesThanCores(0, 0, 1, warn)).toBe(false);
+    expect(warnIfMoreProcessesThanCores(1, 0, 2, warn)).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+    expect(warnIfMoreProcessesThanCores(2, 1, 2, warn)).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.objectContaining({ cores: 2, processes: 4, mediaWorkers: 2, analysisWorkers: 1 }), expect.any(String));
+  });
+});

@@ -239,6 +239,8 @@ export interface ReaperSnapshotBody {
   leases: CallLease[];
 }
 export interface ManualCallRowsBody { rows: AgencyManualCallRecord[] }
+/** A media worker took or gave back a call's slots (`docs/scaling.md` §6.1). */
+export type CallLeaseBody = { op: 'held'; lease: CallLease } | { op: 'released'; concurrencyKey: string };
 
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 const nullableId = (v: unknown): v is string | null => v === null || isId(v);
@@ -319,6 +321,14 @@ export function parseReaperSnapshot(raw: unknown): ReaperSnapshotBody | null {
   }
   return { activeAttemptIds, unrecordedEnds, manualActiveIds, activeCallIds, leases: out };
 }
+export function parseCallLease(raw: unknown): CallLeaseBody | null {
+  if (!isRecord(raw)) return null;
+  if (raw['op'] === 'released') return isId(raw['concurrencyKey']) ? { op: 'released', concurrencyKey: raw['concurrencyKey'] } : null;
+  if (raw['op'] !== 'held') return null;
+  const snap = parseReaperSnapshot({ activeAttemptIds: [], unrecordedEnds: [], manualActiveIds: [], activeCallIds: [], leases: [raw['lease']] });
+  return snap ? { op: 'held', lease: snap.leases[0]! } : null;
+}
+
 export function parseManualCallRows(raw: unknown): ManualCallRowsBody | null {
   if (!isRecord(raw) || !Array.isArray(raw['rows'])) return null;
   const rows: AgencyManualCallRecord[] = [];
@@ -346,6 +356,7 @@ export interface IpcEventMap {
   'concurrency.invalidate': AccountScopeBody;
   'reaper.forget_unrecorded': AttemptIdsBody;
   'voice.wake_self_heal': EmptyBody;
+  'call.lease': CallLeaseBody;
 }
 
 /** Request and response bodies, by request type. */
@@ -378,6 +389,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'concurrency.invalidate': parseAccountScope,
   'reaper.forget_unrecorded': parseAttemptIds,
   'voice.wake_self_heal': parseEmptyBody,
+  'call.lease': parseCallLease,
 };
 
 export const IPC_REQUEST_DECODERS: {
