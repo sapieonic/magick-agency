@@ -44,8 +44,8 @@ vi.mock('../../api/agencyCampaigns', () => ({
 const ANALYSIS: AgencyColumnAnalysis = {
   headers: ['Mobile', 'Name'],
   columns: [
-    { name: 'Mobile', index: 0, samples: ['9820041772'], non_empty: 100, phone_score: 0.95 },
-    { name: 'Name', index: 1, samples: ['Priya Menon'], non_empty: 100, phone_score: 0 },
+    { name: 'Mobile', index: 0, samples: ['9820041772'], non_empty: 100, phone_score: 0.95, distinct: 100, distinct_phones: 100 },
+    { name: 'Name', index: 1, samples: ['Priya Menon'], non_empty: 100, phone_score: 0, distinct: 100, distinct_phones: 100 },
   ],
   rows_sampled: 100,
   truncated: false,

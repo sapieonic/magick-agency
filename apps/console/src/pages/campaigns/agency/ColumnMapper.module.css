@@ -88,7 +88,8 @@
 
 .timezoneNote,
 .ignoreNote,
-.countryNote {
+.countryNote,
+.dedupeNote {
   margin: 0;
   font-size: 12px;
   color: var(--text-muted);
@@ -96,7 +97,8 @@
 
 /* Sits with the phone-column evidence above it — the country code is only
    meaningful once the operator knows which column holds the number. */
-.countryCode {
+.countryCode,
+.dedupe {
   max-width: 420px;
   margin: 0;
 }

@@ -103,13 +103,20 @@ describe('campaign-scoped DNC — every roster row with that number (integration
       phone_e164: DUPLICATE, state: 'pending', source_row_number: 2,
     });
 
-    // Proof the fixture is real: the duplicate IS claimable before the mark.
+    // While the dialled call is live, the claim already holds the duplicate back
+    // (one live call per number). That is not the DNC mark's doing, so the proof
+    // below takes the live call out of the way.
+    expect(await agencyContactRepository.claimDialable(campaign.id, 10)).toEqual([]);
+
+    // Proof the fixture is real: with the call settled, the duplicate IS claimable.
+    await getTestPool().query("UPDATE agency_contacts SET state = 'completed' WHERE id = $1", [dialled.id]);
     const before = await agencyContactRepository.claimDialable(campaign.id, 10);
     expect(before).toHaveLength(1);
-    // Put it back, so the mark faces the state it faces in production.
+    // Put both back, so the mark faces the state it faces in production.
     await getTestPool().query(
       "UPDATE agency_contacts SET state = 'pending' WHERE id = $1", [before[0]!.id],
     );
+    await getTestPool().query("UPDATE agency_contacts SET state = 'connected' WHERE id = $1", [dialled.id]);
 
     await agencyContactRepository.suppressByPhone(campaign.id, DIALLED, 'dnc', {
       alwaysContactId: dialled.id,

@@ -110,7 +110,7 @@ Columns: `id`, `call_id`, `tenant_id`, `event_type`, `event_category`, `severity
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `phone_e164`, `source`, `reason`, `added_by`, `created_at`.
 
-**`agency_ingest_jobs`**. CSV roster ingest jobs: the S3 object, column mapping, progress counters, rejected-rows export, status and errors.
+**`agency_ingest_jobs`**. CSV roster ingest jobs: the S3 object, column mapping, progress counters, rejected-rows export, status and errors. 0007 adds `dedupe_column` (the column whose value marks a duplicate row; see below).
 
 Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `s3_key`, `file_name`, `file_size_bytes`, `phone_column`, `timezone_column`, `ignore_columns`, `default_country_code`, `dedupe_phones`, `dry_run`, `status`, `cancel_requested`, `rows_read`, `accepted`, `rejected`, `duplicates`, `rejected_by_reason`, `bytes_read`, `chunks_sent`, `chunks_total`, `headers`, `context_columns`, `rejected_s3_key`, `rejected_row_count`, `rejected_truncated`, `error_code`, `error_message`, `created_by`, `created_at`, `started_at`, `finished_at`, `updated_at`, `core_rejected_duplicate_rows`, `core_duplicate_source_rows`, `core_rejected_duplicate_rows_may_undercount`, `mode`, `replace_superseded_contacts`, `replace_superseded_uncertain`.
 
@@ -431,6 +431,16 @@ is `web`. No index (nothing filters on it). Adding a column with a constant DEFA
 the table. **Down** drops the CHECK and the column. **Tests**:
 `test/integration/db/agent-session-client-kind-migration.test.ts` (the column, its default, the
 CHECK against the contract's list) and the down → up inventory suite.
+
+### 0007 — `migrations/0007_ingest_dedupe_column.sql`
+
+Roster upload, choosing the duplicate column. **`agency_ingest_jobs.dedupe_column`** `TEXT NULL`:
+the header whose value marks a duplicate row in the file (for example a loan number, so one
+borrower with two loans on one phone keeps both rows). Compared trimmed and case-insensitive; a
+blank value is never a duplicate. NULL keeps the earlier behaviour, which `dedupe_phones` decides
+(normalised phone, or none). Written by `POST /proxy/agency/ingest/jobs` (`dedupe_column`), read by
+the ingest service. No index, no rewrite. **Down** drops the column. **Tests**:
+`test/integration/db/ingest-dedupe-column-migration.test.ts` and the down → up inventory suite.
 
 ## Tests
 

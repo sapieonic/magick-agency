@@ -136,12 +136,16 @@ describe('AgencyContactRepository.claimDialable', () => {
     await new AgencyContactRepository().claimDialable('camp-1', 2);
 
     const sql = pool.query.mock.calls[0]![0] as string;
-    expect(sql).toContain('FOR UPDATE SKIP LOCKED');
+    expect(sql).toContain('FOR UPDATE OF c SKIP LOCKED');
+    expect(sql.indexOf('SKIP LOCKED')).toBeLessThan(sql.indexOf('DISTINCT ON'));
     // The predicate must match idx_agency_contacts_dialable exactly, or the hot
     // query stops being O(log n) as completed rows reach the millions.
-    expect(sql).toContain("state = 'pending'");
-    expect(sql).toContain('next_attempt_at <= now()');
-    expect(sql).toContain('ORDER BY next_attempt_at');
+    expect(sql).toContain("c.campaign_id = $1 AND c.state = 'pending' AND c.next_attempt_at <= now()");
+    expect(sql).toContain('ORDER BY c.next_attempt_at');
+    // The one-live-call-per-number guard; its behaviour is pinned on Postgres by
+    // agency-contact-claim-one-per-number.test.ts.
+    expect(sql).toContain("live.state IN ('in_flight', 'connected')");
+    expect(pool.query.mock.calls[0]![1]).toEqual(['camp-1', 2, 8]);
   });
 });
 

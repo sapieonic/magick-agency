@@ -126,6 +126,7 @@ export type AgencyIngestErrorCode =
   | 'missing_phone_value'
   | 'invalid_phone'
   | 'duplicate_phone'
+  | 'duplicate_key'
   | 'ragged_row'
   | 'value_too_large'
   | 'row_too_large'
@@ -153,6 +154,7 @@ export type AgencyIngestFailureCode =
   | 'malformed_csv'
   | 'phone_column_missing'
   | 'timezone_column_missing'
+  | 'dedupe_column_missing'
   | 'too_many_columns'
   | 'too_many_rows'
   | 'unsupported_encoding'
@@ -214,6 +216,7 @@ const REJECTION_LABEL: Record<AgencyIngestErrorCode, string> = {
   missing_phone_value: 'Empty phone number',
   invalid_phone: 'Not a valid phone number',
   duplicate_phone: 'Duplicate of an earlier row',
+  duplicate_key: 'Duplicate of an earlier row (same value in the duplicate column)',
   ragged_row: 'Row does not match the header',
   value_too_large: 'A value is too large',
   row_too_large: 'The row is too large',
@@ -329,6 +332,28 @@ export interface AgencyIngestOptions {
    * "your file repeated 34 numbers".
    */
   dedupePhones?: boolean;
+  /**
+   * Dedupe on this column instead of the phone: a later row whose value here
+   * repeats an earlier ACCEPTED row's is rejected `duplicate_key`. Takes
+   * precedence over `dedupePhones`. For a loan book, the loan number: one
+   * borrower with two loans is two rows on one number, and both must be called.
+   *
+   * Values are compared by {@link dedupeKey} (trimmed, case-insensitive), and a
+   * blank value is never a duplicate: the row is kept, unchecked, because a
+   * missing loan number is not evidence that two rows are the same loan.
+   * Naming the phone column means the phone dedupe, on the normalised number.
+   *
+   * The column must be RETAINED, not ignored. The roster dedupes again at insert
+   * on `row_fingerprint` (phone, `context`, timezone), and an ignored column is
+   * not in `context`, so two rows differing only in an ignored key would pass
+   * here and collapse into one contact there. `POST /ingest/jobs` refuses the
+   * combination; this module does not re-check it.
+   *
+   * Keeping two rows on one number is safe to dial because
+   * `AgencyContactRepository.claimDialable` never has two calls live to one
+   * number in a campaign.
+   */
+  dedupeColumn?: string;
   batchSize?: number;
   maxRows?: number;
   maxColumns?: number;
@@ -413,6 +438,17 @@ export function dedupeHeaders(headers: string[]): string[] {
   });
 }
 
+/**
+ * How a value in the duplicate column is compared: trimmed and case-insensitive,
+ * so `LN-001`, `ln-001` and ` LN-001 ` are one loan. The column analysis keys its
+ * `distinct` count the same way, so "100% unique" there means no `duplicate_key`
+ * here (within the sample). The phone dedupe compares normalised numbers instead;
+ * its counterpart in the analysis is `distinct_phones`.
+ */
+export function dedupeKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 function normalizeHeader(header: string): string {
   return header.trim().toLowerCase();
 }
@@ -453,6 +489,7 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
     defaultCountryCode,
     rowLimit,
     dedupePhones = true,
+    dedupeColumn,
   } = options;
 
   const parser = parse({
@@ -479,6 +516,8 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
   let retainedHeaders: string[] = [];
   let phoneIndex = -1;
   let timezoneIndex = -1;
+  /** The duplicate column's index, or -1 for the phone dedupe (or none). */
+  let keyIndex = -1;
   const ignored = new Set(ignoreColumns.map(normalizeHeader));
 
   let rowsRead = 0;
@@ -491,7 +530,9 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
   const errors: AgencyIngestRejection[] = [];
   const rejectedByReason: Record<string, number> = {};
 
-  // See the module header: O(distinct phones), and deliberately so.
+  // See the module header: O(distinct phones), and deliberately so. Holds
+  // normalised numbers for the phone dedupe, or `dedupeKey` values for a
+  // duplicate column: O(distinct keys) either way, and empty with dedupe off.
   const seen = new Set<string>();
   let batch: AgencyIngestContact[] = [];
 
@@ -499,6 +540,9 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
   // STARTS on is what a spreadsheet shows the operator, so track the previous
   // record's end and add one.
   let previousEndLine = 0;
+
+  // Settled with the header row. `none` until then, which no data row can see.
+  let dedupeMode: 'phone' | 'column' | 'none' = 'none';
 
   async function reject(rejection: AgencyIngestRejection): Promise<void> {
     rejected += 1;
@@ -580,6 +624,21 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
             );
           }
         }
+
+        if (dedupeColumn !== undefined) {
+          keyIndex = resolveColumn(headers, dedupeColumn);
+          if (keyIndex === -1) {
+            throw new AgencyIngestError(
+              'dedupe_column_missing',
+              `The column chosen to find duplicates, '${dedupeColumn}', is not in the file.`,
+            );
+          }
+          // The phone column chosen by name is the phone dedupe, on the
+          // normalised number rather than the raw text.
+          if (keyIndex === phoneIndex) keyIndex = -1;
+        }
+        const phoneDedupe = dedupeColumn !== undefined ? keyIndex === -1 : dedupePhones;
+        dedupeMode = keyIndex !== -1 ? 'column' : phoneDedupe ? 'phone' : 'none';
 
         retainedHeaders = headers.filter(
           (h, i) => i !== phoneIndex && !ignored.has(normalizeHeader(h)),
@@ -692,19 +751,45 @@ export async function ingestAgencyCsv(options: AgencyIngestOptions): Promise<Age
       // Dedupe on the NORMALISED number, so `09876543210`, `+91 98765 43210`
       // and `9876543210` are one contact rather than three calls to one person.
       // See `dedupePhones` for why this is switchable.
-      if (dedupePhones && seen.has(phoneE164)) {
-        duplicates += 1;
-        await reject({
-          row_number: startLine,
-          column: headers[phoneIndex]!,
-          raw_value: rawPhone,
-          reason_code: 'duplicate_phone',
-          reason: `${phoneE164} already appears earlier in this file.`,
-          context,
-        });
-        continue;
+      if (dedupeMode === 'phone') {
+        if (seen.has(phoneE164)) {
+          duplicates += 1;
+          await reject({
+            row_number: startLine,
+            column: headers[phoneIndex]!,
+            raw_value: rawPhone,
+            reason_code: 'duplicate_phone',
+            reason: `${phoneE164} already appears earlier in this file.`,
+            context,
+          });
+          continue;
+        }
+        seen.add(phoneE164);
       }
-      seen.add(phoneE164);
+
+      // Dedupe on the operator's column. Checked after the phone, like the phone
+      // dedupe, so only an ACCEPTED row claims its key: a first row rejected for
+      // a bad number does not cost a later, good row with the same loan number.
+      // The reason names the column and never its value, which may sit in an
+      // ignored column the rejected-rows export must not leak.
+      if (dedupeMode === 'column') {
+        const key = dedupeKey(record[keyIndex] ?? '');
+        if (key !== '') {
+          if (seen.has(key)) {
+            duplicates += 1;
+            await reject({
+              row_number: startLine,
+              column: headers[keyIndex]!,
+              raw_value: rawPhone,
+              reason_code: 'duplicate_key',
+              reason: `Duplicate ${headers[keyIndex]} of an earlier row in this file.`,
+              context,
+            });
+            continue;
+          }
+          seen.add(key);
+        }
+      }
 
       const timezone =
         timezoneIndex === -1 ? undefined : record[timezoneIndex]?.trim() || undefined;

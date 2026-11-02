@@ -59,6 +59,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-campaign-summaries.routes.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-campaign-update.test.ts` | 4 |
 | `apps/server/test/integration/agency/agency-contact-claim-limit.test.ts` | 2 |
+| `apps/server/test/integration/agency/agency-contact-claim-one-per-number.test.ts` | 5 |
 | `apps/server/test/integration/agency/agency-contact-unclaim-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-conversion-counting.test.ts` | ~13 |
@@ -74,7 +75,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-ingest-concurrent-total.test.ts` | 1 |
 | `apps/server/test/integration/agency/agency-ingest-idempotency.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-ingest-job-repository-sql.test.ts` | ~12 |
-| `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | ~7 |
+| `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-ingest-route-seam.test.ts` | ~7 |
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
@@ -132,16 +133,16 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-agent-identity.test.ts` | 9 |
 | `apps/server/test/unit/agency/agency-call-read-routes.test.ts` | 25 |
 | `apps/server/test/unit/agency/agency-campaign-config.test.ts` | 80 |
-| `apps/server/test/unit/agency/agency-column-analysis.test.ts` | 14 |
+| `apps/server/test/unit/agency/agency-column-analysis.test.ts` | 16 |
 | `apps/server/test/unit/agency/agency-csv-ingest.isolation.test.ts` | 4 |
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
-| `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 54 |
+| `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 65 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
 | `apps/server/test/unit/agency/agency-dialer.test.ts` | 37 |
-| `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 34 |
+| `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
-| `apps/server/test/unit/agency/agency-ingest.service.test.ts` | 50 |
+| `apps/server/test/unit/agency/agency-ingest.service.test.ts` | 51 |
 | `apps/server/test/unit/agency/agency-internal-ingest-ownership.test.ts` | 16 |
 | `apps/server/test/unit/agency/agency-join-result.test.ts` | 7 |
 | `apps/server/test/unit/agency/agency-proxy-path-traversal.test.ts` | 83 |
@@ -212,7 +213,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-campaign-series.routes.test.ts` | 41 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-stats-enrichment.routes.test.ts` | 26 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-transition-actor.routes.test.ts` | 30 |
-| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 139 |
+| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 145 |
 | `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 111 |
 | `apps/server/test/unit/agency/proxy-agency-my-surfaces.routes.test.ts` | 78 |
 | `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
@@ -1111,6 +1112,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
 | `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
+| `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
@@ -1467,6 +1469,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 39 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 19 |
+| `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
@@ -1539,7 +1542,7 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyCampaignsHome.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/agencyCatalogSync.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyClock.test.ts` | 20 |
-| `apps/console/src/__tests__/utils/agencyColumnMapping.test.ts` | 28 |
+| `apps/console/src/__tests__/utils/agencyColumnMapping.test.ts` | 44 |
 | `apps/console/src/__tests__/utils/agencyCompareTray.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyContext.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/agencyCuePrefs.test.ts` | 6 |
@@ -1551,7 +1554,7 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/agencyFieldFilter.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 46 |
-| `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 27 |
+| `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyLiveSession.test.ts` | 19 |

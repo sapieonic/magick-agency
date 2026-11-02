@@ -11,7 +11,7 @@ function streamOf(content: string): Readable {
 }
 
 function stat(name: string, phoneScore: number, nonEmpty = 10): AgencyColumnStat {
-  return { name, index: 0, samples: [], non_empty: nonEmpty, phone_score: phoneScore };
+  return { name, index: 0, samples: [], non_empty: nonEmpty, phone_score: phoneScore, distinct: nonEmpty, distinct_phones: nonEmpty };
 }
 
 describe('column analysis for the mapping screen', () => {
@@ -40,6 +40,32 @@ describe('column analysis for the mapping screen', () => {
     const alt = analysis.columns.find((c) => c.name === 'Alt Mobile')!;
     expect(alt.samples).toEqual(['9000000001']);
     expect(alt.non_empty).toBe(1);
+  });
+
+  it('counts distinct non-empty values per column, keyed as the duplicate check keys them', async () => {
+    const loans = [
+      'Mobile,Loan No,Branch',
+      '9876543210,LN-1,Pune',
+      '9876543210,ln-1 ,pune',
+      '9123456780,LN-2,',
+      '9988776655,LN-3,Pune',
+    ].join('\n');
+    const analysis = await analyzeAgencyCsvColumns({ source: streamOf(loans) });
+    const by = (name: string) => analysis.columns.find((c) => c.name === name)!;
+
+    expect([by('Mobile').distinct, by('Mobile').non_empty]).toEqual([3, 4]);
+    // `ln-1 ` is `LN-1` to the duplicate check, so it is not a new value here either.
+    expect([by('Loan No').distinct, by('Loan No').non_empty]).toEqual([3, 4]);
+    expect([by('Branch').distinct, by('Branch').non_empty]).toEqual([1, 3]);
+  });
+
+  it('counts distinct NUMBERS for the phone dedupe, so two spellings of one number are one', async () => {
+    const phones = ['Mobile', '9876543210', '+919876543210', '+91 98765 43210', '9123456780', 'not-a-number'].join('\n');
+    const analysis = await analyzeAgencyCsvColumns({ source: streamOf(phones), defaultCountryCode: '91' });
+    const mobile = analysis.columns[0]!;
+    // Five values, four parse, two numbers.
+    expect([mobile.non_empty, mobile.distinct, mobile.distinct_phones]).toEqual([5, 5, 2]);
+    expect(mobile.phone_score).toBe(4 / 5);
   });
 
   it('scores phone-likelihood over VALUES, not header text', async () => {

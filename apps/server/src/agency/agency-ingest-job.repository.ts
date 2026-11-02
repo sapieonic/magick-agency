@@ -93,6 +93,8 @@ export interface AgencyIngestJobRecord {
   ignore_columns: string[];
   default_country_code: string | null;
   dedupe_phones: boolean;
+  /** 0007. NULL (or absent on a row read before it): `dedupe_phones` decides. */
+  dedupe_column?: string | null;
   dry_run: boolean;
   /**
    * `undefined` — not merely `'append'` — on a row read back from a schema
@@ -172,6 +174,8 @@ export interface CreateIngestJobInput {
   ignore_columns?: string[];
   default_country_code?: string | null;
   dedupe_phones?: boolean;
+  /** The column that marks a duplicate row; wins over `dedupe_phones`. */
+  dedupe_column?: string | null;
   dry_run?: boolean;
   /** Omitted means `append` — the column's own default, and the safe one. */
   mode?: AgencyIngestMode;
@@ -285,15 +289,23 @@ export class AgencyIngestJobRepository {
       input.dry_run ?? false,
       input.created_by ?? null,
     ];
-    const replacing = input.mode === 'replace';
-    if (replacing) values.push(input.mode);
+    // Optional columns are named only when they carry a value, for the reason
+    // above: `mode` for a replace, `dedupe_column` (0007) when the operator chose
+    // one. A job that asks for neither inserts exactly as it did before them, and
+    // one that does fails loudly on a schema that cannot record what it asked.
+    const optional: [string, unknown][] = [];
+    if (input.mode === 'replace') optional.push(['mode', input.mode]);
+    if (input.dedupe_column) optional.push(['dedupe_column', input.dedupe_column]);
+    for (const [, value] of optional) values.push(value);
+    const extraColumns = optional.map(([column]) => `, ${column}`).join('');
+    const extraParams = optional.map((_, i) => `,$${14 + i}`).join('');
 
     const result = await pool.query<AgencyIngestJobRecord>(
       `INSERT INTO agency_ingest_jobs
          (tenant_id, account_id, campaign_id, s3_key, file_name, file_size_bytes,
           phone_column, timezone_column, ignore_columns, default_country_code,
-          dedupe_phones, dry_run, created_by${replacing ? ', mode' : ''})
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13${replacing ? ',$14' : ''})
+          dedupe_phones, dry_run, created_by${extraColumns})
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13${extraParams})
        RETURNING *`,
       values,
     );

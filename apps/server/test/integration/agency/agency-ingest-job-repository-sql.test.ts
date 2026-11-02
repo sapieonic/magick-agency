@@ -60,6 +60,13 @@ describe('AgencyIngestJobRepository on real Postgres', () => {
       replace_superseded_uncertain: false, core_rejected_duplicate_rows_may_undercount: false,
     });
     expect(job.file_size_bytes).toBe('42');
+    expect(job.dedupe_column).toBeNull();
+  });
+
+  it('create: dedupe_column is stored, alone and alongside mode replace', async () => {
+    expect(await create({ dedupe_column: 'Loan No' })).toMatchObject({ dedupe_column: 'Loan No', mode: 'append' });
+    expect(await create({ dedupe_column: 'Loan No', mode: 'replace' }))
+      .toMatchObject({ dedupe_column: 'Loan No', mode: 'replace' });
   });
 
   it('create: mode replace takes the optional $14 column; dry_run and dedupe_phones=false are kept', async () => {
