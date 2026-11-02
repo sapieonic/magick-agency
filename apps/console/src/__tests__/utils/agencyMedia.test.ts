@@ -49,37 +49,26 @@ describe('the agency station audio wire format', () => {
   describe('the frame ceiling is the API’s, not a guess', () => {
     /**
      * **This is NOT a check against the server's constant.** Nothing here imports
-     * it, and a test that read `webrtc-bridge-manager.ts` off disk would couple
-     * this console's unit suite to the server's source layout.
-     *
-     * An earlier version asserted `MAX_AGENCY_MEDIA_PAYLOAD_CHARS === 64000 * 2`
-     * — our literal against our other literal, arranged to look like a
-     * derivation from the API's constant. It could not fail for any reason worth
-     * knowing about: if the API tightened its bound to the arithmetically correct
-     * `ceil(64000/3)*4 = 85336`, every frame between 85337 and 128000 would
-     * start vanishing into the API's silent drop with this test still green.
-     *
-     * So the assertions below pin the two things that are actually ours to
-     * defend — the guard's boundary behaviour, and that real traffic is nowhere
-     * near it — and the agreement with the server's constant is named as a manual obligation in
-     * `agencyMedia.ts` rather than pretended at here.
+     * it, and a test that read `ws-limits.ts` off disk would couple this console's
+     * unit suite to the server's source layout. The agreement is a manual obligation
+     * named in `agencyMedia.ts`; these assertions pin the arithmetic and the guard's
+     * boundary behaviour.
      */
-    it('is the transcribed value, re-checked by hand against the API', () => {
-      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(128000);
+    it('is the server’s 64 KiB message bound less the JSON envelope', () => {
+      const envelope = JSON.stringify({ event: 'media', media: { payload: '' } }).length;
+      expect(envelope).toBe(40);
+      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(64 * 1024 - envelope);
     });
 
-    it('is comfortably above base64’s true 4/3 expansion of the API’s byte limit', () => {
-      // The property that makes the transcription safe *today*: whatever the API
-      // meant by `* 2`, 128000 is not below the honest encoded bound, so we
-      // never reject a frame the API would have accepted.
-      const honestEncodedBound = Math.ceil(64000 / 3) * 4;
-      expect(honestEncodedBound).toBe(85336);
-      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBeGreaterThanOrEqual(honestEncodedBound);
+    it('keeps the largest frame it accepts inside the server’s message bound', () => {
+      const frame = encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS));
+      expect(frame).not.toBeNull();
+      expect(new TextEncoder().encode(frame!).length).toBeLessThanOrEqual(64 * 1024);
     });
 
-    it('refuses a payload the API would silently drop', () => {
-      // The API logs and returns. A frame we hand it over the ceiling is audio that
-      // vanishes downstream with nothing on this side to show for it.
+    it('refuses a payload the server would close the station for', () => {
+      // Over the bound the server's WebSocket closes with 1009, taking the station
+      // down; a frame refused here is counted instead.
       expect(encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS + 1))).toBeNull();
       // And the boundary itself is accepted, so the guard is `>` and not `>=`.
       expect(encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS))).not.toBeNull();
@@ -90,14 +79,14 @@ describe('the agency station audio wire format', () => {
     });
 
     it('is unreachable by real traffic — it guards a broken graph, not a busy one', () => {
-      // 320 samples × 2 bytes → 640 bytes → 856 base64 characters: 0.7% of the
+      // 320 samples × 2 bytes → 640 bytes → 856 base64 characters: 1.3% of the
       // ceiling. Stated plainly because the opposite reading — that this bound
       // protects a live call from itself — would make it look load-bearing when
       // it is a tripwire for a capture graph that has already gone wrong.
       const bytes = AGENCY_MEDIA_FRAME_SAMPLES * 2;
       const base64Chars = Math.ceil(bytes / 3) * 4;
       expect(base64Chars).toBe(856);
-      expect(base64Chars).toBeLessThan(MAX_AGENCY_MEDIA_PAYLOAD_CHARS / 100);
+      expect(base64Chars).toBeLessThan(MAX_AGENCY_MEDIA_PAYLOAD_CHARS / 50);
     });
   });
 

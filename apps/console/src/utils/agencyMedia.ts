@@ -99,35 +99,31 @@ export const AGENCY_MEDIA_SAMPLE_RATE = 16000;
 export const AGENCY_MEDIA_FRAME_SAMPLES = 320;
 
 /**
- * `pcm16`: the server's ceiling, transcribed: `MAX_MEDIA_FRAME_BYTES * 2` where
- * `MAX_MEDIA_FRAME_BYTES = 64000` (`webrtc-bridge-manager.ts:182`), compared
- * against `data.media.payload.length` — the **encoded** string — at `:1089`
- * (uplink) and `:1143` (downlink).
+ * `pcm16`: the largest uplink payload the server takes, transcribed.
  *
- * ── What the `* 2` is, and what it is not ───────────────────────────────────
- * It is **not** a base64 conversion. Base64 expands 4/3, not 2, so the honest
- * encoded bound for 64000 decoded bytes would be `ceil(64000/3)*4 = 85336`.
- * The server's own comment at `:1088` calls the limit "bytes" while its code measures
- * characters, so `* 2` is a loose safety factor sitting on top of a units
- * mismatch. An earlier revision of this file repeated the server's confusion back as
- * if it were the derivation, which is worse than either mistake alone: the value
- * was right and the stated reason was wrong, so a reader checking the arithmetic
- * would have concluded the constant was wrong and "fixed" it.
+ * ── Where the bound comes from ──────────────────────────────────────────────
+ * The server registers its WebSockets with `maxPayload` 64 KiB
+ * (`WS_MAX_PAYLOAD_DEFAULT_BYTES`, `apps/server/src/utils/ws-limits.ts`; operators may
+ * raise it with `WS_MAX_PAYLOAD_BYTES`, never lower it below the largest legitimate
+ * frame). That bound is on the **whole** message, so the payload gets what is left after
+ * the JSON envelope `{"event":"media","media":{"payload":""}}` (40 characters):
+ * 65536 − 40 = 65496. Base64 is ASCII, so characters and bytes agree.
  *
- * ── Why 128000 and not 85336 ────────────────────────────────────────────────
- * Because this must match what the server **actually rejects**, not what it ought to.
- * A tighter bound here would reject frames the server accepts; a looser one would ship
- * frames into the server's silent drop. It is transcribed, and it must be re-checked
- * against `webrtc-bridge-manager.ts:182` whenever that file moves — nothing
- * at build time links the two values and could catch it.
+ * ── Why it must not be looser ───────────────────────────────────────────────
+ * A message over `maxPayload` is not dropped: `ws` closes the socket with 1009, which
+ * takes the agent's station (and a live call's audio) down with it. The bridge's own
+ * character check behind it is looser, so this is the bound that bites. A frame refused
+ * here is counted on this side instead.
+ *
+ * It is transcribed, and must be re-checked against `ws-limits.ts` whenever the server's
+ * default moves: nothing at build time links the two values.
  *
  * ── This is not a protective bound in practice ──────────────────────────────
- * A 20 ms frame is 640 bytes → **856 base64 characters**, 0.7% of this ceiling.
+ * A 20 ms frame is 640 bytes → **856 base64 characters**, 1.3% of this ceiling.
  * Nothing the capture graph produces can approach it. The check exists so that a
- * broken graph upstream fails visibly on this side rather than becoming audio
- * that never arrives at the dialer runtime — not because normal traffic is near it.
+ * broken graph upstream fails visibly on this side rather than closing the station.
  */
-export const MAX_AGENCY_MEDIA_PAYLOAD_CHARS = 128000;
+export const MAX_AGENCY_MEDIA_PAYLOAD_CHARS = 65_496;
 
 /**
  * A `pcm16` uplink frame, serialised.
