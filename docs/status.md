@@ -450,7 +450,7 @@ re-run):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7559 passed + 42 skipped (380 files) | 1535 passed + 10 expected fail (166 files) |
+| `apps/server` | 7561 passed + 42 skipped (380 files) | 1535 passed + 10 expected fail (166 files) |
 | `packages/db` | 427 | 509 (46 files) |
 | `apps/console` | 4917 (251 files) | — |
 | `apps/super-admin` | 436 | — |
