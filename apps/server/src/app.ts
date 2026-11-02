@@ -30,9 +30,10 @@ export interface BuildAppOptions {
   wsHandoffTarget?: () => WsHandoffTarget | null;
   /**
    * More readiness than Postgres and Redis (the media workers, `docs/scaling.md` §6.6):
-   * `ready` false makes `/readyz` 503; `detail` is what `?detail=1` shows.
+   * `ready` false makes `/readyz` 503; `summary` is merged into every `/readyz` body (no
+   * secrets: each worker's state); `detail` is what `?detail=1` adds.
    */
-  readiness?: () => Promise<{ ready: boolean; detail: unknown }>;
+  readiness?: () => Promise<{ ready: boolean; detail: unknown; summary?: Record<string, unknown> }>;
 }
 
 /**
@@ -141,9 +142,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       return reply.code(503).send({ status: 'unavailable' });
     }
     if (!opts.readiness) return { status: 'ready' };
-    const extra = await opts.readiness().catch(() => ({ ready: false, detail: null }));
+    const extra: { ready: boolean; detail: unknown; summary?: Record<string, unknown> } =
+      await opts.readiness().catch(() => ({ ready: false, detail: null }));
     const wantDetail = (req.query as { detail?: string } | undefined)?.detail === '1';
-    const body = { status: extra.ready ? 'ready' : 'unavailable', ...(wantDetail ? { processes: extra.detail } : {}) };
+    const body = {
+      status: extra.ready ? 'ready' : 'unavailable',
+      ...(extra.summary ?? {}),
+      ...(wantDetail ? { processes: extra.detail } : {}),
+    };
     return extra.ready ? body : reply.code(503).send(body);
   });
 

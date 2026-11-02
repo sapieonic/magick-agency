@@ -20,6 +20,7 @@ import { runAnalysisChildProcess } from './cluster/analysis-child-main.js';
 import { runMediaChildProcess } from './cluster/media-child-main.js';
 import { prepareMediaPrimary, startMediaWorkers } from './cluster/primary.js';
 import { createLoopSampler } from './cluster/loop-sampler.js';
+import { clusterReadiness } from './cluster/readiness.js';
 import { runShutdownPlan, type ShutdownPlan } from './cluster/shutdown-order.js';
 import { DB_CONNECTION_HEADROOM, planDbConnections, readDbConnectionBudget, type DbConnectionBudget } from './cluster/db-connection-budget.js';
 import { setDbConnectionBudgetProvider } from '@magick-agency/observability/metrics/shared';
@@ -97,9 +98,10 @@ async function main(): Promise<void> {
     ctx,
     logger: false,
     ...(media ? { wsTransport: 'handoff' as const, wsHandoffTarget: () => media } : {}),
-    // `/readyz?detail=1`: this process's own loop first (the number the media split exists
-    // to keep low), then each media worker's. One process: ready as before (Postgres and
-    // Redis), and the detail is its own loop alone.
+    // With workers: ready while this process is not draining and at least one media worker
+    // answers; each worker's state is in the body (D5, `cluster/readiness.ts`). One process:
+    // ready as before (Postgres and Redis). `?detail=1`: this process's own loop first (the
+    // number the media split exists to keep low), then each media worker's.
     readiness: async () => {
       const self = {
         role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop(), inFlight: 0, draining: shuttingDown,
@@ -107,7 +109,8 @@ async function main(): Promise<void> {
       };
       if (!media) return { ready: true, detail: [self] };
       const health = await media.health();
-      return { ready: health.every((h) => h !== null && !h.draining), detail: [self, ...health] };
+      const verdict = clusterReadiness(shuttingDown, health);
+      return { ready: verdict.ready, summary: verdict.summary, detail: [self, ...health] };
     },
   });
 

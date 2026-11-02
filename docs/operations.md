@@ -498,9 +498,12 @@ It reads only the base settings (`DATABASE_URL`, `NODE_ENV`, `DB_SSL_CA`,
 `GET /healthz` answers 200 while the process is up. `GET /readyz` answers 200 only when Postgres
 (`SELECT 1`) and Redis (`PING`) respond, else 503. Both are exempt from rate limiting.
 
-With media workers, `/readyz` also needs every media worker to have answered a health ping
-within 1 s and not to be draining (D5). A restarting worker makes it 503 for the second or two
-it takes. `GET /readyz?detail=1` adds the per-process view: role, slot, pid, event-loop
+With media workers, `/readyz` also needs at least one media worker to have answered a health
+ping within 1 s and not to be draining, and the primary not to be shutting down (D5). Its body
+names each worker's state, `{"status":"ready","mediaWorkers":{"answering":1,"total":2,"workers":[{"slot":0,"state":"not_answering"},{"slot":1,"state":"ok"}]}}`:
+one slow or restarting worker does not take the host out of the load balancer or fail the
+uptime check (it would take all traffic away, not the 1/N that worker serves); watch
+`agy-cluster-child-crash` and the *Processes* row for it instead. `GET /readyz?detail=1` adds the per-process view: role, slot, pid, event-loop
 utilisation, p99 loop delay, live calls (media) or jobs (analysis), and whether it is draining.
 The primary's own loop is listed too.
 

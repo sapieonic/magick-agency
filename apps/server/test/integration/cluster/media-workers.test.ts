@@ -101,6 +101,15 @@ async function until(what: string, ms: number, check: () => Promise<boolean> | b
   }
 }
 
+interface ReadyzBody {
+  status: string;
+  mediaWorkers?: { answering: number; total: number; workers: Array<{ slot: number; state: string }> };
+}
+async function readyz(origin: string): Promise<{ code: number; body: ReadyzBody }> {
+  const res = await fetch(`${origin}/readyz`);
+  return { code: res.status, body: await res.json() as ReadyzBody };
+}
+
 async function stopRig(rig: Rig | null): Promise<void> {
   if (!rig) return;
   await rig.floor.close();
@@ -119,6 +128,11 @@ describe('media workers: the real server as a primary and two workers', () => {
     const detail = await r.server.detail();
     expect(detail.status).toBe('ready');
     expect(detail.processes?.map((p) => p?.role)).toEqual(['primary', 'media', 'media']);
+    // Plain /readyz names each worker's state (no secrets, no per-process numbers).
+    expect((await readyz(r.server.origin)).body).toEqual({
+      status: 'ready',
+      mediaWorkers: { answering: 2, total: 2, workers: [{ slot: 0, state: 'ok' }, { slot: 1, state: 'ok' }] },
+    });
 
     // Each station is held by the worker its session hashes to.
     for (const a of r.floor.agents) {
@@ -203,6 +217,14 @@ describe('media workers: the real server as a primary and two workers', () => {
     expect(Date.now() - admittedAt).toBeLessThan(1_000);
     const heardAtKill = survivors.map((a) => a.heard);
 
+    // D5: while slot 0 is dead and restarting, the host stays in rotation (one worker still
+    // serves its half of the floor) and the body names the missing worker.
+    await until('readyz reports slot 0 down while staying 200', 10_000, async () => {
+      const { code, body } = await readyz(r.server.origin);
+      expect(code).toBe(200);
+      return body.mediaWorkers?.workers[0]?.state === 'not_answering' && body.mediaWorkers.workers[1]?.state === 'ok';
+    });
+
     // The dead slot's attempts are closed and their contacts requeued; its agents are offline.
     await until('dead slot reaped', 30_000, async () => {
       const { rows } = await getTestPool().query<{ reserved_agent_id: string; state: string; outcome: string | null }>(
@@ -231,9 +253,10 @@ describe('media workers: the real server as a primary and two workers', () => {
     // The slot comes back with a new process.
     await until('slot 0 back', 30_000, async () => {
       const d = await r.server.detail().catch(() => null);
-      const p0 = d?.processes?.[0];
+      const p0 = d?.processes?.find((p) => p?.role === 'media' && p.slot === 0);
       return d?.status === 'ready' && !!p0 && p0.pid !== deadPid;
     });
+    expect((await readyz(r.server.origin)).body.mediaWorkers?.answering).toBe(2);
 
     // And the whole tree still stops gracefully, with the survivors' calls live.
     r.floor.stopTalking();

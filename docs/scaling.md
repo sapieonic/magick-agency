@@ -790,12 +790,15 @@ which replaces the primary too.
 ### 6.6 Health and readiness
 
 - `/healthz`: the primary is up, unchanged.
-- `/readyz`: Postgres `SELECT 1` and Redis `PING`, as today. In cluster mode it also requires
-  every media slot to be `ready` and to have answered `health.ping` within 2 s. A slot
-  restarting makes `/readyz` 503 for the ~1–2 s it takes. The compose healthcheck's interval
-  and retries ride that out.
-- Single host, no load balancer: a 503 there takes nothing out of rotation. The alternative,
-  "ready while at least one slot is", hides a dead slot from the healthcheck (D5).
+- `/readyz`: Postgres `SELECT 1` and Redis `PING`, as today. In cluster mode (as built, D5)
+  it is 200 while the primary is not draining and at least one media worker answers
+  `health.ping` within 1 s and is not draining, and 503 when none does. The body always
+  carries `mediaWorkers: { answering, total, workers: [{ slot, state }] }`, `state` one of
+  `ok`, `draining`, `not_answering`. The design first required every slot; but the ALB and
+  the uptime check (`DEPLOYMENT.md`) point at `/readyz`, and on a single host a 503 takes all
+  traffic away, so one slow worker (a missed 1 s ping at high ELU) or one in restart backoff
+  (up to 30 s) would take down the whole floor instead of its 1/N. A dead slot is visible in
+  the body, `agy-cluster-child-crash` and the *Processes* panels rather than in the probe.
 - `GET /readyz?detail=1` returns the per-process view (role, slot, `ready`, `elu`,
   `stations`, `liveCalls`). It must stay exempt from the rate limiter like `/readyz` (the
   exemption has to match the path, not the URL with its query). Its body holds no secret.
