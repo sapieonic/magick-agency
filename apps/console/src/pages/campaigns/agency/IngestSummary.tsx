@@ -76,8 +76,8 @@ export function IngestSummary({
       <ul className={styles.breakdowns}>
         <li>
           <strong>{formatCount(summary.duplicates)}</strong> duplicate
-          {summary.duplicates === 1 ? '' : 's'} — a number that already appeared earlier in the
-          file. Counted in the rejected total.
+          {summary.duplicates === 1 ? '' : 's'} — {summary.duplicateMeaning} Counted in the rejected
+          total.
         </li>
         {summary.dncNotice ? (
           <li data-testid="dnc-notice" className={styles.dnc}>

@@ -161,6 +161,50 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(Number(done.core_rejected_duplicate_rows)).toBe(4); // and the roster refused all four verbatim repeats
   });
 
+  describe('duplicates on a chosen column, through to agency_contacts', () => {
+    // One borrower with two loans (rows 2 and 3), and a loan number repeated on another number (row 4).
+    const LOANS_KEY = `agency-ingest/${TENANT}/u1/loans.csv`;
+    const LOANS = [
+      'Name,Mobile,Loan No',
+      'Asha,9876543101,LN-001',
+      'Asha,+919876543101,LN-002',
+      'Ravi,9876543102,ln-001',
+      '',
+    ].join('\n');
+    const loansOn = async (phone: string) =>
+      (await getTestPool().query<{ loan: string }>(
+        `SELECT context->>'Loan No' AS loan FROM agency_contacts WHERE campaign_id = $1 AND phone_e164 = $2 ORDER BY 1`,
+        [campaignId, phone],
+      )).rows.map((r) => r.loan);
+
+    beforeEach(() => { s3.files.set(LOANS_KEY, LOANS); });
+
+    it('deduped on the loan number: both loans on one number become contacts; the repeated loan is rejected and named', async () => {
+      const job = await newJob({ s3_key: LOANS_KEY, file_name: 'loans.csv', dedupe_column: 'Loan No' });
+      await agencyIngestService.run({ job, campaignId });
+
+      const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+      expect(done).toMatchObject({ status: 'completed', dedupe_column: 'Loan No', rejected_by_reason: { duplicate_key: 1 } });
+      expect([done.rows_read, done.accepted, done.rejected, done.duplicates, done.core_rejected_duplicate_rows])
+        .toEqual(['3', '2', '1', '1', '0']);
+      expect(await loansOn('+919876543101')).toEqual(['LN-001', 'LN-002']);
+      expect(await loansOn('+919876543102')).toEqual([]);
+
+      const csv = s3.uploads.get(rejectedExportKey(TENANT, job.id))!;
+      expect(csv).toContain('4,9876543102,Ravi,ln-001,Duplicate Loan No of an earlier row in this file.');
+    });
+
+    it('the same file deduped on the phone keeps one contact per number, as before', async () => {
+      const job = await newJob({ s3_key: LOANS_KEY, file_name: 'loans.csv' });
+      await agencyIngestService.run({ job, campaignId });
+
+      const done = (await agencyIngestJobRepository.findById(job.id, TENANT))!;
+      expect(done).toMatchObject({ status: 'completed', dedupe_column: null, rejected_by_reason: { duplicate_phone: 1 } });
+      expect(await loansOn('+919876543101')).toEqual(['LN-001']);
+      expect(await loansOn('+919876543102')).toEqual(['ln-001']);
+    });
+  });
+
   it('a dry run parses and filters but writes no contacts and no chunk markers', async () => {
     const job = await newJob({ dry_run: true });
     await agencyIngestService.run({ job, campaignId });

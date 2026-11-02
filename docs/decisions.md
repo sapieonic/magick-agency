@@ -187,6 +187,15 @@ implementation chose where the plan left a choice, built and awaiting ratificati
 | Analytics emitters | The `trackX` names stay as one-line aliases over a typed `track<K>()` and `EventCatalog`; `captureEvent` accepts only catalogued names | **default, pending Manas** |
 | Super-admin role enum | The membership role enum follows `ROLES` order (only the order in zod's error message changes) | **default, pending Manas** |
 
+Roster upload, choosing the duplicate column (2026-11-02; ClickUp "Roster upload: let the operator choose the column used to find duplicates"). The ticket's open questions, built with its own recommendations:
+
+| Topic | Default used | Status |
+|---|---|---|
+| Duplicate key rules | One column (no combinations). Values compared trimmed and case-insensitive (`LN-001` = `ln-001`). A blank value is never a duplicate: the row is kept, unchecked. Only an accepted row claims its key, so a first row rejected for a bad number does not cost a later row with the same key. Naming the phone column is the phone dedupe, on the normalised number | **default, pending Manas** |
+| Ignored key column | Refused: the console blocks the mapping and `POST /ingest/jobs` answers 400. An ignored column is not in the contact's `context`, so not in `row_fingerprint`, and two loans differing only there would collapse into one contact at the roster insert | **default, pending Manas** |
+| One live call per number | `claimDialable` skips a contact whose number (digits) is `in_flight` or `connected` on another contact of the same campaign, and claims at most one contact per number per tick. `connected` counts as live because a bridged call with a disposition catalog parks there; it also covers wrap-up, so on existing rosters a second household contact on one number now waits for the first one's write-up | **default, pending Manas** |
+| Soft phone and the guard | Unchanged. The soft phone's pre-dial rule still refuses only an `in_flight` match (SP rulings, `softphone.md` §5), so a tagged manual call to a number whose contact is `connected` goes ahead; and a manual claim racing a pacing claim on two rows of one number can slip through in a window of milliseconds (the claim's busy check is a read, not a lock). See §5 | **open** |
+
 Rulings of 2026-10-30 (Manas):
 
 | Topic | Ruling | Status |
@@ -230,5 +239,6 @@ Rulings of 2026-11-01 (agent mobile app, [`mobile.md`](mobile.md)):
 | 2, 7, 8 | Launch open items | Existing numbers, launch style, domain / freeze / rollback window | Manas, at launch |
 | 9 | Metering | Out of v1; design not started | Manas |
 | B15 | Roster supersede | Three schema changes plus a replace lock; `AGENCY_ROSTER_REPLACE_ENABLED` stays off until then | Manas |
+| — | Soft phone vs one live call per number | Should a tagged soft-phone call to a number whose contact is `connected` (bridged, or in wrap-up) be refused, as `in_flight` is? And is the millisecond race between a manual claim and a pacing claim on two rows of one number worth a per-number lock? (§4, "Roster upload, choosing the duplicate column") | Manas |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |

@@ -6,6 +6,7 @@ import {
   heroLimitReached,
   mappingBlockReason,
   phoneColumn,
+  phoneUniquenessLine,
   phoneValidityLine,
   setDedupe,
   setDefaultCountryCode,
@@ -52,7 +53,7 @@ function dedupeNote(analysis: AgencyColumnAnalysis, state: MappingState, phone: 
   switch (state.dedupe.mode) {
     case 'phone':
       return [
-        uniquenessLine(analysis, phone),
+        phoneUniquenessLine(analysis, phone),
         'A row whose number already appeared earlier in the file is dropped. If one person can have several rows (two loans, two policies), check duplicates on that number instead.',
       ].filter(Boolean).join(' ');
     case 'column':
@@ -61,7 +62,7 @@ function dedupeNote(analysis: AgencyColumnAnalysis, state: MappingState, phone: 
         'Rows that share a phone number are all kept. The dialer never calls one number twice at the same time.',
       ].filter(Boolean).join(' ');
     case 'none':
-      return 'Every row is kept. The dialer never calls one number twice at the same time.';
+      return 'Rows are kept even when they repeat a number or any other value; only an exact copy of an earlier row is skipped. The dialer never calls one number twice at the same time.';
   }
 }
 
@@ -218,6 +219,7 @@ export function ColumnMapper({
         <label htmlFor="ingest-dedupe">Check duplicates on</label>
         <select
           id="ingest-dedupe"
+          aria-describedby="ingest-dedupe-note"
           value={dedupeValue(state.dedupe)}
           disabled={disabled}
           onChange={(event) => onChange(setDedupe(state, dedupeChoice(event.target.value)))}
@@ -230,7 +232,7 @@ export function ColumnMapper({
           ))}
           <option value="none">Don&apos;t remove duplicates</option>
         </select>
-        <p className={styles.dedupeNote} data-testid="dedupe-note">
+        <p id="ingest-dedupe-note" className={styles.dedupeNote} data-testid="dedupe-note">
           {dedupeNote(analysis, state, phone)}
         </p>
       </div>

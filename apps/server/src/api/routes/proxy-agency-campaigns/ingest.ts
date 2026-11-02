@@ -258,6 +258,21 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
         message: 'dedupe_column cannot be combined with dedupe_phones: false.',
       });
     }
+    // An ignored column is not in the contact's `context`, so it is not in the
+    // roster's `row_fingerprint` either: two rows that differ only there (one
+    // borrower, two loan numbers) pass this check and then collapse into one
+    // contact at the roster insert. Refused rather than half-honoured.
+    if (
+      input.dedupe_column !== undefined &&
+      (input.ignore_columns ?? []).some(
+        (column) => column.trim().toLowerCase() === input.dedupe_column!.trim().toLowerCase(),
+      )
+    ) {
+      return reply.code(400).send({
+        error: 'Validation Error',
+        message: `'${input.dedupe_column}' is used to find duplicates, so it cannot also be ignored.`,
+      });
+    }
 
     if (input.mode === 'replace') {
       /**

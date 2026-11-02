@@ -12,10 +12,11 @@ import type { AgencyColumnAnalysis } from '../../types/agency-campaign';
 const ANALYSIS: AgencyColumnAnalysis = {
   headers: ['Mobile', 'Loan No', 'none'],
   columns: [
-    { name: 'Mobile', index: 0, samples: ['9820041772'], non_empty: 100, phone_score: 0.95, distinct: 82 },
-    { name: 'Loan No', index: 1, samples: ['LN-001'], non_empty: 100, phone_score: 0, distinct: 100 },
+    // 95 valid numbers, 77 distinct once normalised: 18 rows repeat a number.
+    { name: 'Mobile', index: 0, samples: ['9820041772'], non_empty: 100, phone_score: 0.95, distinct: 82, distinct_phones: 77 },
+    { name: 'Loan No', index: 1, samples: ['LN-001'], non_empty: 100, phone_score: 0, distinct: 100, distinct_phones: 0 },
     // A header literally called `none` must still be choosable as a column.
-    { name: 'none', index: 2, samples: ['x'], non_empty: 100, phone_score: 0, distinct: 3 },
+    { name: 'none', index: 2, samples: ['x'], non_empty: 100, phone_score: 0, distinct: 3, distinct_phones: 0 },
   ],
   rows_sampled: 100,
   truncated: false,
@@ -40,7 +41,7 @@ describe('ColumnMapper: Check duplicates on', () => {
       'Phone number', 'Loan No', 'none', "Don't remove duplicates",
     ]);
     expect(screen.getByTestId('dedupe-note').textContent).toContain(
-      'Mobile: 82% unique in this file; 18 rows repeat an earlier value and will be dropped.',
+      'Mobile: 81% of valid numbers are unique in this file; 18 rows repeat an earlier number and will be dropped.',
     );
   });
 
@@ -58,6 +59,17 @@ describe('ColumnMapper: Check duplicates on', () => {
       { mode: 'column', column: 'none' },
       { mode: 'none' },
     ]);
+  });
+
+  it('links the select to its note for screen readers', () => {
+    const { select } = renderMapper();
+    expect(select.getAttribute('aria-describedby')).toBe('ingest-dedupe-note');
+    expect(document.getElementById('ingest-dedupe-note')).toBe(screen.getByTestId('dedupe-note'));
+  });
+
+  it('says that "don\'t remove duplicates" still skips an exact copy', () => {
+    renderMapper({ ...initialMapping(ANALYSIS), dedupe: { mode: 'none' } });
+    expect(screen.getByTestId('dedupe-note').textContent).toContain('only an exact copy of an earlier row is skipped');
   });
 
   it('says what a chosen column means for rows that share a number', () => {

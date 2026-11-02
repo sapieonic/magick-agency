@@ -198,15 +198,25 @@ export class AgencyContactRepository {
    * the locking pick (`SKIP LOCKED`, past rows other transactions hold, as before)
    * takes up to `limit * CLAIM_CANDIDATE_FACTOR` due rows, and one contact per
    * number, at most `limit`, is claimed from those. The extra rows are locked only
-   * until the statement ends. Locking in the FIRST scan matters: a pick over an
-   * unlocked candidate list could find its whole window held by another
-   * transaction and claim nothing while dialable rows sat further down
-   * (`contact-claim-contention.test.ts`). When the head of the queue is a run of
-   * rows on one number, a tick can claim fewer than `limit`; the next tick sees
-   * that number busy and moves past it. Pacing ticks for one campaign never
-   * overlap (`PacingEngine.ticking`), which is what makes the busy probe (a read,
-   * not a lock) enough on this single-replica deployment. Pinned on a real
-   * database by `agency-contact-claim-one-per-number.test.ts`.
+   * until the statement ends (a few ms); a soft-phone {@link claimForManual} that
+   * meets one of them in that window answers `busy`, as it does for a row a tick is
+   * claiming. Locking in the FIRST scan matters: a pick over an unlocked candidate
+   * list could find its whole window held by another transaction and claim nothing
+   * while dialable rows sat further down (`contact-claim-contention.test.ts`). When
+   * the head of the queue is a run of rows on one number, a tick can claim fewer
+   * than `limit`; the next tick sees that number busy and moves past it.
+   *
+   * **What the guard does not cover.** The busy probe is a read, not a lock.
+   * Against other pacing ticks that is enough: ticks for one campaign never overlap
+   * (`PacingEngine.ticking`) on this single-replica deployment. It is not enough
+   * against the soft phone, which claims contacts in its own transaction: a manual
+   * claim of one row and a tick's claim of another row on the same number, in the
+   * same few milliseconds, can each miss the other's uncommitted write. And the
+   * soft phone's own pre-dial rule (`pickRosterContact`, docs/softphone.md §5)
+   * refuses only an `in_flight` match, so a tagged manual call to a number whose
+   * contact is `connected` goes ahead. Closing either needs a per-number lock or a
+   * soft-phone ruling, not this statement. Pinned on a real database by
+   * `agency-contact-claim-one-per-number.test.ts`.
    */
   async claimDialable(campaignId: string, limit: number): Promise<AgencyContactRecord[]> {
     if (limit <= 0) return [];

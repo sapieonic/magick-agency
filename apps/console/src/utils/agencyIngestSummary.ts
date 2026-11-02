@@ -81,6 +81,11 @@ export interface IngestSummaryModel {
   reconciliationLine: string;
   /** Duplicate rows. A subset of `rejected`, and labelled as one. */
   duplicates: number;
+  /**
+   * What a duplicate was in this import, as a sentence: a repeated number, or a
+   * repeated value in the operator's chosen column ("a Loan No that …").
+   */
+  duplicateMeaning: string;
   /** DNC suppressions, from `rejected_by_reason`. Also a subset of `rejected`. */
   dncSuppressed: number;
   /** Compliance line, or null when nothing was suppressed. */
@@ -166,6 +171,9 @@ export function buildIngestSummary(job: AgencyIngestJob): IngestSummaryModel {
      */
     reconciliationLine: `${formatCount(accepted)} accepted + ${formatCount(rejected)} rejected = ${formatCount(rowsRead)} rows read`,
     duplicates: job.duplicates,
+    duplicateMeaning: job.dedupe_column
+      ? `a ${job.dedupe_column} value that already appeared earlier in the file.`
+      : 'a number that already appeared earlier in the file.',
     dncSuppressed,
     dncNotice:
       dncSuppressed > 0

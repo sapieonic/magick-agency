@@ -104,6 +104,12 @@ export interface AgencyColumnStat {
    * column is in the sample: the operator's evidence for which column to dedupe on.
    */
   distinct: number;
+  /**
+   * Distinct normalised E.164 numbers among the sampled values that parse as one
+   * (the `phone_score` numerator). The phone dedupe compares numbers, not text, so
+   * this is how unique the column is as a phone column.
+   */
+  distinct_phones: number;
 }
 
 export interface AgencyColumnAnalysis {

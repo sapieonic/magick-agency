@@ -75,7 +75,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-ingest-concurrent-total.test.ts` | 1 |
 | `apps/server/test/integration/agency/agency-ingest-idempotency.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-ingest-job-repository-sql.test.ts` | ~12 |
-| `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | ~7 |
+| `apps/server/test/integration/agency/agency-ingest-roundtrip.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-ingest-route-seam.test.ts` | ~7 |
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
@@ -133,7 +133,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-agent-identity.test.ts` | 9 |
 | `apps/server/test/unit/agency/agency-call-read-routes.test.ts` | 25 |
 | `apps/server/test/unit/agency/agency-campaign-config.test.ts` | 80 |
-| `apps/server/test/unit/agency/agency-column-analysis.test.ts` | 15 |
+| `apps/server/test/unit/agency/agency-column-analysis.test.ts` | 16 |
 | `apps/server/test/unit/agency/agency-csv-ingest.isolation.test.ts` | 4 |
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 65 |
@@ -213,7 +213,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-campaign-series.routes.test.ts` | 41 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-stats-enrichment.routes.test.ts` | 26 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-transition-actor.routes.test.ts` | 30 |
-| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 144 |
+| `apps/server/test/unit/agency/proxy-agency-campaigns.routes.test.ts` | 145 |
 | `apps/server/test/unit/agency/proxy-agency-grouped-stats.routes.test.ts` | 111 |
 | `apps/server/test/unit/agency/proxy-agency-my-surfaces.routes.test.ts` | 78 |
 | `apps/server/test/unit/agency/proxy-agency-roster.routes.test.ts` | 69 |
@@ -1469,7 +1469,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 39 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 19 |
-| `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 4 |
+| `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
@@ -1542,7 +1542,7 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyCampaignsHome.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/agencyCatalogSync.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyClock.test.ts` | 20 |
-| `apps/console/src/__tests__/utils/agencyColumnMapping.test.ts` | 39 |
+| `apps/console/src/__tests__/utils/agencyColumnMapping.test.ts` | 44 |
 | `apps/console/src/__tests__/utils/agencyCompareTray.test.ts` | 23 |
 | `apps/console/src/__tests__/utils/agencyContext.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/agencyCuePrefs.test.ts` | 6 |

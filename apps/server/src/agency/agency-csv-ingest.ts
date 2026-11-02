@@ -343,6 +343,12 @@ export interface AgencyIngestOptions {
    * missing loan number is not evidence that two rows are the same loan.
    * Naming the phone column means the phone dedupe, on the normalised number.
    *
+   * The column must be RETAINED, not ignored. The roster dedupes again at insert
+   * on `row_fingerprint` (phone, `context`, timezone), and an ignored column is
+   * not in `context`, so two rows differing only in an ignored key would pass
+   * here and collapse into one contact there. `POST /ingest/jobs` refuses the
+   * combination; this module does not re-check it.
+   *
    * Keeping two rows on one number is safe to dial because
    * `AgencyContactRepository.claimDialable` never has two calls live to one
    * number in a campaign.
@@ -435,8 +441,9 @@ export function dedupeHeaders(headers: string[]): string[] {
 /**
  * How a value in the duplicate column is compared: trimmed and case-insensitive,
  * so `LN-001`, `ln-001` and ` LN-001 ` are one loan. The column analysis keys its
- * distinct counts the same way, so "100% unique" there means no `duplicate_key`
- * here (within the sample).
+ * `distinct` count the same way, so "100% unique" there means no `duplicate_key`
+ * here (within the sample). The phone dedupe compares normalised numbers instead;
+ * its counterpart in the analysis is `distinct_phones`.
  */
 export function dedupeKey(value: string): string {
   return value.trim().toLowerCase();

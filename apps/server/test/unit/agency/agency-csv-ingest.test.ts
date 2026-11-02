@@ -319,14 +319,12 @@ describe('dedupeColumn — duplicates decided by a column the operator picks', (
     expect(summary.rejected_by_reason).toEqual({ invalid_phone: 1 });
   });
 
-  it('matches the header case-insensitively, and works on an ignored column without leaking its value', async () => {
+  it('matches the header case-insensitively, and the reason names the column, never the value', async () => {
     const csv = 'Mobile,Loan No\n+919800000001,LN-SECRET\n+919800000002,LN-SECRET\n';
-    const { summary, rejections } = await run(csv, {
-      phoneColumn: 'Mobile', dedupeColumn: 'loan no', ignoreColumns: ['Loan No'],
-    });
+    const { summary, rejections } = await run(csv, { phoneColumn: 'Mobile', dedupeColumn: 'loan no' });
     expect(summary).toMatchObject({ accepted: 1, duplicates: 1 });
-    expect(rejections[0]!.context).toEqual({});
-    expect(JSON.stringify(rejections[0])).not.toContain('LN-SECRET');
+    expect(rejections[0]!.reason).toBe('Duplicate Loan No of an earlier row in this file.');
+    expect(rejections[0]!.reason).not.toContain('LN-SECRET');
   });
 
   it('naming the phone column is the phone dedupe, on the normalised number', async () => {

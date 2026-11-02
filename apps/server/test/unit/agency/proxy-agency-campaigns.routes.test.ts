@@ -588,6 +588,20 @@ describe('agency ingest routes', () => {
       await app.close();
     });
 
+    it('refuses 400 when the column is also ignored, matched as the ingest matches headers', async () => {
+      // An ignored column is not in the roster's row fingerprint, so two loans that
+      // differ only there would collapse into one contact at the insert.
+      const app = await buildApp();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/ingest/jobs`,
+        payload: { ...base, dedupe_column: 'Loan No', ignore_columns: ['Notes', ' loan no '] },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().message).toContain('cannot also be ignored');
+      expect(mocks.repo.create).not.toHaveBeenCalled();
+      await app.close();
+    });
+
     it('refuses 400 for a blank column name', async () => {
       const app = await buildApp();
       const res = await app.inject({
