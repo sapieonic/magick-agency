@@ -105,7 +105,7 @@ server, so `TRUST_PROXY_HOPS=2` (the value in `docker/.env.example`). Both direc
 this wrong are silent:
 
 - **Set to 1 behind a terminator:** every client resolves to the terminator's address and shares
-  one 200/min bucket.
+  one `ip_auth` bucket and one unauthenticated `ip` bucket (the per-user bucket still holds).
 - **:8080 reachable without going through the terminator:** a client chooses its own
   `request.ip` by sending `X-Forwarded-For`.
 
@@ -198,9 +198,9 @@ production.
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
 | `CONCURRENCY_RECONCILE_INTERVAL_MS` | `300000` | Self-heal reconcile cadence |
 | `STALE_CALL_SWEEP_MINUTES` | `30` | Stale bridged-call sweep |
-| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 200, 1000, 600, 1000, `1 minute` | Rate-limit buckets (`architecture.md`, "Rate limiting and client IP") |
-| `RATE_LIMIT_IP_AUTH_MAX` | 3000 | Per-IP bucket for requests carrying a bearer: a call floor behind one NAT (Q9, amended 2026-11-01) |
-| `RATE_LIMIT_USER_MAX` | 300 | Per verified user, charged by the session middleware; the bucket that binds signed-in traffic |
+| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_STATION_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 2000, 5000, 2000, 3600, 1000, `1 minute` | Rate-limit buckets (`architecture.md`, "Rate limiting and client IP"), sized for ~550 users behind one NAT and ~510 dials a minute (`apps/server/src/api/middleware/rate-limit-defaults.ts`) |
+| `RATE_LIMIT_IP_AUTH_MAX` | 20000 | Per-IP bucket for requests carrying a bearer: a call floor behind one NAT (Q9, amended 2026-11-01), the whole signed-in floor's traffic |
+| `RATE_LIMIT_USER_MAX` | 600 | Per verified user, charged by the session middleware; the bucket that binds signed-in traffic |
 | `MOBILE_MIN_SUPPORTED_VERSION`, `MOBILE_LATEST_VERSION` | `0.1.0`, `0.1.0` | `GET /client-config`; `MAJOR.MINOR.PATCH`, and the minimum may not be newer than the latest (boot refuses) |
 | `MOBILE_IOS_STORE_URL`, `MOBILE_ANDROID_STORE_URL` | unset | Store links on `GET /client-config`; https only |
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |

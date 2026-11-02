@@ -10,8 +10,8 @@ import { parseConfig } from '../../../../src/config/load.js';
  *  - configured versions and https store links reach the body; one link alone is one key;
  *  - versions are `MAJOR.MINOR.PATCH` only, a store link is https only, and a minimum newer
  *    than the latest is refused at boot (a dirty parse must not throw in the comparison);
- *  - `RATE_LIMIT_USER_MAX` (platform block, default 300) and `RATE_LIMIT_IP_AUTH_MAX`
- *    (voice block's `rateLimit`, default 3000);
+ *  - `RATE_LIMIT_USER_MAX` (platform block, default 600) and `RATE_LIMIT_IP_AUTH_MAX`
+ *    (voice block's `rateLimit`, default 20 000);
  *  - `POST /client-config/uplink-probe` through the REAL app (Firebase and the user lookup
  *    stubbed): refused 401 without a verified bearer (before any body is read, so an
  *    oversized anonymous body is a 401, not a 413), the byte count for 32 KB, 413 above
@@ -77,7 +77,9 @@ describe('GET /client-config', () => {
       const res = await app.inject({ method: 'GET', url: '/client-config' });
       expect(res.statusCode).toBe(200);
       expect(res.json()).toEqual({ mobile: { min_supported: '0.1.0', latest: '0.1.0' } });
-      expect(res.headers['x-ratelimit-limit']).toBe('200');
+      // The plain `ip` bucket's default (`RATE_LIMIT_MAX`): a whole floor's phones read this
+      // at start-up and in each pre-flight from one NAT (`rate-limit-defaults.ts`).
+      expect(res.headers['x-ratelimit-limit']).toBe('2000');
     } finally {
       await app.close();
     }
@@ -153,11 +155,11 @@ describe('MOBILE_* config', () => {
 });
 
 describe('rate-limit config (Q9, amended 2026-11-01)', () => {
-  it('defaults the per-user bucket to 300 and the bearer IP bucket to 3000', () => {
+  it('defaults the per-user bucket to 600 and the bearer IP bucket to 20 000', () => {
     const config = parse();
-    expect(config.userRateLimit.max).toBe(300);
-    expect(config.rateLimit.ipAuthMax).toBe(3000);
-    expect(config.rateLimit.max).toBe(200);
+    expect(config.userRateLimit.max).toBe(600);
+    expect(config.rateLimit.ipAuthMax).toBe(20_000);
+    expect(config.rateLimit.max).toBe(2000);
   });
 
   it('reads RATE_LIMIT_USER_MAX and RATE_LIMIT_IP_AUTH_MAX', () => {

@@ -29,6 +29,13 @@ import {
   routeClassFor,
   RATE_LIMIT_ROUTE_CLASSES,
 } from '../../../../src/api/middleware/rate-limit.middleware.js';
+import {
+  DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX,
+  DEFAULT_RATE_LIMIT_IP_AUTH_MAX,
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_STATION_MAX,
+  DEFAULT_RATE_LIMIT_WEBHOOK_MAX,
+} from '../../../../src/api/middleware/rate-limit-defaults.js';
 
 /** Minimal request stub: the `max` resolver and keyGenerator read url/headers/ip. */
 const apiReq = (url: string, ip = '1.2.3.4') => ({ url, headers: {}, ip }) as any;
@@ -50,7 +57,7 @@ describe('registerRateLimit', () => {
       timeWindow: '1 minute',
     }));
     const options = mockRegister.mock.calls[0]![1] as any;
-    expect(options.max(apiReq('/api/v1/calls'))).toBe(200);
+    expect(options.max(apiReq('/api/v1/calls'))).toBe(DEFAULT_RATE_LIMIT_MAX);
   });
 
   it('uses the Redis store when a client is provided', async () => {
@@ -148,7 +155,7 @@ describe('registerRateLimit', () => {
     const options = mockRegister.mock.calls[0]![1] as any;
     expect(options.timeWindow).toBe(60_000);
     // max still falls back to the default when only timeWindow is supplied.
-    expect(options.max(apiReq('/api/v1/calls'))).toBe(200);
+    expect(options.max(apiReq('/api/v1/calls'))).toBe(DEFAULT_RATE_LIMIT_MAX);
   });
 
   // ── Provider-webhook bucket + ceiling ──────────────────────────────────────
@@ -162,8 +169,8 @@ describe('registerRateLimit', () => {
     await registerRateLimit(app);
 
     const { max } = mockRegister.mock.calls[0]![1] as any;
-    expect(max(apiReq('/api/v1/webhooks/voicelink/static-status/abc'))).toBe(1000);
-    expect(max(apiReq('/api/v1/calls'))).toBe(200);
+    expect(max(apiReq('/api/v1/webhooks/voicelink/static-status/abc'))).toBe(DEFAULT_RATE_LIMIT_WEBHOOK_MAX);
+    expect(max(apiReq('/api/v1/calls'))).toBe(DEFAULT_RATE_LIMIT_MAX);
   });
 
   it('applies webhookMax across every provider webhook mount, not just telephony', async () => {
@@ -178,7 +185,7 @@ describe('registerRateLimit', () => {
       '/api/v1/webhooks/greenapi/conn-1',
       '/api/v1/webhooks/resend',
     ]) {
-      expect(max(apiReq(url))).toBe(1000);
+      expect(max(apiReq(url))).toBe(DEFAULT_RATE_LIMIT_WEBHOOK_MAX);
     }
   });
 
@@ -192,7 +199,7 @@ describe('registerRateLimit', () => {
     // matters only for the exact-prefix comparison, so this pins the
     // real-world URL shape end to end rather than the stripping itself.
     const url = '/api/v1/webhooks/voicelink/static-status/abc?token=deadbeef';
-    expect(options.max(apiReq(url))).toBe(1000);
+    expect(options.max(apiReq(url))).toBe(DEFAULT_RATE_LIMIT_WEBHOOK_MAX);
     expect(options.keyGenerator(apiReq(url, '9.9.9.9'))).toBe('wh:9.9.9.9');
   });
 
@@ -212,7 +219,7 @@ describe('registerRateLimit', () => {
 
     const options = mockRegister.mock.calls[0]![1] as any;
     const url = '/api/v1/calls?next=/api/v1/webhooks/voicelink';
-    expect(options.max(apiReq(url))).toBe(200);
+    expect(options.max(apiReq(url))).toBe(DEFAULT_RATE_LIMIT_MAX);
     expect(options.keyGenerator(apiReq(url, '7.7.7.7'))).toBe('7.7.7.7');
   });
 
@@ -242,7 +249,7 @@ describe('registerRateLimit', () => {
     // With no tenant bucket this is a webhook request like any other, and the
     // ceiling still follows the bucket (one counter, one budget).
     expect(options.keyGenerator(req)).toBe('wh:1.2.3.4');
-    expect(options.max(req)).toBe(1000);
+    expect(options.max(req)).toBe(DEFAULT_RATE_LIMIT_WEBHOOK_MAX);
   });
 
   it('keeps max and keyGenerator in lockstep across every auth/path combination', async () => {
@@ -326,7 +333,7 @@ describe('registerRateLimit', () => {
       '/api/v1/static-media-stream/call-1/token-1',
       '/api/v1/tts-audio/deadbeefcafe',
     ]) {
-      expect(max(apiReq(url))).toBe(600);
+      expect(max(apiReq(url))).toBe(DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX);
       expect(keyGenerator(apiReq(url, '4.4.4.4'))).toBe('cm:4.4.4.4');
     }
   });
@@ -404,17 +411,17 @@ describe('registerRateLimit', () => {
       '/api/v1/webrtc-call/8f1c-callid/pstn-stream',
       '/api/v1/webrtc-call/8f1c-callid/browser-stream?token=t',
     ]) {
-      expect(max(apiReq(url))).toBe(600);
+      expect(max(apiReq(url))).toBe(DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX);
       expect(keyGenerator(apiReq(url, '6.6.6.6'))).toBe('cm:6.6.6.6');
       expect(routeClassFor(url)).toBe('media_stream');
     }
     // The parent is authenticated tenant CRUD and must stay in the tenant/ip
     // budget — matching the whole prefix would have moved it too.
-    expect(max(apiReq('/api/v1/webrtc-call'))).toBe(200);
-    expect(max(apiReq('/api/v1/webrtc-call/8f1c-callid'))).toBe(200);
+    expect(max(apiReq('/api/v1/webrtc-call'))).toBe(DEFAULT_RATE_LIMIT_MAX);
+    expect(max(apiReq('/api/v1/webrtc-call/8f1c-callid'))).toBe(DEFAULT_RATE_LIMIT_MAX);
     expect(keyGenerator(apiReq('/api/v1/webrtc-call/8f1c-callid', '6.6.6.6'))).toBe('6.6.6.6');
     // A lookalike suffix outside the parent prefix is not a media leg.
-    expect(max(apiReq('/api/v1/calls/x/pstn-stream'))).toBe(200);
+    expect(max(apiReq('/api/v1/calls/x/pstn-stream'))).toBe(DEFAULT_RATE_LIMIT_MAX);
   });
 
   it('propagates carrierMediaMax / internalMax overrides', async () => {
@@ -484,17 +491,17 @@ describe('registerRateLimit', () => {
 
   // ── The station socket upgrade: its own `st:<ip>` bucket ───────────────────────
   // Its credential is a single-use query token, not a bearer, so it used to share the plain
-  // 200/min `<ip>` counter with all unauthenticated traffic from the IP: a NAT'd floor
+  // plain `<ip>` counter with all unauthenticated traffic from the IP: a NAT'd floor
   // walking the reconnect ladder at once could 429 a mid-call agent's reconnect.
 
-  it('puts the station upgrade in its own bucket, 1200/min under st:<ip>, with or without a bearer', async () => {
+  it('puts the station upgrade in its own bucket, at its own ceiling under st:<ip>, with or without a bearer', async () => {
     const app = { register: mockRegister } as any;
     await registerRateLimit(app);
     const { max, keyGenerator } = mockRegister.mock.calls[0]![1] as any;
     for (const headers of [{}, { authorization: 'Bearer t' }]) {
       const req = { url: '/proxy/agency/station/9b2e?token=abc&client=mobile&media=alaw8', headers, ip: '100.64.1.1' };
       expect(budgetFor(req)).toBe('station');
-      expect(max(req)).toBe(1200);
+      expect(max(req)).toBe(DEFAULT_RATE_LIMIT_STATION_MAX);
       expect(keyGenerator(req)).toBe('st:100.64.1.1');
     }
     // Path boundary: a lookalike is not the station.
@@ -533,12 +540,12 @@ describe('registerRateLimit', () => {
     expect(keyGenerator(plain)).toBe('100.64.1.1');
   });
 
-  it('defaults the ip_auth ceiling to 3000 and propagates an override', async () => {
+  it('defaults the ip_auth ceiling (20 000) and propagates an override', async () => {
     const app = { register: mockRegister } as any;
     await registerRateLimit(app);
     await registerRateLimit(app, null, { ipAuthMax: 42 });
     const bearer = { url: '/auth/me', headers: { authorization: 'Bearer t' }, ip: 'i' };
-    expect((mockRegister.mock.calls[0]![1] as any).max(bearer)).toBe(3000);
+    expect((mockRegister.mock.calls[0]![1] as any).max(bearer)).toBe(DEFAULT_RATE_LIMIT_IP_AUTH_MAX);
     expect((mockRegister.mock.calls[1]![1] as any).max(bearer)).toBe(42);
   });
 

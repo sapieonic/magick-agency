@@ -360,7 +360,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, and the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request).
 
-Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
+Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit-defaults.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
 | Test file | Cases |
 |---|---|
@@ -539,6 +539,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 |---|---|
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
+| `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
 | `apps/server/test/unit/config/config.test.ts` | 3 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |

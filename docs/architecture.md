@@ -400,16 +400,16 @@ counter never holds two ceilings:
 
 | Bucket | Key | Default / min | Who |
 |---|---|---|---|
-| `webhook` | `wh:<ip>` | 1000 (`RATE_LIMIT_WEBHOOK_MAX`) | `/api/v1/webhooks/*` |
-| `carrier_media` | `cm:<ip>` | 600 (`RATE_LIMIT_CARRIER_MEDIA_MAX`) | media sockets, TTS clips, both WebRTC legs |
-| `station` | `st:<ip>` | 1200 (`RATE_LIMIT_STATION_MAX`) | the station socket upgrade, `/proxy/agency/station/*` (a single-use query token, not a bearer): a floor behind one NAT walking the reconnect ladder at once must not spend the plain bucket or 429 a mid-call reconnect |
+| `webhook` | `wh:<ip>` | 5000 (`RATE_LIMIT_WEBHOOK_MAX`) | `/api/v1/webhooks/*` |
+| `carrier_media` | `cm:<ip>` | 2000 (`RATE_LIMIT_CARRIER_MEDIA_MAX`) | media sockets, TTS clips, both WebRTC legs |
+| `station` | `st:<ip>` | 3600 (`RATE_LIMIT_STATION_MAX`) | the station socket upgrade, `/proxy/agency/station/*` (a single-use query token, not a bearer): a floor behind one NAT walking the reconnect ladder at once must not spend the plain bucket or 429 a mid-call reconnect |
 | `internal` | `int:<ip>` | 1000 (`RATE_LIMIT_INTERNAL_MAX`) | `/internal/*` (none served) |
-| `ip_auth` | `ipa:<ip>` | 3000 (`RATE_LIMIT_IP_AUTH_MAX`) | any other request carrying `Authorization: Bearer` |
-| `ip` | `<ip>` | 200 (`RATE_LIMIT_MAX`) | everything else: sign-in, invites, `GET /client-config` |
+| `ip_auth` | `ipa:<ip>` | 20 000 (`RATE_LIMIT_IP_AUTH_MAX`) | any other request carrying `Authorization: Bearer` |
+| `ip` | `<ip>` | 2000 (`RATE_LIMIT_MAX`) | everything else, unauthenticated: sign-in refusals, invites (own 20/min cap), `GET /client-config` |
 | `exempt` | none | unlimited | `/healthz`, `/readyz` (exact paths) |
 
 Then, inside every authenticated route, `sessionMiddleware` charges the **per-user** bucket once it
-has verified the caller: key `u:<user id>`, default 300/min (`RATE_LIMIT_USER_MAX`, platform config
+has verified the caller: key `u:<user id>`, default 600/min (`RATE_LIMIT_USER_MAX`, platform config
 block), same window and store. That one binds authenticated traffic: agents behind one carrier-grade
 NAT (Jio, Airtel) share an IP but never a user bucket, and the IP bucket for bearer traffic is
 deliberately coarse. Only the PRESENCE of a bearer picks `ip_auth`; it is not verified there and its
@@ -418,6 +418,10 @@ amended 2026-11-01). A route may add its own tighter per-user cap in its own nam
 (`createUserRateLimit`): `POST /client-config/uplink-probe` allows 6 per user per window (`up:<id>`),
 charged with its authentication in `preParsing`, so no body is read for a caller who fails either.
 Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
+
+The defaults are sized for ~500 agents and ~50 supervisors behind one office NAT, at 500
+concurrent calls (~510 dials and ~170 answers a minute); the arithmetic per bucket is in
+`api/middleware/rate-limit-defaults.ts`, which the middleware and both config blocks read.
 Per-route limits (super-admin login 5/min, public invite routes 20/min) are honoured, each keyed on
 the IP alone (the route pins its `keyGenerator`; an inherited one would split a bearer and a
 non-bearer request into two counters). A 429 from any

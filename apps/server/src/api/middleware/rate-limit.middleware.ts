@@ -20,26 +20,37 @@ import type { UserRecord } from '@magick-agency/db/models/user.model';
 import rateLimit from '@fastify/rate-limit';
 import { createChildLogger } from '@magick-agency/observability';
 import { trackRateLimitRejected } from '@magick-agency/observability/metrics/voice';
+import {
+  DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX,
+  DEFAULT_RATE_LIMIT_INTERNAL_MAX,
+  DEFAULT_RATE_LIMIT_IP_AUTH_MAX,
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_STATION_MAX,
+  DEFAULT_RATE_LIMIT_USER_MAX,
+  DEFAULT_RATE_LIMIT_WEBHOOK_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW,
+} from './rate-limit-defaults.js';
 
 const log = createChildLogger({ component: 'rate-limit' });
 
-const DEFAULT_MAX = 200;
-const DEFAULT_IP_AUTH_MAX = 3000;
-const DEFAULT_USER_MAX = 300;
-const DEFAULT_WEBHOOK_MAX = 1000;
-const DEFAULT_CARRIER_MEDIA_MAX = 600;
+// Defaults and their sizing for a 500-agent floor behind one NAT: `rate-limit-defaults.ts`.
+const DEFAULT_MAX = DEFAULT_RATE_LIMIT_MAX;
+const DEFAULT_IP_AUTH_MAX = DEFAULT_RATE_LIMIT_IP_AUTH_MAX;
+const DEFAULT_USER_MAX = DEFAULT_RATE_LIMIT_USER_MAX;
+const DEFAULT_WEBHOOK_MAX = DEFAULT_RATE_LIMIT_WEBHOOK_MAX;
+const DEFAULT_CARRIER_MEDIA_MAX = DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX;
 /**
  * The station socket upgrade's ceiling per IP. Sized for a reconnect storm behind one NAT
  * (Q9): a Wi-Fi blip on a floor sends every agent down the reconnect ladder at once, 6
- * upgrades in ~33 s each, so 1200/min holds a 200-agent floor all walking the whole ladder
+ * upgrades in ~33 s each, so 3600/min holds a 500-agent floor all walking the whole ladder
  * inside one window. Generous because a refused upgrade is the expensive failure here (a
  * mid-call agent who cannot reconnect misses the 8 s deferred hangup), and safe because the
  * upgrade is gated by a single-use token minted over authenticated, per-user-limited HTTP:
  * an upgrade without one costs a Redis lookup and a 4401 close, and buys nothing.
  */
-const DEFAULT_STATION_MAX = 1200;
-const DEFAULT_INTERNAL_MAX = 1000;
-const DEFAULT_WINDOW = '1 minute';
+const DEFAULT_STATION_MAX = DEFAULT_RATE_LIMIT_STATION_MAX;
+const DEFAULT_INTERNAL_MAX = DEFAULT_RATE_LIMIT_INTERNAL_MAX;
+const DEFAULT_WINDOW = DEFAULT_RATE_LIMIT_WINDOW;
 
 /**
  * Unauthenticated carrier/provider webhooks all mount under this prefix
@@ -68,10 +79,11 @@ const WEBHOOK_PATH_PREFIX = '/api/v1/webhooks';
  * rate from the same carrier on the same call, so splitting them further would
  * not remove any cross-purpose exhaustion risk — unlike the split from the
  * self-amplifying webhook stream, which does. Two consequences worth stating:
- * a media upgrade can still be starved by clip fetches on the same batch (~2
- * requests per call against a 600/min default, so ~6.8x headroom at the
- * observed ~44 calls/min), and `/api/v1/tts-audio/:hash` — unauthenticated and
- * NOT token-gated — moves from the 200/min shared ceiling to this higher one.
+ * a media upgrade can still be starved by clip fetches on the same batch (at
+ * most ~2 requests per call; VoiceLink fetches no clips, its one upgrade per dial
+ * is ~510/min on a 500-call floor against the 2000/min default), and
+ * `/api/v1/tts-audio/:hash` — unauthenticated and NOT token-gated — sits under
+ * this ceiling rather than the plain `ip` one.
  * That is a deliberate trade: it is the same handful of carrier IPs, and the
  * endpoint serves an immutable content-addressed clip from disk.
  */
@@ -337,20 +349,19 @@ export function routeClassFor(url: string | undefined): RateLimitRouteClass {
 }
 
 export interface RateLimitOptions {
-  /** Max requests per window per key. Default 200. */
+  /** Max requests per window per key (unauthenticated). Default 2000 (`rate-limit-defaults.ts`). */
   max?: number;
-  /** Max requests per window per IP for requests carrying `Authorization: Bearer`. Default 3000. */
+  /** Max requests per window per IP for requests carrying `Authorization: Bearer`. Default 20 000. */
   ipAuthMax?: number;
-  /** Max requests per window for `/api/v1/webhooks/*`. Default 1000 (`DEFAULT_WEBHOOK_MAX`). */
+  /** Max requests per window for `/api/v1/webhooks/*`. Default 5000 (`DEFAULT_WEBHOOK_MAX`). */
   webhookMax?: number;
-  /** Max requests per window for carrier-facing media/clip paths. Default 600. */
+  /** Max requests per window for carrier-facing media/clip paths. Default 2000. */
   carrierMediaMax?: number;
   /** Max requests per window for `/internal/*` traffic. Default 1000. */
   internalMax?: number;
   /**
-   * Max station socket upgrades per window per IP. Default 1200 (`DEFAULT_STATION_MAX`).
-   * No env key: the ceilings above come from the voice config block, and this one is fixed
-   * until an operator needs to move it.
+   * Max station socket upgrades per window per IP. Default 3600 (`DEFAULT_STATION_MAX`);
+   * `RATE_LIMIT_STATION_MAX` in the voice config block, like the ceilings above.
    */
   stationMax?: number;
   /** Window size (fastify-rate-limit duration string or ms). Default '1 minute'. */
@@ -557,7 +568,7 @@ declare module 'fastify' {
 }
 
 export interface UserRateLimitOptions {
-  /** Max requests per window per verified user. Default 300 (`RATE_LIMIT_USER_MAX`). */
+  /** Max requests per window per verified user. Default 600 (`RATE_LIMIT_USER_MAX`). */
   max?: number;
   /** The IP buckets' window (`RATE_LIMIT_WINDOW`). Default '1 minute'. */
   timeWindow?: string | number;

@@ -1,5 +1,14 @@
 import { z } from 'zod';
 import { envBoolean, type Env } from '../env.js';
+import {
+  DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX,
+  DEFAULT_RATE_LIMIT_INTERNAL_MAX,
+  DEFAULT_RATE_LIMIT_IP_AUTH_MAX,
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_STATION_MAX,
+  DEFAULT_RATE_LIMIT_WEBHOOK_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW,
+} from '../../api/middleware/rate-limit-defaults.js';
 
 /**
  * Voice-engine config: the bridge, guards, VoiceLink adapter, rate limiter, clip
@@ -102,20 +111,20 @@ export const telephonySchema = z.object({
   requireField('voicelink.webhookBaseUrl', data.voicelink.webhookBaseUrl);
 });
 
-// The sizing rationale (why webhookMax is 1000, why carrier media has its own bucket,
-// why bearer-carrying traffic gets `ipAuthMax`) is in the rate-limit middleware header.
+// Why each bucket exists is in the rate-limit middleware header; the defaults and their
+// sizing for a 500-agent floor behind one NAT are in `api/middleware/rate-limit-defaults.ts`.
 // The per-USER ceiling is not here: it keys on the verified user, which is the platform
 // block's (`userRateLimit`, `RATE_LIMIT_USER_MAX`).
 const rateLimitSchema = z.object({
-  max: z.coerce.number().int().min(1).default(200),
+  max: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_MAX),
   /** `RATE_LIMIT_IP_AUTH_MAX`: the per-IP ceiling for requests carrying `Authorization: Bearer`. */
-  ipAuthMax: z.coerce.number().int().min(1).default(3000),
-  webhookMax: z.coerce.number().int().min(1).default(1000),
-  carrierMediaMax: z.coerce.number().int().min(1).default(600),
+  ipAuthMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_IP_AUTH_MAX),
+  webhookMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_WEBHOOK_MAX),
+  carrierMediaMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX),
   /** `RATE_LIMIT_STATION_MAX`: station socket upgrades per IP (single-use token, no bearer). */
-  stationMax: z.coerce.number().int().min(1).default(1200),
-  internalMax: z.coerce.number().int().min(1).default(1000),
-  timeWindow: z.string().default('1 minute'),
+  stationMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_STATION_MAX),
+  internalMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_INTERNAL_MAX),
+  timeWindow: z.string().default(DEFAULT_RATE_LIMIT_WINDOW),
 });
 
 // The app's own bucket.
