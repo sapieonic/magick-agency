@@ -164,4 +164,19 @@ describe('WebSocket upgrade handoff to forked workers', () => {
     expect(() => other.get('/ws', { websocket: true }, () => {})).toThrow(/wsOwner/);
     await other.close();
   });
+
+  // Last: it closes the primary. A socket a worker holds must not hold the primary's
+  // HTTP close (shutdown's first step) open: `child_process` would otherwise track it
+  // against the server and `close()` would wait for the worker (socket-pause.ts).
+  it("the primary's close is not held open by a socket a worker still holds", async () => {
+    const live = await open(`/proxy/agency/station/${randomUUID()}?token=t`);
+    expect(live.ws.readyState).toBe(WebSocket.OPEN);
+    const closed = await Promise.race([
+      app.close().then(() => 'closed'),
+      new Promise((r) => setTimeout(() => r('held open'), 5_000)),
+    ]);
+    expect(closed).toBe('closed');
+    live.ws.terminate();
+  });
 });
+
