@@ -23,6 +23,7 @@ and its pinning test, never by adapting one side to the other.
 | Leaf dialer rules (no imports, or only contracts and other leaves: abandonment predicate, timers, rates, keyset cursor, success disposition, ...) | `packages/domain/src/` |
 | A route plugin's routes, once it is large | the exported plugin function, its hooks and module note stay in `apps/server/src/api/routes/<family>.routes.ts`; the routes go in `apps/server/src/api/routes/<family>/` as `register…(app)` functions it calls on the same instance, so its hooks apply to them and the area plugin does not change |
 | Helpers shared by several route files (ownership probe, parse-or-400, CSV attachment, page drain, ...) | `apps/server/src/api/routes/helpers/` |
+| Composition for several processes on one host: process roles, the IPC protocol and channel, and (later) the supervisor and the socket handoff (`docs/scaling.md`). Composition like `bootstrap/` and `seams/`, not a fifth module area | `apps/server/src/cluster/` |
 | Unit and integration tests | the package's `test/unit/<path>` and `test/integration/<path>`, mirroring `src/<path>` |
 
 ## 2. Module-area files in the shared server
