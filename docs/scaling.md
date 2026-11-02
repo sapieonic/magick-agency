@@ -570,10 +570,17 @@ That is under 1 000 small JSON messages a second in total.
   never dropped, because every event here either has a backstop (bus events: the safety tick
   and cache TTL; `station.*`: the snapshot reconcile on every health ping whose count
   disagrees) or is a request with a deadline.
-- In-flight requests per worker are capped at 256. Past that, new requests fail `refused`:
-  - a dial is returned to the pool;
-  - a forward answers 503;
-  - a webhook answers 503 and the carrier retries.
+- In-flight requests per worker are bounded, and past a bound a new request fails `refused`
+  (a dial is returned to the pool; a forward answers 503; a webhook answers 503 and the
+  carrier retries). As built, two bounds sized so legitimate load cannot reach them:
+  - `dial.execute`, on its own: `MAX_CONCURRENT_CALLS` (1000). A dial is outstanding from
+    send to the carrier's `add_lead` answer (up to 40 s), pacing sends at most one per idle
+    agent, and each takes a global concurrency slot, so a shift start on a worker holding
+    the whole floor (`MEDIA_WORKERS=1`) has at most one per agent and never more than the
+    guard admits. The design's single cap of 256 would have refused a 500-agent shift start;
+  - everything else, together: 2048 (a forwarded agent request and a carrier post per
+    agent or call, ~1000 for a 500-agent floor on one worker, doubled). A dial burst does not
+    use it up, nor the reverse.
 
   A worker that is that far behind is already failing its calls.
 - A **slow worker** (loop saturated) shows as rising `ipc_request_duration_seconds` and
@@ -906,7 +913,7 @@ checklist gets a line.
   revives `DialCommand` dates. Round-trip property: `parse(JSON.parse(JSON.stringify(x))) ≡ x`
   for generated commands.
 - `IpcChannel` over an in-memory channel pair: correlation, per-type deadlines, `gone` on
-  disconnect for every pending request, the 256 in-flight cap, `send` back-pressure counting.
+  disconnect for every pending request, the in-flight bounds (dials apart from the rest), `send` back-pressure counting.
 - `slotFor`: deterministic, and the distribution over 10 000 UUIDs within ±10% per slot.
 - `IpcDialDispatcher`: a refused clearance throws before sending (mutation: drop the check
   and the test goes red); unknown replica → `DispatchRefused`; timeout and `gone` resolve

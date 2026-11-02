@@ -11,7 +11,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { createChildLogger } from '@magick-agency/observability';
 import { trackChildExit } from '@magick-agency/observability/metrics/voice';
-import { IpcChannel, childProcessTransport } from './ipc-channel.js';
+import { IpcChannel, childProcessTransport, type IpcChannelOptions } from './ipc-channel.js';
 import type { HealthBody, IpcEventMap, IpcEventType, WsHandoff } from './ipc-protocol.js';
 import type { ChildRole } from './roles.js';
 
@@ -41,6 +41,8 @@ export interface ChildSupervisorOptions {
   onExit?: (exit: ChildExit) => void | Promise<void>;
   /** A slot became ready (first boot or a restart). */
   onReady?: (slot: number, pid: number) => void;
+  /** Bounds for each incarnation's channel (`IpcChannelOptions`). */
+  channelBounds?: Pick<IpcChannelOptions, 'maxInFlight' | 'maxInFlightByType'>;
   readyTimeoutMs?: number;
   restartBackoffMs?: readonly number[];
   /** More than `max` unexpected exits of one slot inside {@link CRASH_WINDOW_MS}: no re-fork, `onCrashLoop` instead. */
@@ -187,7 +189,7 @@ export class ChildSupervisor {
     s.child = child;
     s.ready = false;
     s.killedAtStop = false;
-    const channel = new IpcChannel(childProcessTransport(child), { name: `primary→${this.opts.role}${s.slot}` });
+    const channel = new IpcChannel(childProcessTransport(child), { name: `primary→${this.opts.role}${s.slot}`, ...this.opts.channelBounds });
     s.channel = channel;
     channel.onEvent('ready', (body) => {
       if (body.role !== this.opts.role || body.slot !== s.slot || s.child !== child) {

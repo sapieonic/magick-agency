@@ -11,7 +11,8 @@
  *  - **A closed channel fails everything outstanding with `gone`**, and refuses new
  *    requests with `refused`, so nothing waits on a process that has exited.
  *  - **Bounded.** At most `maxInFlight` requests may be outstanding; past it a request is
- *    refused, not queued. A `false` from the transport's `send` (Node's backlog threshold)
+ *    refused, not queued. A type given its own bound (`maxInFlightByType`) counts only
+ *    against that bound, so a burst of one kind cannot refuse the others. A `false` from the transport's `send` (Node's backlog threshold)
  *    is counted; the message is still queued by Node, never dropped here.
  */
 import type { ChildProcess } from 'node:child_process';
@@ -131,6 +132,8 @@ export interface IpcChannelOptions {
   name: string;
   /** Outstanding requests allowed before new ones are refused. */
   maxInFlight?: number;
+  /** Request types bounded on their own instead (and not counted in `maxInFlight`). */
+  maxInFlightByType?: Partial<Record<IpcRequestType, number>>;
 }
 
 export interface IpcChannelStats {
@@ -158,7 +161,17 @@ type EventHandler<K extends IpcEventType> = (body: IpcEventMap[K]) => void;
 type RequestHandler<K extends IpcRequestType> = (body: IpcRequestMap[K]['req']) =>
   IpcRequestMap[K]['res'] | Promise<IpcRequestMap[K]['res']>;
 
-export const DEFAULT_IPC_MAX_IN_FLIGHT = 256;
+/**
+ * The shared bound on outstanding requests, for every type without its own. What one end
+ * legitimately has outstanding to a media worker is per agent on that worker: a forwarded
+ * internal request (an HTTP request the agent's console is waiting on, about one at a time)
+ * and a carrier status post per live call, plus a handful of singletons (snapshot, health,
+ * sweep notices). One worker can hold the whole 500-agent floor (`MEDIA_WORKERS=1`), so a
+ * shift start can put ~1000 of those in flight at once; 2048 leaves twice that. The bound
+ * exists for a peer that stops answering: with deadlines of ≤ 40 s, what piles up meanwhile
+ * is bounded by it, never by memory. Dials are bounded separately (`MediaCluster`).
+ */
+export const DEFAULT_IPC_MAX_IN_FLIGHT = 2048;
 /** At most one malformed-message warning per type per this window. */
 const MALFORMED_LOG_WINDOW_MS = 60_000;
 
@@ -168,6 +181,9 @@ export class IpcChannel {
   private readonly eventHandlers = new Map<string, Set<(body: unknown) => void>>();
   private readonly requestHandlers = new Map<string, (body: unknown) => unknown>();
   private readonly maxInFlight: number;
+  private readonly maxInFlightByType: Partial<Record<IpcRequestType, number>>;
+  /** Outstanding requests per bound: a separately bounded type's own count, or `*`. */
+  private readonly inFlightByBound = new Map<string, number>();
   private closed = false;
   private readonly lastMalformedLogAt = new Map<string, number>();
   private readonly counters: Omit<IpcChannelStats, 'inFlight'> = {
@@ -179,6 +195,7 @@ export class IpcChannel {
 
   constructor(private readonly transport: IpcTransport, private readonly opts: IpcChannelOptions) {
     this.maxInFlight = opts.maxInFlight ?? DEFAULT_IPC_MAX_IN_FLIGHT;
+    this.maxInFlightByType = opts.maxInFlightByType ?? {};
     this.unsubscribe.push(transport.onMessage((m, h) => this.receive(m, h)));
     this.unsubscribe.push(transport.onClose(() => this.close()));
     if (!transport.connected) this.close();
@@ -236,19 +253,22 @@ export class IpcChannel {
     opts: { deadlineMs?: number } = {},
   ): Promise<IpcRequestMap[K]['res']> {
     if (this.closed) return Promise.reject(new IpcRequestError('refused', type, 'channel closed'));
-    if (this.pending.size >= this.maxInFlight) {
-      return Promise.reject(new IpcRequestError('refused', type, `${this.maxInFlight} requests already in flight`));
+    const bound = this.maxInFlightByType[type] !== undefined ? type : '*';
+    const cap = this.maxInFlightByType[type] ?? this.maxInFlight;
+    if ((this.inFlightByBound.get(bound) ?? 0) >= cap) {
+      return Promise.reject(new IpcRequestError('refused', type, `${cap} ${bound === '*' ? 'requests' : type} already in flight`));
     }
     const deadlineMs = opts.deadlineMs ?? IPC_DEFAULT_DEADLINES_MS[type];
     const id = this.nextId++;
     const sentAt = performance.now();
     const settled = new Promise<IpcRequestMap[K]['res']>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
+        this.forget(id);
         reject(new IpcRequestError('timeout', type, `no answer within ${deadlineMs} ms`));
       }, deadlineMs);
       timer.unref?.();
       this.pending.set(id, { type, resolve: resolve as (b: unknown) => void, reject, timer });
+      this.inFlightByBound.set(bound, (this.inFlightByBound.get(bound) ?? 0) + 1);
       this.write({ v: IPC_PROTOCOL_VERSION, kind: 'req', id, type, body, deadlineMs });
     });
     settled.then(
@@ -287,8 +307,8 @@ export class IpcChannel {
     for (const off of this.unsubscribe.splice(0)) off();
     for (const [id, p] of this.pending) {
       clearTimeout(p.timer);
+      this.forget(id);
       p.reject(new IpcRequestError('gone', p.type, 'channel closed'));
-      this.pending.delete(id);
     }
     for (const listener of [...this.closeListeners]) {
       try { listener(); } catch (err) { log.warn({ err, channel: this.opts.name }, 'IPC close listener threw'); }
@@ -392,6 +412,15 @@ export class IpcChannel {
     }
   }
 
+  /** Drop a settled request from the pending table and its bound's count. */
+  private forget(id: number): void {
+    const p = this.pending.get(id);
+    if (!p) return;
+    this.pending.delete(id);
+    const bound = this.maxInFlightByType[p.type] !== undefined ? p.type : '*';
+    this.inFlightByBound.set(bound, (this.inFlightByBound.get(bound) ?? 1) - 1);
+  }
+
   private receiveResponse(env: IpcResponseEnvelope): void {
     const p = this.pending.get(env.id);
     if (!p) {
@@ -399,7 +428,7 @@ export class IpcChannel {
       trackIpcDropped('late');
       return;
     }
-    this.pending.delete(env.id);
+    this.forget(env.id);
     clearTimeout(p.timer);
     if (!env.ok) {
       p.reject(new IpcRequestError(env.error.code, p.type, env.error.message));

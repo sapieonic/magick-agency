@@ -78,6 +78,7 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
     },
     ...(opts.readyTimeoutMs !== undefined ? { readyTimeoutMs: opts.readyTimeoutMs } : {}),
     snapshotRefreshMs: config.processes.mediaSnapshotRefreshMs,
+    maxDialsInFlight: config.concurrency.maxConcurrentCalls,
   });
 
   configureAgencyRuntime({

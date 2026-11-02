@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import { slotFor } from '../../../src/cluster/roles.js';
-import { MediaCluster } from '../../../src/cluster/media-cluster.js';
+import { DEFAULT_MAX_DIALS_IN_FLIGHT, MediaCluster } from '../../../src/cluster/media-cluster.js';
 import { parseConfig } from '../../../src/config/load.js';
 import { EMPTY_SNAPSHOT, FakeChildProcess } from '../../helpers/fake-child-process.js';
 
@@ -75,6 +75,38 @@ describe('MediaCluster: a session id in upper case', () => {
     for (const f of forks) if (f.slot !== owner) expect(f.requests('core.inject')).toHaveLength(0);
 
     expect(c.slotFor({ by: 'session', param: 'sessionId' }, { sessionId: id.toUpperCase() }, {})).toBe(owner);
+  });
+});
+
+describe('MediaCluster: dials in flight to one worker', () => {
+  const DIAL = { cmd: {}, grant: 1 } as never;
+
+  it('a whole floor of dials outstanding on one worker (MAX_CONCURRENT_CALLS, 1000 by default) is never refused, nor does it refuse the other requests; one more is', async () => {
+    const { c, forks } = cluster({ count: 1 });
+    running = c;
+    await c.start();
+    const channel = c.supervisor.channel(0)!;
+    const dials = Array.from({ length: DEFAULT_MAX_DIALS_IN_FLIGHT }, () =>
+      channel.request('dial.execute', DIAL).then(() => 'ok', (e: { code: string }) => e.code));
+    // The worker answers none of them (each is waiting on the carrier's add_lead).
+    expect(forks[0]!.requests('dial.execute')).toHaveLength(DEFAULT_MAX_DIALS_IN_FLIGHT);
+    // The floor's other requests still go: a forwarded agent action, a health ping.
+    forks[0]!.handlers.set('health.ping', () => ({ role: 'media', slot: 0, pid: 1, elu: 0, inFlight: 0, pausedForMs: 0, loopDelayP99Ms: 0, draining: false }));
+    await expect(channel.request('health.ping', {})).resolves.toMatchObject({ slot: 0 });
+    await expect(channel.request('dial.execute', DIAL)).rejects.toMatchObject({ code: 'refused' });
+    await c.stop(500);
+    running = null;
+    // None of the floor's dials was refused: each ended `gone` with the worker.
+    expect(new Set(await Promise.all(dials))).toEqual(new Set(['gone']));
+  });
+
+  it('the bound is the one the primary passes (MAX_CONCURRENT_CALLS)', async () => {
+    const { c } = cluster({ count: 1, maxDialsInFlight: 3 });
+    running = c;
+    await c.start();
+    const channel = c.supervisor.channel(0)!;
+    for (let i = 0; i < 3; i++) void channel.request('dial.execute', DIAL).catch(() => {});
+    await expect(channel.request('dial.execute', DIAL)).rejects.toMatchObject({ code: 'refused' });
   });
 });
 
