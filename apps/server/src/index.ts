@@ -13,7 +13,7 @@ import { redisClientOptions } from './utils/redis-options.js';
 import { startPlatform } from './bootstrap/platform.js';
 import { getAgencyRuntime, startAgency } from './bootstrap/agency.js';
 import { startVoice } from './bootstrap/voice.js';
-import { startAnalysis } from './bootstrap/analysis.js';
+import { plannedAnalysisWorkers, startAnalysis } from './bootstrap/analysis.js';
 import { initAnalytics } from './analytics/posthog.js';
 import { processIdentityFromEnv } from './cluster/roles.js';
 import { runAnalysisChildProcess } from './cluster/analysis-child-main.js';
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
   // With worker processes the host's pools add up: compare the sum with the server's limit
   // once, now, before any worker is forked (`cluster/db-connection-budget.ts`). A sum that
   // does not fit refuses the boot (D12); limits that cannot be read give no verdict.
-  const analysisWorkers = config.dialerAnalysis?.enabled ? config.dialerAnalysis.processes : 0;
+  const analysisWorkers = plannedAnalysisWorkers(config);
   let dbBudget: DbConnectionBudget | null = null;
   if (media || analysisWorkers > 0) {
     const plan = planDbConnections(config, { mediaWorkers: media?.count ?? 0, analysisWorkers });

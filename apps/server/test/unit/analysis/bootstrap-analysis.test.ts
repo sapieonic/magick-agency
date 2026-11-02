@@ -30,7 +30,7 @@ vi.mock('../../../src/transcription/index.js', () => ({ createTranscriber: mocks
 vi.mock('../../../src/analysis/index.js', () => ({ createAnalysisService: mocks.createAnalysisService }));
 vi.mock('../../../src/maintenance/retention-purge.js', () => ({ runRetentionPurge: mocks.runPurge }));
 
-import { BOOT_PURGE_DELAY_MS, startAnalysis } from '../../../src/bootstrap/analysis.js';
+import { BOOT_PURGE_DELAY_MS, plannedAnalysisWorkers, startAnalysis } from '../../../src/bootstrap/analysis.js';
 import { getBridgeAnalysisHooks, resetBridgeAnalysisHooks } from '../../../src/seams/bridge-analysis-hooks.js';
 import type { AppContext } from '../../../src/app-context.js';
 import { parseConfig } from '../../../src/config/load.js';
@@ -201,3 +201,28 @@ describe('startAnalysis', () => {
     await stop();
   });
 });
+
+describe('plannedAnalysisWorkers (the children the D12 budget counts)', () => {
+  const withProcesses = (over: Record<string, unknown> = {}) =>
+    ctx({ dialerAnalysis: { enabled: true, pollIntervalMs: 60000, processes: 2 }, ...over }).config;
+
+  it('counts ANALYSIS_WORKERS only when analysis is on and its transcriber and service can be built', () => {
+    expect(plannedAnalysisWorkers(withProcesses())).toBe(2);
+    expect(plannedAnalysisWorkers(ctx({ dialerAnalysis: { enabled: false, processes: 2 } }).config)).toBe(0);
+    mocks.createTranscriber.mockReturnValueOnce(null);
+    expect(plannedAnalysisWorkers(withProcesses())).toBe(0);
+    mocks.createAnalysisService.mockReturnValueOnce(null);
+    expect(plannedAnalysisWorkers(withProcesses())).toBe(0);
+  });
+
+  it('the factories run once per boot: startAnalysis reuses what the plan built', async () => {
+    const config = withProcesses();
+    expect(plannedAnalysisWorkers(config)).toBe(2);
+    const stop = await startAnalysis({ config } as unknown as AppContext);
+    expect(mocks.createTranscriber).toHaveBeenCalledTimes(1);
+    expect(mocks.createAnalysisService).toHaveBeenCalledTimes(1);
+    expect(mocks.createChildren).toHaveBeenCalledWith(expect.objectContaining({ count: 2 }));
+    await stop();
+  });
+});
+

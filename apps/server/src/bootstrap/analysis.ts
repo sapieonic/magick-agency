@@ -44,12 +44,41 @@ export function getAnalysisChildren(): ChildSupervisor | null {
   return analysisChildren;
 }
 
+type AnalysisDependencies = {
+  transcriber: ReturnType<typeof createTranscriber>;
+  analysisService: ReturnType<typeof createAnalysisService>;
+};
+/**
+ * Built by {@link plannedAnalysisWorkers} at boot and handed to the next {@link startAnalysis}
+ * for the same config, once, so the factories run (and log why analysis is off) once per boot.
+ */
+const plannedDependencies = new WeakMap<object, AnalysisDependencies>();
+
+function buildAnalysisDependencies(config: AppContext['config']): AnalysisDependencies {
+  return { transcriber: createTranscriber(config), analysisService: createAnalysisService(config) };
+}
+
+/**
+ * How many analysis children {@link startAnalysis} will fork for this config: `ANALYSIS_WORKERS`
+ * only when analysis is enabled AND its transcriber and analysis service can be built. The
+ * primary's Postgres budget (D12, `cluster/db-connection-budget.ts`) counts these, so a
+ * vendor misconfiguration that keeps analysis off cannot refuse a boot for pools never opened.
+ */
+export function plannedAnalysisWorkers(config: AppContext['config']): number {
+  if (!config.dialerAnalysis?.enabled) return 0;
+  const deps = buildAnalysisDependencies(config);
+  plannedDependencies.set(config, deps);
+  const { transcriber, analysisService } = deps;
+  return transcriber && analysisService ? config.dialerAnalysis.processes : 0;
+}
+
 export async function startAnalysis(ctx: AppContext, opts: StartAnalysisOptions = {}): Promise<() => Promise<void>> {
   const { config } = ctx;
   const stops: Array<() => Promise<void>> = [];
 
-  const transcriber = createTranscriber(config);
-  const analysisService = createAnalysisService(config);
+  const planned = plannedDependencies.get(config);
+  plannedDependencies.delete(config);
+  const { transcriber, analysisService } = planned ?? buildAnalysisDependencies(config);
   const dialerAnalysis = config.dialerAnalysis?.enabled && transcriber && analysisService ? config.dialerAnalysis : null;
   const processes = dialerAnalysis?.processes ?? 0;
 
