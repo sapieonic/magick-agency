@@ -7,6 +7,7 @@
 // reattachBorrowedBrowserLeg, forceEndWithOutcome, playClipToCarrierThenHangUp,
 // getActiveCallIds, gracefulShutdown) and the exported types are a fixed seam, pinned by
 // `test/unit/core/webrtc-bridge-seam-contract.test.ts`.
+import { buildCarrierUrls } from './bridge/carrier-urls.js';
 import crypto from 'node:crypto';
 import { releaseTelephonyLease } from './telephony-release.js';
 import type Redis from 'ioredis';
@@ -189,6 +190,11 @@ export class WebRtcBridgeManager {
   constructor(
     private readonly guardHost: TelephonyGuardHost,
     private readonly redis: Redis | null,
+    /**
+     * `carrierRouteHint`: this media worker's slot, written into the carrier's media and
+     * webhook URLs (`bridge/carrier-urls.ts`). Absent in a single process.
+     */
+    private readonly options: { carrierRouteHint?: string } = {},
   ) {
     this.telephonyRegistry = new TelephonyProviderRegistry(config, { credentials: getTelephonyCredentialService });
     this.keyPrefix = config.redis.keyPrefix;
@@ -603,17 +609,17 @@ export class WebRtcBridgeManager {
       const adapter = this.telephonyRegistry.get(provider);
       // A carrier with no answer XML (VoiceLink) dials OUT to a stream URL baked
       // into the dial request, so hand it the bridge's dedicated PSTN leg explicitly.
-      const mediaStreamUrl =
-        session.carrier?.mediaUrlInDialRequest
-          ? `wss://${new URL(base).host}/api/v1/webrtc-call/${record.id}/pstn-stream?token=${providerToken}`
-          : undefined;
       // Embed the webhook token so forged lifecycle events (which drive
       // status/concurrency) are rejected. A provider with no carrier module gets an
       // untokenized URL.
-      const statusCallbackUrl =
-        webhookToken
-          ? `${base}/webrtc-status/${record.id}?token=${webhookToken}`
-          : `${base}/webrtc-status/${record.id}`;
+      const { mediaStreamUrl, statusCallbackUrl } = buildCarrierUrls({
+        base,
+        callId: record.id,
+        mediaUrlInDialRequest: Boolean(session.carrier?.mediaUrlInDialRequest),
+        providerToken,
+        webhookToken,
+        routeHint: this.options.carrierRouteHint ?? null,
+      });
       const result = await adapter.initiateCall({
         callId: record.id,
         to: params.destinationPhone,

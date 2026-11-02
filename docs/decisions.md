@@ -232,6 +232,25 @@ building it:
 | Analysis worker | A slot pool, `DIALER_ANALYSIS_CONCURRENCY` 8 (1–256), refilled as each job finishes; `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` 512 MiB (at least 2 × `DIALER_MAX_RECORDING_BYTES`), reserved before a claim; a vendor rate-limit breaker (30 s doubling to 15 min, ±20 % jitter, one probe, closed only by a completed job). Rate-limited jobs still never burn an attempt | **default, pending Manas** |
 | Pacing skips and caches | A campaign whose last full tick could reserve nothing is skipped until an invalidation event or the 1 s safety tick (`PACING_SAFETY_TICK_MS`); the account limit and live-call count are read once per account per round and shared through a headroom budget (the guard's Redis count is not used); the campaign row and account limit are cached in pacing with a generation guard, event invalidation and a 2 s TTL. Events travel on `PacingInvalidationBus` (JSON, in-process; an IPC bus replaces it for worker processes, never Redis pub/sub, per Manas 2026-11-02) | **default, pending Manas** |
 
+
+Rulings of 2026-11-02 (multi-process, [`scaling.md`](scaling.md)). Manas asked for the whole
+multi-process build (phase B); these are the design's recommendations, built as the defaults:
+
+| # | Topic | Default used | Status |
+|---|---|---|---|
+| D1 | Topology | Media workers are dialer-runtime shards: each owns its agents' station sockets, their in-process runtime state (live attempts, wrap-up, breaks, the soft phone's live call) and both legs of their calls. The primary keeps HTTP, the public API layer, pacing, the reaper and every leader-only sweep, and sends dials to the owner over IPC. Analysis runs in its own processes | **default, pending Manas** |
+| D2 | Session ownership | Fixed by `fnv1a(sessionId) mod MEDIA_WORKERS` (`cluster/roles.ts`): the station socket, every session-owned internal handler and every dial for that agent go to the same worker, and a reconnect lands where its live call is. A worker crash costs ~1/N of the floor their live calls; they reconnect in `break` | **default, pending Manas** |
+| D3 | Carrier routing | The worker's slot rides in the carrier's media and webhook URLs as `&w=<slot>` (`core/bridge/carrier-urls.ts`), fixed before `add_lead`; routing only, the token is still verified by the owner. No `w`, or the slot down: the primary handles the post with a session-less bridge (the late-terminal path) | **default, pending Manas** |
+| D4 | Crash policy | A child that exits is re-forked with backoff (1 s doubling to 30 s). A media slot that exits more than 5 times in 5 minutes is a crash loop: the primary exits 1 and the container restarts. Analysis children are re-forked without a crash-loop exit | **default, pending Manas** |
+| D5 | Readiness and slow workers | `/readyz` fails unless every media slot is ready and answered a health ping; a slow worker is measured and alerted on, not shed | **default, pending Manas** |
+| D6 | Guards with Redis down | In cluster mode each worker's degraded-mode local limit is `ceil(limit / MEDIA_WORKERS)`, so N workers cannot each admit the whole limit | **default, pending Manas** |
+| D7 | Metric series identity | With workers, every process exports under its own `service.instance.id` (`<id or hostname>:<role><slot>`, stable across restarts), forced on; series multiply by the processes that emit each metric | **default, pending Manas** |
+| D8 | Config placement | `MEDIA_WORKERS` in the base block (new top-level key `processes`); `ANALYSIS_WORKERS` in the analysis block (`dialerAnalysis.processes`). Both default 0, which is the single process exactly as before | **default, pending Manas** |
+| D9 | Station token mint on a failed `SET` | Unchanged for now (found while designing): with Redis configured `verifyAndConsume` never reads the in-process fallback, so a token minted on a failed `SET` is refused and the console re-mints. Answering 503 instead is proposed, not built | **open** |
+| D10 | Vendor rate-limit pause | Shared: one analysis process's breaker opening is relayed by the primary over IPC (not Redis) to every other, which pauses to the same moment and escalation (`VendorRateLimitBreaker.applyRemotePause`); each sends one probe when it ends | **default, pending Manas** |
+| D11 | `agency_agent_sessions.owner_replica` | Left as the joiner's replica id (the primary's, with workers); informational, nothing reads it | **default, pending Manas** |
+| B16 (amended) | Public API layer → internal handlers | Public handlers still call `callCore` in-process. With media workers, an internal handler that reads per-session runtime state is forwarded to the session's worker (`api/core-owners.ts` classifies every agency route; an unclassified one fails at boot). B16's "one process, no network hop" becomes "no network hop" | **default, pending Manas** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
@@ -244,6 +263,7 @@ building it:
 | 1, 3–6 | Launch defaults | Built, pending ratification (§2) | Manas |
 | — | Tidy-up defaults | Built, pending ratification: the **default, pending Manas** rows of the 2026-10-16/17 rulings (§4) | Manas (ratify) |
 | — | Scaling defaults | Built, pending ratification: the **default, pending Manas** rows of the 2026-11-02 scaling rulings (§4) | Manas (ratify) |
+| D1–D11, B16 | Multi-process defaults | Built, pending ratification: the 2026-11-02 multi-process rulings (§4), and D9 (station token mint on a failed `SET`) undecided. Also the host: 500 calls needs more than 2 vCPUs whatever the process layout ([`scaling.md`](scaling.md) §8.1) | Manas |
 | 2, 7, 8 | Launch open items | Existing numbers, launch style, domain / freeze / rollback window | Manas, at launch |
 | 9 | Metering | Out of v1; design not started | Manas |
 | B15 | Roster supersede | Three schema changes plus a replace lock; `AGENCY_ROSTER_REPLACE_ENABLED` stays off until then | Manas |

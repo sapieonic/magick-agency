@@ -15,6 +15,8 @@ import { startAgency } from './bootstrap/agency.js';
 import { startVoice } from './bootstrap/voice.js';
 import { startAnalysis } from './bootstrap/analysis.js';
 import { initAnalytics } from './analytics/posthog.js';
+import { processIdentityFromEnv } from './cluster/roles.js';
+import { runAnalysisChildProcess } from './cluster/analysis-child-main.js';
 
 /**
  * One process, single replica. Start order: storage, PostHog, the app, each area's
@@ -22,6 +24,17 @@ import { initAnalytics } from './analytics/posthog.js';
  * then runs the background stops in reverse.
  */
 async function main(): Promise<void> {
+  // A child forked by the primary (docs/scaling.md) runs only its role's work. The process
+  // the operator started has no role in its environment and is the server, as always.
+  const identity = processIdentityFromEnv(process.env);
+  if (identity.kind === 'child') {
+    if (identity.role === 'analysis') {
+      await runAnalysisChildProcess({ slot: identity.slot, flushTelemetry: shutdownOtelSdk });
+      return;
+    }
+    throw new Error(`no ${identity.role} child process in this build`);
+  }
+
   const pool = initDbPool({
     url: config.db.url,
     poolMin: config.db.poolMin,

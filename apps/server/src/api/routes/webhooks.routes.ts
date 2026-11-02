@@ -48,29 +48,50 @@ export async function webhooksRoutes(
   ) => {
     const { callId } = request.params;
     if (!webrtcBridge) return reply.send({ status: true });
-
-    // Verify the purpose-bound webhook token so forged lifecycle events (which
-    // drive status/settlement/concurrency release) can't be posted with just a
-    // leaked call id. Degrades to accept when Redis/token is unavailable.
-    // Q6 (Manas, 2026-10-09): now only when REDIS is unavailable (absent or erroring), or
-    // the token's SET failed at mint; a missing token while Redis answers is refused 403.
-    // The token outlives the call by 2h for the carrier's late terminal post.
-    const tokenOk = await webrtcBridge.verifyWsToken(callId, request.query?.token, 'webhook');
-    if (!tokenOk) {
-      log.warn({ callId }, 'VoiceLink WebRTC webhook with invalid token — rejecting');
-      return reply.code(403).send({ status: false });
-    }
-
-    const body = (request.body || {}) as VoicelinkWebhookBody;
-    const event = parseVoicelinkWebhook(body, callId);
-    log.info(
-      { callId, event: body.event, eventType: event?.eventType },
-      'VoiceLink WebRTC status webhook received',
-    );
-    // parseVoicelinkWebhook returns null for informational events (call.initiated).
-    if (event) {
-      await webrtcBridge.handleVoicelinkStatus(callId, event);
-    }
-    return reply.send({ status: true });
+    const answer = await handleVoicelinkStatusWebhook(webrtcBridge, callId, request.query?.token, request.body);
+    return reply.code(answer.statusCode).send(answer.body);
   });
+}
+
+/** What the status webhook answers: the HTTP status and body the carrier gets. */
+export interface VoicelinkWebhookAnswer {
+  statusCode: number;
+  body: { status: boolean };
+}
+
+/**
+ * The VoiceLink status webhook, after the route's parsing: verify the purpose-bound
+ * webhook token, decode the event, hand it to the bridge. A function of plain data so the
+ * process that owns the call can run it when the request arrived elsewhere
+ * (`docs/scaling.md` §3.2); the route calls it directly.
+ *
+ * Verify the purpose-bound webhook token so forged lifecycle events (which drive
+ * status/settlement/concurrency release) can't be posted with just a leaked call id.
+ * Q6 (Manas, 2026-10-09): a missing token while Redis answers is refused 403; Redis
+ * unavailable (absent or erroring), or the token's SET failed at mint, accepts. The token
+ * outlives the call by 2h for the carrier's late terminal post.
+ */
+export async function handleVoicelinkStatusWebhook(
+  webrtcBridge: WebRtcBridgeManager,
+  callId: string,
+  token: string | undefined,
+  rawBody: unknown,
+): Promise<VoicelinkWebhookAnswer> {
+  const tokenOk = await webrtcBridge.verifyWsToken(callId, token, 'webhook');
+  if (!tokenOk) {
+    log.warn({ callId }, 'VoiceLink WebRTC webhook with invalid token — rejecting');
+    return { statusCode: 403, body: { status: false } };
+  }
+
+  const body = (rawBody || {}) as VoicelinkWebhookBody;
+  const event = parseVoicelinkWebhook(body, callId);
+  log.info(
+    { callId, event: body.event, eventType: event?.eventType },
+    'VoiceLink WebRTC status webhook received',
+  );
+  // parseVoicelinkWebhook returns null for informational events (call.initiated).
+  if (event) {
+    await webrtcBridge.handleVoicelinkStatus(callId, event);
+  }
+  return { statusCode: 200, body: { status: true } };
 }

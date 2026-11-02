@@ -206,6 +206,7 @@ production.
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |
 | `DIALER_ANALYSIS_CONCURRENCY` | `8` (1-256) | Analysis jobs in flight in this process; see "Sizing the analysis worker" |
 | `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` | `536870912` (512 MiB) | Recording bytes the analysis slots may hold; at least 2 × `DIALER_MAX_RECORDING_BYTES` |
+| `ANALYSIS_WORKERS` | `0` (0-32) | Separate analysis processes, each with its own slots and budget; 0 keeps the slots in the server process. See "Sizing the analysis worker" |
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |
 | `RETENTION_PURGE_INTERVAL_MS` | 1 day | Purge cadence (also runs 60 s after boot) |
@@ -246,6 +247,18 @@ needs ~330 slots, more than one process allows (`DIALER_ANALYSIS_CONCURRENCY` ac
 past most single-key quotas: raise the quotas and run more than one analysis process (claims are
 `FOR UPDATE SKIP LOCKED`, so processes share the queue safely), or accept a backlog that drains
 off-peak.
+
+**Analysis worker processes (`ANALYSIS_WORKERS`).** With `ANALYSIS_WORKERS=K` (0-32, default 0)
+the server forks K analysis processes and runs no analysis slot of its own. Each child runs
+`DIALER_ANALYSIS_CONCURRENCY` slots under its own `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` and a heap of
+that budget plus 512 MB, so recording buffers and vendor waits stay off the process that serves
+calls. Total slots are K × `DIALER_ANALYSIS_CONCURRENCY`. The server keeps the retention purge,
+enqueues jobs when calls end and wakes the children over IPC. A vendor rate limit in one child
+pauses all of them (the primary relays the pause; each then sends one probe when it ends). A
+child that exits is restarted (1 s, 2 s, 4 s, … up to 30 s); its claimed jobs return to the
+queue through the stale recovery, without using an attempt. On shutdown each child requeues
+its own in-flight jobs (generation-matched) and exits; one that has not exited within 15 s is
+killed. 0 is the behaviour before the key existed. Design: [`scaling.md`](scaling.md).
 
 **Memory.** Each slot may buffer a whole recording (up to `DIALER_MAX_RECORDING_BYTES`, 50 MiB)
 and upload it, which copies it once more. A slot reserves 2 × that cap on the recording memory

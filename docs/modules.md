@@ -531,6 +531,20 @@ Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 | `apps/server/test/unit/cache/redis-cache-revocation.test.ts` | 3 |
 | `apps/server/test/unit/cache/redis-cache.test.ts` | 23 |
 
+### `apps/server/src/cluster/`
+
+Composition for running as several processes on one host (`docs/scaling.md`): process roles and the session-to-slot hash (`roles.ts`), the IPC wire format with one decoder per message type (`ipc-protocol.ts`), and one end of the primary ↔ child channel with typed events, deadline-bound requests and close handling (`ipc-channel.ts`). The primary's per-role child supervisor (fork, ready, restart with backoff, crash loop, stop within a grace: `child-supervisor.ts`) and how it forks (`fork.ts`, heap per role). The analysis worker processes (`ANALYSIS_WORKERS`): the child's wiring (`analysis-child.ts`), its process entry (`analysis-child-main.ts`) and the primary's side with the vendor rate-limit relay (`analysis-children.ts`).
+
+Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `child-supervisor.ts`, `fork.ts`, `ipc-channel.ts`, `ipc-protocol.ts`, `roles.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/integration/cluster/analysis-processes.test.ts` | 5 |
+| `apps/server/test/unit/cluster/fork.test.ts` | 3 |
+| `apps/server/test/unit/cluster/ipc-channel.test.ts` | 13 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 9 |
+| `apps/server/test/unit/cluster/roles.test.ts` | 7 |
+
 ### `apps/server/src/config/`
 
 Environment parsing: `index.ts` (exits on invalid config), `load.ts`, `schema.ts` (disjoint-keys check), `env.ts`, call duration limits.

@@ -7,6 +7,10 @@ import { createAnalysisService } from '../analysis/index.js';
 import { createBridgeAnalysisHooks } from '../analysis/bridge-analysis-hooks.js';
 import { resetBridgeAnalysisHooks, setBridgeAnalysisHooks } from '../seams/bridge-analysis-hooks.js';
 import { runRetentionPurge } from '../maintenance/retention-purge.js';
+import type { ChildProcess } from 'node:child_process';
+import type { ChildSupervisor } from '../cluster/child-supervisor.js';
+import { createAnalysisChildren } from '../cluster/analysis-children.js';
+import { analysisChildHeapMb, forkServerChild } from '../cluster/fork.js';
 
 /**
  * The analysis background work (worker, retention purge timers). Returns a stop
@@ -20,18 +24,71 @@ import { runRetentionPurge } from '../maintenance/retention-purge.js';
 /** Settle delay before the boot-time retention purge. */
 export const BOOT_PURGE_DELAY_MS = 60_000;
 
-export async function startAnalysis(ctx: AppContext): Promise<() => Promise<void>> {
+/**
+ * How long analysis children get to requeue their in-flight jobs and exit. A requeue is
+ * one statement; the bound is for a claim already on its way to the database.
+ */
+export const ANALYSIS_CHILD_STOP_GRACE_MS = 15_000;
+
+export interface StartAnalysisOptions {
+  /** Tests: how an analysis child is forked. Default: this server's own entry (`cluster/fork.ts`). */
+  forkChild?: (slot: number) => ChildProcess;
+  childStopGraceMs?: number;
+  readyTimeoutMs?: number;
+}
+
+let analysisChildren: ChildSupervisor | null = null;
+
+/** The analysis children, while `ANALYSIS_WORKERS > 0` runs them; null otherwise. */
+export function getAnalysisChildren(): ChildSupervisor | null {
+  return analysisChildren;
+}
+
+export async function startAnalysis(ctx: AppContext, opts: StartAnalysisOptions = {}): Promise<() => Promise<void>> {
   const { config } = ctx;
   const stops: Array<() => Promise<void>> = [];
 
   const transcriber = createTranscriber(config);
   const analysisService = createAnalysisService(config);
+  const dialerAnalysis = config.dialerAnalysis?.enabled && transcriber && analysisService ? config.dialerAnalysis : null;
+  const processes = dialerAnalysis?.processes ?? 0;
+
+  if (dialerAnalysis && processes > 0) {
+    // ANALYSIS_WORKERS > 0 (docs/scaling.md §1.3): the slots run in child processes and
+    // this process runs none. It still enqueues (the bridge's hooks run here, beside the
+    // bridge) and wakes the children; each child has its own slots, recording budget and
+    // breaker, and one child's vendor rate limit is relayed to the others (D10).
+    const children = createAnalysisChildren({
+      count: processes,
+      fork: opts.forkChild ?? ((slot) => forkServerChild({
+        role: 'analysis', slot, heapMb: analysisChildHeapMb(dialerAnalysis.memoryBudgetBytes),
+      })),
+      ...(opts.readyTimeoutMs !== undefined ? { readyTimeoutMs: opts.readyTimeoutMs } : {}),
+    });
+    try {
+      await children.start();
+    } catch (err) {
+      await children.stop(5_000).catch(() => {});
+      throw err;
+    }
+    analysisChildren = children;
+    setBridgeAnalysisHooks(createBridgeAnalysisHooks());
+    setDialerAnalysisWorker({ wake: () => { children.broadcast('analysis.wake', {}); } });
+    logger.info({ processes, slotsEach: dialerAnalysis.concurrency }, 'Dialer call-analysis worker processes started');
+    stops.push(async () => {
+      setDialerAnalysisWorker(null);
+      resetBridgeAnalysisHooks();
+      await children.stop(opts.childStopGraceMs ?? ANALYSIS_CHILD_STOP_GRACE_MS);
+      if (analysisChildren === children) analysisChildren = null;
+    });
+  }
+
   const worker =
-    config.dialerAnalysis?.enabled && transcriber && analysisService
+    dialerAnalysis && processes === 0 && transcriber && analysisService
       ? initDialerAnalysisWorker({
           transcriber,
           analysisService,
-          config: config.dialerAnalysis,
+          config: dialerAnalysis,
           recordingHosts: config.voicelinkRecording.allowedHosts,
         })
       : null;

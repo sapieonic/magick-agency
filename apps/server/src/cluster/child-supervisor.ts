@@ -1,0 +1,232 @@
+/**
+ * The primary's side of one role's child processes (`docs/scaling.md` §6): fork one per
+ * slot, wait for each to say `ready`, give each incarnation its own {@link IpcChannel},
+ * restart a slot that exits with backoff, and stop them all within a grace.
+ *
+ * Generic over the role: what an analysis or a media child DOES with its channel is the
+ * caller's (`onChannel`), and what must happen between an exit and the re-fork is the
+ * caller's too (`onExit`, awaited first: a media slot's reap runs there, so nothing new
+ * can be owned by the slot before its dead incarnation's work is closed).
+ */
+import type { ChildProcess } from 'node:child_process';
+import { createChildLogger } from '@magick-agency/observability';
+import { IpcChannel, childProcessTransport } from './ipc-channel.js';
+import type { HealthBody, IpcEventMap, IpcEventType } from './ipc-protocol.js';
+import type { ChildRole } from './roles.js';
+
+const log = createChildLogger({ component: 'child-supervisor' });
+
+export const DEFAULT_RESTART_BACKOFF_MS: readonly number[] = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
+/** Exits within this window count towards the backoff step and the crash-loop limit. */
+export const CRASH_WINDOW_MS = 5 * 60_000;
+export const DEFAULT_READY_TIMEOUT_MS = 30_000;
+
+export interface ChildExit {
+  slot: number;
+  code: number | null;
+  signal: NodeJS.Signals | null;
+  /** True when the supervisor asked for it (stop). */
+  expected: boolean;
+  pid: number | undefined;
+}
+
+export interface ChildSupervisorOptions {
+  role: ChildRole;
+  count: number;
+  fork: (slot: number) => ChildProcess;
+  /** Wire one incarnation's channel (event handlers, request handlers). Called before `ready`. */
+  onChannel?: (slot: number, channel: IpcChannel) => void;
+  /** Awaited after an unexpected exit, before the slot is re-forked. */
+  onExit?: (exit: ChildExit) => void | Promise<void>;
+  /** A slot became ready (first boot or a restart). */
+  onReady?: (slot: number, pid: number) => void;
+  readyTimeoutMs?: number;
+  restartBackoffMs?: readonly number[];
+  /** More than `max` unexpected exits of one slot inside {@link CRASH_WINDOW_MS}: no re-fork, `onCrashLoop` instead. */
+  crashLoop?: { max: number; onCrashLoop: (slot: number) => void };
+  now?: () => number;
+}
+
+interface Slot {
+  slot: number;
+  child: ChildProcess | null;
+  channel: IpcChannel | null;
+  ready: boolean;
+  exits: number[];
+  restartTimer: NodeJS.Timeout | null;
+  exited: Promise<void> | null;
+}
+
+export class ChildSupervisor {
+  private readonly slots: Slot[];
+  private stopping = false;
+  private readonly now: () => number;
+  private readonly readyWaiters = new Map<number, Array<() => void>>();
+
+  constructor(private readonly opts: ChildSupervisorOptions) {
+    if (!Number.isInteger(opts.count) || opts.count < 1) throw new RangeError(`child count must be ≥ 1, got ${opts.count}`);
+    this.now = opts.now ?? Date.now;
+    this.slots = Array.from({ length: opts.count }, (_, slot) => ({
+      slot, child: null, channel: null, ready: false, exits: [], restartTimer: null, exited: null,
+    }));
+  }
+
+  get role(): ChildRole {
+    return this.opts.role;
+  }
+
+  get count(): number {
+    return this.slots.length;
+  }
+
+  /** Fork every slot and wait until each is ready. Rejects if one is not ready in time. */
+  async start(): Promise<void> {
+    for (const s of this.slots) this.spawn(s);
+    const timeoutMs = this.opts.readyTimeoutMs ?? DEFAULT_READY_TIMEOUT_MS;
+    await Promise.all(this.slots.map((s) => this.waitReady(s.slot, timeoutMs)));
+  }
+
+  isReady(slot: number): boolean {
+    return this.slots[slot]?.ready === true;
+  }
+
+  readyCount(): number {
+    return this.slots.filter((s) => s.ready).length;
+  }
+
+  /** The channel of a READY slot; null while it boots, restarts or after it stopped. */
+  channel(slot: number): IpcChannel | null {
+    const s = this.slots[slot];
+    return s && s.ready ? s.channel : null;
+  }
+
+  pidOf(slot: number): number | undefined {
+    return this.slots[slot]?.child?.pid;
+  }
+
+  /** Send an event to every ready slot (but `exceptSlot`). Returns how many it went to. */
+  broadcast<K extends IpcEventType>(type: K, body: IpcEventMap[K], exceptSlot?: number): number {
+    let sent = 0;
+    for (const s of this.slots) {
+      if (s.slot === exceptSlot || !s.ready || !s.channel) continue;
+      if (s.channel.emit(type, body)) sent++;
+    }
+    return sent;
+  }
+
+  /** Every slot's health, null for a slot that is not ready or did not answer in time. */
+  async health(deadlineMs = 1_000): Promise<Array<HealthBody | null>> {
+    return Promise.all(this.slots.map(async (s) => {
+      if (!s.ready || !s.channel) return null;
+      return s.channel.request('health.ping', {}, { deadlineMs }).catch(() => null);
+    }));
+  }
+
+  /** Resolves when `slot` is ready (now or later), rejects after `timeoutMs`. */
+  waitReady(slot: number, timeoutMs: number): Promise<void> {
+    if (this.isReady(slot)) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const list = this.readyWaiters.get(slot);
+        if (list) this.readyWaiters.set(slot, list.filter((w) => w !== done));
+        reject(new Error(`${this.opts.role} worker ${slot} not ready within ${timeoutMs} ms`));
+      }, timeoutMs);
+      timer.unref?.();
+      const done = (): void => { clearTimeout(timer); resolve(); };
+      const list = this.readyWaiters.get(slot) ?? [];
+      list.push(done);
+      this.readyWaiters.set(slot, list);
+    });
+  }
+
+  /**
+   * Ask every child to shut down, wait up to `graceMs` for each to exit, then kill what is
+   * left and wait for those exits too. No slot is restarted once this has begun.
+   */
+  async stop(graceMs: number): Promise<void> {
+    this.stopping = true;
+    for (const s of this.slots) {
+      if (s.restartTimer) clearTimeout(s.restartTimer);
+      s.restartTimer = null;
+    }
+    await Promise.all(this.slots.map(async (s) => {
+      const child = s.child;
+      if (!child || !s.exited) return;
+      const exited = s.exited;
+      s.channel?.request('shutdown', { graceMs }, { deadlineMs: graceMs }).catch(() => {});
+      const inTime = await Promise.race([
+        exited.then(() => true),
+        new Promise<boolean>((r) => { const t = setTimeout(() => r(false), graceMs); t.unref?.(); }),
+      ]);
+      if (!inTime) {
+        log.error({ role: this.opts.role, slot: s.slot, pid: child.pid, graceMs }, 'Child did not exit within its grace — killing it');
+        child.kill('SIGKILL');
+        await exited;
+      }
+    }));
+  }
+
+  // ─── internals ───────────────────────────────────────────────────────────
+
+  private spawn(s: Slot): void {
+    const child = this.opts.fork(s.slot);
+    s.child = child;
+    s.ready = false;
+    const channel = new IpcChannel(childProcessTransport(child), { name: `primary→${this.opts.role}${s.slot}` });
+    s.channel = channel;
+    channel.onEvent('ready', (body) => {
+      if (body.role !== this.opts.role || body.slot !== s.slot || s.child !== child) {
+        log.error({ expected: { role: this.opts.role, slot: s.slot }, got: body }, 'A child announced the wrong role or slot — ignoring');
+        return;
+      }
+      s.ready = true;
+      log.info({ role: this.opts.role, slot: s.slot, pid: body.pid }, 'Child process ready');
+      this.opts.onReady?.(s.slot, body.pid);
+      for (const w of this.readyWaiters.get(s.slot) ?? []) w();
+      this.readyWaiters.delete(s.slot);
+    });
+    this.opts.onChannel?.(s.slot, channel);
+    s.exited = new Promise<void>((resolve) => {
+      child.once('exit', (code, signal) => {
+        channel.close();
+        if (s.child === child) {
+          s.ready = false;
+          s.child = null;
+          s.channel = null;
+        }
+        void this.onChildExit(s, { slot: s.slot, code, signal, expected: this.stopping, pid: child.pid }).finally(resolve);
+      });
+    });
+    child.on('error', (err) => log.error({ err, role: this.opts.role, slot: s.slot }, 'Child process error'));
+  }
+
+  private async onChildExit(s: Slot, exit: ChildExit): Promise<void> {
+    if (exit.expected) {
+      log.info({ ...exit, role: this.opts.role }, 'Child process exited');
+      return;
+    }
+    log.error({ ...exit, role: this.opts.role }, 'Child process exited unexpectedly');
+    try {
+      await this.opts.onExit?.(exit);
+    } catch (err) {
+      log.error({ err, role: this.opts.role, slot: s.slot }, 'Child exit handling failed');
+    }
+    if (this.stopping) return;
+    const now = this.now();
+    s.exits = s.exits.filter((t) => now - t < CRASH_WINDOW_MS);
+    s.exits.push(now);
+    if (this.opts.crashLoop && s.exits.length > this.opts.crashLoop.max) {
+      log.fatal({ role: this.opts.role, slot: s.slot, exits: s.exits.length, windowMs: CRASH_WINDOW_MS }, 'Child process crash loop');
+      this.opts.crashLoop.onCrashLoop(s.slot);
+      return;
+    }
+    const backoff = this.opts.restartBackoffMs ?? DEFAULT_RESTART_BACKOFF_MS;
+    const delay = backoff[Math.min(s.exits.length - 1, backoff.length - 1)] ?? 1_000;
+    log.warn({ role: this.opts.role, slot: s.slot, delayMs: delay }, 'Restarting child process');
+    s.restartTimer = setTimeout(() => {
+      s.restartTimer = null;
+      if (!this.stopping) this.spawn(s);
+    }, delay);
+    s.restartTimer.unref?.();
+  }
+}

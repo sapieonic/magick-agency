@@ -136,4 +136,16 @@ describe('analysis config block', () => {
     expect(c.retention.agencyTranscriptRetentionDays).toBe(7);
     expect(parseConfig({ ...base, AGENCY_RETENTION_DAYS: '4' }).ok).toBe(false);
   });
+
+  it('ANALYSIS_WORKERS: 0 by default (slots in the server process), 0-32 accepted, anything else refused at boot', () => {
+    const on = { DIALER_ANALYSIS_ENABLED: 'true' };
+    expect(parse(on).dialerAnalysis?.processes).toBe(0);
+    expect(parse({ ...on, ANALYSIS_WORKERS: '3' }).dialerAnalysis?.processes).toBe(3);
+    expect(parse({ ...on, ANALYSIS_WORKERS: '32' }).dialerAnalysis?.processes).toBe(32);
+    for (const bad of ['-1', '33', '1.5', 'two']) {
+      const r = parseConfig({ ...base, ...on, ANALYSIS_WORKERS: bad });
+      expect(r.ok, bad).toBe(false);
+    }
+  });
 });
+

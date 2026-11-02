@@ -838,7 +838,7 @@ TLS terminator in the path.
 The build lowers the primary's default heap when workers are configured. The pre-deploy
 checklist gets a line.
 
-## 9. Test plan
+## 9. Tests
 
 **Unit** (no infrastructure):
 
