@@ -192,6 +192,14 @@ export const baseConfigSchema = z.object({
      * campaign, the reaper and the sweeps, the API and every console's polling.
      */
     mediaWorkerDbPoolMax: z.coerce.number().int().positive().max(1_000).default(10),
+    /**
+     * `MEDIA_SNAPSHOT_REFRESH_MS`: how often the primary refreshes every media worker's
+     * `reaper.snapshot` between reaper passes (the live call ids the guard's stale sweep
+     * spares, and the slot leases reconciled). Default 5 s. 0 turns the periodic refresh off,
+     * leaving only the reaper's own pass and the workers' `call.lease` deltas: a diagnostic
+     * setting, which the chaos suite uses to prove the slot reap works from the deltas alone.
+     */
+    mediaSnapshotRefreshMs: z.coerce.number().int().min(0).max(600_000).default(5_000),
   }).default({}),
   otel: z.object({
     /** Only the exact string `true`. */
@@ -243,6 +251,7 @@ export function readBaseEnv(env: Env) {
       mediaWorkerHeapMb: env['MEDIA_WORKER_HEAP_MB'],
       crashLoopMax: env['WORKER_CRASH_LOOP_MAX'],
       mediaWorkerDbPoolMax: env['MEDIA_WORKER_DB_POOL_MAX'],
+      mediaSnapshotRefreshMs: env['MEDIA_SNAPSHOT_REFRESH_MS'],
     },
     otel: {
       enabled: env['OTEL_ENABLED'],

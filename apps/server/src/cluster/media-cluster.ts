@@ -45,10 +45,10 @@ const RETURN_RESERVED_DEADLINE_MS = 5_000;
 const SNAPSHOT_DEADLINE_MS = 5_000;
 /**
  * How often the workers' live call ids are refreshed for the guard host's stale sweep, and
- * the slot leases reconciled. `MEDIA_SNAPSHOT_REFRESH_MS` overrides it for the chaos suite,
- * which turns it off to prove the slot reap works from the deltas alone.
+ * the slot leases reconciled, unless {@link MediaClusterOptions.snapshotRefreshMs} says
+ * otherwise (`MEDIA_SNAPSHOT_REFRESH_MS`, `config.processes.mediaSnapshotRefreshMs`).
  */
-export const SNAPSHOT_REFRESH_MS = Number(process.env['MEDIA_SNAPSHOT_REFRESH_MS'] ?? 5_000);
+export const SNAPSHOT_REFRESH_MS = 5_000;
 
 export interface MediaClusterOptions {
   count: number;
@@ -70,6 +70,8 @@ export interface MediaClusterOptions {
   crashLoop?: { max: number; onCrashLoop: (slot: number) => void };
   readyTimeoutMs?: number;
   restartBackoffMs?: readonly number[];
+  /** The periodic snapshot refresh; 0 turns it off. Default {@link SNAPSHOT_REFRESH_MS}. */
+  snapshotRefreshMs?: number;
 }
 
 export class MediaCluster implements WsHandoffTarget {
@@ -128,8 +130,9 @@ export class MediaCluster implements WsHandoffTarget {
 
   async start(): Promise<void> {
     await this.supervisor.start();
-    if (SNAPSHOT_REFRESH_MS > 0) {
-      this.snapshotTimer = setInterval(() => { void this.refreshSnapshots(); }, SNAPSHOT_REFRESH_MS);
+    const refreshMs = this.opts.snapshotRefreshMs ?? SNAPSHOT_REFRESH_MS;
+    if (refreshMs > 0) {
+      this.snapshotTimer = setInterval(() => { void this.refreshSnapshots(); }, refreshMs);
       this.snapshotTimer.unref?.();
     }
     await this.refreshSnapshots();

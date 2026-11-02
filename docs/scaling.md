@@ -833,6 +833,7 @@ which replaces the primary too.
 | `PRIMARY_HEAP_MB` | `processes.primaryHeapMb` | `base.ts` | unset (the entrypoint's flag) | lets the entrypoint keep one value per role |
 | `WORKER_CRASH_LOOP_MAX` | `processes.crashLoopMax` | `base.ts` | `5` (per 5 min) | §6.2 |
 | `MEDIA_WORKER_DB_POOL_MAX` | `processes.mediaWorkerDbPoolMax` | `base.ts` | `10` | each media worker's pg pool. Every process has its own pool, so the host's connections are the sum; the primary checks it against `max_connections` at boot (D12, `cluster/db-connection-budget.ts`) |
+| `MEDIA_SNAPSHOT_REFRESH_MS` | `processes.mediaSnapshotRefreshMs` | `base.ts` | `5000` | how often the primary refreshes each worker's `reaper.snapshot` (live call ids, slot leases). 0 = off: diagnostics, and the chaos suite's proof that the slot reap works from the `call.lease` deltas alone |
 | `ANALYSIS_WORKERS` | `dialerAnalysis.processes` | `analysis.ts` | `0` | 0: analysis slots run in the primary, as today. K ≥ 1: K analysis processes with `DIALER_ANALYSIS_CONCURRENCY` slots and `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` each |
 
 Why there:
