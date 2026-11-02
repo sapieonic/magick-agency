@@ -1,6 +1,7 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import { WebRtcCallError } from '../core/webrtc-bridge-manager.js';
+import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../core/webrtc-bridge-manager.js';
 import {
   agencyAgentSessionRepository,
@@ -58,6 +59,16 @@ export interface AgentReleaseResult {
 }
 
 const log = createChildLogger({ component: 'agency-dialer' });
+
+/**
+ * How long a contact waits before its next dial when the carrier may have queued the one
+ * that just failed (an `add_lead` that timed out, or a 2xx whose body could not be read:
+ * `telephony/carrier-errors.ts`). The pacing tick would otherwise dial it again at once,
+ * while the carrier may still be dialling it: two calls to one customer. 15 min is far
+ * beyond any queue the concurrency guards let build at the carrier; a call the carrier
+ * does place meanwhile is refused at its media connect and hung up.
+ */
+export const DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS = 15 * 60_000;
 
 /**
  * How long a `released` the agent never saw is kept for them to collect on
@@ -475,8 +486,11 @@ export class AgencyDialer {
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
           ? 'reservation_expired'
           : 'failed';
-      log.warn({ err, attemptId }, 'Agency dial failed');
-      await this.abandonBeforeDial(cmd, reason, panelDelivered);
+      // The bridge wraps the adapter's error as `cause`; read through it.
+      const outcomeUnknown = isDialOutcomeUnknown(err);
+      log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
+      await this.abandonBeforeDial(cmd, reason, panelDelivered,
+        outcomeUnknown ? new Date(Date.now() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS) : undefined);
       return;
     }
 
@@ -520,6 +534,11 @@ export class AgencyDialer {
     cmd: DialCommand,
     reason: AgencyReleaseReason,
     notifyAgent: boolean,
+    /**
+     * When the contact may be dialled again. Absent: now. Set only when the carrier may
+     * have queued the failed dial ({@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS}).
+     */
+    retryNotBefore?: Date,
   ): Promise<void> {
     const outcome = reason === 'failed' ? 'failed' : 'orphaned';
     /**
@@ -561,8 +580,9 @@ export class AgencyDialer {
     });
 
     // The condition genuinely cleared, so `now()` is correct here — unlike an
-    // out-of-hours unclaim, which must move the clock forward.
-    await agencyContactRepository.unclaim(cmd.contactId, new Date())
+    // out-of-hours unclaim, which must move the clock forward, and unlike a dial the
+    // carrier may have queued (`retryNotBefore`), which must not be dialled again yet.
+    await agencyContactRepository.unclaim(cmd.contactId, retryNotBefore ?? new Date())
       .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to unclaim contact'));
 
     if (notifyAgent) this.sendReleased(cmd, reason, false, releaseMessageFor(reason));

@@ -87,6 +87,7 @@ const { mockAnalytics } = vi.hoisted(() => ({
 vi.mock('../../../src/analytics/posthog.js', () => mockAnalytics);
 
 import { WebRtcBridgeManager, WebRtcCallError, UNSTORED_WS_TOKEN_CAP } from '../../../src/core/webrtc-bridge-manager.js';
+import { CarrierRequestTimeoutError, isDialOutcomeUnknown } from '../../../src/telephony/carrier-errors.js';
 import { UNSTORED_WS_TOKEN_SWEEP_MS } from '../../../src/core/bridge/ws-tokens.js';
 import { encodeAlaw, decodeAlaw } from '../../../src/utils/audio.js';
 // The platform's default for an unset allow_recording; the bridge must agree with it.
@@ -267,6 +268,46 @@ describe('WebRtcBridgeManager dial', () => {
     // slot released via endCall path
     expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
     expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
+  });
+
+  // A timed-out add_lead may have queued the lead at the carrier. The dial still fails and
+  // releases everything at once (the carrier may be down; holding an agent and the slots
+  // for it is the defect the timeout exists to end), but the refusal carries the adapter's
+  // error as `cause` and the ended event says TELEPHONY_INIT_OUTCOME_UNKNOWN, so the dialer
+  // can defer the contact's redial. Mutation-checked: dropping `refusal.cause = err` reds
+  // the `isDialOutcomeUnknown` assertion.
+  it('a dial whose outcome is unknown (add_lead timed out) fails, releases its slots, and says so', async () => {
+    const cm = makeCallManager();
+    const timeout = new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 15_000, true);
+    mockAdapter.initiateCall.mockRejectedValue(timeout);
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string; errorCode?: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+
+    const err = await dial(mgr).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(WebRtcCallError);
+    expect(err).toMatchObject({ code: 'telephony_init_failed' });
+    expect((err as Error).cause).toBe(timeout);
+    expect(isDialOutcomeUnknown(err)).toBe(true);
+    expect(events.filter((e) => e.phase === 'ended')).toEqual([
+      expect.objectContaining({ errorCode: 'TELEPHONY_INIT_OUTCOME_UNKNOWN' }),
+    ]);
+    expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+    expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
+    expect(mgr.getActiveCallIds()).toEqual([]);
+  });
+
+  it('a plain carrier refusal is not outcome-unknown', async () => {
+    const cm = makeCallManager();
+    mockAdapter.initiateCall.mockRejectedValue(new Error('VoiceLink /v1/add_lead error 500: no'));
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string; errorCode?: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    const err = await dial(mgr).then(() => null, (e: unknown) => e);
+    expect(isDialOutcomeUnknown(err)).toBe(false);
+    expect(events.filter((e) => e.phase === 'ended')).toEqual([
+      expect.objectContaining({ errorCode: 'TELEPHONY_INIT_FAILED' }),
+    ]);
   });
 });
 

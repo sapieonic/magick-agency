@@ -25,6 +25,17 @@ export interface VoicelinkConfig {
    * the bare `customer_number` + separate `country_code` fields add_lead requires.
    */
   defaultCountryCode: string;
+  /**
+   * Abandon `POST /v1/auth/login` after this many ms (`VOICELINK_LOGIN_TIMEOUT_MS`,
+   * default 10 000). Absent: the default. See `voicelink-token-manager.ts`.
+   */
+  loginTimeoutMs?: number;
+  /**
+   * Abandon `POST /v1/add_lead` (and the CDR read) after this many ms
+   * (`VOICELINK_ADD_LEAD_TIMEOUT_MS`, default 15 000). Absent: the default. What a
+   * timed-out add_lead means is in `voicelink.adapter.ts` (`post`).
+   */
+  addLeadTimeoutMs?: number;
 }
 
 /**

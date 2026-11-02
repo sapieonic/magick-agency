@@ -90,7 +90,9 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAgentSessionRepository: repos.session,
 }));
 
-import { AgencyDialer } from '../../../src/agency/agency-dialer.js';
+import { AgencyDialer, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../../src/agency/agency-dialer.js';
+import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
+import { CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
 import { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import { collectMetric } from '../../helpers/otel-metric-reader.js';
@@ -810,6 +812,62 @@ describe('seat time on the paths that never reach the settle site', () => {
         - before,
       'the agent was held through a failed dial and the pivotal series recorded nothing',
     ).toBe(1);
+  });
+
+  /**
+   * A dial the carrier may have queued (`add_lead` timed out, or a 2xx whose body could not
+   * be read): the bridge fails it and the agent is released, but the contact must NOT be
+   * dialled again at once — the carrier may still be dialling it, and the next pacing tick
+   * would make it two calls to one customer. Its redial is deferred by
+   * `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`; any other dial failure returns it now, as before.
+   * Mutation-checked: dropping the `retryNotBefore` argument at the dial site reds the first.
+   */
+  it('defers the contact\'s redial when the carrier may have queued the failed dial', async () => {
+    const bridge = fakeBridge();
+    const refusal = new WebRtcCallError('VoiceLink /v1/add_lead timed out after 15000 ms', 'telephony_init_failed', 502);
+    refusal.cause = new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 15_000, true);
+    bridge.createBridgedCall.mockRejectedValue(refusal);
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = new AgentStateMachine(null, '');
+    vi.spyOn(agents, 'transition').mockResolvedValue(true);
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    await stations.attach({
+      sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
+      agentUserId: 'user-1', ws: fakeWs() as any,
+    });
+
+    const before = Date.now();
+    await dialer.executeDial(makeCmd());
+
+    expect(persistedOutcome()).toBe('failed');
+    expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
+    const nextAt = (repos.contact.unclaim.mock.calls[0]![1] as Date).getTime();
+    expect(nextAt).toBeGreaterThanOrEqual(before + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    expect(nextAt).toBeLessThanOrEqual(Date.now() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    expect(DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS).toBe(15 * 60_000);
+  });
+
+  it('returns the contact at once when the carrier plainly refused the dial', async () => {
+    const bridge = fakeBridge();
+    const refusal = new WebRtcCallError('VoiceLink /v1/add_lead error 500: no', 'telephony_init_failed', 502);
+    refusal.cause = new Error('VoiceLink /v1/add_lead error 500: no');
+    bridge.createBridgedCall.mockRejectedValue(refusal);
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = new AgentStateMachine(null, '');
+    vi.spyOn(agents, 'transition').mockResolvedValue(true);
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    await stations.attach({
+      sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
+      agentUserId: 'user-1', ws: fakeWs() as any,
+    });
+
+    await dialer.executeDial(makeCmd());
+
+    expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
+    const nextAt = (repos.contact.unclaim.mock.calls[0]![1] as Date).getTime();
+    expect(nextAt).toBeLessThanOrEqual(Date.now());
   });
 
   it('observes NOTHING when the dial never went out at all', async () => {

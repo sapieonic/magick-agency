@@ -40,6 +40,18 @@ const voicelinkSchema = z.object({
    * the bare `customer_number` + separate `country_code` fields add_lead requires.
    */
   defaultCountryCode: z.string().optional().default('91'),
+  /**
+   * `VOICELINK_LOGIN_TIMEOUT_MS`: abandon a login after this long. The login is
+   * single-flight, so every dial waits on it; a timeout rejects them all once and the next
+   * dial logs in afresh. Default 10 s (`voicelink-token-manager.ts`).
+   */
+  loginTimeoutMs: z.coerce.number().int().min(1000).max(120_000).default(10_000),
+  /**
+   * `VOICELINK_ADD_LEAD_TIMEOUT_MS`: abandon an `add_lead` after this long. A timed-out
+   * add_lead fails the dial but may have queued the lead, so it is never retried and the
+   * contact's redial is deferred (`voicelink.adapter.ts`, `post`). Default 15 s.
+   */
+  addLeadTimeoutMs: z.coerce.number().int().min(1000).max(120_000).default(15_000),
 });
 
 /**
@@ -250,6 +262,8 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
         password: env['VOICELINK_PASSWORD'],
         webhookBaseUrl: env['VOICELINK_WEBHOOK_BASE_URL'],
         defaultCountryCode: env['VOICELINK_DEFAULT_COUNTRY_CODE'],
+        loginTimeoutMs: env['VOICELINK_LOGIN_TIMEOUT_MS'],
+        addLeadTimeoutMs: env['VOICELINK_ADD_LEAD_TIMEOUT_MS'],
       },
     },
     telephonyCredentials: {

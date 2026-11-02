@@ -45,6 +45,7 @@ import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
 import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
+import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
@@ -651,19 +652,29 @@ export class WebRtcBridgeManager {
     } catch (err) {
       // (rejection of telephony init is reported as a completed `failed` call via
       // endCall below — not a pre-flight rejection.)
-      log.error({ err, callId: record.id }, 'WebRTC outbound initiation failed');
+      //
+      // A dial whose outcome is unknown (an `add_lead` that timed out, or a 2xx whose body
+      // could not be read: the carrier may have queued the lead) fails the same way, so the
+      // agent and the slots are released and the media token is cleared (a late carrier
+      // connect is refused and closed, which hangs it up). Its own error code, and the
+      // adapter's error as `cause`, let the caller defer the contact's redial
+      // (`carrier-errors.ts`).
+      const outcomeUnknown = isDialOutcomeUnknown(err);
+      log.error({ err, callId: record.id, outcomeUnknown }, 'WebRTC outbound initiation failed');
       await this.endCall(record.id, {
         status: 'failed',
         outcome: 'telephony_init_failed',
-        errorCode: 'TELEPHONY_INIT_FAILED',
+        errorCode: outcomeUnknown ? 'TELEPHONY_INIT_OUTCOME_UNKNOWN' : 'TELEPHONY_INIT_FAILED',
         errorMessage: err instanceof Error ? err.message : String(err),
         hangupProvider: false,
       });
-      throw new WebRtcCallError(
+      const refusal = new WebRtcCallError(
         err instanceof Error ? err.message : 'Telephony initiation failed',
         'telephony_init_failed',
         502,
       );
+      refusal.cause = err;
+      throw refusal;
     }
 
     trackWebrtcCallInitiated(record);
