@@ -237,6 +237,15 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   is the agent leg's audio for the socket's life: the handler routes frames on `ws`'s `isBinary`
   (binary is `alaw8` audio, text is JSON control) and tags the socket for the bridge
   (`core/bridge/browser-leg-media.ts`).
+- **Send back-pressure** (`utils/ws-backpressure.ts`). Every write to a station socket (the
+  registry's `send` / `broadcast`, the bridge's relay and status frames on the borrowed leg) and
+  the bridge's media relay to the carrier read `ws.bufferedAmount` first. Media past a soft limit
+  of about 3 s of the leg's own audio (128 KiB `pcm16`, 24 KiB `alaw8`, 40 KiB carrier) is dropped
+  and counted (`websocket_send_backpressure_total`, `droppedBrowserMediaFrames` /
+  `droppedPstnMediaFrames` on the call's end line); control frames are never dropped. A station
+  past the 1 MiB hard cap is not reading at all and is closed 4408 `station_send_backlog` (then
+  terminated if it has not closed 5 s later); the carrier's stream has no hard cap, because closing
+  it hangs the call up.
 - **Pacing** (`pacing-engine.ts`, with `pacing/`: leader lease, caller-ID pool, campaign announcer,
   in-flight tracking). One leader per campaign via a Redis lease (15 s, renewed every
   5 s; a supervise pass every 2 s takes leadership); the leader ticks each campaign it leads every

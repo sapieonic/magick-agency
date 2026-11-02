@@ -591,6 +591,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webhook-url-builder.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-answer-anchor.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-alaw8-media.test.ts` | 16 |
+| `apps/server/test/unit/core/webrtc-bridge-backpressure.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-borrowed-socket-soak.test.ts` | 2 |
 | `apps/server/test/unit/core/webrtc-bridge-credential-hangup.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
@@ -824,9 +825,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), abort errors.
+Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), WebSocket send back-pressure (`ws-backpressure.ts`: stale media dropped past a soft limit, a station closed 4408 past the hard cap), abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-limits.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-backpressure.ts`, `ws-limits.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
@@ -892,8 +893,8 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/unit/load/bridge-row-write-order.test.ts` | 1 | No live status lands over a terminal one, 200 calls with shuffled ringing / answered / terminal |
 | `apps/server/test/unit/load/station-storm.test.ts` | 4 | 150 consoles across 3 tenants: registered once, no cross-talk, tab races leave one live station (4409 for the rest) |
 | `apps/server/test/unit/load/station-heartbeat-scale.test.ts` | 1 | Exactly the silent consoles are reaped 4408 after grace; the sweep stops when the floor empties |
-| `apps/server/test/unit/load/station-backpressure.test.ts` | 2 | Stalled consoles do not hold up broadcasts; 1 `it.fails` (unbounded send buffer) |
-| `apps/server/test/unit/load/station-inbound-fuzz.test.ts` | 4 | About 2,800 seeded hostile frames never throw or disturb bystanders (the `null` frame crash); 1 `it.fails` (no frame-size limit) |
+| `apps/server/test/unit/load/station-backpressure.test.ts` | 3 | Stalled consoles do not hold up broadcasts; their media past the soft limit is dropped, control frames never; past the hard cap a console is closed 4408 `station_send_backlog` (the former `it.fails`, unbounded send buffer, is fixed) |
+| `apps/server/test/unit/load/station-inbound-fuzz.test.ts` | 5 | About 2,800 seeded hostile frames never throw or disturb bystanders (the `null` frame crash); a frame past `maxPayload` (64 KiB) is refused 1009, text or binary (the former `it.fails`, no frame-size limit, is fixed) |
 | `apps/server/test/unit/load/wrapup-manager-interleavings.test.ts` | 2 | Seeded interleavings of enter / disposition / force / cancel / timer: each wrap-up closes once, no early `auto_return` |
 | `apps/server/test/unit/load/in-flight-contention.test.ts` | 2 | `InFlight.settle` waits only on work tracked at drain start |
 | `apps/server/test/unit/load/audit-buffer-drain-under-load.test.ts` | 4 | Both audit buffers drain fully when shutdown lands mid-flush |

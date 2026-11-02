@@ -613,6 +613,12 @@ export const AGENCY_STATION_CLOSE = {
    * console notice. A client that does not recognise the code must fall through to
    * its ordinary retry, which is what makes this safe to ship ahead of any console
    * change.
+   *
+   * Also sent, with reason `station_send_backlog`, when the station has stopped READING:
+   * its unread backlog of server frames passed the server's cap (1 MiB; media past ~3 s
+   * of backlog is dropped first, control frames never). The same "the server stopped
+   * hearing from this station" in the other direction, with the same answer: re-mint and
+   * reconnect, and `ready` carries the state again.
    */
   HEARTBEAT_TIMEOUT: 4408,
   /** Superseded by a newer socket for the same session. Do not retry. */

@@ -86,6 +86,21 @@ observableGauge<'type'>(meter, 'websocket_connections_active', {
   for (const [type, count] of _wsConnectionsByType) observe(count, { type });
 });
 
+// ── WebSocket send back-pressure ───────────────────────────────────────
+// `socket` is `station` (an agent's station socket, written by the station registry and
+// by the bridge's borrowed browser leg) or `carrier` (the carrier's media stream).
+// `action` is `media_dropped` (a media frame past the soft backlog limit) or `closed` (a
+// station socket closed 4408 `station_send_backlog` past the hard cap). Both closed sets,
+// code-owned (`apps/server/src/utils/ws-backpressure.ts`). No session or call ids.
+const websocketSendBackpressureTotal = counter<'socket' | 'action'>(meter, 'websocket_send_backpressure_total', {
+  description: 'WebSocket frames dropped, and station sockets closed, because the peer stopped reading',
+});
+
+/** Record one back-pressure action. Guarded: it runs on the media relay's hot path. */
+export function trackWebsocketSendBackpressure(socket: 'station' | 'carrier', action: 'media_dropped' | 'closed'): void {
+  safeEmit('websocket-send-backpressure', () => websocketSendBackpressureTotal.inc({ socket, action }));
+}
+
 // ── Rate limiter rejections ────────────────────────────────────────────
 // `bucket_kind` comes from the same `budgetFor()` that charged the bucket;
 // `route_class` is a bounded, code-owned slug, never a URL (the 429'd routes
