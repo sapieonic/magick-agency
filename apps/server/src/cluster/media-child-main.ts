@@ -40,8 +40,9 @@ import { createBridgeAnalysisHooks } from '../analysis/bridge-analysis-hooks.js'
 import { setBridgeAnalysisHooks } from '../seams/bridge-analysis-hooks.js';
 import { setDialerAnalysisWorker } from '../core/dialer-analysis-worker-handle.js';
 import { buildCoreHandlers } from '../api/core-handlers.js';
+import { initAnalytics, shutdownAnalytics } from '../analytics/posthog.js';
 import { IpcChannel, parentTransport } from './ipc-channel.js';
-import { installIpcPacingBus, startMediaChild } from './media-child.js';
+import { installIpcPacingBus, startMediaChild, type MediaChild } from './media-child.js';
 import { buildWorkerApp } from './worker-app.js';
 
 const log = createChildLogger({ component: 'media-child' });
@@ -65,7 +66,65 @@ export async function runMediaChildProcess(opts: MediaChildProcessOptions): Prom
   const channel = new IpcChannel(parentTransport(), { name: `media${slot}→primary` });
   installIpcPacingBus(channel);
 
-  const pool = initDbPool({
+  // ── Stopping, wired before anything awaits ───────────────────────────────
+  // The primary may ask this worker to stop while it is still booting (the host is being
+  // stopped a moment after it started, or the slot was re-forked just before a stop). The
+  // `shutdown` handler is registered first, so that request is answered rather than refused
+  // `unsupported` (which left the primary waiting out its grace, then SIGKILL). A stop during
+  // boot lets the boot finish building, then tears down what it built instead of starting
+  // the shard and announcing `ready`.
+  let child: MediaChild | null = null;
+  let stopRequested = false;
+  let bootSettled!: () => void;
+  const booted = new Promise<void>((resolve) => { bootSettled = resolve; });
+  let redis: Redis | null = null;
+  let exiting = false;
+  const finish = async (code: number, why: string, boundMs?: number): Promise<void> => {
+    if (exiting) return;
+    exiting = true;
+    log.info({ slot, why }, 'Media worker process stopping');
+    const stop = booted.then(() => child?.shutdown());
+    if (boundMs !== undefined) {
+      await Promise.race([stop, new Promise((r) => setTimeout(r, boundMs).unref())]);
+    } else {
+      await stop;
+    }
+    await shutdownAnalytics().catch(() => {});
+    await platformAuditLogger.shutdown().catch(() => {});
+    await auditLogger.shutdown().catch(() => {});
+    await redis?.quit().catch(() => {});
+    await closePool().catch(() => {});
+    await opts.flushTelemetry?.().catch(() => {});
+    process.exit(code);
+  };
+  channel.handle('shutdown', async () => {
+    stopRequested = true;
+    await booted;
+    await child?.shutdown();
+    setImmediate(() => { void finish(0, 'shutdown requested'); });
+    return {};
+  });
+  channel.onClose(() => { void finish(1, 'parent channel closed', ORPHANED_SHUTDOWN_BOUND_MS); });
+
+  try {
+    child = await boot(slot, channel, () => stopRequested, (r) => { redis = r; });
+  } finally {
+    bootSettled();
+  }
+}
+
+/**
+ * Build the worker on its own pool and Redis client, then (unless a stop arrived meanwhile)
+ * start the shard and announce `ready`. Null when a stop arrived during boot: what was built
+ * is torn down and nothing was announced.
+ */
+async function boot(
+  slot: number,
+  channel: IpcChannel,
+  stopRequested: () => boolean,
+  onRedis: (redis: Redis) => void,
+): Promise<MediaChild | null> {
+  initDbPool({
     url: config.db.url,
     poolMin: 0,
     // Its own pool, sized for its own calls' writes (`MEDIA_WORKER_DB_POOL_MAX`): every
@@ -73,8 +132,11 @@ export async function runMediaChildProcess(opts: MediaChildProcessOptions): Prom
     poolMax: config.processes.mediaWorkerDbPoolMax,
     ...dbTlsOptions(config),
   });
-  void pool;
   const redis = new Redis(config.redis.url, redisClientOptions(config.redis));
+  onRedis(redis);
+  // PostHog in this process too: the bridge's `webrtc_call_*` events are emitted here. A
+  // no-op unless analytics is enabled; flushed by the stop.
+  initAnalytics();
   initFeatureFlagService(redis, config.redis.keyPrefix);
   platformAuditLogger.start();
   auditLogger.start();
@@ -89,7 +151,6 @@ export async function runMediaChildProcess(opts: MediaChildProcessOptions): Prom
   guardHost.setDegradedShare(config.processes.mediaWorkers);
 
   const runtime = ensureAgencyRuntime(redis, config.redis.keyPrefix);
-  runtime.startShard();
 
   if (config.dialerAnalysis?.enabled && createTranscriber(config) && createAnalysisService(config)) {
     setBridgeAnalysisHooks(createBridgeAnalysisHooks());
@@ -108,31 +169,16 @@ export async function runMediaChildProcess(opts: MediaChildProcessOptions): Prom
     agency: { runtime },
   });
 
-  const child = startMediaChild({ slot, channel, runtime, bridge, guardHost, app, core });
-
-  let exiting = false;
-  const finish = async (code: number, why: string, boundMs?: number): Promise<void> => {
-    if (exiting) return;
-    exiting = true;
-    log.info({ slot, why }, 'Media worker process stopping');
-    const stop = child.shutdown();
-    if (boundMs !== undefined) {
-      await Promise.race([stop, new Promise((r) => setTimeout(r, boundMs).unref())]);
-    } else {
-      await stop;
-    }
-    await platformAuditLogger.shutdown().catch(() => {});
-    await auditLogger.shutdown().catch(() => {});
-    await redis.quit().catch(() => {});
-    await closePool().catch(() => {});
-    await opts.flushTelemetry?.().catch(() => {});
-    process.exit(code);
-  };
-
-  channel.handle('shutdown', async () => {
-    await child.shutdown();
-    setImmediate(() => { void finish(0, 'shutdown requested'); });
-    return {};
-  });
-  channel.onClose(() => { void finish(1, 'parent channel closed', ORPHANED_SHUTDOWN_BOUND_MS); });
+  if (stopRequested()) {
+    // Never `ready`: no socket was handed here and no shard timer started. Close what
+    // was built, in the shutdown's order.
+    log.info({ slot }, 'Media worker asked to stop while booting — not starting');
+    await app.close().catch(() => {});
+    await bridge.gracefulShutdown().catch(() => {});
+    await guardHost.gracefulShutdown().catch(() => {});
+    await core.close().catch(() => {});
+    return null;
+  }
+  runtime.startShard();
+  return startMediaChild({ slot, channel, runtime, bridge, guardHost, app, core });
 }

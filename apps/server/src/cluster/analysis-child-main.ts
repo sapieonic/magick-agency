@@ -15,6 +15,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../config/index.js';
 import { dbTlsOptions } from '../db-tls.js';
 import { auditLogger } from '../audit/audit-logger.js';
+import { initAnalytics, shutdownAnalytics } from '../analytics/posthog.js';
 import { createTranscriber } from '../transcription/index.js';
 import { createAnalysisService } from '../analysis/index.js';
 import type { Transcriber } from '../transcription/types.js';
@@ -64,6 +65,9 @@ export async function runAnalysisChildProcess(opts: AnalysisChildProcessOptions)
     ...dbTlsOptions(config),
   });
   auditLogger.start();
+  // PostHog in this process too: the runner's `dialer_call_*` events are emitted here. A
+  // no-op unless analytics is enabled; flushed in `finish`.
+  initAnalytics();
 
   const channel = new IpcChannel(parentTransport(), { name: `analysis${slot}→primary` });
   const child = startAnalysisChild({
@@ -82,6 +86,7 @@ export async function runAnalysisChildProcess(opts: AnalysisChildProcessOptions)
     log.info({ slot, why }, 'Analysis worker process stopping');
     await child.shutdown().catch((err) => log.error({ err, slot }, 'Analysis requeue on shutdown failed'));
     await auditLogger.shutdown().catch((err) => log.error({ err, slot }, 'audit flush failed'));
+    await shutdownAnalytics().catch((err) => log.error({ err, slot }, 'analytics flush failed'));
     await closePool().catch(() => {});
     await opts.flushTelemetry?.().catch(() => {});
     process.exit(code);
