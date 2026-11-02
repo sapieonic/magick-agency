@@ -70,11 +70,12 @@ describe('body decoders', () => {
   it('shutdown and health', () => {
     expect(parseShutdownBody({ graceMs: 30_000 })).toEqual({ graceMs: 30_000 });
     expect(parseShutdownBody({ graceMs: 0 })).toBeNull();
-    const health = { role: 'media', slot: 1, pid: 9, elu: 0.4, inFlight: 12, draining: false };
+    const health = { role: 'media', slot: 1, pid: 9, elu: 0.4, inFlight: 12, pausedForMs: 0, draining: false };
     expect(parseHealthBody(health)).toEqual(health);
     expect(parseHealthBody({ ...health, elu: 1.5 })).toBeNull();
     expect(parseHealthBody({ ...health, elu: Number.NaN })).toBeNull();
     expect(parseHealthBody({ ...health, draining: 'no' })).toBeNull();
+    expect(parseHealthBody({ ...health, pausedForMs: -1 })).toBeNull();
   });
 
   it('pacing.invalidate is the pacing bus decoder itself', () => {

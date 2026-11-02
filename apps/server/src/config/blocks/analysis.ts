@@ -165,6 +165,15 @@ const dialerAnalysisSchema = z.object({
    */
   concurrency: z.coerce.number().int().min(1).max(256).default(8),
   /**
+   * Separate analysis processes the server forks, each running `concurrency` slots
+   * under its own `memoryBudgetBytes` (`ANALYSIS_WORKERS`, `docs/scaling.md` §1.3). 0
+   * (the default) keeps the slots in the server process itself, exactly as before. With
+   * K > 0 the server runs no slot of its own: it enqueues, wakes the children over IPC
+   * and keeps the retention purge. Claims are `FOR UPDATE SKIP LOCKED`, so the children
+   * share the queue with no other coordination.
+   */
+  processes: z.coerce.number().int().min(0).max(32).default(0),
+  /**
    * Recording bytes the slots may hold in memory at once. A slot reserves
    * `maxRecordingBytes` × 2 before it claims a job and shrinks to the real size once
    * the recording is fetched, so slots × recording size cannot outgrow this. Must hold
@@ -313,6 +322,7 @@ export function readAnalysisEnv(env: Env): Record<string, unknown> {
       maxAttempts: env['DIALER_ANALYSIS_MAX_ATTEMPTS'],
       maxAttemptsTotal: env['DIALER_ANALYSIS_MAX_ATTEMPTS_TOTAL'],
       concurrency: env['DIALER_ANALYSIS_CONCURRENCY'],
+      processes: env['ANALYSIS_WORKERS'],
       memoryBudgetBytes: env['DIALER_ANALYSIS_MEMORY_BUDGET_BYTES'],
       pollIntervalMs: env['DIALER_ANALYSIS_POLL_INTERVAL_MS'],
       settleSeconds: env['DIALER_ANALYSIS_SETTLE_SECONDS'],

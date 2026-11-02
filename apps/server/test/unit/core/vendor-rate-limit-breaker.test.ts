@@ -92,4 +92,46 @@ describe('VendorRateLimitBreaker', () => {
     advance(1);
     expect(b.recordRateLimit(now())).toBe(BREAKER_BASE_PAUSE_MS / 1000);
   });
+
+  describe('applyRemotePause (another analysis process was rate-limited, D10)', () => {
+    it('pauses here until the remote end, escalating to the remote count, without telling the open listeners', () => {
+      const { b, advance, now } = breaker();
+      const opened = vi.fn();
+      b.onOpenListener(opened);
+      b.applyRemotePause(now() + 45_000, 2);
+      expect(b.state).toBe('open');
+      expect(b.admit(8)).toBe(0);
+      expect(b.reopensInMs()).toBe(45_000);
+      expect(opened).not.toHaveBeenCalled();
+      advance(45_000);
+      expect(b.state).toBe('half_open');
+      // A local probe rate-limited now escalates from the remote count: the third opening.
+      b.onStarted(1);
+      b.recordRateLimit(now());
+      expect(b.reopensInMs()).toBe(BREAKER_BASE_PAUSE_MS * 4);
+      expect(opened).toHaveBeenCalledWith(BREAKER_BASE_PAUSE_MS * 4, 3);
+    });
+
+    it('never shortens a pause this process already holds, and ignores one already over', () => {
+      const { b, now } = breaker();
+      b.recordRateLimit(now()); // local: base pause
+      b.applyRemotePause(now() + 1_000, 1);
+      expect(b.reopensInMs()).toBe(BREAKER_BASE_PAUSE_MS);
+      b.applyRemotePause(now() - 1, 5);
+      expect(b.reopensInMs()).toBe(BREAKER_BASE_PAUSE_MS);
+      b.applyRemotePause(now() + BREAKER_BASE_PAUSE_MS * 3, 2);
+      expect(b.reopensInMs()).toBe(BREAKER_BASE_PAUSE_MS * 3);
+    });
+
+    it('a job already in flight here that comes back rate-limited does not reopen the remote pause', () => {
+      const { b, advance, now } = breaker();
+      const startedBefore = now();
+      advance(10);
+      b.applyRemotePause(now() + 20_000, 1);
+      const left = b.reopensInMs();
+      b.recordRateLimit(startedBefore);
+      expect(b.reopensInMs()).toBe(left);
+    });
+  });
 });
+

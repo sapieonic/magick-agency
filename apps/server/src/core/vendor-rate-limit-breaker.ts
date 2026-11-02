@@ -103,6 +103,26 @@ export class VendorRateLimitBreaker {
     return Math.ceil(this.reopensInMs() / 1000);
   }
 
+  /**
+   * Another analysis process sharing the queue (and the vendor key) was rate-limited
+   * and opened its breaker until `untilMs`, after `consecutive` openings
+   * (`docs/scaling.md` decision D10, relayed by the primary over IPC). Pause here too,
+   * so one 429 pauses the fleet rather than each process finding it out with jobs of its
+   * own. Takes the later end and the higher count; never shortens a pause this process
+   * already holds. Counts as an opening for the "started before the opening" rule, so a
+   * job already in flight here that comes back rate-limited does not reopen it. The
+   * open listeners are NOT called: the opening was another process's, and it already
+   * logged, counted and announced it.
+   */
+  applyRemotePause(untilMs: number, consecutive: number): void {
+    const now = this.now();
+    if (untilMs <= now) return;
+    if (this.state === 'open' && untilMs <= this.openUntil) return;
+    this.consecutive = Math.max(this.consecutive, consecutive);
+    this.openedAt = now;
+    this.openUntil = Math.max(this.openUntil, untilMs);
+  }
+
   /** A job that started at `startedAt` completed: closes the breaker unless that job predates the opening. */
   recordSuccess(startedAt: number): void {
     if (startedAt < this.openedAt) return;

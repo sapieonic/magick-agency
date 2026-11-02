@@ -128,6 +128,8 @@ export interface HealthBody {
   elu: number;
   /** Units of work in flight: analysis jobs, or live calls on a media worker. */
   inFlight: number;
+  /** An analysis process: how long its vendor rate-limit pause has left (0 when not paused). */
+  pausedForMs: number;
   draining: boolean;
 }
 
@@ -158,10 +160,11 @@ export function parseShutdownBody(raw: unknown): ShutdownBody | null {
 
 export function parseHealthBody(raw: unknown): HealthBody | null {
   if (!isRecord(raw)) return null;
-  const { role, slot, pid, elu, inFlight, draining } = raw;
+  const { role, slot, pid, elu, inFlight, pausedForMs, draining } = raw;
   if (!(CHILD_ROLES as readonly unknown[]).includes(role) || !isNonNegativeInt(slot) || !isPositiveInt(pid)) return null;
-  if (typeof elu !== 'number' || !(elu >= 0 && elu <= 1) || !isNonNegativeInt(inFlight) || typeof draining !== 'boolean') return null;
-  return { role: role as ChildRole, slot, pid, elu, inFlight, draining };
+  if (typeof elu !== 'number' || !(elu >= 0 && elu <= 1) || !isNonNegativeInt(inFlight)) return null;
+  if (!isNonNegativeInt(pausedForMs) || typeof draining !== 'boolean') return null;
+  return { role: role as ChildRole, slot, pid, elu, inFlight, pausedForMs, draining };
 }
 
 // ─── The catalogue ──────────────────────────────────────────────────────────
