@@ -195,19 +195,23 @@ export class AgencyContactRepository {
    * Ingest stores E.164, so digits and number agree for every roster row.
    *
    * The one-per-number pass needs `DISTINCT ON`, which cannot take `FOR UPDATE`, so
-   * it runs over a non-locking candidate list of the first
-   * `limit * CLAIM_CANDIDATE_FACTOR` due rows (index order, cheap), and the
-   * locking pick is taken from what survives. When the head of the queue is a run
-   * of rows on one number, a tick can claim fewer than `limit`; the next tick sees
+   * the locking pick (`SKIP LOCKED`, past rows other transactions hold, as before)
+   * takes up to `limit * CLAIM_CANDIDATE_FACTOR` due rows, and one contact per
+   * number, at most `limit`, is claimed from those. The extra rows are locked only
+   * until the statement ends. Locking in the FIRST scan matters: a pick over an
+   * unlocked candidate list could find its whole window held by another
+   * transaction and claim nothing while dialable rows sat further down
+   * (`contact-claim-contention.test.ts`). When the head of the queue is a run of
+   * rows on one number, a tick can claim fewer than `limit`; the next tick sees
    * that number busy and moves past it. Pacing ticks for one campaign never
-   * overlap (`PacingEngine.ticking`), which is what makes the unlocked busy probe
-   * enough on this single-replica deployment. Pinned on a real database by
-   * `agency-contact-claim-one-per-number.test.ts`.
+   * overlap (`PacingEngine.ticking`), which is what makes the busy probe (a read,
+   * not a lock) enough on this single-replica deployment. Pinned on a real
+   * database by `agency-contact-claim-one-per-number.test.ts`.
    */
   async claimDialable(campaignId: string, limit: number): Promise<AgencyContactRecord[]> {
     if (limit <= 0) return [];
     const { rows } = await getPool().query<AgencyContactRecord>(
-      `WITH due AS MATERIALIZED (
+      `WITH locked AS MATERIALIZED (
          SELECT c.id, c.next_attempt_at, ${contactDigits('c')} AS digits
            FROM agency_contacts c
           WHERE c.campaign_id = $1 AND c.state = 'pending' AND c.next_attempt_at <= now()
@@ -218,19 +222,16 @@ export class AgencyContactRepository {
                  AND ${contactDigits('live')} = ${contactDigits('c')}
                  AND live.state IN ('in_flight', 'connected'))
           ORDER BY c.next_attempt_at
+            FOR UPDATE OF c SKIP LOCKED
           LIMIT $3
        ),
-       one_per_number AS (
-         SELECT DISTINCT ON (digits) id, next_attempt_at
-           FROM due
-          ORDER BY digits, next_attempt_at, id
-       ),
        picked AS MATERIALIZED (
-         SELECT c.id FROM agency_contacts c
-           JOIN one_per_number o ON o.id = c.id
-          WHERE c.state = 'pending'
-          ORDER BY o.next_attempt_at, o.id
-            FOR UPDATE OF c SKIP LOCKED
+         SELECT id FROM (
+           SELECT DISTINCT ON (digits) id, next_attempt_at
+             FROM locked
+            ORDER BY digits, next_attempt_at, id
+         ) one_per_number
+          ORDER BY next_attempt_at, id
           LIMIT $2
        )
        UPDATE agency_contacts c SET state = 'in_flight', updated_at = now()
