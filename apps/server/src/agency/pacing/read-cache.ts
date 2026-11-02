@@ -14,18 +14,38 @@
  * The TTL is the backstop for an invalidation that never arrives (a lost event, a
  * raw SQL write): no entry is served older than `ttlMs`.
  */
+/** Keys whose generation is remembered before the map is folded into the floor. */
+export const MAX_TRACKED_GENERATIONS = 10_000;
+
 export class GenerationTtlCache<V> {
   private readonly entries = new Map<string, { value: V; storedAt: number }>();
+  /**
+   * The generation of each key invalidated since the last fold. Generations come from one
+   * counter for the whole cache, so a value is never reused. Every campaign and account the
+   * process ever invalidated would otherwise stay here for the process's life: past
+   * {@link MAX_TRACKED_GENERATIONS} the map is dropped and every key reads the counter's
+   * value at that moment (`floor`). A load in flight then fails its store unless nothing
+   * was invalidated after the generation it read (at worst a cache miss, never a stale
+   * store: the floor is at least every generation forgotten).
+   */
   private readonly generations = new Map<string, number>();
+  private seq = 0;
+  private floor = 0;
 
   constructor(
     private readonly ttlMs: number,
     private readonly now: () => number = Date.now,
+    private readonly maxTrackedGenerations = MAX_TRACKED_GENERATIONS,
   ) {}
 
   /** The current generation of `key`: read it BEFORE starting a load, pass it to {@link setIf}. */
   generation(key: string): number {
-    return this.generations.get(key) ?? 0;
+    return this.generations.get(key) ?? this.floor;
+  }
+
+  /** Keys with a remembered generation (bounded by {@link MAX_TRACKED_GENERATIONS}). */
+  get trackedGenerations(): number {
+    return this.generations.size;
   }
 
   /** A fresh value, or undefined. An expired entry is dropped. */
@@ -62,16 +82,21 @@ export class GenerationTtlCache<V> {
   }
 
   invalidate(key: string): void {
-    this.generations.set(key, this.generation(key) + 1);
     this.entries.delete(key);
+    if (!this.generations.has(key) && this.generations.size >= this.maxTrackedGenerations) {
+      this.floor = this.seq;
+      this.generations.clear();
+    }
+    this.generations.set(key, ++this.seq);
   }
 
   /**
-   * Drop every entry. Generations are bumped for the keys that had entries AND kept
-   * for the rest, so a load in flight across a clear cannot store either.
+   * Drop every entry and move every key to a new generation, so a load in flight across a
+   * clear cannot store.
    */
   clear(): void {
-    for (const key of new Set([...this.entries.keys(), ...this.generations.keys()])) this.invalidate(key);
+    this.floor = ++this.seq;
+    this.generations.clear();
     this.entries.clear();
   }
 

@@ -45,10 +45,10 @@ const RETURN_RESERVED_DEADLINE_MS = 5_000;
 const SNAPSHOT_DEADLINE_MS = 5_000;
 /**
  * How often the workers' live call ids are refreshed for the guard host's stale sweep, and
- * the slot leases reconciled. `MEDIA_SNAPSHOT_REFRESH_MS` overrides it for the chaos suite,
- * which turns it off to prove the slot reap works from the deltas alone.
+ * the slot leases reconciled, unless {@link MediaClusterOptions.snapshotRefreshMs} says
+ * otherwise (`MEDIA_SNAPSHOT_REFRESH_MS`, `config.processes.mediaSnapshotRefreshMs`).
  */
-export const SNAPSHOT_REFRESH_MS = Number(process.env['MEDIA_SNAPSHOT_REFRESH_MS'] ?? 5_000);
+export const SNAPSHOT_REFRESH_MS = 5_000;
 
 export interface MediaClusterOptions {
   count: number;
@@ -70,7 +70,24 @@ export interface MediaClusterOptions {
   crashLoop?: { max: number; onCrashLoop: (slot: number) => void };
   readyTimeoutMs?: number;
   restartBackoffMs?: readonly number[];
+  /** The periodic snapshot refresh; 0 turns it off. Default {@link SNAPSHOT_REFRESH_MS}. */
+  snapshotRefreshMs?: number;
+  /**
+   * How many `dial.execute` may be outstanding to one worker (the primary passes
+   * `MAX_CONCURRENT_CALLS`). A dial is outstanding from send to the carrier's `add_lead`
+   * answer, up to 40 s, and pacing sends at most one per idle agent, so a shift start on a
+   * worker that holds most of the floor has as many in flight as it has agents. Each also
+   * takes a global concurrency slot, so more than `MAX_CONCURRENT_CALLS` could never be
+   * admitted anyway: that is the bound, and legitimate load cannot reach it. Dials are
+   * bounded apart from the other requests, so a dial burst never refuses an agent's
+   * forwarded request or a carrier post (and the reverse). Default
+   * {@link DEFAULT_MAX_DIALS_IN_FLIGHT}.
+   */
+  maxDialsInFlight?: number;
 }
+
+/** `MAX_CONCURRENT_CALLS`' default (`config/blocks/voice.ts`). */
+export const DEFAULT_MAX_DIALS_IN_FLIGHT = 1_000;
 
 export class MediaCluster implements WsHandoffTarget {
   readonly supervisor: ChildSupervisor;
@@ -95,6 +112,7 @@ export class MediaCluster implements WsHandoffTarget {
       count: opts.count,
       fork: opts.fork,
       onChannel: (slot, channel) => this.wireChannel(slot, channel),
+      channelBounds: { maxInFlightByType: { 'dial.execute': opts.maxDialsInFlight ?? DEFAULT_MAX_DIALS_IN_FLIGHT } },
       onExit: async (exit) => {
         this.directory.workerDown(exit.slot);
         const last = this.snapshots.get(exit.slot) ?? null;
@@ -128,8 +146,9 @@ export class MediaCluster implements WsHandoffTarget {
 
   async start(): Promise<void> {
     await this.supervisor.start();
-    if (SNAPSHOT_REFRESH_MS > 0) {
-      this.snapshotTimer = setInterval(() => { void this.refreshSnapshots(); }, SNAPSHOT_REFRESH_MS);
+    const refreshMs = this.opts.snapshotRefreshMs ?? SNAPSHOT_REFRESH_MS;
+    if (refreshMs > 0) {
+      this.snapshotTimer = setInterval(() => { void this.refreshSnapshots(); }, refreshMs);
       this.snapshotTimer.unref?.();
     }
     await this.refreshSnapshots();

@@ -1,7 +1,7 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import { WebRtcCallError } from '../core/webrtc-bridge-manager.js';
-import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../core/webrtc-bridge-manager.js';
 import {
   agencyAgentSessionRepository,
@@ -60,15 +60,8 @@ export interface AgentReleaseResult {
 
 const log = createChildLogger({ component: 'agency-dialer' });
 
-/**
- * How long a contact waits before its next dial when the carrier may have queued the one
- * that just failed (an `add_lead` that timed out, or a 2xx whose body could not be read:
- * `telephony/carrier-errors.ts`). The pacing tick would otherwise dial it again at once,
- * while the carrier may still be dialling it: two calls to one customer. 15 min is far
- * beyond any queue the concurrency guards let build at the carrier; a call the carrier
- * does place meanwhile is refused at its media connect and hung up.
- */
-export const DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS = 15 * 60_000;
+/** Defined beside the errors that carry the rule; re-exported for the dial path's callers. */
+export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
 
 /**
  * How long a `released` the agent never saw is kept for them to collect on

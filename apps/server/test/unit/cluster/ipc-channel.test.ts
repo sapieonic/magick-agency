@@ -97,6 +97,44 @@ describe('IpcChannel', () => {
     primary.close();
   });
 
+  it('a type bounded on its own counts only against its bound, and the shared bound only against the rest', async () => {
+    const pair = memoryTransportPair();
+    const primary = new IpcChannel(pair.a, { name: 'primary', maxInFlight: 2, maxInFlightByType: { 'agent.return_reserved': 3 } });
+    const child = new IpcChannel(pair.b, { name: 'child' });
+    child.handle('health.ping', () => new Promise(() => {}));
+    child.handle('agent.return_reserved', () => new Promise(() => {}));
+    const pending: Array<Promise<unknown>> = [];
+    for (let i = 0; i < 3; i++) pending.push(primary.request('agent.return_reserved', { sessionId: `s${i}` }).catch((e: unknown) => e));
+    // Three outstanding of the separately bounded type do not use up the shared two…
+    for (let i = 0; i < 2; i++) pending.push(primary.request('health.ping', {}).catch((e: unknown) => e));
+    // …and each bound refuses exactly one past itself.
+    await expect(primary.request('agent.return_reserved', { sessionId: 's3' })).rejects.toMatchObject({ code: 'refused' });
+    await expect(primary.request('health.ping', {})).rejects.toMatchObject({ code: 'refused' });
+    expect(primary.stats().inFlight).toBe(5);
+    primary.close();
+    // Closing settles every one of them `gone`, and frees the bounds.
+    for (const p of await Promise.all(pending)) expect(p).toMatchObject({ code: 'gone' });
+  });
+
+  it('a settled request frees its bound: answered, timed out, or gone', async () => {
+    vi.useFakeTimers();
+    const { primary, child } = channels({ maxInFlight: 1 });
+    let answer!: () => void;
+    child.handle('health.ping', () => new Promise((r) => { answer = () => r(HEALTH); }));
+    const first = primary.request('health.ping', {});
+    await vi.advanceTimersByTimeAsync(1);
+    answer();
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(first).resolves.toEqual(HEALTH);
+    const second = primary.request('health.ping', {}, { deadlineMs: 50 });
+    await vi.advanceTimersByTimeAsync(60);
+    await expect(second).rejects.toMatchObject({ code: 'timeout' });
+    const third = primary.request('health.ping', {}, { deadlineMs: 50 }).catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(await third).toMatchObject({ code: 'timeout' });
+    primary.close();
+  });
+
   it('answers unsupported for a request with no handler, and handler_error when it throws', async () => {
     const { primary, child } = channels();
     await expect(primary.request('health.ping', {})).rejects.toMatchObject({ code: 'unsupported' });

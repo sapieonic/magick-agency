@@ -79,12 +79,15 @@ export function detachFromServer(socket: net.Socket): boolean {
  * the handoff needs (reads can be stopped; `server` can be detached) and that stopping
  * reads works. Run once at boot by a primary configured for media workers.
  */
-export async function probeSocketReadStop(): Promise<boolean> {
+export async function probeSocketReadStop(opts: { timeoutMs?: number } = {}): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     let settled = false;
+    let client: net.Socket | undefined;
+    // Whichever way it ends (answered, failed, timed out), nothing it opened stays open.
     const done = (ok: boolean): void => {
       if (settled) return;
       settled = true;
+      client?.destroy();
       server.close();
       resolve(ok);
     };
@@ -92,16 +95,15 @@ export async function probeSocketReadStop(): Promise<boolean> {
       const ok = socketReadStopSupported(socket) && stopSocketReads(socket) && handleOf(socket)?.reading === false
         && detachFromServer(socket);
       socket.destroy();
-      client.destroy();
       done(ok);
     });
     server.on('error', () => done(false));
-    let client: net.Socket;
     server.listen(0, '127.0.0.1', () => {
+      if (settled) return;
       const { port } = server.address() as net.AddressInfo;
       client = net.connect(port, '127.0.0.1');
       client.on('error', () => done(false));
     });
-    setTimeout(() => done(false), 2_000).unref();
+    setTimeout(() => done(false), opts.timeoutMs ?? 2_000).unref();
   });
 }

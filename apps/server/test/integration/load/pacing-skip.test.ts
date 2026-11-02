@@ -145,10 +145,13 @@ describe('pacing rounds: skip, wake, share (load)', () => {
     const after = seen.slice(before);
     // The first tick after the event is FULL (woken by it), not a skip.
     expect(after[0]).toMatchObject({ mode: 'full', cause: 'event' });
-    // Observed when the tick ENDS, so the bound carries the tick's own dial work.
-    expect(after[0]!.at - at).toBeLessThanOrEqual(TICK_INTERVAL_MS + 250);
+    // The claim is structural (above): the first round after the event is a full one woken
+    // by it, and the attempt exists when it ends; nothing waited for the safety tick. The
+    // time is reported, and bounded only below the safety tick plus a round, so a loaded
+    // full run cannot fail a correct engine while a dial left to the safety net still would.
     report(`PACING-REACTION available→attempt row ${reacted} ms (round ${TICK_INTERVAL_MS} ms)`);
-    expect(reacted).toBeLessThanOrEqual(TICK_INTERVAL_MS + 250);
+    expect(after[0]!.at - at).toBeLessThan(PACING_SAFETY_TICK_MS + TICK_INTERVAL_MS);
+    expect(reacted).toBeLessThan(PACING_SAFETY_TICK_MS + TICK_INTERVAL_MS);
   }, 60_000);
 
   it('a change no event announced is found by the safety tick, and only by it', async () => {
@@ -166,20 +169,20 @@ describe('pacing rounds: skip, wake, share (load)', () => {
     const agent = world.agentsOf('S')[0]!;
     await world.redis.hset(`agency:agent:${agent.sessionId}:state`, 'state', 'available', 'since', String(Date.now()));
     await world.redis.pexpire(`agency:agent:${agent.sessionId}:state`, AGENT_LEASE_MS.available);
-    const from = Date.now();
     let rounds = 0;
     while ((await attemptCount(s.id)) === 0 && rounds < 20) {
       await sleep(TICK_INTERVAL_MS);
       await world.round({ measure: false });
       rounds++;
     }
-    const waited = Date.now() - from;
     expect(await attemptCount(s.id)).toBe(1);
     const full = seen.filter((o) => o.mode === 'full');
     expect(full.at(-1)).toMatchObject({ cause: 'safety', plan: { toDial: 1 } });
-    // Skipped in between (the skip is real), and found within the bound.
+    // Skipped in between (the skip is real), and found within the bound, counted in rounds:
+    // each round waits at least one interval, so the safety tick is due by this many. (A
+    // wall-clock bound failed a correct engine when a loaded run slowed the sleeps down.)
     expect(seen.slice(1, -1).every((o) => o.mode === 'skipped')).toBe(true);
-    expect(waited).toBeLessThanOrEqual(PACING_SAFETY_TICK_MS + 2 * TICK_INTERVAL_MS + 250);
+    expect(rounds).toBeLessThanOrEqual(Math.ceil(PACING_SAFETY_TICK_MS / TICK_INTERVAL_MS) + 2);
   }, 60_000);
 
   describe('a lowered account limit', () => {
@@ -270,15 +273,19 @@ describe('pacing rounds: skip, wake, share (load)', () => {
         [l.tenantId, l.accountId]);
       await endTwo(l.id, false);
       const attempts = await attemptCount(l.id);
-      const from = Date.now();
       const limitSeen = (seen: typeof seenA) => (seen.filter((o) => o.mode === 'full' && o.plan).at(-1) as any)?.plan.accountLimit;
-      while ((limitSeen(seenA) !== 2 || limitSeen(seenB) !== 2) && Date.now() - from < 5_000) {
+      // Counted in rounds, each at least one interval apart: the TTL and the safety tick are
+      // both due within this many (a wall-clock bound failed under a loaded run).
+      const maxRounds = Math.ceil((PACING_SAFETY_TICK_MS + TTL) / TICK_INTERVAL_MS) + 2;
+      let rounds = 0;
+      while ((limitSeen(seenA) !== 2 || limitSeen(seenB) !== 2) && rounds < 3 * maxRounds) {
         await sleep(TICK_INTERVAL_MS);
         await a.runRound();
         await b.runRound();
+        rounds++;
       }
       expect([limitSeen(seenA), limitSeen(seenB)]).toEqual([2, 2]);
-      expect(Date.now() - from).toBeLessThanOrEqual(PACING_SAFETY_TICK_MS + TTL + 2 * TICK_INTERVAL_MS);
+      expect(rounds).toBeLessThanOrEqual(maxRounds);
       expect(await attemptCount(l.id)).toBe(attempts);
     }, 60_000);
   });

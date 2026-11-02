@@ -570,10 +570,17 @@ That is under 1 000 small JSON messages a second in total.
   never dropped, because every event here either has a backstop (bus events: the safety tick
   and cache TTL; `station.*`: the snapshot reconcile on every health ping whose count
   disagrees) or is a request with a deadline.
-- In-flight requests per worker are capped at 256. Past that, new requests fail `refused`:
-  - a dial is returned to the pool;
-  - a forward answers 503;
-  - a webhook answers 503 and the carrier retries.
+- In-flight requests per worker are bounded, and past a bound a new request fails `refused`
+  (a dial is returned to the pool; a forward answers 503; a webhook answers 503 and the
+  carrier retries). As built, two bounds sized so legitimate load cannot reach them:
+  - `dial.execute`, on its own: `MAX_CONCURRENT_CALLS` (1000). A dial is outstanding from
+    send to the carrier's `add_lead` answer (up to 40 s), pacing sends at most one per idle
+    agent, and each takes a global concurrency slot, so a shift start on a worker holding
+    the whole floor (`MEDIA_WORKERS=1`) has at most one per agent and never more than the
+    guard admits. The design's single cap of 256 would have refused a 500-agent shift start;
+  - everything else, together: 2048 (a forwarded agent request and a carrier post per
+    agent or call, ~1000 for a 500-agent floor on one worker, doubled). A dial burst does not
+    use it up, nor the reverse.
 
   A worker that is that far behind is already failing its calls.
 - A **slow worker** (loop saturated) shows as rising `ipc_request_duration_seconds` and
@@ -717,7 +724,10 @@ nothing new can be owned by it meanwhile.
    - mark the call row failed (`STUCK_ACTIVE_CALL`-style audit, reason `worker_exited`).
 3. Attempts: non-terminal attempts whose `reserved_agent_id` hashes to *k* →
    `reapByIds` (state-guarded) → `requeueOrphanedContact` on the our-fault ledger, as the
-   startup reap does.
+   startup reap does. An attempt dialled and never answered (the worker died with `add_lead`
+   in flight or the phone ringing) may still be placed by the carrier, so its contact is
+   dialable only 15 min after `dialed_at` (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`, the dial
+   path's rule; `reapedRedialNotBefore` in `agency/reaper.ts`, the same in the startup reap).
 4. Manual calls of those sessions → the orphan path of `sweepManualCalls`.
 5. Agent leases of the slot's live sessions are cleared, and rows marked `offline`, so the
    agents rehydrate into `break`. That closes today's fast-restart window in which a
@@ -753,19 +763,28 @@ Children ignore SIGTERM and SIGINT and log them. A dev Ctrl-C signals the whole 
 group, and the order must stay the primary's. They stop only on the IPC `shutdown` request,
 or on `disconnect`.
 
+As built (`index.ts`, `cluster/shutdown-order.ts`):
+
 | t | Primary | Media workers | Analysis workers |
 |---|---|---|---|
-| 0 | SIGTERM. `app.close()`: no new connections or upgrades. In-flight HTTP finishes; forwards are bounded by their deadlines | serving | serving |
-| ≤ 5 s | `pacing.stop()` (ticks drained, `TICK_DRAIN_TIMEOUT_MS`), broadcast `pacing.revoke {campaignId: null}`, reaper stop | revoked: no dial in preparation goes out | — |
-| then, **concurrently** | completion-notice drain (≤ 30 s) | `shutdown {graceMs: 30000}`: worker `app.close()` (station and media sockets close, as today's HTTP close does), `runtime.stop()` (shard: dialer, wrap-up, manual dialer timers), `bridge.gracefulShutdown()` (hang up live calls, release slots), guard host, audit flush, Redis and pool close, OTel flush, `exit 0` | `shutdown`: stop claims, requeue in flight (generation-matched), audit flush, `exit 0` |
-| | waits for every child's `exit` (bound 30 s, then SIGKILL and `reapSlot` for any killed media slot) | | |
-| ≤ ~37 s | voice stop (guard host, its self-heal wait bounded at 15 s, runs inside the window above), platform (audit buffers last), Redis, pool, OTel, `exit 0` | | |
+| 0 | SIGTERM. `app.close()`: no new connections or upgrades. In-flight HTTP finishes (normally ms; a request forwarded to a worker is bounded by its deadline, 15 s at most) | serving | serving |
+| ≤ 5 s | **pacing halts** before anything drains: no new tick, leases given up, `pacing.revoke {campaignId: null}` to every worker, ticks in flight waited for (`TICK_DRAIN_TIMEOUT_MS`) | revoked: no dial in preparation goes out | serving (no new job is enqueued by a dial) |
+| then, **concurrently** | completion-notice drain (≤ 30 s) | `shutdown {graceMs: 30000}`: worker `app.close()` (station and media sockets close), `stopShard()` (dialer, wrap-up, manual dialer timers), `bridge.gracefulShutdown()` (hang up live calls, release slots), guard host, PostHog and audit flush, Redis and pool close, OTel flush, `exit 0` | `shutdown {graceMs: 15000}`: stop claims, requeue in flight (generation-matched), PostHog and audit flush, `exit 0` |
+| | waits for every child's `exit` (30 s media, 15 s analysis); a media worker still running is SIGKILLed and its slot reaped (§6.1: slots released, attempts ended and requeued, agents offline) before the stop goes on | | |
+| ≤ ~37 s | agency stop (reaper and runtime; pacing already halted, notices drained), voice stop (guard host; its self-heal wait is bounded at 15 s and only waits when a sweep is mid-flight), platform (audit buffers last), Redis, pool, OTel, `exit 0` | | |
 
-Worst case is 5 s + 30 s + a few seconds, inside 45 s. Today's sequence runs the stops one
-after another. In cluster mode the agency drain and the children's drains overlap, so adding
-processes does not lengthen shutdown. The order inside each worker matches today's order
-inside one process. `runtime-boot-order.test.ts` keeps pinning single-process mode, and a
-cluster twin pins the table above.
+The bounds that add up in the normal worst case are 5 s + 30 s plus a few seconds, inside the
+45 s `stop_grace_period` of `docker/docker-compose.prod.yml`. The analysis stop runs beside the
+media drain rather than before pacing halts (it used to run first, so pacing kept dialing for
+up to 15 s with HTTP already closed, and its 15 s added to the rest). Two rarely-hit bounds
+are not covered if both stack on a 30 s worker drain: an internal request forwarded at the
+instant of SIGTERM (up to 15 s) and a self-heal sweep in flight (up to 15 s); one process has
+the same tail (5 + 30 + 15 s). The order inside each worker matches the order inside one
+process. Pinned by `test/unit/cluster/shutdown-order.test.ts` (halt first, drains together,
+the rest in reverse), `child-supervisor.test.ts` (a worker killed at stop is reaped before
+the stop resolves), `runtime-boot-order.test.ts` (single-process order) and
+`test/integration/cluster/media-workers.test.ts` (the whole tree exits 0 inside 45 s with
+live calls on both workers).
 
 ### 6.5 Deploys
 
@@ -778,12 +797,15 @@ which replaces the primary too.
 ### 6.6 Health and readiness
 
 - `/healthz`: the primary is up, unchanged.
-- `/readyz`: Postgres `SELECT 1` and Redis `PING`, as today. In cluster mode it also requires
-  every media slot to be `ready` and to have answered `health.ping` within 2 s. A slot
-  restarting makes `/readyz` 503 for the ~1–2 s it takes. The compose healthcheck's interval
-  and retries ride that out.
-- Single host, no load balancer: a 503 there takes nothing out of rotation. The alternative,
-  "ready while at least one slot is", hides a dead slot from the healthcheck (D5).
+- `/readyz`: Postgres `SELECT 1` and Redis `PING`, as today. In cluster mode (as built, D5)
+  it is 200 while the primary is not draining and at least one media worker answers
+  `health.ping` within 1 s and is not draining, and 503 when none does. The body always
+  carries `mediaWorkers: { answering, total, workers: [{ slot, state }] }`, `state` one of
+  `ok`, `draining`, `not_answering`. The design first required every slot; but the ALB and
+  the uptime check (`DEPLOYMENT.md`) point at `/readyz`, and on a single host a 503 takes all
+  traffic away, so one slow worker (a missed 1 s ping at high ELU) or one in restart backoff
+  (up to 30 s) would take down the whole floor instead of its 1/N. A dead slot is visible in
+  the body, `agy-cluster-child-crash` and the *Processes* panels rather than in the probe.
 - `GET /readyz?detail=1` returns the per-process view (role, slot, `ready`, `elu`,
   `stations`, `liveCalls`). It must stay exempt from the rate limiter like `/readyz` (the
   exemption has to match the path, not the URL with its query). Its body holds no secret.
@@ -804,23 +826,30 @@ which replaces the primary too.
   Forwarding costs the primary work in proportion to log volume, which is small.
 - **OTel in children.** `instrumentation.ts` is the first import of the one bundle every role
   runs, so each child starts its own SDK with the same env. `shutdownOtelSdk()` is called
-  last in each child's shutdown. Trace context crosses IPC in the envelope's `tp`.
-- **New metrics**, declared in `packages/observability/src/metrics/voice.ts` (the area that
-  owns the WebSocket surfaces and the limiter), all bounded label sets:
-  - `ws_handoff_total{route, result}`
-  - `ipc_messages_total{role, type, direction, result}`
-  - `ipc_request_duration_seconds{type}`
-  - `ipc_request_failures_total{type, code}`
-  - `ipc_send_backlogged_total{role}`
-  - `cluster_worker_exits_total{role, reason}`
-  - `cluster_slot_reaped_total{what}`
+  last in each child's shutdown. Trace context does **not** cross IPC (as built, §12): the
+  envelope has a `tp` field, unused, and each process traces on its own.
+- **New metrics** (as built), declared in `packages/observability/src/metrics/voice.ts` (the
+  area that owns the WebSocket surfaces and the limiter), all bounded label sets:
+  - `ws_handoff_total{route, result}`: upgrades handed to a worker, or refused instead;
+  - `ipc_requests_total{type, outcome}`: every IPC request by type and `ok` / `timeout` /
+    `gone` / `refused` / `error`;
+  - `ipc_request_duration_seconds{type}`: the round trip of an answered request;
+  - `ipc_messages_dropped_total{reason}`: `malformed`, `unsupported`, `late`, `backlogged`;
+  - `cluster_child_exits_total{role, expected}`: child exits, `expected="false"` for a crash
+    (or a worker the stop had to kill).
+
+  And in `metrics/shared.ts`, beside the pool's own: `db_connections_planned` and
+  `db_connections_allowed`, the host's pools against Postgres's limit (D12). A slot reap is
+  logged (`Reaped a dead media worker's calls, attempts and agents`), not counted.
 - **Grafana.**
   - Existing rules aggregate `by (service_name)` and keep working.
   - *Event-loop delay p99* (`max by (service_name)`) now pages on the worst process, which is
     what an operator wants.
   - New dashboard panels: ELU and p99 delay `by (instance)`, IPC request p99 by type, worker
     exits, handoff failures.
-  - New rules: a media worker exit (any), and a crash loop.
+  - New rule: `agy-cluster-child-crash`, any unexpected child exit. A crash loop has no rule
+    of its own: each of its exits fires that one, and the primary then exits 1 and the
+    container restarts (D4); `agy-service-not-reporting` covers a host that does not come back.
   - `pnpm test:grafana` checks every new rule and panel against the declarations above, so the
     metrics must be declared in the same commit that the panels reference them.
 
@@ -830,8 +859,9 @@ which replaces the primary too.
 |---|---|---|---|---|
 | `MEDIA_WORKERS` | `processes.mediaWorkers` | `base.ts` (new top-level key `processes`) | `0` | 0: single process, exactly as today. N ≥ 1: primary plus N media workers |
 | `MEDIA_WORKER_HEAP_MB` | `processes.mediaWorkerHeapMb` | `base.ts` | `768` | `--max-old-space-size` for each media worker (the fork's `execArgv`; the image's 4096 applies to the primary only) |
-| `PRIMARY_HEAP_MB` | `processes.primaryHeapMb` | `base.ts` | unset (the entrypoint's flag) | lets the entrypoint keep one value per role |
 | `WORKER_CRASH_LOOP_MAX` | `processes.crashLoopMax` | `base.ts` | `5` (per 5 min) | §6.2 |
+| `MEDIA_WORKER_DB_POOL_MAX` | `processes.mediaWorkerDbPoolMax` | `base.ts` | `10` | each media worker's pg pool. Every process has its own pool, so the host's connections are the sum; the primary checks it against `max_connections` at boot (D12, `cluster/db-connection-budget.ts`) |
+| `MEDIA_SNAPSHOT_REFRESH_MS` | `processes.mediaSnapshotRefreshMs` | `base.ts` | `5000` | how often the primary refreshes each worker's `reaper.snapshot` (live call ids, slot leases). 0 = off: diagnostics, and the chaos suite's proof that the slot reap works from the `call.lease` deltas alone |
 | `ANALYSIS_WORKERS` | `dialerAnalysis.processes` | `analysis.ts` | `0` | 0: analysis slots run in the primary, as today. K ≥ 1: K analysis processes with `DIALER_ANALYSIS_CONCURRENCY` slots and `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` each |
 
 Why there:
@@ -889,7 +919,7 @@ checklist gets a line.
   revives `DialCommand` dates. Round-trip property: `parse(JSON.parse(JSON.stringify(x))) ≡ x`
   for generated commands.
 - `IpcChannel` over an in-memory channel pair: correlation, per-type deadlines, `gone` on
-  disconnect for every pending request, the 256 in-flight cap, `send` back-pressure counting.
+  disconnect for every pending request, the in-flight bounds (dials apart from the rest), `send` back-pressure counting.
 - `slotFor`: deterministic, and the distribution over 10 000 UUIDs within ±10% per slot.
 - `IpcDialDispatcher`: a refused clearance throws before sending (mutation: drop the check
   and the test goes red); unknown replica → `DispatchRefused`; timeout and `gone` resolve
@@ -923,8 +953,9 @@ ephemeral port against the worktree's test database):
 - `ANALYSIS_WORKERS=2`: two processes drain one queue with no job run twice; one vendor 429
   pauses both.
 
-**Load:** `test/integration/load/multi-process-media.test.ts`, on the existing
-`voicelink-load-harness.ts` and `station-floor-harness.ts`, sized by `LOAD_SCALE`.
+**Load** (as built: a script, not a suite, `apps/server/scripts/load/cluster-media-load.ts`,
+`--calls`, `--media-workers`, `--seconds`; results in `operations.md`, "Sizing the media
+workers". The design below, with its `LOAD_HOST=1` mode, is not built):
 
 - N calls (default 60; `LOAD_SCALE=8` for 480) across 2–3 workers, both legs at 50 fps for
   60 s, through the real primary.
@@ -935,7 +966,11 @@ ephemeral port against the worktree's test database):
   pacing round is skipped for lateness.
 - A `LOAD_HOST=1` mode prints the per-process table for a run on a target host behind nginx.
 
-**Chaos** (`test/integration/agency/chaos/`):
+**Chaos** (as built, the cases live in `test/integration/cluster/*.test.ts`:
+`media-workers.test.ts` kills a worker mid-call and kills the primary, `analysis-processes.test.ts`
+kills an analysis worker mid-job; a crash loop's exit is unit-tested in
+`test/unit/cluster/child-supervisor.test.ts`. The separate files designed below were not
+written, and no slow-worker suite exists):
 
 - `worker-killed-mid-call.test.ts`: SIGKILL W1 with calls live on both workers. W0's calls
   keep flowing (frames counted through the kill). Within one `reapSlot`:
@@ -969,7 +1004,7 @@ lines of change including tests.
 | 6 | `feat(server): worker supervision, slot reap and cluster shutdown`: restart policy, crash loop, `reapSlot` (plus `agencyCallRepository` / attempt repository reads by session set; no migration), shutdown ordering, `/readyz` (+ `?detail=1`); chaos suites | `index.ts`, `app.ts` (`/readyz`), `packages/db` repository additions | L, ~1 200 |
 | 7 | `feat(server,observability): per-process metrics, logs and traces`: instance ids per role, `role`/`slot` log fields, line-forwarding of child output, IPC metrics, Grafana panels and rules | `packages/observability`, `utils/otel-sdk-config.ts`, `grafana/` | M, ~600 |
 | 8 | `test(server): multi-process media load test`: the harness extension of §9, `LOAD_HOST` mode | — | M, ~500 |
-| 9 | `docs: multi-process operation`: `architecture.md`, `operations.md` (config, shutdown, health, sizing), `status.md` invariants (2: "one host, one primary; never scale `server`"), `seams.md` §1 (`src/cluster/` as composition) and §2 (`processes`), `decisions.md` (B16 amended, D1–D11), `DEPLOYMENT.md`; `docker/entrypoint.sh` heap per role; pre-deploy checklist | `docker/entrypoint.sh`, docs | S, ~300 |
+| 9 | `docs: multi-process operation`: `architecture.md`, `operations.md` (config, shutdown, health, sizing), `status.md` invariants (2: "one host, one primary; never scale `server`"), `seams.md` §1 (`src/cluster/` as composition) and §2 (`processes`), `decisions.md` (B16 amended, D1–D11), `DEPLOYMENT.md`; ~~`docker/entrypoint.sh` heap per role~~ (not built, out of scope: no `docker/` change; children get their heap through the fork, §12); pre-deploy checklist | docs | S, ~300 |
 
 Steps 1–3 change no behaviour. Step 2 is the first gain and is independent of the media work.
 Step 4 can ship dark (no config enables it until 5). Steps 5 and 6 should ship together for
@@ -985,7 +1020,7 @@ service containers.
 | D2 | Session ownership | sticky by `fnv1a(sessionId) mod MEDIA_WORKERS`. A worker crash costs ~1/N of the floor their live calls, and they reconnect in `break` |
 | D3 | Carrier routing | the `w=<slot>` hint in the media and webhook URLs, over a primary-side `callId` map |
 | D4 | Crash policy | re-fork with backoff; more than 5 exits of a slot in 5 min ⇒ the primary exits and the container restarts |
-| D5 | `/readyz` and slow workers | not ready unless every media slot is ready; v1 measures slow workers and does not shed them |
+| D5 | `/readyz` and slow workers | not ready unless every media slot is ready; v1 measures slow workers and does not shed them. **As built (review): ready while at least one media worker answers, each worker's state in the body (`decisions.md` D5, §6.6)** |
 | D6 | Guards with Redis down | each worker's local limit is `ceil(limit / MEDIA_WORKERS)` |
 | D7 | Metrics | `service.instance.id` forced on per process in cluster mode (series × emitting processes) |
 | D8 | Config placement | `MEDIA_WORKERS` in base (`processes`), `ANALYSIS_WORKERS` in the analysis block |

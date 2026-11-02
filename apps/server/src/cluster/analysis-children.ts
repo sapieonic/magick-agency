@@ -19,13 +19,23 @@ export interface AnalysisChildrenOptions {
   restartBackoffMs?: readonly number[];
 }
 
-export function createAnalysisChildren(opts: AnalysisChildrenOptions): ChildSupervisor {
+export function createAnalysisChildren(opts: AnalysisChildrenOptions, now: () => number = Date.now): ChildSupervisor {
+  // The pause in force, if any. A child that is not ready when a pause is relayed (still
+  // booting, or being restarted) would miss it and find the vendor's limit out for itself
+  // with jobs of its own; it is told on `ready` instead.
+  let current: { untilMs: number; consecutive: number } | null = null;
   const children: ChildSupervisor = new ChildSupervisor({
     role: 'analysis',
     count: opts.count,
     fork: opts.fork,
+    onReady: (slot) => {
+      if (!current || current.untilMs <= now()) return;
+      children.channel(slot)?.emit('analysis.rate_paused', current);
+      log.info({ slot, pausedForMs: current.untilMs - now() }, 'An analysis worker came up during a vendor rate-limit pause; pausing it too');
+    },
     onChannel: (slot, channel) => {
       channel.onEvent('analysis.rate_paused', (body) => {
+        if (!current || body.untilMs > current.untilMs) current = { untilMs: body.untilMs, consecutive: body.consecutive };
         const told = children.broadcast('analysis.rate_paused', body, slot);
         log.warn({ fromSlot: slot, told, pausedForMs: Math.max(0, body.untilMs - Date.now()), consecutive: body.consecutive },
           'An analysis worker was rate-limited by the AI vendor; pausing the other analysis workers');

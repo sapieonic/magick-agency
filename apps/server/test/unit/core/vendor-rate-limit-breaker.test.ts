@@ -62,11 +62,11 @@ describe('VendorRateLimitBreaker', () => {
     for (let i = 0; i < 8; i++) {
       advance(pause);
       expect(b.admit(8)).toBe(1);
-      b.onStarted(1);
+      expect(b.onStarted(1)).toBe(true);
       expect(b.admit(8)).toBe(0); // the probe is in flight
       const probeStart = now();
       advance(100);
-      b.onFinished();
+      b.onFinished(true);
       const next = Math.min(pause * 2, BREAKER_MAX_PAUSE_MS);
       expect(b.recordRateLimit(probeStart)).toBe(next / 1000);
       pause = next;
@@ -82,15 +82,29 @@ describe('VendorRateLimitBreaker', () => {
     b.recordSuccess(old); // started before the opening: proves nothing
     expect(b.state).toBe('open');
     advance(BREAKER_BASE_PAUSE_MS);
-    b.onStarted(1);
+    b.onFinished(b.onStarted(1));
     const probe = now();
-    b.onFinished();
     b.recordSuccess(probe);
     expect(b.state).toBe('closed');
     expect(b.admit(8)).toBe(8);
     // And the next opening starts from the base pause again.
     advance(1);
     expect(b.recordRateLimit(now())).toBe(BREAKER_BASE_PAUSE_MS / 1000);
+  });
+
+  it('only the probe frees the half-open slot: a job from before the opening finishing does not', () => {
+    const { b, advance, now } = breaker();
+    // A job started while closed, still in flight when the breaker opens and the pause ends.
+    expect(b.onStarted(1)).toBe(false);
+    b.recordRateLimit(now());
+    advance(BREAKER_BASE_PAUSE_MS);
+    expect(b.admit(8)).toBe(1);
+    expect(b.onStarted(1)).toBe(true); // the probe
+    expect(b.admit(8)).toBe(0);
+    b.onFinished(false); // the old job ends: the probe is still running
+    expect(b.admit(8)).toBe(0);
+    b.onFinished(true);
+    expect(b.admit(8)).toBe(1);
   });
 
   describe('applyRemotePause (another analysis process was rate-limited, D10)', () => {

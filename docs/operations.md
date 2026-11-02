@@ -188,7 +188,7 @@ production.
 | `NODE_ENV` | `development` | `production` turns on Postgres TLS and makes Firebase and VoiceLink mandatory |
 | `TRUST_PROXY_HOPS` | `1` (min 1) | Number of reverse proxies in front (Q9) |
 | `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
-| `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool, one for every area. 30 for a 500-agent floor, inside Postgres's default `max_connections` (100) with room for migrations and an operator; lower it on a managed database with a smaller limit. Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
+| `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
 | `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Only `true` / `false` parse; `false` is the one opt-out |
 | `REDIS_KEY_PREFIX` | empty | Prefix on every Redis key |
@@ -209,6 +209,7 @@ production.
 | `MEDIA_WORKERS` | `0` (0-64) | Media worker processes ([`scaling.md`](scaling.md)). 0 = one process, as before. N = a primary plus N workers that hold the agents' sockets and relay the audio. On 2 vCPUs more than 1 buys little; 500 calls needs more cores whatever the layout (§8.1) |
 | `MEDIA_WORKER_HEAP_MB` | `768` | Each media worker's `--max-old-space-size` (the primary keeps the entrypoint's) |
 | `WORKER_CRASH_LOOP_MAX` | `5` | More exits of one media worker in 5 minutes makes the primary exit and the container restart (D4) |
+| `MEDIA_WORKER_DB_POOL_MAX` | `10` | Each media worker's own pg pool (a worker writes only its own calls' rows; pacing, the sweeps and the API stay on the primary's `DB_POOL_MAX`) |
 | `ANALYSIS_WORKERS` | `0` (0-32) | Separate analysis processes, each with its own slots and budget; 0 keeps the slots in the server process. See "Sizing the analysis worker" |
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |
@@ -242,7 +243,10 @@ Size it as:
   Keep slots × requests per job ÷ minutes per job under the key's requests-per-minute quota, with
   headroom for retries. Use a dedicated `DIALER_TRANSCRIBE_API_KEY`.
 - *Postgres*: a slot holds a pool connection only for a claim, a heartbeat or the final
-  transaction, but it shares `DB_POOL_MAX` (default 10) with HTTP; raise it with large slot counts.
+  transaction. In the server process the slots share `DB_POOL_MAX` (default 30) with HTTP;
+  raise it with large slot counts. An analysis worker process has its own pool of
+  `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`, which counts towards the host's total
+  ("Sizing the media workers", *Postgres connections*).
 
 The default of 8 covers about 4 analysed calls a minute at 2 minutes a job (a floor of ~12 agents
 on 3-minute calls). At the 500-call target (~167 calls a minute) and 2 minutes a job the queue
@@ -324,6 +328,23 @@ One process saturates at 200 calls, and at 500 it cannot bridge more than about 
   `MEDIA_WORKERS × MEDIA_WORKER_HEAP_MB`, plus the analysis children, plus Redis, nginx and the
   OS.
 
+**Postgres connections.** Every process opens its own pool, so the host can open the sum:
+
+`DB_POOL_MAX` + `MEDIA_WORKERS × MEDIA_WORKER_DB_POOL_MAX` + `ANALYSIS_WORKERS × min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`
+
+The database must allow that plus about 5 (a migration run, the super-admin CLI, an operator)
+for the server's role: `max_connections − superuser_reserved_connections`. With the defaults
+the 500-call layout (`MEDIA_WORKERS=3`, `ANALYSIS_WORKERS=2`) is 30 + 3 × 10 + 2 × 10 = 80, plus
+5 = 85, which fits a stock Postgres (100, 3 reserved). The RDS instance `DEPLOYMENT.md` suggests
+(`db.t4g.medium`) derives `max_connections` from its memory (about 400). A smaller managed
+plan can allow fewer than 100: check it before raising any of the three. The pools start empty
+and grow under load, so a host over the limit boots and runs normally and is refused
+connections (`53300 too_many_connections`) only at a peak. So the primary checks the sum at
+boot when workers are configured: past the limit it logs an error (it still starts; a default
+pending Manas, `decisions.md`), and exports `db_connections_planned` (the sum plus the
+headroom) and `db_connections_allowed`; `/readyz?detail=1` shows the numbers on the primary's
+entry (`db`).
+
 **What to watch.** The *Processes* dashboard row shows event-loop utilisation by instance
 (`:primary`, `:media0`, …): a worker pinned near 1 needs another core. It also shows child
 exits (`agy-cluster-child-crash` warns on any), IPC requests and handoffs. `/readyz?detail=1`
@@ -360,10 +381,11 @@ gives the same per-process view on the host.
 
 ## Shutdown and grace period
 
-On SIGTERM or SIGINT the server closes HTTP first, then stops analysis, agency (pacing first,
-waiting up to 5 s for ticks in flight; in-flight campaign-completion mails get up to 30 s), voice (the bridge hangs up live calls and
-releases their slots) and platform (audit buffers flushed), then closes Redis and Postgres
-(`apps/server/src/index.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
+On SIGTERM or SIGINT the server closes HTTP first, then halts pacing (waiting up to 5 s for
+ticks in flight), stops analysis, then agency (in-flight campaign-completion mails get up to
+30 s), voice (the bridge hangs up live calls and releases their slots) and platform (audit
+buffers flushed), then closes Redis and Postgres (`apps/server/src/index.ts`,
+`cluster/shutdown-order.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
 so the production compose file sets `stop_grace_period: 45s` on the server. On any other runtime,
 give the container at least 45 s. `http closed` is logged once the HTTP close has succeeded, so
 the order can be read from the logs. Read it from each line's `time` field rather than the line
@@ -390,11 +412,15 @@ choose to go available.
 **With media workers** (`MEDIA_WORKERS > 0`), the primary orders the shutdown; the workers
 ignore SIGTERM and SIGINT. HTTP closes first, then:
 
-1. Pacing halts: ticks are drained, leases are given up, and every worker is told no dial may
-   go out.
-2. The workers drain alongside the completion-notice drain. Each worker closes its sockets,
-   stops the shard, ends its live calls and exits; one still running after 30 s is killed.
-3. The analysis children requeue their jobs, voice stops, the audit buffers flush.
+1. Pacing halts, before anything drains: ticks are drained (up to 5 s), leases are given up,
+   and every worker is told no dial may go out.
+2. Together: the media workers drain alongside the completion-notice drain (each worker
+   closes its sockets, stops the shard, ends its live calls and exits; one still running
+   after 30 s is killed and its slot reaped, so its calls' slots are released at once), and
+   the analysis children requeue their jobs and exit (15 s, then killed).
+3. Agency stops, then voice, then platform (the audit buffers flush last).
+
+Worst case about 5 s + 30 s plus a few seconds, inside the compose file's 45 s grace.
 
 The multi-process end-to-end suite (`test/integration/cluster/media-workers.test.ts`) pins that
 the whole tree exits 0 inside 45 s, including with live calls on a worker. A worker whose primary dies hangs its calls up within 5 s and exits.
@@ -473,9 +499,12 @@ It reads only the base settings (`DATABASE_URL`, `NODE_ENV`, `DB_SSL_CA`,
 `GET /healthz` answers 200 while the process is up. `GET /readyz` answers 200 only when Postgres
 (`SELECT 1`) and Redis (`PING`) respond, else 503. Both are exempt from rate limiting.
 
-With media workers, `/readyz` also needs every media worker to have answered a health ping
-within 1 s and not to be draining (D5). A restarting worker makes it 503 for the second or two
-it takes. `GET /readyz?detail=1` adds the per-process view: role, slot, pid, event-loop
+With media workers, `/readyz` also needs at least one media worker to have answered a health
+ping within 1 s and not to be draining, and the primary not to be shutting down (D5). Its body
+names each worker's state, `{"status":"ready","mediaWorkers":{"answering":1,"total":2,"workers":[{"slot":0,"state":"not_answering"},{"slot":1,"state":"ok"}]}}`:
+one slow or restarting worker does not take the host out of the load balancer or fail the
+uptime check (it would take all traffic away, not the 1/N that worker serves); watch
+`agy-cluster-child-crash` and the *Processes* row for it instead. `GET /readyz?detail=1` adds the per-process view: role, slot, pid, event-loop
 utilisation, p99 loop delay, live calls (media) or jobs (analysis), and whether it is draining.
 The primary's own loop is listed too.
 

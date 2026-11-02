@@ -75,20 +75,23 @@ describe('voice ↔ agency boot and stop order', () => {
     await closeTestRedis();
   });
 
-  it('index.ts starts voice before agency, listens only after the bootstraps, and stops in reverse', () => {
+  it('index.ts starts voice before agency, listens only after the bootstraps, and stops in the shutdown plan\'s order', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/index.ts'), 'utf8');
-    const voice = source.indexOf('stops.push(await startVoice(ctx))');
-    const agency = source.indexOf('stops.push(await startAgency(ctx))');
-    const analysis = source.indexOf('stops.push(await startAnalysis(ctx))');
+    const voice = source.indexOf('plan.stops.push(await startVoice(ctx))');
+    const agency = source.indexOf('plan.stops.push(await startAgency(ctx))');
+    const analysis = source.indexOf('plan.drains.push(await startAnalysis(ctx))');
     expect(voice).toBeGreaterThan(-1);
     expect(agency).toBeGreaterThan(voice);
+    expect(analysis).toBeGreaterThan(agency);
+    // Pacing halts before any drain (`cluster/shutdown-order.ts`, unit-tested there).
+    expect(source.indexOf('plan.haltPacing = () => runtime.pacing.halt()')).toBeGreaterThan(agency);
     // `agencyRuntime.start()` (startup reap, then the
     // supervisor) completes before `app.listen`, so no request beats the reap.
     const listens = [...source.matchAll(/await app\.listen\(/g)].map((m) => m.index!);
     expect(listens).toHaveLength(1);
     expect(listens[0]).toBeGreaterThan(agency);
     expect(listens[0]).toBeGreaterThan(analysis);
-    const stopLoop = source.search(/for \(const stop of \[\.\.\.stops\]\.reverse\(\)\)/);
+    const stopLoop = source.indexOf('await runShutdownPlan(plan,');
     expect(stopLoop).toBeGreaterThan(-1);
     // HTTP closes before the bootstraps' stops — `http-close` precedes the runtime/bridge
     // stops and `audit-flush`; `app.close()` precedes `auditLogger.shutdown()` — so no
@@ -99,7 +102,7 @@ describe('voice ↔ agency boot and stop order', () => {
     expect(closes[0]).toBeLessThan(stopLoop);
     const sigterm = source.indexOf("process.on('SIGTERM'");
     expect(sigterm).toBeGreaterThan(-1);
-    expect(sigterm).toBeLessThan(source.indexOf('stops.push(await startPlatform(ctx))'));
+    expect(sigterm).toBeLessThan(source.indexOf('plan.stops.push(await startPlatform(ctx))'));
   });
 
   it('self-heal before runtime.start(); startup reaper before the supervisor; no tick once the agency stop begins; the bridge drains after', async () => {

@@ -101,6 +101,15 @@ async function until(what: string, ms: number, check: () => Promise<boolean> | b
   }
 }
 
+interface ReadyzBody {
+  status: string;
+  mediaWorkers?: { answering: number; total: number; workers: Array<{ slot: number; state: string }> };
+}
+async function readyz(origin: string): Promise<{ code: number; body: ReadyzBody }> {
+  const res = await fetch(`${origin}/readyz`);
+  return { code: res.status, body: await res.json() as ReadyzBody };
+}
+
 async function stopRig(rig: Rig | null): Promise<void> {
   if (!rig) return;
   await rig.floor.close();
@@ -119,6 +128,11 @@ describe('media workers: the real server as a primary and two workers', () => {
     const detail = await r.server.detail();
     expect(detail.status).toBe('ready');
     expect(detail.processes?.map((p) => p?.role)).toEqual(['primary', 'media', 'media']);
+    // Plain /readyz names each worker's state (no secrets, no per-process numbers).
+    expect((await readyz(r.server.origin)).body).toEqual({
+      status: 'ready',
+      mediaWorkers: { answering: 2, total: 2, workers: [{ slot: 0, state: 'ok' }, { slot: 1, state: 'ok' }] },
+    });
 
     // Each station is held by the worker its session hashes to.
     for (const a of r.floor.agents) {
@@ -188,20 +202,28 @@ describe('media workers: the real server as a primary and two workers', () => {
       });
       if (slotFor(a.sessionId, 2) === 0) late = a;
     }
-    await until('the late call admitted', 30_000, async () => {
-      const { rows } = await getTestPool().query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM agency_call_attempts WHERE reserved_agent_id = $1 AND webrtc_call_id IS NOT NULL`, [late!.sessionId]);
-      return rows[0]!.n === 1;
-    });
-    const admittedAt = Date.now();
     const before = await r.server.detail();
     const deadPid = before.processes!.find((p) => p?.role === 'media' && p.slot === 0)!.pid;
     expect(survivors.length).toBeGreaterThan(0);
     expect(victims.length).toBeGreaterThan(0);
-
+    // Killed the moment the late call is seen admitted and still live (its slot taken, its
+    // attempt not ended): the slot reap below must release a slot taken just before a crash.
+    await until('the late call admitted', 30_000, async () => {
+      const { rows } = await getTestPool().query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM agency_call_attempts
+          WHERE reserved_agent_id = $1 AND webrtc_call_id IS NOT NULL AND state <> 'ended'`, [late!.sessionId]);
+      return rows[0]!.n === 1;
+    });
     process.kill(deadPid, 'SIGKILL');
-    expect(Date.now() - admittedAt).toBeLessThan(1_000);
     const heardAtKill = survivors.map((a) => a.heard);
+
+    // D5: while slot 0 is dead and restarting, the host stays in rotation (one worker still
+    // serves its half of the floor) and the body names the missing worker.
+    await until('readyz reports slot 0 down while staying 200', 10_000, async () => {
+      const { code, body } = await readyz(r.server.origin);
+      expect(code).toBe(200);
+      return body.mediaWorkers?.workers[0]?.state === 'not_answering' && body.mediaWorkers.workers[1]?.state === 'ok';
+    });
 
     // The dead slot's attempts are closed and their contacts requeued; its agents are offline.
     await until('dead slot reaped', 30_000, async () => {
@@ -220,9 +242,11 @@ describe('media workers: the real server as a primary and two workers', () => {
     async () => `${(await r.floor.redisClient.keys('active_calls:lock:*')).length} locks for ${await liveCalls()} live calls`);
     const { rows: sessions } = await getTestPool().query<{ id: string; state: string }>('SELECT id, state FROM agency_agent_sessions');
     for (const s of sessions) if (slotFor(s.id, 2) === 0) expect(s.state).toBe('offline');
-    // The survivors' calls never stopped: their stations kept hearing the customer.
-    await new Promise((res) => setTimeout(res, 2_000));
-    survivors.forEach((a, i) => expect(a.heard - heardAtKill[i]!).toBeGreaterThan(50));
+    // The survivors' calls never stopped: their stations kept hearing the customer (50
+    // frames a second; a stopped relay would never add 50 more).
+    await until('the survivors kept hearing their customers', 15_000,
+      () => survivors.every((a, i) => a.heard - heardAtKill[i]! > 50),
+      async () => JSON.stringify(survivors.map((a, i) => a.heard - heardAtKill[i]!)));
     const { rows: live } = await getTestPool().query<{ reserved_agent_id: string }>(
       `SELECT reserved_agent_id FROM agency_call_attempts WHERE campaign_id = $1 AND state <> 'ended'`, [r.campaignId]);
     expect(live.every((x) => slotFor(x.reserved_agent_id, 2) === 1)).toBe(true);
@@ -231,9 +255,10 @@ describe('media workers: the real server as a primary and two workers', () => {
     // The slot comes back with a new process.
     await until('slot 0 back', 30_000, async () => {
       const d = await r.server.detail().catch(() => null);
-      const p0 = d?.processes?.[0];
+      const p0 = d?.processes?.find((p) => p?.role === 'media' && p.slot === 0);
       return d?.status === 'ready' && !!p0 && p0.pid !== deadPid;
     });
+    expect((await readyz(r.server.origin)).body.mediaWorkers?.answering).toBe(2);
 
     // And the whole tree still stops gracefully, with the survivors' calls live.
     r.floor.stopTalking();

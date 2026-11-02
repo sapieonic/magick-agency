@@ -15,6 +15,7 @@ import { createChildLogger } from '@magick-agency/observability';
 import { config } from '../config/index.js';
 import { dbTlsOptions } from '../db-tls.js';
 import { auditLogger } from '../audit/audit-logger.js';
+import { initAnalytics, shutdownAnalytics } from '../analytics/posthog.js';
 import { createTranscriber } from '../transcription/index.js';
 import { createAnalysisService } from '../analysis/index.js';
 import type { Transcriber } from '../transcription/types.js';
@@ -22,6 +23,7 @@ import type { PostCallAnalysisService } from '../analysis/index.js';
 import type { DialerAnalysisConfig } from '../core/dialer-analysis-runner.js';
 import { IpcChannel, parentTransport } from './ipc-channel.js';
 import { startAnalysisChild } from './analysis-child.js';
+import { analysisChildDbPoolMax } from './db-connection-budget.js';
 
 const log = createChildLogger({ component: 'analysis-child' });
 
@@ -57,11 +59,15 @@ export async function runAnalysisChildProcess(opts: AnalysisChildProcessOptions)
   initDbPool({
     url: config.db.url,
     poolMin: 0,
-    // A slot holds a connection only for a claim, a heartbeat or the final transaction.
-    poolMax: Math.min(config.db.poolMax, analysisConfig.concurrency + 2),
+    // A slot holds a connection only for a claim, a heartbeat or the final transaction. The
+    // primary counts this pool in the host's total (`db-connection-budget.ts`).
+    poolMax: analysisChildDbPoolMax(config.db.poolMax, analysisConfig.concurrency),
     ...dbTlsOptions(config),
   });
   auditLogger.start();
+  // PostHog in this process too: the runner's `dialer_call_*` events are emitted here. A
+  // no-op unless analytics is enabled; flushed in `finish`.
+  initAnalytics();
 
   const channel = new IpcChannel(parentTransport(), { name: `analysis${slot}→primary` });
   const child = startAnalysisChild({
@@ -80,6 +86,7 @@ export async function runAnalysisChildProcess(opts: AnalysisChildProcessOptions)
     log.info({ slot, why }, 'Analysis worker process stopping');
     await child.shutdown().catch((err) => log.error({ err, slot }, 'Analysis requeue on shutdown failed'));
     await auditLogger.shutdown().catch((err) => log.error({ err, slot }, 'audit flush failed'));
+    await shutdownAnalytics().catch((err) => log.error({ err, slot }, 'analytics flush failed'));
     await closePool().catch(() => {});
     await opts.flushTelemetry?.().catch(() => {});
     process.exit(code);

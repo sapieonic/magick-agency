@@ -11,7 +11,7 @@ import type { AppContext } from './app-context.js';
 import { dbTlsOptions } from './db-tls.js';
 import { redisClientOptions } from './utils/redis-options.js';
 import { startPlatform } from './bootstrap/platform.js';
-import { startAgency } from './bootstrap/agency.js';
+import { getAgencyRuntime, startAgency } from './bootstrap/agency.js';
 import { startVoice } from './bootstrap/voice.js';
 import { startAnalysis } from './bootstrap/analysis.js';
 import { initAnalytics } from './analytics/posthog.js';
@@ -20,11 +20,16 @@ import { runAnalysisChildProcess } from './cluster/analysis-child-main.js';
 import { runMediaChildProcess } from './cluster/media-child-main.js';
 import { prepareMediaPrimary, startMediaWorkers } from './cluster/primary.js';
 import { createLoopSampler } from './cluster/loop-sampler.js';
+import { clusterReadiness } from './cluster/readiness.js';
+import { runShutdownPlan, type ShutdownPlan } from './cluster/shutdown-order.js';
+import { DB_CONNECTION_HEADROOM, planDbConnections, readDbConnectionBudget, type DbConnectionBudget } from './cluster/db-connection-budget.js';
+import { setDbConnectionBudgetProvider } from '@magick-agency/observability/metrics/shared';
 
 /**
  * One process, single replica. Start order: storage, PostHog, the app, each area's
  * background work (platform, voice, agency, analysis), then listen; shutdown closes HTTP,
- * then runs the background stops in reverse.
+ * halts pacing, runs the drains together (media workers, analysis), then the remaining
+ * stops in reverse (`cluster/shutdown-order.ts`).
  */
 async function main(): Promise<void> {
   // A child forked by the primary (docs/scaling.md) runs only its role's work. The process
@@ -56,7 +61,8 @@ async function main(): Promise<void> {
   // not exist yet. No-op unless analytics is enabled.
   initAnalytics();
 
-  const stops: Array<() => Promise<void>> = [];
+  // What shutdown runs after HTTP has closed, filled as each part starts.
+  const plan: ShutdownPlan = { haltPacing: null, drains: [], stops: [] };
   // Set below; a media crash loop shuts the process down with exit code 1 (D4).
   let shutdownWith: ((signal: string, code: number) => Promise<void>) | null = null;
 
@@ -70,18 +76,41 @@ async function main(): Promise<void> {
     },
   });
 
+  // With worker processes the host's pools add up: compare the sum with the server's limit
+  // once, now (`cluster/db-connection-budget.ts`). Logged and reported, never refused.
+  const analysisWorkers = config.dialerAnalysis?.enabled ? config.dialerAnalysis.processes : 0;
+  let dbBudget: DbConnectionBudget | null = null;
+  if (media || analysisWorkers > 0) {
+    const plan = planDbConnections(config, { mediaWorkers: media?.count ?? 0, analysisWorkers });
+    dbBudget = await readDbConnectionBudget((sql) => pool.query(sql), plan)
+      .catch((err: unknown) => { logger.warn({ err, plan }, 'Could not read Postgres max_connections to check the host\'s pools'); return null; });
+    if (dbBudget) {
+      const budget = dbBudget;
+      setDbConnectionBudgetProvider(() => ({ planned: budget.total + DB_CONNECTION_HEADROOM, allowed: budget.maxConnections - budget.reserved }));
+      if (!budget.fits) {
+        logger.error({ db: budget },
+          'The host\'s Postgres pools can open more connections than the server allows (max_connections): lower DB_POOL_MAX / MEDIA_WORKER_DB_POOL_MAX or raise max_connections');
+      }
+    }
+  }
+
   const app = await buildApp({
     ctx,
     logger: false,
     ...(media ? { wsTransport: 'handoff' as const, wsHandoffTarget: () => media } : {}),
-    // `/readyz?detail=1`: this process's own loop first (the number the media split exists
-    // to keep low), then each media worker's. One process: ready as before (Postgres and
-    // Redis), and the detail is its own loop alone.
+    // With workers: ready while this process is not draining and at least one media worker
+    // answers; each worker's state is in the body (D5, `cluster/readiness.ts`). One process:
+    // ready as before (Postgres and Redis). `?detail=1`: this process's own loop first (the
+    // number the media split exists to keep low), then each media worker's.
     readiness: async () => {
-      const self = { role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop(), inFlight: 0, draining: shuttingDown };
+      const self = {
+        role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop(), inFlight: 0, draining: shuttingDown,
+        ...(dbBudget ? { db: dbBudget } : {}),
+      };
       if (!media) return { ready: true, detail: [self] };
       const health = await media.health();
-      return { ready: health.every((h) => h !== null && !h.draining), detail: [self, ...health] };
+      const verdict = clusterReadiness(shuttingDown, health);
+      return { ready: verdict.ready, summary: verdict.summary, detail: [self, ...health] };
     },
   });
 
@@ -91,7 +120,9 @@ async function main(): Promise<void> {
   //
   // Shutdown closes HTTP FIRST, before the workers, the agency runtime and the bridge stop
   // and before the audit buffers are flushed, so no request can buffer an audit row after the
-  // platform stop has flushed the loggers; then the background stops run in reverse.
+  // platform stop has flushed the loggers. Then pacing halts (no dial from here on), the
+  // drains run together (the media workers beside the completion notices, the analysis
+  // stop), and the remaining stops run in reverse (docs/scaling.md §6.4).
   let shuttingDown = false;
   const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return;
@@ -104,9 +135,7 @@ async function main(): Promise<void> {
         () => logger.info('http closed'),
         (err) => logger.error({ err }, 'http close failed'),
       );
-      for (const stop of [...stops].reverse()) {
-        await stop().catch((err) => logger.error({ err }, 'stop failed'));
-      }
+      await runShutdownPlan(plan, (err, step) => logger.error({ err, step }, 'stop failed'));
       await redis.quit().catch(() => {});
       await closePool();
     } finally {
@@ -121,17 +150,20 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
-  stops.push(await startPlatform(ctx));
+  plan.stops.push(await startPlatform(ctx));
   // Voice before agency: the bridge's startup self-heal runs before the agency
   // runtime starts, and on shutdown (reverse order) the runtime stops before the
   // bridge drains, so no pacing tick can dial while calls are being torn down.
-  stops.push(await startVoice(ctx));
-  stops.push(await startAgency(ctx));
+  plan.stops.push(await startVoice(ctx));
+  plan.stops.push(await startAgency(ctx));
+  // Shutdown halts pacing before anything drains, so no dial overtakes a stop.
+  const runtime = getAgencyRuntime();
+  if (runtime) plan.haltPacing = () => runtime.pacing.halt();
   // After the startup reap (no worker existed, so "every non-terminal row is dead" held),
-  // the media workers. Their stop runs before agency's: pacing halts, then the workers
-  // drain beside the completion-notice drain (docs/scaling.md §6.4).
-  if (media) stops.push(await startMediaWorkers(media));
-  stops.push(await startAnalysis(ctx));
+  // the media workers. Their stop drains them beside the completion-notice drain; it runs
+  // with the analysis stop, after pacing has halted and before agency's (docs/scaling.md §6.4).
+  if (media) plan.drains.push(await startMediaWorkers(media));
+  plan.drains.push(await startAnalysis(ctx));
 
   // Listen only after the bootstraps (the startup reaper and the agency runtime's
   // start complete first), so no request — an agent going available, say — lands

@@ -306,8 +306,10 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
   it('start negotiation failures and garbage frames: bad codecs end the call failed, garbage on a live stream is dropped without disturbing the audio', async () => {
     const r = rig!;
     // Shortened from 30s so the never-starts case runs in test time. An instance field,
-    // set before any call is dialled.
-    (r.bridge as unknown as { startTimeoutSeconds: number }).startTimeoutSeconds = 1;
+    // set before any call is dialled. 5 s, not 1: under a full run's load a bad start frame
+    // could take longer than 1 s to be read, and the call then ended `provider_start_timeout`
+    // instead of the refusal under test (seen in full runs, never alone).
+    (r.bridge as unknown as { startTimeoutSeconds: number }).startTimeoutSeconds = 5;
     const GARBAGE: Array<string | Buffer> = [
       'not json at all',
       'null',

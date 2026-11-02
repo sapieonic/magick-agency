@@ -7,6 +7,9 @@
  *   ANALYSIS_TEST_MODE   fast | slow | hang | rate_limit_first
  *   ANALYSIS_TEST_SLOTS  slots in this process (default 4)
  *   ANALYSIS_TEST_TALLY  a file: one line per transcription, `<pid> <recording url>`
+ *   ANALYSIS_TEST_ENTERED  a file: one line, `<pid>`, each time a transcription is ENTERED
+ *                        (past the runner's last claim check before the vendor call). A
+ *                        test that needs a process provably inside a `hang` reads it.
  */
 import { appendFileSync } from 'node:fs';
 import { processIdentityFromEnv } from '../../src/cluster/roles.js';
@@ -21,6 +24,7 @@ if (identity.kind !== 'child' || identity.role !== 'analysis') throw new Error('
 
 const mode = process.env['ANALYSIS_TEST_MODE'] ?? 'fast';
 const tally = process.env['ANALYSIS_TEST_TALLY'];
+const entered = process.env['ANALYSIS_TEST_ENTERED'];
 const slots = Number(process.env['ANALYSIS_TEST_SLOTS'] ?? 4);
 
 // The recording fetch returns the URL as the body, so a transcription names its call.
@@ -31,6 +35,7 @@ let rateLimited = false;
 const transcriber = {
   provider: 'gemini' as const,
   async transcribe(req: { audio: Buffer }) {
+    if (entered) appendFileSync(entered, `${process.pid}\n`);
     if (mode === 'hang') await new Promise(() => {});
     if (mode === 'rate_limit_first' && !rateLimited) {
       rateLimited = true;

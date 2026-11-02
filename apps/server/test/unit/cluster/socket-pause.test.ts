@@ -1,5 +1,5 @@
 import net from 'node:net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { detachFromServer, probeSocketReadStop, socketReadStopSupported, stopSocketReads } from '../../../src/cluster/socket-pause.js';
 
 /*
@@ -37,6 +37,32 @@ describe('socket-pause (a Node internal, isolated and feature-detected)', () => 
     const { socket } = await pair();
     expect(socketReadStopSupported(socket)).toBe(true);
     await expect(probeSocketReadStop()).resolves.toBe(true);
+  });
+
+  it('the probe closes its client socket when it times out (its server never saw the connection)', async () => {
+    // The probe's client is pointed at another server, which accepts and holds it, so the
+    // probe's own server never sees a connection and the probe times out.
+    let held: net.Socket | null = null;
+    const sink = net.createServer((socket) => { held = socket; });
+    await new Promise<void>((r) => sink.listen(0, '127.0.0.1', () => r()));
+    const sinkPort = (sink.address() as net.AddressInfo).port;
+    const connect = net.connect.bind(net) as (port: number, host: string) => net.Socket;
+    const spy = vi.spyOn(net, 'connect').mockImplementation(((_port: number, host: string) => connect(sinkPort, host)) as never);
+    try {
+      await expect(probeSocketReadStop({ timeoutMs: 200 })).resolves.toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(held).not.toBeNull();
+    // The client end was destroyed by the probe: the held end sees it close.
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('the probe left its client socket open')), 2_000);
+      const s = held as unknown as net.Socket;
+      if (s.destroyed) { clearTimeout(t); resolve(); return; }
+      s.once('close', () => { clearTimeout(t); resolve(); });
+      s.resume();
+    });
+    sink.close();
   });
 
   it('pause() alone leaves the handle reading: the public API cannot keep bytes in the kernel', async () => {

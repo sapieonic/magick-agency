@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { closePool, initDbPool } from '@magick-agency/db';
 import { dialerAnalysisJobRepository as jobs } from '@magick-agency/db/repositories/dialer-analysis-job.repository';
 import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
@@ -33,7 +33,7 @@ interface Fleet {
   children: ChildProcess[];
 }
 
-function fleet(count: number, modeFor: (slot: number) => string, opts: { tally?: string; slots?: number; restartBackoffMs?: number[] } = {}): Fleet {
+function fleet(count: number, modeFor: (slot: number) => string, opts: { tally?: string; entered?: string; slots?: number; restartBackoffMs?: number[] } = {}): Fleet {
   const exits: Fleet['exits'] = [];
   const children: ChildProcess[] = [];
   // The production wiring (`bootstrap/analysis.ts` builds the same), with the fork pointed
@@ -48,6 +48,7 @@ function fleet(count: number, modeFor: (slot: number) => string, opts: { tally?:
           ANALYSIS_TEST_MODE: modeFor(slot),
           ANALYSIS_TEST_SLOTS: String(opts.slots ?? 4),
           ...(opts.tally ? { ANALYSIS_TEST_TALLY: opts.tally } : {}),
+          ...(opts.entered ? { ANALYSIS_TEST_ENTERED: opts.entered } : {}),
           LOG_LEVEL: 'warn',
         },
       });
@@ -58,8 +59,16 @@ function fleet(count: number, modeFor: (slot: number) => string, opts: { tally?:
     readyTimeoutMs: 30_000,
     restartBackoffMs: opts.restartBackoffMs ?? [60_000],
   });
-  return { supervisor, exits, children };
+  const f = { supervisor, exits, children };
+  fleets.push(f);
+  return f;
 }
+
+/**
+ * Every fleet a case started, stopped after it whether it passed or not: a case that fails
+ * before its own stop must not leave processes claiming from the queue the next case fills.
+ */
+const fleets: Fleet[] = [];
 
 async function enqueue(n: number): Promise<string[]> {
   const ids: string[] = [];
@@ -94,6 +103,9 @@ const drained = (ms: number) => until('queue drained', ms, async () =>
 describe('analysis worker processes over real Postgres', () => {
   beforeAll(() => { initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 10 }); });
   beforeEach(async () => { await truncateAll(); });
+  afterEach(async () => {
+    await Promise.all(fleets.splice(0).map((f) => f.supervisor.stop(5_000)));
+  }, 30_000);
   afterAll(async () => { await closePool(); await closeTestPool(); });
 
   it('two processes drain one queue: every job claimed once and completed, both take a share, both exit 0 on stop', async () => {
@@ -173,19 +185,28 @@ describe('analysis worker processes over real Postgres', () => {
 
   it('a graceful stop requeues only its own claims: a claim recovered and re-claimed elsewhere is left alone', async () => {
     await enqueue(1);
-    const a = fleet(1, () => 'hang', { slots: 1 });
+    // Who has entered the vendor call. The row says `transcribing` from the claim on, but
+    // the runner checks its claim once more before the call: a recovery landing before that
+    // check fences A out at once, frees its one slot, and A claims the job again itself (so
+    // the "B" claim below would be A's, and A's stop would requeue it). The recovery must
+    // land after A is past that check, hung inside the call with generation 1 in memory.
+    const entered = join(mkdtempSync(join(tmpdir(), 'ma-analysis-')), 'entered.txt');
+    const enteredBy = (pid: number | undefined): boolean =>
+      existsSync(entered) && readFileSync(entered, 'utf8').split('\n').includes(String(pid));
+    const a = fleet(1, () => 'hang', { slots: 1, entered });
     await a.supervisor.start();
     a.supervisor.broadcast('analysis.wake', {});
-    await until('A claimed the job', 15_000, async () => (await rows())[0]?.status === 'transcribing');
-    expect((await rows())[0]!.claim_generation).toBe(1);
+    await until('A is inside the vendor call', 15_000, async () => enteredBy(a.supervisor.pidOf(0)));
+    expect((await rows())[0]).toMatchObject({ status: 'transcribing', claim_generation: 1 });
 
     // A looks dead to the sweep (its heartbeat is "stale"), so its claim is recovered…
     await jobs.recoverStale(new Date(Date.now() + 1_000), 8);
     // …and B claims it: generation 3, while A still holds generation 1 in memory.
-    const b = fleet(1, () => 'hang', { slots: 1 });
+    const b = fleet(1, () => 'hang', { slots: 1, entered });
     await b.supervisor.start();
     b.supervisor.broadcast('analysis.wake', {});
-    await until('B claimed the job', 15_000, async () => (await rows())[0]?.claim_generation === 3);
+    await until('B is inside the vendor call', 15_000, async () => enteredBy(b.supervisor.pidOf(0)));
+    expect((await rows())[0]).toMatchObject({ status: 'transcribing', claim_generation: 3 });
 
     await a.supervisor.stop(10_000);
     expect(a.exits).toEqual([{ slot: 0, code: 0, signal: null }]);

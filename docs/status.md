@@ -443,23 +443,14 @@ runs unchanged.
 
 ## Test counts
 
-Run of 2026-11-02, after the mobile-station multi-process tests, `apps/server` only (`pnpm lint`
-clean in 8 packages): unit 7520 passed + 42 skipped (372 files); integration 1528 passed + 10
-expected fail + 3 failed (165 files). The 3: `load/voicelink-media-ws-load.test.ts` "start
-negotiation failures" (intermittent, below; alone: 2 red and 1 green here, 1 green on the commit before), and two cases of
-`cluster/analysis-processes.test.ts` ("vendor rate limit pauses the other" and "a graceful stop
-requeues only its own claims"). The second is red when its file runs whole on this commit and
-on the commit before these tests, and green alone; the first passed in each rerun of the file.
-Neither file touches what this change does.
-
-Latest run, 2026-11-02, after the multi-process build (scaling Phase B), from inside each package
+Latest run, 2026-11-02, after the multi-process review fixes, from inside each package
 (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and `pnpm test:release` 10
-pass):
+pass; super-admin, web-ui and domain unchanged since the row below, not re-run):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7520 passed + 42 skipped (372 files) | 1526 passed + 10 expected fail (164 files) |
-| `packages/db` | 427 | 506 (46 files) |
+| `apps/server` | 7559 passed + 42 skipped (380 files) | 1530 passed + 10 expected fail (165 files) |
+| `packages/db` | 427 | 509 (46 files) |
 | `apps/console` | 4917 (251 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 249 | — |

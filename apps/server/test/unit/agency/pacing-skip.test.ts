@@ -231,6 +231,33 @@ describe('GenerationTtlCache', () => {
     expect(c.get('k')).toBe('fresh');
   });
 
+  it('remembers a bounded number of generations, and a fold never lets an overtaken load store', async () => {
+    const c = new GenerationTtlCache<string>(10_000, Date.now, 3);
+    let release!: (v: string) => void;
+    const loading = c.getOrLoad('k', () => new Promise<string>((r) => { release = r; }));
+    c.invalidate('k'); // overtakes the load
+    for (const key of ['a', 'b', 'c', 'd', 'e']) c.invalidate(key); // folds the map, forgetting 'k'
+    expect(c.trackedGenerations).toBeLessThanOrEqual(3);
+    release('stale');
+    expect(await loading).toBe('stale');
+    expect(c.get('k')).toBeUndefined();
+    // A key never invalidated still caches after a fold, and so does 'k' afresh.
+    expect(await c.getOrLoad('z', async () => 'fresh')).toBe('fresh');
+    expect(c.get('z')).toBe('fresh');
+    expect(await c.getOrLoad('k', async () => 'again')).toBe('again');
+    expect(c.get('k')).toBe('again');
+  });
+
+  it('a load in flight across a clear does not store', async () => {
+    const c = new GenerationTtlCache<string>(10_000);
+    let release!: (v: string) => void;
+    const loading = c.getOrLoad('never-invalidated', () => new Promise<string>((r) => { release = r; }));
+    c.clear();
+    release('stale');
+    await loading;
+    expect(c.get('never-invalidated')).toBeUndefined();
+  });
+
   it('`fresh` reads through and still stores', async () => {
     const c = new GenerationTtlCache<number>(10_000);
     await c.getOrLoad('k', async () => 1);

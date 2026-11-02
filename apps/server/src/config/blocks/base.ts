@@ -108,9 +108,13 @@ export const baseConfigSchema = z.object({
      * page poll every 10 s per open console), and at ~550 consoles plus ~510 dials and
      * ~170 settles a minute that is a few hundred short statements a second, which 10
      * connections queue behind as soon as one transaction or a slow report holds several.
-     * 30 stays well inside Postgres's default `max_connections` (100), leaving room for
-     * migrations, the super-admin CLI and an operator's session; a managed database with a
-     * lower limit needs this lowered to fit. Saturation shows in `db_pool_clients_waiting`
+     * **Per process.** One process at 30 stays well inside Postgres's default
+     * `max_connections` (100), leaving room for migrations, the super-admin CLI and an
+     * operator's session. With worker processes each opens its own pool
+     * (`MEDIA_WORKER_DB_POOL_MAX` per media worker, `min(DB_POOL_MAX,
+     * DIALER_ANALYSIS_CONCURRENCY + 2)` per analysis worker), and the primary checks the sum
+     * against the server at boot (`cluster/db-connection-budget.ts`). A managed database with
+     * a lower limit needs this lowered to fit. Saturation shows in `db_pool_clients_waiting`
      * and `db_pool_acquire_seconds` (`metrics/shared.ts`).
      */
     poolMax: z.coerce.number().int().positive().default(30),
@@ -176,6 +180,26 @@ export const baseConfigSchema = z.object({
     mediaWorkerHeapMb: z.coerce.number().int().min(128).max(65_536).default(768),
     /** `WORKER_CRASH_LOOP_MAX`: more exits of one media slot in 5 minutes makes the primary exit (D4). */
     crashLoopMax: z.coerce.number().int().min(1).max(100).default(5),
+    /**
+     * `MEDIA_WORKER_DB_POOL_MAX`: each media worker's own pg pool (`DB_POOL_MAX` sizes the
+     * primary's). Every process opens its own pool, so the host's connections are the SUM
+     * (`cluster/db-connection-budget.ts` adds them up at boot and compares them with the
+     * server's `max_connections`). Default 10: a worker's statements are its own calls'
+     * (the attempt's `dialing` stamp and call id, the call row's lifecycle writes, the
+     * settle, a forwarded disposition or break, a station attach), a few a second for a
+     * worker carrying ~170 calls at ~3 minutes each, every one a short single-row write.
+     * The primary keeps the 30 for what is bursty and many-row: contact claims for every
+     * campaign, the reaper and the sweeps, the API and every console's polling.
+     */
+    mediaWorkerDbPoolMax: z.coerce.number().int().positive().max(1_000).default(10),
+    /**
+     * `MEDIA_SNAPSHOT_REFRESH_MS`: how often the primary refreshes every media worker's
+     * `reaper.snapshot` between reaper passes (the live call ids the guard's stale sweep
+     * spares, and the slot leases reconciled). Default 5 s. 0 turns the periodic refresh off,
+     * leaving only the reaper's own pass and the workers' `call.lease` deltas: a diagnostic
+     * setting, which the chaos suite uses to prove the slot reap works from the deltas alone.
+     */
+    mediaSnapshotRefreshMs: z.coerce.number().int().min(0).max(600_000).default(5_000),
   }).default({}),
   otel: z.object({
     /** Only the exact string `true`. */
@@ -226,6 +250,8 @@ export function readBaseEnv(env: Env) {
       mediaWorkers: env['MEDIA_WORKERS'],
       mediaWorkerHeapMb: env['MEDIA_WORKER_HEAP_MB'],
       crashLoopMax: env['WORKER_CRASH_LOOP_MAX'],
+      mediaWorkerDbPoolMax: env['MEDIA_WORKER_DB_POOL_MAX'],
+      mediaSnapshotRefreshMs: env['MEDIA_SNAPSHOT_REFRESH_MS'],
     },
     otel: {
       enabled: env['OTEL_ENABLED'],

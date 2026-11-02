@@ -10,6 +10,17 @@
 // that carry `dialOutcomeUnknown: true` say so; {@link isDialOutcomeUnknown} reads it
 // through `cause` chains, because the bridge wraps the adapter's error.
 
+/**
+ * How long a contact waits before its next dial when the carrier may have queued the one
+ * that just failed (an `add_lead` that timed out, or a 2xx whose body could not be read),
+ * or when a process died with the dial sent and no answer or bridge recorded (the reaper,
+ * `agency/reaper.ts`). The pacing tick would otherwise dial it again at once, while the
+ * carrier may still be dialling it: two calls to one customer. 15 min is far beyond any
+ * queue the concurrency guards let build at the carrier; a call the carrier does place
+ * meanwhile is refused at its media connect and hung up.
+ */
+export const DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS = 15 * 60_000;
+
 /** A carrier REST request abandoned after its timeout. */
 export class CarrierRequestTimeoutError extends Error {
   constructor(

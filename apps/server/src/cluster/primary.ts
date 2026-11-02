@@ -77,6 +77,8 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
       onCrashLoop: (slot) => opts.onFatal(`media worker ${slot} crash loop`),
     },
     ...(opts.readyTimeoutMs !== undefined ? { readyTimeoutMs: opts.readyTimeoutMs } : {}),
+    snapshotRefreshMs: config.processes.mediaSnapshotRefreshMs,
+    maxDialsInFlight: config.concurrency.maxConcurrentCalls,
   });
 
   configureAgencyRuntime({

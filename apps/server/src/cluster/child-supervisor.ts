@@ -11,7 +11,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { createChildLogger } from '@magick-agency/observability';
 import { trackChildExit } from '@magick-agency/observability/metrics/voice';
-import { IpcChannel, childProcessTransport } from './ipc-channel.js';
+import { IpcChannel, childProcessTransport, type IpcChannelOptions } from './ipc-channel.js';
 import type { HealthBody, IpcEventMap, IpcEventType, WsHandoff } from './ipc-protocol.js';
 import type { ChildRole } from './roles.js';
 
@@ -26,7 +26,7 @@ export interface ChildExit {
   slot: number;
   code: number | null;
   signal: NodeJS.Signals | null;
-  /** True when the supervisor asked for it (stop). */
+  /** True when the supervisor asked for it (stop) and it exited within the stop's grace. */
   expected: boolean;
   pid: number | undefined;
 }
@@ -37,10 +37,12 @@ export interface ChildSupervisorOptions {
   fork: (slot: number) => ChildProcess;
   /** Wire one incarnation's channel (event handlers, request handlers). Called before `ready`. */
   onChannel?: (slot: number, channel: IpcChannel) => void;
-  /** Awaited after an unexpected exit, before the slot is re-forked. */
+  /** Awaited after an unexpected exit (a crash, or a child the stop had to SIGKILL), before the slot is re-forked. */
   onExit?: (exit: ChildExit) => void | Promise<void>;
   /** A slot became ready (first boot or a restart). */
   onReady?: (slot: number, pid: number) => void;
+  /** Bounds for each incarnation's channel (`IpcChannelOptions`). */
+  channelBounds?: Pick<IpcChannelOptions, 'maxInFlight' | 'maxInFlightByType'>;
   readyTimeoutMs?: number;
   restartBackoffMs?: readonly number[];
   /** More than `max` unexpected exits of one slot inside {@link CRASH_WINDOW_MS}: no re-fork, `onCrashLoop` instead. */
@@ -56,6 +58,8 @@ interface Slot {
   exits: number[];
   restartTimer: NodeJS.Timeout | null;
   exited: Promise<void> | null;
+  /** The stop had to SIGKILL this incarnation: its exit is not a clean one, and `onExit` runs. */
+  killedAtStop: boolean;
 }
 
 export class ChildSupervisor {
@@ -68,7 +72,7 @@ export class ChildSupervisor {
     if (!Number.isInteger(opts.count) || opts.count < 1) throw new RangeError(`child count must be ≥ 1, got ${opts.count}`);
     this.now = opts.now ?? Date.now;
     this.slots = Array.from({ length: opts.count }, (_, slot) => ({
-      slot, child: null, channel: null, ready: false, exits: [], restartTimer: null, exited: null,
+      slot, child: null, channel: null, ready: false, exits: [], restartTimer: null, exited: null, killedAtStop: false,
     }));
   }
 
@@ -168,6 +172,10 @@ export class ChildSupervisor {
       ]);
       if (!inTime) {
         log.error({ role: this.opts.role, slot: s.slot, pid: child.pid, graceMs }, 'Child did not exit within its grace — killing it');
+        // Its own shutdown did not finish, so what it owned was not closed: its exit runs
+        // `onExit` like a crash (a media slot's reap: its calls' slots, attempts and
+        // agents), and the stop waits for that before it resolves. No restart follows.
+        s.killedAtStop = true;
         child.kill('SIGKILL');
         await exited;
       }
@@ -180,7 +188,8 @@ export class ChildSupervisor {
     const child = this.opts.fork(s.slot);
     s.child = child;
     s.ready = false;
-    const channel = new IpcChannel(childProcessTransport(child), { name: `primary→${this.opts.role}${s.slot}` });
+    s.killedAtStop = false;
+    const channel = new IpcChannel(childProcessTransport(child), { name: `primary→${this.opts.role}${s.slot}`, ...this.opts.channelBounds });
     s.channel = channel;
     channel.onEvent('ready', (body) => {
       if (body.role !== this.opts.role || body.slot !== s.slot || s.child !== child) {
@@ -202,7 +211,7 @@ export class ChildSupervisor {
           s.child = null;
           s.channel = null;
         }
-        void this.onChildExit(s, { slot: s.slot, code, signal, expected: this.stopping, pid: child.pid }).finally(resolve);
+        void this.onChildExit(s, { slot: s.slot, code, signal, expected: this.stopping && !s.killedAtStop, pid: child.pid }).finally(resolve);
       });
     });
     child.on('error', (err) => log.error({ err, role: this.opts.role, slot: s.slot }, 'Child process error'));

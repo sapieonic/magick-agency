@@ -726,3 +726,105 @@ describe('findStrandedInFlight and the stranded-contact sweep', () => {
     expect(await reaper().sweepStrandedContacts()).toBe(0);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (5) A reaped dial whose outcome is unknown is not redialled early.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * A process that died with a dial sent and no answer recorded (a media worker killed with
+ * `add_lead` in flight or the phone ringing; the whole server after a crash) may have left
+ * the carrier dialling the customer. The dial path's rule for an outcome-unknown
+ * `add_lead` applies (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`): the contact is requeued, but
+ * not dialable until that long after `dialed_at`. A dial never sent, or one answered, is
+ * dialable at once as before.
+ *
+ * The clock is the database's: each `dialed_at` is written in SQL and each assertion reads
+ * `next_attempt_at - dialed_at` (or `- now()`) in SQL.
+ */
+describe('a reaped dial with an unknown outcome is not redialled before the carrier rule allows', () => {
+  const DELAY_SECONDS = 15 * 60;
+
+  /** One attempt per shape, reserved to `sessionId`, with its contact `in_flight`. */
+  async function shapes(campaignId: string, sessionId: string) {
+    const make = async (row: number, attempt: Record<string, unknown>, dialedSecondsAgo: number | null, answered: boolean) => {
+      const c = await insertAgencyContact(campaignId, { state: 'in_flight', source_row_number: row });
+      const a = await insertAgencyAttempt(campaignId, c.id as string, { reserved_agent_id: sessionId, ...attempt });
+      if (dialedSecondsAgo !== null) {
+        await getTestPool().query(
+          `UPDATE agency_call_attempts
+              SET dialed_at = now() - make_interval(secs => $2),
+                  answered_at = CASE WHEN $3::boolean THEN now() - make_interval(secs => $2 - 2) END,
+                  bridged_at  = CASE WHEN $3::boolean THEN now() - make_interval(secs => $2 - 2) END
+            WHERE id = $1`,
+          [a.id, dialedSecondsAgo, answered],
+        );
+      }
+      return c.id as string;
+    };
+    return {
+      ringing: await make(1, { state: 'dialing' }, 10, false),
+      longAgo: await make(2, { state: 'dialing' }, DELAY_SECONDS + 60, false),
+      bridged: await make(3, { state: 'bridged' }, 30, true),
+      neverSent: await make(4, { state: 'queued' }, null, false),
+    };
+  }
+
+  async function redial(contactId: string) {
+    const { rows } = await getTestPool().query<{ state: string; after_dial: number | null; from_now: number }>(
+      `SELECT c.state,
+              EXTRACT(EPOCH FROM c.next_attempt_at - a.dialed_at)::float8 AS after_dial,
+              EXTRACT(EPOCH FROM c.next_attempt_at - now())::float8 AS from_now
+         FROM agency_contacts c
+         JOIN agency_call_attempts a ON a.contact_id = c.id
+        WHERE c.id = $1`,
+      [contactId],
+    );
+    return rows[0]!;
+  }
+
+  async function expectRule(ids: Awaited<ReturnType<typeof shapes>>) {
+    const ringing = await redial(ids.ringing);
+    expect(ringing.state).toBe('pending');
+    // The delay after the dial was sent, not after the reap.
+    expect(ringing.after_dial).toBeCloseTo(DELAY_SECONDS, 0);
+    for (const dialableNow of [ids.longAgo, ids.bridged, ids.neverSent]) {
+      const r = await redial(dialableNow);
+      expect(r.state).toBe('pending');
+      // `next_attempt_at` is the reap's own instant, a moment ago.
+      expect(r.from_now).toBeLessThanOrEqual(1);
+      expect(r.from_now).toBeGreaterThan(-60);
+    }
+  }
+
+  it('a media worker\'s slot reap (reapSessions) defers only the dial sent and never answered', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const dead = (await insertAgentSession(campaignId)).id as string;
+    const ids = await shapes(campaignId, dead);
+
+    const report = await reaper().reapSessions((sessionId) => sessionId === dead);
+
+    expect(report.attempts).toBe(4);
+    await expectRule(ids);
+  });
+
+  it('the single-process startup reap (reapOnStartup) applies the same rule', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const ids = await shapes(campaignId, session);
+
+    expect((await reaper().reapOnStartup()).attempts).toBe(4);
+    await expectRule(ids);
+  });
+
+  it('the periodic leak sweep (sweepOnce) applies it too', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const ids = await shapes(campaignId, session);
+    await getTestPool().query(
+      'UPDATE agency_call_attempts SET created_at = now() - make_interval(secs => $1)', [WELL_PAST_LEAK_FLOOR_SECONDS]);
+
+    expect(await reaper().sweepOnce()).toBe(4);
+    await expectRule(ids);
+  });
+});

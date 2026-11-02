@@ -55,4 +55,13 @@ describe('slotFor', () => {
     expect(slotFor('', 1_000_003)).toBe(0x811c9dc5 % 1_000_003);
     expect(slotFor('a', 4_294_967_291)).toBe(0xe40c292c % 4_294_967_291);
   });
+
+  it('a session id in upper case is owned by the same slot as the stored (lower-case) id', () => {
+    // 'A' and 'a' hash apart, so without the normalisation this would differ.
+    expect(slotFor('A', 4_294_967_291)).toBe(0xe40c292c % 4_294_967_291);
+    for (let i = 0; i < 200; i++) {
+      const id = randomUUID();
+      for (const n of [2, 3, 5]) expect(slotFor(id.toUpperCase(), n)).toBe(slotFor(id, n));
+    }
+  });
 });

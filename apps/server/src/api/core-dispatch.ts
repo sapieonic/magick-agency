@@ -86,11 +86,6 @@ export function getCoreHandlers(): FastifyInstance | null {
 }
 
 /**
- * Run the internal handler for `req` in-process and return its status, body and headers.
- *
- * Throws when the handler table was never built (a wiring defect).
- */
-/**
  * One internal request as `callCore` hands it to the internal instance: everything it
  * built (the URL with its query, the tenancy headers it wrote, the JSON payload). Plain
  * data, so it can be run in another process (`docs/scaling.md` §3.4).
@@ -136,6 +131,12 @@ export async function injectLocal(app: FastifyInstance, args: CoreInjectArgs): P
   return { statusCode: res.statusCode, headers: res.headers, rawPayload: res.rawPayload };
 }
 
+/**
+ * Run the internal handler for `req` and return its status, body and headers: in-process,
+ * or, with media workers, in the worker that owns the request's session (`CoreInjector`).
+ *
+ * Throws when the handler table was never built (a wiring defect).
+ */
 export async function callCore(req: CoreCallRequest): Promise<CoreCallResult> {
   if (isUnsafeCorePath(req.path)) {
     log.warn({ path: req.path, tenantId: req.tenantId }, 'Rejected path-escaping core path');

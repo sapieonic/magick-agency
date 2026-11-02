@@ -122,6 +122,13 @@ describe('station WebSocket proxy', () => {
     client.close();
   });
 
+  it('hands the session id on lower-cased: an upper-case id keys the same station as the stored one', async () => {
+    const client = connectClient(`${proxy.url}${PREFIX}/${SESSION.toUpperCase().replace(/1/g, 'A')}?token=t`);
+    await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler');
+    expect((mocks.handleStationSocket.mock.calls[0] as unknown[])[1]).toBe(SESSION.replace(/1/g, 'a'));
+    client.close();
+  });
+
   it('hands the parsed client and media on: the defaults when the upgrade names neither', async () => {
     const client = connectClient(`${proxy.url}${PREFIX}/${SESSION}?token=t`);
     await waitFor(() => mocks.handleStationSocket.mock.calls.length >= 1, 'station handler');

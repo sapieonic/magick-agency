@@ -5,7 +5,8 @@ import {
   agencyContactRepository,
   agencyManualCallRepository,
 } from '../db/repositories/agency.repository.js';
-import type { AgencyManualCallRecord } from '../db/models/agency.model.js';
+import type { AgencyCallAttemptRecord, AgencyManualCallRecord } from '../db/models/agency.model.js';
+import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../telephony/carrier-errors.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { AUTO_DISPOSITION_CODE } from './disposition.js';
 import { requiresDisposition } from './outcome-classifier.js';
@@ -134,6 +135,28 @@ export interface SessionReapReport {
 }
 
 /**
+ * When a reaped attempt's contact may be dialled again.
+ *
+ * An attempt stamped `dialing` (`dialed_at` set) that never recorded an answer or a bridge
+ * died with its dial's outcome unknown: the process (a media worker, or the whole server)
+ * may have been killed with `add_lead` in flight or the customer's phone ringing, and the
+ * carrier may still place that call. That is the rule the dial path applies to an
+ * outcome-unknown `add_lead` ({@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS}): no redial until
+ * that long after the dial was sent. Every other reaped attempt (never sent, or answered:
+ * the carrier's call is over with its media socket) is dialable at once, as before.
+ */
+export function reapedRedialNotBefore(
+  attempt: Pick<AgencyCallAttemptRecord, 'dialed_at' | 'answered_at' | 'bridged_at'>,
+  now: Date = new Date(),
+): Date {
+  if (attempt.dialed_at && !attempt.answered_at && !attempt.bridged_at) {
+    const notBefore = new Date(attempt.dialed_at).getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS;
+    if (notBefore > now.getTime()) return new Date(notBefore);
+  }
+  return now;
+}
+
+/**
  * Crash recovery.
  *
  * `gracefulShutdown()` handles SIGTERM. It does not handle SIGKILL, OOM, or a hard
@@ -172,7 +195,7 @@ export class AgencyReaper {
     for (const attempt of attempts) {
       await this.requeueOrphanedContact(attempt.contact_id, 'startup', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
-      });
+      }, reapedRedialNotBefore(attempt));
     }
 
     // Every station socket died with the process, so no agent is really available.
@@ -208,7 +231,7 @@ export class AgencyReaper {
     for (const attempt of reaped) {
       await this.requeueOrphanedContact(attempt.contact_id, 'startup', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
-      });
+      }, reapedRedialNotBefore(attempt));
     }
     const sessionIds = (await agencyAgentSessionRepository.findLiveIds()).filter(isDead);
     let manual: AgencyManualCallRecord[] = [];
@@ -324,7 +347,7 @@ export class AgencyReaper {
     for (const attempt of reaped) {
       await this.requeueOrphanedContact(attempt.contact_id, 'leak', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
-      });
+      }, reapedRedialNotBefore(attempt));
     }
     if (reaped.length > 0) {
       log.warn(
@@ -350,7 +373,7 @@ export class AgencyReaper {
     for (const attempt of reaped) {
       await this.requeueOrphanedContact(attempt.contact_id, 'leak', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
-      });
+      }, reapedRedialNotBefore(attempt));
     }
     if (reaped.length > 0) {
       log.warn({ count: reaped.length }, 'Agency reaper ended attempts the dialer could not record');
@@ -626,6 +649,12 @@ export class AgencyReaper {
      * rather than inheriting a silent `'unknown'` series.
      */
     scope: { tenantId: string; campaignId: string },
+    /**
+     * When the contact may be dialled again: now, unless the reaped attempt's dial outcome
+     * is unknown ({@link reapedRedialNotBefore}). The stranded-contact sweep has no attempt
+     * to ask and passes nothing.
+     */
+    notBefore: Date = new Date(),
   ): Promise<void> {
     // ── The our-fault bound belongs here too ─────────────────────────────────
     //
@@ -650,9 +679,12 @@ export class AgencyReaper {
         return 0;
       });
     // Only the BOUND is taken from the decision. The requeue below deliberately
-    // keeps its immediate `next_attempt_at`: crash recovery wants the contact
-    // dialable as soon as the roster reaches it, and adding the dial path's
-    // cool-off here would delay every contact after a routine deploy. The
+    // does not take the dial path's cool-off: crash recovery wants the contact
+    // dialable as soon as the roster reaches it, and that cool-off would delay
+    // every contact after a routine deploy. The one exception is `notBefore`, and
+    // it is not a cool-off but the carrier rule: a dial sent and never answered
+    // may still be placed by the carrier, so it waits out
+    // DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS from its `dialed_at`. The
     // shared function is still the right home for the ceiling — one place
     // decides how many our-fault redials a contact may have, both callers obey it.
     const decision = resolveOurFaultRedial(null, 'orphaned', new Date(), ourFaultUsed);
@@ -737,7 +769,7 @@ export class AgencyReaper {
       // site takes no decision it could have been attached to. See its header.
       .markState(contactId, 'pending', {
         last_outcome: 'orphaned',
-        next_attempt_at: new Date(),
+        next_attempt_at: notBefore,
       })
       .catch((err) => log.error({ err, contactId, source }, 'Failed to requeue orphaned contact'));
   }

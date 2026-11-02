@@ -123,11 +123,22 @@ export function resolveMetricsExportTimeoutMs(intervalMs: number): number {
  * that runs as one process (no workers configured). Read from the environment because
  * the SDK starts before the config module.
  */
+/**
+ * The config's `isEnvTrue` (`config/env.ts`), restated: this module cannot import the config
+ * (see the header), and the analysis block parses `DIALER_ANALYSIS_ENABLED` with it, so `1`
+ * forks analysis children and must also give the primary its suffix.
+ * `test/unit/cluster/process-observability.test.ts` pins that the two agree.
+ */
+export function envFlagTrue(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return !['false', '0', 'no', ''].includes(value.toLowerCase().trim());
+}
+
 export function processInstanceSuffix(env: Env): string | null {
   const role = env['MA_PROCESS_ROLE'];
   if (role) return `${role}${env['MA_WORKER_SLOT'] ?? ''}`;
   const positive = (v: string | undefined): boolean => /^\d+$/.test(v ?? '') && Number(v) > 0;
-  const analysisChildren = env['DIALER_ANALYSIS_ENABLED'] === 'true' && positive(env['ANALYSIS_WORKERS']);
+  const analysisChildren = envFlagTrue(env['DIALER_ANALYSIS_ENABLED']) && positive(env['ANALYSIS_WORKERS']);
   return positive(env['MEDIA_WORKERS']) || analysisChildren ? 'primary' : null;
 }
 

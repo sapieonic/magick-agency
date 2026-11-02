@@ -2,7 +2,7 @@
 // (the one `@fastify/websocket` registration), the base config block (`WS_MAX_PAYLOAD_BYTES`,
 // whose floor is the largest legitimate message below) and the load harnesses, so the tests
 // run against the bound production uses.
-import { AGENCY_STATION_ALAW8_MAX_FRAME_BYTES } from '@magick-agency/contracts/agency';
+import { AGENCY_STATION_ALAW8_MAX_FRAME_BYTES, AGENCY_WS_MAX_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 
 /** Characters of base64 for `bytes` bytes (padded). */
 function base64Length(bytes: number): number {
@@ -56,7 +56,9 @@ export const WS_LARGEST_LEGITIMATE_MESSAGE_BYTES = Math.max(...Object.values(WS_
 
 /**
  * Default `maxPayload` for every WebSocket: 64 KiB, about 1.5× the largest legitimate
- * message ({@link WS_LARGEST_LEGITIMATE_MESSAGE_BYTES}).
+ * message ({@link WS_LARGEST_LEGITIMATE_MESSAGE_BYTES}). The number is the wire contract's
+ * (`AGENCY_WS_MAX_MESSAGE_BYTES`), so the console sizes its largest frame from the same
+ * constant.
  *
  * Without it `ws` allows 100 MiB, and buffers, stringifies and `JSON.parse`s the whole
  * message on the shared event loop before anything can decide to ignore it: one
@@ -70,7 +72,7 @@ export const WS_LARGEST_LEGITIMATE_MESSAGE_BYTES = Math.max(...Object.values(WS_
  * routes plus margin. Configurable as `WS_MAX_PAYLOAD_BYTES` (`server.wsMaxPayloadBytes`,
  * never below {@link WS_LARGEST_LEGITIMATE_MESSAGE_BYTES}).
  */
-export const WS_MAX_PAYLOAD_DEFAULT_BYTES = 64 * 1024;
+export const WS_MAX_PAYLOAD_DEFAULT_BYTES = AGENCY_WS_MAX_MESSAGE_BYTES;
 
 /** The options `@fastify/websocket` is registered with: `ws`'s server options carry the bound. */
 export function websocketPluginOptions(maxPayload: number = WS_MAX_PAYLOAD_DEFAULT_BYTES): {

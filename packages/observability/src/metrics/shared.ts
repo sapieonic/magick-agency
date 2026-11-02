@@ -66,3 +66,27 @@ export function observeDbPoolAcquire(seconds: number, result: 'ok' | 'error'): v
     // Losing one sample beats failing the query it measures.
   }
 }
+
+// ── Postgres connections for the whole host (`cluster/db-connection-budget.ts`) ─────────
+// With worker processes every process opens its own pool, so the host can open the SUM of
+// their maxima. The primary computes that sum at boot and reads the server's limit;
+// `db_connections_planned > db_connections_allowed` means a peak can be refused connections.
+// Exported by the primary only, and only when worker processes are configured.
+
+/** Wired by the primary at boot, with the numbers it computed once. */
+let _dbConnectionBudgetProvider: (() => { planned: number; allowed: number }) | null = null;
+
+export function setDbConnectionBudgetProvider(fn: (() => { planned: number; allowed: number }) | null): void {
+  _dbConnectionBudgetProvider = fn;
+}
+
+observableGauge(meter, 'db_connections_planned', {
+  description: 'Postgres connections this host\'s processes can open together: the sum of every process\'s pool maximum, plus the headroom kept for migrations and an operator',
+}, (observe) => {
+  if (_dbConnectionBudgetProvider) observe(_dbConnectionBudgetProvider().planned);
+});
+observableGauge(meter, 'db_connections_allowed', {
+  description: 'Postgres connections the server allows an ordinary role: max_connections minus superuser_reserved_connections, read at boot',
+}, (observe) => {
+  if (_dbConnectionBudgetProvider) observe(_dbConnectionBudgetProvider().allowed);
+});

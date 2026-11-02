@@ -80,7 +80,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-migration.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~14 |
+| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~17 |
 | `apps/server/test/integration/agency/agency-retry-idempotency.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
@@ -199,7 +199,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 81 |
-| `apps/server/test/unit/agency/pacing-skip.test.ts` | 23 |
+| `apps/server/test/unit/agency/pacing-skip.test.ts` | 25 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
 | `apps/server/test/unit/agency/profile-in-use-reference-check.test.ts` | 23 |
@@ -221,7 +221,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 29 |
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
-| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 20 |
+| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 22 |
 | `apps/server/test/unit/agency/reaper.test.ts` | 43 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
@@ -319,9 +319,9 @@ Files: `client.ts`, `llm-observability.ts`, `posthog.ts`
 
 ### `apps/server/src/api/`
 
-The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` and `forwardCore` (`core-dispatch.ts`; `forwardCore` answers the public request with the internal handler's status and body) and the internal handler instance (`core-handlers.ts`), the id guard for agency routes, and profile-route auth.
+The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` and `forwardCore` (`core-dispatch.ts`; `forwardCore` answers the public request with the internal handler's status and body) and the internal handler instance (`core-handlers.ts`), which process each internal agency route runs in (`core-owners.ts`: every route classified, an unclassified one refused at boot; with media workers a session-owned one is forwarded to its worker, B16 amended), the id guard for agency routes, and profile-route auth.
 
-Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dispatch.ts`, `core-handlers.ts`, `platform.plugin.ts`, `profile-route-auth.ts`, `voice.plugin.ts`
+Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dispatch.ts`, `core-handlers.ts`, `core-owners.ts`, `platform.plugin.ts`, `profile-route-auth.ts`, `voice.plugin.ts`
 
 | Test file | Cases |
 |---|---|
@@ -353,6 +353,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
 | `apps/server/test/unit/api/core-dispatch.test.ts` | 13 |
+| `apps/server/test/unit/api/core-route-owners.test.ts` | 6 |
 | `apps/server/test/unit/api/platform-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/profile-route-auth.test.ts` | 13 |
 | `apps/server/test/unit/api/route-table.test.ts` | 3 |
@@ -404,6 +405,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
 | `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
+| `apps/server/test/unit/api/routes/helpers/path-params.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/invites.routes.test.ts` | 140 |
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
@@ -543,23 +545,32 @@ Composition for running as several processes on one host (`docs/scaling.md`; off
 - The media workers: the child (`media-child.ts`, `media-child-main.ts`), and the primary's side (`media-cluster.ts`, `station-directory.ts`, `ipc-dial-dispatcher.ts`, `primary.ts` with the slot reap).
 - The analysis workers (`analysis-child.ts`, `analysis-child-main.ts`, `analysis-children.ts`).
 - Per-process loop sampling (`loop-sampler.ts`).
+- The primary's `/readyz` verdict with workers (`readiness.ts`, D5), the shutdown order (`shutdown-order.ts`: pacing halts, then the drains together, then the rest) and the host's Postgres connection budget (`db-connection-budget.ts`, D12).
 
-Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `child-supervisor.ts`, `fork.ts`, `ipc-channel.ts`, `ipc-dial-dispatcher.ts`, `ipc-protocol.ts`, `loop-sampler.ts`, `media-child-main.ts`, `media-child.ts`, `media-cluster.ts`, `primary.ts`, `record-codecs.ts`, `roles.ts`, `socket-pause.ts`, `station-directory.ts`, `worker-app.ts`, `ws-adopt.ts`, `ws-handoff.plugin.ts`
+Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `child-supervisor.ts`, `db-connection-budget.ts`, `fork.ts`, `ipc-channel.ts`, `ipc-dial-dispatcher.ts`, `ipc-protocol.ts`, `loop-sampler.ts`, `media-child-main.ts`, `media-child.ts`, `media-cluster.ts`, `primary.ts`, `readiness.ts`, `record-codecs.ts`, `roles.ts`, `shutdown-order.ts`, `socket-pause.ts`, `station-directory.ts`, `worker-app.ts`, `ws-adopt.ts`, `ws-handoff.plugin.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/cluster/analysis-processes.test.ts` | 5 |
+| `apps/server/test/integration/cluster/db-connection-budget.test.ts` | 1 |
 | `apps/server/test/integration/cluster/media-workers.test.ts` | 3 |
 | `apps/server/test/integration/cluster/mobile-stations.test.ts` | 4 |
 | `apps/server/test/integration/cluster/ws-handoff.test.ts` | 8 |
+| `apps/server/test/unit/cluster/analysis-children.test.ts` | 3 |
+| `apps/server/test/unit/cluster/child-mains.test.ts` | 3 |
 | `apps/server/test/unit/cluster/child-supervisor.test.ts` | 5 |
+| `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 6 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
-| `apps/server/test/unit/cluster/ipc-channel.test.ts` | 13 |
+| `apps/server/test/unit/cluster/ipc-channel.test.ts` | 15 |
 | `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 10 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 14 |
+| `apps/server/test/unit/cluster/media-cluster.test.ts` | 6 |
+| `apps/server/test/unit/cluster/primary.test.ts` | 3 |
 | `apps/server/test/unit/cluster/process-observability.test.ts` | 4 |
-| `apps/server/test/unit/cluster/roles.test.ts` | 7 |
-| `apps/server/test/unit/cluster/socket-pause.test.ts` | 5 |
+| `apps/server/test/unit/cluster/readiness.test.ts` | 4 |
+| `apps/server/test/unit/cluster/roles.test.ts` | 8 |
+| `apps/server/test/unit/cluster/shutdown-order.test.ts` | 3 |
+| `apps/server/test/unit/cluster/socket-pause.test.ts` | 6 |
 
 ### `apps/server/src/config/`
 
@@ -621,7 +632,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/telephony-guard-host.test.ts` | 31 |
 | `apps/server/test/unit/core/telephony-release-wiring.test.ts` | 2 |
 | `apps/server/test/unit/core/telephony-release.test.ts` | 41 |
-| `apps/server/test/unit/core/vendor-rate-limit-breaker.test.ts` | 5 |
+| `apps/server/test/unit/core/vendor-rate-limit-breaker.test.ts` | 10 |
 | `apps/server/test/unit/core/voice-concurrency-control.test.ts` | 8 |
 | `apps/server/test/unit/core/webhook-url-builder.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-answer-anchor.test.ts` | 3 |
@@ -641,9 +652,9 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 
 ### `apps/server/src/core/bridge/`
 
-Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping), `browser-leg-media.ts` (the browser leg's media format: the per-socket `pcm16`/`alaw8` tag the station handler sets and every attach reads, the `alaw8` message-size check and the 20 ms framer for carrier → browser A-law; part of the §3.1 seam). None imports metrics. Tested through the bridge suites above.
+Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping), `browser-leg-media.ts` (the browser leg's media format: the per-socket `pcm16`/`alaw8` tag the station handler sets and every attach reads, the `alaw8` message-size check and the 20 ms framer for carrier → browser A-law; part of the §3.1 seam), `carrier-urls.ts` (the carrier's media and status URLs for a call, with a media worker's `&w=<slot>` routing hint, D3). None imports metrics. Tested through the bridge suites above, and `carrier-urls.ts` by `apps/server/test/unit/core/carrier-urls.test.ts` (3).
 
-Files: `admission.ts`, `bridge-types.ts`, `browser-leg-media.ts`, `ws-tokens.ts`
+Files: `admission.ts`, `bridge-types.ts`, `browser-leg-media.ts`, `carrier-urls.ts`, `ws-tokens.ts`
 
 ### `apps/server/src/db/`
 
@@ -1158,7 +1169,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
-| `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~31 |
+| `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~34 |
 | `packages/db/test/integration/flows/dialer-analysis-dsar.test.ts` | ~1 |
 | `packages/db/test/integration/flows/dialer-analysis-failure-paths.test.ts` | ~2 |
 | `packages/db/test/integration/flows/dialer-analysis-gating.test.ts` | ~2 |

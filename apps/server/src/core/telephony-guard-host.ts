@@ -200,12 +200,6 @@ export class TelephonyGuardHost {
   }
 
   /**
-   * Wake the demand-driven self-heal poller. Idempotent; resets the idle counter
-   * so a fresh call always restores the full dormancy window. Called on startup
-   * and on every call end. No-op while shutting down. The timer is unref'd
-   * (never holds the process open) and goes dormant on its own when idle.
-   */
-  /**
    * A media worker (`docs/scaling.md` §5.5): the self-heal (counters vs locks, stale rows)
    * is the primary's alone, so a wake here is sent there instead of arming a poll.
    */
@@ -221,6 +215,13 @@ export class TelephonyGuardHost {
     this.accountConcurrencyGuard.setDegradedShare(processes);
   }
 
+  /**
+   * Wake the demand-driven self-heal poller. Idempotent; resets the idle counter
+   * so a fresh call always restores the full dormancy window. Called on startup
+   * and on every call end. No-op while shutting down. The timer is unref'd
+   * (never holds the process open) and goes dormant on its own when idle. In a media
+   * worker the wake goes to the primary instead (`delegateSelfHeal`).
+   */
   wakeSelfHeal(): void {
     if (this.selfHealDelegate) {
       this.selfHealDelegate();
