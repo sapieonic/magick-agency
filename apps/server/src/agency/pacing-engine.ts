@@ -16,6 +16,8 @@ import type { AgencyCampaignChangeReason, AgencyCampaignStatus } from '@magick-a
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
 import {
+  agencyPacingMissedWakeupsTotal,
+  agencyPacingTicksTotal,
   agencyPreDialGateTotal,
   agencyTickIdleTotal,
 } from '@magick-agency/observability/metrics/agency';
@@ -24,13 +26,38 @@ import { LeaderLease, LEADER_RENEW_MS } from './pacing/leader-lease.js';
 import { InFlight } from './pacing/in-flight.js';
 import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
 import { CampaignAnnouncer } from './pacing/campaign-announcer.js';
+import {
+  getPacingInvalidationBus,
+  type PacingInvalidationBus,
+  type PacingInvalidationEvent,
+} from './pacing/invalidation-bus.js';
+import { GenerationTtlCache } from './pacing/read-cache.js';
+import { PacingRound, accountKeyOf } from './pacing/round.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
 
 const log = createChildLogger({ component: 'agency-pacing-engine' });
 
-/** How often the leader evaluates a campaign. */
-const TICK_INTERVAL_MS = 250;
+/** How often the leader evaluates a campaign (one ROUND over every campaign it leads). */
+export const TICK_INTERVAL_MS = 250;
+
+/**
+ * The longest a QUIESCENT campaign goes without a full tick. A campaign whose last
+ * full tick could reserve nothing (no agent available, no account slot, no caller
+ * IDs, not running) is skipped — no database, no Redis — until an invalidation
+ * event wakes it (`pacing/invalidation-bus.ts`) or this much time has passed. The
+ * bound on what a lost event can cost; `agency_pacing_missed_wakeups_total` counts
+ * the safety ticks that found work.
+ */
+export const PACING_SAFETY_TICK_MS = 1_000;
+
+/**
+ * How long a cached campaign row or account limit may be served without an
+ * invalidation. The backstop for a write that published nothing (raw SQL, a lost
+ * event); every write through the repositories and the concurrency seam publishes.
+ * Campaign rows are also re-primed by every supervise pass (`findActive`, 2 s).
+ */
+export const PACING_CACHE_TTL_MS = 2_000;
 /** How often a replica tries to take leadership of campaigns it does not lead. */
 const SUPERVISE_INTERVAL_MS = 2_000;
 
@@ -89,6 +116,9 @@ interface TickPlan {
    * day in. Absent ⇒ the tick intends to dial.
    */
   idle?: TickIdleReason;
+  /** The account limit and live calls the plan used (absent when it stopped at `no_agents`). */
+  accountLimit?: number;
+  occupied?: number;
 }
 
 /**
@@ -100,6 +130,54 @@ interface TickPlan {
  * "why is this campaign placing no calls" is the question this label answers.
  */
 type TickIdleReason = 'no_agents' | 'no_slots' | 'no_contacts' | 'no_reservations' | 'no_caller_ids';
+
+/** Why a scheduled tick ran in full (a metric label, see `agencyPacingTicksTotal`). */
+export type PacingWakeCause = 'first' | 'event' | 'active' | 'safety' | 'forced';
+
+/**
+ * What the skip logic knows about one led campaign. Created dirty by `beginLeading`,
+ * dropped by `relinquish`.
+ */
+interface CampaignPacingState {
+  /** An invalidation event arrived since the last full tick began. */
+  dirty: boolean;
+  /**
+   * The last full tick could reserve nothing and ended in a state only an event can
+   * change (see `runTick`). False after any tick that planned a dial, failed, or
+   * was cut short.
+   */
+  quiescent: boolean;
+  /** When the last full tick began (engine clock); {@link NEVER} before the first. */
+  lastFullAt: number;
+  /** The idle reason the last full tick recorded, replayed by a skipped tick. */
+  idle?: TickIdleReason;
+  /** The campaign's account, learned from its row: account events wake it. */
+  accountKey: string | null;
+}
+
+const NEVER = Number.NEGATIVE_INFINITY;
+
+/** Engine tunables. Production uses the defaults; tests shorten them. */
+export interface PacingEngineOptions {
+  /** The invalidation bus. Default: the process bus (`getPacingInvalidationBus()`). */
+  bus?: PacingInvalidationBus;
+  safetyTickMs?: number;
+  cacheTtlMs?: number;
+  /** The engine clock for the skip logic and the caches. Default `Date.now`. */
+  now?: () => number;
+}
+
+/** One tick, as the engine saw it. For tests and the measurement harness only. */
+export type PacingTickObservation =
+  | { campaignId: string; mode: 'skipped' }
+  | {
+      campaignId: string;
+      mode: 'full';
+      cause: PacingWakeCause;
+      /** Present when the tick planned (a running campaign with usable caller IDs). */
+      plan?: { accountLimit: number | null; occupied: number | null; toDial: number; idle?: TickIdleReason };
+      quiescent: boolean;
+    };
 
 /**
  * The pacing loop: one authoritative leader per campaign, dialing to human
@@ -114,8 +192,32 @@ type TickIdleReason = 'no_agents' | 'no_slots' | 'no_contacts' | 'no_reservation
  * prevents double-dialing; it is not, and it cannot be.
  */
 export class PacingEngine {
-  private readonly led = new Map<string, { tick: NodeJS.Timeout; renew: NodeJS.Timeout }>();
+  /** Campaigns this engine leads, with their lease-renewal timer. Ticks come from the one round timer. */
+  private readonly led = new Map<string, { renew: NodeJS.Timeout }>();
   private superviseTimer: NodeJS.Timeout | null = null;
+  /**
+   * The round timer: every `TICK_INTERVAL_MS` it starts a tick for each led campaign
+   * that needs one ({@link runRound}). Armed by the first `beginLeading`, disarmed
+   * when the engine leads nothing or stops.
+   */
+  private roundTimer: NodeJS.Timeout | null = null;
+  /** The bus subscription: live from the first `beginLeading` until the engine leads nothing or stops. */
+  private unsubscribeBus: (() => void) | null = null;
+  /** Skip-logic state per led campaign. */
+  private readonly pacingState = new Map<string, CampaignPacingState>();
+  /**
+   * Campaign rows between full ticks, invalidated by `campaign_changed` and re-primed
+   * by every supervise pass. Read by scheduled ticks; a forced tick reads through.
+   */
+  private readonly campaignCache: GenerationTtlCache<AgencyCampaignRecord>;
+  /** `max_concurrent_calls` per account, invalidated by `account_limit_changed`. */
+  private readonly limitCache: GenerationTtlCache<number>;
+  private readonly bus: PacingInvalidationBus;
+  private readonly safetyTickMs: number;
+  private readonly now: () => number;
+  private tickObserver: ((o: PacingTickObservation) => void) | null = null;
+  /** Whether {@link armRounds} starts the round timer. See {@link setAutoRounds}. */
+  private autoRounds = true;
   private stopped = false;
   /** Guards against a slow tick overlapping the next one. */
   private readonly ticking = new Set<string>();
@@ -141,9 +243,41 @@ export class PacingEngine {
      * test ever wrote.
      */
     private readonly dnc: DncRegistry,
+    options: PacingEngineOptions = {},
   ) {
     this.lease = new LeaderLease(redis, keyPrefix, replicaId);
     this.announcer = new CampaignAnnouncer(stations);
+    this.bus = options.bus ?? getPacingInvalidationBus();
+    this.safetyTickMs = options.safetyTickMs ?? PACING_SAFETY_TICK_MS;
+    this.now = options.now ?? Date.now;
+    const ttl = options.cacheTtlMs ?? PACING_CACHE_TTL_MS;
+    this.campaignCache = new GenerationTtlCache(ttl, this.now);
+    this.limitCache = new GenerationTtlCache(ttl, this.now);
+  }
+
+  /** See every tick the engine runs or skips (tests, the measurement harness). */
+  registerTickObserver(observer: ((o: PacingTickObservation) => void) | null): void {
+    this.tickObserver = observer;
+  }
+
+  /**
+   * Tests and the measurement harness only: `false` keeps the round timer off (the
+   * bus subscription and the skip logic stay live) so the caller drives
+   * {@link runRound} itself, deterministically.
+   */
+  setAutoRounds(enabled: boolean): void {
+    this.autoRounds = enabled;
+    if (!enabled && this.roundTimer) {
+      clearInterval(this.roundTimer);
+      this.roundTimer = null;
+    } else if (enabled && this.unsubscribeBus && !this.roundTimer) {
+      this.startRoundTimer();
+    }
+  }
+
+  private observe(o: PacingTickObservation): void {
+    if (!this.tickObserver) return;
+    try { this.tickObserver(o); } catch (err) { log.warn({ err }, 'Pacing tick observer threw'); }
   }
 
   /** The per-campaign leader lease — `pacing/leader-lease.ts`. */
@@ -278,6 +412,7 @@ export class PacingEngine {
     if (this.superviseTimer) clearInterval(this.superviseTimer);
     this.superviseTimer = null;
     for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
+    this.disarmRounds();
     // Wait (bounded) for any tick already in flight — see `inFlightTicks` — and only
     // then settle the completion notices, so a notice the final tick requested is
     // in the set being drained rather than added after it. See `inFlightNotices`.
@@ -408,7 +543,14 @@ export class PacingEngine {
   }
 
   private async superviseInner(): Promise<void> {
+    // The cache generation of every campaign we lead, read BEFORE the query, so a
+    // row an invalidation overtook is not primed (see `GenerationTtlCache`).
+    const generations = new Map([...this.pacingState.keys()].map((id) => [id, this.campaignCache.generation(id)]));
     const all = await agencyCampaignRepository.findActive();
+    for (const row of all) {
+      const generation = generations.get(row.id);
+      if (generation !== undefined) this.primeCampaign(row, generation);
+    }
     // Filtered here rather than in `findActive`'s SQL: the flag lives in Redis and
     // the override table, not on the campaign row, so this cannot be a predicate.
     //
@@ -497,19 +639,48 @@ export class PacingEngine {
     log.info({ campaignId: campaign.id, name: campaign.name }, 'Took agency campaign leadership');
     // We hold the lease again, so ticks are authorised again.
     this.revoked.delete(campaign.id);
+    this.armRounds();
 
-    const tick = setInterval(() => {
-      void this.tickOnce(campaign.id).catch((err) =>
-        log.error({ err, campaignId: campaign.id }, 'Agency tick failed'));
-    }, TICK_INTERVAL_MS);
-    tick.unref?.();
+    // Dirty, so the first round ticks it in full whatever happened before.
+    this.pacingState.set(campaign.id, {
+      dirty: true, quiescent: false, lastFullAt: NEVER, accountKey: accountKeyOf(campaign.tenant_id, campaign.account_id),
+    });
 
     const renew = setInterval(() => {
       void this.renewLeadership(campaign.id);
     }, LEADER_RENEW_MS);
     renew.unref?.();
 
-    this.led.set(campaign.id, { tick, renew });
+    this.led.set(campaign.id, { renew });
+  }
+
+  /**
+   * Start the round timer and the bus subscription, if they are not running. The
+   * caches start empty: what they held while nothing listened for invalidations
+   * cannot be trusted.
+   */
+  private armRounds(): void {
+    if (this.unsubscribeBus) return;
+    this.campaignCache.clear();
+    this.limitCache.clear();
+    this.unsubscribeBus = this.bus.subscribe((event) => this.onInvalidation(event));
+    if (this.autoRounds) this.startRoundTimer();
+  }
+
+  private startRoundTimer(): void {
+    this.roundTimer = setInterval(() => {
+      void this.runRound().catch((err) => log.error({ err }, 'Agency pacing round failed'));
+    }, TICK_INTERVAL_MS);
+    this.roundTimer.unref?.();
+  }
+
+  private disarmRounds(): void {
+    if (this.roundTimer) clearInterval(this.roundTimer);
+    this.roundTimer = null;
+    this.unsubscribeBus?.();
+    this.unsubscribeBus = null;
+    this.campaignCache.clear();
+    this.limitCache.clear();
   }
 
   private async renewLeadership(campaignId: string): Promise<void> {
@@ -536,10 +707,12 @@ export class PacingEngine {
     this.revoked.add(campaignId);
     const timers = this.led.get(campaignId);
     if (timers) {
-      clearInterval(timers.tick);
       clearInterval(timers.renew);
       this.led.delete(campaignId);
     }
+    this.pacingState.delete(campaignId);
+    this.campaignCache.invalidate(campaignId);
+    if (this.led.size === 0) this.disarmRounds();
     if (!opts.alreadyLost) await this.lease.release(campaignId);
   }
 
@@ -567,20 +740,156 @@ export class PacingEngine {
    * guard, every tick, forever, whenever agents outnumber the account limit.
    */
   async tickOnce(campaignId: string): Promise<void> {
-    // Tracked so `stop()` can wait for it — see `inFlightTicks`.
-    await this.inFlightTicks.track(this.runTick(campaignId));
+    // A FORCED full tick: never skipped, and every read goes to the database (a
+    // round of its own, `fresh`), exactly as a tick always did. The scheduled path
+    // is `runRound`. Tracked so `stop()` can wait for it — see `inFlightTicks`.
+    await this.inFlightTicks.track(this.runTick(campaignId, new PacingRound(true), 'forced'));
   }
 
-  private async runTick(campaignId: string): Promise<void> {
+  /**
+   * One scheduled round: a tick for every led campaign that needs one, all started
+   * together so campaigns of one account share their account reads
+   * (`pacing/round.ts`). A campaign is SKIPPED — no database, no Redis — when its
+   * last full tick was quiescent, no invalidation event has arrived since, and the
+   * safety tick is not due ({@link wakeCause}).
+   *
+   * Resolves when every tick it started has settled (the timer does not wait; tests
+   * and the harness do).
+   */
+  async runRound(): Promise<void> {
+    if (this.stopped) return;
+    const round = new PacingRound(false);
+    const now = this.now();
+    const started: Promise<void>[] = [];
+    for (const campaignId of this.led.keys()) {
+      // A tick still in flight from an earlier round keeps the campaign; this round
+      // passes it by, as the per-campaign guard in `runTick` always has.
+      if (this.ticking.has(campaignId)) continue;
+      const state = this.pacingState.get(campaignId);
+      const cause = this.wakeCause(state, now);
+      if (cause === null) {
+        // Replay the idle reason the last full tick found, so `agency_tick_idle_total`
+        // keeps counting idle ticks, not only the full ones.
+        if (state?.idle) this.recordIdle(campaignId, state.idle);
+        safeEmit('agency-pacing-ticks', () => agencyPacingTicksTotal.inc({ mode: 'skipped', cause: 'none' }));
+        this.observe({ campaignId, mode: 'skipped' });
+        continue;
+      }
+      started.push(this.inFlightTicks.track(this.runTick(campaignId, round, cause)).catch((err) => {
+        log.error({ err, campaignId }, 'Agency tick failed');
+      }));
+    }
+    await Promise.all(started);
+  }
+
+  /**
+   * Whether a scheduled tick runs in full, and why; null to skip it.
+   *
+   * Skipping is safe only from a QUIESCENT state: one whose plan reserved nothing
+   * and which no time passing can change — no agent `available`, no account slot,
+   * no usable caller ID, or not `running`. Each leaves it only through an event the
+   * bus carries: an agent entering `available` or attaching a station, a call on
+   * the account ending, the campaign row or the account limit changing, contacts
+   * arriving. A campaign that planned a dial (`active`) ticks every round, as before.
+   * The safety tick bounds what a lost event can cost.
+   */
+  private wakeCause(state: CampaignPacingState | undefined, now: number): PacingWakeCause | null {
+    if (!state || state.lastFullAt === NEVER) return 'first';
+    if (state.dirty) return 'event';
+    if (!state.quiescent) return 'active';
+    if (now - state.lastFullAt >= this.safetyTickMs) return 'safety';
+    return null;
+  }
+
+  /** The campaign row: cached between scheduled ticks, read through on a forced one. */
+  private async loadCampaign(campaignId: string, round: PacingRound): Promise<AgencyCampaignRecord | null> {
+    if (!round.fresh) {
+      const hit = this.campaignCache.get(campaignId);
+      if (hit) return hit;
+    }
+    const generation = this.campaignCache.generation(campaignId);
+    const row = await agencyCampaignRepository.findById(campaignId);
+    if (row) this.campaignCache.setIf(campaignId, generation, row);
+    else this.campaignCache.invalidate(campaignId);
+    return row;
+  }
+
+  /**
+   * A row the supervise pass read (fresher than any cached one, generation
+   * permitting). A row that differs from the cached one is a change no event
+   * announced, so the campaign is woken as an event would.
+   */
+  private primeCampaign(row: AgencyCampaignRecord, generation: number): void {
+    const cached = this.campaignCache.get(row.id);
+    if (!this.campaignCache.setIf(row.id, generation, row)) return;
+    if (cached && rowVersion(cached) !== rowVersion(row)) this.markDirty(row.id);
+  }
+
+  // ─── Invalidation events ────────────────────────────────────────────────
+
+  private onInvalidation(event: PacingInvalidationEvent): void {
+    switch (event.type) {
+      case 'campaign_changed':
+        this.campaignCache.invalidate(event.campaignId);
+        this.markDirty(event.campaignId);
+        return;
+      case 'contacts_changed':
+        this.markDirty(event.campaignId);
+        return;
+      case 'account_limit_changed': {
+        const key = accountKeyOf(event.tenantId, event.accountId);
+        this.limitCache.invalidate(key);
+        this.markAccountDirty(key);
+        return;
+      }
+      case 'account_capacity_freed':
+        this.markAccountDirty(accountKeyOf(event.tenantId, event.accountId));
+        return;
+      case 'agent_available': {
+        const campaignId = event.campaignId ?? this.localCampaignOf(event.sessionId);
+        if (campaignId) this.markDirty(campaignId);
+        // Unknown: wake everything rather than guess. Rare (a session this process
+        // holds no station for cannot be dialed here anyway).
+        else for (const state of this.pacingState.values()) state.dirty = true;
+        return;
+      }
+    }
+  }
+
+  private localCampaignOf(sessionId: string): string | null {
+    const stations = this.stations as Partial<Pick<StationRegistry, 'get'>>;
+    return typeof stations.get === 'function' ? stations.get.call(this.stations, sessionId)?.campaignId ?? null : null;
+  }
+
+  private markDirty(campaignId: string): void {
+    const state = this.pacingState.get(campaignId);
+    if (state) state.dirty = true;
+  }
+
+  private markAccountDirty(accountKey: string): void {
+    for (const state of this.pacingState.values()) if (state.accountKey === accountKey) state.dirty = true;
+  }
+
+  private async runTick(campaignId: string, round: PacingRound, cause: PacingWakeCause): Promise<void> {
     if (this.ticking.has(campaignId)) return;
     this.ticking.add(campaignId);
+    const startedAt = this.now();
+    // Cleared BEFORE the reads: an event that lands while this tick runs re-arms it,
+    // so the next round ticks again rather than trusting reads that predate it.
+    const startState = this.pacingState.get(campaignId);
+    if (startState) startState.dirty = false;
+    let quiescent = false;
+    let idle: TickIdleReason | undefined;
+    let planned: TickPlan | undefined;
+    safeEmit('agency-pacing-ticks', () => agencyPacingTicksTotal.inc({ mode: 'full', cause }));
     try {
-      const campaign = await agencyCampaignRepository.findById(campaignId);
+      const campaign = await this.loadCampaign(campaignId, round);
       if (!campaign) {
         this.lastStatus.delete(campaignId);
         await this.relinquish(campaignId);
         return;
       }
+      if (startState) startState.accountKey = accountKeyOf(campaign.tenant_id, campaign.account_id);
 
       // A status change must reach idle agents, who are outside every per-attempt
       // frame's reach. Detected here because the tick already loads the row.
@@ -636,6 +945,9 @@ export class PacingEngine {
       if (campaign.status === 'running' && usableCallerIds(campaign).length === 0) {
         this.recordIdle(campaign.id, 'no_caller_ids');
         this.noteMisconfigured(campaign, 'has no usable caller IDs — every tick will dial nothing until one is added');
+        // Only a campaign edit clears it, and an edit publishes `campaign_changed`.
+        quiescent = true;
+        idle = 'no_caller_ids';
         return;
       }
       // Reached only when the pool is genuinely usable, so this cannot wipe the
@@ -647,16 +959,26 @@ export class PacingEngine {
       // have no dialer" has to be answered where the dial happens. Today every
       // member is `stopping` and the status alone would do — which is exactly what
       // was true of the last two fixes for this bug, right up until it wasn't.
+      // Quiescent unless the plan below finds work: a campaign that is not running
+      // (paused, or stopping and draining) changes only through a campaign event, or
+      // — for the drain — a call on its account ending.
+      let willBeQuiescent = true;
       if (campaign.status === 'running' && !this.drainOnly.has(campaignId)) {
-        const plan = await this.planTick(campaign);
+        const plan = await this.planTick(campaign, round);
+        planned = plan;
         if (plan.idle) this.recordIdle(campaign.id, plan.idle);
         if (plan.toDial > 0) {
+          willBeQuiescent = false;
           // `planTick` awaited on Redis and the DB; leadership may have been given
           // up in that window. Reserving and dialing past this point would place
           // calls without a lease.
           if (!this.mayDial(campaignId)) return;
           const dialed = await this.dialUpTo(campaign, plan);
           if (dialed > 0) return; // did work; completion is only checked on an idle tick
+        } else {
+          // `no_agents` or `no_slots`: only an agent entering `available`, a call
+          // ending or the limit rising can change it, and each publishes.
+          idle = plan.idle;
         }
       }
 
@@ -664,12 +986,35 @@ export class PacingEngine {
       // leader — evaluates completion, so there is exactly one writer of these two
       // transitions and no race with the supervisor's controls.
       await this.maybeFinalize(campaign);
+      quiescent = willBeQuiescent;
     } finally {
       this.ticking.delete(campaignId);
+      const state = this.pacingState.get(campaignId);
+      if (state) {
+        state.lastFullAt = startedAt;
+        state.quiescent = quiescent;
+        state.idle = quiescent ? idle : undefined;
+      }
+      // A safety tick that found work is a wake-up the bus missed.
+      if (cause === 'safety' && planned && planned.toDial > 0) {
+        safeEmit('agency-pacing-missed-wakeup', () => agencyPacingMissedWakeupsTotal.inc());
+        log.info({ campaignId }, 'Pacing safety tick found work no invalidation event announced');
+      }
+      this.observe({
+        campaignId, mode: 'full', cause, quiescent,
+        ...(planned ? {
+          plan: {
+            accountLimit: planned.accountLimit ?? null,
+            occupied: planned.occupied ?? null,
+            toDial: planned.toDial,
+            ...(planned.idle ? { idle: planned.idle } : {}),
+          },
+        } : {}),
+      });
     }
   }
 
-  private async planTick(campaign: AgencyCampaignRecord): Promise<TickPlan> {
+  private async planTick(campaign: AgencyCampaignRecord, round: PacingRound): Promise<TickPlan> {
     // Availability is read from Redis, not the DB: presence is the heartbeat, and
     // a DB row saying `available` for an agent whose socket died would put a real
     // customer through to nobody.
@@ -729,14 +1074,23 @@ export class PacingEngine {
     candidates.sort((a, b) =>
       a.availableSince - b.availableSince || a.sessionId.localeCompare(b.sessionId));
 
-    const accountLimit = await accountSettingsRepository.getMaxConcurrentCalls(
-      campaign.tenant_id, campaign.account_id,
-    );
+    // Both account reads are per ROUND, not per tick (`pacing/round.ts`): the limit
+    // through the engine's invalidated cache, the live calls read once per account
+    // per round and never carried into the next.
+    const accountKey = accountKeyOf(campaign.tenant_id, campaign.account_id);
+    const accountLimit = await round.limit(accountKey, () => this.loadAccountLimit(campaign, round));
     // The WHOLE ACCOUNT's live calls: every campaign's attempts plus the soft
     // phone's live manual calls (docs/softphone.md §4.1). `accountLimit` is the
     // account's ceiling, and a manual call holds a carrier slot like any attempt
     // while belonging to no campaign, so no per-campaign count can see it.
-    const occupied = await agencyAttemptRepository.countLiveForAccount(campaign.tenant_id, campaign.account_id);
+    //
+    // NOT the concurrency guard's Redis count, although it caps the same thing: the
+    // guard counts a call from bridge admission to its release, this counts an
+    // attempt from its insert (before admission) to `ended`, and the guard also
+    // holds calls the dialer never made (another product's browser dial on the
+    // account). The database count is the conservative one for pacing.
+    const occupied = await round.liveCalls(accountKey, () =>
+      agencyAttemptRepository.countLiveForAccount(campaign.tenant_id, campaign.account_id));
 
     /**
      * **The two limits constrain different things, and subtracting one from the
@@ -762,9 +1116,19 @@ export class PacingEngine {
      *     take one. Attempts already in flight have their agent and must not be
      *     charged against this half.
      */
-    const accountHeadroom = accountLimit - occupied;
-    const toDial = Math.max(0, Math.min(accountHeadroom, candidates.length));
-    return { toDial, candidates, ...(toDial === 0 ? { idle: 'no_slots' as const } : {}) };
+    // `MAX(0, MIN(limit − occupied, idle))`, less whatever the account's other
+    // campaigns planned this round — none, with one campaign per account.
+    const toDial = round.takeHeadroom(accountKey, accountLimit, occupied, candidates.length);
+    return { toDial, candidates, accountLimit, occupied, ...(toDial === 0 ? { idle: 'no_slots' as const } : {}) };
+  }
+
+  /** `max_concurrent_calls`: cached between scheduled rounds, read through on a forced one. */
+  private loadAccountLimit(campaign: AgencyCampaignRecord, round: PacingRound): Promise<number> {
+    return this.limitCache.getOrLoad(
+      accountKeyOf(campaign.tenant_id, campaign.account_id),
+      () => accountSettingsRepository.getMaxConcurrentCalls(campaign.tenant_id, campaign.account_id),
+      { fresh: round.fresh },
+    );
   }
 
   /**
@@ -1207,4 +1571,10 @@ export class PacingEngine {
   leading(): string[] {
     return [...this.led.keys()];
   }
+}
+
+/** What tells two reads of a campaign row apart: its `updated_at`, which every write stamps. */
+function rowVersion(row: AgencyCampaignRecord): string {
+  const at = (row as { updated_at?: Date | string | null }).updated_at;
+  return at instanceof Date ? at.toISOString() : String(at ?? '');
 }

@@ -198,6 +198,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 81 |
+| `apps/server/test/unit/agency/pacing-skip.test.ts` | 23 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
 | `apps/server/test/unit/agency/profile-in-use-reference-check.test.ts` | 23 |
@@ -269,9 +270,9 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 
 ### `apps/server/src/agency/pacing/`
 
-The pacing engine's parts, split out of `pacing-engine.ts`: `leader-lease.ts` (the per-campaign Redis leader lease), `campaign-announcer.ts` (the `campaign_state` broadcasts and their `flagGated` / `reportedStuck` latches), `caller-id-pool.ts` (usable caller IDs and the round-robin pick), `in-flight.ts` (tracking in-flight ticks and completion notices so `stop()` can wait for them). Tested through the `PacingEngine` suites above.
+The pacing engine's parts, split out of `pacing-engine.ts`: `leader-lease.ts` (the per-campaign Redis leader lease), `campaign-announcer.ts` (the `campaign_state` broadcasts and their `flagGated` / `reportedStuck` latches), `caller-id-pool.ts` (usable caller IDs and the round-robin pick), `in-flight.ts` (tracking in-flight ticks and completion notices so `stop()` can wait for them), `round.ts` (one round's per-account reads and shared headroom budget), `read-cache.ts` (the generation-guarded TTL cache of campaign rows and account limits), `invalidation-bus.ts` (`PacingInvalidationBus`: the JSON events that wake a skipped campaign and drop cached reads, and the in-process implementation), `limit-invalidation.ts` (wraps the `ConcurrencyControl` seam so a limit invalidation also publishes `account_limit_changed`). Tested through the `PacingEngine` suites above; `pacing-skip.test.ts` covers rounds, the skip, the bus, the caches and the budget.
 
-Files: `caller-id-pool.ts`, `campaign-announcer.ts`, `in-flight.ts`, `leader-lease.ts`
+Files: `caller-id-pool.ts`, `campaign-announcer.ts`, `in-flight.ts`, `invalidation-bus.ts`, `leader-lease.ts`, `limit-invalidation.ts`, `read-cache.ts`, `round.ts`
 
 ### `apps/server/src/ai/`
 
@@ -908,6 +909,8 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/station-floor.test.ts` | ~2 | 150-agent join / connect / available storm and a reconnect storm through the real routes |
 | `apps/server/test/integration/load/station-floor-soak.test.ts` | ~1 | 100 agents, about 520 calls through wrap-up and disposition; console = Redis = session row |
 | `apps/server/test/integration/load/floor-run.test.ts` | ~1 | 100 agents, 5 campaigns, 3 tenants, 2,200 contacts to exhaustion; invariants and the pacing law every round |
+| `apps/server/test/integration/load/pacing-skip.test.ts` | ~5 | The scheduled path: available→dial within one round after idle (real timers), the safety tick finds an unannounced change, a lowered limit reaches two engines on one bus (and through the TTL), a churning floor keeps the pacing law with no missed wake-up |
+| `apps/server/test/integration/load/pacing-statements.test.ts` | ~2 | Statement harness: pg statements and Redis commands per second for N campaigns × M agents, idle and at the limit (`PACING_HARNESS_*`) |
 | `apps/server/test/integration/load/agent-churn.test.ts` | ~2 | Breaks, drops, re-attaches, leaves and late joins: no orphaned reservation; 1 `it.fails` (Available during an announced call) |
 | `apps/server/test/integration/load/concurrency-cap.test.ts` | ~4 | Guards on real Redis gate dials without losing contacts; 2 `it.fails` (provider share ignored by the tick; refused dial stamped `dialed_at`) |
 | `apps/server/test/integration/load/tenant-isolation.test.ts` | ~1 | A saturated tenant beside a small one: no starvation, caps and DNC scoped per tenant |
@@ -930,7 +933,9 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/hostile-input-fuzz.test.ts` | ~5 | Seeded fuzz over every route from `onRoute`: 4xx per contract, never a 500 or a stack; 1 `it.fails` (headerless multipart part hangs) |
 
 Harnesses beside them: `integration/load/floor-harness.ts` and `floor-pool.ts` (multi-tenant world
-on one real `AgencyRuntime`), `station-floor-harness.ts`, `voicelink-load-harness.ts` (real
+on one real `AgencyRuntime`; `scheduled: true`, or `FLOOR_SCHEDULED=1` for every floor suite, drives
+the engine's `runRound` instead of `tickOnce`), `statement-counter.ts` (counts pg statements and Redis
+commands for the pacing statement harness), `station-floor-harness.ts`, `voicelink-load-harness.ts` (real
 `buildApp` pointed at the mock carrier, `assertNoLeaks`), `load-harness.ts` (bulk-seeded floor for
 the API suites), `unit/load/station-load-harness.ts`.
 

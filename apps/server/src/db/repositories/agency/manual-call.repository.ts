@@ -40,6 +40,7 @@ import type { AgencyManualCallRecord } from '../../models/agency.model.js';
 import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 import { keysetCondition, params, toKeysetPage } from './query-builders.js';
 import { projectManualCallRow, type AgencyManualCallJoinedRow } from './projections.js';
+import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 
 type Db = Pick<PoolClient, 'query'>;
 
@@ -314,7 +315,13 @@ export class AgencyManualCallRepository {
       RETURNING *`,
       [id, input.endedAt ?? null, input.outcome, input.endReason, input.talkSeconds, input.unplaced === true],
     );
-    return rows[0] ?? null;
+    const ended = rows[0] ?? null;
+    // A soft-phone call held one of the account's slots (pacing counts it). Inside a
+    // caller's transaction the end is not visible yet, so that caller publishes.
+    if (ended && !deps.client) {
+      publishPacingInvalidation({ type: 'account_capacity_freed', tenantId: ended.tenant_id, accountId: ended.account_id });
+    }
+    return ended;
   }
 
   /**
@@ -544,6 +551,10 @@ export class AgencyManualCallRepository {
       RETURNING *`,
       [[...input.liveIds], input.createdBefore ?? null],
     );
+    const accounts = new Map(rows.map((r) => [`${r.tenant_id}:${r.account_id}`, r]));
+    for (const r of accounts.values()) {
+      publishPacingInvalidation({ type: 'account_capacity_freed', tenantId: r.tenant_id, accountId: r.account_id });
+    }
     return rows;
   }
 

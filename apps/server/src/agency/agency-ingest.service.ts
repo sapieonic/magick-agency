@@ -25,6 +25,7 @@ import {
 } from './agency-ingest-job.repository.js';
 
 import { rejectedExportKey } from './agency-ingest-keys.js';
+import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 
 const log = createChildLogger({ component: 'agency-ingest-service' });
 
@@ -448,6 +449,8 @@ export class AgencyIngestService {
             contacts: dialable,
           });
           foldCoreChunkResult(chunkResult);
+          // Contacts arrived: a pacing leader that found nothing to claim ticks again.
+          publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaignId! });
 
           chunkIndex += 1;
           progress.chunks_sent = chunkIndex;

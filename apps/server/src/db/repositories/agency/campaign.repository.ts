@@ -16,6 +16,18 @@ import { CAMPAIGN_INSERT_COLUMNS_SQL } from './sql-fragments.js';
 import { iso } from './projections.js';
 import { createRetryCampaign, previewRetry } from './campaign-retry.js';
 import { campaignHealthInputs, campaignStats, campaignStatsSeries } from './campaign-stats.js';
+import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
+
+/**
+ * Every write to a campaign row goes out as `campaign_changed`, so a pacing leader's
+ * cached row is dropped and the campaign ticks in full on the next round
+ * (`pacing/invalidation-bus.ts`). After the autocommitted UPDATE, so the woken tick
+ * reads the new row. Only when a row was written: a guard that matched nothing
+ * changed nothing.
+ */
+function announceCampaignChanged(row: AgencyCampaignRecord | null | undefined): void {
+  if (row) publishPacingInvalidation({ type: 'campaign_changed', campaignId: row.id });
+}
 
 /**
  * The columns {@link AgencyCampaignRepository.update} may write. Deliberately not
@@ -327,6 +339,7 @@ export class AgencyCampaignRepository {
       `UPDATE agency_campaigns SET ${sets.join(', ')}, updated_at = now() WHERE id = $1 RETURNING *`,
       values,
     );
+    announceCampaignChanged(rows[0]);
     return rows[0] ?? null;
   }
 
@@ -479,6 +492,7 @@ export class AgencyCampaignRepository {
         pausing ? new Date() : null,
       ],
     );
+    announceCampaignChanged(rows[0]);
     return rows[0] ?? null;
   }
 
@@ -529,6 +543,7 @@ export class AgencyCampaignRepository {
       RETURNING *`,
       [campaignId, measuredPct],
     );
+    announceCampaignChanged(rows[0]);
     return rows[0] ?? null;
   }
 

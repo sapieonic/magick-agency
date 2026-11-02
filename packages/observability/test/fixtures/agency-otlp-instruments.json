@@ -169,6 +169,21 @@
     ]
   },
   {
+    "name": "agency_pacing_missed_wakeups_total",
+    "kind": "Counter",
+    "description": "Pacing safety ticks that found work no invalidation event announced",
+    "attributes": []
+  },
+  {
+    "name": "agency_pacing_ticks_total",
+    "kind": "Counter",
+    "description": "Scheduled pacing ticks, full or skipped, by the cause of a full tick",
+    "attributes": [
+      "cause",
+      "mode"
+    ]
+  },
+  {
     "name": "agency_predial_gate_total",
     "kind": "Counter",
     "description": "Pre-dial gate decisions, by gate and what the tick did about it",

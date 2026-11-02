@@ -659,6 +659,16 @@ export interface FloorWorldOptions {
    * reservation CAS, `uq_agency_attempt_live`, the attempt-number index) must.
    */
   splitBrain?: boolean;
+  /**
+   * Drive the engine's SCHEDULED path instead of `tickOnce`: the engine leads every
+   * campaign (lease taken, `beginLeading`), its round timer is off, and each
+   * `round()` calls `runRound()` — so a campaign whose last tick was quiescent is
+   * SKIPPED unless an invalidation event (or the safety tick) wakes it. The pacing
+   * law then also proves that no wake-up the floor's churn needs is missed.
+   * Default: on when `FLOOR_SCHEDULED=1` (and the world is not split-brain), so
+   * every floor suite can be re-run against the scheduled path.
+   */
+  scheduled?: boolean;
 }
 
 export const NO_DELAY_RETRY_POLICY = {
@@ -818,6 +828,20 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
   }
 
   for (const agent of agents) await bringOnline(agent);
+
+  const scheduled = opts.scheduled ?? (process.env['FLOOR_SCHEDULED'] === '1' && !opts.splitBrain);
+  if (scheduled) {
+    if (opts.splitBrain) throw new Error('Floor harness: scheduled and splitBrain do not combine');
+    rt.pacing.setAutoRounds(false);
+    const engine = rt.pacing as unknown as {
+      lease: { tryAcquire(id: string): Promise<boolean> };
+      beginLeading(row: unknown): void;
+    };
+    for (const c of campaigns) {
+      if (!(await engine.lease.tryAcquire(c.id))) throw new Error(`Floor harness: could not lead ${c.spec.label}`);
+      engine.beginLeading(await agencyCampaignRepository.findById(c.id));
+    }
+  }
 
   const world = {
     seed,
@@ -1013,7 +1037,9 @@ export async function createFloorWorld(opts: FloorWorldOptions) {
       const inputs = measure ? await world.pacingInputs() : {};
       const before = measure ? await attemptCounts() : null;
       const order = rng.shuffle(campaigns);
-      if (fork) {
+      if (scheduled) {
+        await rt.pacing.runRound();
+      } else if (fork) {
         const f = fork;
         await Promise.all(order.flatMap((c) => [rt.pacing.tickOnce(c.id), f.tickOnce(c.id)]));
       } else if (parallelTicks) {

@@ -73,6 +73,19 @@ export class StationRegistry {
     return `${this.keyPrefix}agency:station:${sessionId}`;
   }
 
+  private readonly attachListeners = new Set<(entry: { sessionId: string; campaignId: string | null }) => void>();
+
+  /**
+   * Be told after every attach. An agent whose `available` lease outlived a dropped
+   * socket becomes dialable again on reconnect with no state write at all (the
+   * rehydrate reads the live lease), so the attach itself is the pacing engine's
+   * wake-up for it (wired by the runtime). Total: a throwing listener is logged.
+   */
+  onAttached(listener: (entry: { sessionId: string; campaignId: string | null }) => void): () => void {
+    this.attachListeners.add(listener);
+    return () => { this.attachListeners.delete(listener); };
+  }
+
   /** Register a newly-opened station socket and claim ownership of the agent. */
   async attach(input: StationAttachInput): Promise<void> {
     const entry: Omit<StationEntry, 'lastSeen'> = { ...input, clientKind: input.clientKind ?? 'web' };
@@ -105,6 +118,13 @@ export class StationRegistry {
     await this.claimOwnership(entry.sessionId);
     log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind },
       'Station socket attached');
+    for (const listener of this.attachListeners) {
+      try {
+        listener({ sessionId: entry.sessionId, campaignId: entry.campaignId });
+      } catch (err) {
+        log.warn({ err, sessionId: entry.sessionId }, 'Station attach listener threw');
+      }
+    }
   }
 
   /**

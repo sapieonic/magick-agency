@@ -28,6 +28,24 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from './query-builders.js';
 import { projectAttemptRow } from './projections.js';
+import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
+
+/**
+ * Tell pacing that live calls ENDED on these rows' accounts, so a campaign held at
+ * its account limit ticks again at once (`pacing/invalidation-bus.ts`). Once per
+ * account. Called after the autocommitted UPDATE returned, so the end is visible to
+ * the count the woken tick runs.
+ */
+function announceCapacityFreed(rows: ReadonlyArray<{ tenant_id: string; account_id: string; state: string }>): void {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row.state !== 'ended') continue;
+    const key = `${row.tenant_id}:${row.account_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    publishPacingInvalidation({ type: 'account_capacity_freed', tenantId: row.tenant_id, accountId: row.account_id });
+  }
+}
 
 const log = createChildLogger({ component: 'agency-repository' });
 
@@ -226,6 +244,7 @@ export class AgencyAttemptRepository {
         patch.abandon_reason ?? null,
       ],
     );
+    if (state === 'ended' && rows[0]) announceCapacityFreed(rows);
     return rows[0] ?? null;
   }
 
@@ -727,6 +746,7 @@ export class AgencyAttemptRepository {
       RETURNING *`,
       [AGENCY_ATTEMPT_LIVE_STATES as unknown as string[], olderThan],
     );
+    announceCapacityFreed(rows);
     return rows;
   }
 
@@ -770,6 +790,7 @@ export class AgencyAttemptRepository {
       RETURNING *`,
       [attemptIds, AGENCY_ATTEMPT_LIVE_STATES as unknown as string[]],
     );
+    announceCapacityFreed(rows);
     return rows;
   }
 

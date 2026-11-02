@@ -155,14 +155,17 @@ describe('voice ↔ agency boot and stop order', () => {
     vi.spyOn(engine.bridge, 'gracefulShutdown').mockImplementation(async () => {
       events.push('bridge.drain'); return drain();
     });
+    // Scheduled ticks come from the engine's ROUND timer (`runRound`, one round over
+    // every led campaign every 250ms), so a round is what is counted: a round run
+    // after the stop began means a timer survived it.
     let stopping = false;
     let ticksAfterStop = 0;
     let ticks = 0;
-    const tick = runtime.pacing.tickOnce.bind(runtime.pacing);
-    vi.spyOn(runtime.pacing, 'tickOnce').mockImplementation(async (id: string) => {
+    const round = runtime.pacing.runRound.bind(runtime.pacing);
+    vi.spyOn(runtime.pacing, 'runRound').mockImplementation(async () => {
       ticks++;
       if (stopping) ticksAfterStop++;
-      return tick(id);
+      return round();
     });
 
     // index.ts's sequence: voice, then agency; stops reversed.
@@ -186,7 +189,7 @@ describe('voice ↔ agency boot and stop order', () => {
       if (stop === stopAgency) { stopping = true; events.push('agency.stop'); }
       await stop();
     }
-    // Long enough for several 250ms ticks had any interval survived.
+    // Long enough for several 250ms rounds had the timer survived.
     await new Promise((r) => setTimeout(r, 1_000));
 
     // (b) No tick once the agency stop began; pacing fully relinquished; and the

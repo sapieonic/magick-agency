@@ -129,7 +129,10 @@ provider guard (the two guard calls go through `getConcurrencyControl()`). The u
 the account guard) go through it too. The voice engine registers the implementation in
 `apps/server/src/bootstrap/voice.ts`; until then every call throws, so a write before wiring fails
 loudly. `apps/server/test/integration/app/concurrency-seam-wiring.test.ts` proves the wiring through
-`buildApp`.
+`buildApp`. `startAgency` then wraps the registered implementation (`agency/pacing/limit-invalidation.ts`):
+each `invalidateAccountLimit` / `invalidateProviderLimits` also publishes `account_limit_changed` on
+the pacing invalidation bus, so the pacing engine's cached limit is dropped at the same point as the
+guards'. The interface does not change; the agency stop unwraps it.
 
 ### 3.4 Super-admin credential routes → carrier credential service
 
