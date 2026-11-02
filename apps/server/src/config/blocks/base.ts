@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SERVICE_NAME } from '@magick-agency/observability/service';
 import type { Env } from '../env.js';
 import { resolveMetricsExportIntervalMs } from '../../utils/otel-sdk-config.js';
+import { WS_LARGEST_LEGITIMATE_MESSAGE_BYTES, WS_MAX_PAYLOAD_DEFAULT_BYTES } from '../../utils/ws-limits.js';
 
 /**
  * Base block: process (`config.server`), Postgres (`config.db`), Redis (`config.redis`),
@@ -72,6 +73,18 @@ export const baseConfigSchema = z.object({
      * 200/min bucket.
      */
     trustProxyHops: z.coerce.number().int().min(1, 'TRUST_PROXY_HOPS must be at least 1 (0 buckets every client under the proxy IP)').default(1),
+    /**
+     * `WS_MAX_PAYLOAD_BYTES`: the largest inbound WebSocket message, on every WebSocket route
+     * (`ws`'s `maxPayload`, set where `app.ts` registers `@fastify/websocket`). A bigger one
+     * closes the socket with 1009. Default 64 KiB; the derivation per route is in
+     * `src/utils/ws-limits.ts`. Never below the largest legitimate message (a 1 s `pcm16`
+     * station frame), or a legitimate client would be disconnected; `ws`'s own default is
+     * 100 MiB, buffered and parsed on the event loop.
+     */
+    wsMaxPayloadBytes: z.coerce.number().int()
+      .min(WS_LARGEST_LEGITIMATE_MESSAGE_BYTES, `WS_MAX_PAYLOAD_BYTES must be at least ${WS_LARGEST_LEGITIMATE_MESSAGE_BYTES} (the largest legitimate WebSocket message)`)
+      .max(16 * 1024 * 1024)
+      .default(WS_MAX_PAYLOAD_DEFAULT_BYTES),
   }),
   db: z.object({
     /**
@@ -155,6 +168,7 @@ export function readBaseEnv(env: Env) {
       env: env['NODE_ENV'],
       logLevel: env['LOG_LEVEL'],
       trustProxyHops: env['TRUST_PROXY_HOPS'],
+      wsMaxPayloadBytes: env['WS_MAX_PAYLOAD_BYTES'],
     },
     db: {
       url: env['DATABASE_URL'],

@@ -307,7 +307,8 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
       '{"event":"media"}',
       '{"event":"media","media":{"payload":12345}}',
       '{"event":"media","media":{"payload":null}}',
-      JSON.stringify({ event: 'media', media: { payload: 'A'.repeat(200_000) } }), // oversized: dropped before decode
+      // (An oversized frame is no longer here: past `maxPayload`, 64 KiB, the transport closes
+      // the stream with 1009 before the bridge sees it. Pinned by its own case below.)
       '{"event":"mark","mark":{"name":"x"}}',
       '{"event":"dtmf","dtmf":{"digit":"5"}}',
       Buffer.from([0xff, 0x00, 0xfe, 0x01]),
@@ -366,6 +367,39 @@ describe(`VoiceLink media WebSocket under load (calls ${CALLS}, seed ${LOAD_SEED
         expect({ outcome: row.outcome, code: row.error_code }, ctx(i, p))
           .toEqual({ outcome: 'unsupported_media_format', code: 'UNSUPPORTED_MEDIA_FORMAT' });
       }
+    }
+    expect([...endedCounts(r).values()].every((v) => v === 1)).toBe(true);
+    await assertNoLeaks(r, plans.map((p) => p.station));
+  }, 120_000);
+
+  // The transport bound (`maxPayload`, `src/utils/ws-limits.ts`) applies to the carrier's
+  // stream too: one `ws` server serves every route. A frame past it (the 200 KB media frame
+  // that used to reach the bridge's own 128 000-character drop) is refused by `ws` with 1009,
+  // which closes the stream; for VoiceLink that is the hang-up, so the answered call ends
+  // `pstn_stream_closed`, once. No legitimate carrier frame is near it: VoiceLink sends 20 ms
+  // of A-law, 216 base64 characters.
+  it('a carrier frame past the transport bound closes the stream with 1009 and settles the call once', async () => {
+    const r = rig!;
+    const plans: Plan[] = [];
+    for (let i = 0; i < 3; i++) {
+      const steps: CallScript['steps'] = [
+        { do: 'connect' },
+        { do: 'start' },
+        { do: 'raw', frames: [JSON.stringify({ event: 'media', media: { payload: 'A'.repeat(200_000) } })] },
+        { do: 'waitForServerClose' },
+        { do: 'webhook', spec: carrierScripts.webhooks.endedAnswered(new Date().toISOString(), 1) },
+      ];
+      plans.push({ number: numberFor(i), station: new LoadStationSocket(), script: { name: 'oversized', steps } });
+    }
+    await dialAll(r, plans);
+    await r.carrier.settled();
+    const rows = await waitAllTerminal(r, plans.map((p) => p.callId!));
+    for (const [i, p] of plans.entries()) {
+      const call = carrierCallOf(r, p);
+      expect(call.errors, ctx(i, p)).toEqual([]);
+      expect(call.close, ctx(i, p)).toMatchObject({ by: 'server', code: 1009 });
+      expect(p.station.media, ctx(i, p)).toHaveLength(0);
+      expect(rows.get(p.callId!)!.outcome, ctx(i, p)).toBe('pstn_stream_closed');
     }
     expect([...endedCounts(r).values()].every((v) => v === 1)).toBe(true);
     await assertNoLeaks(r, plans.map((p) => p.station));

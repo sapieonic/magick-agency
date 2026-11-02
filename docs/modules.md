@@ -36,6 +36,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 | `apps/server/test/integration/app/trust-proxy.test.ts` | ~4 |
 | `apps/server/test/unit/app/max-param-length.test.ts` | 2 |
 | `apps/server/test/unit/app/request-id.test.ts` | 2 |
+| `apps/server/test/unit/app/websocket-max-payload.test.ts` | 4 |
 | `apps/server/test/unit/deploy/migrate.test.ts` | 9 |
 
 ### `apps/server/src/agency/`
@@ -823,9 +824,9 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-limits.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
