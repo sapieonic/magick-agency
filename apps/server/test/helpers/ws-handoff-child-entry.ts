@@ -3,6 +3,10 @@
  * adoption path (`IpcChannel.onHandoff` → `adoptUpgrade` → `@fastify/websocket` on a
  * Fastify instance that never listens), with the two WebSocket routes reduced to the
  * A-law passthrough relay. Each socket is greeted with where it landed.
+ *
+ * Plus a mobile station on the real `StationRegistry` (no Redis), and a socket that reports
+ * what the registry holds, so a test can see the liveness probe on an adopted socket: its
+ * pings, its pongs renewing `lastSeen`, and its timer and listeners gone with the socket.
  */
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
@@ -12,6 +16,7 @@ import { IpcChannel, parentTransport } from '../../src/cluster/ipc-channel.js';
 import { processIdentityFromEnv } from '../../src/cluster/roles.js';
 import { adoptUpgrade } from '../../src/cluster/ws-adopt.js';
 import { websocketPluginOptions } from '../../src/utils/ws-limits.js';
+import { StationRegistry } from '../../src/agency/station-registry.js';
 
 const identity = processIdentityFromEnv(process.env);
 if (identity.kind !== 'child') throw new Error('ws-handoff-child-entry needs a child role');
@@ -45,6 +50,21 @@ async function main(): Promise<void> {
       }
     });
     hello(ws, 'pstn', req);
+  });
+  const stations = new StationRegistry(null, '', `test:mw${slot}`);
+  app.get<{ Params: { sessionId: string } }>('/probe/station/:sessionId', { websocket: true }, (ws, req) => {
+    const { sessionId } = req.params;
+    // As the station socket does: detach on close, by socket.
+    ws.on('close', () => { void stations.detach(sessionId, ws); });
+    void stations.attach({ sessionId, campaignId: null, tenantId: 't', accountId: 'a', agentUserId: 'u', ws, clientKind: 'mobile' })
+      .then(() => hello(ws, 'probe', req));
+  });
+  app.get<{ Params: { sessionId: string } }>('/probe/inspect/:sessionId', { websocket: true }, (ws, req) => {
+    const entry = stations.get(req.params.sessionId);
+    ws.send(JSON.stringify({
+      event: 'inspect', slot, probes: stations.probeCount(), stations: stations.size(),
+      lastSeen: entry?.lastSeen ?? null, pongListeners: entry ? entry.ws.listenerCount('pong') : null,
+    }));
   });
   await app.ready();
 

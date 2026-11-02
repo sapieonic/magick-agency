@@ -74,13 +74,13 @@ Run from this directory (dotenv resolves from cwd):
 pnpm vitest run test/unit/agency/pacing-engine.test.ts
 pnpm vitest run -c vitest.config.integration.ts test/integration/agency/<file>.test.ts
 pnpm vitest run -t "<test name>"
-INTEGRATION_LANE=rest pnpm test:integration        # skip the ~3 min wall-clock files
+INTEGRATION_LANE=rest pnpm test:integration        # skip the ~4.5 min wall-clock files
 ```
 
 - Unit config excludes `test/integration/**`; integration runs file-serially (one database) with
   `packages/db/test/helpers/global-setup.ts`, which drops and re-migrates the test DB.
-- `INTEGRATION_LANE=wall-clock|rest` splits off the two files that wait on real Redis TTLs
-  (listed in `vitest.config.integration.ts`); unset runs everything.
+- `INTEGRATION_LANE=wall-clock|rest` splits off the files that wait on real timers (Redis
+  TTLs, the mobile liveness grace; listed in `vitest.config.integration.ts`); unset runs everything.
 - **Chaos suites:** `test/integration/agency/chaos/`, run with integration.
 - **Load, soak and scenario suites:** `test/{unit,integration}/load/` and `test/unit/scenarios/`.
   `LOAD_SCALE` multiplies their sizes for a deliberate soak; `LOAD_SEED` reproduces a red run

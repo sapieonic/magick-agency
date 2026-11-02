@@ -6,6 +6,12 @@
  *
  *   pnpm tsx scripts/load/cluster-media-load.ts --calls 200 --media-workers 2 --seconds 20
  *   pnpm tsx scripts/load/cluster-media-load.ts --calls 500 --media-workers 0   # one process
+ *   pnpm tsx scripts/load/cluster-media-load.ts --calls 200 --client 0.5         # half on the mobile app
+ *
+ * `--client web|mobile|<ratio>`: which app the stations join as (`client=`), or the share of
+ * them on the mobile app, interleaved (default `web`). A mobile station is probed by its
+ * worker with an RFC 6455 ping every 3 s and pings itself every 10 s, as the app does; the
+ * report splits the frames heard by app and counts the probe pings received.
  *
  * Runs on the worktree's TEST database and Redis db (`.test-env.local.json`), which it
  * truncates and flushes: never alongside an integration run. Nothing in the call path is
@@ -24,6 +30,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TEST_DB_URL } from '../../../../packages/db/test/helpers/test-db.js';
 import { TEST_REDIS_URL } from '../../test/helpers/test-redis.js';
+import { MOBILE_STATION_PROBE_MS } from '@magick-agency/domain/timers';
 
 function arg(name: string, fallback: number): number {
   const i = process.argv.indexOf(`--${name}`);
@@ -34,6 +41,17 @@ const CALLS = arg('calls', 200);
 const MEDIA_WORKERS = arg('media-workers', 2);
 const SECONDS = arg('seconds', 20);
 const FLOOR_PROCS = arg('floor-procs', 2);
+const MOBILE_RATIO = ((): number => {
+  const i = process.argv.indexOf('--client');
+  const v = i >= 0 ? process.argv[i + 1] : 'web';
+  if (v === 'web') return 0;
+  if (v === 'mobile') return 1;
+  const r = Number(v);
+  if (!(r >= 0 && r <= 1)) throw new Error(`--client must be web, mobile or a ratio in [0, 1], got ${v}`);
+  return r;
+})();
+/** Agent `i` is on the mobile app: `MOBILE_RATIO` of them, spread evenly. */
+const clientOf = (i: number): 'web' | 'mobile' => (Math.floor((i + 1) * MOBILE_RATIO) > Math.floor(i * MOBILE_RATIO) ? 'mobile' : 'web');
 const TENANT = '8b1d0c8e-3d0e-4c7a-8b44-1f6b0a000001';
 const ACCOUNT = '8b1d0c8e-3d0e-4c7a-8b44-1f6b0a000002';
 
@@ -126,7 +144,8 @@ async function main(): Promise<void> {
   const userIds = Array.from({ length: CALLS }, (_, i) => `8b1d0c8e-3d0e-4c7a-8b44-${String(i).padStart(12, '0')}`);
   const started = Date.now();
   await Promise.all(floors.map((f, i) => {
-    f.send({ join: { tenantId: TENANT, accountId: ACCOUNT, campaignId: campaign.id, userIds: userIds.filter((_, j) => j % FLOOR_PROCS === i) } });
+    const mine = userIds.map((u, j) => ({ u, j })).filter(({ j }) => j % FLOOR_PROCS === i);
+    f.send({ join: { tenantId: TENANT, accountId: ACCOUNT, campaignId: campaign.id, userIds: mine.map((x) => x.u), clients: mine.map((x) => clientOf(x.j)) } });
     return message(f, 'joined');
   }));
   const joinedMs = Date.now() - started;
@@ -149,11 +168,16 @@ async function main(): Promise<void> {
   const bridgedAtStart = await bridged();
   await new Promise((r) => setTimeout(r, 3_000)); // settle
 
-  const stats = async (): Promise<{ heard: number; mediaIn: number }> => {
-    const heardParts = await Promise.all(floors.map((f) => { f.send({ stats: true }); return message<{ heard: number }>(f, 'stats'); }));
+  interface FloorStats { heard: number; heardWeb: number; heardMobile: number; probePings: number; mobileAgents: number; closed: number }
+  const stats = async (): Promise<FloorStats & { mediaIn: number }> => {
+    const parts = await Promise.all(floors.map((f) => { f.send({ stats: true }); return message<FloorStats>(f, 'stats'); }));
     carrier.send({ stats: true });
     const c = await message<{ mediaIn: number }>(carrier, 'stats');
-    return { heard: heardParts.reduce((n, p) => n + p.heard, 0), mediaIn: c.mediaIn };
+    const sum = (k: keyof FloorStats) => parts.reduce((n, p) => n + p[k], 0);
+    return {
+      heard: sum('heard'), heardWeb: sum('heardWeb'), heardMobile: sum('heardMobile'),
+      probePings: sum('probePings'), mobileAgents: sum('mobileAgents'), closed: sum('closed'), mediaIn: c.mediaIn,
+    };
   };
 
   // The window: per second, every process's CPU and the server's own loop view.
@@ -191,8 +215,20 @@ async function main(): Promise<void> {
   const max = (xs: number[] = []) => (xs.length ? Math.max(...xs) : null);
 
   const bridgedAtEnd = await bridged();
+  // Bridged calls by the app their agent is on (the share of each among the bridged).
+  const { rows: bridgedRows } = await getTestPool().query<{ reserved_agent_id: string }>(
+    `SELECT reserved_agent_id FROM agency_call_attempts WHERE bridged_at IS NOT NULL AND state <> 'ended'`);
+  const { rows: sessionUsers } = await getTestPool().query<{ id: string; agent_user_id: string }>('SELECT id, agent_user_id FROM agency_agent_sessions');
+  const userIndex = new Map(userIds.map((u, i) => [u, i]));
+  const sessionClient = new Map(sessionUsers.map((r) => [r.id, clientOf(userIndex.get(r.agent_user_id) ?? 0)]));
+  const bridgedMobile = bridgedRows.filter((r) => sessionClient.get(r.reserved_agent_id) === 'mobile').length;
   const report = {
     calls: CALLS,
+    mobileShare: MOBILE_RATIO,
+    mobileAgents: s1.mobileAgents,
+    bridgedMobileAtWindowEnd: bridgedMobile,
+    bridgedWebAtWindowEnd: bridgedRows.length - bridgedMobile,
+    stationsClosedDuringRun: s1.closed,
     bridgedAtWindowStart: bridgedAtStart,
     bridgedAtWindowEnd: bridgedAtEnd,
     mediaWorkers: MEDIA_WORKERS,
@@ -202,7 +238,15 @@ async function main(): Promise<void> {
     framesPerSecond: {
       expectedEachWay: bridgedAtStart * 50,
       heardByAgents: Math.round((s1.heard - s0.heard) / secs),
+      heardByWebAgents: Math.round((s1.heardWeb - s0.heardWeb) / secs),
+      expectedByWebAgents: (bridgedRows.length - bridgedMobile) * 50,
+      heardByMobileAgents: Math.round((s1.heardMobile - s0.heardMobile) / secs),
+      expectedByMobileAgents: bridgedMobile * 50,
       receivedByCarrier: Math.round((s1.mediaIn - s0.mediaIn) / secs),
+    },
+    mobileProbePings: {
+      perAgentPerSecond: s1.mobileAgents ? Number(((s1.probePings - s0.probePings) / secs / s1.mobileAgents).toFixed(3)) : null,
+      expectedPerAgentPerSecond: Number((1000 / MOBILE_STATION_PROBE_MS).toFixed(3)),
     },
     serverProcesses: serverPids.map((pid, i) => ({ pid, role: i === 0 ? (MEDIA_WORKERS > 0 ? 'primary' : 'single') : 'child', cpuPct: avg(cpuSamples.get(pid)) })),
     serverLoops: Object.fromEntries([...loopSamples].map(([k, v]) => [k, { elu: avg(v.elu), eluMax: max(v.elu), loopDelayP99Ms: avg(v.p99) }])),
