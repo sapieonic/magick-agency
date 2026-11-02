@@ -109,10 +109,16 @@ describe('pacing rounds: skip, wake, share (load)', () => {
     const seen = observe(world.runtime.pacing);
     await lead(world.runtime.pacing, [r.id]);
 
-    // An idle period long enough for skips AND a safety tick.
-    await sleep(PACING_SAFETY_TICK_MS + 500);
+    // An idle period long enough for skips AND a safety tick. Wait for the safety tick
+    // itself rather than a fixed sleep: on real timers under a loaded full run the 1 s
+    // timer slips, and a fixed `SAFETY + 500 ms` sleep then misses a tick that does come.
+    // The deadline (3 × the safety interval) still fails a safety tick that never fires.
+    const safetySeen = (): boolean => seen.some((o) => o.mode === 'full' && o.cause === 'safety');
+    const safetyDeadline = Date.now() + 3 * PACING_SAFETY_TICK_MS;
+    await sleep(PACING_SAFETY_TICK_MS);
+    while (!safetySeen() && Date.now() < safetyDeadline) await sleep(50);
     expect(seen.filter((o) => o.mode === 'skipped').length).toBeGreaterThan(2);
-    expect(seen.some((o) => o.mode === 'full' && o.cause === 'safety')).toBe(true);
+    expect(safetySeen()).toBe(true);
     expect(await attemptCount(r.id)).toBe(0);
 
     const agent = world.agentsOf('R')[0]!;
