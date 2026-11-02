@@ -443,16 +443,15 @@ runs unchanged.
 
 ## Test counts
 
-Latest run, 2026-11-02, after the review fixes, the mobile-station tests and D9/D12, from
-inside each package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
-`pnpm test:release` 10 pass; super-admin, web-ui and domain unchanged since the row below, not
-re-run):
+Latest run, 2026-11-02, after the second review's fixes, from inside each package (`pnpm lint`
+clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and `pnpm test:release` 10 pass;
+super-admin, web-ui and domain unchanged since the row below, not re-run):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7562 passed + 42 skipped (380 files) | 1536 passed + 10 expected fail (166 files) |
+| `apps/server` | 7569 passed + 42 skipped (380 files) | 1538 passed + 10 expected fail (166 files) |
 | `packages/db` | 427 | 509 (46 files) |
-| `apps/console` | 4917 (251 files) | — |
+| `apps/console` | 4921 (251 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
