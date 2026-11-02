@@ -194,13 +194,30 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   (`packages/domain/src/timers.ts`). Only the session's own agent can mint its token (Q8).
 - **Pacing** (`pacing-engine.ts`, with `pacing/`: leader lease, caller-ID pool, campaign announcer,
   in-flight tracking). One leader per campaign via a Redis lease (15 s, renewed every
-  5 s; a supervise pass every 2 s takes leadership); the leader ticks each campaign it leads every
-  250 ms. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
+  5 s; a supervise pass every 2 s takes leadership); the leader runs one ROUND every 250 ms over
+  the campaigns it leads. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
   `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency/contact.repository.ts`)
   plus the `uq_agency_attempt_live` unique index, so two leaders cannot dial one contact.
   `pre-dial-gates.ts` checks phone validity, then calling hours, then DNC (fail closed).
   `stop()` waits up to 5 s (`TICK_DRAIN_TIMEOUT_MS`) for ticks in flight, and every dial site
   re-checks `mayDial`, so no tick dials after shutdown begins.
+- **Pacing rounds, skips and invalidation** (`pacing-engine.ts` `runRound`, `pacing/round.ts`,
+  `pacing/invalidation-bus.ts`, `pacing/read-cache.ts`). A round starts a tick for every led
+  campaign together, so campaigns of one account read the account limit and its live calls once
+  per round and draw new dials from one headroom budget (the live-call count is never carried into
+  the next round). A campaign whose last full tick was QUIESCENT (no agent available, no account
+  slot, no usable caller ID, or not running) is skipped with no database or Redis work until an
+  event wakes it or the safety tick (`PACING_SAFETY_TICK_MS`, 1 s) comes due; a campaign that
+  planned a dial ticks every round. The events go over `PacingInvalidationBus`, plain JSON so a
+  child-process IPC implementation can replace the in-process one: `campaign_changed` (every
+  campaign repository write), `account_limit_changed` (the `ConcurrencyControl` seam's limit
+  invalidations, wrapped by `startAgency`), `account_capacity_freed` (attempt and manual-call
+  ends), `agent_available` (a state write into `available`, a station attach), `contacts_changed`
+  (ingest chunks). The campaign row and the account limit are cached between full ticks in a
+  generation-guarded TTL cache (2 s backstop), dropped by their events and re-primed by the
+  supervise pass. `tickOnce` is a forced full tick that reads everything fresh. Measured by
+  `test/integration/load/pacing-statements.test.ts`; `agency_pacing_ticks_total` and
+  `agency_pacing_missed_wakeups_total` show the skip ratio and any wake-up the bus missed.
 - **Dialer** (`agency-dialer.ts`, `dial-dispatcher.ts`, with `dialer/`: live-attempt record, contact
   settlement). Reserves the agent before the dial, re-asserts the lease and asks the pacing engine
   (`stillAuthorised`) right before `createBridgedCall`, registers the lifecycle listener before
