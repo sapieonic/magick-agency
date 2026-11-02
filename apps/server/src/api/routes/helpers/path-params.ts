@@ -118,8 +118,26 @@ export function rejectPathEscapingParams(): preHandlerHookHandler {
         return reply.code(400).send(pathEscapingParamRejection(name));
       }
     }
+    canonicaliseUuidParams(request);
     return undefined;
   };
+}
+
+/**
+ * A UUID is the same id in either case, but the server keys state by the string: Redis
+ * keys, in-process maps, and with media workers the worker that owns a session
+ * (`cluster/roles.ts` `slotFor`). So a UUID-shaped param is lower-cased here, at the edge,
+ * to the form Postgres returns, and every key built from it below matches the stored id.
+ */
+export function canonicalUuid(value: string): string {
+  return UUID_PATH_PARAM.test(value) ? value.toLowerCase() : value;
+}
+
+function canonicaliseUuidParams(request: FastifyRequest): void {
+  const params = (request.params ?? {}) as Record<string, unknown>;
+  for (const [name, value] of Object.entries(params)) {
+    if (typeof value === 'string') params[name] = canonicalUuid(value);
+  }
 }
 
 /**
@@ -146,6 +164,7 @@ export function requireUuidPathParams(): preHandlerHookHandler {
         });
       }
     }
+    canonicaliseUuidParams(request);
     return undefined;
   };
 }

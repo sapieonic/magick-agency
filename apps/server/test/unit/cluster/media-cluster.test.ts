@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
+import { slotFor } from '../../../src/cluster/roles.js';
 import { MediaCluster } from '../../../src/cluster/media-cluster.js';
 import { parseConfig } from '../../../src/config/load.js';
 import { EMPTY_SNAPSHOT, FakeChildProcess } from '../../helpers/fake-child-process.js';
@@ -15,6 +17,8 @@ function cluster(opts: Partial<ConstructorParameters<typeof MediaCluster>[0]> = 
     fork: (slot) => {
       const child = new FakeChildProcess('media', slot);
       child.handlers.set('reaper.snapshot', () => EMPTY_SNAPSHOT);
+      // Answers a forwarded internal request with the slot it ran in.
+      child.handlers.set('core.inject', () => ({ statusCode: 200, headers: {}, body: Buffer.from(String(slot)).toString('base64') }));
       forks.push(child);
       setImmediate(() => child.ready());
       return child.asChild();
@@ -34,6 +38,45 @@ afterEach(async () => {
 });
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+describe('MediaCluster: a session id in upper case', () => {
+  /** FNV-1a as hashed before the fix: case-sensitive. */
+  function rawSlot(key: string, n: number): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return h % n;
+  }
+  /**
+   * A session id whose upper-case spelling hashed to another slot of three. (With two
+   * slots they never split: a letter and its capital share their low bit, and FNV-1a's
+   * multiplier is odd, so the hash's parity ignores case.)
+   */
+  function splitId(): string {
+    for (let i = 0; i < 10_000; i++) {
+      const id = randomUUID();
+      if (rawSlot(id, 3) !== rawSlot(id.toUpperCase(), 3)) return id;
+    }
+    throw new Error('no id found whose case changes its slot');
+  }
+
+  it('is forwarded (callCore) and handed off (station upgrade) to the worker that owns the stored id', async () => {
+    const { c, forks } = cluster({ count: 3 });
+    running = c;
+    await c.start();
+    const id = splitId();
+    const owner = slotFor(id, 3);
+
+    const res = await c.coreInjector(
+      { method: 'POST', url: `/api/v1/agency/sessions/${id.toUpperCase()}/break`, headers: {}, payload: '{}' },
+      async () => { throw new Error('ran locally'); },
+    );
+    expect(res.rawPayload.toString()).toBe(String(owner));
+    expect(forks[owner]!.requests('core.inject')).toHaveLength(1);
+    for (const f of forks) if (f.slot !== owner) expect(f.requests('core.inject')).toHaveLength(0);
+
+    expect(c.slotFor({ by: 'session', param: 'sessionId' }, { sessionId: id.toUpperCase() }, {})).toBe(owner);
+  });
+});
 
 describe('MediaCluster snapshot refresh', () => {
   it('MEDIA_SNAPSHOT_REFRESH_MS comes through config: 5 s by default, 0 allowed (off)', () => {

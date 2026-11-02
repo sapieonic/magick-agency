@@ -43,9 +43,15 @@ export function processIdentityFromEnv(env: Readonly<Record<string, string | und
  * The slot that owns `key` among `n` (FNV-1a, 32-bit). Deterministic, so a session's
  * station socket, its agent-control requests and its dials all reach the same media
  * worker, and a reconnect lands where its live call is (`docs/scaling.md` §1.4).
+ *
+ * The key is a session id, a UUID, and a UUID is one id whatever its letters' case:
+ * Postgres and the edge's UUID checks accept either. It is hashed lower-cased (the form
+ * Postgres returns), so an id a client sends in upper case is owned by the same worker
+ * as the stored one, rather than forwarded to another that has none of its state.
  */
 export function slotFor(key: string, n: number): number {
   if (!Number.isInteger(n) || n < 1) throw new RangeError(`slot count must be a positive integer, got ${n}`);
+  key = key.toLowerCase();
   let h = 0x811c9dc5;
   for (let i = 0; i < key.length; i++) {
     h ^= key.charCodeAt(i);
