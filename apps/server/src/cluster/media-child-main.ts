@@ -68,7 +68,9 @@ export async function runMediaChildProcess(opts: MediaChildProcessOptions): Prom
   const pool = initDbPool({
     url: config.db.url,
     poolMin: 0,
-    poolMax: config.db.poolMax,
+    // Its own pool, sized for its own calls' writes (`MEDIA_WORKER_DB_POOL_MAX`): every
+    // process's pool counts against the server's max_connections (`db-connection-budget.ts`).
+    poolMax: config.processes.mediaWorkerDbPoolMax,
     ...dbTlsOptions(config),
   });
   void pool;

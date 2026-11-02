@@ -20,6 +20,8 @@ import { runAnalysisChildProcess } from './cluster/analysis-child-main.js';
 import { runMediaChildProcess } from './cluster/media-child-main.js';
 import { prepareMediaPrimary, startMediaWorkers } from './cluster/primary.js';
 import { createLoopSampler } from './cluster/loop-sampler.js';
+import { DB_CONNECTION_HEADROOM, planDbConnections, readDbConnectionBudget, type DbConnectionBudget } from './cluster/db-connection-budget.js';
+import { setDbConnectionBudgetProvider } from '@magick-agency/observability/metrics/shared';
 
 /**
  * One process, single replica. Start order: storage, PostHog, the app, each area's
@@ -70,6 +72,24 @@ async function main(): Promise<void> {
     },
   });
 
+  // With worker processes the host's pools add up: compare the sum with the server's limit
+  // once, now (`cluster/db-connection-budget.ts`). Logged and reported, never refused.
+  const analysisWorkers = config.dialerAnalysis?.enabled ? config.dialerAnalysis.processes : 0;
+  let dbBudget: DbConnectionBudget | null = null;
+  if (media || analysisWorkers > 0) {
+    const plan = planDbConnections(config, { mediaWorkers: media?.count ?? 0, analysisWorkers });
+    dbBudget = await readDbConnectionBudget((sql) => pool.query(sql), plan)
+      .catch((err: unknown) => { logger.warn({ err, plan }, 'Could not read Postgres max_connections to check the host\'s pools'); return null; });
+    if (dbBudget) {
+      const budget = dbBudget;
+      setDbConnectionBudgetProvider(() => ({ planned: budget.total + DB_CONNECTION_HEADROOM, allowed: budget.maxConnections - budget.reserved }));
+      if (!budget.fits) {
+        logger.error({ db: budget },
+          'The host\'s Postgres pools can open more connections than the server allows (max_connections): lower DB_POOL_MAX / MEDIA_WORKER_DB_POOL_MAX or raise max_connections');
+      }
+    }
+  }
+
   const app = await buildApp({
     ctx,
     logger: false,
@@ -78,7 +98,10 @@ async function main(): Promise<void> {
     // to keep low), then each media worker's. One process: ready as before (Postgres and
     // Redis), and the detail is its own loop alone.
     readiness: async () => {
-      const self = { role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop(), inFlight: 0, draining: shuttingDown };
+      const self = {
+        role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop(), inFlight: 0, draining: shuttingDown,
+        ...(dbBudget ? { db: dbBudget } : {}),
+      };
       if (!media) return { ready: true, detail: [self] };
       const health = await media.health();
       return { ready: health.every((h) => h !== null && !h.draining), detail: [self, ...health] };

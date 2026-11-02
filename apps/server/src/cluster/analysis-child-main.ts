@@ -22,6 +22,7 @@ import type { PostCallAnalysisService } from '../analysis/index.js';
 import type { DialerAnalysisConfig } from '../core/dialer-analysis-runner.js';
 import { IpcChannel, parentTransport } from './ipc-channel.js';
 import { startAnalysisChild } from './analysis-child.js';
+import { analysisChildDbPoolMax } from './db-connection-budget.js';
 
 const log = createChildLogger({ component: 'analysis-child' });
 
@@ -57,8 +58,9 @@ export async function runAnalysisChildProcess(opts: AnalysisChildProcessOptions)
   initDbPool({
     url: config.db.url,
     poolMin: 0,
-    // A slot holds a connection only for a claim, a heartbeat or the final transaction.
-    poolMax: Math.min(config.db.poolMax, analysisConfig.concurrency + 2),
+    // A slot holds a connection only for a claim, a heartbeat or the final transaction. The
+    // primary counts this pool in the host's total (`db-connection-budget.ts`).
+    poolMax: analysisChildDbPoolMax(config.db.poolMax, analysisConfig.concurrency),
     ...dbTlsOptions(config),
   });
   auditLogger.start();
