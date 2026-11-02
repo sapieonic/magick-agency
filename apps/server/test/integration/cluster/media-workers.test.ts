@@ -41,7 +41,7 @@ interface Rig {
  * `contacts` contacts; agents joined until each of the two slots holds at least
  * `perSlot` (session ids are random, so a fixed count could land on one slot).
  */
-async function startRig(contacts: number, frames: number, perSlot = 2): Promise<Rig> {
+async function startRig(contacts: number, frames: number, perSlot = 2, extraEnv: Record<string, string> = {}): Promise<Rig> {
   await truncateAll();
   await flushTestRedis();
   await getTestPool().query(
@@ -76,6 +76,7 @@ async function startRig(contacts: number, frames: number, perSlot = 2): Promise<
     RATE_LIMIT_CARRIER_MEDIA_MAX: '1000000',
     RATE_LIMIT_STATION_MAX: '1000000',
     LOG_LEVEL: process.env['CLUSTER_TEST_LOG_LEVEL'] ?? 'warn',
+    ...extraEnv,
   });
   origin = server.origin;
   const floor = new ClusterFloor(server.origin);
@@ -117,7 +118,7 @@ describe('media workers: the real server as a primary and two workers', () => {
     const r = rig;
     const detail = await r.server.detail();
     expect(detail.status).toBe('ready');
-    expect(detail.processes?.map((p) => p?.role)).toEqual(['media', 'media']);
+    expect(detail.processes?.map((p) => p?.role)).toEqual(['primary', 'media', 'media']);
 
     // Each station is held by the worker its session hashes to.
     for (const a of r.floor.agents) {
@@ -162,7 +163,11 @@ describe('media workers: the real server as a primary and two workers', () => {
   }, 240_000);
 
   it('a media worker killed mid-call: the other keeps its audio, the dead slot is reaped and comes back', async () => {
-    rig = await startRig(40, 3_000); // 60 s calls: still live when the worker is killed
+    // 60 s calls: still live when the worker is killed. The workers' 5 s snapshots are off
+    // (MEDIA_SNAPSHOT_REFRESH_MS=0): the primary learns which slots a worker holds only from
+    // its `call.lease` deltas, so the slot reap below can release a call's slots only if the
+    // deltas carried them.
+    rig = await startRig(40, 3_000, 2, { MEDIA_SNAPSHOT_REFRESH_MS: '0' });
     const r = rig;
     const agents = r.floor.agents.length;
     r.floor.startTalking();
@@ -171,14 +176,31 @@ describe('media workers: the real server as a primary and two workers', () => {
         `SELECT count(*)::int AS n FROM agency_call_attempts WHERE campaign_id = $1 AND bridged_at IS NOT NULL AND state <> 'ended'`, [r.campaignId]);
       return rows[0]!.n === agents;
     });
-    const before = await r.server.detail();
-    const deadPid = before.processes![0]!.pid;
     const survivors = r.floor.agents.filter((a) => slotFor(a.sessionId, 2) === 1);
     const victims = r.floor.agents.filter((a) => slotFor(a.sessionId, 2) === 0);
+    // One more agent on slot 0, so a call is admitted on the doomed worker a moment before
+    // it is killed.
+    let late = null as Awaited<ReturnType<typeof r.floor.join>> | null;
+    for (let i = 100; i < 140 && !late; i++) {
+      const a = await r.floor.join({
+        tenantId: TENANT, accountId: ACCOUNT, campaignId: r.campaignId,
+        agentUserId: `7a1d0c8e-3d0e-4c7a-8b44-${String(i).padStart(12, '0')}`,
+      });
+      if (slotFor(a.sessionId, 2) === 0) late = a;
+    }
+    await until('the late call admitted', 30_000, async () => {
+      const { rows } = await getTestPool().query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM agency_call_attempts WHERE reserved_agent_id = $1 AND webrtc_call_id IS NOT NULL`, [late!.sessionId]);
+      return rows[0]!.n === 1;
+    });
+    const admittedAt = Date.now();
+    const before = await r.server.detail();
+    const deadPid = before.processes!.find((p) => p?.role === 'media' && p.slot === 0)!.pid;
     expect(survivors.length).toBeGreaterThan(0);
     expect(victims.length).toBeGreaterThan(0);
 
     process.kill(deadPid, 'SIGKILL');
+    expect(Date.now() - admittedAt).toBeLessThan(1_000);
     const heardAtKill = survivors.map((a) => a.heard);
 
     // The dead slot's attempts are closed and their contacts requeued; its agents are offline.
@@ -188,6 +210,14 @@ describe('media workers: the real server as a primary and two workers', () => {
       const dead = rows.filter((x) => slotFor(x.reserved_agent_id, 2) === 0);
       return dead.length > 0 && dead.every((x) => x.state === 'ended' && x.outcome === 'orphaned');
     });
+    // Every slot the dead worker held is released by the reap, now, not by the 330 s lock
+    // TTL: the global guard's locks are exactly the survivors' live calls, the late call's
+    // included in what was released.
+    const liveCalls = async (): Promise<number> => (await getTestPool().query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM agency_calls WHERE status IN ('initiating','ringing','in_progress')`)).rows[0]!.n;
+    await until('global locks back to the live calls', 10_000, async () =>
+      (await r.floor.redisClient.keys('active_calls:lock:*')).length === await liveCalls(),
+    async () => `${(await r.floor.redisClient.keys('active_calls:lock:*')).length} locks for ${await liveCalls()} live calls`);
     const { rows: sessions } = await getTestPool().query<{ id: string; state: string }>('SELECT id, state FROM agency_agent_sessions');
     for (const s of sessions) if (slotFor(s.id, 2) === 0) expect(s.state).toBe('offline');
     // The survivors' calls never stopped: their stations kept hearing the customer.
@@ -195,7 +225,8 @@ describe('media workers: the real server as a primary and two workers', () => {
     survivors.forEach((a, i) => expect(a.heard - heardAtKill[i]!).toBeGreaterThan(50));
     const { rows: live } = await getTestPool().query<{ reserved_agent_id: string }>(
       `SELECT reserved_agent_id FROM agency_call_attempts WHERE campaign_id = $1 AND state <> 'ended'`, [r.campaignId]);
-    expect(live.map((x) => x.reserved_agent_id).sort()).toEqual(survivors.map((a) => a.sessionId).sort());
+    expect(live.every((x) => slotFor(x.reserved_agent_id, 2) === 1)).toBe(true);
+    for (const a of survivors) expect(live.map((x) => x.reserved_agent_id)).toContain(a.sessionId);
 
     // The slot comes back with a new process.
     await until('slot 0 back', 30_000, async () => {
@@ -221,7 +252,7 @@ describe('media workers: the real server as a primary and two workers', () => {
         `SELECT count(*)::int AS n FROM agency_call_attempts WHERE campaign_id = $1 AND bridged_at IS NOT NULL AND state <> 'ended'`, [r.campaignId]);
       return rows[0]!.n === agents;
     });
-    const workerPids = (await r.server.detail()).processes!.map((p) => p!.pid);
+    const workerPids = (await r.server.detail()).processes!.filter((p) => p?.role === 'media').map((p) => p!.pid);
     r.server.child.kill('SIGKILL');
     const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
     await until('workers gone', 20_000, () => workerPids.every((pid) => !alive(pid)));

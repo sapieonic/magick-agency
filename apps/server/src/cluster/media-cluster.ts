@@ -31,7 +31,7 @@ import type { VoicelinkWebhookForwarder } from '../api/routes/webhooks.routes.js
 import { getDialerAnalysisWorker } from '../core/dialer-analysis-worker-handle.js';
 import { ChildSupervisor } from './child-supervisor.js';
 import { IpcRequestError, type IpcChannel } from './ipc-channel.js';
-import type { ReaperSnapshotBody, WsHandoff } from './ipc-protocol.js';
+import type { CallLease, ReaperSnapshotBody, WsHandoff } from './ipc-protocol.js';
 import { IpcDialDispatcher } from './ipc-dial-dispatcher.js';
 import { slotFor } from './roles.js';
 import { StationDirectory } from './station-directory.js';
@@ -43,8 +43,12 @@ const CORE_INJECT_DEADLINE_MS = 15_000;
 const WEBHOOK_DEADLINE_MS = 10_000;
 const RETURN_RESERVED_DEADLINE_MS = 5_000;
 const SNAPSHOT_DEADLINE_MS = 5_000;
-/** How often the workers' live call ids are refreshed for the guard host's stale sweep. */
-export const SNAPSHOT_REFRESH_MS = 5_000;
+/**
+ * How often the workers' live call ids are refreshed for the guard host's stale sweep, and
+ * the slot leases reconciled. `MEDIA_SNAPSHOT_REFRESH_MS` overrides it for the chaos suite,
+ * which turns it off to prove the slot reap works from the deltas alone.
+ */
+export const SNAPSHOT_REFRESH_MS = Number(process.env['MEDIA_SNAPSHOT_REFRESH_MS'] ?? 5_000);
 
 export interface MediaClusterOptions {
   count: number;
@@ -57,8 +61,12 @@ export interface MediaClusterOptions {
   grantFor?: (campaignId: string) => number | null;
   /** Wake this process's guard self-heal poll (a worker's calls ended). */
   wakeSelfHeal?: () => void;
-  /** Awaited after a media worker exits unexpectedly, before it is re-forked (the slot reap). */
-  onWorkerExit?: (slot: number, lastSnapshot: ReaperSnapshotBody | null) => Promise<void>;
+  /**
+   * Awaited after a media worker exits unexpectedly, before it is re-forked (the slot
+   * reap): its last snapshot, and the exact slots it held (`call.lease` deltas, reconciled
+   * by each snapshot).
+   */
+  onWorkerExit?: (slot: number, lastSnapshot: ReaperSnapshotBody | null, leases: CallLease[]) => Promise<void>;
   crashLoop?: { max: number; onCrashLoop: (slot: number) => void };
   readyTimeoutMs?: number;
   restartBackoffMs?: readonly number[];
@@ -71,6 +79,8 @@ export class MediaCluster implements WsHandoffTarget {
   private grantFor: (campaignId: string) => number | null;
   private wakeSelfHeal: () => void;
   private readonly snapshots = new Map<number, ReaperSnapshotBody>();
+  /** Per slot: the telephony slots its worker holds, by concurrency key. */
+  private readonly leases = new Map<number, Map<string, CallLease>>();
   private snapshotTimer: NodeJS.Timeout | null = null;
 
   constructor(private readonly opts: MediaClusterOptions) {
@@ -88,8 +98,10 @@ export class MediaCluster implements WsHandoffTarget {
       onExit: async (exit) => {
         this.directory.workerDown(exit.slot);
         const last = this.snapshots.get(exit.slot) ?? null;
+        const held = [...(this.leases.get(exit.slot)?.values() ?? [])];
         this.snapshots.delete(exit.slot);
-        await opts.onWorkerExit?.(exit.slot, last);
+        this.leases.delete(exit.slot);
+        await opts.onWorkerExit?.(exit.slot, last, held);
       },
       ...(opts.crashLoop ? { crashLoop: opts.crashLoop } : {}),
       ...(opts.readyTimeoutMs !== undefined ? { readyTimeoutMs: opts.readyTimeoutMs } : {}),
@@ -116,8 +128,10 @@ export class MediaCluster implements WsHandoffTarget {
 
   async start(): Promise<void> {
     await this.supervisor.start();
-    this.snapshotTimer = setInterval(() => { void this.refreshSnapshots(); }, SNAPSHOT_REFRESH_MS);
-    this.snapshotTimer.unref?.();
+    if (SNAPSHOT_REFRESH_MS > 0) {
+      this.snapshotTimer = setInterval(() => { void this.refreshSnapshots(); }, SNAPSHOT_REFRESH_MS);
+      this.snapshotTimer.unref?.();
+    }
     await this.refreshSnapshots();
   }
 
@@ -137,6 +151,12 @@ export class MediaCluster implements WsHandoffTarget {
     channel.onEvent('pacing.invalidate', (ev) => publishPacingInvalidation(ev));
     channel.onEvent('voice.wake_self_heal', () => this.wakeSelfHeal());
     channel.onEvent('analysis.wake', () => getDialerAnalysisWorker()?.wake());
+    channel.onEvent('call.lease', (change) => {
+      let held = this.leases.get(slot);
+      if (!held) { held = new Map(); this.leases.set(slot, held); }
+      if (change.op === 'held') held.set(change.lease.concurrencyKey, change.lease);
+      else held.delete(change.concurrencyKey);
+    });
   }
 
   // ─── the upgrade handoff ─────────────────────────────────────────────────
@@ -275,6 +295,9 @@ export class MediaCluster implements WsHandoffTarget {
       try {
         const s = await channel.request('reaper.snapshot', {}, { deadlineMs: SNAPSHOT_DEADLINE_MS });
         this.snapshots.set(slot, s);
+        // Reconcile: the channel is FIFO, so a delta sent before the worker took the
+        // snapshot arrived before this answer and is in it; one sent after arrives after.
+        this.leases.set(slot, new Map(s.leases.map((l) => [l.concurrencyKey, l])));
         return s;
       } catch {
         return null;

@@ -14,6 +14,7 @@
  * the concurrency invalidations) and forks the workers.
  */
 import type { ChildProcess } from 'node:child_process';
+import os from 'node:os';
 import { logger } from '@magick-agency/observability';
 import type Redis from 'ioredis';
 import type { AppContext } from '../app-context.js';
@@ -27,7 +28,7 @@ import { getConcurrencyControl, setConcurrencyControl, type ConcurrencyControl }
 import { releaseTelephonyLease } from '../core/telephony-release.js';
 import { agencyCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
 import { MediaCluster } from './media-cluster.js';
-import type { ReaperSnapshotBody } from './ipc-protocol.js';
+import type { CallLease, ReaperSnapshotBody } from './ipc-protocol.js';
 import { forkServerChild } from './fork.js';
 import { probeSocketReadStop } from './socket-pause.js';
 import { slotFor } from './roles.js';
@@ -51,6 +52,7 @@ export const MEDIA_WORKER_STOP_GRACE_MS = 30_000;
 export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPrimaryOptions): Promise<MediaCluster | null> {
   const { config } = ctx;
   const count = config.processes.mediaWorkers;
+  warnIfMoreProcessesThanCores(count, config.dialerAnalysis?.enabled ? config.dialerAnalysis.processes : 0);
   if (count === 0) return null;
   if (!(await probeSocketReadStop())) {
     logger.warn({ mediaWorkers: count, node: process.version },
@@ -69,7 +71,7 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
     fork: opts.forkChild ?? ((slot) => forkServerChild({ role: 'media', slot, heapMb: config.processes.mediaWorkerHeapMb })),
     readOwner: (sessionId) => ownership.ownerOf(sessionId),
     setAgentOffline: async (sessionId) => { await agents.set(sessionId, 'offline'); },
-    onWorkerExit: (slot, last) => reapSlot(cluster, slot, last),
+    onWorkerExit: (slot, last, held) => reapSlot(cluster, slot, last, held),
     crashLoop: {
       max: config.processes.crashLoopMax,
       onCrashLoop: (slot) => opts.onFatal(`media worker ${slot} crash loop`),
@@ -97,6 +99,25 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
   setCoreInjector(cluster.coreInjector);
   setVoicelinkWebhookForwarder(cluster.webhookForwarder);
   return cluster;
+}
+
+/**
+ * Not refused (the config does not depend on the host), but said once at boot: more
+ * processes than cores share the cores, and a media worker that waits for a core delays
+ * its calls' audio (`docs/operations.md`, "Sizing the media workers").
+ */
+export function warnIfMoreProcessesThanCores(
+  mediaWorkers: number,
+  analysisWorkers: number,
+  cores: number = os.availableParallelism(),
+  warn: (fields: Record<string, number>, msg: string) => void = (f, m) => logger.warn(f, m),
+): boolean {
+  if (mediaWorkers + analysisWorkers === 0) return false;
+  const processes = 1 + mediaWorkers + analysisWorkers;
+  if (processes <= cores) return false;
+  warn({ cores, processes, mediaWorkers, analysisWorkers, primary: 1 },
+    'More server processes than CPU cores: they will share cores (MEDIA_WORKERS + ANALYSIS_WORKERS + the primary)');
+  return true;
 }
 
 /** After the bootstraps: bind what exists only now, then fork the workers and wait for them. */
@@ -150,27 +171,37 @@ export async function startMediaWorkers(cluster: MediaCluster): Promise<() => Pr
  * soft-phone call of a session in its slot is dead by definition (the startup reap's
  * rule, narrowed to one slot), and nothing new can be owned by the slot until this ends.
  */
-export async function reapSlot(cluster: MediaCluster, slot: number, last: ReaperSnapshotBody | null): Promise<void> {
+export async function reapSlot(
+  cluster: MediaCluster,
+  slot: number,
+  last: ReaperSnapshotBody | null,
+  held: readonly CallLease[] = last?.leases ?? [],
+): Promise<void> {
   const runtime = getAgencyRuntime();
   const voice = getVoiceEngine();
   const isDead = (sessionId: string): boolean => slotFor(sessionId, cluster.count) === slot;
-  // Capacity back now, not when the 330 s locks lapse: the calls the worker last reported.
-  if (voice && last) {
-    for (const lease of last.leases) {
+  // Capacity back now, not when the 330 s locks lapse: exactly the slots the worker held,
+  // from its `call.lease` deltas (a call admitted a moment before the crash included).
+  if (voice) {
+    for (const lease of held) {
       await releaseTelephonyLease(voice.guardHost, {
         concurrencyKey: lease.concurrencyKey, tenantId: lease.tenantId, accountId: lease.accountId,
         provider: lease.provider, source: 'webrtc', callId: lease.callId,
       }).catch(() => 'failure');
     }
-    if (last.activeCallIds.length > 0) {
-      await agencyCallRepository.failActiveByIds(last.activeCallIds, 'worker_exited')
-        .catch((err) => logger.error({ err, slot }, 'Could not fail the dead media worker\'s call rows'));
-    }
-    voice.guardHost.wakeSelfHeal();
   }
   if (runtime) {
     const report = await runtime.reaper.reapSessions(isDead)
       .catch((err) => { logger.error({ err, slot }, 'Slot reap failed'); return null; });
-    logger.warn({ slot, report, calls: last?.activeCallIds.length ?? null }, 'Reaped a dead media worker\'s calls, attempts and agents');
+    // Their call rows: what the worker last reported live, and the calls of the attempts
+    // the reap just ended (a call placed after that report included).
+    const callIds = [...new Set([...(last?.activeCallIds ?? []), ...(report?.callIds ?? [])])];
+    if (callIds.length > 0) {
+      await agencyCallRepository.failActiveByIds(callIds, 'worker_exited')
+        .catch((err) => logger.error({ err, slot }, 'Could not fail the dead media worker\'s call rows'));
+    }
+    logger.warn({ slot, report, slotsReleased: held.length, callRowsFailed: callIds.length },
+      'Reaped a dead media worker\'s calls, attempts and agents');
   }
+  voice?.guardHost.wakeSelfHeal();
 }

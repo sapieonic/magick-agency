@@ -84,6 +84,13 @@ describe('body decoders', () => {
     expect(IPC_EVENT_DECODERS['pacing.invalidate']({ type: 'made_up' })).toBeNull();
   });
 
+  it('call.lease: a held lease whole, a release by its key, anything else refused', () => {
+    const decode = IPC_EVENT_DECODERS['call.lease'];
+    expect(decode({ op: 'released', concurrencyKey: 'k' })).toEqual({ op: 'released', concurrencyKey: 'k' });
+    expect(decode({ op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a' } })).toBeNull();
+    expect(decode({ op: 'dropped', concurrencyKey: 'k' })).toBeNull();
+  });
+
   it('every request type has both decoders and a default deadline', () => {
     for (const type of Object.keys(IPC_REQUEST_DECODERS) as Array<keyof typeof IPC_REQUEST_DECODERS>) {
       expect(typeof IPC_REQUEST_DECODERS[type].req).toBe('function');
@@ -106,6 +113,7 @@ describe('body decoders', () => {
       'concurrency.invalidate': { tenantId: 't', accountId: 'a' },
       'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
       'voice.wake_self_heal': {},
+      'call.lease': { op: 'held', lease: { callId: 'c', concurrencyKey: 'k', tenantId: 't', accountId: 'a', provider: 'voicelink' } },
     };
     for (const [type, decode] of Object.entries(IPC_EVENT_DECODERS)) {
       const sample = samples[type];

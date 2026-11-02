@@ -129,6 +129,8 @@ export interface SessionReapReport {
   attempts: number;
   manualCalls: number;
   sessions: number;
+  /** The bridge calls of the attempts it ended, for the caller to fail their rows. */
+  callIds: string[];
 }
 
 /**
@@ -219,7 +221,8 @@ export class AgencyReaper {
       await agencyAgentSessionRepository.setState(sessionId, 'offline')
         .catch((err) => log.warn({ err, sessionId }, 'Could not write a dead worker\'s agent offline'));
     }
-    return { attempts: reaped.length, manualCalls: manual.length, sessions: sessionIds.length };
+    const callIds = reaped.map((a) => a.webrtc_call_id).filter((id): id is string => typeof id === 'string');
+    return { attempts: reaped.length, manualCalls: manual.length, sessions: sessionIds.length, callIds };
   }
 
   /** Periodic sweeps: leaked attempts, lapsed wrap-ups and stranded contacts. */
