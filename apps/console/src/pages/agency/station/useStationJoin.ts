@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createAgencySession, leaveAgencySession } from '../../../api/agency';
 import { closeSoftphoneSession } from '../softphone/closeSoftphoneSession';
 import { useMountedRef } from '../../../hooks/useMountedRef';
-import { errorBody, errorCode } from '../../../utils/agencyErrors';
+import { errorBody, errorCode, retryOnStationTokenUnavailable } from '../../../utils/agencyErrors';
 import {
   conflictIsMidCall,
   joinConflictFallbackSentence,
@@ -182,7 +182,8 @@ export function useStationJoin({
     setJoinError(null);
     setJoinConflict(null);
     const joinKey = `${tenantId}:${accountId}:${campaignId}`;
-    coalesceJoin(joinKey, () => createAgencySession(campaignId, tenantId, accountId))
+    // A 503 `station_token_unavailable` (D9) is retried here, not shown: see the helper.
+    coalesceJoin(joinKey, () => retryOnStationTokenUnavailable(() => createAgencySession(campaignId, tenantId, accountId)))
       .then((session) => {
         rememberLiveSessionFromBootstrap(tenantId, session);
         if (!cancelled) setBootstrap(session);

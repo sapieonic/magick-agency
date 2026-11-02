@@ -73,6 +73,7 @@ import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../..
 import { getVoiceEngine, resetVoiceEngineForTests, startVoice } from '../../../src/bootstrap/voice.js';
 import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
+import { StationTokenUnavailableError } from '../../../src/agency/station-token.js';
 import type { AgencyRuntime } from '../../../src/agency/runtime.js';
 import { agencyAgentSessionRepository, agencySoftphoneSettingsRepository } from '../../../src/db/repositories/agency.repository.js';
 
@@ -329,6 +330,25 @@ describe('soft-phone HTTP routes — real app, real runtime, fake carrier (integ
     await closePool();
     await closeTestPool();
     await closeTestRedis();
+  });
+
+  it('D9: a station token that cannot be stored makes the session open a 503 station_token_unavailable; the retry opens it', async () => {
+    const agent = await user(tenant, account, 'agent');
+    const mint = vi.spyOn(runtime.tokens, 'mint').mockRejectedValueOnce(new StationTokenUnavailableError('any'));
+    try {
+      const refused = await post('/proxy/agency/softphone/sessions', agent);
+      expect(refused.statusCode, refused.body).toBe(503);
+      expect(refused.json()).toMatchObject({ code: 'station_token_unavailable' });
+      expect(refused.body).not.toContain('token=');
+    } finally {
+      mint.mockRestore();
+    }
+    // Nothing half-open: the retry is served as an ordinary open or rehydrate.
+    const retried = await post('/proxy/agency/softphone/sessions', agent);
+    expect([200, 201], retried.body).toContain(retried.statusCode);
+    expect(retried.json().station_ws_url).toMatch(/\?token=/);
+    const left = await post(`/proxy/agency/sessions/${retried.json().session_id}/leave`, agent);
+    expect(left.statusCode, left.body).toBeLessThan(300);
   });
 
   it('a tagged call over HTTP: session → place → answer → hang up → outcome → list/detail → audit', async () => {

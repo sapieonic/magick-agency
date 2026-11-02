@@ -227,6 +227,22 @@ describe('runtime routes through the real app (integration)', () => {
       expect(rows[0].agent_user_id).toBe(w.agentA.id);
     });
 
+    it('D9: a station token that cannot be stored makes the join a 503 station_token_unavailable; the retried join is served', async () => {
+      const mint = vi.spyOn(getAgencyRuntime()!.tokens, 'mint')
+        .mockRejectedValueOnce(new StationTokenUnavailableError('any'));
+      try {
+        const refused = await post('/proxy/agency/sessions', w.agentA, { campaign_id: w.campaign });
+        expect(refused.statusCode, refused.body).toBe(503);
+        expect(refused.json()).toMatchObject({ code: 'station_token_unavailable' });
+        expect(refused.body).not.toContain('token=');
+      } finally {
+        mint.mockRestore();
+      }
+      const retried = await post('/proxy/agency/sessions', w.agentA, { campaign_id: w.campaign });
+      expect([200, 201], retried.body).toContain(retried.statusCode);
+      expect(retried.json().station_ws_url).toMatch(/\?token=/);
+    });
+
     it("another tenant's or a sibling account's campaign is a 404", async () => {
       for (const campaign_id of [w.foreignCampaign, w.siblingCampaign]) {
         const res = await post('/proxy/agency/sessions', w.agentA, { campaign_id });
