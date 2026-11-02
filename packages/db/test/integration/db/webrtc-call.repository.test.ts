@@ -406,4 +406,47 @@ describe('webrtcCallRepository (integration)', () => {
       expect(failed).toEqual([]);
     });
   });
+
+  // ── failActiveByIds (a dead media worker's calls, docs/scaling.md §6.1) ──────
+  describe('failActiveByIds', () => {
+    it('fails exactly the named live rows, whatever their age; other rows and terminal ones are untouched', async () => {
+      const named = [];
+      for (const s of NON_TERMINAL) named.push(await insertWebrtcCall({ status: s }));
+      const endedMeanwhile = await insertWebrtcCall({ status: 'completed', outcome: 'connected' });
+      const otherWorkers = await insertWebrtcCall({ status: 'in_progress' });
+
+      const failed = await webrtcCallRepository.failActiveByIds(
+        [...named.map((r) => r.id), endedMeanwhile.id], 'worker_exited');
+
+      expect(new Set(failed.map((r) => r.id))).toEqual(new Set(named.map((r) => r.id)));
+      for (const f of failed) {
+        expect(f).toMatchObject({ status: 'failed', outcome: 'stuck_active_call', error_code: 'STUCK_ACTIVE_CALL', error_message: 'stuck active call: worker_exited' });
+        expect(f.ended_at).toBeInstanceOf(Date);
+        expect(f.talk_time_seconds).toBe(0);
+      }
+      const { rows } = await getTestPool().query<{ id: string; status: string; outcome: string | null }>(
+        'SELECT id, status, outcome FROM agency_calls WHERE id = ANY($1::uuid[])', [[endedMeanwhile.id, otherWorkers.id]]);
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      // A call that ended on its own keeps its own outcome; a call not named is not touched.
+      expect(byId.get(endedMeanwhile.id)).toMatchObject({ status: 'completed', outcome: 'connected' });
+      expect(byId.get(otherWorkers.id)).toMatchObject({ status: 'in_progress' });
+    });
+
+    it('keeps a duration and talk time already recorded, and fills a missing duration from created_at', async () => {
+      const kept = await insertWebrtcCall({ status: 'in_progress', talk_time_seconds: 42, duration_seconds: 60 });
+      const filled = await insertWebrtcCall({ status: 'in_progress' });
+      await getTestPool().query('UPDATE agency_calls SET created_at = $2 WHERE id = $1', [filled.id, ago(90)]);
+      const failed = await webrtcCallRepository.failActiveByIds([kept.id, filled.id], 'worker_exited');
+      const byId = new Map(failed.map((r) => [r.id, r]));
+      expect(byId.get(kept.id)).toMatchObject({ talk_time_seconds: 42, duration_seconds: 60 });
+      expect(byId.get(filled.id)!.duration_seconds).toBeGreaterThanOrEqual(89);
+    });
+
+    it('is idempotent, and an empty list touches nothing (no query)', async () => {
+      const row = await insertWebrtcCall({ status: 'ringing' });
+      expect(await webrtcCallRepository.failActiveByIds([row.id], 'worker_exited')).toHaveLength(1);
+      expect(await webrtcCallRepository.failActiveByIds([row.id], 'worker_exited')).toHaveLength(0);
+      expect(await webrtcCallRepository.failActiveByIds([], 'worker_exited')).toEqual([]);
+    });
+  });
 });
