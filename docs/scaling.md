@@ -826,23 +826,30 @@ which replaces the primary too.
   Forwarding costs the primary work in proportion to log volume, which is small.
 - **OTel in children.** `instrumentation.ts` is the first import of the one bundle every role
   runs, so each child starts its own SDK with the same env. `shutdownOtelSdk()` is called
-  last in each child's shutdown. Trace context crosses IPC in the envelope's `tp`.
-- **New metrics**, declared in `packages/observability/src/metrics/voice.ts` (the area that
-  owns the WebSocket surfaces and the limiter), all bounded label sets:
-  - `ws_handoff_total{route, result}`
-  - `ipc_messages_total{role, type, direction, result}`
-  - `ipc_request_duration_seconds{type}`
-  - `ipc_request_failures_total{type, code}`
-  - `ipc_send_backlogged_total{role}`
-  - `cluster_worker_exits_total{role, reason}`
-  - `cluster_slot_reaped_total{what}`
+  last in each child's shutdown. Trace context does **not** cross IPC (as built, §12): the
+  envelope has a `tp` field, unused, and each process traces on its own.
+- **New metrics** (as built), declared in `packages/observability/src/metrics/voice.ts` (the
+  area that owns the WebSocket surfaces and the limiter), all bounded label sets:
+  - `ws_handoff_total{route, result}`: upgrades handed to a worker, or refused instead;
+  - `ipc_requests_total{type, outcome}`: every IPC request by type and `ok` / `timeout` /
+    `gone` / `refused` / `error`;
+  - `ipc_request_duration_seconds{type}`: the round trip of an answered request;
+  - `ipc_messages_dropped_total{reason}`: `malformed`, `unsupported`, `late`, `backlogged`;
+  - `cluster_child_exits_total{role, expected}`: child exits, `expected="false"` for a crash
+    (or a worker the stop had to kill).
+
+  And in `metrics/shared.ts`, beside the pool's own: `db_connections_planned` and
+  `db_connections_allowed`, the host's pools against Postgres's limit (D12). A slot reap is
+  logged (`Reaped a dead media worker's calls, attempts and agents`), not counted.
 - **Grafana.**
   - Existing rules aggregate `by (service_name)` and keep working.
   - *Event-loop delay p99* (`max by (service_name)`) now pages on the worst process, which is
     what an operator wants.
   - New dashboard panels: ELU and p99 delay `by (instance)`, IPC request p99 by type, worker
     exits, handoff failures.
-  - New rules: a media worker exit (any), and a crash loop.
+  - New rule: `agy-cluster-child-crash`, any unexpected child exit. A crash loop has no rule
+    of its own: each of its exits fires that one, and the primary then exits 1 and the
+    container restarts (D4); `agy-service-not-reporting` covers a host that does not come back.
   - `pnpm test:grafana` checks every new rule and panel against the declarations above, so the
     metrics must be declared in the same commit that the panels reference them.
 
@@ -852,7 +859,6 @@ which replaces the primary too.
 |---|---|---|---|---|
 | `MEDIA_WORKERS` | `processes.mediaWorkers` | `base.ts` (new top-level key `processes`) | `0` | 0: single process, exactly as today. N ≥ 1: primary plus N media workers |
 | `MEDIA_WORKER_HEAP_MB` | `processes.mediaWorkerHeapMb` | `base.ts` | `768` | `--max-old-space-size` for each media worker (the fork's `execArgv`; the image's 4096 applies to the primary only) |
-| `PRIMARY_HEAP_MB` | `processes.primaryHeapMb` | `base.ts` | unset (the entrypoint's flag) | lets the entrypoint keep one value per role |
 | `WORKER_CRASH_LOOP_MAX` | `processes.crashLoopMax` | `base.ts` | `5` (per 5 min) | §6.2 |
 | `MEDIA_WORKER_DB_POOL_MAX` | `processes.mediaWorkerDbPoolMax` | `base.ts` | `10` | each media worker's pg pool. Every process has its own pool, so the host's connections are the sum; the primary checks it against `max_connections` at boot (D12, `cluster/db-connection-budget.ts`) |
 | `MEDIA_SNAPSHOT_REFRESH_MS` | `processes.mediaSnapshotRefreshMs` | `base.ts` | `5000` | how often the primary refreshes each worker's `reaper.snapshot` (live call ids, slot leases). 0 = off: diagnostics, and the chaos suite's proof that the slot reap works from the `call.lease` deltas alone |
@@ -947,8 +953,9 @@ ephemeral port against the worktree's test database):
 - `ANALYSIS_WORKERS=2`: two processes drain one queue with no job run twice; one vendor 429
   pauses both.
 
-**Load:** `test/integration/load/multi-process-media.test.ts`, on the existing
-`voicelink-load-harness.ts` and `station-floor-harness.ts`, sized by `LOAD_SCALE`.
+**Load** (as built: a script, not a suite, `apps/server/scripts/load/cluster-media-load.ts`,
+`--calls`, `--media-workers`, `--seconds`; results in `operations.md`, "Sizing the media
+workers". The design below, with its `LOAD_HOST=1` mode, is not built):
 
 - N calls (default 60; `LOAD_SCALE=8` for 480) across 2–3 workers, both legs at 50 fps for
   60 s, through the real primary.
@@ -959,7 +966,11 @@ ephemeral port against the worktree's test database):
   pacing round is skipped for lateness.
 - A `LOAD_HOST=1` mode prints the per-process table for a run on a target host behind nginx.
 
-**Chaos** (`test/integration/agency/chaos/`):
+**Chaos** (as built, the cases live in `test/integration/cluster/*.test.ts`:
+`media-workers.test.ts` kills a worker mid-call and kills the primary, `analysis-processes.test.ts`
+kills an analysis worker mid-job; a crash loop's exit is unit-tested in
+`test/unit/cluster/child-supervisor.test.ts`. The separate files designed below were not
+written, and no slow-worker suite exists):
 
 - `worker-killed-mid-call.test.ts`: SIGKILL W1 with calls live on both workers. W0's calls
   keep flowing (frames counted through the kill). Within one `reapSlot`:
@@ -993,7 +1004,7 @@ lines of change including tests.
 | 6 | `feat(server): worker supervision, slot reap and cluster shutdown`: restart policy, crash loop, `reapSlot` (plus `agencyCallRepository` / attempt repository reads by session set; no migration), shutdown ordering, `/readyz` (+ `?detail=1`); chaos suites | `index.ts`, `app.ts` (`/readyz`), `packages/db` repository additions | L, ~1 200 |
 | 7 | `feat(server,observability): per-process metrics, logs and traces`: instance ids per role, `role`/`slot` log fields, line-forwarding of child output, IPC metrics, Grafana panels and rules | `packages/observability`, `utils/otel-sdk-config.ts`, `grafana/` | M, ~600 |
 | 8 | `test(server): multi-process media load test`: the harness extension of §9, `LOAD_HOST` mode | — | M, ~500 |
-| 9 | `docs: multi-process operation`: `architecture.md`, `operations.md` (config, shutdown, health, sizing), `status.md` invariants (2: "one host, one primary; never scale `server`"), `seams.md` §1 (`src/cluster/` as composition) and §2 (`processes`), `decisions.md` (B16 amended, D1–D11), `DEPLOYMENT.md`; `docker/entrypoint.sh` heap per role; pre-deploy checklist | `docker/entrypoint.sh`, docs | S, ~300 |
+| 9 | `docs: multi-process operation`: `architecture.md`, `operations.md` (config, shutdown, health, sizing), `status.md` invariants (2: "one host, one primary; never scale `server`"), `seams.md` §1 (`src/cluster/` as composition) and §2 (`processes`), `decisions.md` (B16 amended, D1–D11), `DEPLOYMENT.md`; ~~`docker/entrypoint.sh` heap per role~~ (not built, out of scope: no `docker/` change; children get their heap through the fork, §12); pre-deploy checklist | docs | S, ~300 |
 
 Steps 1–3 change no behaviour. Step 2 is the first gain and is independent of the media work.
 Step 4 can ship dark (no config enables it until 5). Steps 5 and 6 should ship together for
@@ -1009,7 +1020,7 @@ service containers.
 | D2 | Session ownership | sticky by `fnv1a(sessionId) mod MEDIA_WORKERS`. A worker crash costs ~1/N of the floor their live calls, and they reconnect in `break` |
 | D3 | Carrier routing | the `w=<slot>` hint in the media and webhook URLs, over a primary-side `callId` map |
 | D4 | Crash policy | re-fork with backoff; more than 5 exits of a slot in 5 min ⇒ the primary exits and the container restarts |
-| D5 | `/readyz` and slow workers | not ready unless every media slot is ready; v1 measures slow workers and does not shed them |
+| D5 | `/readyz` and slow workers | not ready unless every media slot is ready; v1 measures slow workers and does not shed them. **As built (review): ready while at least one media worker answers, each worker's state in the body (`decisions.md` D5, §6.6)** |
 | D6 | Guards with Redis down | each worker's local limit is `ceil(limit / MEDIA_WORKERS)` |
 | D7 | Metrics | `service.instance.id` forced on per process in cluster mode (series × emitting processes) |
 | D8 | Config placement | `MEDIA_WORKERS` in base (`processes`), `ANALYSIS_WORKERS` in the analysis block |
