@@ -206,6 +206,9 @@ production.
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |
 | `DIALER_ANALYSIS_CONCURRENCY` | `8` (1-256) | Analysis jobs in flight in this process; see "Sizing the analysis worker" |
 | `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` | `536870912` (512 MiB) | Recording bytes the analysis slots may hold; at least 2 × `DIALER_MAX_RECORDING_BYTES` |
+| `MEDIA_WORKERS` | `0` (0-64) | Media worker processes ([`scaling.md`](scaling.md)). 0 = one process, as before. N = a primary plus N workers that hold the agents' sockets and relay the audio. On 2 vCPUs more than 1 buys little; 500 calls needs more cores whatever the layout (§8.1) |
+| `MEDIA_WORKER_HEAP_MB` | `768` | Each media worker's `--max-old-space-size` (the primary keeps the entrypoint's) |
+| `WORKER_CRASH_LOOP_MAX` | `5` | More exits of one media worker in 5 minutes makes the primary exit and the container restart (D4) |
 | `ANALYSIS_WORKERS` | `0` (0-32) | Separate analysis processes, each with its own slots and budget; 0 keeps the slots in the server process. See "Sizing the analysis worker" |
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |
@@ -280,6 +283,51 @@ while `dialer_analysis_queue_depth{status="queued"}` grows means too few slots;
 `dialer_analysis_rate_limit_pauses_total` rising means the vendor quota is. `dialer_analysis_in_flight`
 and `dialer_analysis_memory_reserved_bytes` show the pool itself.
 
+### Sizing the media workers
+
+`MEDIA_WORKERS=N` moves the agents' station sockets and their calls' audio relay into N
+processes, so the relay no longer shares a loop with pacing, webhooks and the API
+([`scaling.md`](scaling.md)).
+
+**What it buys.** Each process is one CPU core at most. The relay costs about 35–40 µs of CPU
+per relayed frame, and a call is 100 frames a second (50 each way). So:
+- 200 calls is about 0.75 of a core;
+- 500 calls is about 1.9 cores for the relay alone;
+- nginx and the TLS terminator also handle every frame on the same host (not measured here).
+
+**Measured.** From `apps/server/scripts/load/cluster-media-load.ts`: the real server, the mock
+carrier, real station sockets, 50 frames a second each way per call, 20 s windows. The machine
+is a shared 4-core dev box, and the load generators themselves used 1.1–1.8 of its cores, so
+read the ratios, not the absolutes:
+
+| Calls | `MEDIA_WORKERS` | Calls bridged | Primary (or single) loop: ELU, p99 delay | Each media worker: ELU, p99 delay |
+|---|---|---|---|---|
+| 200 | 0 | 200 | 0.98, 24 ms | – |
+| 200 | 2 | 200 | 0.05, 4 ms | 0.59 / 0.64, 6 ms |
+| 500 | 0 | 250, then no more | 1.00, 69 ms | – |
+| 500 | 2 | 500 | 0.06, 5 ms | 0.97 / 0.95, 44–62 ms |
+| 500 | 3 | 500 | 0.05, 6 ms | 0.88 / 0.81 / 0.90, 23–34 ms |
+
+In every run with workers the primary's loop stays near idle while the workers carry the audio.
+One process saturates at 200 calls, and at 500 it cannot bridge more than about 250.
+
+**How many.**
+- Leave one core for the primary, nginx, the TLS terminator and Redis:
+  `MEDIA_WORKERS = min(vCPUs − 1, ceil(calls ÷ 170))`. 170 calls keeps a worker around 0.6 ELU.
+- On 2 vCPUs, `MEDIA_WORKERS=1` keeps the relay off the loop that paces and serves the API. It
+  does not raise the call ceiling: the relay still has one core.
+- 500 calls needs more than 2 vCPUs whatever the process layout.
+- More processes than cores is allowed and logged once at boot (cores, media, analysis,
+  primary); they then share cores, and a worker waiting for a core delays its calls' audio.
+- Size the RAM for the primary's heap (the entrypoint's 4 GB), plus
+  `MEDIA_WORKERS × MEDIA_WORKER_HEAP_MB`, plus the analysis children, plus Redis, nginx and the
+  OS.
+
+**What to watch.** The *Processes* dashboard row shows event-loop utilisation by instance
+(`:primary`, `:media0`, …): a worker pinned near 1 needs another core. It also shows child
+exits (`agy-cluster-child-crash` warns on any), IPC requests and handoffs. `/readyz?detail=1`
+gives the same per-process view on the host.
+
 ## Deployment invariants
 
 1. **Redis keeps keys for their TTL.** Turn persistence on (AOF or RDB) and set
@@ -289,9 +337,11 @@ and `dialer_analysis_memory_reserved_bytes` show the pool itself.
    cuts a live call's carrier leg and status webhooks; each refusal logs
    `WebRTC WS token missing while Redis answered`. If Redis is down altogether, tokens are accepted
    (a live call is never hard-failed for a Redis outage).
-2. **One replica.** The bridge remembers tokens whose Redis `SET` failed in-process; the
-   runtime, reaper, retention and partition jobs assume one process. Scaling out needs that memo
-   shared or dropped, and a review of every sweep.
+2. **One host, one server container.** Never scale `server`. With `MEDIA_WORKERS` or
+   `ANALYSIS_WORKERS` set, the one container runs a primary and the workers it forks
+   ([`scaling.md`](scaling.md)). The primary is the only process that runs the reaper, the
+   sweeps, retention and partition jobs. A token's Q6 memo is always minted and verified in
+   the same worker. A second server container would break all of that.
 3. **Reachable only through exactly `TRUST_PROXY_HOPS` proxies.** `request.ip` trusts that many
    `X-Forwarded-For` entries from the right and keys every IP rate-limit bucket. If the port is
    reachable directly, a client can set its own IP and evade the limits; if the real chain has a
@@ -335,6 +385,19 @@ rulings of 2026-10-16/17). 5 s plus 30 s stays inside the 45 s grace.
 
 Agents are not returned to the pool on shutdown; after a restart they come back in `break` and must
 choose to go available.
+
+**With media workers** (`MEDIA_WORKERS > 0`), the primary orders the shutdown; the workers
+ignore SIGTERM and SIGINT. HTTP closes first, then:
+
+1. Pacing halts: ticks are drained, leases are given up, and every worker is told no dial may
+   go out.
+2. The workers drain alongside the completion-notice drain. Each worker closes its sockets,
+   stops the shard, ends its live calls and exits; one still running after 30 s is killed.
+3. The analysis children requeue their jobs, voice stops, the audit buffers flush.
+
+The multi-process end-to-end suite (`test/integration/cluster/media-workers.test.ts`) pins that
+the whole tree exits 0 inside 45 s, including with live calls on a worker. A worker whose primary dies hangs its calls up within 5 s and exits.
+Details: [`scaling.md`](scaling.md) §6.
 
 ## Migrations
 
@@ -408,6 +471,12 @@ It reads only the base settings (`DATABASE_URL`, `NODE_ENV`, `DB_SSL_CA`,
 
 `GET /healthz` answers 200 while the process is up. `GET /readyz` answers 200 only when Postgres
 (`SELECT 1`) and Redis (`PING`) respond, else 503. Both are exempt from rate limiting.
+
+With media workers, `/readyz` also needs every media worker to have answered a health ping
+within 1 s and not to be draining (D5). A restarting worker makes it 503 for the second or two
+it takes. `GET /readyz?detail=1` adds the per-process view: role, slot, pid, event-loop
+utilisation, p99 loop delay, live calls (media) or jobs (analysis), and whether it is draining.
+The primary's own loop is listed too.
 
 ## Releases and versioning
 

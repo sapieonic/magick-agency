@@ -380,9 +380,74 @@ Still open from the load suites: eight integration `it.fails` (the provider-shar
 per-provider live-call count, which attempts do not carry). Not exercised: Firefox, Safari and Edge
 on the console's A-law path, and anything against a real VoiceLink call.
 
+### Several processes on one host 2026-11-02 (phase B, [`scaling.md`](scaling.md))
+
+Built to carry 400–500 simultaneous calls on one host. Off by default: with `MEDIA_WORKERS` and
+`ANALYSIS_WORKERS` unset the server is one process, exactly as before, and every earlier suite
+runs unchanged.
+
+- **Media workers (`MEDIA_WORKERS=N`).** The process the operator starts becomes a primary.
+  - The primary accepts every request and upgrade, charges the rate limits, and hands each
+    station and carrier socket, with its handle, to the worker that owns it.
+  - A worker owns the sessions `slotFor(sessionId)` gives its slot. It holds their runtime state
+    and relays their calls' audio; no frame crosses a process boundary.
+  - Pacing, the reaper and every leader-only sweep stay in the primary.
+  - Dials, session-owned internal handlers and carrier webhooks go to the owner over
+    `child_process` IPC. Redis keeps only its old roles.
+- **Analysis workers (`ANALYSIS_WORKERS=K`).** The analysis slot pool runs in K processes on the
+  shared queue. One vendor rate limit pauses all of them, relayed by the primary.
+- **Failure.** A worker that dies is reaped by slot before it is re-forked:
+  - exactly the telephony slots it held are released (each admission and release is reported
+    as it happens);
+  - its call rows are failed, its attempts ended `orphaned` with their contacts requeued, and
+    its agents written offline;
+  - a crash loop makes the primary exit.
+
+  A worker whose primary dies hangs up and exits. Shutdown stays inside the 45 s grace.
+- **Measured** (shared 4-core dev machine; [`operations.md`](operations.md), "Sizing the media
+  workers"):
+  - one process saturates at 200 calls (ELU 0.98) and cannot bridge more than about 250 of 500;
+  - with 2 workers all 500 bridge, the primary's loop stays at 0.06, and each worker runs near
+    0.95;
+  - 500 calls needs more than 2 vCPUs whatever the layout.
+- **Evidence.**
+  - The real server entry with two media workers against the mock VoiceLink carrier: calls
+    dialled, bridged and relayed through the owning workers, then a graceful exit.
+  - One worker SIGKILLed mid-call: the other's audio continues; the dead slot is reaped, with a
+    call admitted under 1 s before the kill released by the reap, not the lock TTL; the slot
+    comes back.
+  - The primary SIGKILLed: the workers exit, and the next boot's startup reap closes everything.
+  - The handoff with real forked workers; multi-process analysis (no double claim, a SIGKILL
+    mid-job recovered without using an attempt, generation-matched requeue).
+  - Each guard mutation-checked.
+
+**Not verified:**
+- **Whether VoiceLink ends a call when its media socket drops**, and how fast. VoiceLink has no
+  hangup endpoint, so after a media worker dies a closed media socket is the only lever on the
+  customer's leg. This needs a VoiceLink sandbox check.
+- Nothing has run on a real host behind nginx and the TLS terminator. Their per-frame CPU on the
+  same cores is not measured.
+- Trace context does not cross IPC (each process traces on its own).
+- The Grafana panels and `agy-cluster-child-crash` are written and validated, not applied.
+
 ## Test counts
 
-Latest run, 2026-11-02, after the scaling phase A merges, from inside each package (`pnpm lint`
+Latest run, 2026-11-02, after the multi-process build (scaling Phase B), from inside each package
+(`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and `pnpm test:release` 10
+pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7520 passed + 42 skipped (372 files) | 1526 passed + 10 expected fail (164 files) |
+| `packages/db` | 427 | 506 (46 files) |
+| `apps/console` | 4917 (251 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 249 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+
+Run of 2026-11-02, after the scaling phase A merges, from inside each package (`pnpm lint`
 clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` pass):
 
 | Package | Unit | Integration |
@@ -526,6 +591,9 @@ files are listed in [`modules.md`](modules.md).
 
 **Deployment pieces:**
 
+- **Several processes on one host are built but have not run on a real host** behind nginx and the
+  TLS terminator; whether VoiceLink ends a call when its media socket drops is unverified (it has
+  no hangup endpoint). See "Several processes on one host 2026-11-02" above.
 - **OpenTelemetry export is built but has not run against Grafana Cloud.** The SDK
   (`apps/server/src/instrumentation.ts`) pushes traces, metrics and logs over OTLP when
   `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` are set; it was
@@ -562,8 +630,10 @@ in [`operations.md`](operations.md).
 1. **Redis keeps keys for their TTL.** Persistence on (AOF or RDB) and `maxmemory-policy
    noeviction` (or a `volatile-*` policy with nothing else competing). Call tokens are verified
    against Redis; a token lost early is refused, which cuts a live call's carrier leg (Q6).
-2. **Single replica.** The unstored-token memo is in-process (Q6), the dialer runtime has one
-   replica id, and several sweeps assume one process.
+2. **One host, one server container.** With media or analysis workers it is a primary and
+   its forked children ([`scaling.md`](scaling.md)). The primary alone runs the reaper and the
+   leader-only sweeps, and a Q6 token is minted and verified in the same worker. A second
+   container would break both.
 3. **Exactly `TRUST_PROXY_HOPS` proxies in front.** The server must not be reachable except
    through them, or `X-Forwarded-For` spoofing defeats the IP rate limits (Q9).
 4. **Postgres TLS** is on only when `NODE_ENV=production`, and then the certificate is verified
@@ -586,7 +656,10 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       `VITE_FIREBASE_*` build values; values containing `$` or ` #` single-quoted.
 - [ ] Redis: persistence on, `noeviction` (the compose file's `redis` does both; an external Redis
       must too). Its volume is backed up or at least survives a host restart.
-- [ ] One replica only: never scale `server`.
+- [ ] One server container only: never scale `server`. For more calls, set `MEDIA_WORKERS`
+      (and `ANALYSIS_WORKERS`) on a host with the cores for them ([`scaling.md`](scaling.md)
+      §8.1). The heap per media worker is `MEDIA_WORKER_HEAP_MB`; the primary keeps the
+      entrypoint's 4 GB. Size the host's RAM for the sum.
 - [ ] TLS terminator in front of nginx :8080; `TRUST_PROXY_HOPS=2` (terminator + nginx; one more
       per extra proxy in front); :8080 reachable only from the terminator (loopback by default);
       port 3021 not reachable at all (the compose file publishes none).

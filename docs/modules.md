@@ -533,17 +533,32 @@ Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 
 ### `apps/server/src/cluster/`
 
-Composition for running as several processes on one host (`docs/scaling.md`): process roles and the session-to-slot hash (`roles.ts`), the IPC wire format with one decoder per message type (`ipc-protocol.ts`), and one end of the primary ↔ child channel with typed events, deadline-bound requests and close handling (`ipc-channel.ts`). The primary's per-role child supervisor (fork, ready, restart with backoff, crash loop, stop within a grace: `child-supervisor.ts`) and how it forks (`fork.ts`, heap per role). The analysis worker processes (`ANALYSIS_WORKERS`): the child's wiring (`analysis-child.ts`), its process entry (`analysis-child-main.ts`) and the primary's side with the vendor rate-limit relay (`analysis-children.ts`).
+Composition for running as several processes on one host (`docs/scaling.md`; off unless `MEDIA_WORKERS` or `ANALYSIS_WORKERS` is set). Not a fifth module area: like `bootstrap/` and `seams/`, it wires the four areas into processes.
 
-Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `child-supervisor.ts`, `fork.ts`, `ipc-channel.ts`, `ipc-protocol.ts`, `roles.ts`
+- Roles and the session-to-slot hash (`roles.ts`).
+- The IPC wire format, one decoder per message type (`ipc-protocol.ts`), and the records that cross it whole (`record-codecs.ts`).
+- One end of the primary ↔ child channel: typed events, deadline-bound requests, socket handoffs, close handling (`ipc-channel.ts`).
+- The primary's per-role supervisor (`child-supervisor.ts`) and how it forks (`fork.ts`: heap per role, a child's output forwarded a whole line at a time).
+- The upgrade handoff: the primary's plugin (`ws-handoff.plugin.ts`), the Node internals it relies on (`socket-pause.ts`), and the worker's adoption and app (`ws-adopt.ts`, `worker-app.ts`).
+- The media workers: the child (`media-child.ts`, `media-child-main.ts`), and the primary's side (`media-cluster.ts`, `station-directory.ts`, `ipc-dial-dispatcher.ts`, `primary.ts` with the slot reap).
+- The analysis workers (`analysis-child.ts`, `analysis-child-main.ts`, `analysis-children.ts`).
+- Per-process loop sampling (`loop-sampler.ts`).
+
+Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `child-supervisor.ts`, `fork.ts`, `ipc-channel.ts`, `ipc-dial-dispatcher.ts`, `ipc-protocol.ts`, `loop-sampler.ts`, `media-child-main.ts`, `media-child.ts`, `media-cluster.ts`, `primary.ts`, `record-codecs.ts`, `roles.ts`, `socket-pause.ts`, `station-directory.ts`, `worker-app.ts`, `ws-adopt.ts`, `ws-handoff.plugin.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/cluster/analysis-processes.test.ts` | 5 |
+| `apps/server/test/integration/cluster/media-workers.test.ts` | 3 |
+| `apps/server/test/integration/cluster/ws-handoff.test.ts` | 7 |
+| `apps/server/test/unit/cluster/child-supervisor.test.ts` | 5 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 13 |
-| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 9 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 10 |
+| `apps/server/test/unit/cluster/media-adapters.test.ts` | 14 |
+| `apps/server/test/unit/cluster/process-observability.test.ts` | 4 |
 | `apps/server/test/unit/cluster/roles.test.ts` | 7 |
+| `apps/server/test/unit/cluster/socket-pause.test.ts` | 5 |
 
 ### `apps/server/src/config/`
 

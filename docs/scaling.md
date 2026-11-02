@@ -4,10 +4,11 @@ The design for carrying 400–500 simultaneous calls on one host by spreading th
 relay over several Node processes. A primary process forks workers over `child_process` IPC.
 It covers the topology, the WebSocket handoff, the life of a call across processes, the IPC
 protocol, the single-replica assumptions and how each is resolved, failure and lifecycle,
-observability, config, tests and the build order. Status: **design, not built**. Nothing
-here changes how the server runs until `MEDIA_WORKERS` or `ANALYSIS_WORKERS` is set. Written
-2026-11-02 against the tree at the merge of the codec, analysis worker, pacing, console A-law
-and load-hardening work.
+observability, config, tests and the build order. Status: **built** (phase B, 2026-11-02).
+Where the build departed from the design, the section says so ("as built"); the departures
+are listed in §12. Nothing here changes how the server runs until `MEDIA_WORKERS` or
+`ANALYSIS_WORKERS` is set. Written 2026-11-02 against the tree at the merge of the codec,
+analysis worker, pacing, console A-law and load-hardening work.
 
 Read it with [`architecture.md`](architecture.md) (the single-process composition this
 splits), [`seams.md`](seams.md) (the seams it reuses) and [`operations.md`](operations.md)
@@ -154,6 +155,43 @@ socket and webhooks are routed by a hint the worker writes into the URLs it hand
    If `child.send` fails: the socket is destroyed and counted.
 
 The primary never parses a frame, never sees the station token, and does no work per frame.
+
+#### 2.1.1 The two Node internals the handoff relies on (as built)
+
+Both live in one module, `src/cluster/socket-pause.ts`. Both are feature-detected, checked
+once at boot on a real loopback socket (`probeSocketReadStop`), and pinned against the
+running Node by `test/unit/cluster/socket-pause.test.ts`. Known good on Node 22 (`.nvmrc`). A
+Node upgrade that changes either one fails that test. In production, if the boot probe fails,
+the primary logs a warning and runs as one process: it forks no media workers and serves every
+socket itself. Per-socket fallback is not attempted, because a primary with workers holds no
+runtime for their sessions.
+
+1. **Stopping the socket's reads**, `socket._handle.readStop()`, the call `net.Socket`'s own
+   `pause()` makes for buffered sockets.
+
+   **Why the public API is not enough.** For a plain socket, `pause()` only stops the stream
+   flowing. libuv keeps reading into the JS buffer, and `child.send(msg, socket)` closes the
+   parent's copy without moving that buffer. Draining with `socket.read()` after `pause()` does
+   not close the race either:
+   - `read()` re-arms the handle (`_read` → `tryReadStart`), so more bytes can land after the
+     drain and before the send;
+   - once `send` takes the handle it sets `handle.onread` to a no-op, so bytes read in that
+     window are dropped.
+
+   The spike (§2.6) and `test/integration/cluster/ws-handoff.test.ts` both lose the early
+   frame without the read stop.
+2. **Detaching the socket from its server**, `socket.server = null` before `child.send`.
+   Found while building. For a socket a `net.Server` accepted, `child_process` registers the
+   child as a "worker" of that server, and the server's `close()` then waits until the child
+   reports every socket it was sent as closed.
+   - The primary closes HTTP first on shutdown, while its workers still hold live stations
+     and calls, so `close()` would wait for them forever. The first end-to-end run hung
+     exactly there.
+   - With `server` cleared, Node does no tracking. The server's own count (`_server`,
+     untouched) is decremented once, when the primary destroys its copy of the socket after
+     the send.
+   - A refused upgrade's socket is destroyed once its 503 is written, so a client that never
+     closes its side cannot hold `close()` open either.
 
 ### 2.2 The handoff message
 
@@ -823,6 +861,11 @@ measured here, and they are not free.
 | 4 vCPU / 8 GB | `MEDIA_WORKERS=2`, `ANALYSIS_WORKERS=1` | roughly 300–400 calls, to be measured with nginx and TLS in the path |
 | 8 vCPU / 16 GB | `MEDIA_WORKERS=3`–`4`, `ANALYSIS_WORKERS=2` | 500 calls with each worker near 0.5 ELU |
 
+**Measured since** (build step 8, a shared 4-core dev machine): one process saturates at 200
+calls and cannot bridge more than about 250 of 500; with two workers all 500 bridge, the
+primary's loop stays near 0.06 and each worker runs near 0.95. The table and the method are in
+[`operations.md`](operations.md), "Sizing the media workers".
+
 Rule of thumb: `MEDIA_WORKERS = min(vCPUs − 1, ceil(calls / 170))`. 170 calls keeps a worker
 around 0.6 ELU on the bench's numbers. Leave a core for the primary, nginx and TLS. The real
 figure for a host comes from the build-step-8 load test run on that host, with nginx and the
@@ -951,3 +994,21 @@ service containers.
 | D11 | `owner_replica` column | stamp the worker's replica id at attach, or leave it as the joiner's (informational either way) |
 | B16 | Amendment | public handlers still call `callCore` in-process; for session-owned internal handlers that call is forwarded to the owning worker. B16's "one process, no network hop" becomes "no network hop" |
 | Host | Sizing | 500 calls needs more than 2 vCPUs whatever the process layout (§8.1). On the current default host this design protects pacing, webhooks and the API from the relay, but does not raise the call ceiling |
+
+## 12. As built (phase B, 2026-11-02): where the build departed from the design
+
+| Topic | Design | As built, and why |
+|---|---|---|
+| Node internals (§2.1) | One internal: stopping the socket's reads | Two internals, in one module (`cluster/socket-pause.ts`), feature-detected, probed at boot and pinned by a unit test (§2.1.1). The second, `socket.server = null` before `child.send`, was found by the first end-to-end run: without it the primary's HTTP close waits for the workers' sockets forever. An integration test (the primary's close is not held open by a socket a worker holds) goes red without it. If either internal is missing, the primary runs as one process and logs a warning; there is no per-socket fallback |
+| Refused upgrades | 503 written to the raw socket | 503, then the socket is destroyed once written: a client need not close its side, and a half-closed socket held the server's close open |
+| Step boundaries (§10) | Steps 4, 5 and 6 as separate commits | One commit for the three: they share the protocol, the channel, the supervisor and `app.ts`, and none is usable alone. Steps 1–3 and 7–9 are their own commits |
+| Runtime role options (step 3) | In the step-3 seam refactor | `AgencyRuntimeOptions` and `startShard` / `stopShard` landed with the shards that use them (step 5) |
+| Heap per role (§8) | Entrypoint per role | `docker/` unchanged (no infrastructure change). Children get their heap through the fork's `execArgv`: `MEDIA_WORKER_HEAP_MB`, and for analysis the budget plus 512 MB. The primary keeps the entrypoint's 4 GB, so a host's RAM must cover the sum (pre-deploy checklist) |
+| `MEDIA_WORKERS` vs cores (§8) | Boot refuses `MEDIA_WORKERS > availableParallelism()` | Not refused (config parsing stays independent of the host), but logged once at boot with the cores and the counts (media + analysis + primary) |
+| Crash-time slot release (§6.1) | Release the slots from the worker's last snapshot | Exact. The bridge reports every admission and release as it happens (`observeLeases`), each worker forwards them as `call.lease` events, and the 5 s snapshot reconciles them, so the slot reap releases precisely what the dead worker held, including a call admitted a moment before the crash. Pinned by the chaos suite with the snapshots off; a mutation of the forwarding goes red |
+| Crash-time carrier hangup (§6.1) | `reapSlot` hangs the dead worker's carrier legs up through VoiceLink's REST API | Not built: **VoiceLink has no hangup endpoint**, so a closed media socket is the only lever. Whether VoiceLink ends the call when its media socket drops, and how fast, is **unverified** and needs a sandbox check (`status.md`, "Not verified"). The rest of the reap is built: slots released, call rows failed, attempts ended `orphaned` with their contacts requeued, manual calls closed, agents written offline with leases cleared |
+| Trace context across IPC (§4.1, §7) | `tp` in the envelope continues the sender's span | Not built: each process traces on its own. The envelope carries the `tp` field, unused |
+| Readiness detail (§6.6) | Per-process view | As designed, plus each process's p99 loop delay and the primary's own loop sample. One process also answers `?detail=1` with its own loop; plain `/readyz` is unchanged |
+| Analysis crash loop | Same as media | Analysis children are re-forked with backoff and never make the primary exit: analysis does not serve calls |
+| Remote rate-limit pause (D10) | Each process half-opens when the pause ends | Also: a job here that slipped into a pause relayed from another process (its claim already on its way) cannot close that pause early. Found by a flaky multi-process run |
+| D9 (station token mint) | Answer 503 on a failed `SET` | Not built (open decision) |

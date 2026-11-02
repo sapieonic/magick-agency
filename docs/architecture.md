@@ -498,6 +498,39 @@ a rate-limit key and never an auth input.
 - **Server branding guard**: `apps/server/test/unit/branding/no-parent-brand.test.ts` scans
   `apps/server/src` and `packages/*/src` with comments stripped.
 
+## Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`)
+
+Off by default: with neither set, everything above is one process, exactly as described. Design
+and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`):
+
+- **The primary** is the process `index.ts` starts. It keeps the HTTP listener, the public API
+  layer, the rate limiter, pacing, the reaper and every leader-only sweep, and the guard's
+  self-heal. With `MEDIA_WORKERS=N` it forks N media workers after the startup reap, so no
+  worker exists while the reap's "every non-terminal row is dead" premise must hold.
+- **A media worker** is a dialer-runtime shard. It owns the sessions with
+  `slotFor(sessionId) mod N == slot`: their station sockets, live attempts, wrap-up, breaks and
+  soft-phone call, and both legs and the audio relay of their calls. No audio frame crosses a
+  process boundary.
+- **Upgrades** are routed through the primary's Fastify hooks (the rate limiter charges them
+  there) and handed to the owner with the socket handle (`ws-handoff.plugin.ts`). The worker
+  completes the handshake (`ws-adopt.ts`, `worker-app.ts`). The station socket goes to its
+  session's slot; the carrier's stream and status posts go to the slot written into the URLs
+  the worker gave the carrier (`&w=<slot>`).
+- **Dials** go from pacing to the owner over IPC (`IpcDialDispatcher`, `dial.execute`), with a
+  leadership grant the worker checks synchronously.
+- **Session-owned internal handlers** (`api/core-owners.ts`) are forwarded by `callCore`'s
+  injector to the owning worker; every other handler runs in the primary.
+- **IPC** is Node's `child_process` channel, with one decoder per message type
+  (`ipc-protocol.ts`) and deadline-bound requests (`ipc-channel.ts`). Redis keeps only its old
+  roles.
+- **A worker that dies** is reaped by slot before it is re-forked (`cluster/primary.ts`
+  `reapSlot`): its call slots are released, its attempts are ended `orphaned` with their
+  contacts requeued, and its agents are written offline. More than 5 exits of one slot in
+  5 minutes makes the primary exit and the container restart.
+- **Analysis children** (`ANALYSIS_WORKERS=K`) run only the slot pool, on the shared
+  `SKIP LOCKED` queue, each with its own budget. A vendor rate limit in one is relayed by the
+  primary to all of them.
+
 ## Observability
 
 - **OpenTelemetry SDK** (`apps/server/src/instrumentation.ts`, the first import of `src/index.ts`):
