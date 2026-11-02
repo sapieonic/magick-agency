@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAudioCapture } from '../../hooks/useAudioCapture';
+import type { CapturedFrameMessage } from '../../utils/audio-worklet-processor';
+import type { AgencyUplinkFrame } from '../../utils/agencyMedia';
 
 /**
  * **`useAudioCapture`, at the hook.**
@@ -96,13 +98,15 @@ let inGestureTask = true;
  * `emit()` stands in for the worklet's `this.port.postMessage(...)`.
  */
 class FakePort {
-  private handler: ((e: { data: ArrayBuffer }) => void) | null = null;
-  private queue: ArrayBuffer[] = [];
+  private handler: ((e: { data: CapturedFrameMessage }) => void) | null = null;
+  private queue: CapturedFrameMessage[] = [];
+  /** What the hook posted TO the worklet (format switches). */
+  posted: unknown[] = [];
 
-  get onmessage(): ((e: { data: ArrayBuffer }) => void) | null {
+  get onmessage(): ((e: { data: CapturedFrameMessage }) => void) | null {
     return this.handler;
   }
-  set onmessage(next: ((e: { data: ArrayBuffer }) => void) | null) {
+  set onmessage(next: ((e: { data: CapturedFrameMessage }) => void) | null) {
     this.handler = next;
     if (!next) return;
     // Enabling the port delivers everything that accumulated while it was not.
@@ -110,9 +114,13 @@ class FakePort {
   }
 
   /** One 20 ms frame produced by the worklet. */
-  emit(data: ArrayBuffer): void {
+  emit(data: CapturedFrameMessage): void {
     if (this.handler) this.handler({ data });
     else this.queue.push(data);
+  }
+
+  postMessage(message: unknown): void {
+    this.posted.push(message);
   }
 
   /** Frames sitting in the port's queue, undelivered. */
@@ -125,16 +133,24 @@ let workletNodes: FakeAudioWorkletNode[] = [];
 
 class FakeAudioWorkletNode {
   port = new FakePort();
-  constructor() {
+  readonly processorName: string;
+  readonly options: AudioWorkletNodeOptions | undefined;
+  constructor(_ctx: unknown, name: string, options?: AudioWorkletNodeOptions) {
     if (workletNodeThrows) throw workletNodeThrows;
+    this.processorName = name;
+    this.options = options;
     workletNodes.push(this);
   }
   connect(): void {}
   disconnect(): void {}
 }
 
+/** The rate a context comes up at. Every supported browser honours the 16 kHz asked for. */
+let contextRate = 16000;
+
 class FakeAudioContext {
   state = startsSuspended ? 'suspended' : 'running';
+  sampleRate = contextRate;
   destination = {};
   closed = false;
   readonly bornInGesture = inGestureTask;
@@ -174,6 +190,7 @@ beforeEach(() => {
   addModuleResult = 'ok';
   workletNodeThrows = null;
   inGestureTask = true;
+  contextRate = 16000;
 
   vi.stubGlobal('AudioContext', FakeAudioContext as unknown as typeof AudioContext);
   vi.stubGlobal('AudioWorkletNode', FakeAudioWorkletNode as unknown as typeof AudioWorkletNode);
@@ -312,7 +329,7 @@ describe('a throw between the grant and the publish releases the microphone', ()
 
   it('stops the granted track when the worklet node cannot be constructed', async () => {
     // The third unguarded statement. A context whose module resolved but never
-    // registered `pcm16-processor` throws here, after the grant, same as above.
+    // registered `station-capture-processor` throws here, after the grant, same as above.
     workletNodeThrows = named('InvalidStateError');
     const { result } = renderHook(() => useAudioCapture());
 
@@ -587,7 +604,7 @@ describe('the arming window does not accumulate audio', () => {
    */
 
   /** 20 ms of PCM16 at 16 kHz: 320 samples, 640 bytes. */
-  const frame = () => new ArrayBuffer(640);
+  const frame = (): CapturedFrameMessage => ({ format: 'pcm16', data: new ArrayBuffer(640) });
 
   async function armed() {
     const view = renderHook(() => useAudioCapture());
@@ -609,7 +626,7 @@ describe('the arming window does not accumulate audio', () => {
     // make, because a plain `{ onmessage: null }` slot discards by construction.
     expect(node.port.depth).toBe(0);
 
-    const sent: string[] = [];
+    const sent: AgencyUplinkFrame[] = [];
     await act(async () => {
       await view.result.current.start((payload) => sent.push(payload));
     });
@@ -630,7 +647,7 @@ describe('the arming window does not accumulate audio', () => {
     const { view, node } = await armed();
     for (let i = 0; i < 3000; i++) node.port.emit(frame());
 
-    const sent: string[] = [];
+    const sent: AgencyUplinkFrame[] = [];
     await act(async () => {
       await view.result.current.start((payload) => sent.push(payload));
     });
@@ -643,7 +660,7 @@ describe('the arming window does not accumulate audio', () => {
 
   it('still drops muted frames, and still sends after unmute', async () => {
     const { view, node } = await armed();
-    const sent: string[] = [];
+    const sent: AgencyUplinkFrame[] = [];
     await act(async () => {
       await view.result.current.start((payload) => sent.push(payload));
     });
@@ -668,7 +685,7 @@ describe('the arming window does not accumulate audio', () => {
     // one customer's audio on the next customer's socket. `useAgencyAudio` also
     // guards it, but the sink is released here and must be released here.
     const { view, node } = await armed();
-    const sent: string[] = [];
+    const sent: AgencyUplinkFrame[] = [];
     await act(async () => {
       await view.result.current.start((payload) => sent.push(payload));
     });
@@ -680,5 +697,98 @@ describe('the arming window does not accumulate audio', () => {
     });
     node.port.emit(frame());
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe('the capture format follows the station socket', () => {
+  /**
+   * `alaw8` frames go to the sink as the worklet's own `ArrayBuffer` (no copy, no
+   * base64); `pcm16` frames as base64, as always. The worklet tags each frame, so a
+   * frame is never judged by its length: 640 bytes of PCM16 are also four whole A-law
+   * frames.
+   */
+  const alawFrame = (): CapturedFrameMessage => ({ format: 'alaw8', data: new Uint8Array(160).fill(0xd5).buffer });
+
+  async function armedAs(format: 'pcm16' | 'alaw8') {
+    const view = renderHook(() => useAudioCapture());
+    act(() => {
+      view.result.current.setFormat(format);
+    });
+    await act(async () => {
+      await view.result.current.prepare();
+    });
+    const node = workletNodes.at(-1)!;
+    const sent: AgencyUplinkFrame[] = [];
+    await act(async () => {
+      await view.result.current.start((frame) => sent.push(frame));
+    });
+    return { view, node, sent };
+  }
+
+  it('builds the station capture processor in pcm16 until told otherwise', async () => {
+    const { node } = await armedAs('pcm16');
+    expect(node.processorName).toBe('station-capture-processor');
+    expect(node.options?.processorOptions).toEqual({ format: 'pcm16' });
+  });
+
+  it('builds it in alaw8 when the station asks for alaw8, and hands A-law bytes over untouched', async () => {
+    const { node, sent } = await armedAs('alaw8');
+    expect(node.options?.processorOptions).toEqual({ format: 'alaw8' });
+
+    const frame = alawFrame();
+    node.port.emit(frame);
+    expect(sent).toHaveLength(1);
+    // The very buffer the worklet transferred: no copy and no base64 on the 50 Hz path.
+    expect(sent[0]).toBe(frame.data);
+  });
+
+  it('still base64-encodes pcm16 frames', async () => {
+    const { node, sent } = await armedAs('pcm16');
+    node.port.emit({ format: 'pcm16', data: new Uint8Array([1, 2, 3, 4]).buffer });
+    expect(sent).toEqual([btoa(String.fromCharCode(1, 2, 3, 4))]);
+  });
+
+  it('drops alaw8 frames while muted, like pcm16 ones', async () => {
+    const { view, node, sent } = await armedAs('alaw8');
+    act(() => {
+      view.result.current.setMuted(true);
+    });
+    node.port.emit(alawFrame());
+    expect(sent).toHaveLength(0);
+  });
+
+  it('switches a live graph in place over the worklet port, without a second microphone', async () => {
+    const { view, node } = await armedAs('alaw8');
+    act(() => {
+      view.result.current.setFormat('pcm16');
+    });
+    expect(node.port.posted).toEqual([{ format: 'pcm16' }]);
+    expect(gumCalls).toBe(1);
+    expect(workletNodes).toHaveLength(1);
+
+    // The same format again posts nothing.
+    act(() => {
+      view.result.current.setFormat('pcm16');
+    });
+    expect(node.port.posted).toHaveLength(1);
+  });
+
+  it('refuses alaw8 on a context rate A-law cannot be made from, and releases the microphone', async () => {
+    contextRate = 44100;
+    const view = renderHook(() => useAudioCapture());
+    act(() => {
+      view.result.current.setFormat('alaw8');
+    });
+    let rejected: unknown = null;
+    await act(async () => {
+      await view.result.current.prepare().catch((err: unknown) => {
+        rejected = err;
+      });
+    });
+    expect(rejected).toBeInstanceOf(Error);
+    expect(view.result.current.error).toEqual({ kind: 'unknown', name: 'NotSupportedError' });
+    expect(tracks[0]!.stop).toHaveBeenCalled();
+    expect(contexts[0]!.closed).toBe(true);
+    expect(workletNodes).toHaveLength(0);
   });
 });

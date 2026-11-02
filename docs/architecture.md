@@ -297,9 +297,13 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   station) to the carrier's PSTN leg. Its constructor takes the `TelephonyGuardHost`.
 - **Browser leg media** (`core/bridge/browser-leg-media.ts`, contracts `AgencyStationMediaFormat`).
   The station socket says how the agent leg speaks: `pcm16` (JSON `media` frames, base64 PCM16
-  16 kHz, the console) or `alaw8` (binary messages of raw G.711 A-law 8 kHz, the mobile app: any
-  whole number of 20 ms / 160-byte frames up to 1 s in, exactly one 160-byte frame per message
-  out). The station handler tags its socket with the format at upgrade; the session reads the tag
+  16 kHz) or `alaw8` (binary messages of raw G.711 A-law 8 kHz: any whole number of 20 ms /
+  160-byte frames up to 1 s in, exactly one 160-byte frame per message out). The mobile app always
+  asks for `alaw8`; the console asks for it unless the tenant's `agency_console_alaw8` flag is off
+  (default on), and turns to `pcm16` for the rest of that station if the server refuses `alaw8`
+  (1008 `invalid_media`) or answers it with JSON `media`. The console makes its A-law in the
+  capture AudioWorklet (half-band low-pass, 16 → 8 kHz) and decodes and interpolates the downlink
+  to its 16 kHz playback context, with filter state kept across frames (`utils/alaw8/g711.js`). The station handler tags its socket with the format at upgrade; the session reads the tag
   at every attach (`adoptBorrowedBrowserLeg`: dial-time, late bind, re-attach), so it is a
   synchronous field read on the bind path and a reconnect that chose another format switches the
   relay with it. The bridge's borrowed-socket listener routes on `isBinary`; media in the other

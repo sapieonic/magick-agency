@@ -379,7 +379,10 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   that means anything is a dial character, and `D` is not one.
 - **Audio.** On `/dialer/phone` the playback context is warmed and the microphone probed on the
   agent's first gesture on the page, so the permission prompt never lands mid-call. The mic opens
-  when dialing starts and sends only once bridged; it is released when the call ends. The ringback
+  when dialing starts and sends only once bridged; it is released when the call ends. The audio
+  rides the station socket in the console's format, binary A-law (`media=alaw8`) unless the
+  tenant's `agency_console_alaw8` flag is off ([`architecture.md`](architecture.md), "Browser leg
+  media"), the same as a campaign call. The ringback
   is generated in the browser (400 + 450 Hz, ring-ring). While ringing, Mute silences only the
   ringback ("Mute ring"); the microphone's mute is separate, and answering with the microphone
   muted is announced assertively. The SP3 warning shows while ringing; hang-up is hold-to-confirm

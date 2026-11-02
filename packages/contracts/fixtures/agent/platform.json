@@ -111,7 +111,8 @@
   "feature_flags": {
     "agency_dialer_enabled": true,
     "agency_call_analysis": false,
-    "agency_softphone_enabled": false
+    "agency_softphone_enabled": false,
+    "agency_console_alaw8": true
   },
   "notification_preferences": {
     "events": [

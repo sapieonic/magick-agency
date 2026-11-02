@@ -6,7 +6,9 @@ import type {
   AgencyStationErrorFrame,
   AgencyStationReleasedFrame,
 } from '../../types/agency';
+import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 import type { AgencyManualCall } from '../../types/softphone';
+import type { AgencyUplinkFrame } from '../../utils/agencyMedia';
 import type { WrapupAnchor } from '../../utils/agencyWrapup';
 import type { DiagnosticEntry } from '../../utils/agencyDiagnostics';
 
@@ -70,8 +72,13 @@ export type StationConnection =
  * inline arrow function in the caller's options object would do exactly that.
  */
 export interface AgencyStationAudioSink {
-  /** Base64 PCM16 mono 16 kHz — see `utils/agencyMedia.ts` for the provenance. */
+  /** `pcm16`: base64 PCM16 mono 16 kHz — see `utils/agencyMedia.ts` for the provenance. */
   onMedia(payload: string): void;
+  /**
+   * `alaw8`: one binary message of raw G.711 A-law 8 kHz (the server sends one 160-byte
+   * frame per message). Optional like the sink itself: absent, the bytes are dropped.
+   */
+  onAlaw?(bytes: ArrayBuffer): void;
 }
 
 export interface LiveAttempt {
@@ -227,6 +234,17 @@ export interface UseAgencyStationResult {
    * Unlike the removed `hangup` frame, this one is read: the API's borrowed-leg
    * listener acts on `media` and nothing else
    * (`webrtc-bridge-manager.ts:1083`).
+   *
+   * **The frame must be in the socket's format** ({@link mediaFormat}): a base64 string
+   * goes out as a JSON `media` frame on a `pcm16` socket, an `ArrayBuffer` of whole
+   * 160-byte A-law frames as a binary message on an `alaw8` socket. Any other pairing
+   * is refused (`false`) rather than sent: the server would drop it silently.
    */
-  sendMedia: (payload: string) => boolean;
+  sendMedia: (frame: AgencyUplinkFrame) => boolean;
+  /**
+   * The audio format of the current (or next) socket: what `sendMedia` takes and what
+   * the capture graph must produce. The caller's preference (`mediaFormat` option)
+   * until the server refuses `alaw8`; then `pcm16` for the rest of this station.
+   */
+  mediaFormat: AgencyStationMediaFormat;
 }

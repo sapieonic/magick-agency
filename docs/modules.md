@@ -659,7 +659,7 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
 | `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
-| `apps/server/test/unit/feature-flags/registry.test.ts` | 14 |
+| `apps/server/test/unit/feature-flags/registry.test.ts` | 15 |
 
 ### `apps/server/src/invites/`
 
@@ -981,7 +981,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` | 10 |
 | `packages/contracts/test/exports.test.ts` | 12 |
-| `packages/contracts/test/flags.test.ts` | 7 |
+| `packages/contracts/test/flags.test.ts` | 8 |
 | `packages/contracts/test/rbac.test.ts` | 60 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
@@ -1415,7 +1415,9 @@ Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `T
 
 React hooks for data loading and the station. `useTeam`, `useAccounts` and `usePhoneNumbers` sit on web-ui's `useAsyncResource` (its `enabled: false` waits for their scope); `useVisibleInterval` (visible-only, single-flight polling) and `useRefetchOnReturn` drive the campaign detail page and the campaigns home; `useDialogA11y` and `useModalFocus` are thin callers of web-ui's `useDialogFocus`.
 
-The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a station connection the host owns (`/dialer/phone` or the switched campaign station). It never opens a socket or the microphone; it reads the host's `manual_call` frames, calls the soft-phone routes, and tells the host's audio which call is live. The call on screen is the newest copy from the frame, the HTTP answers and `GET /softphone/bootstrap` (re-read after every reconnect), compared by `newerCall` with the frame winning a tie. It owns the number, Call and its refusals (the override prompt for SP1 / SP2), the debounced call-details and notes saves, the outcome with the station's disposition rules plus `call_live` / `fields_required`, Mark DNC, hang-up and the ringback, and finish mode (`finishOnly`: the flag off per the host, the bootstrap's `softphone_enabled` or a `softphone_disabled` dial refusal; nothing can start a call, everything that finishes one stays). `useAgencyStation` accepts any `StationSocketBootstrap` (a soft-phone session has no campaign), keeps the last `manual_call` frame as `manualCall` (malformed frames are dropped with a diagnostic), and feeds `useStationUnloadGuard`'s new `busyRef` so a tab cannot close silently over a soft-phone call during `break`. `useBreakQueue` adds `requestSoftphone` (`POST /sessions/:id/softphone`, queued like a break) and `softphoneRejection`. `useFeatureFlagEnabled` reads one client flag and fails closed with no provider (`SOFTPHONE_FLAG`). `useSoftphone` is tested through `SoftphoneView.test.tsx` (`components/softphone/`).
+The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a station connection the host owns (`/dialer/phone` or the switched campaign station). It never opens a socket or the microphone; it reads the host's `manual_call` frames, calls the soft-phone routes, and tells the host's audio which call is live. The call on screen is the newest copy from the frame, the HTTP answers and `GET /softphone/bootstrap` (re-read after every reconnect), compared by `newerCall` with the frame winning a tie. It owns the number, Call and its refusals (the override prompt for SP1 / SP2), the debounced call-details and notes saves, the outcome with the station's disposition rules plus `call_live` / `fields_required`, Mark DNC, hang-up and the ringback, and finish mode (`finishOnly`: the flag off per the host, the bootstrap's `softphone_enabled` or a `softphone_disabled` dial refusal; nothing can start a call, everything that finishes one stays). `useAgencyStation` accepts any `StationSocketBootstrap` (a soft-phone session has no campaign), keeps the last `manual_call` frame as `manualCall` (malformed frames are dropped with a diagnostic), and feeds `useStationUnloadGuard`'s new `busyRef` so a tab cannot close silently over a soft-phone call during `break`. `useBreakQueue` adds `requestSoftphone` (`POST /sessions/:id/softphone`, queued like a break) and `softphoneRejection`. `useFeatureFlagEnabled` reads one client flag and fails closed with no provider (`SOFTPHONE_FLAG`); `useStationMediaFormat` turns `agency_console_alaw8` into the station socket's format (`alaw8`, else `pcm16`). `useSoftphone` is tested through `SoftphoneView.test.tsx` (`components/softphone/`).
+
+Call audio (`media=alaw8` by default, `pcm16` the fallback; `utils/agencyMedia.ts`): `useAgencyStation` names the format on every upgrade (`mediaFormat` option and result), reads binary as `ArrayBuffer`, sends A-law as binary and refuses a frame in the other format, and turns to `pcm16` for good on 1008 `invalid_media` or JSON `media` on an `alaw8` socket. `useAudioCapture` builds the one capture worklet in the socket's format and switches it in place (`setFormat`); `useAudioPlayback.playAlaw` decodes through `utils/alaw8/g711.js` into the same 16 kHz scheduler as `play`; `useAgencyAudio.sync` takes the station's `format`.
 
 Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignSeries.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`
 
@@ -1424,16 +1426,19 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/agencyStationWsUrl.test.ts` | 7 |
 | `apps/console/src/__tests__/hooks/agentSurfacesStrictMode.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/tenantListHooks.test.tsx` | 5 |
+| `apps/console/src/__tests__/hooks/useAgencyStation.alaw8.test.ts` | 19 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.manualCall.test.ts` | 5 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.media.test.ts` | 10 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.test.ts` | 77 |
-| `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 18 |
+| `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 24 |
+| `apps/console/src/__tests__/hooks/useAudioPlayback.alaw.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/useCampaignSeries.test.tsx` | 16 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
 | `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useServerClock.test.ts` | 16 |
+| `apps/console/src/__tests__/hooks/useStationMediaFormat.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useVisibleInterval.test.ts` | 7 |
 
 ### `apps/console/src/pages/`
@@ -1461,7 +1466,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyLoginPage.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.softphone.test.tsx` | 3 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` | 46 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 47 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 53 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 31 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.cueVisual.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.renders.test.tsx` | 5 |
@@ -1480,7 +1485,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
-| `apps/console/src/__tests__/pages/SoftphonePage.audio.test.tsx` | 3 |
+| `apps/console/src/__tests__/pages/SoftphonePage.audio.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/SoftphonePage.test.tsx` | 24 |
 | `apps/console/src/__tests__/pages/SoftphoneSettingsPage.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/TeamPage.a11y.test.tsx` | 1 |
@@ -1520,7 +1525,7 @@ _No dedicated test files._
 
 Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more. The soft phone's own helpers are in `softphone/` (next entry); here `agencyAgentSurfaces.ts` adds `SOFTPHONE_SURFACE` and `agentSurfacesFor` (the fourth agent screen, kept out of the fixed `AGENT_SURFACES`), `agencyCampaignTabs.ts` the Soft-phone calls tab with a `flag` that `visibleCampaignTabs` checks, and `agencyStationReducer.ts` the `manualCall` slot and its `manual_call` action. `format/` is the one rendering of counts, percentages and plurals (`number.ts`, display locale `en-IN`), durations (`duration.ts`: live timers floor, aggregates round), dates with cached formatters (`date.ts`), a named zone's wall clock (`zone.ts`) and calling days (`weekdays.ts`). `agency/` holds `metrics.ts` (`ratio`, `ratePct`, `stateShares`, `ON_SHIFT_STATES`) and the pieces the large agency modules were split into — `agentWindows`, `buckets`, `agentReadouts`, `roster/`, `overview/`, `config/` — each re-exported by its original module so import paths are unchanged.
 
-Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/reservedBreakReason.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
+Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `alaw8/g711.js` (+ `g711.d.ts`; plain JS, run by the capture worklet as source text: G.711 A-law and the half-band 16 ⇄ 8 kHz filters, checked against the agent app's cross-language checksums), `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/reservedBreakReason.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1564,7 +1569,7 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyLiveSession.test.ts` | 19 |
-| `apps/console/src/__tests__/utils/agencyMedia.test.ts` | 18 |
+| `apps/console/src/__tests__/utils/agencyMedia.test.ts` | 27 |
 | `apps/console/src/__tests__/utils/agencyNotes.test.ts` | 43 |
 | `apps/console/src/__tests__/utils/agencyPadGate.test.ts` | 11 |
 | `apps/console/src/__tests__/utils/agencyPermissionMirror.test.ts` | 13 |
@@ -1584,7 +1589,8 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/agentPermissions.test.ts` | 22 |
 | `apps/console/src/__tests__/utils/agentWindows.timezone.test.ts` | 8 |
-| `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 10 |
+| `apps/console/src/__tests__/utils/alaw8/g711.test.ts` | 39 |
+| `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/format.test.ts` | 16 |
