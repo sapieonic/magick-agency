@@ -301,6 +301,34 @@ export class DialerAnalysisJobRepository {
     return result.rows;
   }
 
+  /**
+   * Milliseconds until the next `queued` job becomes claimable (0 when one already
+   * is; a `NULL` `next_attempt_at` counts as now), or null when nothing is queued.
+   * Measured on the database clock, the clock `claimRunnable` compares against. The
+   * worker arms a timer for it when a claim comes back short, so a job waiting out its
+   * settle delay or backoff starts on time rather than at the next poll. Two probes of
+   * `idx_dialer_analysis_jobs_runnable (status, next_attempt_at)` rather than an
+   * aggregate over every queued row; LEAST ignores the side that found nothing.
+   */
+  async msUntilNextRunnable(): Promise<number | null> {
+    const pool = getPool();
+    // The CASE matters: GREATEST(0, NULL) is 0, which would read "nothing queued" as "due now".
+    const result = await pool.query<{ ms: string | null }>(
+      `WITH nxt AS (
+         SELECT LEAST(
+           (SELECT now() WHERE EXISTS (
+              SELECT 1 FROM dialer_analysis_jobs WHERE status = 'queued' AND next_attempt_at IS NULL)),
+           (SELECT min(next_attempt_at) FROM dialer_analysis_jobs WHERE status = 'queued')
+         ) AS at
+       )
+       SELECT CASE WHEN at IS NULL THEN NULL
+                   ELSE GREATEST(0, EXTRACT(EPOCH FROM (at - now())) * 1000) END::text AS ms
+       FROM nxt`,
+    );
+    const ms = result.rows[0]?.ms;
+    return ms == null ? null : Math.ceil(Number(ms));
+  }
+
   /** Heartbeat, fenced on the claim generation. Returns false when the fence rejects it. */
   async heartbeat(id: string, generation: number): Promise<boolean> {
     const pool = getPool();
