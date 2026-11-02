@@ -163,7 +163,10 @@ export class ChildSupervisor {
     }
     await Promise.all(this.slots.map(async (s) => {
       const child = s.child;
-      if (!child || !s.exited) return;
+      // A child that already exited may still be in its `onExit` (a media slot's crash reap
+      // writing its calls' rows): wait for that too, or the pool closes under it.
+      if (!child) { await s.exited; return; }
+      if (!s.exited) return;
       const exited = s.exited;
       s.channel?.request('shutdown', { graceMs }, { deadlineMs: graceMs }).catch(() => {});
       const inTime = await Promise.race([

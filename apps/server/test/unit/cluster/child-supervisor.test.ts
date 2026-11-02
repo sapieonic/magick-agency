@@ -105,6 +105,26 @@ describe('ChildSupervisor', () => {
     await sup.stop(100);
   });
 
+  it('stop waits for a crash reap already running before it resolves (the pool must outlive it)', async () => {
+    let finishReap!: () => void;
+    const order: string[] = [];
+    const { sup, forks } = harness({
+      onExit: () => new Promise<void>((resolve) => {
+        order.push('reap started');
+        finishReap = () => { order.push('reap done'); resolve(); };
+      }),
+    });
+    await sup.start();
+    forks[0]!.exit(null, 'SIGKILL');
+    await until(() => order.includes('reap started'));
+    const stopped = sup.stop(100).then(() => order.push('stopped'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(order).toEqual(['reap started']);
+    finishReap();
+    await stopped;
+    expect(order).toEqual(['reap started', 'reap done', 'stopped']);
+  });
+
   it('more exits of one slot than the crash-loop limit stops re-forking and reports it', async () => {
     const onCrashLoop = vi.fn();
     const { sup, forks } = harness({ crashLoop: { max: 2, onCrashLoop } });
