@@ -11,6 +11,6 @@ export type FeatureFlagStatus = 'loading' | 'ready' | 'error';
 
 // The map is served by agency itself (permission `agency.flags.read`, floor
 // `agent`), and its client-exposed keys are exactly `agency_dialer_enabled`,
-// `agency_call_analysis` and `agency_softphone_enabled` — see `AgencyClientFlagMap`
+// `agency_call_analysis`, `agency_softphone_enabled` and `agency_console_alaw8` — see `AgencyClientFlagMap`
 // in `../../flags`, the narrowed form. `FeatureFlagMap` stays the open record
 // because the console's `FeatureFlagsContext` reads it that way.

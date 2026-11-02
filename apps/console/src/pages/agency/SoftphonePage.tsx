@@ -11,7 +11,7 @@ import {
   type SoftphoneSessionOnSoftphoneRefusal,
 } from '../../api/softphone';
 import { trackAgencySoftphoneSwitch, trackFeatureGateUnavailable } from '../../analytics/events';
-import { SOFTPHONE_FLAG, useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { SOFTPHONE_FLAG, useFeatureFlagEnabled, useStationMediaFormat } from '../../hooks/useFeatureFlagEnabled';
 import { useAgencyAudio } from '../../hooks/useAgencyAudio';
 import { useAgencyStation } from '../../hooks/useAgencyStation';
 import { useServerClock } from '../../hooks/useServerClock';
@@ -149,6 +149,7 @@ function SoftphoneConsole({
     tenantId: tenantId ?? undefined,
     accountId: accountId ?? undefined,
     audio: audio.sink,
+    mediaFormat: useStationMediaFormat(),
   });
   const clock = useServerClock(stationState.clockOffsetMs);
   const { connection } = stationState;
@@ -157,8 +158,13 @@ function SoftphoneConsole({
   // One owner for the microphone: arm on the dial, open the uplink on `bridged_at`.
   const target = audioTarget({ stationIsGone, live: stationState.live, manualCall: stationState.manualCall });
   useEffect(() => {
-    audio.sync({ attemptId: target.id, bridged: target.bridged, send: stationState.sendMedia });
-  }, [audio.sync, target.id, target.bridged, stationState.sendMedia]);
+    audio.sync({
+      attemptId: target.id,
+      bridged: target.bridged,
+      send: stationState.sendMedia,
+      format: stationState.mediaFormat,
+    });
+  }, [audio.sync, target.id, target.bridged, stationState.sendMedia, stationState.mediaFormat]);
 
   const cueVolume = useMemo(() => {
     try {

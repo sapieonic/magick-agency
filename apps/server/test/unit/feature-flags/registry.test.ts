@@ -12,10 +12,10 @@ import {
 import { FIXTURE_FLAGS } from '../../helpers/fixture-flags.js';
 
 /*
- * The registry holds only the four agency flags.
- *  - "declares …" pins exactly the four agency flags; the shape cases pin
+ * The registry holds only the five agency flags.
+ *  - "declares …" pins exactly the five agency flags; the shape cases pin
  *    agency_dialer_enabled / agency_call_analysis / agency_late_binding /
- *    agency_softphone_enabled; defineFlag and the boolean
+ *    agency_softphone_enabled / agency_console_alaw8; defineFlag and the boolean
  *    resolveEnvDefault cases use agency_dialer_enabled (FF_AGENCY_DIALER); the number
  *    resolveEnvDefault case uses an unregistered fixture copy of
  *    prewarm_ring_delay_ms (resolveEnvDefault takes a definition); the
@@ -41,13 +41,15 @@ describe('feature-flag registry', () => {
       }
     });
 
-    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled', () => {
+    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8', () => {
       expect(getFlag('agency_call_analysis')).toBeDefined();
       expect(getFlag('agency_dialer_enabled')).toBeDefined();
       expect(getFlag('agency_late_binding')).toBeDefined();
       expect(getFlag('agency_softphone_enabled')).toBeDefined();
+      expect(getFlag('agency_console_alaw8')).toBeDefined();
       expect(allFlags().map((f) => f.key)).toEqual([
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
+        'agency_console_alaw8',
       ]);
     });
 
@@ -96,6 +98,17 @@ describe('feature-flag registry', () => {
       // The console shows the soft phone's nav item and the station's switch on it.
       expect(f.clientExposed).toBe(true);
       expect(f.envVar).toBe('FF_AGENCY_SOFTPHONE');
+    });
+
+    it('agency_console_alaw8 is boolean, default ON, tri-scoped, client-exposed', () => {
+      const f = getFlag('agency_console_alaw8')!;
+      expect(f.type).toBe('boolean');
+      // On by default: it is the way back to pcm16 for a tenant, not a capability.
+      expect(f.default).toBe(true);
+      expect(f.scopes).toEqual(expect.arrayContaining(['global', 'tenant', 'account']));
+      // The console picks its station socket's media format from it.
+      expect(f.clientExposed).toBe(true);
+      expect(f.envVar).toBe('FF_AGENCY_CONSOLE_ALAW8');
     });
   });
 
@@ -173,6 +186,7 @@ describe('feature-flag registry', () => {
       expect(keys).toContain('agency_dialer_enabled');
       expect(keys).toContain('agency_call_analysis');
       expect(keys).toContain('agency_softphone_enabled');
+      expect(keys).toContain('agency_console_alaw8');
       expect(keys).not.toContain('agency_late_binding');
     });
   });

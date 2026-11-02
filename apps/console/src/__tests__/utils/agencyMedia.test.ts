@@ -4,7 +4,11 @@ import {
   AGENCY_MEDIA_SAMPLE_RATE,
   MAX_AGENCY_MEDIA_PAYLOAD_CHARS,
   encodeAgencyMediaFrame,
+  isPlayableAlawMessage,
+  isSendableAlawMessage,
   readAgencyMediaPayload,
+  uplinkFrameFormat,
+  withStationMediaQuery,
 } from '../../utils/agencyMedia';
 
 /**
@@ -124,5 +128,57 @@ describe('the agency station audio wire format', () => {
       expect(() => readAgencyMediaPayload(frame)).not.toThrow();
       expect(readAgencyMediaPayload(frame)).toBeNull();
     });
+  });
+});
+
+describe('media=alaw8', () => {
+  describe('withStationMediaQuery: the upgrade names the socket format', () => {
+    it('appends after the token, leaving the token byte for byte as minted', () => {
+      const token = 'a+b/c=d%2Be';
+      expect(withStationMediaQuery(`/proxy/agency/station/s1?token=${token}`, 'alaw8')).toBe(
+        `/proxy/agency/station/s1?token=${token}&media=alaw8`,
+      );
+    });
+
+    it('names pcm16 explicitly too', () => {
+      expect(withStationMediaQuery('/proxy/agency/station/s1?token=t', 'pcm16')).toBe(
+        '/proxy/agency/station/s1?token=t&media=pcm16',
+      );
+    });
+
+    it('starts a query when there is none, and keeps a fragment last', () => {
+      expect(withStationMediaQuery('/proxy/agency/station/s1', 'alaw8')).toBe('/proxy/agency/station/s1?media=alaw8');
+      expect(withStationMediaQuery('/s?token=t#x', 'alaw8')).toBe('/s?token=t&media=alaw8#x');
+    });
+
+    it('replaces a media parameter already there: the server refuses a repeated one', () => {
+      expect(withStationMediaQuery('/s?media=pcm16&token=t&media=x', 'alaw8')).toBe('/s?token=t&media=alaw8');
+      expect(withStationMediaQuery('/s?media&token=t', 'alaw8')).toBe('/s?token=t&media=alaw8');
+    });
+
+    it('leaves look-alike parameters alone', () => {
+      expect(withStationMediaQuery('/s?token=t&mediax=1', 'alaw8')).toBe('/s?token=t&mediax=1&media=alaw8');
+    });
+
+    it('works on an absolute ws(s) URL', () => {
+      expect(withStationMediaQuery('wss://api.example/proxy/agency/station/s1?token=t', 'alaw8')).toBe(
+        'wss://api.example/proxy/agency/station/s1?token=t&media=alaw8',
+      );
+    });
+  });
+
+  it('a frame says which socket format it belongs to by its type', () => {
+    expect(uplinkFrameFormat('QUJD')).toBe('pcm16');
+    expect(uplinkFrameFormat(new ArrayBuffer(160))).toBe('alaw8');
+  });
+
+  it('uplink: a non-zero whole number of 160-byte frames, at most one second (the server’s rule)', () => {
+    for (const ok of [160, 320, 7840, 8000]) expect(isSendableAlawMessage(ok), `${ok}`).toBe(true);
+    for (const bad of [0, 1, 159, 161, 640 + 1, 8160, 16000]) expect(isSendableAlawMessage(bad), `${bad}`).toBe(false);
+  });
+
+  it('downlink: anything from one byte to one second is played', () => {
+    for (const ok of [1, 160, 8000]) expect(isPlayableAlawMessage(ok), `${ok}`).toBe(true);
+    for (const bad of [0, 8001]) expect(isPlayableAlawMessage(bad), `${bad}`).toBe(false);
   });
 });
