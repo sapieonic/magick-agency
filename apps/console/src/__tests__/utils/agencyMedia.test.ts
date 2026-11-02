@@ -10,6 +10,7 @@ import {
   uplinkFrameFormat,
   withStationMediaQuery,
 } from '../../utils/agencyMedia';
+import { AGENCY_WS_MAX_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 
 /**
  * The **wire format**, pinned against the API rather than against our own intent.
@@ -48,22 +49,22 @@ describe('the agency station audio wire format', () => {
 
   describe('the frame ceiling is the API’s, not a guess', () => {
     /**
-     * **This is NOT a check against the server's constant.** Nothing here imports
-     * it, and a test that read `ws-limits.ts` off disk would couple this console's
-     * unit suite to the server's source layout. The agreement is a manual obligation
-     * named in `agencyMedia.ts`; these assertions pin the arithmetic and the guard's
-     * boundary behaviour.
+     * The server's bound is the wire contract's `AGENCY_WS_MAX_MESSAGE_BYTES` (the
+     * server's `WS_MAX_PAYLOAD_DEFAULT_BYTES` is that constant), so both sides read one
+     * number; these assertions pin the arithmetic and the guard's boundary behaviour.
      */
     it('is the server’s 64 KiB message bound less the JSON envelope', () => {
       const envelope = JSON.stringify({ event: 'media', media: { payload: '' } }).length;
       expect(envelope).toBe(40);
-      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(64 * 1024 - envelope);
+      expect(AGENCY_WS_MAX_MESSAGE_BYTES).toBe(64 * 1024);
+      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(AGENCY_WS_MAX_MESSAGE_BYTES - envelope);
+      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(65_496);
     });
 
     it('keeps the largest frame it accepts inside the server’s message bound', () => {
       const frame = encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS));
       expect(frame).not.toBeNull();
-      expect(new TextEncoder().encode(frame!).length).toBeLessThanOrEqual(64 * 1024);
+      expect(new TextEncoder().encode(frame!).length).toBe(AGENCY_WS_MAX_MESSAGE_BYTES);
     });
 
     it('refuses a payload the server would close the station for', () => {

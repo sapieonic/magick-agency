@@ -1,3 +1,4 @@
+import { AGENCY_WS_MAX_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 import { describe, it, expect, vi } from 'vitest';
 import type { RouteOptions } from 'fastify';
 
@@ -52,6 +53,8 @@ describe('WebSocket maxPayload', () => {
   it('registers @fastify/websocket with the 64 KiB bound, not ws\'s 100 MiB default', async () => {
     const { maxPayload } = await websocketRoutesAndBound();
     expect(maxPayload).toBe(64 * 1024);
+    // The wire contract's number, which the console sizes its largest frame from.
+    expect(maxPayload).toBe(AGENCY_WS_MAX_MESSAGE_BYTES);
     expect(maxPayload).toBe(WS_MAX_PAYLOAD_DEFAULT_BYTES);
   });
 

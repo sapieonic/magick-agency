@@ -1,6 +1,7 @@
 import {
   AGENCY_STATION_ALAW8_FRAME_BYTES,
   AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
+  AGENCY_WS_MAX_MESSAGE_BYTES,
   type AgencyStationMediaFormat,
 } from '@magick-agency/contracts/agency';
 
@@ -103,11 +104,12 @@ export const AGENCY_MEDIA_FRAME_SAMPLES = 320;
  *
  * ── Where the bound comes from ──────────────────────────────────────────────
  * The server registers its WebSockets with `maxPayload` 64 KiB
- * (`WS_MAX_PAYLOAD_DEFAULT_BYTES`, `apps/server/src/utils/ws-limits.ts`; operators may
- * raise it with `WS_MAX_PAYLOAD_BYTES`, never lower it below the largest legitimate
- * frame). That bound is on the **whole** message, so the payload gets what is left after
- * the JSON envelope `{"event":"media","media":{"payload":""}}` (40 characters):
- * 65536 − 40 = 65496. Base64 is ASCII, so characters and bytes agree.
+ * (`AGENCY_WS_MAX_MESSAGE_BYTES` in the wire contract, which the server's
+ * `WS_MAX_PAYLOAD_DEFAULT_BYTES` is; operators may raise it with `WS_MAX_PAYLOAD_BYTES`,
+ * never lower it below the largest legitimate frame). That bound is on the **whole**
+ * message, so the payload gets what is left after the JSON envelope
+ * `{"event":"media","media":{"payload":""}}` (40 characters): 65536 − 40 = 65496. Base64
+ * is ASCII, so characters and bytes agree.
  *
  * ── Why it must not be looser ───────────────────────────────────────────────
  * A message over `maxPayload` is not dropped: `ws` closes the socket with 1009, which
@@ -115,15 +117,14 @@ export const AGENCY_MEDIA_FRAME_SAMPLES = 320;
  * character check behind it is looser, so this is the bound that bites. A frame refused
  * here is counted on this side instead.
  *
- * It is transcribed, and must be re-checked against `ws-limits.ts` whenever the server's
- * default moves: nothing at build time links the two values.
+ * Both sides read the one constant, so the server's default cannot move without this.
  *
  * ── This is not a protective bound in practice ──────────────────────────────
  * A 20 ms frame is 640 bytes → **856 base64 characters**, 1.3% of this ceiling.
  * Nothing the capture graph produces can approach it. The check exists so that a
  * broken graph upstream fails visibly on this side rather than closing the station.
  */
-export const MAX_AGENCY_MEDIA_PAYLOAD_CHARS = 65_496;
+export const MAX_AGENCY_MEDIA_PAYLOAD_CHARS = AGENCY_WS_MAX_MESSAGE_BYTES - '{"event":"media","media":{"payload":""}}'.length;
 
 /**
  * A `pcm16` uplink frame, serialised.
