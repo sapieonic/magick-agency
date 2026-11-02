@@ -717,7 +717,10 @@ nothing new can be owned by it meanwhile.
    - mark the call row failed (`STUCK_ACTIVE_CALL`-style audit, reason `worker_exited`).
 3. Attempts: non-terminal attempts whose `reserved_agent_id` hashes to *k* →
    `reapByIds` (state-guarded) → `requeueOrphanedContact` on the our-fault ledger, as the
-   startup reap does.
+   startup reap does. An attempt dialled and never answered (the worker died with `add_lead`
+   in flight or the phone ringing) may still be placed by the carrier, so its contact is
+   dialable only 15 min after `dialed_at` (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`, the dial
+   path's rule; `reapedRedialNotBefore` in `agency/reaper.ts`, the same in the startup reap).
 4. Manual calls of those sessions → the orphan path of `sweepManualCalls`.
 5. Agent leases of the slot's live sessions are cleared, and rows marked `offline`, so the
    agents rehydrate into `break`. That closes today's fast-restart window in which a
