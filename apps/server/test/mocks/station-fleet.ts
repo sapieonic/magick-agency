@@ -88,6 +88,14 @@ export interface FleetOptions {
    * (`STATION_INTERVALS.heartbeat_ms`) rather than the fleet inventing one.
    */
   heartbeatMs: number;
+  /**
+   * Which app the agents' stations join as (`client=` on the upgrade): `web` (the
+   * console), `mobile` (the app), or the share of agents on the app, in [0, 1], spread
+   * evenly in the order they are added. Unset sends no `client=` (the server reads `web`).
+   * An agent's own `AgentSpec.client` wins. A mobile station is probed by the server with
+   * RFC 6455 pings, which `ws` answers itself, as the phone's WebSocket stack does.
+   */
+  client?: 'web' | 'mobile' | number;
   actions?: FleetActions;
   rng?: Rng;
 }
@@ -99,6 +107,8 @@ export interface AgentSpec {
   campaignId: string;
   agentUserId: string;
   label?: string;
+  /** This agent's app; see {@link FleetOptions.client}. */
+  client?: 'web' | 'mobile';
 }
 
 /** Poll until `predicate` holds or the deadlock bound passes. */
@@ -250,9 +260,16 @@ export class StationLeg {
 export class FleetAgent {
   readonly legs: StationLeg[] = [];
   readonly label: string;
+  /** The `client=` this agent's legs send, or null for none. */
+  readonly client: 'web' | 'mobile' | null;
 
-  constructor(readonly spec: AgentSpec, private readonly fleet: StationFleet) {
+  constructor(readonly spec: AgentSpec, private readonly fleet: StationFleet, index: number) {
     this.label = spec.label ?? spec.sessionId.slice(0, 8);
+    const opt = fleet.options.client;
+    this.client = spec.client
+      ?? (typeof opt === 'number'
+        ? (Math.floor((index + 1) * opt) > Math.floor(index * opt) ? 'mobile' : 'web')
+        : opt ?? null);
   }
 
   get sessionId(): string { return this.spec.sessionId; }
@@ -279,7 +296,11 @@ export class FleetAgent {
   /** Open a leg with a token the caller already holds (or a wrong/absent one). */
   openWithToken(token: string | undefined): StationLeg {
     const path = (this.fleet.options.path ?? defaultPath)(this.sessionId);
-    const query = token === undefined ? '' : `?token=${encodeURIComponent(token)}`;
+    const params = [
+      ...(token === undefined ? [] : [`token=${encodeURIComponent(token)}`]),
+      ...(this.client ? [`client=${this.client}`] : []),
+    ];
+    const query = params.length ? `?${params.join('&')}` : '';
     const leg = new StationLeg(`${this.fleet.options.origin}${path}${query}`);
     this.legs.push(leg);
     return leg;
@@ -339,7 +360,7 @@ export class StationFleet {
   }
 
   add(spec: AgentSpec): FleetAgent {
-    const agent = new FleetAgent(spec, this);
+    const agent = new FleetAgent(spec, this, this.agents.length);
     this.agents.push(agent);
     return agent;
   }

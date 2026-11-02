@@ -13,9 +13,20 @@ import { TEST_REDIS_URL } from './test-redis.js';
  * socket upgrade to the server's port (`media=alaw8`, the console's default), then the
  * agent made available. Each station counts the A-law frames it hears, can talk back at
  * 50 frames a second, and pings like the console so the silent-station sweep leaves it be.
+ *
+ * `client: 'mobile'` joins as the app does (`client=mobile`): the server then probes the
+ * station with RFC 6455 pings every 3 s, which `ws` answers on its own, as the phone's
+ * WebSocket stack does; they are counted in `probePings`. The app pings every 10 s.
  */
+export type FloorClient = 'web' | 'mobile';
+
 export interface FloorAgent {
   sessionId: string;
+  client: FloorClient;
+  /** The server's protocol pings this station received (a `mobile` station is probed). */
+  probePings: number;
+  /** Close code, if the server closed or dropped the station. */
+  closedWith: number | null;
   ws: WebSocket;
   frames: Array<Record<string, unknown>>;
   /** Binary A-law frames received (the customer's audio). */
@@ -40,13 +51,16 @@ export class ClusterFloor {
     return this.redis;
   }
 
-  async join(input: { tenantId: string; accountId: string; campaignId: string; agentUserId: string }): Promise<FloorAgent> {
-    const join = await agencyAgentSessionRepository.joinOrRehydrate({ ...input, replicaId: 'test-floor' });
+  async join(input: { tenantId: string; accountId: string; campaignId: string; agentUserId: string; client?: FloorClient }): Promise<FloorAgent> {
+    const { client = 'web', ...who } = input;
+    const join = await agencyAgentSessionRepository.joinOrRehydrate({ ...who, replicaId: 'test-floor' });
     if (!join.ok) throw new Error('join refused');
     const sessionId = join.session.id;
     const { token } = await this.tokens.mint(sessionId);
-    const url = `${this.origin.replace('http', 'ws')}/proxy/agency/station/${sessionId}?token=${token}&media=alaw8`;
-    const agent: FloorAgent = { sessionId, ws: new WebSocket(url), frames: [], heard: 0 };
+    const url = `${this.origin.replace('http', 'ws')}/proxy/agency/station/${sessionId}?token=${token}&media=alaw8&client=${client}`;
+    const agent: FloorAgent = { sessionId, client, probePings: 0, closedWith: null, ws: new WebSocket(url), frames: [], heard: 0 };
+    agent.ws.on('ping', () => { agent.probePings++; });
+    agent.ws.on('close', (code) => { agent.closedWith = code; });
     agent.ws.on('message', (raw, isBinary) => {
       if (isBinary) { agent.heard++; return; }
       agent.frames.push(JSON.parse(raw.toString()) as Record<string, unknown>);
@@ -66,10 +80,15 @@ export class ClusterFloor {
     return agent;
   }
 
-  /** Ping every 5 s, as the console does. */
+  /** Ping every 5 s, as the console does; a mobile station every 10 s, as the app does. */
   startPings(): void {
+    let tick = 0;
     this.pinger = setInterval(() => {
-      for (const a of this.agents) if (a.ws.readyState === WebSocket.OPEN) a.ws.send(JSON.stringify({ event: 'ping', ts: Date.now() }));
+      tick++;
+      for (const a of this.agents) {
+        if (a.client === 'mobile' && tick % 2 === 1) continue;
+        if (a.ws.readyState === WebSocket.OPEN) a.ws.send(JSON.stringify({ event: 'ping', ts: Date.now() }));
+      }
     }, 5_000);
     this.pinger.unref();
   }

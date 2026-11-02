@@ -419,6 +419,14 @@ runs unchanged.
   - The primary SIGKILLed: the workers exit, and the next boot's startup reap closes everything.
   - The handoff with real forked workers; multi-process analysis (no double claim, a SIGKILL
     mid-job recovered without using an attempt, generation-matched requeue).
+  - The mobile app's station inside a worker (`cluster/mobile-stations.test.ts`, the app
+    simulated through the public API on `client=mobile&media=alaw8`): the 3 s probe and its
+    pongs on the adopted socket; a silent phone terminated 10–15 s after its last sign of
+    life and not dialable until back; M1 (back inside 8 s, the call resumes on the same
+    worker with audio both ways; not back, it ends); `device_away` applied in the owning
+    worker, at once or queued behind a call; 160-byte `alaw8` frames at 50/s both ways.
+    200 calls, half on the app, 2 workers: all bridged, frames heard as expected, probe
+    pings 0.34/s per phone.
   - Each guard mutation-checked.
 
 **Not verified:**
@@ -428,9 +436,21 @@ runs unchanged.
 - Nothing has run on a real host behind nginx and the TLS terminator. Their per-frame CPU on the
   same cores is not measured.
 - Trace context does not cross IPC (each process traces on its own).
+- A real phone against a multi-process server: the app is simulated (a `ws` client that
+  answers or withholds pongs); an OS suspending the app, a radio handover and the Flutter
+  suites are not part of these runs.
 - The Grafana panels and `agy-cluster-child-crash` are written and validated, not applied.
 
 ## Test counts
+
+Run of 2026-11-02, after the mobile-station multi-process tests, `apps/server` only (`pnpm lint`
+clean in 8 packages): unit 7520 passed + 42 skipped (372 files); integration 1528 passed + 10
+expected fail + 3 failed (165 files). The 3: `load/voicelink-media-ws-load.test.ts` "start
+negotiation failures" (intermittent, below; alone: 2 red and 1 green here, 1 green on the commit before), and two cases of
+`cluster/analysis-processes.test.ts` ("vendor rate limit pauses the other" and "a graceful stop
+requeues only its own claims"). The second is red when its file runs whole on this commit and
+on the commit before these tests, and green alone; the first passed in each rerun of the file.
+Neither file touches what this change does.
 
 Latest run, 2026-11-02, after the multi-process build (scaling Phase B), from inside each package
 (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and `pnpm test:release` 10

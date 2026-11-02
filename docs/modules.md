@@ -550,7 +550,8 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 |---|---|
 | `apps/server/test/integration/cluster/analysis-processes.test.ts` | 5 |
 | `apps/server/test/integration/cluster/media-workers.test.ts` | 3 |
-| `apps/server/test/integration/cluster/ws-handoff.test.ts` | 7 |
+| `apps/server/test/integration/cluster/mobile-stations.test.ts` | 4 |
+| `apps/server/test/integration/cluster/ws-handoff.test.ts` | 8 |
 | `apps/server/test/unit/cluster/child-supervisor.test.ts` | 5 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 13 |
@@ -919,7 +920,7 @@ a WebSocket *client*, which a stub server cannot be.
 | Mock | What it is |
 |---|---|
 | `mocks/voicelink/` | Scriptable VoiceLink carrier: login, `add_lead` and CDR REST with injectable faults (latency, status, hang, malformed JSON, TCP reset, held responses); per-call scripts that open the media WS to the server, send `start` (A-law 8 kHz), stream seeded audio, post webhooks (duplicated, shuffled, out of order) and end by any close code or a TCP destroy |
-| `mocks/station-fleet.ts` | N agent consoles over real `ws` with real station tokens: heartbeat, ready / break / disposition, reconnect, network drop, silence, slow reader, rapid connect-disconnect, seeded hostile frames; frames recorded with timestamps |
+| `mocks/station-fleet.ts` | N agent consoles over real `ws` with real station tokens: heartbeat, ready / break / disposition, reconnect, network drop, silence, slow reader, rapid connect-disconnect, seeded hostile frames; frames recorded with timestamps; `client=` web, mobile or a mix |
 
 | Test file | Cases | Guards |
 |---|---|---|

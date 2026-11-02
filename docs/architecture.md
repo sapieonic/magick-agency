@@ -582,7 +582,7 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
 `sndfile-programs`, then runs `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm test` and
 `pnpm build`; the integration job runs as three parallel jobs, each against its own Postgres 16
 and Redis 7 service containers mapped to 5436 and 6383: `packages/db`, the server suite, and the
-server's wall-clock lane (the two files that wait on real Redis TTLs, listed in
+server's wall-clock lane (the files that wait on real timers, listed in
 `apps/server/vitest.config.integration.ts` and selected by `INTEGRATION_LANE`). Job 1 also runs
 `pnpm test:grafana` and `pnpm test:release`.
 
