@@ -727,6 +727,12 @@ export class AgencyAgentSessionRepository {
    * UPDATE will touch, joined back on `id`. Returning the rows rather than
    * `rowCount` also makes the count the length of what was actually written.
    */
+  /** Every live session's id (not left). The media-worker slot reap filters it by slot. */
+  async findLiveIds(): Promise<string[]> {
+    const { rows } = await getPool().query<{ id: string }>('SELECT id FROM agency_agent_sessions WHERE left_at IS NULL');
+    return rows.map((r) => r.id);
+  }
+
   async markAllOffline(): Promise<number> {
     const { rows } = await getPool().query<AgencySessionTransitionRow>(
       sessionTransitionSql({

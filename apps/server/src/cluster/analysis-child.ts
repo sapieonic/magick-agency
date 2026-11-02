@@ -15,7 +15,6 @@
  * {@link startAnalysisChild} is the wiring, with its dependencies injected, so the
  * process entry (`analysis-child-main.ts`) and the multi-process tests run the same code.
  */
-import { performance } from 'node:perf_hooks';
 import { createChildLogger } from '@magick-agency/observability';
 import type { Transcriber } from '../transcription/types.js';
 import type { PostCallAnalysisService } from '../analysis/index.js';
@@ -25,6 +24,7 @@ import { setDialerAnalysisWorker } from '../core/dialer-analysis-worker-handle.j
 import { VendorRateLimitBreaker } from '../core/vendor-rate-limit-breaker.js';
 import type { IpcChannel } from './ipc-channel.js';
 import type { HealthBody } from './ipc-protocol.js';
+import { createLoopSampler } from './loop-sampler.js';
 
 const log = createChildLogger({ component: 'analysis-child' });
 
@@ -66,7 +66,7 @@ export function startAnalysisChild(deps: AnalysisChildDeps): AnalysisChild {
 
   let draining = false;
   let shuttingDown: Promise<void> | null = null;
-  let lastElu = performance.eventLoopUtilization();
+  const sampleLoop = createLoopSampler();
 
   channel.onEvent('analysis.wake', () => { if (!draining) worker.wake(); });
   channel.onEvent('analysis.rate_paused', ({ untilMs, consecutive }) => {
@@ -76,11 +76,9 @@ export function startAnalysisChild(deps: AnalysisChildDeps): AnalysisChild {
   });
 
   const health = (): HealthBody => {
-    const elu = performance.eventLoopUtilization(lastElu);
-    lastElu = performance.eventLoopUtilization();
     return {
       role: 'analysis', slot, pid: process.pid,
-      elu: Math.min(1, Math.max(0, Number(elu.utilization.toFixed(4)) || 0)),
+      ...sampleLoop(),
       inFlight: worker.inFlightCount,
       pausedForMs: Math.max(0, Math.round(breaker.reopensInMs())),
       draining,

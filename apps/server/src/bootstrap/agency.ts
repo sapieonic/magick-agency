@@ -1,7 +1,7 @@
 import type Redis from 'ioredis';
 import { logger } from '@magick-agency/observability';
 import type { AppContext } from '../app-context.js';
-import { AgencyRuntime } from '../agency/runtime.js';
+import { AgencyRuntime, type AgencyRuntimeOptions } from '../agency/runtime.js';
 import { ensureVoiceEngine } from './voice.js';
 import { agencyIngestJobRepository } from '../agency/agency-ingest-job.repository.js';
 import { startAgencyIngestReaper } from '../agency/agency-ingest.service.js';
@@ -30,13 +30,24 @@ import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
  */
 
 let runtime: AgencyRuntime | null = null;
+let runtimeOptions: AgencyRuntimeOptions = {};
+
+/**
+ * How the runtime is assembled, set before it is first built: the primary of a
+ * multi-process server installs its media-worker adapters here (`cluster/primary.ts`).
+ * Unset (one process): the runtime is built as it always was.
+ */
+export function configureAgencyRuntime(options: AgencyRuntimeOptions): void {
+  if (runtime) throw new Error('configureAgencyRuntime must run before the agency runtime is built');
+  runtimeOptions = options;
+}
 /** The stop {@link startAgency} returned while it has not yet run; null otherwise. */
 let activeStop: (() => Promise<void>) | null = null;
 
 export function ensureAgencyRuntime(redis: Redis | null, keyPrefix: string): AgencyRuntime {
   if (runtime) return runtime;
   const { bridge } = ensureVoiceEngine(redis);
-  runtime = new AgencyRuntime(bridge, redis, keyPrefix);
+  runtime = new AgencyRuntime(bridge, redis, keyPrefix, runtimeOptions);
   return runtime;
 }
 
@@ -53,6 +64,7 @@ export function getAgencyRuntime(): AgencyRuntime | null {
 export async function resetAgencyRuntimeForTests(): Promise<void> {
   if (activeStop) await activeStop();
   runtime = null;
+  runtimeOptions = {};
 }
 
 /**

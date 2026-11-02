@@ -79,11 +79,11 @@ async function rows(): Promise<JobRow[]> {
   )).rows;
 }
 
-async function until(what: string, ms: number, check: () => Promise<boolean>): Promise<void> {
+async function until(what: string, ms: number, check: () => Promise<boolean>, diag?: () => Promise<unknown>): Promise<void> {
   const deadline = Date.now() + ms;
   for (;;) {
     if (await check()) return;
-    if (Date.now() > deadline) throw new Error(`timed out waiting for: ${what}`);
+    if (Date.now() > deadline) throw new Error(`timed out waiting for: ${what}${diag ? ` ${JSON.stringify(await diag())}` : ''}`);
     await new Promise((r) => setTimeout(r, 50));
   }
 }
@@ -134,7 +134,7 @@ describe('analysis worker processes over real Postgres', () => {
     await until('both slots paused', 20_000, async () => {
       const h = await f.supervisor.health();
       return (h[0]?.pausedForMs ?? 0) > 0 && (h[1]?.pausedForMs ?? 0) > 0;
-    });
+    }, async () => ({ health: await f.supervisor.health(), jobs: (await rows()).map((r) => `${r.status}/${r.attempts}/${r.claim_generation}`) }));
     const h = await f.supervisor.health();
     expect(Math.abs(h[0]!.pausedForMs - h[1]!.pausedForMs)).toBeLessThan(2_000);
     // The rate-limited job went back without using an attempt.

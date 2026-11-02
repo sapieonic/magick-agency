@@ -278,6 +278,18 @@ export class AccountConcurrencyGuard {
 
   // --- Local fallback ---
 
+  /**
+   * D6 (`docs/scaling.md` §5.6): this process's share of a limit when Redis is down. Every
+   * media worker falls back to process-local leases then, so with N workers each may
+   * admit only `ceil(limit / N)`, or together they would admit N times the limit. 1 (one
+   * process): the whole limit, as before.
+   */
+  private degradedShare = 1;
+
+  setDegradedShare(processes: number): void {
+    this.degradedShare = Math.max(1, Math.floor(processes));
+  }
+
   private tryAcquireLocal(
     tenantId: string, accountId: string, limit: number, callId: string,
   ): boolean {
@@ -286,7 +298,7 @@ export class AccountConcurrencyGuard {
     // Re-acquire of a lease this replica already holds is idempotent (parity
     // with the Redis script's `EXISTS lock -> return 2`).
     if (leases?.has(callId)) return true;
-    if ((leases?.size ?? 0) >= limit) return false;
+    if ((leases?.size ?? 0) >= Math.ceil(limit / this.degradedShare)) return false;
     if (leases) leases.add(callId);
     else this.localLeases.set(key, new Set([callId]));
     return true;

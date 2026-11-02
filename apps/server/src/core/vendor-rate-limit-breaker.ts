@@ -46,6 +46,8 @@ export class VendorRateLimitBreaker {
   /** When the breaker last opened; jobs that started before it cannot reopen or close it. */
   private openedAt = Number.NEGATIVE_INFINITY;
   private probeInFlight = false;
+  /** The end of a pause applied from another process ({@link applyRemotePause}); 0 when none. */
+  private remoteUntil = 0;
 
   constructor(opts: VendorRateLimitBreakerOptions = {}) {
     this.now = opts.now ?? Date.now;
@@ -121,11 +123,16 @@ export class VendorRateLimitBreaker {
     this.consecutive = Math.max(this.consecutive, consecutive);
     this.openedAt = now;
     this.openUntil = Math.max(this.openUntil, untilMs);
+    this.remoteUntil = this.openUntil;
   }
 
   /** A job that started at `startedAt` completed: closes the breaker unless that job predates the opening. */
   recordSuccess(startedAt: number): void {
     if (startedAt < this.openedAt) return;
+    // A pause another process applied runs to its end: a job here that slipped through
+    // (its claim was already on the way) succeeding says nothing about the vendor key the
+    // whole fleet shares. Local openings keep their rule, as before.
+    if (this.now() < this.remoteUntil) return;
     this.consecutive = 0;
     this.openUntil = 0;
   }

@@ -205,6 +205,19 @@ export class WebRtcBridgeManager {
   private readonly tokens: BridgeWsTokens;
 
   /**
+   * The telephony slots each live call holds: what the primary must release if this
+   * process dies with them (`docs/scaling.md` §6.1). Not part of the dialer's seam.
+   */
+  heldLeases(): Array<{ callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }> {
+    const out: Array<{ callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }> = [];
+    for (const s of this.sessions.values()) {
+      if (!s.slotsHeld || !s.concurrencyKey) continue;
+      out.push({ callId: s.callId, concurrencyKey: s.concurrencyKey, tenantId: s.tenantId, accountId: s.accountId, provider: s.provider });
+    }
+    return out;
+  }
+
+  /**
    * Check a carrier-presented per-call token (`provider` for the PSTN media socket,
    * `webhook` for status posts). The webhook route and {@link attachPstnLegVerified}
    * call it here; the rules are `BridgeWsTokens.verifyWsToken`'s.

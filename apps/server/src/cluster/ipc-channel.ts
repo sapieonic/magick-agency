@@ -21,6 +21,7 @@ import {
   IPC_EVENT_DECODERS,
   IPC_PROTOCOL_VERSION,
   IPC_REQUEST_DECODERS,
+  parseWsHandoff,
   isIpcEventType,
   isIpcRequestType,
   parseIpcEnvelope,
@@ -31,6 +32,7 @@ import {
   type IpcRequestMap,
   type IpcRequestType,
   type IpcResponseEnvelope,
+  type WsHandoff,
 } from './ipc-protocol.js';
 
 const log = createChildLogger({ component: 'ipc-channel' });
@@ -39,7 +41,14 @@ const log = createChildLogger({ component: 'ipc-channel' });
 export interface IpcTransport {
   /** Queue a message. False means Node's backlog threshold is passed (still queued) or the channel is closed. */
   send(message: unknown): boolean;
-  onMessage(handler: (message: unknown) => void): () => void;
+  /**
+   * Send a message with a socket handle (the upgrade handoff). The sender's copy of the
+   * socket is closed once it has gone. False when it could not be sent. Absent on a
+   * transport that cannot carry handles (the in-memory test pair).
+   */
+  sendHandle?(message: unknown, handle: unknown): boolean;
+  /** `handle` is the socket that came with the message, when one did. */
+  onMessage(handler: (message: unknown, handle?: unknown) => void): () => void;
   onClose(handler: () => void): () => void;
   readonly connected: boolean;
 }
@@ -55,8 +64,26 @@ export function childProcessTransport(child: ChildProcess): IpcTransport {
         if (err) log.debug({ err, pid: child.pid }, 'IPC send to child failed');
       });
     },
+    sendHandle: (message, handle) => {
+      if (!child.connected) return false;
+      try {
+        child.send(message as never, handle as never, (err) => {
+          if (err) log.warn({ err, pid: child.pid }, 'IPC handoff to child failed');
+          // Sent or not, this process is done with the socket. Node closes the parent's
+          // handle after a send but never destroys the JS socket, so the HTTP server
+          // would count the connection forever and `server.close()` (shutdown's first
+          // step) would never return. Its handle is already detached: destroying the
+          // object closes nothing the worker holds.
+          (handle as { destroy?: () => void }).destroy?.();
+        });
+        return true;
+      } catch (err) {
+        log.warn({ err, pid: child.pid }, 'IPC handoff to child threw');
+        return false;
+      }
+    },
     onMessage: (handler) => {
-      const listener = (m: unknown): void => handler(m);
+      const listener = (m: unknown, h?: unknown): void => handler(m, h);
       child.on('message', listener);
       return () => { child.off('message', listener); };
     },
@@ -78,7 +105,7 @@ export function parentTransport(proc: NodeJS.Process = process): IpcTransport {
       });
     },
     onMessage: (handler) => {
-      const listener = (m: unknown): void => handler(m);
+      const listener = (m: unknown, h?: unknown): void => handler(m, h);
       proc.on('message', listener);
       return () => { proc.off('message', listener); };
     },
@@ -146,10 +173,11 @@ export class IpcChannel {
   };
   private readonly unsubscribe: Array<() => void> = [];
   private readonly closeListeners = new Set<() => void>();
+  private handoffHandler: ((msg: WsHandoff, handle: unknown) => void) | null = null;
 
   constructor(private readonly transport: IpcTransport, private readonly opts: IpcChannelOptions) {
     this.maxInFlight = opts.maxInFlight ?? DEFAULT_IPC_MAX_IN_FLIGHT;
-    this.unsubscribe.push(transport.onMessage((m) => this.receive(m)));
+    this.unsubscribe.push(transport.onMessage((m, h) => this.receive(m, h)));
     this.unsubscribe.push(transport.onClose(() => this.close()));
     if (!transport.connected) this.close();
   }
@@ -170,6 +198,22 @@ export class IpcChannel {
     }
     this.closeListeners.add(listener);
     return () => { this.closeListeners.delete(listener); };
+  }
+
+  /**
+   * Hand an upgraded socket to the other process (`docs/scaling.md` §2.2). False when it
+   * could not be sent (closed channel, or a transport without handles); the caller then
+   * still owns the socket.
+   */
+  sendHandoff(msg: WsHandoff, socket: unknown): boolean {
+    if (this.closed || !this.transport.sendHandle) return false;
+    this.counters.sent++;
+    return this.transport.sendHandle(msg, socket);
+  }
+
+  /** Receive handed-off sockets. One handler; a handoff with no handler or no socket is closed. */
+  onHandoff(handler: (msg: WsHandoff, socket: unknown) => void): void {
+    this.handoffHandler = handler;
   }
 
   /** Fire and forget. False when the channel is closed (nothing was sent). */
@@ -248,9 +292,27 @@ export class IpcChannel {
     if (!this.transport.send(envelope)) this.counters.backlogged++;
   }
 
-  private receive(raw: unknown): void {
-    if (this.closed) return;
+  private receive(raw: unknown, handle?: unknown): void {
+    if (this.closed) {
+      (handle as { destroy?: () => void } | undefined)?.destroy?.();
+      return;
+    }
     this.counters.received++;
+    if ((raw as { kind?: unknown } | null)?.kind === 'handoff') {
+      const msg = parseWsHandoff(raw);
+      if (!msg || !handle || !this.handoffHandler) {
+        this.noteMalformed('handoff', raw, msg ? 'no socket or no handler' : 'did not decode');
+        (handle as { destroy?: () => void } | undefined)?.destroy?.();
+        return;
+      }
+      try {
+        this.handoffHandler(msg, handle);
+      } catch (err) {
+        log.error({ err, channel: this.opts.name }, 'IPC handoff handler threw');
+        (handle as { destroy?: () => void }).destroy?.();
+      }
+      return;
+    }
     const env = parseIpcEnvelope(raw);
     if (!env) {
       this.noteMalformed('envelope', raw);

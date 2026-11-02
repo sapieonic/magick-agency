@@ -13,7 +13,7 @@ function channels(opts: { maxInFlight?: number } = {}): { pair: MemoryTransportP
   };
 }
 
-const HEALTH = { role: 'analysis' as const, slot: 0, pid: 1, elu: 0.1, inFlight: 0, pausedForMs: 0, draining: false };
+const HEALTH = { role: 'analysis' as const, slot: 0, pid: 1, elu: 0.1, inFlight: 0, pausedForMs: 0, loopDelayP99Ms: 0, draining: false };
 
 describe('IpcChannel', () => {
   afterEach(() => { vi.useRealTimers(); });

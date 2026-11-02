@@ -13,6 +13,7 @@ import { agencyErrorHandler } from './api/middleware/agency-error-handler.js';
 import { errorMaskHook } from './api/middleware/error-mask.middleware.js';
 import { clientLogContextHook } from './api/middleware/client-log-context.js';
 import { websocketPluginOptions, WS_MAX_PAYLOAD_DEFAULT_BYTES } from './utils/ws-limits.js';
+import { registerWsHandoff, type WsHandoffTarget } from './cluster/ws-handoff.plugin.js';
 
 export interface BuildAppOptions {
   /** Null in tests that only exercise routing; lanes must cope or require it. */
@@ -20,6 +21,18 @@ export interface BuildAppOptions {
   logger?: boolean;
   /** Collects every registered route (handoff rule 10: enumerate from the router). */
   onRoute?: (route: RouteOptions) => void;
+  /**
+   * `local` (default): `@fastify/websocket` completes every upgrade here, as always.
+   * `handoff` (the primary with media workers, `docs/scaling.md` §2.1): every upgrade is
+   * routed through the app's hooks and handed to the owning worker by `wsHandoffTarget`.
+   */
+  wsTransport?: 'local' | 'handoff';
+  wsHandoffTarget?: () => WsHandoffTarget | null;
+  /**
+   * More readiness than Postgres and Redis (the media workers, `docs/scaling.md` §6.6):
+   * `ready` false makes `/readyz` 503; `detail` is what `?detail=1` shows.
+   */
+  readiness?: () => Promise<{ ready: boolean; detail: unknown }>;
 }
 
 /**
@@ -119,15 +132,19 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   app.get('/healthz', async () => ({ status: 'ok' }));
 
-  app.get('/readyz', async (_req, reply) => {
+  app.get('/readyz', async (req, reply) => {
     if (!opts.ctx) return reply.code(503).send({ status: 'unavailable' });
     try {
       await opts.ctx.pool.query('SELECT 1');
       await opts.ctx.redis.ping();
-      return { status: 'ready' };
     } catch {
       return reply.code(503).send({ status: 'unavailable' });
     }
+    if (!opts.readiness) return { status: 'ready' };
+    const extra = await opts.readiness().catch(() => ({ ready: false, detail: null }));
+    const wantDetail = (req.query as { detail?: string } | undefined)?.detail === '1';
+    const body = { status: extra.ready ? 'ready' : 'unavailable', ...(wantDetail ? { processes: extra.detail } : {}) };
+    return extra.ready ? body : reply.code(503).send(body);
   });
 
   // The flag service is initialised with the shared Redis at boot, before `listen`; without it
@@ -143,9 +160,15 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // serves them all): 64 KiB by default (`WS_MAX_PAYLOAD_BYTES`), sized against the largest
   // legitimate message per route in `utils/ws-limits.ts`. Without it `ws` allows 100 MiB,
   // buffered and parsed on the event loop; past it the socket is closed with 1009.
-  await app.register(websocket, websocketPluginOptions(
-    opts.ctx?.config.server.wsMaxPayloadBytes ?? WS_MAX_PAYLOAD_DEFAULT_BYTES,
-  ));
+  if (opts.wsTransport === 'handoff') {
+    // The primary of a multi-process server: no handshake here; `maxPayload` is the
+    // worker's, which registers `@fastify/websocket` with the same options.
+    registerWsHandoff(app, { target: opts.wsHandoffTarget ?? (() => null) });
+  } else {
+    await app.register(websocket, websocketPluginOptions(
+      opts.ctx?.config.server.wsMaxPayloadBytes ?? WS_MAX_PAYLOAD_DEFAULT_BYTES,
+    ));
+  }
 
   await app.register(platformPlugin, { ctx: opts.ctx });
   await app.register(agencyPlugin, { ctx: opts.ctx });

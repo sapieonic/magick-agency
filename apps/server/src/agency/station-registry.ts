@@ -88,6 +88,14 @@ export class StationRegistry {
     return () => { this.attachListeners.delete(listener); };
   }
 
+  private readonly detachListeners = new Set<(sessionId: string) => void>();
+
+  /** Be told after every detach (a media worker tells the primary's directory). Total. */
+  onDetached(listener: (sessionId: string) => void): () => void {
+    this.detachListeners.add(listener);
+    return () => { this.detachListeners.delete(listener); };
+  }
+
   /** Register a newly-opened station socket and claim ownership of the agent. */
   async attach(input: StationAttachInput): Promise<void> {
     const entry: Omit<StationEntry, 'lastSeen'> = { ...input, clientKind: input.clientKind ?? 'web' };
@@ -193,6 +201,9 @@ export class StationRegistry {
     if (!entry || (ws && entry.ws !== ws)) return;
     this.stations.delete(sessionId);
     this.stopProbe(sessionId);
+    for (const listener of this.detachListeners) {
+      try { listener(sessionId); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
+    }
     if (this.redis) {
       await this.redis.del(this.ownershipKey(sessionId)).catch((err) =>
         log.warn({ err, sessionId }, 'Failed to clear station ownership key'));

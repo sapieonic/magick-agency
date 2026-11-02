@@ -400,7 +400,8 @@ export class PacingEngine {
     return this.inFlightNotices.size;
   }
 
-  private async drainNotices(): Promise<void> {
+  /** Settle the completion notices requested so far, bounded by {@link noticeDrainTimeoutMs}. */
+  async drainNotices(): Promise<void> {
     if (await this.inFlightNotices.settle(this.noticeDrainTimeoutMs)) return;
     log.error(
       { pending: this.inFlightNotices.size, timeoutMs: this.noticeDrainTimeoutMs },
@@ -469,6 +470,7 @@ export class PacingEngine {
   start(): void {
     if (this.superviseTimer) return;
     this.stopped = false;
+    this.halted = null;
     const supervise = (): void => {
       void this.superviseOnce().catch((err) => log.error({ err }, 'Agency supervise pass failed'));
     };
@@ -478,18 +480,34 @@ export class PacingEngine {
   }
 
   async stop(): Promise<void> {
-    this.stopped = true;
-    this.announceRevoked(null, this.grantSeq);
-    if (this.superviseTimer) clearInterval(this.superviseTimer);
-    this.superviseTimer = null;
-    for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
-    this.disarmRounds();
-    // Wait (bounded) for any tick already in flight — see `inFlightTicks` — and only
-    // then settle the completion notices, so a notice the final tick requested is
+    await this.halt();
+    // Only then settle the completion notices, so a notice the final tick requested is
     // in the set being drained rather than added after it. See `inFlightNotices`.
-    await this.drainTicks();
     await this.drainNotices();
   }
+
+  /**
+   * The first half of {@link stop}: no new tick, every lease given up, and (bounded) the
+   * ticks already in flight waited for. After it no dial is prepared or sent. With media
+   * workers the primary halts pacing, then drains the notices beside the workers'
+   * shutdown (`docs/scaling.md` §6.4); `stop()` afterwards finds both done. Idempotent.
+   */
+  async halt(): Promise<void> {
+    if (this.halted) return this.halted;
+    this.halted = (async () => {
+      this.stopped = true;
+      this.announceRevoked(null, this.grantSeq);
+      if (this.superviseTimer) clearInterval(this.superviseTimer);
+      this.superviseTimer = null;
+      for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
+      this.disarmRounds();
+      // Wait (bounded) for any tick already in flight — see `inFlightTicks`.
+      await this.drainTicks();
+    })();
+    return this.halted;
+  }
+
+  private halted: Promise<void> | null = null;
 
   /**
    * Campaigns led **to drain, never to dial**.
