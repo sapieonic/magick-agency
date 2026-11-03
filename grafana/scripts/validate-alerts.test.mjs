@@ -15,7 +15,9 @@
  *  3. every `{{ $labels.x }}` in a description survives the aggregation;
  *  4. every grouping keeps `service_name` (the `deployment` routing label is
  *     templated from it) and none keeps `instance`;
- *  5. the pending-period arithmetic of zero-threshold rate()/increase() rules;
+ *  5. the pending-period arithmetic of zero-threshold rate()/increase() rules,
+ *     and the new-series guard beside every firing increase() (a series' first sample
+ *     is invisible to increase(), header of alert-rules.tf);
  *  6. every rule selects agency's deployments and nothing else;
  *  7. the routing labels the stack's notification policy keys on are present
  *     and spelled as it expects (this module manages no routing of its own).
@@ -180,6 +182,40 @@ function firingSide(node) {
   if (node.type === 'binary' && (node.op === 'and' || node.op === 'unless')) return firingSide(node.left);
   if (node.type === 'binary' && node.op === 'or') return [...firingSide(node.left), ...firingSide(node.right)];
   return [node];
+}
+
+const unparen = (n) => (n?.type === 'paren' ? unparen(n.expr) : n);
+
+function selectorKey(n) {
+  const s = unparen(n);
+  if (s?.type !== 'selector') return null;
+  return `${s.name}{${s.matchers.map((m) => `${m.label}${m.op}${JSON.stringify(m.value)}`).sort().join(',')}}`;
+}
+
+function allNodes(node) {
+  const out = [];
+  const visit = (n) => {
+    out.push(n);
+    for (const c of [n.expr, n.left, n.right, ...(n.args ?? [])].filter(Boolean)) visit(c);
+  };
+  visit(node);
+  return out;
+}
+
+/**
+ * Whether `ast` carries the new-series guard for `key` over `seconds`:
+ * `(key unless key offset W) and on (service_name) … (nodejs_eventloop_utilization_ratio … offset W)`.
+ */
+function hasNewSeriesGuard(ast, key, seconds) {
+  return allNodes(ast).some((n) => {
+    if (n.type !== 'binary' || n.op !== 'and' || n.matching?.kind !== 'on' || !n.matching.labels.includes('service_name')) return false;
+    const u = unparen(n.left);
+    if (u?.type !== 'binary' || u.op !== 'unless' || selectorKey(u.left) !== key) return false;
+    const off = unparen(u.right);
+    if (off?.type !== 'offset' || selectorKey(off.expr) !== key || durationSeconds(off.offset) !== seconds) return false;
+    return allNodes(n.right).some((r) => r.type === 'offset' && durationSeconds(r.offset) === seconds
+      && unparen(r.expr)?.type === 'selector' && unparen(r.expr).name === 'nodejs_eventloop_utilization_ratio');
+  });
 }
 
 function load() {
@@ -354,6 +390,23 @@ describe('agency alert rules', () => {
       }
     }
     assert.deepEqual(problems, [], `pending periods on the window boundary:\n  ${problems.join('\n  ')}`);
+  });
+
+  // A counter series is created by its first increment, so increase() over it
+  // is empty until a second sample: the first failure (or crash) ever, or the
+  // first since a restart, would never fire. Every increase() on a rule's firing
+  // side carries the guard (one in an `and` filter, a volume floor, need not).
+  test('every firing increase() carries the new-series guard over the same series and window', () => {
+    const problems = [];
+    for (const r of load().rules.filter((x) => x.ast)) {
+      for (const n of firingSide(r.ast).flatMap(allNodes)) {
+        if (n.type !== 'call' || n.fn !== 'increase' || n.args[0]?.type !== 'range') continue;
+        const key = selectorKey(n.args[0].expr);
+        const w = durationSeconds(n.args[0].range);
+        if (!key || !hasNewSeriesGuard(r.ast, key, w)) problems.push(`${r.uid}: increase(${key ?? '?'}[${n.args[0].range}]) has no new-series guard`);
+      }
+    }
+    assert.deepEqual(problems, [], `increase() rules blind to a series' first sample:\n  ${problems.join('\n  ')}`);
   });
 
   test('every expression has balanced delimiters', () => {

@@ -558,6 +558,7 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/integration/cluster/mobile-stations.test.ts` | 4 |
 | `apps/server/test/integration/cluster/ws-handoff.test.ts` | 8 |
 | `apps/server/test/unit/cluster/analysis-children.test.ts` | 3 |
+| `apps/server/test/unit/cluster/child-exit-metric.test.ts` | 1 |
 | `apps/server/test/unit/cluster/child-mains.test.ts` | 3 |
 | `apps/server/test/unit/cluster/child-supervisor.test.ts` | 7 |
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
@@ -995,7 +996,7 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 | Test file | Cases |
 |---|---|
-| `grafana/scripts/validate-alerts.test.mjs` (`pnpm test:grafana`, node:test) | 16 |
+| `grafana/scripts/validate-alerts.test.mjs` (`pnpm test:grafana`, node:test) | 17 |
 | `grafana/scripts/validate-dashboard.test.mjs` (`pnpm test:grafana`, node:test) | 15 |
 
 ## `tooling` and release configuration

@@ -10,7 +10,7 @@
  */
 import type { ChildProcess } from 'node:child_process';
 import { createChildLogger } from '@magick-agency/observability';
-import { trackChildExit } from '@magick-agency/observability/metrics/voice';
+import { primeChildExits, trackChildExit } from '@magick-agency/observability/metrics/voice';
 import { IpcChannel, childProcessTransport, type IpcChannelOptions } from './ipc-channel.js';
 import type { HealthBody, IpcEventMap, IpcEventType, WsHandoff } from './ipc-protocol.js';
 import type { ChildRole } from './roles.js';
@@ -71,6 +71,9 @@ export class ChildSupervisor {
   constructor(private readonly opts: ChildSupervisorOptions) {
     if (!Number.isInteger(opts.count) || opts.count < 1) throw new RangeError(`child count must be ≥ 1, got ${opts.count}`);
     this.now = opts.now ?? Date.now;
+    // Both exit series exist at zero from now on, so the crash alert's `increase()` sees the
+    // role's first crash (`primeChildExits`).
+    primeChildExits(opts.role);
     this.slots = Array.from({ length: opts.count }, (_, slot) => ({
       slot, child: null, channel: null, ready: false, exits: [], restartTimer: null, exited: null, killedAtStop: false,
     }));

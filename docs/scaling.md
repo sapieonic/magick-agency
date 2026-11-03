@@ -852,6 +852,11 @@ which replaces the primary too.
   - New rule: `agy-cluster-child-crash`, any unexpected child exit. A crash loop has no rule
     of its own: each of its exits fires that one, and the primary then exits 1 and the
     container restarts (D4); `agy-service-not-reporting` covers a host that does not come back.
+    A role's first crash fires too: the supervisor records both of its role's exit series at
+    zero when it is built (`primeChildExits`; `increase()` cannot see a series' first sample),
+    and the rule carries the new-series guard for a crash before that zero's first export. A
+    crash during the primary's own stop counts as well (§6.4); the rule is a warning (Slack),
+    so it never pages for a host that was being stopped anyway.
   - `pnpm test:grafana` checks every new rule and panel against the declarations above, so the
     metrics must be declared in the same commit that the panels reference them.
 
