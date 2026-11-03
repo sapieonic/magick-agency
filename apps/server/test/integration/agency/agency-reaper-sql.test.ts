@@ -43,7 +43,8 @@ const { AUTO_DISPOSITION_CODE } = await import('../../../src/agency/disposition.
  *    COALESCE(a.wrapup_seconds, 0) + $1) < now()` — and its two joins. A mock
  *    returns whatever rows the test hands it, so the predicate that chose them is
  *    never evaluated.
- * 3. `recordAutoDisposition`'s `disposition_code IS NULL` guard, same reason as (1).
+ * 3. `closeLapsedWrapup`'s guards (`disposition_code IS NULL`, the contact still parked
+ *    for this attempt), same reason as (1).
  *
  * All three are the *only* thing standing between a sweep and the harm it is meant
  * to repair, and all three are pure SQL. So they get a tier that runs SQL.
@@ -609,33 +610,6 @@ describe('the sweep against real SQL', () => {
   });
 
   /**
-   * `recordAutoDisposition`'s guard, in SQL: the sweep must LOSE this race.
-   *
-   * An agent submitting their real write-up between the sweep's SELECT and its write
-   * keeps it. Asserted by writing a real code first and then sweeping — the sweep
-   * finds the row (its own SELECT ran before the code landed, which is the race) and
-   * the guarded UPDATE declines.
-   */
-  it('loses to an agent real disposition, and leaves their record intact', async () => {
-    const { attemptId } = await conversationAwaitingWrapup({
-      endedSecondsAgo: 200,
-      wrapupSeconds: 30,
-      campaign: {
-        disposition_catalog: JSON.stringify([{ code: 'promise_to_pay', label: 'Promise to pay' }]),
-      },
-    });
-
-    const first = await agencyAttemptRepository.recordAutoDisposition(attemptId, 'promise_to_pay');
-    expect(first).not.toBeNull();
-
-    // The second write is refused rather than overwriting — `null`, not a row.
-    const second = await agencyAttemptRepository.recordAutoDisposition(attemptId, AUTO_DISPOSITION_CODE);
-    expect(second, 'the guard let a second writer overwrite a record of what was said to a customer')
-      .toBeNull();
-    expect((await attemptRow(attemptId))['disposition_code']).toBe('promise_to_pay');
-  });
-
-  /**
    * The sweep is bounded, and the bound is not a suggestion.
    *
    * `limit = 500` by default. Asserted at a small explicit limit rather than by
@@ -653,6 +627,156 @@ describe('the sweep against real SQL', () => {
     // `ORDER BY a.ended_at` — the longest-stranded contacts are freed first, which
     // is the only ordering that keeps a backlog from starving the oldest rows.
     expect(limited.map((r) => r.id)).toEqual([created[0], created[1]]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (3b) The sweep writes only while the row is still what it read.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * `sweepLapsedWrapups` reads with `findLapsedWrapups` and then writes, row by row. Each
+ * case moves the attempt or its contact on INSIDE that window (run after the real
+ * `findLapsedWrapups` returns and before the sweep's write), with the real writes the
+ * moving path makes. The write must land on nothing and count nothing.
+ *
+ * Before the fix the arm that owed no disposition wrote the contact with an unconditional
+ * `markState`, and the owed arm's stamp was guarded but its contact write was not: (a) and
+ * (b) put a contact with a live call back to `completed`, (c) stamped an attempt and wrote
+ * a suppressed contact, (d) wrote over a contact the agent's write-up was releasing.
+ * Mutation-checked: dropping the newest-attempt clause from `closeLapsedWrapup` reds (b);
+ * dropping `ct.state = 'connected'` reds (c); dropping `a.disposition_code IS NULL` reds (d).
+ */
+describe('a lapsed-wrap-up close writes only while the row is still what the sweep read', () => {
+  /** Run `between` after the sweep's real `findLapsedWrapups` and before its write. */
+  function interleaveAfterRead(between: () => Promise<void>) {
+    const real = agencyAttemptRepository.findLapsedWrapups.bind(agencyAttemptRepository);
+    return vi.spyOn(agencyAttemptRepository, 'findLapsedWrapups').mockImplementationOnce(async (...args) => {
+      const rows = await real(...args);
+      expect(rows.length, 'the read found nothing: the case would be vacuous').toBe(1);
+      await between();
+      return rows;
+    });
+  }
+
+  async function sweepWith(between: () => Promise<void>): Promise<number> {
+    const spy = interleaveAfterRead(between);
+    try {
+      return await reaper().sweepLapsedWrapups();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  /** Pacing's own claim and attempt insert, as one tick runs them. */
+  async function pacingRedials(campaignId: string, contactId: string): Promise<string> {
+    const claimed = await agencyContactRepository.claimDialable(campaignId, 10);
+    expect(claimed.map((c) => c.id)).toEqual([contactId]);
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const attempt = await agencyAttemptRepository.create({
+      campaignId, contactId, tenantId: claimed[0]!.tenant_id, accountId: claimed[0]!.account_id,
+      callerId: '+919000000001', reservedAgentId: session,
+    });
+    expect(attempt, 'the live-attempt index refused the redial').not.toBeNull();
+    await agencyAttemptRepository.setState(attempt!.id, 'dialing', { dialed_at: new Date() });
+    return attempt!.id;
+  }
+
+  async function contactAfter(id: string) {
+    const { rows } = await getTestPool().query<{
+      state: string; last_outcome: string | null; last_disposition: string | null; attempt_count: number;
+    }>('SELECT state, last_outcome, last_disposition, attempt_count FROM agency_contacts WHERE id = $1', [id]);
+    return rows[0]!;
+  }
+
+  const CATALOG = JSON.stringify([{ code: 'callback', label: 'Call back' }]);
+
+  it('(a) no disposition owed: leaves a contact the agent released and pacing re-claimed `in_flight` under its new call', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { status: 'running' },
+    });
+    let newAttemptId = '';
+    const closed = await sweepWith(async () => {
+      // Released (a callback due now), then claimed and dialled again by pacing.
+      await agencyContactRepository.markState(w.contactId, 'pending', { next_attempt_at: new Date(Date.now() - 1000) });
+      newAttemptId = await pacingRedials(w.campaignId, w.contactId);
+    });
+
+    expect(closed).toBe(0);
+    expect(await contactAfter(w.contactId), 'the contact of a live call was taken off it').toMatchObject({
+      state: 'in_flight', last_outcome: null, attempt_count: 1,
+    });
+    expect((await attemptRow(newAttemptId))['state']).toBe('dialing');
+    expect((await attemptRow(w.attemptId))['disposition_code']).toBeNull();
+    // Nothing can claim it while its call is live.
+    expect(await agencyContactRepository.claimDialable(w.campaignId, 10)).toEqual([]);
+  });
+
+  it('(b) leaves a contact a NEWER call has parked `connected` for its own write-up', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { status: 'running' },
+    });
+    let newAttemptId = '';
+    const closed = await sweepWith(async () => {
+      await agencyContactRepository.markState(w.contactId, 'pending', { next_attempt_at: new Date(Date.now() - 1000) });
+      newAttemptId = await pacingRedials(w.campaignId, w.contactId);
+      // The new call bridged: the dialer parks the contact for ITS write-up.
+      await agencyAttemptRepository.setState(newAttemptId, 'bridged', { bridged_at: new Date() });
+      await agencyContactRepository.markState(w.contactId, 'connected');
+    });
+
+    expect(closed).toBe(0);
+    expect(await contactAfter(w.contactId), 'a live conversation\'s contact was released').toMatchObject({
+      state: 'connected', last_outcome: null,
+    });
+    expect((await attemptRow(newAttemptId))['state']).toBe('bridged');
+  });
+
+  it('(c) disposition owed: stamps nothing and writes nothing on a contact suppressed DNC meanwhile', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { disposition_catalog: CATALOG },
+    });
+    const { rows: [contact] } = await getTestPool().query<{ phone_e164: string }>(
+      'SELECT phone_e164 FROM agency_contacts WHERE id = $1', [w.contactId]);
+    const closed = await sweepWith(async () => {
+      await agencyContactRepository.suppressByPhone(w.campaignId, contact!.phone_e164, 'dnc');
+    });
+
+    expect(closed).toBe(0);
+    expect((await attemptRow(w.attemptId))['disposition_code']).toBeNull();
+    expect(await contactAfter(w.contactId)).toMatchObject({ state: 'suppressed', last_disposition: null, last_outcome: null });
+  });
+
+  it('(d) disposition owed: loses to the agent\'s real write-up landing in the window, and writes nothing over it', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { disposition_catalog: CATALOG },
+    });
+    const closed = await sweepWith(async () => {
+      // The disposition route's first statement; its contact write comes after the sweep's.
+      const recorded = await agencyAttemptRepository.recordDisposition({
+        attemptId: w.attemptId, dispositionCode: 'callback', notes: null, callbackAt: null,
+        actorUserId: '6c1d0c8e-3d0e-4c7a-8b44-00000000b001', onBehalf: false,
+      });
+      expect(recorded).not.toBeNull();
+    });
+
+    expect(closed).toBe(0);
+    expect((await attemptRow(w.attemptId))['disposition_code'], 'a record of what was said to a customer was overwritten')
+      .toBe('callback');
+    // The route releases the contact itself; the sweep wrote nothing for it to contradict.
+    expect(await contactAfter(w.contactId)).toMatchObject({ state: 'connected', last_disposition: null, last_outcome: null });
+  });
+
+  /** The control: nothing moved, so the same sweep closes it. */
+  it('still closes a wrap-up nothing moved on', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { disposition_catalog: CATALOG },
+    });
+    expect(await sweepWith(async () => {})).toBe(1);
+    expect((await attemptRow(w.attemptId))['disposition_code']).toBe(AUTO_DISPOSITION_CODE);
+    expect(await contactAfter(w.contactId)).toMatchObject({
+      state: 'completed', last_outcome: 'connected', last_disposition: AUTO_DISPOSITION_CODE, attempt_count: 1,
+    });
   });
 });
 

@@ -462,7 +462,7 @@ export class AgencyManualCallRepository {
    * did not come within `lapseMs` of `ended_at`, or whose session has LEFT. A call
    * that bridged (so owed an outcome) is stamped `no_disposition` with the source
    * its tag implies and no `dispositioned_by_user_id` (nobody recorded it — the
-   * attempt's `recordAutoDisposition` rule); one that never bridged just settles.
+   * attempt's `closeLapsedWrapup` rule); one that never bridged just settles.
    *
    * A call that never bridged owes NO outcome, so it is not given the 30 minutes: it
    * is closed once `unansweredGraceMs` has passed since it ended. The dialer settles

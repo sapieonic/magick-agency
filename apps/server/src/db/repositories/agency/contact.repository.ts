@@ -931,8 +931,9 @@ export class AgencyContactRepository {
    *     `ended` handler's, which would launder the row out of `suppressed` and
    *     leave the NEXT write unguarded. Guarded, and the reason the key is the
    *     reason rather than the target state.
-   *   * `reaper.ts` lapsed-wrap-up sweep — `resolveRetryDecision` ⇒ `'pending'`.
-   *     Guarded.
+   *   * `reaper.ts` lapsed-wrap-up sweep — no longer a caller:
+   *     `AgencyAttemptRepository.closeLapsedWrapup` writes its `resolveRetryDecision`
+   *     answer in one guarded statement with the same `CASE`, keyed on the same reason.
    *   * `reaper.ts` orphan requeue and our-fault-bounded retire — no longer a
    *     caller: {@link requeueOrphaned} writes them in one statement with the
    *     same `CASE`, keyed on the same reason.

@@ -101,8 +101,8 @@ describe('agency repository — the methods no other real-Postgres suite reaches
     expect((await a.findById(attempt.id))!.webrtc_call_id).toBe(call.id);
   });
 
-  it('attempt writes: setState, saveNotes, recordDisposition, recordAutoDisposition', async () => {
-    const { attempt } = await world();
+  it('attempt writes: setState, saveNotes, recordDisposition, closeLapsedWrapup', async () => {
+    const { attempt, contact } = await world();
     const a = repo.agencyAttemptRepository;
     await a.setState(attempt.id, 'ended', { outcome: 'no_answer', ended_at: new Date() });
     expect((await a.findById(attempt.id))!.state).toBe('ended');
@@ -119,8 +119,12 @@ describe('agency repository — the methods no other real-Postgres suite reaches
       actorUserId: agentUser, onBehalf: false,
     })).toBeNull();
     expect((await a.findById(attempt.id))!.disposition_code).toBe('sale');
-    // the auto-disposition never overwrites a human's
-    expect(await a.recordAutoDisposition(attempt.id, 'auto_wrapup')).toBeNull();
+    // the auto-close never overwrites a human's
+    expect(await a.closeLapsedWrapup({
+      attemptId: attempt.id, contactId: contact.id, dispositionCode: 'auto_wrapup', contactState: 'completed',
+      lastOutcome: 'connected', nextAttemptAt: null, suppressedReason: null,
+    })).toBeNull();
+    expect((await a.findById(attempt.id))!.disposition_code).toBe('sale');
   });
 
   it('reaper reads and writes: findNonTerminalOlderThan, reapByIds, reapNonTerminal', async () => {
