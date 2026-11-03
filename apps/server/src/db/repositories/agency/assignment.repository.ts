@@ -27,8 +27,9 @@
  *    group at the boundary is taken whole (at most one group over).
  *
  * ── Concurrency ─────────────────────────────────────────────────────────────
- * The commit first locks the rows its plan moves (`FOR UPDATE` in a MATERIALIZED CTE, in id
- * order), then re-plans and writes in one statement whose UPDATE re-checks each row (not
+ * The commit first locks the rows its plan moves (`FOR NO KEY UPDATE` in a MATERIALIZED CTE,
+ * in id order: the UPDATE's own lock mode, so an attempt insert's FK check on a contact is
+ * not blocked), then re-plans and writes in one statement whose UPDATE re-checks each row (not
  * live, still with the planned owner). The pacing claim uses `SKIP LOCKED`, so it passes
  * over the rows being moved rather than waiting on them. A row that entered the plan
  * unlocked (a contact that changed meanwhile) changes the fingerprint, the gate refuses,
@@ -409,7 +410,7 @@ export class AgencyAssignmentRepository {
              SELECT c.id FROM agency_contacts c JOIN plan p ON p.id = c.id
               WHERE p.from_user_id IS DISTINCT FROM p.to_user_id
               ORDER BY c.id
-                FOR UPDATE OF c)
+                FOR NO KEY UPDATE OF c)
            SELECT count(*)::int AS n FROM lk`,
           lockBind.values,
         );
