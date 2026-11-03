@@ -23,6 +23,7 @@ import {
   contactCsvHeader,
   contactCsvRow,
   enrichAttemptAgentNames,
+  enrichContactOwnerNames,
   forwardAllowedQuery,
   unknownQueryParamsError,
   PREAMBLE_QUERY_PARAMS,
@@ -442,6 +443,13 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
         filters,
         header: contactCsvHeader(),
         renderRow: contactCsvRow,
+        enrich: (body) => enrichContactOwnerNames(
+          body, request.tenantId!, resolveAgentNames,
+          (err) => log.warn(
+            { tenantId: request.tenantId, err: err instanceof Error ? err.message : String(err) },
+            'agency spine: owner name resolution failed during export; emitting blank assigned_to',
+          ),
+        ),
       });
       return sendSpineCsv(request, reply, {
         kind: 'contacts',

@@ -51,6 +51,12 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_contacts.exported',
   'agency_campaign_agent.assigned',
   'agency_campaign_agent.unassigned',
+  // ── Contact assignment ─────────────────────────────────────────────────────
+  // One row per committed operation (details: batch_id, kind, moved, skipped_live, to_pool,
+  // per_agent; the per-contact history rows carry the same batch_id), and one per campaign
+  // where an unstaffed agent held contacts (moved to the pool, or `kept: true`).
+  'agency_contacts.assigned',
+  'agency_contacts.unassigned_on_unstaff',
   // ── The soft phone (docs/softphone.md §6) ─────────────────────────────────
   // One row per soft-phone dial and per act on it. The two overrides are rows of
   // their own beside `placed` (SP1, SP2): a dial placed THROUGH a DNC hit or a closed

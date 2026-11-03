@@ -2414,6 +2414,48 @@
       "source": "apps/console/src/api/softphone.ts",
       "status": "served",
       "reason": "soft-phone route, served by the public API layer at the console path (docs/softphone.md §6, decision B16)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/assignments/preview",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/campaigns/:id/assignments",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/assignments/progress",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/contacts/:contactId/assignments",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-contacts/summary",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/my-contacts",
+      "source": "apps/console/src/api/agencyAssignment.ts",
+      "status": "served",
+      "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
     }
   ]
 }

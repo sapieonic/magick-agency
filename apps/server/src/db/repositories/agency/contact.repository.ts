@@ -1498,6 +1498,7 @@ export class AgencyContactRepository {
       SELECT c.id, c.phone_e164, c.state, c.attempt_count, c.our_fault_attempts,
              c.last_outcome, c.last_disposition, c.next_attempt_at,
              c.suppressed_reason, c.timezone, c.csv_line_number,
+             c.assigned_user_id, c.assigned_at,
              c.created_at, c.updated_at,
              ${keysetAtSql('c.created_at')} AS cursor_at
         FROM agency_contacts c

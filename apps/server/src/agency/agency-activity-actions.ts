@@ -166,6 +166,8 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_manual_call.lapsed', label: 'Soft-phone outcome lapsed', group: 'Calls' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned', group: 'Staffing' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },
+  { value: 'agency_contacts.assigned', label: 'Contacts assigned', group: 'Staffing' },
+  { value: 'agency_contacts.unassigned_on_unstaff', label: "Unstaffed agent's contacts returned (or kept)", group: 'Staffing' },
   { value: 'agency_session.joined', label: 'Agent joined', group: 'Staffing' },
   { value: 'agency_session.left', label: 'Agent left', group: 'Staffing' },
   { value: 'agency_session.break_started', label: 'Break started', group: 'Staffing' },
