@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import { DEFAULTS } from '../setup/factories.js';
+import { DEFAULTS, insertTenant, insertUser } from '../setup/factories.js';
 import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
 
 /**
@@ -161,7 +161,16 @@ describe('retryFromCampaign — the settings, and keep_assignments', () => {
       ...base, phone_e164: '+919000000102', assigned_user_id: AGENT_B, assigned_at: PARENT_STAMP, assigned_by_user_id: ASSIGNER,
     });
     await insertAgencyContact(p.id as string, { ...base, phone_e164: '+919000000103' });
+    await staffOn(p.id as string, AGENT_A);
+    await staffOn(p.id as string, AGENT_B);
     return p.id as string;
+  }
+
+  /** Staffing rows on `campaignId` (the owners a retry keeps must be staffed on the parent). */
+  async function staffOn(campaignId: string, userId: string, active = true) {
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agents (tenant_id, campaign_id, user_id, unassigned_at) VALUES ($1, $2, $3, $4)`,
+      [DEFAULTS.tenantId, campaignId, userId, active ? null : new Date()]);
   }
 
   async function retry(parentId: string, extra: Record<string, unknown> = {}) {
@@ -198,7 +207,11 @@ describe('retryFromCampaign — the settings, and keep_assignments', () => {
     return rows;
   }
 
-  beforeEach(truncateAll);
+  beforeEach(async () => {
+    await truncateAll();
+    await insertTenant({ id: DEFAULTS.tenantId });
+    for (const id of [AGENT_A, AGENT_B]) await insertUser({ id });
+  });
 
   it('the child inherits the parent\'s seven settings', async () => {
     const result = await retry(await parent());
@@ -259,6 +272,21 @@ describe('retryFromCampaign — the settings, and keep_assignments', () => {
     expect(contacts).toHaveLength(3);
     for (const c of contacts) expect([c.assigned_user_id, c.assigned_at, c.assigned_by_user_id]).toEqual([null, null, null]);
     expect(await events(result.campaign.id)).toEqual([]);
+  });
+
+  it('keeps only owners still staffed on the parent: an unstaffed agent\'s contact lands in the pool', async () => {
+    const parentId = await parent();
+    await getTestPool().query(
+      'UPDATE agency_campaign_agents SET unassigned_at = now() WHERE campaign_id = $1 AND user_id = $2', [parentId, AGENT_B]);
+    const result = await retry(parentId, { actorUserId: SUPERVISOR });
+    expect(result.assignments_kept).toBe(1);
+    const contacts = await childContacts(result.campaign.id);
+    expect(contacts.map((c) => [c.phone_e164, c.assigned_user_id, c.assigned_at === null])).toEqual([
+      ['+919000000101', AGENT_A, false],
+      ['+919000000102', null, true],
+      ['+919000000103', null, true],
+    ]);
+    expect((await events(result.campaign.id)).map((r) => r.to_user_id)).toEqual([AGENT_A]);
   });
 
   it('a cohort with no owned contact keeps nothing and writes no row', async () => {
@@ -398,8 +426,12 @@ describe('the routes — internal handler and the public layer in front of it (i
   });
 
   it('public retry create: the owner is kept by default, and the history names the supervisor', async () => {
-    const owner = randomUUID();
+    await insertTenant({ id: DEFAULTS.tenantId });
+    const owner = (await insertUser() as { id: string }).id;
     const p = await insertAgencyCampaign({ status: 'completed' });
+    await getTestPool().query(
+      'INSERT INTO agency_campaign_agents (tenant_id, campaign_id, user_id) VALUES ($1, $2, $3)',
+      [DEFAULTS.tenantId, p.id, owner]);
     await insertAgencyContact(p.id as string, {
       phone_e164: '+919000000401', attempt_count: 1, last_outcome: 'no_answer', state: 'completed',
       assigned_user_id: owner, assigned_at: new Date(),

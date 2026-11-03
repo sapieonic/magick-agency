@@ -472,7 +472,12 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
       // ── The owner is the one 0009 column that may be copied ─────────────
       //
       // `keep_assignments` (default true): a contact's owner on the parent stays its
-      // owner on the child (`assigned_user_id` and `assigned_by_user_id` copied,
+      // owner on the child when that owner is still actively staffed on the PARENT (a former
+      // member's or an unstaffed agent's contacts land in the pool: nobody would work them);
+      // staffing itself is not copied, so the supervisor staffs the child with those agents
+      // before starting it, or the pacing leader's unstaffed-owner sweep returns their open
+      // contacts to the pool once it runs (CA6, `on_unstaff = 'return_to_pool'`). Kept:
+      // (`assigned_user_id` and `assigned_by_user_id` copied,
       // `assigned_at` restamped now(), since that is when the child's row got its
       // owner), and each such contact gets one `inherited` history row below, in
       // this transaction. False: every copied contact lands in the pool. The CASE
@@ -481,9 +486,12 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
       const seedParams = params();
       const childId = seedParams.add(campaign.id);
       const keepAssignments = input.keepAssignments ?? true;
-      const keep = `${seedParams.add(keepAssignments)}::boolean`;
+      const parentId = seedParams.add(input.parent.id);
+      const keep = `(${seedParams.add(keepAssignments)}::boolean AND c.assigned_user_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM agency_campaign_agents a
+                 WHERE a.campaign_id = ${parentId} AND a.user_id = c.assigned_user_id AND a.unassigned_at IS NULL))`;
       const seedConditions = [
-        `c.campaign_id = ${seedParams.add(input.parent.id)}`,
+        `c.campaign_id = ${parentId}`,
         ...retrySelectionConditions(input.selector, 'c', seedParams),
         `NOT (${neverSeededSuppressionSql('c')})`,
       ];
@@ -498,8 +506,8 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
                   c.id,
                   c.root_contact_id,
                   CASE WHEN ${keep} THEN c.assigned_user_id END,
-                  CASE WHEN ${keep} AND c.assigned_user_id IS NOT NULL THEN now() END,
-                  CASE WHEN ${keep} AND c.assigned_user_id IS NOT NULL THEN c.assigned_by_user_id END
+                  CASE WHEN ${keep} THEN now() END,
+                  CASE WHEN ${keep} THEN c.assigned_by_user_id END
              FROM agency_contacts c
             WHERE ${seedConditions.join(' AND ')}
            ON CONFLICT (campaign_id, row_fingerprint) WHERE row_fingerprint IS NOT NULL
