@@ -37,6 +37,9 @@ enum StationEvent implements WireEnum {
   ended('ended'),
   media('media'),
   manualCall('manual_call'),
+
+  /// Contact assignment: this agent's own queue changed (strict / preferred).
+  queue('queue'),
   unknown('');
 
   const StationEvent(this.wire);
@@ -94,6 +97,7 @@ sealed class StationFrame {
         'status' => BridgeStatusFrame.fromJson(decoded),
         'ended' => BridgeEndedFrame.fromJson(decoded),
         'manual_call' => ManualCallFrame.fromJson(decoded),
+        'queue' => QueueFrame.fromJson(decoded),
         _ => UnknownFrame(raw: text, eventRaw: event, reason: 'unknown event'),
       };
       // Any failure, including a TypeError this package did not anticipate,
@@ -173,6 +177,7 @@ final class ReadyFrame extends StationFrame {
     this.pendingState,
     String? pendingStateRaw,
     this.pendingBreakReason,
+    this.queue,
   }) : stateRaw = stateRaw ?? state.wire,
        pendingStateRaw = pendingStateRaw ?? pendingState?.wire;
 
@@ -182,6 +187,7 @@ final class ReadyFrame extends StationFrame {
     final active = j.objOrNull('active_attempt');
     final wrapup = j.objOrNull('active_wrapup');
     final missed = j.objOrNull('missed_release');
+    final queue = j.objOrNull('queue');
     return ReadyFrame(
       sessionId: j.str('session_id'),
       state: AgentState.fromWire(state),
@@ -193,12 +199,17 @@ final class ReadyFrame extends StationFrame {
       pendingState: pending == null ? null : AgentState.fromWire(pending),
       pendingStateRaw: pending,
       pendingBreakReason: j.strOrNull('pending_break_reason'),
+      queue: queue == null ? null : QueueState.fromJson(queue),
     );
   }
 
   final String sessionId;
   final AgentState state;
   final String stateRaw;
+
+  /// This agent's own queue now, on a `strict` or `preferred` campaign;
+  /// null otherwise (and from a server older than contact assignment).
+  final QueueState? queue;
 
   /// The break's code when [state] is `break` (e.g. `device_away`: the app was
   /// paused for leaving the foreground). Null when not on break, on a break
@@ -228,7 +239,8 @@ final class ReadyFrame extends StationFrame {
       other.activeWrapup == activeWrapup &&
       other.missedRelease == missedRelease &&
       other.pendingStateRaw == pendingStateRaw &&
-      other.pendingBreakReason == pendingBreakReason;
+      other.pendingBreakReason == pendingBreakReason &&
+      other.queue == queue;
 
   @override
   int get hashCode => Object.hash(
@@ -240,6 +252,7 @@ final class ReadyFrame extends StationFrame {
     missedRelease,
     pendingStateRaw,
     pendingBreakReason,
+    queue,
   );
 
   @override
@@ -736,7 +749,84 @@ final class ManualCallFrame extends StationFrame {
   String toString() => 'ManualCallFrame($id, ${call['state']})';
 }
 
+/// This agent's own queue changed between due and nothing due (or the reason
+/// changed). Sent only on `strict` and `preferred` campaigns, only on a
+/// change; the bootstrap's and the `ready` frame's `queue` carry the state at
+/// join and at reconnect.
+///
+/// Contract: `AgencyStationQueueFrame` (`agency/station.ts`).
+final class QueueFrame extends StationFrame {
+  const QueueFrame({required this.campaignId, required this.queue});
+
+  factory QueueFrame.fromJson(Map<String, Object?> j) =>
+      QueueFrame(campaignId: j.str('campaign_id'), queue: QueueState.fromJson(j));
+
+  final String campaignId;
+  final QueueState queue;
+
+  @override
+  StationEvent get event => StationEvent.queue;
+
+  @override
+  bool operator ==(Object other) => other is QueueFrame && other.campaignId == campaignId && other.queue == queue;
+
+  @override
+  int get hashCode => Object.hash(campaignId, queue);
+
+  @override
+  String toString() => 'QueueFrame($campaignId, $queue)';
+}
+
 // ─── Payload types ──────────────────────────────────────────────────────────
+
+/// An agent's own queue on a `strict` or `preferred` campaign: something is
+/// due now, or nothing is and why.
+///
+/// A [reason] this build does not know is [QueueIdleReason.unknown], with the
+/// wire string kept in [reasonRaw]: the station still says "Nothing due now".
+///
+/// Contract: `AgencyQueueState` (`agency/station.ts`).
+@immutable
+final class QueueState {
+  QueueState({required this.due, this.reason, String? reasonRaw, this.nextDueAt})
+    : reasonRaw = reasonRaw ?? reason?.wire;
+
+  factory QueueState.fromJson(Map<String, Object?> j) {
+    final reason = j.strOrNull('reason');
+    return QueueState(
+      due: j.boolean('due'),
+      reason: reason == null ? null : QueueIdleReason.fromWire(reason),
+      reasonRaw: reason,
+      nextDueAt: j.timeOrNull('next_due_at'),
+    );
+  }
+
+  /// Something is due for this agent now. When `true`, [reason] is null.
+  final bool due;
+
+  /// Why nothing is due; null when [due].
+  final QueueIdleReason? reason;
+  final String? reasonRaw;
+
+  /// When this agent's next contact falls due; null when none is scheduled.
+  final DateTime? nextDueAt;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'due': due,
+    'reason': reasonRaw,
+    'next_due_at': nextDueAt == null ? null : isoUtc(nextDueAt!),
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is QueueState && other.due == due && other.reasonRaw == reasonRaw && other.nextDueAt == nextDueAt;
+
+  @override
+  int get hashCode => Object.hash(due, reasonRaw, nextDueAt);
+
+  @override
+  String toString() => due ? 'QueueState(due)' : 'QueueState($reasonRaw, next: $nextDueAt)';
+}
 
 /// The contact handed to the agent at reservation.
 ///

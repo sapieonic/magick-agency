@@ -325,8 +325,7 @@ class ManualCall {
   String get versionKey => '$id@${isoUtc(updatedAt)}';
 
   @override
-  bool operator ==(Object other) =>
-      other is ManualCall && other.runtimeType == runtimeType && _sameCall(other);
+  bool operator ==(Object other) => other is ManualCall && other.runtimeType == runtimeType && _sameCall(other);
 
   bool _sameCall(ManualCall o) =>
       o.id == id &&
@@ -991,8 +990,10 @@ final class ManualCallOverridesRequest {
 
   bool get isEmpty => dncNote == null && hoursNote == null;
 
-  ManualCallOverridesRequest withDncNote(String note) => ManualCallOverridesRequest(dncNote: note, hoursNote: hoursNote);
-  ManualCallOverridesRequest withHoursNote(String note) => ManualCallOverridesRequest(dncNote: dncNote, hoursNote: note);
+  ManualCallOverridesRequest withDncNote(String note) =>
+      ManualCallOverridesRequest(dncNote: note, hoursNote: hoursNote);
+  ManualCallOverridesRequest withHoursNote(String note) =>
+      ManualCallOverridesRequest(dncNote: dncNote, hoursNote: note);
 
   Map<String, Object?> toJson() {
     final json = <String, Object?>{};
@@ -1367,7 +1368,8 @@ final class ManualCallListRow extends ManualCall {
 /// `GET /proxy/agency/softphone/calls`. Contract: `AgencyApi.AgencyManualCallsPage`.
 typedef ManualCallsPage = KeysetPage<ManualCallListRow>;
 
-ManualCallsPage decodeManualCallsPage(Map<String, Object?> json) => KeysetPage.fromJson(json, ManualCallListRow.fromJson);
+ManualCallsPage decodeManualCallsPage(Map<String, Object?> json) =>
+    KeysetPage.fromJson(json, ManualCallListRow.fromJson);
 
 /// The query of `GET /proxy/agency/softphone/calls`. The app lists the agent's
 /// own calls only, so [agentUserId] is required: a supervisor using the app
@@ -1882,6 +1884,10 @@ enum SoftphoneErrorCode implements WireEnum {
   /// `details`: one entry per offending field.
   fieldsInvalid('fields_invalid'),
   settingsInvalid('settings_invalid'),
+
+  /// 409 (contact assignment): the tagged campaign is `strict` and the
+  /// number's contact belongs to another agent. Nothing was dialled.
+  contactAssignedElsewhere('contact_assigned_elsewhere'),
   unknown('');
 
   const SoftphoneErrorCode(this.wire);

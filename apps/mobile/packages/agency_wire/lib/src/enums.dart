@@ -593,3 +593,141 @@ enum CallAvailability implements WireEnum {
   static final _byWire = wireIndex(values);
   static CallAvailability fromWire(String? raw) => _byWire[raw] ?? unknown;
 }
+
+// ─── Contact assignment (`agency/assignment.ts`, `api/agency/assignment.ts`) ─
+
+/// How pacing pairs a campaign's contacts with agents. An absent mode (a
+/// server older than contact assignment) reads as [pool].
+///
+/// Contract: `AgencyAssignmentMode` / `AGENCY_ASSIGNMENT_MODES` (`agency/assignment.ts`).
+enum AssignmentMode implements WireEnum {
+  /// One shared queue; the owner is ignored.
+  pool('pool'),
+
+  /// The agent is dialled only the contacts assigned to them.
+  strict('strict'),
+
+  /// Their own due contacts first, then unassigned ones; never another agent's.
+  preferred('preferred'),
+  unknown('');
+
+  const AssignmentMode(this.wire);
+  @override
+  final String wire;
+
+  /// Whether the agent has a queue of their own (and so a queue state).
+  bool get hasOwnQueue => this == strict || this == preferred;
+
+  static final _byWire = wireIndex(values);
+  static AssignmentMode fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Why an agent on a `strict` or `preferred` campaign has nothing to dial now.
+///
+/// Contract: `AgencyQueueIdleReason` (`agency/station.ts`).
+enum QueueIdleReason implements WireEnum {
+  /// Nothing open is assigned to them (in `preferred`, nothing in the pool either).
+  queueEmpty('queue_empty'),
+
+  /// Their open contacts are all scheduled later by the retry policy.
+  waitingForRetry('waiting_for_retry'),
+
+  /// Their open contacts are all callbacks booked for later.
+  callbacksLater('callbacks_later'),
+
+  /// The campaign's calling window is closed now.
+  outsideCallingHours('outside_calling_hours'),
+  unknown('');
+
+  const QueueIdleReason(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static QueueIdleReason fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// The parts of an outcome's override a dial can spend.
+///
+/// Contract: `AgencyOverrideKind` / `AGENCY_OVERRIDE_KINDS` (`agency/session.ts`).
+enum OverrideKind implements WireEnum {
+  /// Dials allowed past the retry policy's `max_attempts`.
+  extraAttempts('extra_attempts'),
+
+  /// One dial before the contact's next scheduled time.
+  retryDelay('retry_delay'),
+
+  /// One dial outside the calling hours, with a note.
+  callingHours('calling_hours'),
+  unknown('');
+
+  const OverrideKind(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static OverrideKind fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Where one of the agent's contacts stands. The app sends these as the
+/// `bucket=` filter of `GET /my-contacts`.
+///
+/// Contract: `AgencyMyContactBucket` / `AGENCY_MY_CONTACT_BUCKETS` (`api/agency/assignment.ts`).
+enum MyContactBucket implements WireEnum {
+  /// Open, never attempted, not a callback.
+  pending('pending'),
+
+  /// Open; its last outcome booked a callback.
+  callback('callback'),
+
+  /// Open, attempted, scheduled for another try.
+  notReached('not_reached'),
+
+  /// On a call or awaiting its write-up.
+  inProgress('in_progress'),
+
+  /// Done.
+  reached('reached'),
+
+  /// The retry policy's attempts are spent.
+  exhausted('exhausted'),
+
+  /// DNC or otherwise suppressed; never dialled again.
+  suppressed('suppressed'),
+  unknown('');
+
+  const MyContactBucket(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static MyContactBucket fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
+
+/// Why a contact cannot be retried by its agent now.
+///
+/// Contract: `AgencyAgentRetryBlock` / `AGENCY_AGENT_RETRY_BLOCKS` (`api/agency/assignment.ts`).
+enum AgentRetryBlock implements WireEnum {
+  /// The campaign does not allow agent retry.
+  retryDisabled('retry_disabled'),
+
+  /// Not a contact that was not reached (pending, reached, on a call, ...).
+  notRetryable('not_retryable'),
+
+  /// Already reopened `agent_retry_rounds` times.
+  roundsUsed('rounds_used'),
+
+  /// Its last attempt is too recent; `available_at` says when.
+  cooldown('cooldown'),
+
+  /// DNC or suppressed; never.
+  suppressed('suppressed'),
+  unknown('');
+
+  const AgentRetryBlock(this.wire);
+  @override
+  final String wire;
+
+  static final _byWire = wireIndex(values);
+  static AgentRetryBlock fromWire(String? raw) => _byWire[raw] ?? unknown;
+}
