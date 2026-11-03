@@ -5,6 +5,8 @@ import { useTenant } from '../../contexts/TenantContext';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode } from '../../utils/agencyErrors';
 import { useModalFocus } from '../../hooks/useModalFocus';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CallerIdPicker } from '../../pages/agency/CallerIdPicker';
 import { HoldToConfirmButton, type HoldToConfirmCopy } from './HoldToConfirmButton';
 import {
@@ -153,6 +155,13 @@ export function AgencyRetryDialog({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   /**
+   * Contact assignment: each copied contact keeps its parent contact's agent
+   * (the server's default) or lands in the pool. Offered, and sent, only while
+   * the `agency_contact_assignment_enabled` flag is on.
+   */
+  const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
+  const [keepAssignments, setKeepAssignments] = useState(true);
+  /**
    * Re-arms the hold button after a refusal.
    *
    * `HoldToConfirmButton` resets on a change of its subject and on nothing else,
@@ -201,6 +210,7 @@ export function AgencyRetryDialog({
     setWindowStart(trimSeconds(campaign.calling_window_start));
     setWindowEnd(trimSeconds(campaign.calling_window_end));
     setSubmitError(null);
+    setKeepAssignments(true);
     setAttemptToken((n) => n + 1);
     // A fresh intent. Reopening the dialog IS a new one — a supervisor who
     // closed it and came back means to author another campaign, so carrying the
@@ -310,6 +320,7 @@ export function AgencyRetryDialog({
     // Absent on a non-secure origin, which the API reads as an unkeyed create —
     // legal, and better than a dialog that cannot open at all.
     if (idempotencyKey.current) body.idempotency_key = idempotencyKey.current;
+    if (assignmentEnabled) body.keep_assignments = keepAssignments;
 
     createRetry(campaign.id, body, tenantId, accountId)
       .then((result) => {
@@ -341,6 +352,8 @@ export function AgencyRetryDialog({
     campaign.id,
     preview,
     onCreated,
+    assignmentEnabled,
+    keepAssignments,
   ]);
 
   // Focus in on open, Tab trapped inside, focus restored to the Retry trigger on
@@ -579,6 +592,26 @@ export function AgencyRetryDialog({
               </div>
             </div>
           </details>
+
+          {assignmentEnabled ? (
+            <div className={styles.field}>
+              <label className={styles.label}>
+                <input
+                  type="checkbox"
+                  checked={keepAssignments}
+                  onChange={(event) => setKeepAssignments(event.target.checked)}
+                  disabled={submitting}
+                  data-testid="retry-keep-assignments"
+                />{' '}
+                Keep the parent’s assignments
+              </label>
+              <p className={styles.overridesHint}>
+                {keepAssignments
+                  ? 'Each contact stays with the agent it was assigned to on the original campaign.'
+                  : 'Every contact starts in the pool, unassigned.'}
+              </p>
+            </div>
+          ) : null}
 
           {submitError && (
             <p className={styles.submitError} role="alert" data-testid="retry-submit-error">

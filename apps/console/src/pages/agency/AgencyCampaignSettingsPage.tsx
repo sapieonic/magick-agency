@@ -4,6 +4,13 @@ import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
 import { useCallAnalysisProfiles } from '../../hooks/useCallAnalysisProfiles';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { errorCode } from '../../utils/agencyErrors';
+import {
+  ASSIGNMENT_REFUSAL_COPY,
+  CONTACT_ASSIGNMENT_FLAG,
+  assignmentModeLocked,
+} from '../../utils/agencyAssignmentCopy';
 import { getAgencyCampaign, updateAgencyCampaign } from '../../api/agencyCampaigns';
 import { hasPermission } from '../../utils/permissions';
 import {
@@ -87,6 +94,9 @@ export function AgencyCampaignSettingsPage() {
   const [saving, setSaving] = useState(false);
 
   const canEdit = hasPermission(role, 'agency.campaigns.write');
+  // Contact assignment's settings and outcome overrides: shown and sent only while
+  // the flag is on (the server refuses a non-default value with it off).
+  const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
 
   // L1 (UX) gating only — the server's 403 is the real enforcement, and
   // `useGovernance` fails OPEN, so a missing/failed map leaves both controls
@@ -180,6 +190,9 @@ export function AgencyCampaignSettingsPage() {
     // "your profile is gone" from any other 404 — the server masks the dialer runtime's body, so
     // what we sent is the only evidence left (see `campaignSaveRefusal`).
     const recordingFields = recordingPayload({ recordingEnabled, analyticsEnabled, next: recording });
+    // The mode is locked (and so unchanged) unless the LOADED campaign is draft or paused.
+    const modeLocked = assignmentModeLocked(campaign?.status);
+    const assignmentScope = !assignmentEnabled ? 'none' : modeLocked ? 'settings_only' : 'all';
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -192,7 +205,7 @@ export function AgencyCampaignSettingsPage() {
       const updated = await updateAgencyCampaign(
         id,
         {
-          ...buildConfigPayload(config),
+          ...buildConfigPayload(config, assignmentScope),
           ...recordingFields,
           name: name.trim(),
           caller_ids: callerIds,
@@ -235,6 +248,7 @@ export function AgencyCampaignSettingsPage() {
         wrapup_seconds: config.wrapupSeconds,
         auto_return: config.autoReturn,
         wrapup_redial: config.allowWrapupRedial,
+        ...(assignmentEnabled ? assignmentAnalytics(config) : {}),
         recording_enabled: recording.record,
         analysis_profile_set: resolveProfileId(recording.profileId) !== null,
         reordered,
@@ -250,6 +264,13 @@ export function AgencyCampaignSettingsPage() {
         setSaveError(refusal);
         return;
       }
+      // The campaign started between the load and the save, so its mode is locked
+      // now. Said on the field rather than as a bare 409; the operator's other
+      // edits stay on screen.
+      if (errorCode(err) === 'mode_change_requires_pause') {
+        setFieldErrors({ assignment_mode: ASSIGNMENT_REFUSAL_COPY.mode_change_requires_pause });
+        return;
+      }
       // The server answers `{ details: { field: message } }` keyed by the body path,
       // so the message lands on the field that caused it.
       const mapped = fieldErrorsFromResponse(err);
@@ -260,7 +281,7 @@ export function AgencyCampaignSettingsPage() {
     }
   }, [
     id, config, name, callerIds, recording, recordingEnabled, analyticsEnabled,
-    tenantId, accountId, showToast,
+    tenantId, accountId, showToast, assignmentEnabled, campaign?.status,
   ]);
 
   if (loading) return <LoadingSpinner />;
@@ -444,7 +465,12 @@ export function AgencyCampaignSettingsPage() {
         )}
       </div>
 
-      <CampaignBehaviourSection state={config} onChange={setConfig} fieldErrors={fieldErrors} />
+      <CampaignBehaviourSection
+        state={config}
+        onChange={setConfig}
+        fieldErrors={fieldErrors}
+        assignment={assignmentEnabled ? { modeLocked: assignmentModeLocked(campaign.status) } : undefined}
+      />
 
       {canEdit && (
         <div className={styles.actions}>
@@ -464,3 +490,12 @@ export function AgencyCampaignSettingsPage() {
 }
 
 export default AgencyCampaignSettingsPage;
+
+/** The assignment half of `agency_campaign_config_saved`: enum labels and counts only. */
+function assignmentAnalytics(config: CampaignConfigState) {
+  return {
+    assignment_mode: config.assignment.mode,
+    agent_retry: config.assignment.allowAgentRetry,
+    override_outcome_count: config.dispositions.filter((d) => d.override != null).length,
+  };
+}

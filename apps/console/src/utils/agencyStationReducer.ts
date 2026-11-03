@@ -1,6 +1,7 @@
 import type {
   AgencyAgentState,
   AgencyMissedRelease,
+  AgencyQueueState,
   AgencyReservedAttempt,
   AgencyStationAgentStateFrame,
   AgencyStationErrorFrame,
@@ -64,6 +65,13 @@ export interface StationState {
   missedPings: number;
   /** The session's soft-phone call, as the newest `manual_call` frame stated it. */
   manualCall: AgencyManualCall | null;
+  /**
+   * This agent's own queue on a `strict` / `preferred` campaign (contact
+   * assignment), as the socket last stated it: `undefined` until the socket has
+   * said anything (the bootstrap's `queue` stands until then), `null` when a
+   * `ready` carried none (a `pool` campaign has no per-agent queue).
+   */
+  queue: AgencyQueueState | null | undefined;
 }
 
 export const INITIAL_STATION_STATE: StationState = {
@@ -84,6 +92,7 @@ export const INITIAL_STATION_STATE: StationState = {
   dialing: true,
   missedPings: 0,
   manualCall: null,
+  queue: undefined,
 };
 
 export type StationAction =
@@ -105,7 +114,9 @@ export type StationAction =
   | { type: 'pong'; offsetMs: number | null }
   | { type: 'error'; frame: AgencyStationErrorFrame }
   /** A `manual_call` frame: the whole row, kept only when it is not older than the copy held. */
-  | { type: 'manual_call'; call: AgencyManualCall };
+  | { type: 'manual_call'; call: AgencyManualCall }
+  /** A `queue` frame: this agent's queue changed (sent only on a change). */
+  | { type: 'queue'; queue: AgencyQueueState };
 
 /**
  * `state` itself when nothing in `changes` differs — so a frame that restates
@@ -161,6 +172,9 @@ export function stationReducer(state: StationState, action: StationAction): Stat
           : null,
         missedRelease: frame.missed_release ?? null,
         ...breakQueue(state, frame.pending_state, frame.pending_break_reason),
+        // A snapshot like every other field: absent means this campaign states no
+        // per-agent queue, not "keep what we had".
+        queue: frame.queue ?? null,
       };
       if (frame.state === 'wrapup') {
         // A deadline only when this replica still owns the timer; absent, the
@@ -270,5 +284,16 @@ export function stationReducer(state: StationState, action: StationAction): Stat
     case 'manual_call':
       // The frame's copy goes first so it wins a tie: the frame is the authority.
       return patch(state, { manualCall: newerCall(action.call, state.manualCall) });
+
+    case 'queue': {
+      // Compared by value: the frame is a fresh object each time, and a restated
+      // queue must cost no render.
+      const held = state.queue;
+      const next = action.queue;
+      if (held && held.due === next.due && held.reason === next.reason && held.next_due_at === next.next_due_at) {
+        return state;
+      }
+      return { ...state, queue: { due: next.due, reason: next.reason, next_due_at: next.next_due_at } };
+    }
   }
 }

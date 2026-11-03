@@ -1,3 +1,5 @@
+import type { AgencyQueueIdleReason, AgencyQueueState } from '../types/agency';
+
 /**
  * Copy for the station's idle panels — the contact column and the empty
  * middle column while the agent is waiting.
@@ -51,4 +53,65 @@ export function stationAgentLabel(user: {
   const email = user?.email?.trim();
   if (email) return email;
   return 'Signed in';
+}
+
+// ─── "Nothing due now" (contact assignment) ─────────────────────────────────
+
+/**
+ * On a `strict` or `preferred` campaign an agent with nothing due is NOT
+ * reserved, so "waiting for a call" would be untrue: no call is coming until
+ * something falls due. The idle guide says so, and why, from the `queue` the
+ * bootstrap, `ready` and the `queue` frame state. A `Record` over the contract's
+ * union, so a reason added there without copy fails the type check.
+ *
+ * `{next}` is the next due time when the server sent one; the other sentence
+ * reads whole on its own.
+ */
+export const QUEUE_IDLE_COPY: Record<AgencyQueueIdleReason, { withTime: string; withoutTime: string }> = {
+  queue_empty: {
+    withTime: 'You have no open contacts right now. Your supervisor can assign you more.',
+    withoutTime: 'You have no open contacts right now. Your supervisor can assign you more.',
+  },
+  waiting_for_retry: {
+    withTime: 'Your contacts are scheduled for another try later. The next one is due {next}.',
+    withoutTime: 'Your contacts are all scheduled for another try later.',
+  },
+  callbacks_later: {
+    withTime: 'Your open contacts are callbacks booked for later. The next one is due {next}.',
+    withoutTime: 'Your open contacts are all callbacks booked for later.',
+  },
+  outside_calling_hours: {
+    withTime: 'The campaign is outside its calling hours. Calls start again {next}.',
+    withoutTime: 'The campaign is outside its calling hours.',
+  },
+};
+
+export const NOTHING_DUE_HEADING = 'Nothing due now';
+
+/**
+ * The idle guide's lead line when the agent's own queue has nothing due, or
+ * `null` when the ordinary "a call will reach you" copy is true (pool mode, no
+ * queue stated, or something due).
+ */
+export function nothingDueCopy(
+  queue: AgencyQueueState | null | undefined,
+  formatTime: (iso: string) => string,
+): string | null {
+  if (!queue || queue.due || !queue.reason) return null;
+  const copy = QUEUE_IDLE_COPY[queue.reason];
+  if (!copy) return null;
+  return queue.next_due_at
+    ? copy.withTime.replace('{next}', formatTime(queue.next_due_at))
+    : copy.withoutTime;
+}
+
+/**
+ * The queue to show: the socket's statement once it has made one, the
+ * bootstrap's (the state at join) until then.
+ */
+export function effectiveQueue(
+  socket: AgencyQueueState | null | undefined,
+  bootstrap: AgencyQueueState | null | undefined,
+): AgencyQueueState | null {
+  return socket !== undefined ? socket : (bootstrap ?? null);
 }

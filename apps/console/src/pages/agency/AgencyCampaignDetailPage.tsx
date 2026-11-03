@@ -14,6 +14,9 @@ import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip
 import { CampaignPerformance } from '../../components/agency/CampaignPerformance';
 import { AgentFloor } from '../../components/agency/AgentFloor';
 import { CampaignAgentAssignments } from '../../components/agency/CampaignAgentAssignments';
+import { CampaignAssignmentProgress } from '../../components/agency/CampaignAssignmentProgress';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
 import { CampaignSeriesSection } from '../../components/agency/CampaignSeriesSection';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
@@ -101,6 +104,8 @@ export function AgencyCampaignDetailPage() {
    * checking the looser one here would show an `operator` four buttons that 403.
    */
   const canControl = hasPermission(role, 'agency.supervise');
+  // Contacts by agent (contact assignment): a supervisor read behind its flag.
+  const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
   // Floors at `agent`, so everyone above holds it too — a supervisor covering a
   // shift is the case this exists for.
   const canJoinStation = hasPermission(role, 'agency.station.connect');
@@ -451,6 +456,13 @@ export function AgencyCampaignDetailPage() {
           */
           liveAgentUserIds={stats?.agents ? stats.agents.map((a) => a.agent_user_id) : null}
         />
+
+        {/*
+          Contacts by agent, under the staffing list: who works here, then how far
+          each has got through the contacts assigned to them. Mounted only for a
+          supervisor with the flag on, so its read never 403s on a page view.
+        */}
+        {canControl && assignmentEnabled ? <CampaignAssignmentProgress campaignId={campaign.id} /> : null}
       </div>
       )}
 

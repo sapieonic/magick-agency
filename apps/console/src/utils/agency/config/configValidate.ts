@@ -1,6 +1,16 @@
-import type { AgencyRetryRule } from '../../../types/agency-campaign';
+import type { AgencyDispositionEntry, AgencyRetryRule } from '../../../types/agency-campaign';
+import {
+  AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX,
+  AGENCY_AGENT_RETRY_ROUNDS_MAX,
+  AGENCY_AGENT_RETRY_ROUNDS_MIN,
+  AGENCY_ASSIGNMENT_MODES,
+  AGENCY_CALLBACK_FALLBACK_VALUES,
+  AGENCY_CALLBACK_GRACE_MINUTES_MAX,
+  AGENCY_ON_UNSTAFF_VALUES,
+  AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX,
+} from '@magick-agency/contracts/agency';
 import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
-import type { CampaignConfigState } from './configConstants';
+import type { AssignmentConfigState, CampaignConfigState } from './configConstants';
 import { reservedDispositionCodeMessage } from '../systemDisposition';
 
 /*
@@ -50,6 +60,8 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
       const rule = validateRetryRule(entry.retry, `${at}.retry`);
       Object.assign(errors, rule);
     }
+
+    if (entry.override) Object.assign(errors, validateOverride(entry, `${at}.override`));
   });
 
   for (const [outcome, rule] of Object.entries(state.retryPolicy)) {
@@ -90,7 +102,65 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
     errors['wrapup_seconds'] = 'Wrap-up is 0–600 seconds. 0 means no wrap-up.';
   }
 
+  Object.assign(errors, validateAssignment(state.assignment));
+
   return errors;
+}
+
+/**
+ * An outcome's override, keyed `disposition_catalog[i].override.*` as the server
+ * keys it. The editor only offers the legal shapes; this catches a catalog
+ * loaded from the API in a shape the editor would not produce.
+ */
+function validateOverride(entry: AgencyDispositionEntry, at: string): Record<string, string> {
+  const errors: Record<string, string> = {};
+  const override = entry.override!;
+  if (entry.suppress || entry.terminal) {
+    errors[at] =
+      'An outcome that ends or stops calling the contact can’t allow an override. Remove the override or the flag.';
+    return errors;
+  }
+  if (override.extra_attempts !== undefined) {
+    const n = override.extra_attempts;
+    if (!Number.isInteger(n) || n < 1 || n > AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX) {
+      errors[`${at}.extra_attempts`] = `Extra attempts are 1 to ${AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX}.`;
+    }
+  }
+  if (!override.extra_attempts && !override.retry_delay && !override.calling_hours) {
+    errors[at] = 'Pick at least one thing this outcome allows, or turn the override off.';
+  }
+  return errors;
+}
+
+/** The 0009 bounds, from the contract; keys are the body's own field names. */
+function validateAssignment(assignment: AssignmentConfigState): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!(AGENCY_ASSIGNMENT_MODES as readonly string[]).includes(assignment.mode)) {
+    errors['assignment_mode'] = 'Pick how contacts are assigned.';
+  }
+  if (!(AGENCY_ON_UNSTAFF_VALUES as readonly string[]).includes(assignment.onUnstaff)) {
+    errors['on_unstaff'] = 'Pick what happens to an agent’s contacts when they leave the campaign.';
+  }
+  if (!(AGENCY_CALLBACK_FALLBACK_VALUES as readonly string[]).includes(assignment.callbackFallback)) {
+    errors['callback_fallback'] = 'Pick what happens to a callback whose agent is away.';
+  }
+  if (!wholeIn(assignment.callbackGraceMinutes, 0, AGENCY_CALLBACK_GRACE_MINUTES_MAX)) {
+    errors['callback_owner_grace_minutes'] =
+      `Wait 0 to ${AGENCY_CALLBACK_GRACE_MINUTES_MAX.toLocaleString()} minutes (7 days).`;
+  }
+  if (!wholeIn(assignment.agentRetryRounds, AGENCY_AGENT_RETRY_ROUNDS_MIN, AGENCY_AGENT_RETRY_ROUNDS_MAX)) {
+    errors['agent_retry_rounds'] =
+      `Rounds are ${AGENCY_AGENT_RETRY_ROUNDS_MIN} to ${AGENCY_AGENT_RETRY_ROUNDS_MAX}.`;
+  }
+  if (!wholeIn(assignment.agentRetryCooldownMinutes, 0, AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX)) {
+    errors['agent_retry_cooldown_minutes'] =
+      `Cooldown is 0 to ${AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX.toLocaleString()} minutes (7 days).`;
+  }
+  return errors;
+}
+
+function wholeIn(value: number, min: number, max: number): boolean {
+  return Number.isInteger(value) && value >= min && value <= max;
 }
 
 function validateRetryRule(rule: AgencyRetryRule, at: string): Record<string, string> {

@@ -10,6 +10,7 @@ import {
   type CatalogEdit,
 } from '../../../utils/agencyCampaignConfigForm';
 import type { AgencyDispositionEntry } from '../../../types/agency-campaign';
+import { AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX } from '@magick-agency/contracts/agency';
 import type { ConfigFieldErrors } from './configFieldErrors';
 import styles from './CampaignBehaviourSection.module.css';
 
@@ -24,6 +25,13 @@ interface DispositionCatalogEditorProps {
   dispositions: AgencyDispositionEntry[];
   onChange: (next: AgencyDispositionEntry[]) => void;
   errors: ConfigFieldErrors;
+  /**
+   * Offer each outcome's "Allows override" group (contact assignment). Off by
+   * default: the soft phone's settings reuse this editor, and an override is a
+   * campaign feature the server refuses in that catalog. The campaign forms turn
+   * it on while the `agency_contact_assignment_enabled` flag is on.
+   */
+  overrides?: boolean;
 }
 
 /**
@@ -35,7 +43,12 @@ interface DispositionCatalogEditorProps {
  * (rows this session added; a loaded row never follows its label) and writes the
  * entries back through `onChange`.
  */
-export function DispositionCatalogEditor({ dispositions, onChange, errors }: DispositionCatalogEditorProps) {
+export function DispositionCatalogEditor({
+  dispositions,
+  onChange,
+  errors,
+  overrides = false,
+}: DispositionCatalogEditorProps) {
   const autoCodeRows = useRef<ReadonlySet<number>>(new Set());
 
   const edit = (action: CatalogEdit) => {
@@ -301,6 +314,84 @@ export function DispositionCatalogEditor({ dispositions, onChange, errors }: Dis
               )}
 
               {/*
+                ── Allows override ─────────────────────────────────────────
+                What filing this outcome lets the contact's agent do next, for
+                this contact only. Hidden where the outcome suppresses or ends
+                the contact: nothing would read it, and the server refuses it
+                there. There is deliberately no Do Not Call part — DNC is never
+                overridable, so it is not offered.
+              */}
+              {overrides && !retryUnreachable ? (
+                <div
+                  className={styles.dispositionRetry}
+                  role="group"
+                  aria-label={`What ${name} allows the agent`}
+                  data-testid={`override-group-${index}`}
+                >
+                  <p className={styles.flagTitle}>Allows override</p>
+                  <label className={styles.retryToggle}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(entry.override?.extra_attempts)}
+                      onChange={(event) => edit({
+                        type: 'setOverride',
+                        index,
+                        patch: { extra_attempts: event.target.checked ? 1 : undefined },
+                      })}
+                    />
+                    Extra attempts past the limit
+                  </label>
+                  {entry.override?.extra_attempts ? (
+                    <div className={styles.retryFields}>
+                      <label className={styles.retryField}>
+                        up to
+                        <input
+                          type="number"
+                          min={1}
+                          max={AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX}
+                          aria-label={`${name} extra attempts`}
+                          aria-describedby={errors.describedBy(`disposition_catalog[${index}].override.extra_attempts`)}
+                          value={entry.override.extra_attempts}
+                          onChange={(event) => edit({
+                            type: 'setOverride',
+                            index,
+                            // 0 would clear the part; keep the box ticked and let
+                            // validation say the bound instead.
+                            patch: { extra_attempts: Number(event.target.value) || 1 },
+                          })}
+                        />
+                        more
+                      </label>
+                    </div>
+                  ) : null}
+                  <label className={styles.retryToggle}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(entry.override?.retry_delay)}
+                      onChange={(event) => edit({
+                        type: 'setOverride',
+                        index,
+                        patch: { retry_delay: event.target.checked },
+                      })}
+                    />
+                    May dial before the next scheduled time
+                  </label>
+                  <label className={styles.retryToggle}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(entry.override?.calling_hours)}
+                      onChange={(event) => edit({
+                        type: 'setOverride',
+                        index,
+                        patch: { calling_hours: event.target.checked },
+                      })}
+                    />
+                    May dial outside calling hours (needs a note)
+                  </label>
+                </div>
+              ) : null}
+
+              {/*
                 The combination, in one sentence. Five checkboxes state five
                 mechanisms; this is the only place the screen says what the
                 operator has actually configured.
@@ -313,6 +404,8 @@ export function DispositionCatalogEditor({ dispositions, onChange, errors }: Dis
               {errors.render(`disposition_catalog[${index}].label`)}
               {errors.render(`disposition_catalog[${index}].retry.max_attempts`)}
               {errors.render(`disposition_catalog[${index}].retry.delay_minutes`)}
+              {errors.render(`disposition_catalog[${index}].override`)}
+              {errors.render(`disposition_catalog[${index}].override.extra_attempts`)}
             </li>
           );
         })}

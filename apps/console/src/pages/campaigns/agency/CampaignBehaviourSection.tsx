@@ -5,6 +5,7 @@ import { CallingHoursFields } from './CallingHoursFields';
 import { DispositionCatalogEditor } from './DispositionCatalogEditor';
 import { RetryPolicyTable } from './RetryPolicyTable';
 import { WrapupFields } from './WrapupFields';
+import { AssignmentFields } from './AssignmentFields';
 
 /**
  * Campaign configuration: calling hours, the
@@ -77,6 +78,13 @@ export interface CampaignBehaviourSectionProps {
   layout?: 'sections' | 'plain';
   /** Which editors to render. Defaults to both, so the settings page is unchanged. */
   include?: readonly BehaviourSectionId[];
+  /**
+   * Contact assignment: present only while the `agency_contact_assignment_enabled`
+   * flag is on. It adds the Assignment group and each outcome's "Allows override"
+   * group; absent, neither renders (and the page sends neither). `modeLocked`: the
+   * campaign is not draft or paused, so its mode cannot change now.
+   */
+  assignment?: { modeLocked: boolean };
 }
 
 export function CampaignBehaviourSection({
@@ -86,6 +94,7 @@ export function CampaignBehaviourSection({
   now,
   layout = 'sections',
   include = ['hours', 'behaviour'],
+  assignment,
 }: CampaignBehaviourSectionProps) {
   const errors = useConfigFieldErrors(fieldErrors);
   const showHours = include.includes('hours');
@@ -106,6 +115,7 @@ export function CampaignBehaviourSection({
         dispositions={state.dispositions}
         onChange={(dispositions) => onChange({ ...state, dispositions })}
         errors={errors}
+        overrides={assignment !== undefined}
       />
       <RetryPolicyTable
         retryPolicy={state.retryPolicy}
@@ -119,6 +129,14 @@ export function CampaignBehaviourSection({
         onChange={(patch) => onChange({ ...state, ...patch })}
         errors={errors}
       />
+      {assignment ? (
+        <AssignmentFields
+          assignment={state.assignment}
+          onChange={(next) => onChange({ ...state, assignment: next })}
+          errors={errors}
+          modeLocked={assignment.modeLocked}
+        />
+      ) : null}
     </>
   );
 
@@ -144,7 +162,9 @@ export function CampaignBehaviourSection({
       {showBehaviour ? (
         <ComposerSection
           title="Behaviour"
-          helper="Outcomes agents can pick, how retries work, and wrap-up."
+          helper={assignment
+            ? 'Outcomes agents can pick, how retries work, wrap-up, and how contacts are assigned.'
+            : 'Outcomes agents can pick, how retries work, and wrap-up.'}
         >
           {behaviour}
         </ComposerSection>

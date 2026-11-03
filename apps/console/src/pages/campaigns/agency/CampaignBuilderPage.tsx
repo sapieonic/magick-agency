@@ -18,6 +18,8 @@ import {
 import { createAgencyCampaign, updateAgencyCampaign } from '../../../api/agencyCampaigns';
 import { buildContextDisplay, mappingBlockReason } from '../../../utils/agencyColumnMapping';
 import { useRosterIngest } from '../../../hooks/useRosterIngest';
+import { useFeatureFlagEnabled } from '../../../hooks/useFeatureFlagEnabled';
+import { ASSIGNMENT_MODE_COPY, CONTACT_ASSIGNMENT_FLAG } from '../../../utils/agencyAssignmentCopy';
 import {
   trackAgencyCampaignBuilderStepViewed,
   trackAgencyCampaignConfigBlocked,
@@ -68,6 +70,9 @@ import styles from './CampaignBuilderPage.module.css';
 
 export default function CampaignBuilderPage() {
   const { tenantId, accountId } = useTenant();
+  // Contact assignment: the Assignment group and outcome overrides, flag-gated.
+  // The builder's campaign is always a draft, so the mode is never locked here.
+  const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
 
   const [step, setStep] = useState<BuilderStepId>('basics');
   const [name, setName] = useState('');
@@ -214,7 +219,10 @@ export default function CampaignBuilderPage() {
       const id = await ensureCampaign();
       await updateAgencyCampaign(
         id,
-        { ...buildConfigPayload(config), ...(record_calls !== undefined ? { record_calls } : {}) },
+        {
+          ...buildConfigPayload(config, assignmentEnabled ? 'all' : 'none'),
+          ...(record_calls !== undefined ? { record_calls } : {}),
+        },
         tenantId ?? undefined,
         accountId ?? undefined,
       );
@@ -238,6 +246,13 @@ export default function CampaignBuilderPage() {
           wrapup_seconds: config.wrapupSeconds,
           auto_return: config.autoReturn,
           wrapup_redial: config.allowWrapupRedial,
+          ...(assignmentEnabled
+            ? {
+              assignment_mode: config.assignment.mode,
+              agent_retry: config.assignment.allowAgentRetry,
+              override_outcome_count: config.dispositions.filter((d) => d.override != null).length,
+            }
+            : {}),
           recording_enabled: recordCalls,
           // The builder has no call-summary picker; only the settings page sets one.
           analysis_profile_set: false,
@@ -270,7 +285,7 @@ export default function CampaignBuilderPage() {
     } finally {
       setSavingConfig(false);
     }
-  }, [config, recordCalls, recordingEnabled, ensureCampaign, tenantId, accountId, goTo, setError]);
+  }, [config, recordCalls, recordingEnabled, assignmentEnabled, ensureCampaign, tenantId, accountId, goTo, setError]);
 
   const backToMapping = useCallback(() => {
     setPhase('mapping');
@@ -592,6 +607,7 @@ export default function CampaignBuilderPage() {
                     fieldErrors={fieldErrors}
                     layout="plain"
                     include={['behaviour']}
+                    assignment={assignmentEnabled ? { modeLocked: false } : undefined}
                   />
                   <CampaignRecordingField
                     checked={recordCalls}
@@ -654,6 +670,17 @@ export default function CampaignBuilderPage() {
                     }${config.allowWrapupRedial ? ' · Redial from wrap-up allowed' : ''}`}
                     onEdit={() => goTo('behaviour')}
                   />
+                  {assignmentEnabled ? (
+                    <ReviewRow
+                      label="Assignment"
+                      value={`${ASSIGNMENT_MODE_COPY[config.assignment.mode].label}${
+                        config.assignment.allowAgentRetry
+                          ? ` · Agents may retry missed contacts (up to ${config.assignment.agentRetryRounds}×)`
+                          : ''
+                      }`}
+                      onEdit={() => goTo('behaviour')}
+                    />
+                  ) : null}
                   <ReviewRow
                     label="Recording"
                     value={recordCalls ? 'Every call is recorded' : 'Off'}
