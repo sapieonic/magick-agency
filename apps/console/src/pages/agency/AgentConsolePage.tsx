@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTenant } from '../../contexts/TenantContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -29,6 +29,12 @@ import { StationHeader } from '../../components/agency/StationHeader';
 import { ContactPanel } from '../../components/agency/ContactPanel';
 import { ContactDetail } from '../../components/agency/ContactDetail';
 import { IdleGuide } from '../../components/agency/IdleGuide';
+import { MyContactsPanel, myContactsLockReason } from '../../components/agency/MyContactsPanel';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
+import { effectiveQueue, nothingDueCopy } from '../../utils/agencyStationIdle';
+import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
+import { trackAgencyStationNothingDue } from '../../analytics/events';
 import { StationActionBar } from '../../components/agency/StationActionBar';
 import {
   LEAVE_CONFIRM_ACTION,
@@ -120,6 +126,41 @@ export default function AgentConsolePage() {
   const micNotice = agencyAudioNotice(audio.error);
 
   useLiveSessionTouch({ tenantId, bootstrap, agentState, connection });
+
+  /*
+    ── Contact assignment ────────────────────────────────────────────────────
+    "Nothing due now": on a strict / preferred campaign an agent with nothing due
+    is not reserved, so the idle guide says why instead of promising a call. The
+    queue is the socket's once it has stated one, the bootstrap's until then.
+    Not flag-gated: the flag gates the surface, and pacing keeps a stored strict
+    mode with it off — the sentence is true either way.
+  */
+  const queue = effectiveQueue(station.queue, bootstrap?.queue);
+  const nothingDue = nothingDueCopy(queue, formatSpineTimestamp);
+  const nothingDueReason = nothingDue !== null ? queue?.reason ?? null : null;
+  useEffect(() => {
+    if (!nothingDueReason || !bootstrap) return;
+    trackAgencyStationNothingDue({ campaign_id: bootstrap.campaign_id, reason: nothingDueReason });
+  }, [nothingDueReason, bootstrap]);
+
+  /*
+    My contacts: a panel over the station (see `MyContactsPanel` for why not a
+    column or a page). The header button is fixed for the shift — shown when the
+    flag is on and the campaign assigns contacts or lets agents retry, both read
+    from the bootstrap — and refused in place, with the reason, while a call is
+    reserved, live or in wrap-up, so nothing moves under a cursor. The panel is
+    unmounted the moment that lock applies: a reservation never lands behind it.
+  */
+  const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
+  const myContactsOffered = assignmentEnabled && bootstrap !== null && (
+    (bootstrap.assignment_mode !== undefined && bootstrap.assignment_mode !== 'pool')
+    || bootstrap.allow_agent_retry === true
+  );
+  const myContactsLock = myContactsLockReason(agentState, connection === 'open');
+  const [myContactsOpen, setMyContactsOpen] = useState(false);
+  useEffect(() => {
+    if (myContactsLock !== null) setMyContactsOpen(false);
+  }, [myContactsLock]);
 
   /**
    * Focus moves exactly ONCE per call — to the console root, on reservation — and
@@ -363,6 +404,24 @@ export default function AgentConsolePage() {
         onExit={exit.exitStation}
         connection={connection}
         missedPings={missedPings}
+        extra={myContactsOffered ? (
+          <span className={styles.myContactsSlot}>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setMyContactsOpen(true)}
+              disabled={myContactsLock !== null}
+              aria-describedby={myContactsLock !== null ? 'my-contacts-lock' : undefined}
+              title={myContactsLock ?? 'Your assigned contacts: search, retry the ones you missed, or call one'}
+              data-testid="my-contacts-open"
+            >
+              My contacts
+            </button>
+            {myContactsLock !== null ? (
+              <span id="my-contacts-lock" className={styles.srOnly}>{myContactsLock}</span>
+            ) : null}
+          </span>
+        ) : undefined}
       />
 
       {/*
@@ -487,7 +546,7 @@ export default function AgentConsolePage() {
               filterInputRef={fieldFilterRef}
             />
           ) : (
-            <IdleGuide dialing={dialing} />
+            <IdleGuide dialing={dialing} nothingDue={nothingDue} />
           )}
         </section>
 
@@ -554,6 +613,20 @@ export default function AgentConsolePage() {
         the original sentence describes what confirming will do, and once it has
         failed the only news is that it did not.
       */}
+      {myContactsOpen && myContactsLock === null && bootstrap ? (
+        <MyContactsPanel
+          campaignId={bootstrap.campaign_id}
+          campaignName={bootstrap.campaign_name}
+          assignmentMode={bootstrap.assignment_mode ?? null}
+          sessionId={bootstrap.session_id}
+          agentState={agentState}
+          dialing={dialing}
+          queue={queue}
+          onClose={() => setMyContactsOpen(false)}
+          onCalled={() => setMyContactsOpen(false)}
+        />
+      ) : null}
+
       <ConfirmDialog
         open={exit.leaveConfirm}
         title={LEAVE_CONFIRM_TITLE}
