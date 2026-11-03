@@ -100,7 +100,8 @@ unique.
 4. Install SIGTERM / SIGINT handlers before any background work, so a signal during a slow start
    runs the stops collected so far.
 5. Bootstraps in order, each returning a stop function: `startPlatform` (audit buffers, audit
-   partition maintenance, cache-invalidation subscriber); `startVoice` (S3, clip cache and sweeper,
+   partition maintenance, cache-invalidation subscriber on `<REDIS_KEY_PREFIX>cache:invalidate:db<N>`,
+   scoped to the Redis db because pub/sub is server-wide); `startVoice` (S3, clip cache and sweeper,
    decode scratch reap, guard host and bridge, startup self-heal); `startAgency` (ingest reaper, then
    `AgencyRuntime.start()`, which runs the startup reaper before the pacing supervisor);
    `startAnalysis` (worker, retention purge). Voice starts before agency so the bridge's self-heal
@@ -309,6 +310,14 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   statement that locks both rows and writes only while the attempt has no disposition and the
   contact is still parked `connected` for it (no newer attempt, no soft-phone claim); it counts
   only the closes that landed.
+- **Disposition** (`api/routes/agency/attempts.ts`). `recordDisposition` is one guarded UPDATE:
+  the same code again is a successful replay, a different code a 409. The contact write after it
+  (`AgencyContactRepository.releaseFromDisposition`) is one statement that lands only while the
+  contact is still the attempt's: no newer attempt, no soft-phone claim held or taken since the
+  attempt, and the contact parked `connected` for it (or `pending` on the same code, the replay
+  that corrects a callback time, or DNC-suppressed, where only `last_disposition` lands). A late
+  replay of an old attempt's disposition therefore answers the same 200 and leaves a contact a
+  later call settled, or pacing or the soft phone re-claimed, as it is.
 - **Soft phone** (`softphone/`, [`softphone.md`](softphone.md)). Manual calls outside pacing:
   `ManualDialer` dials agent-first through the bridge with a `manual` correlation and owns the
   call until it ends; `SoftphoneService` (`runtime.softphone`) is the API layer's surface. The

@@ -192,7 +192,7 @@ production.
 | `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
 | `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Only `true` / `false` parse; `false` is the one opt-out |
-| `REDIS_KEY_PREFIX` | empty | Prefix on every Redis key |
+| `REDIS_KEY_PREFIX` | empty | Prefix on every Redis key, and on the cache-invalidation pub/sub channel (`<prefix>cache:invalidate:db<N>`, N the URL's Redis db). Pub/sub is server-wide, not per db, so two deployments on one Redis are separated by a different prefix or a different db |
 | `REDIS_COMMAND_TIMEOUT_MS`, `REDIS_MAX_RETRIES_PER_REQUEST`, `REDIS_CONNECT_TIMEOUT_MS` | `2000`, `1`, `2000` | Redis client bounds: a Redis that is gone or stalled fails each command within the timeout (a rejection, so call tokens fail open per Q6, and the agent lease renewer keeps renewing through it). ioredis's defaults took ~10 s to show on `/readyz` and held some requests ~30 s |
 | `MAX_CONCURRENT_CALLS` | `1000` | Global guard ceiling: call legs holding a slot, ringing and `ending` included (a 500-call floor holds ~860 at peak; sizing in `config/blocks/voice.ts`). Per-account limits come from super-admin settings, default 5 |
 | `VOICELINK_LOGIN_TIMEOUT_MS`, `VOICELINK_ADD_LEAD_TIMEOUT_MS` | `10000`, `15000` | VoiceLink REST timeouts, per request (a 401's retry gets a fresh one; the `add_lead` value also bounds a CDR lookup). A timed-out `add_lead` fails the dial (agent and slots released at once) but may have queued the lead: never retried, the contact's redial deferred 15 min, a late carrier media connect refused and hung up (`voicelink.adapter.ts`, `post`) |
@@ -219,7 +219,7 @@ production.
 | `AUDIT_PARTITION_MAINTENANCE_ENABLED` | `true` | Creates partitions 3 months ahead and drops old ones, daily |
 | `INVITE_TOKEN_TTL_DAYS` | `7` (1–90) | Invite expiry |
 | `PLATFORM_BRAND_NAME`, `_ACCENT`, `_LOGO_URL` | `Magick Agency`, `#7c5cfc`, unset | Brand in mail (B17) |
-| `LOCAL_CACHE_ENABLED` | `false` | In-process cache layer over Redis (5 s TTL) |
+| `LOCAL_CACHE_ENABLED` | `false` | In-process cache layer over Redis (5 s TTL), kept honest by invalidations on `<REDIS_KEY_PREFIX>cache:invalidate:db<N>`. A release that changed the channel's name (the `:db<N>` suffix arrived in one) does not carry invalidations between an old and a new process while both run; each process's own copies still drop, and the others' within the local TTL |
 | `LOG_LEVEL` | `info` | |
 
 `apps/server/.env.example` carries the reasoning for the proxy, TLS, recording-host, retention and
