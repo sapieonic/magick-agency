@@ -4,6 +4,7 @@ import { AGENT_LEASE_MS } from './agent-state-machine.js';
 import { callingWindowState, nextWindowOpen, resolveCallingWindow } from './calling-hours.js';
 import { normalizeE164 } from './dnc-registry.js';
 import type { DncRegistry } from './dnc-registry.js';
+import { validateOverrideNoteText } from './contact-overrides.js';
 
 const log = createChildLogger({ component: 'agency-pre-dial-gates' });
 
@@ -107,7 +108,11 @@ export type PreDialGate =
  *   answering for this one cannot answer for them.
  */
 export type PreDialDecision =
-  | { action: 'dial'; clearance: PreDialClearance }
+  /**
+   * `callingHoursOverridden`: the window was closed and the agent's calling-hours override
+   * let it pass ({@link PreDialGateOptions.callingHoursOverride}). The caller spends it.
+   */
+  | { action: 'dial'; clearance: PreDialClearance; callingHoursOverridden?: true }
   | { action: 'suppress'; gate: PreDialGate; suppressedReason: 'dnc' | 'invalid' }
   | { action: 'defer'; gate: PreDialGate; deferUntil: Date }
   | { action: 'halt'; gate: PreDialGate };
@@ -118,8 +123,26 @@ export interface PreDialGateInput {
   campaign: Pick<AgencyCampaignRecord,
     'id' | 'tenant_id' | 'account_id' | 'calling_window_start' | 'calling_window_end' | 'calling_days'
     | 'default_timezone'>;
-  contact: Pick<AgencyContactRecord, 'id' | 'phone_e164' | 'timezone'>;
+  contact: Pick<AgencyContactRecord, 'id' | 'phone_e164' | 'timezone'>
+    & Partial<Pick<AgencyContactRecord, 'override_calling_hours'>>;
   now: Date;
+}
+
+/**
+ * Options a dial path other than the pacing tick may pass. Absent: the gates are exactly
+ * the tick's.
+ */
+export interface PreDialGateOptions {
+  /**
+   * The agent's own dial of one of their contacts (`my-contact-call.ts`, decision D7/D8):
+   * a CLOSED calling window passes **only** when the contact holds an unspent calling-hours
+   * override (`override_calling_hours`, granted by an outcome) **and** `note` is a valid
+   * note (trimmed, 10–500 code points). Nothing else changes: phone validity still
+   * suppresses, an UNRESOLVABLE window still defers (there is no window to be outside of,
+   * so nothing to override), and DNC is still checked after it and still suppresses or
+   * halts. DNC has no override anywhere.
+   */
+  callingHoursOverride?: { note: string | null | undefined };
 }
 
 /**
@@ -133,8 +156,10 @@ export interface PreDialGateInput {
 export async function evaluatePreDialGates(
   input: PreDialGateInput,
   deps: { dnc: DncRegistry },
+  options: PreDialGateOptions = {},
 ): Promise<PreDialDecision> {
   const { campaign, contact, now } = input;
+  let callingHoursOverridden = false;
 
   // ── 1. Is this a number at all ────────────────────────────────────────────
   // First because it is terminal and free. A row whose phone is not E.164 can
@@ -168,7 +193,10 @@ export async function evaluatePreDialGates(
       deferUntil: new Date(now.getTime() + UNRESOLVABLE_WINDOW_PARK_MS),
     };
   }
-  if (state === 'closed') {
+  if (state === 'closed' && hoursOverrideApplies(contact, options)) {
+    // Not a pass: DNC below still runs, and fails closed.
+    callingHoursOverridden = true;
+  } else if (state === 'closed') {
     const opens = nextWindowOpen(window, now);
     // Null means no opening exists at all — an empty `calling_days`, or
     // `start == end`. Parked rather than treated as "now", which would spin.
@@ -206,7 +234,19 @@ export async function evaluatePreDialGates(
     return { action: 'halt', gate: 'dnc_unavailable' };
   }
 
-  return { action: 'dial', clearance: mintClearance(contact.id, now) };
+  return callingHoursOverridden
+    ? { action: 'dial', clearance: mintClearance(contact.id, now), callingHoursOverridden: true }
+    : { action: 'dial', clearance: mintClearance(contact.id, now) };
+}
+
+/** {@link PreDialGateOptions.callingHoursOverride}'s two conditions, both required. */
+function hoursOverrideApplies(
+  contact: PreDialGateInput['contact'],
+  options: PreDialGateOptions,
+): boolean {
+  if (!options.callingHoursOverride) return false;
+  if (contact.override_calling_hours !== true) return false;
+  return validateOverrideNoteText(options.callingHoursOverride.note) !== null;
 }
 
 function mintClearance(contactId: string, now: Date): PreDialClearance {

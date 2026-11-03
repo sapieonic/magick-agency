@@ -31,6 +31,20 @@
     },
     {
       "method": "POST",
+      "path": "/proxy/agency/my-contacts/retry",
+      "source": "apps/console/src/api/agencyMyContacts.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); contact assignment: the agent reopens their not-reached contacts"
+    },
+    {
+      "method": "POST",
+      "path": "/proxy/agency/my-contacts/:contactId/call",
+      "source": "apps/console/src/api/agencyMyContacts.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); contact assignment: the agent dials one of their contacts"
+    },
+    {
+      "method": "POST",
       "path": "/proxy/agency/sessions/:id/leave",
       "source": "apps/console/src/api/agency.ts",
       "status": "served",

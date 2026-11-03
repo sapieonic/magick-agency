@@ -18,6 +18,7 @@ import {
   resolveRetryDecision,
 } from '../retry-policy.js';
 import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../telephony/carrier-errors.js';
+import { outcomeRuleDelayMinutes } from '../contact-overrides.js';
 
 const log = createChildLogger({ component: 'agency-dialer' });
 
@@ -214,6 +215,32 @@ export async function settleContact(
     const decision = resolveRetryDecision(
       cmd.campaign.retry_policy, outcome, new Date(), attemptsUsed,
     );
+    // ── `max_attempts` spent: an outcome-granted extra attempt may keep it open ──
+    // (decision D8.) Only this exhaustion: never a suppression, never the our-fault
+    // ledger's retirement above. The spend, the decision's write and the attempt's
+    // `override_applied` are one transaction (`markExhaustedOrSpendExtraAttempt`), at most
+    // once per attempt, under the same DNC freeze as `markState`.
+    if (decision.contactState === 'exhausted' && decision.reason === 'max_attempts_reached') {
+      const settled = await agencyContactRepository.markExhaustedOrSpendExtraAttempt({
+        contactId: cmd.contactId,
+        attemptId: cmd.attemptId,
+        decision,
+        delayMinutes: outcomeRuleDelayMinutes(cmd.campaign.retry_policy, outcome),
+        now: new Date(),
+      });
+      log.info(
+        {
+          contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, attemptsUsed,
+          contactState: settled?.state ?? decision.contactState, retryReason: decision.reason,
+          extraAttemptSpent: settled?.extraAttemptSpent ?? false,
+          nextAttemptAt: settled?.nextAttemptAt ?? null,
+        },
+        settled?.extraAttemptSpent
+          ? 'Contact kept open past max_attempts by an outcome-granted extra attempt'
+          : 'Contact released by the outcome retry policy',
+      );
+      return;
+    }
     // ⚠️ `decision.contactState` is `'pending'` for every retryable outcome under
     // its cap, and this contact may have been marked DNC mid-call. `markState`
     // refuses that transition in SQL — see its header for why the guard is there

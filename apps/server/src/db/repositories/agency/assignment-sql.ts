@@ -71,7 +71,9 @@ export interface AgentRetrySettingsParams {
 /**
  * Why contact `c` cannot be retried by its agent now (contract: `AgencyAgentRetryBlock`), or
  * NULL when it can. "Not reached" is an `exhausted` contact, or an open one whose last call did
- * not connect and that is not a callback (`not_reached` in {@link contactBucketSql}).
+ * not connect and that is not a callback (`not_reached` in {@link contactBucketSql}), scheduled
+ * for LATER: an open one already due now is in the queue as it is, so retrying it would change
+ * nothing but spend a round (and two concurrent reopens would spend two).
  *
  * In order: the campaign must allow it (`retry_disabled`); a suppressed or DNC row never
  * (`suppressed`); it must be not reached (`not_retryable`); a round must be left
@@ -87,13 +89,27 @@ export function agentRetryBlockSql(alias: string, p: AgentRetrySettingsParams): 
       ${c}.state = 'exhausted'
       OR (${c}.state = 'pending' AND ${c}.attempt_count > 0
           AND ${c}.last_outcome IS DISTINCT FROM 'connected'
-          AND NOT COALESCE(${c}.last_disposition = ANY(${p.callbackCodes}::text[]), false))
+          AND NOT COALESCE(${c}.last_disposition = ANY(${p.callbackCodes}::text[]), false)
+          -- statement_timestamp(), not now(): now() is the TRANSACTION's start, and a reopen
+          -- that began before a concurrent one committed (its next_attempt_at = that one's
+          -- now()) would read the freshly reopened contact as scheduled for later.
+          AND ${c}.next_attempt_at > statement_timestamp())
     ) THEN 'not_retryable'
     WHEN ${c}.agent_retry_rounds_used >= ${p.rounds}::int THEN 'rounds_used'
-    WHEN NOT ${c}.override_retry_delay
-         AND ${lastAttemptAtSql(c)} > now() - make_interval(mins => ${p.cooldownMinutes}::int) THEN 'cooldown'
+    WHEN NOT ${c}.override_retry_delay AND ${agentRetryCoolingSql(c, p.cooldownMinutes)} THEN 'cooldown'
     ELSE NULL
   END)`;
+}
+
+/**
+ * Whether contact `c`'s agent-retry cooldown is still running: its last attempt is more
+ * recent than `cooldownMinutesParam` minutes (`int`). NULL-safe: a contact never attempted
+ * is not cooling. {@link agentRetryBlockSql} blocks on it unless a retry-delay override is
+ * held; a retry that goes ahead while it runs spends that override (the reopen and the
+ * agent's own dial read this to know).
+ */
+export function agentRetryCoolingSql(alias: string, cooldownMinutesParam: string): string {
+  return `COALESCE(${lastAttemptAtSql(alias)} > now() - make_interval(mins => ${cooldownMinutesParam}::int), false)`;
 }
 
 /** When the cooldown on contact `c` ends: last attempt + cooldown (NULL if never attempted). */
