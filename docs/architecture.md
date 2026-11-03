@@ -531,7 +531,8 @@ a rate-limit key and never an auth input.
   and the numbered migrations after it (0002: the two telephony-credential tables; 0003: the
   dialer's attempt and contact indexes; 0004: the in-flight contacts index the reaper's
   stranded-contact sweep reads; 0005: the soft phone; 0006: `agency_agent_sessions.client_kind`;
-  0007: `agency_ingest_jobs.dedupe_column`),
+  0007: `agency_ingest_jobs.dedupe_column`; 0008: wrap-up redial, `agency_campaigns.allow_wrapup_redial`
+  and the attempt's `redial_of_attempt_id` / `redial_number`),
   all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`: `agency.repository.ts`, a barrel over `agency/`). Repository
