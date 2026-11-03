@@ -351,7 +351,7 @@ P = primary, W*k* = the agent's media worker (`slotFor(sessionId)`).
 | Dispatch | P: `IpcDialDispatcher.dispatch` checks the clearance with `rejectClearance` exactly as `LocalDialDispatcher` does, maps `ownerReplica` → slot (refuses a replica not in the live set), sends | request `dial.execute {cmd, grant}` |
 | `executeDial` | W*k*: checks `cmd.ownerReplica === replicaId` (the same loud refusal as today), then `dialer.executeDial(cmd, { stillAuthorised })`, unchanged: flag read, priors, the `reserved` panel, lease CAS, `dialing` stamp, `liveByAttempt`, `createBridgedCall` | response when it settles |
 | `stillAuthorised` | W*k*, **synchronous**, from pushed grants (below) | events `pacing.revoke {campaignId|null, upTo}` |
-| Media URL minting | W*k* in `placeOutboundLeg`: tokens stored in Redis (Q6 memo on failure, in W*k*), URLs with `&w=k` | — |
+| Media URL minting | W*k* in `placeOutboundLeg`: tokens stored in Redis (Q6 memo on failure, in W*k*), URLs with `&w=k`. A throw after the session is registered and before `add_lead` tears the call down in W*k* (its `released` delta told, no `ended`) and rejects the dial | `call.lease` `released` |
 | `add_lead` to VoiceLink | W*k* | — |
 | Carrier media connect | P routes by `w` → W*k* verifies the provider token, adopts the leg | `handoff` |
 | Relay | W*k* only, both sockets local | none |
@@ -660,7 +660,7 @@ election is needed.
 | `reapSlot(k)` (new, §6.1): the startup rule narrowed to one dead worker | P, on worker exit, **before** re-forking slot *k* | the dead slot's sessions by `slotFor` |
 | `sweepOnce` (leaked attempts) | P | `owned` = union of every worker's `reaper.snapshot` `activeAttemptIds`; `isAgentHeldSomewhere` per §5.2; a snapshot timeout skips this cycle |
 | `reapUnrecordedEnds` | P | snapshots' `unrecordedEnds`; `reaper.forget_unrecorded` back to each worker. The dialer saw these end, so a contact is dialable at once; only one whose dial it reported `dialOutcomeUnknown` waits 15 min after `dialed_at`. A contact that is no longer that attempt's (the abandon's unclaim landed, then pacing or a soft-phone call took it) is left alone |
-| `sweepLapsedWrapups`, `sweepStrandedContacts` | P | none (database) |
+| `sweepLapsedWrapups`, `sweepStrandedContacts` | P | none (database). Each lapsed wrap-up is closed by one statement that locks the attempt and contact and writes only while they are still what the read found (`closeLapsedWrapup`), so a contact that moved on in between, or a second pass, writes nothing |
 | `sweepManualCalls` | P | `manualActiveIds` union; `softphone.closed_by_sweep` to each row's slot |
 | Guard self-heal reconcile (counters vs lock keys, Redis-global) | P | woken by `voice.wake_self_heal` |
 | Stale WebRTC call sweep | P | `excludeIds` = union of `activeCallIds`; its cutoff (≥ 4 h 5 min) is the real guard |
