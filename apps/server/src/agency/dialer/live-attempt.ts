@@ -106,6 +106,9 @@ export interface LiveAttempt {
    * True while `executeDial` awaits the bridge's dial (`createBridgedCall` /
    * `createUnboundBridgedCall`).
    *
+   * Every end the `ended` arm sees while this is true and nothing answered waits for the
+   * dial's result before its contact is settled ({@link dialSettled}).
+   *
    * A dial the carrier refused is ended by the bridge BEFORE the dial call rejects:
    * the bridge's `endCall` emits `ended` (`telephony_init_failed`) and only then
    * throws. When that end is outcome-unknown (`DIAL_OUTCOME_UNKNOWN_ERROR_CODE`) the
@@ -121,6 +124,18 @@ export interface LiveAttempt {
    * whatever error the dial call rejected with.
    */
   outcomeUnknownEnd: boolean;
+  /**
+   * Resolves once the bridge's dial call has returned: `true` when it rejected with an
+   * outcome-unknown error (the carrier may have queued the lead), `false` otherwise.
+   * Never rejects; pending until the dial is placed.
+   *
+   * The `ended` arm awaits it before settling the contact of an attempt that ended
+   * while {@link placing} and unanswered (an agent hang-up, a station teardown or any
+   * other end racing `add_lead`): only the dial knows whether the carrier may still ring
+   * that customer, and the contact is held `in_flight` (claimed, so no tick can take
+   * it) until it says (`AgencyDialer.settleContactAfterDial`).
+   */
+  dialSettled: Promise<boolean>;
 }
 
 /**
