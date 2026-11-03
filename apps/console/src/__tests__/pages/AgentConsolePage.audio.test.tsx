@@ -15,6 +15,17 @@ const mocks = vi.hoisted(() => ({
   markContactDnc: vi.fn(),
   useTenant: vi.fn(),
 }));
+/**
+ * The station's media format, which the page reads from the tenant's
+ * `agency_console_alaw8` flag. Mocked at that one function (the rest of the module is
+ * real) so each test chooses the format the way the flag would. `pcm16` unless a test
+ * says otherwise: most of this file pins the fallback's JSON envelope.
+ */
+const flagState = vi.hoisted(() => ({ mediaFormat: 'pcm16' as 'pcm16' | 'alaw8' }));
+vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),
+  useStationMediaFormat: () => flagState.mediaFormat,
+}));
 vi.mock('../../api/agency', () => mocks);
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../contexts/AuthContext', () => ({
@@ -26,6 +37,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
 import { AGENCY_PLAYBACK_JITTER_MS } from '../../hooks/useAgencyAudio';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
+import type { CapturedFrameMessage } from '../../utils/audio-worklet-processor';
 
 /**
  * **The audio path, at the page.**
@@ -145,21 +157,27 @@ let stickyActivation = true;
  * enable/queue mechanic rather than poking `onmessage?.()` directly.
  */
 class FakePort {
-  private handler: ((e: { data: ArrayBuffer }) => void) | null = null;
-  private queue: ArrayBuffer[] = [];
+  private handler: ((e: { data: CapturedFrameMessage }) => void) | null = null;
+  private queue: CapturedFrameMessage[] = [];
+  /** What the page posted to the worklet: format switches. */
+  posted: unknown[] = [];
 
-  get onmessage(): ((e: { data: ArrayBuffer }) => void) | null {
+  get onmessage(): ((e: { data: CapturedFrameMessage }) => void) | null {
     return this.handler;
   }
-  set onmessage(next: ((e: { data: ArrayBuffer }) => void) | null) {
+  set onmessage(next: ((e: { data: CapturedFrameMessage }) => void) | null) {
     this.handler = next;
     if (!next) return;
     this.queue.splice(0).forEach((data) => next({ data }));
   }
 
-  emit(data: ArrayBuffer): void {
+  emit(data: CapturedFrameMessage): void {
     if (this.handler) this.handler({ data });
     else this.queue.push(data);
+  }
+
+  postMessage(message: unknown): void {
+    this.posted.push(message);
   }
 
   /** Frames sitting undelivered on the port. */
@@ -170,7 +188,9 @@ class FakePort {
 
 class FakeAudioWorkletNode {
   port = new FakePort();
-  constructor() {
+  readonly options: AudioWorkletNodeOptions | undefined;
+  constructor(_ctx: unknown, _name: string, options?: AudioWorkletNodeOptions) {
+    this.options = options;
     worklet = this;
   }
   connect(): void {}
@@ -179,6 +199,7 @@ class FakeAudioWorkletNode {
 
 class FakeAudioContext {
   state = audioStartsSuspended ? 'suspended' : 'running';
+  sampleRate = 16000;
   currentTime = 0;
   destination = {};
   closed = false;
@@ -221,6 +242,7 @@ class FakeAudioContext {
     };
   }
   createBuffer(_ch: number, length: number, rate: number) {
+    buffers.push({ length, rate });
     return { duration: length / rate, getChannelData: () => new Float32Array(length) };
   }
   createBufferSource() {
@@ -264,10 +286,18 @@ class FakeAudioContext {
   }
 }
 
-/** One 20ms frame of PCM16 — 320 samples, the shape the real worklet emits. */
-function capturedFrame(): ArrayBuffer {
-  return new Int16Array(320).buffer;
+/** One 20ms frame of PCM16 — 320 samples, the shape the real worklet emits in `pcm16`. */
+function capturedFrame(): CapturedFrameMessage {
+  return { format: 'pcm16', data: new Int16Array(320).buffer };
 }
+
+/** One 20 ms frame of A-law silence, the shape the real worklet emits in `alaw8`. */
+function capturedAlawFrame(): CapturedFrameMessage {
+  return { format: 'alaw8', data: new Uint8Array(160).fill(0xd5).buffer };
+}
+
+/** Every playback buffer created: its length and rate. */
+let buffers: Array<{ length: number; rate: number }> = [];
 
 /**
  * The 640 zero bytes a silent 20 ms PCM16 frame decodes to.
@@ -291,17 +321,26 @@ class FakeSocket {
   static instances: FakeSocket[] = [];
   static OPEN = 1;
   readyState = 0;
+  binaryType = 'blob';
   onopen: (() => void) | null = null;
-  onmessage: ((e: { data: string }) => void) | null = null;
+  onmessage: ((e: { data: string | ArrayBuffer }) => void) | null = null;
   onclose: ((e: { code: number; reason: string }) => void) | null = null;
   onerror: (() => void) | null = null;
-  sent: string[] = [];
+  sent: Array<string | ArrayBuffer> = [];
 
   constructor(public url: string) {
     FakeSocket.instances.push(this);
   }
-  send(data: string): void {
+  send(data: string | ArrayBuffer): void {
     this.sent.push(data);
+  }
+  /** A binary message from the server (an `alaw8` frame). */
+  emitBinary(data: ArrayBuffer): void {
+    this.onmessage?.({ data });
+  }
+  serverClose(code: number, reason = ''): void {
+    this.readyState = 3;
+    this.onclose?.({ code, reason });
   }
   close(): void {
     this.readyState = 3;
@@ -320,8 +359,14 @@ const latest = () => FakeSocket.instances[FakeSocket.instances.length - 1]!;
 /** Frames the console put on the wire as audio, in the API's envelope. */
 function mediaFrames(): string[] {
   return latest()
-    .sent.filter((raw) => (JSON.parse(raw) as { event: string }).event === 'media')
+    .sent.filter((raw): raw is string => typeof raw === 'string')
+    .filter((raw) => (JSON.parse(raw) as { event: string }).event === 'media')
     .map((raw) => (JSON.parse(raw) as { media: { payload: string } }).media.payload);
+}
+
+/** Binary messages the console put on the wire: `alaw8` audio. */
+function binaryFrames(): ArrayBuffer[] {
+  return latest().sent.filter((raw): raw is ArrayBuffer => typeof raw !== 'string');
 }
 
 const ATTEMPT: AgencyReservedAttempt = {
@@ -367,6 +412,8 @@ beforeEach(() => {
   heldPrompts = [];
   worklet = null;
   played = [];
+  buffers = [];
+  flagState.mediaFormat = 'pcm16';
   contexts = [];
   audioStartsSuspended = false;
   stickyActivation = true;
@@ -563,7 +610,7 @@ describe('the uplink opens on `bridged` and carries the API’s envelope', () =>
     await onCall();
     speak();
 
-    const raw = latest().sent.find((s) => s.includes('"media"'))!;
+    const raw = latest().sent.find((s): s is string => typeof s === 'string' && s.includes('"media"'))!;
     expect(JSON.parse(raw)).toEqual({ event: 'media', media: { payload: expect.any(String) } });
   });
 
@@ -1557,5 +1604,99 @@ describe('device selection', () => {
     expect('deviceId' in audio).toBe(false);
     expect(audio.channelCount).toBe(1);
     expect(audio.sampleRate).toBe(16000);
+  });
+});
+
+describe('call audio as binary A-law (media=alaw8, the agency_console_alaw8 flag on)', () => {
+  beforeEach(() => {
+    flagState.mediaFormat = 'alaw8';
+  });
+
+  it('asks the server for alaw8 on the upgrade, and reads binary as ArrayBuffer', async () => {
+    await mounted();
+    expect(latest().url).toContain('media=alaw8');
+    expect(latest().url).toContain('token=t1');
+    expect(latest().binaryType).toBe('arraybuffer');
+  });
+
+  it('asks for pcm16 when the flag is off (the way back without a deploy)', async () => {
+    flagState.mediaFormat = 'pcm16';
+    await mounted();
+    expect(latest().url).toContain('media=pcm16');
+    expect(latest().url).not.toContain('media=alaw8');
+  });
+
+  it('builds the capture graph in alaw8 and sends its frames as binary messages, never JSON media', async () => {
+    await onCall();
+    expect(worklet!.options?.processorOptions).toEqual({ format: 'alaw8' });
+
+    const frame = capturedAlawFrame();
+    act(() => {
+      worklet?.port.emit(frame);
+    });
+
+    expect(binaryFrames()).toEqual([frame.data]);
+    expect(binaryFrames()[0]!.byteLength).toBe(160);
+    // Not a JSON `media` frame anywhere: on an alaw8 socket the server drops those.
+    expect(mediaFrames()).toHaveLength(0);
+  });
+
+  it('sends nothing while only reserved, as in pcm16', async () => {
+    await reserved();
+    act(() => {
+      worklet?.port.emit(capturedAlawFrame());
+    });
+    expect(binaryFrames()).toHaveLength(0);
+  });
+
+  it('plays binary A-law frames: 160 bytes become 320 samples at 16 kHz, cushioned and contiguous', async () => {
+    await onCall();
+    await act(async () => {
+      latest().emitBinary(new Uint8Array(160).fill(0xd5).buffer);
+      latest().emitBinary(new Uint8Array(160).fill(0xd5).buffer);
+    });
+
+    expect(played).toHaveLength(2);
+    const playback = buffers.filter((b) => b.length === 320);
+    expect(playback).toEqual([
+      { length: 320, rate: 16000 },
+      { length: 320, rate: 16000 },
+    ]);
+    // The same scheduler as pcm16: the jitter cushion on the first frame, the second
+    // queued after it rather than on top of it.
+    expect(played[0]).toBeCloseTo(AGENCY_PLAYBACK_JITTER_MS / 1000, 6);
+    expect(played[1]).toBeCloseTo(played[0]! + 0.02, 6);
+  });
+
+  it('falls back to pcm16 mid-call when the server refuses alaw8, and keeps the agent audible', async () => {
+    mocks.mintStationToken.mockResolvedValue({
+      session_id: 'sess-1',
+      station_ws_url: '/proxy/agency/station/sess-1?token=FRESH',
+      expires_at: 'x',
+    });
+    await onCall();
+    const node = worklet!;
+
+    // A server that does not speak alaw8 refuses the upgrade with 1008 invalid_media.
+    await act(async () => {
+      latest().serverClose(1008, 'invalid_media');
+    });
+    await waitFor(() => expect(FakeSocket.instances).toHaveLength(2), { timeout: 3000 });
+    expect(latest().url).toContain('token=FRESH');
+    expect(latest().url).toContain('media=pcm16');
+
+    // The live capture graph is switched in place: no second microphone.
+    expect(node.port.posted).toContainEqual({ format: 'pcm16' });
+    expect(gumCalls).toHaveLength(1);
+    expect(tracks[0]!.stop).not.toHaveBeenCalled();
+
+    await act(async () => {
+      latest().open();
+    });
+    act(() => {
+      worklet?.port.emit(capturedFrame());
+    });
+    expect(mediaFrames()).toEqual([btoa(SILENT_FRAME_BYTES)]);
+    expect(binaryFrames()).toHaveLength(0);
   });
 });

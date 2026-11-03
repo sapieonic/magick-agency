@@ -23,6 +23,7 @@ and its pinning test, never by adapting one side to the other.
 | Leaf dialer rules (no imports, or only contracts and other leaves: abandonment predicate, timers, rates, keyset cursor, success disposition, ...) | `packages/domain/src/` |
 | A route plugin's routes, once it is large | the exported plugin function, its hooks and module note stay in `apps/server/src/api/routes/<family>.routes.ts`; the routes go in `apps/server/src/api/routes/<family>/` as `register…(app)` functions it calls on the same instance, so its hooks apply to them and the area plugin does not change |
 | Helpers shared by several route files (ownership probe, parse-or-400, CSV attachment, page drain, ...) | `apps/server/src/api/routes/helpers/` |
+| Composition for several processes on one host: process roles, the IPC protocol and channel, the child supervisor, the socket handoff, the media and analysis worker entries, the readiness and shutdown order (`docs/scaling.md`). Composition like `bootstrap/` and `seams/`, not a fifth module area | `apps/server/src/cluster/` |
 | Unit and integration tests | the package's `test/unit/<path>` and `test/integration/<path>`, mirroring `src/<path>` |
 
 ## 2. Module-area files in the shared server
@@ -41,7 +42,7 @@ by `test/unit/config/blocks-disjoint.test.ts`). The keys each block declares:
 
 | Block | Top-level keys |
 |---|---|
-| `base.ts` | `server`, `db`, `redis` |
+| `base.ts` | `server`, `db`, `redis`, `otel`, `processes` |
 | `platform.ts` | `firebase`, `superAdmin`, `mailjet`, `brand`, `invites`, `localCache`, `consoleBaseUrl`, `auditPartitions`, `userRateLimit`, `mobile` |
 | `agency.ts` | `agency` |
 | `voice.ts` | `concurrency`, `telephony`, `telephonyCredentials`, `rateLimit`, `s3`, `staticCallTts`, `audio`, `analytics` |
@@ -129,7 +130,10 @@ provider guard (the two guard calls go through `getConcurrencyControl()`). The u
 the account guard) go through it too. The voice engine registers the implementation in
 `apps/server/src/bootstrap/voice.ts`; until then every call throws, so a write before wiring fails
 loudly. `apps/server/test/integration/app/concurrency-seam-wiring.test.ts` proves the wiring through
-`buildApp`.
+`buildApp`. `startAgency` then wraps the registered implementation (`agency/pacing/limit-invalidation.ts`):
+each `invalidateAccountLimit` / `invalidateProviderLimits` also publishes `account_limit_changed` on
+the pacing invalidation bus, so the pacing engine's cached limit is dropped at the same point as the
+guards'. The interface does not change; the agency stop unwraps it.
 
 ### 3.4 Super-admin credential routes → carrier credential service
 

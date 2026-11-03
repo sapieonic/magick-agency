@@ -1,5 +1,5 @@
 /**
- * The four agency feature flags: keys, defaults, scopes, `envVar` names,
+ * The five agency feature flags: keys, defaults, scopes, `envVar` names,
  * `clientExposed`, owners and descriptions. Super-admins can override them per
  * tenant and account.
  *
@@ -148,9 +148,38 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency soft phone: agents dial a typed number from the browser, outside campaign pacing',
   },
+
+  // ── The console's call audio on the station socket: A-law, or the PCM16 fallback ──
+  //
+  // On, the web console opens its station socket with `media=alaw8`: binary G.711
+  // A-law 8 kHz frames both ways (`agency/station.ts`, `AgencyStationMediaFormat`),
+  // which the server relays to and from VoiceLink without a transcode. Off, it asks
+  // for `media=pcm16`: base64 PCM16 16 kHz in JSON, transcoded on the server for every
+  // frame. There is no quality difference (the carrier leg is A-law 8 kHz either way);
+  // the difference is server CPU per relayed frame, which is what decides how many
+  // simultaneous calls one process carries.
+  //
+  // ── `default: true`, deliberately, unlike every flag above ─────────────────────
+  //
+  // It is not a capability being granted, it is the way BACK: a tenant whose agents
+  // hit a problem with the A-law path is switched to `pcm16` with an override row
+  // (`false`), no deploy. The console reads it at each station connect, so the switch
+  // reaches an agent on their next socket. A console that cannot read the flags uses
+  // `pcm16` (it fails closed to the format every server speaks), and the mobile app
+  // ignores it: it always speaks `alaw8`.
+  agency_console_alaw8: {
+    key: 'agency_console_alaw8',
+    type: 'boolean',
+    default: true,
+    envVar: 'FF_AGENCY_CONSOLE_ALAW8', // FF_AGENCY_CONSOLE_ALAW8=false: every tenant on pcm16
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console picks its station socket's media format from it
+    owner: 'voice',
+    description: 'Agency console call audio as binary A-law 8 kHz on the station socket (media=alaw8); off falls back to base64 PCM16 (media=pcm16)',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The four agency flag keys. */
+/** The five agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -158,6 +187,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_late_binding',
   'agency_call_analysis',
   'agency_softphone_enabled',
+  'agency_console_alaw8',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

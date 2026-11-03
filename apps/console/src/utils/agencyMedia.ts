@@ -1,81 +1,133 @@
+import {
+  AGENCY_STATION_ALAW8_FRAME_BYTES,
+  AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
+  AGENCY_WS_MAX_MESSAGE_BYTES,
+  type AgencyStationMediaFormat,
+} from '@magick-agency/contracts/agency';
+
 /**
- * The agency station socket's **audio wire format**, in one place.
+ * The agency station socket's **audio wire formats**, in one place.
  *
- * Everything here is transcribed from the server rather than assumed, because the
- * console is the only participant that has to *produce* the format and the cost
- * of getting it wrong is a call that connects, bills, and carries no sound.
+ * The format belongs to the socket and is chosen at the upgrade with `media=`
+ * (contracts `AgencyStationMediaFormat`; absent means `pcm16`). The console asks for
+ * `alaw8` unless the tenant's `agency_console_alaw8` flag is off, and falls back to
+ * `pcm16` for the rest of the station's life if the server refuses `alaw8`
+ * (`useAgencyStation`). Either way the console has one format to produce and one to
+ * consume per socket, and neither depends on which carrier is dialling: the server
+ * transcodes on its far side.
  *
- * ── What the server sends us (downlink) ────────────────────────────────────────────
- *   `{ event: 'media', media: { payload: <base64> } }`
- * `payload` is **PCM16, mono, 16 kHz, little-endian**. The server normalises both
- * carriers to it before writing to this socket: VoiceLink's G.711 A-law 8 kHz is
- * transcoded and
- * VoBiz's L16 16 kHz is passed through unchanged.
+ * ── `alaw8` (the default) ──────────────────────────────────────────────────────────
+ * **Binary** WebSocket messages of raw G.711 A-law, 8 kHz mono, one byte per sample,
+ * no header. Up: any whole number of 160-byte (20 ms) frames per message, at most 1 s
+ * ({@link isSendableAlawMessage}); the capture worklet sends one frame per message.
+ * Down: exactly one 160-byte frame per message. With VoiceLink, whose wire audio is
+ * already A-law, the server relays the bytes untouched: no transcode, no base64, no
+ * JSON per frame. Text messages stay JSON control frames, and a JSON `media` frame on
+ * this socket is dropped by the server, so the console never sends one here
+ * (`useAgencyStation.sendMedia` routes by the frame's type and the socket's format).
  *
- * ── What the server expects from us (uplink) ───────────────────────────────────────
- * The **same envelope in the same encoding** (`:1083`, `:1099-1109`). The server reads
- * `data.event === 'media' && typeof data.media?.payload === 'string'` and then
- * transcodes *outbound* per carrier. So the asymmetry that exists — A-law for
- * VoiceLink, L16 for VoBiz — is entirely on the server's far side. **The console has
- * exactly one format to produce and one to consume, and neither depends on which
- * carrier is dialling.** That is worth stating because the obvious guess (mirror
- * whatever the carrier uses) would be wrong and would fail per-carrier.
+ * ── `pcm16` (the fallback) ─────────────────────────────────────────────────────────
+ * Down: `{ event: 'media', media: { payload: <base64> } }`, `payload` PCM16 mono 16 kHz
+ * little-endian. Up: the **same envelope in the same encoding**. A binary message on
+ * this socket is ignored by the server.
  *
- * There is **no handshake**. The server's browser-side listener treats
- * `start`/`connected`/`stop` as informational and acts on nothing but `media`
- * (`:1117`), unlike the AI-call media-stream path where `useBrowserCall` opens
- * with a `start`. Sending one here would be harmless and meaningless, so we
- * don't — a frame nobody reads is the exact shape of a dead `hangup` frame
- * that has since been removed.
- *
- * The API relays both directions untouched
- * on the station route, so
- * there is no third format in the middle.
+ * There is **no handshake** in either format: the server's browser-side listener acts
+ * on `media` (or binary audio) and nothing else, so the console sends no `start`.
  */
 
-/** The server normalises every carrier to this before the socket. Hz. */
+/** One captured uplink frame: base64 PCM16 (`pcm16`) or raw A-law bytes (`alaw8`). */
+export type AgencyUplinkFrame = string | ArrayBuffer;
+
+/** What a frame of this type is: the socket format it can be sent on. */
+export function uplinkFrameFormat(frame: AgencyUplinkFrame): AgencyStationMediaFormat {
+  return typeof frame === 'string' ? 'pcm16' : 'alaw8';
+}
+
+/**
+ * Is a binary uplink message of `byteLength` bytes one the server accepts on an `alaw8`
+ * socket: a non-zero whole number of 20 ms frames, at most 1 s? Anything else the
+ * server drops silently, so it is refused here where the drop can be counted.
+ */
+export function isSendableAlawMessage(byteLength: number): boolean {
+  return (
+    byteLength > 0 &&
+    byteLength <= AGENCY_STATION_ALAW8_MAX_FRAME_BYTES &&
+    byteLength % AGENCY_STATION_ALAW8_FRAME_BYTES === 0
+  );
+}
+
+/**
+ * Is a binary downlink message of `byteLength` bytes worth playing? The server sends
+ * exactly one 20 ms frame; anything from one byte to 1 s is decoded (A-law has no
+ * framing to lose), and a larger message is dropped rather than allocated for.
+ */
+export function isPlayableAlawMessage(byteLength: number): boolean {
+  return byteLength > 0 && byteLength <= AGENCY_STATION_ALAW8_MAX_FRAME_BYTES;
+}
+
+/**
+ * The upgrade URL with the socket's format: `station_ws_url` (a path with `?token=`, or
+ * an absolute URL) plus `media=<format>`.
+ *
+ * Appended as text rather than re-serialised through `URLSearchParams`, which would
+ * re-encode the single-use token's characters. A `media=` already present is replaced:
+ * the server refuses a repeated parameter (1008) rather than guess which one was meant.
+ * `pcm16` is named explicitly too, so the request says what the console will speak.
+ */
+export function withStationMediaQuery(url: string, format: AgencyStationMediaFormat): string {
+  const hashAt = url.indexOf('#');
+  const base = hashAt === -1 ? url : url.slice(0, hashAt);
+  const hash = hashAt === -1 ? '' : url.slice(hashAt);
+  const queryAt = base.indexOf('?');
+  if (queryAt === -1) return `${base}?media=${format}${hash}`;
+  const path = base.slice(0, queryAt);
+  const params = base
+    .slice(queryAt + 1)
+    .split('&')
+    .filter((p) => p !== '' && p !== 'media' && !p.startsWith('media='));
+  params.push(`media=${format}`);
+  return `${path}?${params.join('&')}${hash}`;
+}
+
+/** `pcm16`: the server normalises every carrier to this before the socket. Hz. */
 export const AGENCY_MEDIA_SAMPLE_RATE = 16000;
 
 /**
- * Samples per outbound frame — 20 ms at 16 kHz, which is what
- * `pcm16-processor` already emits for the AI-call path. Kept as a named constant
- * because the playback jitter cushion below is expressed in whole frames of it.
+ * `pcm16`: samples per outbound frame — 20 ms at 16 kHz, which is what the capture
+ * worklet emits in that format. Kept as a named constant because the playback jitter
+ * cushion is expressed in whole frames of it.
  */
 export const AGENCY_MEDIA_FRAME_SAMPLES = 320;
 
 /**
- * The server's ceiling, transcribed: `MAX_MEDIA_FRAME_BYTES * 2` where
- * `MAX_MEDIA_FRAME_BYTES = 64000` (`webrtc-bridge-manager.ts:182`), compared
- * against `data.media.payload.length` — the **encoded** string — at `:1089`
- * (uplink) and `:1143` (downlink).
+ * `pcm16`: the largest uplink payload the server takes, transcribed.
  *
- * ── What the `* 2` is, and what it is not ───────────────────────────────────
- * It is **not** a base64 conversion. Base64 expands 4/3, not 2, so the honest
- * encoded bound for 64000 decoded bytes would be `ceil(64000/3)*4 = 85336`.
- * The server's own comment at `:1088` calls the limit "bytes" while its code measures
- * characters, so `* 2` is a loose safety factor sitting on top of a units
- * mismatch. An earlier revision of this file repeated the server's confusion back as
- * if it were the derivation, which is worse than either mistake alone: the value
- * was right and the stated reason was wrong, so a reader checking the arithmetic
- * would have concluded the constant was wrong and "fixed" it.
+ * ── Where the bound comes from ──────────────────────────────────────────────
+ * The server registers its WebSockets with `maxPayload` 64 KiB
+ * (`AGENCY_WS_MAX_MESSAGE_BYTES` in the wire contract, which the server's
+ * `WS_MAX_PAYLOAD_DEFAULT_BYTES` is; operators may raise it with `WS_MAX_PAYLOAD_BYTES`,
+ * never lower it below the largest legitimate frame). That bound is on the **whole**
+ * message, so the payload gets what is left after the JSON envelope
+ * `{"event":"media","media":{"payload":""}}` (40 characters): 65536 − 40 = 65496. Base64
+ * is ASCII, so characters and bytes agree.
  *
- * ── Why 128000 and not 85336 ────────────────────────────────────────────────
- * Because this must match what the server **actually rejects**, not what it ought to.
- * A tighter bound here would reject frames the server accepts; a looser one would ship
- * frames into the server's silent drop. It is transcribed, and it must be re-checked
- * against `webrtc-bridge-manager.ts:182` whenever that file moves — nothing
- * at build time links the two values and could catch it.
+ * ── Why it must not be looser ───────────────────────────────────────────────
+ * A message over `maxPayload` is not dropped: `ws` closes the socket with 1009, which
+ * takes the agent's station (and a live call's audio) down with it. The bridge's own
+ * character check behind it is looser, so this is the bound that bites. A frame refused
+ * here is counted on this side instead.
+ *
+ * Both sides read the one constant, so the server's default cannot move without this.
  *
  * ── This is not a protective bound in practice ──────────────────────────────
- * A 20 ms frame is 640 bytes → **856 base64 characters**, 0.7% of this ceiling.
+ * A 20 ms frame is 640 bytes → **856 base64 characters**, 1.3% of this ceiling.
  * Nothing the capture graph produces can approach it. The check exists so that a
- * broken graph upstream fails visibly on this side rather than becoming audio
- * that never arrives at the dialer runtime — not because normal traffic is near it.
+ * broken graph upstream fails visibly on this side rather than closing the station.
  */
-export const MAX_AGENCY_MEDIA_PAYLOAD_CHARS = 128000;
+export const MAX_AGENCY_MEDIA_PAYLOAD_CHARS = AGENCY_WS_MAX_MESSAGE_BYTES - '{"event":"media","media":{"payload":""}}'.length;
 
 /**
- * The uplink frame, serialised.
+ * A `pcm16` uplink frame, serialised.
  *
  * Returns `null` for a payload the server would drop, so the caller can count the drop
  * instead of shipping a frame into a silent discard.
@@ -86,7 +138,7 @@ export function encodeAgencyMediaFrame(payload: string): string | null {
 }
 
 /**
- * Read a downlink payload off an already-parsed frame.
+ * Read a `pcm16` downlink payload off an already-parsed frame.
  *
  * Deliberately tolerant in the same way the server's reader is — `typeof payload ===
  * 'string'` and nothing more. A frame that fails this is not an error; it is a

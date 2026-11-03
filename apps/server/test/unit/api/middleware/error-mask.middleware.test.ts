@@ -212,3 +212,29 @@ describe('errorMaskHook', () => {
     expect(reply.header).toHaveBeenCalledWith('content-type', 'application/json; charset=utf-8');
   });
 });
+
+describe('reviewed retry answers and probe paths', () => {
+  it.each([
+    [503, 'worker_unavailable', 'Service Unavailable'],
+    [504, 'worker_timeout', 'Gateway Timeout'],
+  ])('a %i %s from a forwarded request leaves as its fixed retry body, not the mask', async (status, code, error) => {
+    const extra = JSON.stringify({ error, code, message: 'Try again in a moment.', leaked: 'internal detail' });
+    const out = await errorMaskHook(makeRequest(), makeReply(status), extra);
+    expect(JSON.parse(String(out))).toEqual({ error, code, message: 'Try again in a moment.' });
+    expect(mocks.logger.error).not.toHaveBeenCalled();
+  });
+
+  it('a reviewed code on the wrong status, or any other code, is still masked', async () => {
+    const wrongStatus = await errorMaskHook(makeRequest(), makeReply(500), JSON.stringify({ code: 'worker_unavailable' }));
+    expect(JSON.parse(String(wrongStatus)).message).toBe(MASKED_ERROR_MESSAGE);
+    const other = await errorMaskHook(makeRequest(), makeReply(503), JSON.stringify({ code: 'db_down', message: 'pg says no' }));
+    expect(JSON.parse(String(other)).message).toBe(MASKED_ERROR_MESSAGE);
+  });
+
+  it('/readyz is exempt with a query string too: ?detail=1 keeps its per-process detail when not ready', async () => {
+    const body = JSON.stringify({ status: 'unavailable', detail: [{ role: 'primary' }] });
+    expect(await errorMaskHook(makeRequest({ url: '/readyz?detail=1' }), makeReply(503), body)).toBe(body);
+    expect(await errorMaskHook(makeRequest({ url: '/readyz' }), makeReply(503), body)).toBe(body);
+  });
+});
+

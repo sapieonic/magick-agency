@@ -44,6 +44,20 @@ import {
 import { BridgeWsTokens, type WsTokenPurpose } from './bridge/ws-tokens.js';
 import { admitBridgeCall } from './bridge/admission.js';
 import { isAcceptableAlawMessage, rawDataToBuffer } from './bridge/browser-leg-media.js';
+import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
+import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import {
+  CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
+} from '../utils/ws-backpressure.js';
+import { buildCarrierUrls, type CarrierUrls } from './bridge/carrier-urls.js';
+
+/** One call's telephony slots, held under its concurrency key (`WebRtcBridgeManager.heldLeases`). */
+export interface HeldLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
+
+/** A change in the telephony slots this process holds (`WebRtcBridgeManager.observeLeases`). */
+export type LeaseChange =
+  | { op: 'held'; lease: HeldLease }
+  | { op: 'released'; concurrencyKey: string };
 
 export {
   WebRtcCallError,
@@ -184,6 +198,11 @@ export class WebRtcBridgeManager {
   constructor(
     private readonly guardHost: TelephonyGuardHost,
     private readonly redis: Redis | null,
+    /**
+     * `carrierRouteHint`: this media worker's slot, written into the carrier's media and
+     * webhook URLs (`bridge/carrier-urls.ts`). Absent in a single process.
+     */
+    private readonly options: { carrierRouteHint?: string } = {},
   ) {
     this.telephonyRegistry = new TelephonyProviderRegistry(config, { credentials: getTelephonyCredentialService });
     this.keyPrefix = config.redis.keyPrefix;
@@ -192,6 +211,44 @@ export class WebRtcBridgeManager {
 
   /** The per-call credentials — `bridge/ws-tokens.ts`. */
   private readonly tokens: BridgeWsTokens;
+
+  /**
+   * Told the moment this process takes or gives back a call's telephony slots
+   * (`docs/scaling.md` §6.1): a media worker forwards each change to the primary, so a
+   * worker that dies has its slots released exactly, including a call admitted a moment
+   * before. `held` is told right after admission, before the call has a row, so its
+   * `callId` is the concurrency key until then (log correlation only); `released` after
+   * the release went out. One observer; null clears it.
+   */
+  private leaseObserver: ((change: LeaseChange) => void) | null = null;
+  /**
+   * Every slot set this process holds, by concurrency key: added where `held` is told and
+   * removed where `released` is, in the same synchronous step. So it holds a call from its
+   * admission (before it has a row or a session) until its release went out (after its
+   * session is gone), and {@link heldLeases} always agrees with the deltas told so far.
+   */
+  private readonly leases = new Map<string, HeldLease>();
+
+  observeLeases(observer: ((change: LeaseChange) => void) | null): void {
+    this.leaseObserver = observer;
+  }
+
+  private noteLease(change: LeaseChange): void {
+    if (change.op === 'held') this.leases.set(change.lease.concurrencyKey, change.lease);
+    else this.leases.delete(change.concurrencyKey);
+    if (!this.leaseObserver) return;
+    try { this.leaseObserver(change); } catch { /* an observer never fails a call */ }
+  }
+
+  /**
+   * The telephony slots this process holds: what the primary must release if it dies with
+   * them (`docs/scaling.md` §6.1). Exactly the `held` deltas told and not yet `released`,
+   * including a call admitted but not yet registered and one whose release is in flight.
+   * Not part of the dialer's seam.
+   */
+  heldLeases(): HeldLease[] {
+    return [...this.leases.values()].map((l) => ({ ...l }));
+  }
 
   /**
    * Check a carrier-presented per-call token (`provider` for the PSTN media socket,
@@ -465,6 +522,7 @@ export class WebRtcBridgeManager {
     await admitBridgeCall(this.guardHost, {
       concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider, slotTtlSeconds,
     });
+    this.noteLease({ op: 'held', lease: { callId: concurrencyKey, concurrencyKey, tenantId: params.tenantId, accountId: params.accountId, provider } });
 
     // 2. Persist the call (status initiating). Every call dials on the service's own
     // VoiceLink account. The INSERT stays inside the same try so a failure still
@@ -536,86 +594,124 @@ export class WebRtcBridgeManager {
     // holds the relay until a valid `start` (correct codec/rate) arrives.
     if (session.carrier?.media.negotiatesOnStart) session.providerMediaReady = false;
     this.sessions.set(record.id, session);
+    // The lease now names its call (log correlation in a slot reap); still the same slots.
+    const lease = this.leases.get(concurrencyKey);
+    if (lease) this.leases.set(concurrencyKey, { ...lease, callId: record.id });
 
-    // 4. Max-duration guard (resolved above, reused for the slot TTL).
-    session.maxDurationSeconds = maxDuration;
-    session.setMaxDurationTimer(maxDuration, () => {
-      // Answer-anchored, matching every other teardown path here (browser-close,
-      // shutdown): a call that hit the ceiling mid-conversation is `completed`,
-      // but one that was never answered never connected, so it settles `canceled`.
-      // Hardcoding `completed` would record an unanswered call as a success.
-      this.inBackground(this.localHangup(record.id, {
-        status: session.localEndStatus(),
-        outcome: 'max_duration_reached',
-      }), record.id, 'Error ending call on max duration');
-    });
-
-    // 4b. Borrowed socket (agency): attach BEFORE the dial so no early carrier
-    // event (`ringing`, or a fast `answer`) is notified into a null browser leg.
-    // Relay is safe this early — media is dropped until the PSTN leg is live.
-    if (params.browserSocket) {
-      this.attachBorrowedBrowserLeg(
-        session, params.browserSocket, params.browserHangupOutcome, params.browserCloseGraceMs ?? 0,
-      );
-    } else if (params.borrowedBrowserLeg) {
-      // Late binding: no socket yet. Record the borrowed contract now anyway —
-      // the outcome and grace window the bind will need, and `browserWsOwned =
-      // false`, so the ownership guards treat it as borrowed during the ring.
-      session.markBorrowedUnbound(params.browserHangupOutcome, params.browserCloseGraceMs ?? 0);
-    }
-
-    // 5. The carrier connects the provider WS + posts webhooks itself, so those two
-    // legs get their own purpose-bound tokens (embedded only in the URLs we send
-    // the carrier). No browser token: every leg is borrowed.
-    const tokenTtl = maxDuration + SLOT_TTL_GRACE_SECONDS;
-    let providerToken: string | undefined;
-    let webhookToken: string | undefined;
-    if (session.carrier) {
-      providerToken = crypto.randomUUID();
-      webhookToken = crypto.randomUUID();
-      await Promise.all([
-        this.tokens.storeWsToken(record.id, providerToken, tokenTtl, 'provider'),
-        this.tokens.storeWsToken(record.id, webhookToken, tokenTtl, 'webhook'),
-      ]);
-    }
-
-    auditLogger.log({
-      callId: record.id,
-      tenantId: params.tenantId,
-      accountId: params.accountId,
-      eventType: 'webrtc_call.initiating',
-      eventCategory: 'call',
-      severity: 'info',
-      eventData: { provider, destination: params.destinationPhone, caller_id: params.callerId },
-    });
-
-    // 6. Place the outbound telephony leg.
+    // 4–5b run with the session registered, the slots held, and (from 4) the max-duration
+    // timer armed, but with no carrier leg placed. A throw anywhere in them must tear all of
+    // that down here: before this guard a throw (a token store, say) escaped with the
+    // session, its slots, its lease entry, its timer and the borrowed station socket's
+    // listeners all left in place until the max-duration timer fired, 30 minutes on.
+    // See `abortUnplacedLeg` for why that teardown emits no `ended`.
+    let base: string;
+    let adapter: ReturnType<TelephonyProviderRegistry['get']>;
+    let carrierUrls: CarrierUrls;
     try {
+      // 4. Max-duration guard (resolved above, reused for the slot TTL).
+      session.maxDurationSeconds = maxDuration;
+      session.setMaxDurationTimer(maxDuration, () => {
+        // Answer-anchored, matching every other teardown path here (browser-close,
+        // shutdown): a call that hit the ceiling mid-conversation is `completed`,
+        // but one that was never answered never connected, so it settles `canceled`.
+        // Hardcoding `completed` would record an unanswered call as a success.
+        this.inBackground(this.localHangup(record.id, {
+          status: session.localEndStatus(),
+          outcome: 'max_duration_reached',
+        }), record.id, 'Error ending call on max duration');
+      });
+
+      // 4b. Borrowed socket (agency): attach BEFORE the dial so no early carrier
+      // event (`ringing`, or a fast `answer`) is notified into a null browser leg.
+      // Relay is safe this early — media is dropped until the PSTN leg is live.
+      if (params.browserSocket) {
+        this.attachBorrowedBrowserLeg(
+          session, params.browserSocket, params.browserHangupOutcome, params.browserCloseGraceMs ?? 0,
+        );
+      } else if (params.borrowedBrowserLeg) {
+        // Late binding: no socket yet. Record the borrowed contract now anyway —
+        // the outcome and grace window the bind will need, and `browserWsOwned =
+        // false`, so the ownership guards treat it as borrowed during the ring.
+        session.markBorrowedUnbound(params.browserHangupOutcome, params.browserCloseGraceMs ?? 0);
+      }
+
+      // 5. The carrier connects the provider WS + posts webhooks itself, so those two
+      // legs get their own purpose-bound tokens (embedded only in the URLs we send
+      // the carrier). No browser token: every leg is borrowed.
+      const tokenTtl = maxDuration + SLOT_TTL_GRACE_SECONDS;
+      let providerToken: string | undefined;
+      let webhookToken: string | undefined;
+      if (session.carrier) {
+        providerToken = crypto.randomUUID();
+        webhookToken = crypto.randomUUID();
+        await Promise.all([
+          this.tokens.storeWsToken(record.id, providerToken, tokenTtl, 'provider'),
+          this.tokens.storeWsToken(record.id, webhookToken, tokenTtl, 'webhook'),
+        ]);
+      }
+
+      // 5b. Everything the carrier request is built from. None of it asks the carrier
+      // anything, so a throw here (no webhook base configured, a provider with no adapter)
+      // is a failure before the carrier, torn down by the catch below. Inside the carrier
+      // request's own try it was reported as the carrier refusing the dial
+      // (`TELEPHONY_INIT_FAILED`, with an `ended`), and the dialer charged the contact's
+      // `failed` allowance for a dial that never left this process.
+      //
       // `base` is the provider's own webhook namespace (…/webhooks/voicelink), so
       // `${base}/webrtc-status/${id}` resolves to the per-provider route.
-      const base = this.webhookUrls.baseUrl(provider);
+      base = this.webhookUrls.baseUrl(provider);
       // The service's own carrier account only: the synchronous registry lookup.
-      const adapter = this.telephonyRegistry.get(provider);
+      adapter = this.telephonyRegistry.get(provider);
       // A carrier with no answer XML (VoiceLink) dials OUT to a stream URL baked
       // into the dial request, so hand it the bridge's dedicated PSTN leg explicitly.
-      const mediaStreamUrl =
-        session.carrier?.mediaUrlInDialRequest
-          ? `wss://${new URL(base).host}/api/v1/webrtc-call/${record.id}/pstn-stream?token=${providerToken}`
-          : undefined;
       // Embed the webhook token so forged lifecycle events (which drive
       // status/concurrency) are rejected. A provider with no carrier module gets an
       // untokenized URL.
-      const statusCallbackUrl =
-        webhookToken
-          ? `${base}/webrtc-status/${record.id}?token=${webhookToken}`
-          : `${base}/webrtc-status/${record.id}`;
+      carrierUrls = buildCarrierUrls({
+        base,
+        callId: record.id,
+        mediaUrlInDialRequest: Boolean(session.carrier?.mediaUrlInDialRequest),
+        providerToken,
+        webhookToken,
+        routeHint: this.options.carrierRouteHint ?? null,
+      });
+
+      auditLogger.log({
+        callId: record.id,
+        tenantId: params.tenantId,
+        accountId: params.accountId,
+        eventType: 'webrtc_call.initiating',
+        eventCategory: 'call',
+        severity: 'info',
+        eventData: { provider, destination: params.destinationPhone, caller_id: params.callerId },
+      });
+    } catch (err) {
+      await this.abortUnplacedLeg(record.id, err);
+      throw err;
+    }
+
+    // A teardown that ran while 4–5 awaited (the agent's station socket closed during the
+    // token store, a supervisor's force-end) has already claimed the call terminal, said
+    // `ended` and released everything. Dialling now would ring a customer for a call that
+    // no longer exists, only for the race check after the dial to hang it straight up.
+    if (session.endHandled) {
+      log.warn({ callId: record.id }, 'WebRTC call was torn down before its carrier leg was placed — not dialling');
+      return { record, session };
+    }
+
+    // 6. Place the outbound telephony leg. Only the carrier request is inside this try:
+    // its catch reports a dial the carrier refused (or may have queued) and hangs nothing
+    // up. A step before it (5b) asks the carrier nothing and is torn down as unplaced; a
+    // step after `initiateCall` resolved runs with the leg placed and must not land here
+    // either (see the `provider_call_id` write below).
+    try {
       const result = await adapter.initiateCall({
         callId: record.id,
         to: params.destinationPhone,
         from: params.callerId,
         webhookUrl: `${base}/webrtc-answer/${record.id}`,
-        statusCallbackUrl,
-        mediaStreamUrl,
+        statusCallbackUrl: carrierUrls.statusCallbackUrl,
+        mediaStreamUrl: carrierUrls.mediaStreamUrl,
         maxDuration,
         // The VoiceLink adapter does not send this flag; the carrier's recording URL
         // arrives on its terminal webhook.
@@ -623,44 +719,67 @@ export class WebRtcBridgeManager {
         machineDetection: false,
       });
       session.providerCallId = result.providerCallId || null;
-      // The teardown-during-dial race, closed here because this is the first
-      // instant it can be closed. `endCall`'s hangup is gated on
-      // `providerCallId`, which does not exist until the line above — so a
-      // teardown that ran while the dial was in flight (a borrowed socket is
-      // attached BEFORE the dial, so an agent who dismisses a ringing call is
-      // squarely inside this window) claimed the terminal state, found no carrier
-      // handle, and left the leg dialling with nothing left to hang it up. The
-      // session is already destroyed and out of the map at that point; we still
-      // hold the reference, which is all the hangup needs.
-      if (session.endHandled) {
-        log.warn(
-          { callId: record.id, providerCallId: session.providerCallId },
-          'WebRTC call was torn down mid-dial — hanging up the carrier leg now that it has an id',
-        );
-        await this.hangupProviderLeg(session);
-      }
-      // The carrier's REAL id wins when it is already known: a carrier that dials (its
-      // `start` frame or a webhook) before its own add_lead response reaches us has
-      // already backfilled `provider_call_id` (`persistCarrierCallId`), and this
-      // dial-time placeholder — our own call id, for VoiceLink — would overwrite it.
-      await webrtcCallRepository.update(record.id, { provider_call_id: session.carrierCallId ?? session.providerCallId });
     } catch (err) {
       // (rejection of telephony init is reported as a completed `failed` call via
       // endCall below — not a pre-flight rejection.)
-      log.error({ err, callId: record.id }, 'WebRTC outbound initiation failed');
+      //
+      // A dial whose outcome is unknown (an `add_lead` that timed out, or a 2xx whose body
+      // could not be read: the carrier may have queued the lead) fails the same way, so the
+      // agent and the slots are released and the media token is cleared (a late carrier
+      // connect is refused and closed, which hangs it up). Its own error code, and the
+      // adapter's error as `cause`, let the caller defer the contact's redial
+      // (`carrier-errors.ts`).
+      const outcomeUnknown = isDialOutcomeUnknown(err);
+      log.error({ err, callId: record.id, outcomeUnknown }, 'WebRTC outbound initiation failed');
       await this.endCall(record.id, {
         status: 'failed',
         outcome: 'telephony_init_failed',
-        errorCode: 'TELEPHONY_INIT_FAILED',
+        errorCode: outcomeUnknown ? 'TELEPHONY_INIT_OUTCOME_UNKNOWN' : 'TELEPHONY_INIT_FAILED',
         errorMessage: err instanceof Error ? err.message : String(err),
         hangupProvider: false,
       });
-      throw new WebRtcCallError(
+      const refusal = new WebRtcCallError(
         err instanceof Error ? err.message : 'Telephony initiation failed',
         'telephony_init_failed',
         502,
       );
+      refusal.cause = err;
+      throw refusal;
     }
+
+    // The teardown-during-dial race, closed here because this is the first
+    // instant it can be closed. `endCall`'s hangup is gated on
+    // `providerCallId`, which does not exist until the line above — so a
+    // teardown that ran while the dial was in flight (a borrowed socket is
+    // attached BEFORE the dial, so an agent who dismisses a ringing call is
+    // squarely inside this window) claimed the terminal state, found no carrier
+    // handle, and left the leg dialling with nothing left to hang it up. The
+    // session is already destroyed and out of the map at that point; we still
+    // hold the reference, which is all the hangup needs.
+    if (session.endHandled) {
+      log.warn(
+        { callId: record.id, providerCallId: session.providerCallId },
+        'WebRTC call was torn down mid-dial — hanging up the carrier leg now that it has an id',
+      );
+      await this.hangupProviderLeg(session);
+    }
+    // The carrier's REAL id wins when it is already known: a carrier that dials (its
+    // `start` frame or a webhook) before its own add_lead response reaches us has
+    // already backfilled `provider_call_id` (`persistCarrierCallId`), and this
+    // dial-time placeholder — our own call id, for VoiceLink — would overwrite it.
+    //
+    // The leg is placed: a failed write here is a correlation gap, never a failed dial.
+    // It used to sit inside the dial's try, whose catch ended the call `failed` with
+    // `telephony_init_failed` and without hanging up the leg it had just placed: the
+    // customer was rung by a call with no session behind it, the dialer charged the
+    // contact a carrier refusal and scheduled its redial, and the soft phone recorded
+    // the call as never placed. The carrier's own events backfill the id
+    // (`persistCarrierCallId`).
+    await webrtcCallRepository.update(record.id, { provider_call_id: session.carrierCallId ?? session.providerCallId })
+      .catch((err: unknown) => log.error(
+        { err, callId: record.id, providerCallId: session.providerCallId },
+        'Could not persist the carrier call id — the call is placed and carries on',
+      ));
 
     trackWebrtcCallInitiated(record);
     return { record, session };
@@ -1223,8 +1342,10 @@ export class WebRtcBridgeManager {
           // the way the carrier expects.
           const pcm = Buffer.from(data.media.payload, 'base64');
           const wire = session.codec.pcm16kToCarrier(pcm);
-          this.send(session.pstnWs, session.carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
-          this.recordRelayFrame(session, 'b2p', t0);
+          if (this.mayRelayToPstn(session)) {
+            this.send(session.pstnWs, session.carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
+            this.recordRelayFrame(session, 'b2p', t0);
+          }
         }
       } catch (err) {
         log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
@@ -1261,8 +1382,10 @@ export class WebRtcBridgeManager {
       const wire = session.browserMediaPassthrough
         ? alaw
         : session.codec!.pcm16kToCarrier(session.browserAlawCodec().alawToPcm16k(alaw));
-      this.send(session.pstnWs, carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
-      this.recordRelayFrame(session, 'b2p', t0);
+      if (this.mayRelayToPstn(session)) {
+        this.send(session.pstnWs, carrier.media.frameOutbound(wire.toString('base64'), session.providerStreamId));
+        this.recordRelayFrame(session, 'b2p', t0);
+      }
     } catch (err) {
       log.warn({ err, callId: session.callId }, 'Dropped malformed browser media frame');
     }
@@ -1286,7 +1409,9 @@ export class WebRtcBridgeManager {
     } else {
       return;
     }
-    session.browserAlawFramer.push(alaw, (frame) => this.sendBinary(browserWs, frame));
+    session.browserAlawFramer.push(alaw, (frame) => {
+      if (this.mayRelayToBrowser(session, browserWs)) this.sendBinary(browserWs, frame);
+    });
     this.recordRelayFrame(session, 'p2b', t0);
   }
 
@@ -1335,8 +1460,10 @@ export class WebRtcBridgeManager {
           // Carrier wire audio → browser PCM16 16kHz (stateful transcode).
           const wire = Buffer.from(data.media.payload, 'base64');
           const pcm = session.codec.carrierToPcm16k(wire);
-          this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
-          this.recordRelayFrame(session, 'p2b', t0);
+          if (this.mayRelayToBrowser(session, session.browserWs)) {
+            this.send(session.browserWs, { event: 'media', media: { payload: pcm.toString('base64') } });
+            this.recordRelayFrame(session, 'p2b', t0);
+          }
         }
       } catch (err) {
         log.warn({ err, callId: session.callId }, 'Dropped malformed PSTN media frame');
@@ -1736,8 +1863,46 @@ export class WebRtcBridgeManager {
   }
 
   /**
+   * Tear down a registered session whose carrier leg was never placed: a throw in
+   * {@link placeOutboundLeg} between registering the session and the carrier request.
+   * The full {@link endCall} (terminal row, timers, the borrowed socket detached, slots,
+   * lease entry, tokens), with no carrier hangup because there is no leg, and with **no
+   * `ended` lifecycle event**: the dial's rejection, thrown next, is the one signal.
+   *
+   * Why no `ended`: a dial that never reached the carrier is settled by the caller's
+   * catch, exactly as a refused admission or a failed INSERT already is (neither ever
+   * has a session). Both dial-side consumers settle on whichever signal comes first,
+   * and an `ended` here would be settled as a call that was placed: the agency
+   * dialer's `ended` arm (`live.placing`, an error code other than outcome-unknown)
+   * would charge the contact's `failed` allowance and schedule the campaign's retry for
+   * a dial that never left this process, and the soft phone would settle the manual
+   * call there as well as in its own catch (`abandonUnplaced`), which a rejection that
+   * is not `telephony_init_failed` sends it to. Nothing else was told about this call:
+   * no carrier event can precede the carrier request, so no `answered` or `bridged`
+   * was emitted for it.
+   *
+   * Never throws: the caller rethrows the original error.
+   */
+  private async abortUnplacedLeg(callId: string, err: unknown): Promise<void> {
+    log.error({ err, callId }, 'WebRTC call failed before its carrier leg was placed — tearing it down');
+    try {
+      await this.endCall(callId, {
+        status: 'failed',
+        outcome: 'bridge_setup_failed',
+        errorCode: 'BRIDGE_SETUP_FAILED',
+        errorMessage: err instanceof Error ? err.message : String(err),
+        hangupProvider: false,
+        announce: false,
+      });
+    } catch (teardownErr) {
+      log.error({ err: teardownErr, callId }, 'Teardown of a call that was never placed failed');
+    }
+  }
+
+  /**
    * Idempotent teardown: persist the terminal row, close both legs, and release
-   * the shared slots.
+   * the shared slots. `announce: false` skips the `ended` lifecycle event (only
+   * {@link abortUnplacedLeg} passes it); everything else runs.
    */
   private async endCall(
     callId: string,
@@ -1748,6 +1913,7 @@ export class WebRtcBridgeManager {
       errorMessage?: string;
       recordingUrl?: string;
       hangupProvider: boolean;
+      announce?: boolean;
     },
   ): Promise<void> {
     const session = this.sessions.get(callId);
@@ -1827,7 +1993,7 @@ export class WebRtcBridgeManager {
     // Observers (e.g. the agency dialer) see the terminal moment BEFORE teardown,
     // while the session is still readable. Listener throws are swallowed — nothing
     // a subscriber does may interrupt slot release below.
-    this.emitLifecycle({
+    if (opts.announce !== false) this.emitLifecycle({
       callId,
       correlationId: session.correlationId,
       phase: 'ended',
@@ -1859,6 +2025,8 @@ export class WebRtcBridgeManager {
       maxRelayDwellMicros: Math.round(session.maxRelayDwellMicros),
       browserMediaFormat: session.browserMediaFormat,
       ignoredBrowserMediaFrames: session.ignoredBrowserMediaFrames,
+      droppedBrowserMediaFrames: session.droppedBrowserMediaFrames,
+      droppedPstnMediaFrames: session.droppedPstnMediaFrames,
     }, 'WebRTC call ended');
   }
 
@@ -1898,6 +2066,7 @@ export class WebRtcBridgeManager {
       concurrencyKey: key, tenantId, accountId, provider, source: 'webrtc',
       ...(callId ? { callId } : {}),
     });
+    this.noteLease({ op: 'released', concurrencyKey: key });
   }
 
   // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -1974,7 +2143,69 @@ export class WebRtcBridgeManager {
     );
   }
 
+  /**
+   * A control frame for the browser leg (`status`, `ended`): never dropped for back-pressure,
+   * but a station whose backlog is past its hard cap is closed instead (see
+   * {@link mayRelayToBrowser}).
+   */
   private notifyBrowser(session: WebRtcBridgeSession, payload: unknown): void {
-    if (session.browserWs) this.send(session.browserWs, payload);
+    const ws = session.browserWs;
+    if (!ws) return;
+    if (sendVerdict(ws, { media: false }, this.browserLegLimits(session)) === 'over_cap') {
+      this.closeBrowserForBacklog(session, ws);
+      return;
+    }
+    this.send(ws, payload);
+  }
+
+  // ─── Send back-pressure (`utils/ws-backpressure.ts`) ─────────────────────
+
+  /** The browser leg's limits: its own format's soft limit, the station's hard cap. */
+  private browserLegLimits(session: WebRtcBridgeSession) {
+    return session.browserMediaFormat === 'alaw8' ? STATION_ALAW8_LIMITS : STATION_PCM16_LIMITS;
+  }
+
+  /**
+   * May one more carrier → browser media frame be written? No when the station console
+   * has stopped reading: past the soft limit (about 3 s of this leg's audio) the frame is
+   * dropped and counted, because audio heard that late is worthless; past the hard cap
+   * the station is closed 4408 `station_send_backlog`, and the call gets the usual
+   * station-close grace while the console reconnects.
+   */
+  private mayRelayToBrowser(session: WebRtcBridgeSession, ws: WebSocket): boolean {
+    switch (sendVerdict(ws, { media: true }, this.browserLegLimits(session))) {
+      case 'send': return true;
+      case 'drop':
+        session.droppedBrowserMediaFrames++;
+        trackWebsocketSendBackpressure('station', 'media_dropped');
+        return false;
+      case 'over_cap':
+        this.closeBrowserForBacklog(session, ws);
+        return false;
+      case 'not_open': return false;
+    }
+  }
+
+  /**
+   * May one more browser → carrier media frame be written? Past the carrier's soft limit
+   * the frame is dropped and counted. There is no hard cap: closing the carrier's media
+   * stream would hang the call up.
+   */
+  private mayRelayToPstn(session: WebRtcBridgeSession): boolean {
+    const ws = session.pstnWs;
+    if (!ws) return false;
+    const verdict = sendVerdict(ws, { media: true }, CARRIER_MEDIA_LIMITS);
+    if (verdict === 'drop') {
+      session.droppedPstnMediaFrames++;
+      trackWebsocketSendBackpressure('carrier', 'media_dropped');
+    }
+    return verdict === 'send';
+  }
+
+  private closeBrowserForBacklog(session: WebRtcBridgeSession, ws: WebSocket): void {
+    if (!closeForSendBacklog(ws)) return;
+    trackWebsocketSendBackpressure('station', 'closed');
+    log.warn({ callId: session.callId, bufferedAmount: ws.bufferedAmount, mediaFormat: session.browserMediaFormat },
+      'Station console stopped reading mid-call: send backlog past its cap, closing 4408');
   }
 }

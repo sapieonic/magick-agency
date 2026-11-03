@@ -74,6 +74,16 @@ const { createStationWorld, leakReport, NO_LEAKS } = await import('./station-loa
 const { fuzzFrame, FUZZ_KINDS } = await import('../../mocks/station-fleet.js');
 const { STATION_INTERVALS } = await import('../../../src/api/routes/agency/helpers.js');
 const { scaled, createRng, LOAD_SEED, LOAD_SCALE } = await import('../../helpers/load-scale.js');
+const { WS_MAX_PAYLOAD_DEFAULT_BYTES } = await import('../../../src/utils/ws-limits.js');
+
+/**
+ * The `large_text` payload, in characters, that keeps the whole frame just under the
+ * transport bound (`maxPayload`, `src/utils/ws-limits.ts`): the frame is
+ * `{"event":"media","media":{"payload":"…"}}`, 40 characters of envelope. Past the bound
+ * `ws` closes the socket with 1009 (pinned below); under it the frame reaches the
+ * station listener, which must ignore it.
+ */
+const LARGEST_UNDER_BOUND = WS_MAX_PAYLOAD_DEFAULT_BYTES - 40;
 
 /** Per-test deadlock bound. Generous on purpose: a healthy run takes a few seconds. */
 const DEADLOCK_BOUND_MS = 60_000 * Math.max(1, LOAD_SCALE);
@@ -137,8 +147,8 @@ describe('fuzzed inbound frames on a full floor (load)', () => {
       const leg = a.leg!;
       const mine: number[] = [];
       const frames = [
-        ...FUZZ_KINDS.map((kind) => fuzzFrame(w.rng, { kind })),
-        ...Array.from({ length: FRAMES_PER_FUZZER }, () => fuzzFrame(w.rng)),
+        ...FUZZ_KINDS.map((kind) => fuzzFrame(w.rng, { kind, largeBytes: LARGEST_UNDER_BOUND })),
+        ...Array.from({ length: FRAMES_PER_FUZZER }, () => fuzzFrame(w.rng, { largeBytes: LARGEST_UNDER_BOUND })),
       ];
       for (const [i, f] of frames.entries()) {
         leg.sendRaw(f.data, { binary: f.binary });
@@ -209,19 +219,20 @@ describe('fuzzed inbound frames on a full floor (load)', () => {
     expect(sender!.leg!.closed).toBeNull();
   });
 
-  it('accepts and ignores a 2 MiB text frame — no frame-size limit is configured on the station socket', { timeout: DEADLOCK_BOUND_MS }, async () => {
-    // Characterisation. `@fastify/websocket` is registered app-wide with no
-    // options, so `ws`'s default `maxPayload` (100 MiB) is the only bound: a
-    // frame this size is buffered whole, stringified and `JSON.parse`d on the
-    // event loop before anything decides to ignore it. The bridge's own media
-    // ceiling (`MAX_MEDIA_FRAME_BYTES`, 64 KB decoded) is applied only after that.
+  it('accepts and ignores the largest frame under the transport bound', { timeout: DEADLOCK_BOUND_MS }, async () => {
+    // The bound (`maxPayload`, 64 KiB by default) is checked by `ws` as the frame arrives;
+    // a frame exactly at it is still delivered to the station listener, which ignores a
+    // media frame on a socket with no live call. The frame is 1.5x a second of PCM16
+    // audio, so this is also the margin a legitimate client has.
     world = await createStationWorld({
       sessions: sessions as never, agents: 2, heartbeatMs: STATION_INTERVALS.heartbeat_ms, rng: createRng(),
     });
     const w = world;
     await w.fleet.connectAll();
     const [big, other] = w.fleet.agents;
-    big!.leg!.sendRaw(fuzzFrame(w.rng, { kind: 'large_text', largeBytes: 2 * 1024 * 1024 }).data);
+    const frame = fuzzFrame(w.rng, { kind: 'large_text', largeBytes: LARGEST_UNDER_BOUND }).data as string;
+    expect(Buffer.byteLength(frame)).toBe(WS_MAX_PAYLOAD_DEFAULT_BYTES);
+    big!.leg!.sendRaw(frame);
     const ts = markedPing(big!.leg!);
     const otherTs = markedPing(other!.leg!);
     await w.fleet.waitFor(() => pongTs(big!.leg!).includes(ts) && pongTs(other!.leg!).includes(otherTs), 'pings after the large frame');
@@ -229,23 +240,42 @@ describe('fuzzed inbound frames on a full floor (load)', () => {
     expect(escaped).toEqual([]);
   });
 
-  // FINDING (not fixed here — the fix is the `@fastify/websocket` registration in
-  // `src/app.ts`, a shared composition file): the station socket has no frame-size
-  // limit below `ws`'s 100 MiB default. Any authenticated console can make the
-  // server buffer and `JSON.parse` a frame ~50× larger than the biggest legitimate
-  // one (a media frame the bridge would itself drop past 128 KB of base64) on the
-  // shared event loop. The expected behaviour is a transport refusal, `1009`
-  // (message too big), well before that. Flip to `it` once `maxPayload` is set.
-  it.fails('refuses a frame far larger than any legitimate station frame with 1009', { timeout: DEADLOCK_BOUND_MS }, async () => {
+  // Was `it.fails` (load suites 2026-10-23): `@fastify/websocket` was registered with `ws`'s
+  // 100 MiB default, so any signed-in console could make the server buffer and
+  // `JSON.parse` a frame ~100x the biggest legitimate one on the shared event loop. Fixed
+  // by `maxPayload` in `src/app.ts` (`src/utils/ws-limits.ts`): the frame is refused as it
+  // arrives, with 1009 (message too big), and nothing escapes to the process.
+  it('refuses a frame far larger than any legitimate station frame with 1009', { timeout: DEADLOCK_BOUND_MS }, async () => {
     world = await createStationWorld({
-      sessions: sessions as never, agents: 1, heartbeatMs: STATION_INTERVALS.heartbeat_ms, rng: createRng(),
+      sessions: sessions as never, agents: 2, heartbeatMs: STATION_INTERVALS.heartbeat_ms, rng: createRng(),
     });
     const w = world;
     await w.fleet.connectAll();
     const leg = w.fleet.agents[0]!.leg!;
+    const bystander = w.fleet.agents[1]!.leg!;
     leg.sendRaw(fuzzFrame(w.rng, { kind: 'large_text', largeBytes: 4 * 1024 * 1024 }).data);
     const ts = markedPing(leg);
     await w.fleet.waitFor(() => leg.closed !== null || pongTs(leg).includes(ts), 'the large frame to be refused or ignored');
     expect(leg.closed?.code).toBe(1009);
+    expect(escaped).toEqual([]);
+    // One byte over the bound is refused too, and a bystander is untouched.
+    const bystanderTs = markedPing(bystander);
+    await w.fleet.waitFor(() => pongTs(bystander).includes(bystanderTs), 'the bystander\'s ping');
+    expect(bystander.closed).toBeNull();
+  });
+
+  it('refuses a frame one byte over the bound with 1009, and a binary one too', { timeout: DEADLOCK_BOUND_MS }, async () => {
+    world = await createStationWorld({
+      sessions: sessions as never, agents: 2, heartbeatMs: STATION_INTERVALS.heartbeat_ms, rng: createRng(),
+    });
+    const w = world;
+    await w.fleet.connectAll();
+    const [text, binary] = w.fleet.agents.map((a) => a.leg!);
+    text!.sendRaw(fuzzFrame(w.rng, { kind: 'large_text', largeBytes: LARGEST_UNDER_BOUND + 1 }).data);
+    binary!.sendRaw(Buffer.alloc(WS_MAX_PAYLOAD_DEFAULT_BYTES + 1), { binary: true });
+    await w.fleet.waitFor(() => text!.closed !== null && binary!.closed !== null, 'both sockets to be refused');
+    expect(text!.closed?.code).toBe(1009);
+    expect(binary!.closed?.code).toBe(1009);
+    expect(escaped).toEqual([]);
   });
 });

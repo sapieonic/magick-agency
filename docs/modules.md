@@ -33,9 +33,11 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 | `apps/server/test/integration/app/concurrency-seam-wiring.test.ts` | ~2 |
 | `apps/server/test/integration/app/error-mask-app-wide.test.ts` | ~3 |
 | `apps/server/test/integration/app/feature-flag-boot-wiring.test.ts` | ~2 |
+| `apps/server/test/integration/app/readyz.test.ts` | 5 |
 | `apps/server/test/integration/app/trust-proxy.test.ts` | ~4 |
 | `apps/server/test/unit/app/max-param-length.test.ts` | 2 |
 | `apps/server/test/unit/app/request-id.test.ts` | 2 |
+| `apps/server/test/unit/app/websocket-max-payload.test.ts` | 4 |
 | `apps/server/test/unit/deploy/migrate.test.ts` | 9 |
 
 ### `apps/server/src/agency/`
@@ -64,6 +66,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-conversion-counting.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-crash-recovery.test.ts` | ~6 |
+| `apps/server/test/integration/agency/agency-disposition-contact-write.test.ts` | 9 |
 | `apps/server/test/integration/agency/agency-dnc-campaign-scope.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-dnc-mark-route.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-dnc-resurrection.test.ts` | ~12 |
@@ -80,7 +83,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-migration.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~14 |
+| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | 27 |
 | `apps/server/test/integration/agency/agency-retry-idempotency.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
@@ -121,7 +124,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~7 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 27 |
+| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 45 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
@@ -138,7 +141,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 65 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 37 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 41 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -180,7 +183,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/canceled-outcome-ledger.test.ts` | 11 |
 | `apps/server/test/unit/agency/dial-dispatcher.test.ts` | 7 |
 | `apps/server/test/unit/agency/disposition-policy.test.ts` | 90 |
-| `apps/server/test/unit/agency/disposition-route.test.ts` | 37 |
+| `apps/server/test/unit/agency/disposition-route.test.ts` | 38 |
 | `apps/server/test/unit/agency/disposition.test.ts` | 19 |
 | `apps/server/test/unit/agency/dnc-availability.test.ts` | 6 |
 | `apps/server/test/unit/agency/dnc-mark-route.test.ts` | 37 |
@@ -199,6 +202,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 81 |
+| `apps/server/test/unit/agency/pacing-skip.test.ts` | 25 |
 | `apps/server/test/unit/agency/pre-dial-gates.test.ts` | 20 |
 | `apps/server/test/unit/agency/presence-resilience.test.ts` | 14 |
 | `apps/server/test/unit/agency/profile-in-use-reference-check.test.ts` | 23 |
@@ -220,8 +224,8 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-route-table.test.ts` | 29 |
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
-| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 20 |
-| `apps/server/test/unit/agency/reaper.test.ts` | 43 |
+| `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 22 |
+| `apps/server/test/unit/agency/reaper.test.ts` | 45 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
@@ -235,7 +239,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/station-reconnect-frame.test.ts` | 4 |
 | `apps/server/test/unit/agency/station-registry.test.ts` | 29 |
 | `apps/server/test/unit/agency/station-supersede-stomp.test.ts` | 10 |
-| `apps/server/test/unit/agency/station-token.test.ts` | 5 |
+| `apps/server/test/unit/agency/station-token.test.ts` | 6 |
 | `apps/server/test/unit/agency/station-upgrade.test.ts` | 13 |
 | `apps/server/test/unit/agency/supervisor-stats.test.ts` | 26 |
 | `apps/server/test/unit/agency/wrapup-manager.test.ts` | 34 |
@@ -248,7 +252,7 @@ Files: `grouped.ts`, `roster.ts`, `stats.ts`
 
 ### `apps/server/src/agency/dialer/`
 
-The dialer's internals, split out of `agency-dialer.ts`: `live-attempt.ts` (the `LiveAttempt` record, `isUnannounced`, the panel builder) and `contact-settlement.ts` (`settleContact`: the our-fault / retry-policy routing of an ended attempt's contact). Tested through the `AgencyDialer` suites above (`agency-dialer`, `late-binding`, `canceled-outcome-ledger`, `our-fault-redial`, the chaos suites).
+The dialer's internals, split out of `agency-dialer.ts`: `live-attempt.ts` (the `LiveAttempt` record, `isUnannounced`, the panel builder) and `contact-settlement.ts` (`settleContact`: the our-fault / retry-policy routing of an ended attempt's contact; `holdOutcomeUnknownContact`: the 15-minute hold of an outcome-unknown dial's contact, charged to the our-fault ledger). Tested through the `AgencyDialer` suites above (`agency-dialer`, `late-binding`, `canceled-outcome-ledger`, `our-fault-redial`, the chaos suites).
 
 Files: `contact-settlement.ts`, `live-attempt.ts`
 
@@ -262,17 +266,17 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 |---|---|
 | `apps/server/test/integration/agency/chaos/softphone-restart-mid-call.test.ts` | 3 |
 | `apps/server/test/integration/agency/softphone-agent-claim.test.ts` | 8 |
-| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 10 |
+| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 17 |
 | `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 14 |
 | `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
-| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 20 |
+| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 21 |
 | `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | 26 |
 
 ### `apps/server/src/agency/pacing/`
 
-The pacing engine's parts, split out of `pacing-engine.ts`: `leader-lease.ts` (the per-campaign Redis leader lease), `campaign-announcer.ts` (the `campaign_state` broadcasts and their `flagGated` / `reportedStuck` latches), `caller-id-pool.ts` (usable caller IDs and the round-robin pick), `in-flight.ts` (tracking in-flight ticks and completion notices so `stop()` can wait for them). Tested through the `PacingEngine` suites above.
+The pacing engine's parts, split out of `pacing-engine.ts`: `leader-lease.ts` (the per-campaign Redis leader lease), `campaign-announcer.ts` (the `campaign_state` broadcasts and their `flagGated` / `reportedStuck` latches), `caller-id-pool.ts` (usable caller IDs and the round-robin pick), `in-flight.ts` (tracking in-flight ticks and completion notices so `stop()` can wait for them), `round.ts` (one round's per-account reads and shared headroom budget), `read-cache.ts` (the generation-guarded TTL cache of campaign rows and account limits), `invalidation-bus.ts` (`PacingInvalidationBus`: the JSON events that wake a skipped campaign and drop cached reads, and the in-process implementation), `limit-invalidation.ts` (wraps the `ConcurrencyControl` seam so a limit invalidation also publishes `account_limit_changed`). Tested through the `PacingEngine` suites above; `pacing-skip.test.ts` covers rounds, the skip, the bus, the caches and the budget.
 
-Files: `caller-id-pool.ts`, `campaign-announcer.ts`, `in-flight.ts`, `leader-lease.ts`
+Files: `caller-id-pool.ts`, `campaign-announcer.ts`, `in-flight.ts`, `invalidation-bus.ts`, `leader-lease.ts`, `limit-invalidation.ts`, `read-cache.ts`, `round.ts`
 
 ### `apps/server/src/ai/`
 
@@ -295,8 +299,9 @@ Files: `analysis.service.ts`, `bridge-analysis-hooks.ts`, `dimension-presets.ts`
 | Test file | Cases |
 |---|---|
 | `apps/server/test/integration/analysis/pipeline.test.ts` | ~12 |
+| `apps/server/test/integration/analysis/worker-pool.test.ts` | ~2 |
 | `apps/server/test/unit/analysis/analysis.service.test.ts` | 22 |
-| `apps/server/test/unit/analysis/bootstrap-analysis.test.ts` | 10 |
+| `apps/server/test/unit/analysis/bootstrap-analysis.test.ts` | 17 |
 | `apps/server/test/unit/analysis/bridge-analysis-hooks.test.ts` | 30 |
 | `apps/server/test/unit/analysis/dimension-presets.test.ts` | 10 |
 | `apps/server/test/unit/analysis/index.test.ts` | 9 |
@@ -317,9 +322,9 @@ Files: `client.ts`, `llm-observability.ts`, `posthog.ts`
 
 ### `apps/server/src/api/`
 
-The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` and `forwardCore` (`core-dispatch.ts`; `forwardCore` answers the public request with the internal handler's status and body) and the internal handler instance (`core-handlers.ts`), the id guard for agency routes, and profile-route auth.
+The HTTP surface: the four area plugins (`platform`, `agency`, `voice`, `analysis`), `callCore` and `forwardCore` (`core-dispatch.ts`; `forwardCore` answers the public request with the internal handler's status and body) and the internal handler instance (`core-handlers.ts`), which process each internal agency route runs in (`core-owners.ts`: every route classified, an unclassified one refused at boot; with media workers a session-owned one is forwarded to its worker, B16 amended), the id guard for agency routes, and profile-route auth.
 
-Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dispatch.ts`, `core-handlers.ts`, `platform.plugin.ts`, `profile-route-auth.ts`, `voice.plugin.ts`
+Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dispatch.ts`, `core-handlers.ts`, `core-owners.ts`, `platform.plugin.ts`, `profile-route-auth.ts`, `voice.plugin.ts`
 
 | Test file | Cases |
 |---|---|
@@ -330,7 +335,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-performance-access.test.ts` | ~16 |
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
 | `apps/server/test/integration/api/agency-join-staffing.test.ts` | ~4 |
-| `apps/server/test/integration/api/agency-runtime-routes.test.ts` | ~19 |
+| `apps/server/test/integration/api/agency-runtime-routes.test.ts` | 38 |
 | `apps/server/test/integration/api/agency-mobile-presence.test.ts` | 11 |
 | `apps/server/test/integration/api/agency-session-conflict-forward.test.ts` | ~13 |
 | `apps/server/test/integration/api/agency-spine-export.e2e.test.ts` | ~4 |
@@ -351,6 +356,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
 | `apps/server/test/unit/api/core-dispatch.test.ts` | 13 |
+| `apps/server/test/unit/api/core-route-owners.test.ts` | 6 |
 | `apps/server/test/unit/api/platform-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/profile-route-auth.test.ts` | 13 |
 | `apps/server/test/unit/api/route-table.test.ts` | 3 |
@@ -360,13 +366,13 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, and the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request).
 
-Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
+Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit-defaults.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/api/middleware/error-handler.middleware.test.ts` | 11 |
 | `apps/server/test/unit/api/middleware/error-mask.integration.test.ts` | 5 |
-| `apps/server/test/unit/api/middleware/error-mask.middleware.test.ts` | 17 |
+| `apps/server/test/unit/api/middleware/error-mask.middleware.test.ts` | 21 |
 | `apps/server/test/unit/api/middleware/headers.test.ts` | 2 |
 | `apps/server/test/unit/api/middleware/rate-limit.app-scope.test.ts` | 8 |
 | `apps/server/test/unit/api/middleware/rate-limit.middleware.test.ts` | 43 |
@@ -402,6 +408,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
 | `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
+| `apps/server/test/unit/api/routes/helpers/path-params.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/invites.routes.test.ts` | 140 |
 | `apps/server/test/unit/api/routes/membership-fail-closed.test.ts` | 7 |
 | `apps/server/test/unit/api/routes/notification.routes.test.ts` | 14 |
@@ -425,7 +432,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/agency/proxy-agency-softphone.routes.test.ts` | 47 |
 | `apps/server/test/unit/agency/device-away-break.test.ts` | 35 |
 | `apps/server/test/unit/agency/softphone-internal-routes.test.ts` | 49 |
-| `apps/server/test/integration/api/softphone-routes.test.ts` | 20 |
+| `apps/server/test/integration/api/softphone-routes.test.ts` | 21 |
 | `apps/server/test/integration/api/softphone-policy-routes.test.ts` | 18 |
 
 ### `apps/server/src/api/validators/`
@@ -519,7 +526,7 @@ Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/cache/local-cache-invalidation.test.ts` | ~9 |
+| `apps/server/test/integration/cache/local-cache-invalidation.test.ts` | 10 |
 | `apps/server/test/integration/cache/membership-invalidation.test.ts` | ~3 |
 | `apps/server/test/integration/cache/redis-cache.delbypattern.test.ts` | ~4 |
 | `apps/server/test/integration/cache/tenant-record-cache.test.ts` | ~10 |
@@ -527,7 +534,49 @@ Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 | `apps/server/test/unit/cache/local-cache.test.ts` | 15 |
 | `apps/server/test/unit/cache/redis-cache-invalidation-order.test.ts` | 4 |
 | `apps/server/test/unit/cache/redis-cache-revocation.test.ts` | 3 |
-| `apps/server/test/unit/cache/redis-cache.test.ts` | 23 |
+| `apps/server/test/unit/cache/redis-cache.test.ts` | 24 |
+
+### `apps/server/src/cluster/`
+
+Composition for running as several processes on one host (`docs/scaling.md`; off unless `MEDIA_WORKERS` or `ANALYSIS_WORKERS` is set). Not a fifth module area: like `bootstrap/` and `seams/`, it wires the four areas into processes.
+
+- Roles and the session-to-slot hash (`roles.ts`).
+- The IPC wire format, one decoder per message type (`ipc-protocol.ts`), and the records that cross it whole (`record-codecs.ts`).
+- One end of the primary ↔ child channel: typed events, deadline-bound requests, socket handoffs, close handling (`ipc-channel.ts`).
+- The primary's per-role supervisor (`child-supervisor.ts`) and how it forks (`fork.ts`: heap per role, a child's output forwarded a whole line at a time).
+- The upgrade handoff: the primary's plugin (`ws-handoff.plugin.ts`), the Node internals it relies on (`socket-pause.ts`), and the worker's adoption and app (`ws-adopt.ts`, `worker-app.ts`).
+- The media workers: the child (`media-child.ts`, `media-child-main.ts`), and the primary's side (`media-cluster.ts`, `station-directory.ts`, `ipc-dial-dispatcher.ts`, `primary.ts` with the slot reap).
+- The analysis workers (`analysis-child.ts`, `analysis-child-main.ts`, `analysis-children.ts`).
+- Per-process loop sampling over a fixed 5 s window, read without reset (`loop-sampler.ts`).
+- The primary's `/readyz` verdict with workers (`readiness.ts`, D5; also the 1 s probe cache and the `READYZ_DETAIL_TOKEN` check, D13), the shutdown order (`shutdown-order.ts`: pacing halts, then the drains together, then the rest) and the host's Postgres connection budget (`db-connection-budget.ts`, D12).
+
+Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `child-supervisor.ts`, `db-connection-budget.ts`, `fork.ts`, `ipc-channel.ts`, `ipc-dial-dispatcher.ts`, `ipc-protocol.ts`, `loop-sampler.ts`, `media-child-main.ts`, `media-child.ts`, `media-cluster.ts`, `primary.ts`, `readiness.ts`, `record-codecs.ts`, `roles.ts`, `shutdown-order.ts`, `socket-pause.ts`, `station-directory.ts`, `worker-app.ts`, `ws-adopt.ts`, `ws-handoff.plugin.ts`
+
+| Test file | Cases |
+|---|---|
+| `apps/server/test/integration/cluster/analysis-processes.test.ts` | 5 |
+| `apps/server/test/integration/cluster/db-connection-budget.test.ts` | 1 |
+| `apps/server/test/integration/cluster/media-workers.test.ts` | 3 |
+| `apps/server/test/integration/cluster/mobile-stations.test.ts` | 4 |
+| `apps/server/test/integration/cluster/ws-handoff.test.ts` | 8 |
+| `apps/server/test/unit/cluster/analysis-children.test.ts` | 3 |
+| `apps/server/test/unit/cluster/child-exit-metric.test.ts` | 1 |
+| `apps/server/test/unit/cluster/child-mains.test.ts` | 3 |
+| `apps/server/test/unit/cluster/child-supervisor.test.ts` | 7 |
+| `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
+| `apps/server/test/unit/cluster/fork.test.ts` | 3 |
+| `apps/server/test/unit/cluster/ipc-channel.test.ts` | 16 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 11 |
+| `apps/server/test/unit/cluster/lease-snapshot-window.test.ts` | 2 |
+| `apps/server/test/unit/cluster/loop-sampler.test.ts` | 5 |
+| `apps/server/test/unit/cluster/media-adapters.test.ts` | 14 |
+| `apps/server/test/unit/cluster/media-cluster.test.ts` | 6 |
+| `apps/server/test/unit/cluster/primary.test.ts` | 3 |
+| `apps/server/test/unit/cluster/process-observability.test.ts` | 4 |
+| `apps/server/test/unit/cluster/readiness.test.ts` | 17 |
+| `apps/server/test/unit/cluster/roles.test.ts` | 8 |
+| `apps/server/test/unit/cluster/shutdown-order.test.ts` | 3 |
+| `apps/server/test/unit/cluster/socket-pause.test.ts` | 6 |
 
 ### `apps/server/src/config/`
 
@@ -539,10 +588,11 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 |---|---|
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
-| `apps/server/test/unit/config/config.test.ts` | 3 |
+| `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
+| `apps/server/test/unit/config/config.test.ts` | 4 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
-| `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 11 |
+| `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
 
 ### `apps/server/src/config/blocks/`
 
@@ -564,9 +614,9 @@ Files: `csv-parser.ts`
 
 ### `apps/server/src/core/`
 
-The voice engine: WebRTC bridge manager and session, the telephony guard host and the global / account / provider concurrency guards, concurrency control for the seam, telephony release, paced audio streamer and pace schedule, webhook URL builder; and the dialer analysis worker, its handle, runner and transcript-quality checks.
+The voice engine: WebRTC bridge manager and session, the telephony guard host and the global / account / provider concurrency guards, concurrency control for the seam, telephony release, paced audio streamer and pace schedule, webhook URL builder; and the dialer analysis worker (a slot pool), its handle, runner, recording byte budget, vendor rate-limit breaker and transcript-quality checks.
 
-Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-runner.ts`, `dialer-analysis-worker-handle.ts`, `dialer-analysis-worker.ts`, `pace-schedule.ts`, `paced-audio-streamer.ts`, `provider-concurrency-guard.ts`, `telephony-concurrency.ts`, `telephony-guard-host.ts`, `telephony-release.ts`, `transcript-quality.ts`, `voice-concurrency-control.ts`, `webhook-url-builder.ts`, `webrtc-bridge-manager.ts`, `webrtc-bridge-session.ts`
+Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-runner.ts`, `dialer-analysis-worker-handle.ts`, `dialer-analysis-worker.ts`, `pace-schedule.ts`, `paced-audio-streamer.ts`, `provider-concurrency-guard.ts`, `recording-byte-budget.ts`, `telephony-concurrency.ts`, `telephony-guard-host.ts`, `telephony-release.ts`, `transcript-quality.ts`, `vendor-rate-limit-breaker.ts`, `voice-concurrency-control.ts`, `webhook-url-builder.ts`, `webrtc-bridge-manager.ts`, `webrtc-bridge-session.ts`
 
 | Test file | Cases |
 |---|---|
@@ -576,27 +626,30 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/concurrency-extend-lock.test.ts` | 21 |
 | `apps/server/test/unit/core/concurrency-guard.test.ts` | 25 |
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
-| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` | 32 |
+| `apps/server/test/unit/core/dialer-analysis-runner.test.ts` | 39 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
-| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 13 |
+| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 22 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
 | `apps/server/test/unit/core/pace-schedule.test.ts` | 15 |
 | `apps/server/test/unit/core/paced-audio-streamer.test.ts` | 15 |
 | `apps/server/test/unit/core/provider-concurrency-guard.test.ts` | 19 |
+| `apps/server/test/unit/core/recording-byte-budget.test.ts` | 10 |
 | `apps/server/test/unit/core/telephony-concurrency-group.test.ts` | 1 |
 | `apps/server/test/unit/core/telephony-guard-host.test.ts` | 31 |
 | `apps/server/test/unit/core/telephony-release-wiring.test.ts` | 2 |
 | `apps/server/test/unit/core/telephony-release.test.ts` | 41 |
+| `apps/server/test/unit/core/vendor-rate-limit-breaker.test.ts` | 10 |
 | `apps/server/test/unit/core/voice-concurrency-control.test.ts` | 8 |
 | `apps/server/test/unit/core/webhook-url-builder.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-answer-anchor.test.ts` | 3 |
 | `apps/server/test/unit/core/webrtc-bridge-alaw8-media.test.ts` | 16 |
+| `apps/server/test/unit/core/webrtc-bridge-backpressure.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-borrowed-socket-soak.test.ts` | 2 |
 | `apps/server/test/unit/core/webrtc-bridge-credential-hangup.test.ts` | 5 |
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 62 |
+| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-manual-correlation.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 4 |
@@ -605,9 +658,9 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 
 ### `apps/server/src/core/bridge/`
 
-Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping), `browser-leg-media.ts` (the browser leg's media format: the per-socket `pcm16`/`alaw8` tag the station handler sets and every attach reads, the `alaw8` message-size check and the 20 ms framer for carrier → browser A-law; part of the §3.1 seam). None imports metrics. Tested through the bridge suites above.
+Parts of the WebRTC bridge split out of `webrtc-bridge-manager.ts`, which stays the seam's module path (docs/seams.md §3.1) and re-exports the types: `bridge-types.ts` (`WebRtcCallError` and the exported seam types), `ws-tokens.ts` (`BridgeWsTokens`: the carrier's per-call tokens and the unstored-token memory; `verifyWsToken` stays on the manager as a delegate), `admission.ts` (`admitBridgeCall`: the slot acquire and its refusal mapping), `browser-leg-media.ts` (the browser leg's media format: the per-socket `pcm16`/`alaw8` tag the station handler sets and every attach reads, the `alaw8` message-size check and the 20 ms framer for carrier → browser A-law; part of the §3.1 seam), `carrier-urls.ts` (the carrier's media and status URLs for a call, with a media worker's `&w=<slot>` routing hint, D3). None imports metrics. Tested through the bridge suites above, and `carrier-urls.ts` by `apps/server/test/unit/core/carrier-urls.test.ts` (3).
 
-Files: `admission.ts`, `bridge-types.ts`, `browser-leg-media.ts`, `ws-tokens.ts`
+Files: `admission.ts`, `bridge-types.ts`, `browser-leg-media.ts`, `carrier-urls.ts`, `ws-tokens.ts`
 
 ### `apps/server/src/db/`
 
@@ -656,7 +709,7 @@ Files: `feature-flag.service.ts`, `index.ts`, `registry.ts`
 | `apps/server/test/unit/feature-flags/feature-flag.service.test.ts` | 46 |
 | `apps/server/test/unit/feature-flags/flag-snapshot.test.ts` | 30 |
 | `apps/server/test/unit/feature-flags/registry-contracts.test.ts` | 4 |
-| `apps/server/test/unit/feature-flags/registry.test.ts` | 14 |
+| `apps/server/test/unit/feature-flags/registry.test.ts` | 15 |
 
 ### `apps/server/src/invites/`
 
@@ -766,9 +819,9 @@ Files: `s3.ts`
 
 ### `apps/server/src/telephony/`
 
-Telephony provider factory and types; the carrier modules (each carrier's media-stream protocol and hangup style, which the bridge asks instead of branching on a provider name); the VoiceLink adapter, media protocol, webhook normaliser, token manager and carrier fixture. `factory.ts` builds the service's own adapters from env and BYOC adapters from tenant credentials (`getForCredentialId`, decisions B18–B22): it peeks the credential row on every use and refuses another tenant or provider before any secret is opened, calls `resolve` only on a cache miss (keyed by peek's version list), and drops cached adapters only on `CredentialUnavailableError`, rethrowing transient errors unchanged.
+Telephony provider factory and types; the carrier REST errors whose dial outcome is unknown (`carrier-errors.ts`: a timed-out or unreadable `add_lead`, read by the bridge and the dialer to defer the redial); the carrier modules (each carrier's media-stream protocol and hangup style, which the bridge asks instead of branching on a provider name); the VoiceLink adapter, media protocol, webhook normaliser, token manager and carrier fixture. `factory.ts` builds the service's own adapters from env and BYOC adapters from tenant credentials (`getForCredentialId`, decisions B18–B22): it peeks the credential row on every use and refuses another tenant or provider before any secret is opened, calls `resolve` only on a cache miss (keyed by peek's version list), and drops cached adapters only on `CredentialUnavailableError`, rethrowing transient errors unchanged.
 
-Files: `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `webhook-grace.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.media.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
+Files: `carrier-errors.ts`, `carrier-module.ts`, `carrier-modules.ts`, `factory.ts`, `types.ts`, `webhook-grace.ts`, `voicelink/voicelink-carrier.fixture.json`, `voicelink/voicelink-token-manager.ts`, `voicelink/voicelink.adapter.ts`, `voicelink/voicelink.media.ts`, `voicelink/voicelink.types.ts`, `voicelink/voicelink.webhook.ts`
 
 | Test file | Cases |
 |---|---|
@@ -824,16 +877,18 @@ Files: `tts-file-cache.ts`
 
 ### `apps/server/src/utils/`
 
-Shared helpers: audio and FIR filter, the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, abort errors.
+Shared helpers: audio and FIR filter (`audio-fir.ts`: the bridge's A-law 8k ⇄ PCM16 16k transcoder, allocation-free per frame and pinned byte for byte to a frozen pre-rewrite copy, `test/helpers/reference-audio-fir.ts`; `scripts/bench-transcoder.ts` times both), the `X-Client` parser (`client-header.ts`: which app sent a request; never an auth or rate-limit input), concurrency, decode gate, the one UUID shape check (`uuid.ts`, shared by routes and agency modules), phone normaliser, recording URL signing and resolution, recording proxy, URL redaction (logs and OTel spans), the OTel SDK's pure configuration (`otel-sdk-config.ts`: export interval, resource, metric views, fresh gauges, the bounded shutdown, and the trace config: pg without parameter values or pool-connect spans, untraced probes and PostHog), retry, safe emit, webhook base URL, WebSocket no-delay, the inbound WebSocket message bound (`ws-limits.ts`: `maxPayload`, sized per WebSocket route), the Redis client options (`redis-options.ts`: command, connect and retry bounds, used by `index.ts`), WebSocket send back-pressure (`ws-backpressure.ts`: stale media dropped past a soft limit, a station closed 4408 past the hard cap), abort errors.
 
-Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-nodelay.ts`
+Files: `abort-error.ts`, `audio-fir.ts`, `audio.ts`, `client-header.ts`, `concurrency.ts`, `decode-gate.ts`, `otel-sdk-config.ts`, `phone-normalizer.ts`, `recording-proxy.ts`, `recording-url-resolver.ts`, `recording-url.ts`, `redact-url.ts`, `redis-options.ts`, `retry.ts`, `safe-emit.ts`, `uuid.ts`, `webhook-base.ts`, `ws-backpressure.ts`, `ws-limits.ts`, `ws-nodelay.ts`
 
 | Test file | Cases |
 |---|---|
 | `apps/server/test/unit/utils/audio-downmix.test.ts` | 11 |
 | `apps/server/test/unit/utils/audio-fir.test.ts` | 24 |
+| `apps/server/test/unit/utils/audio-fir.reference.test.ts` | 14 |
 | `apps/server/test/unit/utils/audio.test.ts` | 41 |
 | `apps/server/test/unit/utils/concurrency.core.test.ts` | 9 |
+| `apps/server/test/unit/utils/redis-options.test.ts` | 5 |
 | `apps/server/test/unit/utils/concurrency.test.ts` | 14 |
 | `apps/server/test/unit/utils/decode-gate.test.ts` | 23 |
 | `apps/server/test/unit/utils/metrics-tts-clip-cache.test.ts` | 7 |
@@ -882,18 +937,18 @@ a WebSocket *client*, which a stub server cannot be.
 | Mock | What it is |
 |---|---|
 | `mocks/voicelink/` | Scriptable VoiceLink carrier: login, `add_lead` and CDR REST with injectable faults (latency, status, hang, malformed JSON, TCP reset, held responses); per-call scripts that open the media WS to the server, send `start` (A-law 8 kHz), stream seeded audio, post webhooks (duplicated, shuffled, out of order) and end by any close code or a TCP destroy |
-| `mocks/station-fleet.ts` | N agent consoles over real `ws` with real station tokens: heartbeat, ready / break / disposition, reconnect, network drop, silence, slow reader, rapid connect-disconnect, seeded hostile frames; frames recorded with timestamps |
+| `mocks/station-fleet.ts` | N agent consoles over real `ws` with real station tokens: heartbeat, ready / break / disposition, reconnect, network drop, silence, slow reader, rapid connect-disconnect, seeded hostile frames; frames recorded with timestamps; `client=` web, mobile or a mix |
 
 | Test file | Cases | Guards |
 |---|---|---|
 | `apps/server/test/unit/load/load-scale.test.ts` | 3 | The shared PRNG is deterministic and in bounds |
 | `apps/server/test/unit/load/mock-voicelink-carrier.test.ts` | 6 | The mock carrier itself: URL rewrite, auth and 422, fault ordering, a `start` the product parses, audio surviving the real codec |
-| `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 18 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; 2 `it.fails` (no REST timeout) |
+| `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 22 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; a hung `add_lead` or login is abandoned at its timeout (the former 2 `it.fails`), a timed-out or unreadable `add_lead` is outcome-unknown and never retried; a CDR lookup's 401 retry gets its own deadline |
 | `apps/server/test/unit/load/bridge-row-write-order.test.ts` | 1 | No live status lands over a terminal one, 200 calls with shuffled ringing / answered / terminal |
 | `apps/server/test/unit/load/station-storm.test.ts` | 4 | 150 consoles across 3 tenants: registered once, no cross-talk, tab races leave one live station (4409 for the rest) |
 | `apps/server/test/unit/load/station-heartbeat-scale.test.ts` | 1 | Exactly the silent consoles are reaped 4408 after grace; the sweep stops when the floor empties |
-| `apps/server/test/unit/load/station-backpressure.test.ts` | 2 | Stalled consoles do not hold up broadcasts; 1 `it.fails` (unbounded send buffer) |
-| `apps/server/test/unit/load/station-inbound-fuzz.test.ts` | 4 | About 2,800 seeded hostile frames never throw or disturb bystanders (the `null` frame crash); 1 `it.fails` (no frame-size limit) |
+| `apps/server/test/unit/load/station-backpressure.test.ts` | 3 | Stalled consoles do not hold up broadcasts; their media past the soft limit is dropped, control frames never; past the hard cap a console is closed 4408 `station_send_backlog` (the former `it.fails`, unbounded send buffer, is fixed) |
+| `apps/server/test/unit/load/station-inbound-fuzz.test.ts` | 5 | About 2,800 seeded hostile frames never throw or disturb bystanders (the `null` frame crash); a frame past `maxPayload` (64 KiB) is refused 1009, text or binary (the former `it.fails`, no frame-size limit, is fixed) |
 | `apps/server/test/unit/load/wrapup-manager-interleavings.test.ts` | 2 | Seeded interleavings of enter / disposition / force / cancel / timer: each wrap-up closes once, no early `auto_return` |
 | `apps/server/test/unit/load/in-flight-contention.test.ts` | 2 | `InFlight.settle` waits only on work tracked at drain start |
 | `apps/server/test/unit/load/audit-buffer-drain-under-load.test.ts` | 4 | Both audit buffers drain fully when shutdown lands mid-flush |
@@ -902,9 +957,13 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/voicelink-media-ws-load.test.ts` | ~8 | 50 simultaneous carrier streams in order both ways; `alaw8` stations beside `pcm16` ones (A-law byte for byte both ways); token gate; `start` failures; slow carrier; every close shape settles once; mid-call reconnect |
 | `apps/server/test/integration/load/voicelink-webhook-storm.test.ts` | ~3 | 40 calls of duplicated, shuffled, concurrent webhooks settle once with recordings and carrier ids kept; 1 `it.fails` (terminal overtaking `answered`) |
 | `apps/server/test/integration/load/voicelink-full-stack.test.ts` | ~1 | Real app, real stations, pacing engine dialling through the real adapter into the mock carrier; no leaks |
+| `apps/server/test/integration/load/voicelink-dial-outcome-unknown.test.ts` | 2 | The same stack, five refused dials (unreadable 200, `add_lead` timeout, 500, an agent hang-up during a hung `add_lead`, an outcome-unknown dial at the our-fault bound): each settled once; an outcome-unknown one (the raced hang-up too) `pending` on the our-fault ledger, `attempt_count` untouched and not dialable before `dialed_at` + 15 min, `exhausted` at the bound; a plain refusal by the retry policy; one `released` per dial; no leaks. And an outcome-unknown dial whose hold write fails: the stranded-contact sweep that recovers it keeps it until `dialed_at` + 15 min |
+| `apps/server/test/integration/load/voicelink-bridge-setup-failure.test.ts` | 3 | The same stack, the carrier-token store or the webhook base (an input of the carrier request) failing after the bridge session is registered: no session, slots, lease, timer or media token left, no `ended`, the attempt `failed` and uncharged (`BRIDGE_SETUP_FAILED`, not a carrier refusal), one `released`; the contact held 1 min (`PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`), then its next dial reaches the carrier. And every call row INSERT failing on a short list with free agents: each contact dialled once in the window, nothing charged, nobody retired |
 | `apps/server/test/integration/load/station-floor.test.ts` | ~2 | 150-agent join / connect / available storm and a reconnect storm through the real routes |
 | `apps/server/test/integration/load/station-floor-soak.test.ts` | ~1 | 100 agents, about 520 calls through wrap-up and disposition; console = Redis = session row |
 | `apps/server/test/integration/load/floor-run.test.ts` | ~1 | 100 agents, 5 campaigns, 3 tenants, 2,200 contacts to exhaustion; invariants and the pacing law every round |
+| `apps/server/test/integration/load/pacing-skip.test.ts` | ~5 | The scheduled path: available→dial within one round after idle (real timers), the safety tick finds an unannounced change, a lowered limit reaches two engines on one bus (and through the TTL), a churning floor keeps the pacing law with no missed wake-up |
+| `apps/server/test/integration/load/pacing-statements.test.ts` | ~2 | Statement harness: pg statements and Redis commands per second for N campaigns × M agents, idle and at the limit (`PACING_HARNESS_*`) |
 | `apps/server/test/integration/load/agent-churn.test.ts` | ~2 | Breaks, drops, re-attaches, leaves and late joins: no orphaned reservation; 1 `it.fails` (Available during an announced call) |
 | `apps/server/test/integration/load/concurrency-cap.test.ts` | ~4 | Guards on real Redis gate dials without losing contacts; 2 `it.fails` (provider share ignored by the tick; refused dial stamped `dialed_at`) |
 | `apps/server/test/integration/load/tenant-isolation.test.ts` | ~1 | A saturated tenant beside a small one: no starvation, caps and DNC scoped per tenant |
@@ -918,16 +977,18 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/contact-claim-contention.test.ts` | ~7 | Concurrent claimers and settlers, `SKIP LOCKED`, DNC racing claims, overlapping stranded-contact sweeps |
 | `apps/server/test/integration/load/floor-morning-rush.test.ts` | ~5 | 90 agents sign in, join, connect and poll across 3 tenants; every body swept for foreign ids |
 | `apps/server/test/integration/load/session-join-races.test.ts` | ~3 | Racing joins: one session, the documented 409, one "session started" event |
-| `apps/server/test/integration/load/disposition-storm.test.ts` | ~2 | Concurrent and duplicate dispositions with supervisor reads: exactly-once effects, no deadlocks; 1 `it.fails` (stale replay reopens a contact) |
+| `apps/server/test/integration/load/disposition-storm.test.ts` | 2 | Concurrent and duplicate dispositions with supervisor reads: exactly-once effects, no deadlocks; a stale same-code replay of an old attempt leaves a contact a later call settled as it is (the former `it.fails`, stale replay reopens a contact, is fixed) |
 | `apps/server/test/integration/load/campaign-mutation-races.test.ts` | ~6 | Racing lifecycle and PATCH requests end legal and audited; 2 `it.fails` (audit `from`, combined calling window) |
 | `apps/server/test/integration/load/roster-ingest-concurrency.test.ts` | ~3 | Concurrent ingests: totals exact, chunk idempotency keys honoured |
 | `apps/server/test/integration/load/rate-limit-bursts.test.ts` | ~5 | Exact ceilings, 429 body and headers, per-client buckets, probes and webhooks unaffected |
 | `apps/server/test/integration/load/rate-limit-user-bucket.test.ts` | ~3 | A floor behind one NAT address: a per-user budget each, an exact per-user ceiling under a burst, the bearer IP bucket apart from the unauthenticated one |
-| `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~3 | A tiny and a starved pg pool, Redis cut and restored: probes correct, no 401 sign-outs, recovery |
+| `apps/server/test/integration/load/resource-exhaustion.test.ts` | ~4 | A tiny and a starved pg pool, Redis cut, and Redis stalled (TCP up, no replies), with the client built as `index.ts` builds it: probes correct, answers within 10 s, no 401 sign-outs, recovery |
 | `apps/server/test/integration/load/hostile-input-fuzz.test.ts` | ~5 | Seeded fuzz over every route from `onRoute`: 4xx per contract, never a 500 or a stack; 1 `it.fails` (headerless multipart part hangs) |
 
 Harnesses beside them: `integration/load/floor-harness.ts` and `floor-pool.ts` (multi-tenant world
-on one real `AgencyRuntime`), `station-floor-harness.ts`, `voicelink-load-harness.ts` (real
+on one real `AgencyRuntime`; `scheduled: true`, or `FLOOR_SCHEDULED=1` for every floor suite, drives
+the engine's `runRound` instead of `tickOnce`), `statement-counter.ts` (counts pg statements and Redis
+commands for the pacing statement harness), `station-floor-harness.ts`, `voicelink-load-harness.ts` (real
 `buildApp` pointed at the mock carrier, `assertNoLeaks`), `load-harness.ts` (bulk-seeded floor for
 the API suites), `unit/load/station-load-harness.ts`.
 
@@ -941,7 +1002,7 @@ Files: `README.md`, `dashboards/magick-agency-overview.json`, `scripts/metric-de
 
 | Test file | Cases |
 |---|---|
-| `grafana/scripts/validate-alerts.test.mjs` (`pnpm test:grafana`, node:test) | 16 |
+| `grafana/scripts/validate-alerts.test.mjs` (`pnpm test:grafana`, node:test) | 17 |
 | `grafana/scripts/validate-dashboard.test.mjs` (`pnpm test:grafana`, node:test) | 15 |
 
 ## `tooling` and release configuration
@@ -973,7 +1034,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` | 10 |
 | `packages/contracts/test/exports.test.ts` | 12 |
-| `packages/contracts/test/flags.test.ts` | 7 |
+| `packages/contracts/test/flags.test.ts` | 8 |
 | `packages/contracts/test/rbac.test.ts` | 60 |
 | `packages/contracts/test/stall.test.ts` | 4 |
 
@@ -1007,7 +1068,7 @@ _No dedicated test files._
 
 ### `packages/db/src/`
 
-pg pool and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
+pg pool (default 30 connections; every acquire timed into `db_pool_acquire_seconds` and the `db_pool_clients_*` gauges fed) and TLS options (`connection.ts`), migrations directory, pg error helpers, barrel.
 
 Files: `connection.ts`, `index.ts`, `migrations-dir.ts`, `pg-errors.ts`
 
@@ -1051,7 +1112,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/audit.repository.test.ts` | ~12 |
 | `packages/db/test/integration/repositories/call-analysis-profile.repository.test.ts` | ~6 |
 | `packages/db/test/integration/repositories/claim-limit.test.ts` | 5 |
-| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~9 |
+| `packages/db/test/integration/repositories/dialer-analysis-job.repository.test.ts` | ~10 |
 | `packages/db/test/integration/repositories/membership.repository.test.ts` | ~33 |
 | `packages/db/test/integration/repositories/phone-number.repository.test.ts` | ~8 |
 | `packages/db/test/integration/repositories/provider-concurrency.repository.test.ts` | ~6 |
@@ -1093,6 +1154,7 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 | Test file | Cases |
 |---|---|
+| `packages/db/test/integration/db/pool-wait-metrics.test.ts` | 3 |
 | `packages/db/test/integration/db/transaction.test.ts` | 8 |
 | `packages/db/test/unit/utils/single-flight.test.ts` | 16 |
 | `packages/db/test/unit/utils/sql-update.test.ts` | 8 |
@@ -1116,7 +1178,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |
-| `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~31 |
+| `packages/db/test/integration/db/webrtc-call.repository.test.ts` | ~34 |
 | `packages/db/test/integration/flows/dialer-analysis-dsar.test.ts` | ~1 |
 | `packages/db/test/integration/flows/dialer-analysis-failure-paths.test.ts` | ~2 |
 | `packages/db/test/integration/flows/dialer-analysis-gating.test.ts` | ~2 |
@@ -1408,7 +1470,9 @@ Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `T
 
 React hooks for data loading and the station. `useTeam`, `useAccounts` and `usePhoneNumbers` sit on web-ui's `useAsyncResource` (its `enabled: false` waits for their scope); `useVisibleInterval` (visible-only, single-flight polling) and `useRefetchOnReturn` drive the campaign detail page and the campaigns home; `useDialogA11y` and `useModalFocus` are thin callers of web-ui's `useDialogFocus`.
 
-The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a station connection the host owns (`/dialer/phone` or the switched campaign station). It never opens a socket or the microphone; it reads the host's `manual_call` frames, calls the soft-phone routes, and tells the host's audio which call is live. The call on screen is the newest copy from the frame, the HTTP answers and `GET /softphone/bootstrap` (re-read after every reconnect), compared by `newerCall` with the frame winning a tie. It owns the number, Call and its refusals (the override prompt for SP1 / SP2), the debounced call-details and notes saves, the outcome with the station's disposition rules plus `call_live` / `fields_required`, Mark DNC, hang-up and the ringback, and finish mode (`finishOnly`: the flag off per the host, the bootstrap's `softphone_enabled` or a `softphone_disabled` dial refusal; nothing can start a call, everything that finishes one stays). `useAgencyStation` accepts any `StationSocketBootstrap` (a soft-phone session has no campaign), keeps the last `manual_call` frame as `manualCall` (malformed frames are dropped with a diagnostic), and feeds `useStationUnloadGuard`'s new `busyRef` so a tab cannot close silently over a soft-phone call during `break`. `useBreakQueue` adds `requestSoftphone` (`POST /sessions/:id/softphone`, queued like a break) and `softphoneRejection`. `useFeatureFlagEnabled` reads one client flag and fails closed with no provider (`SOFTPHONE_FLAG`). `useSoftphone` is tested through `SoftphoneView.test.tsx` (`components/softphone/`).
+The soft phone (docs/softphone.md §7): `useSoftphone` is its state machine on a station connection the host owns (`/dialer/phone` or the switched campaign station). It never opens a socket or the microphone; it reads the host's `manual_call` frames, calls the soft-phone routes, and tells the host's audio which call is live. The call on screen is the newest copy from the frame, the HTTP answers and `GET /softphone/bootstrap` (re-read after every reconnect), compared by `newerCall` with the frame winning a tie. It owns the number, Call and its refusals (the override prompt for SP1 / SP2), the debounced call-details and notes saves, the outcome with the station's disposition rules plus `call_live` / `fields_required`, Mark DNC, hang-up and the ringback, and finish mode (`finishOnly`: the flag off per the host, the bootstrap's `softphone_enabled` or a `softphone_disabled` dial refusal; nothing can start a call, everything that finishes one stays). `useAgencyStation` accepts any `StationSocketBootstrap` (a soft-phone session has no campaign), keeps the last `manual_call` frame as `manualCall` (malformed frames are dropped with a diagnostic), and feeds `useStationUnloadGuard`'s new `busyRef` so a tab cannot close silently over a soft-phone call during `break`. `useBreakQueue` adds `requestSoftphone` (`POST /sessions/:id/softphone`, queued like a break) and `softphoneRejection`. `useFeatureFlagEnabled` reads one client flag and fails closed with no provider (`SOFTPHONE_FLAG`); `useStationMediaFormat` turns `agency_console_alaw8` into the station socket's format (`alaw8`, else `pcm16`). `useSoftphone` is tested through `SoftphoneView.test.tsx` (`components/softphone/`).
+
+Call audio (`media=alaw8` by default, `pcm16` the fallback; `utils/agencyMedia.ts`): `useAgencyStation` names the format on every upgrade (`mediaFormat` option and result), reads binary as `ArrayBuffer`, sends A-law as binary and refuses a frame in the other format, and turns to `pcm16` for good on 1008 `invalid_media` or JSON `media` on an `alaw8` socket. `useAudioCapture` builds the one capture worklet in the socket's format and switches it in place (`setFormat`); `useAudioPlayback.playAlaw` decodes through `utils/alaw8/g711.js` into the same 16 kHz scheduler as `play`; `useAgencyAudio.sync` takes the station's `format`.
 
 Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgencyCues.ts`, `useAgencyNotes.ts`, `useAgencyStation.ts`, `useAgentAttempts.ts`, `useAgentPerformance.ts`, `useAgentRoster.ts`, `useAudioCapture.ts`, `useAudioPlayback.ts`, `useBestHours.ts`, `useBreakQueue.ts`, `useCallAnalysisProfiles.ts`, `useCampaignContribution.ts`, `useCampaignSeries.ts`, `useDialogA11y.ts`, `useDispositionSubmit.ts`, `useFeatureFlagEnabled.ts`, `useLatestRef.ts`, `useMediaQuery.ts`, `useModalFocus.ts`, `useMountedRef.ts`, `usePermission.ts`, `usePhoneNumbers.ts`, `usePostHogIdentify.ts`, `useRefetchOnReturn.ts`, `useRepaintTick.ts`, `useRosterIngest.ts`, `useServerClock.ts`, `useSoftphone.ts`, `useStationUnloadGuard.ts`, `useTeam.ts`, `useVisibleInterval.ts`
 
@@ -1417,16 +1481,19 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 | `apps/console/src/__tests__/hooks/agencyStationWsUrl.test.ts` | 7 |
 | `apps/console/src/__tests__/hooks/agentSurfacesStrictMode.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/tenantListHooks.test.tsx` | 5 |
+| `apps/console/src/__tests__/hooks/useAgencyStation.alaw8.test.ts` | 19 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.manualCall.test.ts` | 5 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.media.test.ts` | 10 |
 | `apps/console/src/__tests__/hooks/useAgencyStation.test.ts` | 77 |
-| `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 18 |
+| `apps/console/src/__tests__/hooks/useAudioCapture.test.ts` | 24 |
+| `apps/console/src/__tests__/hooks/useAudioPlayback.alaw.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useCallAnalysisProfiles.test.tsx` | 9 |
 | `apps/console/src/__tests__/hooks/useCampaignSeries.test.tsx` | 16 |
 | `apps/console/src/__tests__/hooks/useMediaQuery.test.ts` | 3 |
 | `apps/console/src/__tests__/hooks/useMountedRef.test.tsx` | 3 |
 | `apps/console/src/__tests__/hooks/useRepaintTick.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useServerClock.test.ts` | 16 |
+| `apps/console/src/__tests__/hooks/useStationMediaFormat.test.ts` | 4 |
 | `apps/console/src/__tests__/hooks/useVisibleInterval.test.ts` | 7 |
 
 ### `apps/console/src/pages/`
@@ -1454,11 +1521,11 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyLoginPage.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.softphone.test.tsx` | 3 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` | 46 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 47 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 53 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 31 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.cueVisual.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.renders.test.tsx` | 5 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 14 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.retry.test.tsx` | 15 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.softphone.test.tsx` | 27 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.stationExit.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.test.tsx` | 47 |
@@ -1474,7 +1541,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/JoinPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/NotificationSettingsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/RecordingSection.test.tsx` | 9 |
-| `apps/console/src/__tests__/pages/SoftphonePage.audio.test.tsx` | 3 |
+| `apps/console/src/__tests__/pages/SoftphonePage.audio.test.tsx` | 5 |
 | `apps/console/src/__tests__/pages/SoftphonePage.test.tsx` | 24 |
 | `apps/console/src/__tests__/pages/SoftphoneSettingsPage.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/TeamPage.a11y.test.tsx` | 1 |
@@ -1514,7 +1581,7 @@ _No dedicated test files._
 
 Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, series ranges and more. The soft phone's own helpers are in `softphone/` (next entry); here `agencyAgentSurfaces.ts` adds `SOFTPHONE_SURFACE` and `agentSurfacesFor` (the fourth agent screen, kept out of the fixed `AGENT_SURFACES`), `agencyCampaignTabs.ts` the Soft-phone calls tab with a `flag` that `visibleCampaignTabs` checks, and `agencyStationReducer.ts` the `manualCall` slot and its `manual_call` action. `format/` is the one rendering of counts, percentages and plurals (`number.ts`, display locale `en-IN`), durations (`duration.ts`: live timers floor, aggregates round), dates with cached formatters (`date.ts`), a named zone's wall clock (`zone.ts`) and calling days (`weekdays.ts`). `agency/` holds `metrics.ts` (`ratio`, `ratePct`, `stateShares`, `ON_SHIFT_STATES`) and the pieces the large agency modules were split into — `agentWindows`, `buckets`, `agentReadouts`, `roster/`, `overview/`, `config/` — each re-exported by its original module so import paths are unchanged.
 
-Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/reservedBreakReason.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
+Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `alaw8/g711.js` (+ `g711.d.ts`; plain JS, run by the capture worklet as source text: G.711 A-law and the half-band 16 ⇄ 8 kHz filters, checked against the agent app's cross-language checksums), `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/funnel.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/reservedBreakReason.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentEntry.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignOverview.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignSeries.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1551,14 +1618,14 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyDispositionForm.test.ts` | 26 |
 | `apps/console/src/__tests__/utils/agencyDispositionSubmit.test.ts` | 34 |
 | `apps/console/src/__tests__/utils/agencyDncCopy.test.ts` | 20 |
-| `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 4 |
+| `apps/console/src/__tests__/utils/agencyErrors.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/agencyFieldFilter.test.ts` | 12 |
 | `apps/console/src/__tests__/utils/agencyHealthStrip.test.ts` | 46 |
 | `apps/console/src/__tests__/utils/agencyIngestSummary.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyInviteJoinCopy.test.ts` | 28 |
 | `apps/console/src/__tests__/utils/agencyJoinConflict.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyLiveSession.test.ts` | 19 |
-| `apps/console/src/__tests__/utils/agencyMedia.test.ts` | 18 |
+| `apps/console/src/__tests__/utils/agencyMedia.test.ts` | 27 |
 | `apps/console/src/__tests__/utils/agencyNotes.test.ts` | 43 |
 | `apps/console/src/__tests__/utils/agencyPadGate.test.ts` | 11 |
 | `apps/console/src/__tests__/utils/agencyPermissionMirror.test.ts` | 13 |
@@ -1578,7 +1645,8 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/agentPermissions.test.ts` | 22 |
 | `apps/console/src/__tests__/utils/agentWindows.timezone.test.ts` | 8 |
-| `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 10 |
+| `apps/console/src/__tests__/utils/alaw8/g711.test.ts` | 39 |
+| `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/format.test.ts` | 16 |

@@ -122,6 +122,16 @@ export const AGENCY_STATION_ALAW8_FRAME_BYTES = 160;
 export const AGENCY_STATION_ALAW8_MAX_FRAME_BYTES = 8000;
 
 /**
+ * The largest WebSocket message, in bytes, the server takes on any route by default (its
+ * `maxPayload`, `WS_MAX_PAYLOAD_DEFAULT_BYTES` in `apps/server/src/utils/ws-limits.ts`). A
+ * message past it is not dropped: the server closes the socket with 1009, which takes a
+ * station (and a live call's audio) down. Clients size their largest frame under it (the
+ * console's `pcm16` uplink: this less the JSON envelope). Operators may raise the server's
+ * bound (`WS_MAX_PAYLOAD_BYTES`), never below the largest legitimate frame.
+ */
+export const AGENCY_WS_MAX_MESSAGE_BYTES = 64 * 1024;
+
+/**
  * **WITHDRAWN. Do not send this frame; nothing reads it.**
  *
  * Kept as a named type only so the union below can document the gap rather than
@@ -613,6 +623,12 @@ export const AGENCY_STATION_CLOSE = {
    * console notice. A client that does not recognise the code must fall through to
    * its ordinary retry, which is what makes this safe to ship ahead of any console
    * change.
+   *
+   * Also sent, with reason `station_send_backlog`, when the station has stopped READING:
+   * its unread backlog of server frames passed the server's cap (1 MiB; media past ~3 s
+   * of backlog is dropped first, control frames never). The same "the server stopped
+   * hearing from this station" in the other direction, with the same answer: re-mint and
+   * reconnect, and `ready` carries the state again.
    */
   HEARTBEAT_TIMEOUT: 4408,
   /** Superseded by a newer socket for the same session. Do not retry. */

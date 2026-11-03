@@ -1,10 +1,12 @@
 import type Redis from 'ioredis';
 import { logger } from '@magick-agency/observability';
 import type { AppContext } from '../app-context.js';
-import { AgencyRuntime } from '../agency/runtime.js';
+import { AgencyRuntime, type AgencyRuntimeOptions } from '../agency/runtime.js';
 import { ensureVoiceEngine } from './voice.js';
 import { agencyIngestJobRepository } from '../agency/agency-ingest-job.repository.js';
 import { startAgencyIngestReaper } from '../agency/agency-ingest.service.js';
+import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurrency-control.js';
+import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -28,13 +30,24 @@ import { startAgencyIngestReaper } from '../agency/agency-ingest.service.js';
  */
 
 let runtime: AgencyRuntime | null = null;
+let runtimeOptions: AgencyRuntimeOptions = {};
+
+/**
+ * How the runtime is assembled, set before it is first built: the primary of a
+ * multi-process server installs its media-worker adapters here (`cluster/primary.ts`).
+ * Unset (one process): the runtime is built as it always was.
+ */
+export function configureAgencyRuntime(options: AgencyRuntimeOptions): void {
+  if (runtime) throw new Error('configureAgencyRuntime must run before the agency runtime is built');
+  runtimeOptions = options;
+}
 /** The stop {@link startAgency} returned while it has not yet run; null otherwise. */
 let activeStop: (() => Promise<void>) | null = null;
 
 export function ensureAgencyRuntime(redis: Redis | null, keyPrefix: string): AgencyRuntime {
   if (runtime) return runtime;
   const { bridge } = ensureVoiceEngine(redis);
-  runtime = new AgencyRuntime(bridge, redis, keyPrefix);
+  runtime = new AgencyRuntime(bridge, redis, keyPrefix, runtimeOptions);
   return runtime;
 }
 
@@ -51,6 +64,7 @@ export function getAgencyRuntime(): AgencyRuntime | null {
 export async function resetAgencyRuntimeForTests(): Promise<void> {
   if (activeStop) await activeStop();
   runtime = null;
+  runtimeOptions = {};
 }
 
 /**
@@ -73,6 +87,13 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   }
   agencyIngestReapInterval = startAgencyIngestReaper();
 
+  // A concurrency-limit write invalidates the pacing engine's cached limit as well as
+  // the guards' (`agency/pacing/limit-invalidation.ts`). Voice starts first and has
+  // registered the seam's implementation; this wraps it, and the stop unwraps it.
+  const undecorated = getConcurrencyControl();
+  const decorated = withPacingInvalidation(undecorated);
+  setConcurrencyControl(decorated);
+
   // The startup reaper runs BEFORE the pacing supervisor. A crash leaves attempts non-terminal and contacts `in_flight`, and those count
   // against the tick's occupancy — a supervisor started first would compute a fabricated
   // occupancy from dead rows and quietly dial nothing forever.
@@ -84,6 +105,7 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
     // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents
     // are NOT returned to the pool: they rehydrate into `break`.
     await agencyRuntime.stop();
+    if (getConcurrencyControl() === decorated) setConcurrencyControl(undecorated);
   };
   activeStop = stop;
   return stop;

@@ -17,7 +17,7 @@ vi.mock('@magick-agency/db/connection', () => ({ getPool: () => getTestPool() })
 
 const {
   insertAgencyCampaign, insertAgencyContact, insertAgencyAttempt, insertAgentSession,
-  noLiveAttempts,
+  insertManualCall, insertSoftphoneSession, noLiveAttempts,
 } = await import('./agency-factories.js');
 const { AgencyReaper } = await import('../../../src/agency/reaper.js');
 const {
@@ -43,7 +43,8 @@ const { AUTO_DISPOSITION_CODE } = await import('../../../src/agency/disposition.
  *    COALESCE(a.wrapup_seconds, 0) + $1) < now()` — and its two joins. A mock
  *    returns whatever rows the test hands it, so the predicate that chose them is
  *    never evaluated.
- * 3. `recordAutoDisposition`'s `disposition_code IS NULL` guard, same reason as (1).
+ * 3. `closeLapsedWrapup`'s guards (`disposition_code IS NULL`, the contact still parked
+ *    for this attempt), same reason as (1).
  *
  * All three are the *only* thing standing between a sweep and the harm it is meant
  * to repair, and all three are pure SQL. So they get a tier that runs SQL.
@@ -609,33 +610,6 @@ describe('the sweep against real SQL', () => {
   });
 
   /**
-   * `recordAutoDisposition`'s guard, in SQL: the sweep must LOSE this race.
-   *
-   * An agent submitting their real write-up between the sweep's SELECT and its write
-   * keeps it. Asserted by writing a real code first and then sweeping — the sweep
-   * finds the row (its own SELECT ran before the code landed, which is the race) and
-   * the guarded UPDATE declines.
-   */
-  it('loses to an agent real disposition, and leaves their record intact', async () => {
-    const { attemptId } = await conversationAwaitingWrapup({
-      endedSecondsAgo: 200,
-      wrapupSeconds: 30,
-      campaign: {
-        disposition_catalog: JSON.stringify([{ code: 'promise_to_pay', label: 'Promise to pay' }]),
-      },
-    });
-
-    const first = await agencyAttemptRepository.recordAutoDisposition(attemptId, 'promise_to_pay');
-    expect(first).not.toBeNull();
-
-    // The second write is refused rather than overwriting — `null`, not a row.
-    const second = await agencyAttemptRepository.recordAutoDisposition(attemptId, AUTO_DISPOSITION_CODE);
-    expect(second, 'the guard let a second writer overwrite a record of what was said to a customer')
-      .toBeNull();
-    expect((await attemptRow(attemptId))['disposition_code']).toBe('promise_to_pay');
-  });
-
-  /**
    * The sweep is bounded, and the bound is not a suggestion.
    *
    * `limit = 500` by default. Asserted at a small explicit limit rather than by
@@ -653,6 +627,156 @@ describe('the sweep against real SQL', () => {
     // `ORDER BY a.ended_at` — the longest-stranded contacts are freed first, which
     // is the only ordering that keeps a backlog from starving the oldest rows.
     expect(limited.map((r) => r.id)).toEqual([created[0], created[1]]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (3b) The sweep writes only while the row is still what it read.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * `sweepLapsedWrapups` reads with `findLapsedWrapups` and then writes, row by row. Each
+ * case moves the attempt or its contact on INSIDE that window (run after the real
+ * `findLapsedWrapups` returns and before the sweep's write), with the real writes the
+ * moving path makes. The write must land on nothing and count nothing.
+ *
+ * Before the fix the arm that owed no disposition wrote the contact with an unconditional
+ * `markState`, and the owed arm's stamp was guarded but its contact write was not: (a) and
+ * (b) put a contact with a live call back to `completed`, (c) stamped an attempt and wrote
+ * a suppressed contact, (d) wrote over a contact the agent's write-up was releasing.
+ * Mutation-checked: dropping the newest-attempt clause from `closeLapsedWrapup` reds (b);
+ * dropping `ct.state = 'connected'` reds (c); dropping `a.disposition_code IS NULL` reds (d).
+ */
+describe('a lapsed-wrap-up close writes only while the row is still what the sweep read', () => {
+  /** Run `between` after the sweep's real `findLapsedWrapups` and before its write. */
+  function interleaveAfterRead(between: () => Promise<void>) {
+    const real = agencyAttemptRepository.findLapsedWrapups.bind(agencyAttemptRepository);
+    return vi.spyOn(agencyAttemptRepository, 'findLapsedWrapups').mockImplementationOnce(async (...args) => {
+      const rows = await real(...args);
+      expect(rows.length, 'the read found nothing: the case would be vacuous').toBe(1);
+      await between();
+      return rows;
+    });
+  }
+
+  async function sweepWith(between: () => Promise<void>): Promise<number> {
+    const spy = interleaveAfterRead(between);
+    try {
+      return await reaper().sweepLapsedWrapups();
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  /** Pacing's own claim and attempt insert, as one tick runs them. */
+  async function pacingRedials(campaignId: string, contactId: string): Promise<string> {
+    const claimed = await agencyContactRepository.claimDialable(campaignId, 10);
+    expect(claimed.map((c) => c.id)).toEqual([contactId]);
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const attempt = await agencyAttemptRepository.create({
+      campaignId, contactId, tenantId: claimed[0]!.tenant_id, accountId: claimed[0]!.account_id,
+      callerId: '+919000000001', reservedAgentId: session,
+    });
+    expect(attempt, 'the live-attempt index refused the redial').not.toBeNull();
+    await agencyAttemptRepository.setState(attempt!.id, 'dialing', { dialed_at: new Date() });
+    return attempt!.id;
+  }
+
+  async function contactAfter(id: string) {
+    const { rows } = await getTestPool().query<{
+      state: string; last_outcome: string | null; last_disposition: string | null; attempt_count: number;
+    }>('SELECT state, last_outcome, last_disposition, attempt_count FROM agency_contacts WHERE id = $1', [id]);
+    return rows[0]!;
+  }
+
+  const CATALOG = JSON.stringify([{ code: 'callback', label: 'Call back' }]);
+
+  it('(a) no disposition owed: leaves a contact the agent released and pacing re-claimed `in_flight` under its new call', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { status: 'running' },
+    });
+    let newAttemptId = '';
+    const closed = await sweepWith(async () => {
+      // Released (a callback due now), then claimed and dialled again by pacing.
+      await agencyContactRepository.markState(w.contactId, 'pending', { next_attempt_at: new Date(Date.now() - 1000) });
+      newAttemptId = await pacingRedials(w.campaignId, w.contactId);
+    });
+
+    expect(closed).toBe(0);
+    expect(await contactAfter(w.contactId), 'the contact of a live call was taken off it').toMatchObject({
+      state: 'in_flight', last_outcome: null, attempt_count: 1,
+    });
+    expect((await attemptRow(newAttemptId))['state']).toBe('dialing');
+    expect((await attemptRow(w.attemptId))['disposition_code']).toBeNull();
+    // Nothing can claim it while its call is live.
+    expect(await agencyContactRepository.claimDialable(w.campaignId, 10)).toEqual([]);
+  });
+
+  it('(b) leaves a contact a NEWER call has parked `connected` for its own write-up', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { status: 'running' },
+    });
+    let newAttemptId = '';
+    const closed = await sweepWith(async () => {
+      await agencyContactRepository.markState(w.contactId, 'pending', { next_attempt_at: new Date(Date.now() - 1000) });
+      newAttemptId = await pacingRedials(w.campaignId, w.contactId);
+      // The new call bridged: the dialer parks the contact for ITS write-up.
+      await agencyAttemptRepository.setState(newAttemptId, 'bridged', { bridged_at: new Date() });
+      await agencyContactRepository.markState(w.contactId, 'connected');
+    });
+
+    expect(closed).toBe(0);
+    expect(await contactAfter(w.contactId), 'a live conversation\'s contact was released').toMatchObject({
+      state: 'connected', last_outcome: null,
+    });
+    expect((await attemptRow(newAttemptId))['state']).toBe('bridged');
+  });
+
+  it('(c) disposition owed: stamps nothing and writes nothing on a contact suppressed DNC meanwhile', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { disposition_catalog: CATALOG },
+    });
+    const { rows: [contact] } = await getTestPool().query<{ phone_e164: string }>(
+      'SELECT phone_e164 FROM agency_contacts WHERE id = $1', [w.contactId]);
+    const closed = await sweepWith(async () => {
+      await agencyContactRepository.suppressByPhone(w.campaignId, contact!.phone_e164, 'dnc');
+    });
+
+    expect(closed).toBe(0);
+    expect((await attemptRow(w.attemptId))['disposition_code']).toBeNull();
+    expect(await contactAfter(w.contactId)).toMatchObject({ state: 'suppressed', last_disposition: null, last_outcome: null });
+  });
+
+  it('(d) disposition owed: loses to the agent\'s real write-up landing in the window, and writes nothing over it', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { disposition_catalog: CATALOG },
+    });
+    const closed = await sweepWith(async () => {
+      // The disposition route's first statement; its contact write comes after the sweep's.
+      const recorded = await agencyAttemptRepository.recordDisposition({
+        attemptId: w.attemptId, dispositionCode: 'callback', notes: null, callbackAt: null,
+        actorUserId: '6c1d0c8e-3d0e-4c7a-8b44-00000000b001', onBehalf: false,
+      });
+      expect(recorded).not.toBeNull();
+    });
+
+    expect(closed).toBe(0);
+    expect((await attemptRow(w.attemptId))['disposition_code'], 'a record of what was said to a customer was overwritten')
+      .toBe('callback');
+    // The route releases the contact itself; the sweep wrote nothing for it to contradict.
+    expect(await contactAfter(w.contactId)).toMatchObject({ state: 'connected', last_disposition: null, last_outcome: null });
+  });
+
+  /** The control: nothing moved, so the same sweep closes it. */
+  it('still closes a wrap-up nothing moved on', async () => {
+    const w = await conversationAwaitingWrapup({
+      endedSecondsAgo: 200, wrapupSeconds: 30, campaign: { disposition_catalog: CATALOG },
+    });
+    expect(await sweepWith(async () => {})).toBe(1);
+    expect((await attemptRow(w.attemptId))['disposition_code']).toBe(AUTO_DISPOSITION_CODE);
+    expect(await contactAfter(w.contactId)).toMatchObject({
+      state: 'completed', last_outcome: 'connected', last_disposition: AUTO_DISPOSITION_CODE, attempt_count: 1,
+    });
   });
 });
 
@@ -724,5 +848,369 @@ describe('findStrandedInFlight and the stranded-contact sweep', () => {
 
     // Requeued once: `pending` is not `in_flight`, so a second sweep finds nothing.
     expect(await reaper().sweepStrandedContacts()).toBe(0);
+  });
+
+  /**
+   * The contact of a dial whose outcome is unknown is held 15 minutes by one write
+   * (`holdOutcomeUnknownContact`, or the soft phone's settle). When that write fails the
+   * contact stays `in_flight`, and this sweep finds it after 5 minutes. It requeued it with
+   * no hold, cutting the 15 minutes to about 5 while the carrier may still ring the
+   * customer. The requeue now reads the contact's own dials, in the same statement, and
+   * keeps any sent and never answered (and not ended by a carrier answer) until `dialed_at`
+   * + 15 min. `dialed_at` is written at INSERT (an UPDATE would move the rows' `updated_at`
+   * and hide them from the sweep) and the hold is read back against it in SQL.
+   */
+  it('keeps the outcome-unknown hold of a contact whose hold write failed: not dialable before dialed_at + 15 min', async () => {
+    const campaignId = await campaign();
+    const DELAY_SECONDS = 15 * 60;
+    const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
+    /** An `in_flight` contact behind one ended dial `dialedSecondsAgo` back. */
+    const strandedBehind = async (attempt: Record<string, unknown>, dialedSecondsAgo: number, answered = false) => {
+      const c = await insertAgencyContact(campaignId, { state: 'in_flight', updated_at: LONG_AGO() });
+      await insertAgencyAttempt(campaignId, c.id as string, {
+        state: 'ended', updated_at: LONG_AGO(), dialed_at: ago(dialedSecondsAgo),
+        ...(answered ? { answered_at: ago(dialedSecondsAgo - 2) } : {}),
+        ...attempt,
+      });
+      return c.id as string;
+    };
+    // The dialer's own outcome-unknown dial (`failed`), and a teardown that raced one (`canceled`).
+    const unknown = await strandedBehind({ outcome: 'failed' }, 6 * 60);
+    const raced = await strandedBehind({ outcome: 'canceled' }, 6 * 60);
+    // Not held: the carrier answered it (no answer), it was answered, or its hold has run out.
+    const noAnswer = await strandedBehind({ outcome: 'no_answer' }, 6 * 60);
+    const answered = await strandedBehind({ outcome: 'failed' }, 6 * 60, true);
+    const longAgo = await strandedBehind({ outcome: 'failed' }, DELAY_SECONDS + 60);
+    // A soft-phone call that claimed the contact, dialled with its outcome unknown, settled,
+    // and whose contact settle failed (the lapse sweep's catch leaves it to this sweep).
+    const softphone = await insertAgencyContact(campaignId, { state: 'in_flight', updated_at: LONG_AGO() });
+    const session = await insertSoftphoneSession();
+    const manual = await insertManualCall(session, {
+      campaign_id: campaignId, contact_id: softphone.id, contact_claimed: true, contact_prior_state: 'pending',
+      state: 'ended', outcome: 'failed', ended_at: LONG_AGO(), settled_at: LONG_AGO(), dialed_at: ago(6 * 60),
+    });
+    expect(manual.id).toBeTruthy();
+
+    expect(await reaper().sweepStrandedContacts()).toBe(6);
+
+    const { rows } = await getTestPool().query<{ id: string; state: string; our_fault_attempts: number; after_dial: number | null; from_now: number }>(
+      `SELECT c.id, c.state, c.our_fault_attempts,
+              EXTRACT(EPOCH FROM c.next_attempt_at - COALESCE(
+                (SELECT max(a.dialed_at) FROM agency_call_attempts a WHERE a.contact_id = c.id),
+                (SELECT max(m.dialed_at) FROM agency_manual_calls m WHERE m.contact_id = c.id)))::float8 AS after_dial,
+              EXTRACT(EPOCH FROM c.next_attempt_at - now())::float8 AS from_now
+         FROM agency_contacts c WHERE c.campaign_id = $1`,
+      [campaignId],
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const id of [unknown, raced, softphone.id as string]) {
+      const r = byId.get(id)!;
+      expect({ state: r.state, ourFault: r.our_fault_attempts }).toEqual({ state: 'pending', ourFault: 1 });
+      expect(r.after_dial, 'dialable before the outcome-unknown hold ran out').toBeCloseTo(DELAY_SECONDS, 0);
+    }
+    for (const id of [noAnswer, answered, longAgo]) {
+      const r = byId.get(id)!;
+      expect({ state: r.state, ourFault: r.our_fault_attempts }).toEqual({ state: 'pending', ourFault: 1 });
+      expect(r.from_now).toBeLessThanOrEqual(1);
+      expect(r.from_now).toBeGreaterThan(-60);
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (5) A reaped dial whose outcome is unknown is not redialled early.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * A process that died with a dial sent and no answer recorded (a media worker killed with
+ * `add_lead` in flight or the phone ringing; the whole server after a crash) may have left
+ * the carrier dialling the customer. The dial path's rule for an outcome-unknown
+ * `add_lead` applies (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`): the contact is requeued, but
+ * not dialable until that long after `dialed_at`. A dial never sent, or one answered, is
+ * dialable at once as before.
+ *
+ * The clock is the database's: each `dialed_at` is written in SQL and each assertion reads
+ * `next_attempt_at - dialed_at` (or `- now()`) in SQL.
+ */
+describe('a reaped dial with an unknown outcome is not redialled before the carrier rule allows', () => {
+  const DELAY_SECONDS = 15 * 60;
+
+  /** One attempt per shape, reserved to `sessionId`, with its contact `in_flight`. */
+  async function shapes(campaignId: string, sessionId: string) {
+    const make = async (row: number, attempt: Record<string, unknown>, dialedSecondsAgo: number | null, answered: boolean) => {
+      const c = await insertAgencyContact(campaignId, { state: 'in_flight', source_row_number: row });
+      const a = await insertAgencyAttempt(campaignId, c.id as string, { reserved_agent_id: sessionId, ...attempt });
+      if (dialedSecondsAgo !== null) {
+        await getTestPool().query(
+          `UPDATE agency_call_attempts
+              SET dialed_at = now() - make_interval(secs => $2),
+                  answered_at = CASE WHEN $3::boolean THEN now() - make_interval(secs => $2 - 2) END,
+                  bridged_at  = CASE WHEN $3::boolean THEN now() - make_interval(secs => $2 - 2) END
+            WHERE id = $1`,
+          [a.id, dialedSecondsAgo, answered],
+        );
+      }
+      return c.id as string;
+    };
+    return {
+      ringing: await make(1, { state: 'dialing' }, 10, false),
+      longAgo: await make(2, { state: 'dialing' }, DELAY_SECONDS + 60, false),
+      bridged: await make(3, { state: 'bridged' }, 30, true),
+      neverSent: await make(4, { state: 'queued' }, null, false),
+    };
+  }
+
+  async function redial(contactId: string) {
+    const { rows } = await getTestPool().query<{ state: string; after_dial: number | null; from_now: number }>(
+      `SELECT c.state,
+              EXTRACT(EPOCH FROM c.next_attempt_at - a.dialed_at)::float8 AS after_dial,
+              EXTRACT(EPOCH FROM c.next_attempt_at - now())::float8 AS from_now
+         FROM agency_contacts c
+         JOIN agency_call_attempts a ON a.contact_id = c.id
+        WHERE c.id = $1`,
+      [contactId],
+    );
+    return rows[0]!;
+  }
+
+  async function expectRule(ids: Awaited<ReturnType<typeof shapes>>) {
+    const ringing = await redial(ids.ringing);
+    expect(ringing.state).toBe('pending');
+    // The delay after the dial was sent, not after the reap.
+    expect(ringing.after_dial).toBeCloseTo(DELAY_SECONDS, 0);
+    for (const dialableNow of [ids.longAgo, ids.bridged, ids.neverSent]) {
+      const r = await redial(dialableNow);
+      expect(r.state).toBe('pending');
+      // `next_attempt_at` is the reap's own instant, a moment ago.
+      expect(r.from_now).toBeLessThanOrEqual(1);
+      expect(r.from_now).toBeGreaterThan(-60);
+    }
+  }
+
+  it('a media worker\'s slot reap (reapSessions) defers only the dial sent and never answered', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const dead = (await insertAgentSession(campaignId)).id as string;
+    const ids = await shapes(campaignId, dead);
+
+    const report = await reaper().reapSessions((sessionId) => sessionId === dead);
+
+    expect(report.attempts).toBe(4);
+    await expectRule(ids);
+  });
+
+  it('the single-process startup reap (reapOnStartup) applies the same rule', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const ids = await shapes(campaignId, session);
+
+    expect((await reaper().reapOnStartup()).attempts).toBe(4);
+    await expectRule(ids);
+  });
+
+  it('the periodic leak sweep (sweepOnce) applies it too', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const ids = await shapes(campaignId, session);
+    await getTestPool().query(
+      'UPDATE agency_call_attempts SET created_at = now() - make_interval(secs => $1)', [WELL_PAST_LEAK_FLOOR_SECONDS]);
+
+    expect(await reaper().sweepOnce()).toBe(4);
+    await expectRule(ids);
+  });
+
+  /**
+   * The sweep of the dialer's unrecorded ends is different: the dialer saw these end, so the
+   * row's shape (dialled, never answered) does not mean the outcome is unknown. A no-answer
+   * whose `ended` write failed is over at the carrier, and holding its contact 15 minutes
+   * after a transient write failure stalls a campaign near the end of its list. Only a dial
+   * the dialer itself reported outcome-unknown keeps the rule.
+   * Mutation-checked: passing `reapedRedialNotBefore(attempt)` for every unrecorded end
+   * (the code before the fix) reds the first contact here.
+   */
+  it('the sweep of the dialer\'s unrecorded ends defers only a dial it reported outcome-unknown', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const ringing = async (row: number) => {
+      const c = await insertAgencyContact(campaignId, { state: 'in_flight', source_row_number: row });
+      const a = await insertAgencyAttempt(campaignId, c.id as string, { reserved_agent_id: session, state: 'dialing' });
+      await getTestPool().query(
+        `UPDATE agency_call_attempts SET dialed_at = now() - make_interval(secs => 10) WHERE id = $1`, [a.id]);
+      return { contactId: c.id as string, attemptId: a.id as string };
+    };
+    const noAnswer = await ringing(1);
+    const unknown = await ringing(2);
+    const forget = vi.fn();
+
+    const reaped = await reaper({
+      // The agent is back in the pool with their station connected: only this arm can end them.
+      ownerOf: async () => 'replica-A',
+      unrecordedEnds: {
+        entries: () => [
+          { attemptId: noAnswer.attemptId, dialOutcomeUnknown: false },
+          { attemptId: unknown.attemptId, dialOutcomeUnknown: true },
+        ],
+        forget,
+      },
+    }).sweepOnce();
+
+    expect(reaped).toBe(2);
+    expect(forget).toHaveBeenCalledWith([noAnswer.attemptId, unknown.attemptId]);
+    const over = await redial(noAnswer.contactId);
+    expect(over.state).toBe('pending');
+    expect(over.from_now).toBeLessThanOrEqual(1);
+    expect(over.from_now).toBeGreaterThan(-60);
+    const held = await redial(unknown.contactId);
+    expect(held.state).toBe('pending');
+    expect(held.after_dial).toBeCloseTo(DELAY_SECONDS, 0);
+    const { rows } = await getTestPool().query<{ state: string; outcome: string }>(
+      'SELECT state, outcome FROM agency_call_attempts WHERE id = ANY($1::uuid[]) ORDER BY id',
+      [[noAnswer.attemptId, unknown.attemptId]],
+    );
+    expect(rows.map((r) => `${r.state}/${r.outcome}`)).toEqual(['ended/orphaned', 'ended/orphaned']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// (6) A requeue moves only a contact its reaped attempt still holds.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The dialer's abandon path ends the attempt and unclaims the contact as two writes. When
+ * only the `ended` write fails, the contact is `pending` again with its attempt still
+ * `dialing`, and the attempt is reported to the reaper as an unrecorded end. Until the
+ * sweep (up to a minute), the contact can be taken again:
+ *
+ *  - by pacing, once the sweep's `reapByIds` has ended the old attempt (the live-attempt
+ *    index refuses a new one before that): pacing claims it and dials a new attempt in the
+ *    window between the reap and the requeue;
+ *  - by a soft-phone call at any time (a manual call is not an attempt).
+ *
+ * The requeue used to write `pending` regardless, which put a contact with a live call
+ * back on the roster (claimable again mid-call), or reopened one the new call had already
+ * settled. Each case below drives the real sweep over real rows; the interleaving is
+ * the real claim and insert, run where pacing would run them.
+ * Mutation-checked: dropping the ownership `CASE` from `requeueOrphaned`'s WHERE reds all three.
+ */
+describe('a requeue moves only a contact its reaped attempt still holds', () => {
+  async function abandonedWithUnrecordedEnd() {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const contact = await insertAgencyContact(campaignId, { state: 'in_flight', attempt_count: 1 });
+    const contactId = contact.id as string;
+    const old = await insertAgencyAttempt(campaignId, contactId, { reserved_agent_id: session, state: 'dialing' });
+    // The abandon path's `ended` write failed; its unclaim landed.
+    await agencyContactRepository.unclaim(contactId, new Date(Date.now() - 1000));
+    const ends = {
+      entries: () => [{ attemptId: old.id as string, dialOutcomeUnknown: false }],
+      forget: vi.fn(),
+    };
+    return { campaignId, session, contactId, oldAttemptId: old.id as string, ends };
+  }
+
+  /** Pacing's own claim and attempt insert, as one tick runs them. */
+  async function pacingRedials(campaignId: string, session: string, contactId: string) {
+    const claimed = await agencyContactRepository.claimDialable(campaignId, 10);
+    expect(claimed.map((c) => c.id)).toEqual([contactId]);
+    const attempt = await agencyAttemptRepository.create({
+      campaignId, contactId, tenantId: claimed[0]!.tenant_id, accountId: claimed[0]!.account_id,
+      callerId: '+919000000001', reservedAgentId: session,
+    });
+    expect(attempt, 'the live-attempt index refused the redial').not.toBeNull();
+    await agencyAttemptRepository.setState(attempt!.id, 'dialing', { dialed_at: new Date() });
+    return attempt!.id;
+  }
+
+  /** Run `between` after the sweep's real `reapByIds` and before its requeue. */
+  function interleaveAfterReap(between: () => Promise<void>) {
+    const real = agencyAttemptRepository.reapByIds.bind(agencyAttemptRepository);
+    return vi.spyOn(agencyAttemptRepository, 'reapByIds').mockImplementationOnce(async (ids) => {
+      const rows = await real(ids);
+      await between();
+      return rows;
+    });
+  }
+
+  async function contactRow(id: string) {
+    const { rows } = await getTestPool().query<{
+      state: string; attempt_count: number; our_fault_attempts: number; next_attempt_at: Date; last_outcome: string | null;
+    }>('SELECT state, attempt_count, our_fault_attempts, next_attempt_at, last_outcome FROM agency_contacts WHERE id = $1', [id]);
+    return rows[0]!;
+  }
+
+  async function attemptRow(id: string) {
+    const { rows } = await getTestPool().query<{ state: string; outcome: string | null }>(
+      'SELECT state, outcome FROM agency_call_attempts WHERE id = $1', [id]);
+    return rows[0]!;
+  }
+
+  it('leaves a contact pacing re-claimed with a new live attempt `in_flight`, and still ends the orphaned row', async () => {
+    const w = await abandonedWithUnrecordedEnd();
+    let newAttemptId = '';
+    const spy = interleaveAfterReap(async () => { newAttemptId = await pacingRedials(w.campaignId, w.session, w.contactId); });
+    try {
+      expect(await reaper({ ownerOf: async () => 'replica-A', unrecordedEnds: w.ends }).sweepOnce()).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(await attemptRow(w.oldAttemptId)).toEqual({ state: 'ended', outcome: 'orphaned' });
+    expect(await attemptRow(newAttemptId)).toMatchObject({ state: 'dialing' });
+    const after = await contactRow(w.contactId);
+    expect(after.state, 'the contact of a live call was put back on the roster').toBe('in_flight');
+    expect(after.our_fault_attempts).toBe(0);
+    // Nothing can claim it while its call is live.
+    expect(await agencyContactRepository.claimDialable(w.campaignId, 10)).toEqual([]);
+    expect(w.ends.forget).toHaveBeenCalledWith([w.oldAttemptId]);
+  });
+
+  it('does not reopen a contact the new attempt already settled', async () => {
+    const w = await abandonedWithUnrecordedEnd();
+    const spy = interleaveAfterReap(async () => {
+      const id = await pacingRedials(w.campaignId, w.session, w.contactId);
+      await agencyAttemptRepository.setState(id, 'ended', { outcome: 'connected', ended_at: new Date() });
+      await agencyContactRepository.markState(w.contactId, 'completed', { last_outcome: 'connected', bump_attempt: true });
+    });
+    try {
+      await reaper({ ownerOf: async () => 'replica-A', unrecordedEnds: w.ends }).sweepOnce();
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(await attemptRow(w.oldAttemptId)).toEqual({ state: 'ended', outcome: 'orphaned' });
+    expect(await contactRow(w.contactId)).toMatchObject({
+      state: 'completed', last_outcome: 'connected', attempt_count: 2, our_fault_attempts: 0,
+    });
+  });
+
+  it('leaves a contact a soft-phone call claimed to that call', async () => {
+    const w = await abandonedWithUnrecordedEnd();
+    const softphone = await insertSoftphoneSession();
+    const claim = await agencyContactRepository.claimForManual(w.campaignId, w.contactId);
+    expect(claim.outcome).toBe('claimed');
+    await insertManualCall(softphone as never, {
+      campaign_id: w.campaignId, contact_id: w.contactId, contact_claimed: true, contact_prior_state: 'pending', state: 'dialing',
+    });
+
+    expect(await reaper({ ownerOf: async () => 'replica-A', unrecordedEnds: w.ends }).sweepOnce()).toBe(1);
+
+    expect(await attemptRow(w.oldAttemptId)).toEqual({ state: 'ended', outcome: 'orphaned' });
+    expect(await contactRow(w.contactId)).toMatchObject({ state: 'in_flight', our_fault_attempts: 0 });
+    // Pacing cannot dial the customer the agent is calling by hand.
+    expect(await agencyContactRepository.claimDialable(w.campaignId, 10)).toEqual([]);
+  });
+
+  /** The control: still the reaped attempt's, so it is requeued exactly as before. */
+  it('still requeues a contact the reaped attempt holds', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const contact = await insertAgencyContact(campaignId, { state: 'in_flight', attempt_count: 1 });
+    const old = await insertAgencyAttempt(campaignId, contact.id as string, { reserved_agent_id: session, state: 'dialing' });
+    const ends = { entries: () => [{ attemptId: old.id as string, dialOutcomeUnknown: false }], forget: vi.fn() };
+
+    expect(await reaper({ ownerOf: async () => 'replica-A', unrecordedEnds: ends }).sweepOnce()).toBe(1);
+
+    expect(await contactRow(contact.id as string)).toMatchObject({
+      state: 'pending', last_outcome: 'orphaned', attempt_count: 1, our_fault_attempts: 1,
+    });
   });
 });

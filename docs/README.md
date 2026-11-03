@@ -2,7 +2,7 @@
 
 The entry point to the project's documentation: what Magick Agency is, where it stands on one
 screen, a map of every doc, and what to read first depending on why you are here. Status claims
-are as of 2026-10-23.
+are as of 2026-11-02.
 
 ## What Magick Agency is
 
@@ -26,7 +26,11 @@ console 4367; super-admin 366; builds OK. Unit re-run 2026-10-10: server 6507, c
 unit + 42 skipped / 1211 integration; db 426 / 469; console 4410; super-admin 421; web-ui 231
 (`status.md`). The 2026-10-23 load and scenario suites (a full floor over real sockets, a mock
 VoiceLink carrier and agent fleet) fixed 11 defects and pinned 12 more as `it.fails` for decision:
-server 6755 unit + 4 expected fail / 1288 integration + 10 expected fail.
+server 6755 unit + 4 expected fail / 1288 integration + 10 expected fail. The 2026-11-02 scaling
+work for 400–500 simultaneous calls on one host (phase A: a faster bridge transcoder, the console
+on binary A-law, WebSocket and carrier bounds, sized ceilings, a continuous analysis worker,
+cheaper pacing) leaves server 7430 unit / 1511 integration + 10 expected fail; phase B (media and
+analysis worker processes over IPC) is next.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
@@ -55,6 +59,7 @@ Details and next steps: [`status.md`](status.md).
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
 | [`mobile.md`](mobile.md) | The agent mobile app (`apps/mobile`, Flutter): V1 scope, the foreground rule and `device_away`, how it talks to the server and the station socket (`client=mobile`, `media=alaw8`), the app's structure, builds and releases, what is not verified |
 | [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |
+| [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |
 | [`../DEPLOYMENT.md`](../DEPLOYMENT.md) | Deploying to the cloud step by step: VM, managed Postgres, S3, DNS and TLS for your domain, vendor wiring, verification, day-2 work, troubleshooting |
 | [`../README.md`](../README.md) | Dev setup: prerequisites, infra, env, migration, first super-admin, running everything |

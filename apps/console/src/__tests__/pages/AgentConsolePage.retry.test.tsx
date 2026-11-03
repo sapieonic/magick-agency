@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { ApiError } from '../../api/client';
 import { render, screen, cleanup, act, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -370,3 +371,21 @@ describe('the agent is given lineage and nothing else', () => {
 function PARENT_CAMPAIGN_FIELDS(): Partial<AgencyPriorAttempt> {
   return { campaign_id: PARENT_CAMPAIGN.id, campaign_name: PARENT_CAMPAIGN.name };
 }
+
+describe('joining while the station token cannot be stored (D9)', () => {
+  it('a 503 station_token_unavailable join is retried on its own and the station opens', async () => {
+    mocks.createAgencySession
+      .mockRejectedValueOnce(new ApiError(503, {
+        error: 'Service Unavailable', code: 'station_token_unavailable', message: 'Try again in a moment.',
+      }))
+      .mockResolvedValue(BOOTSTRAP);
+    render(
+      <MemoryRouter initialEntries={['/station?campaign=camp-child']}>
+        <AgentConsolePage />
+      </MemoryRouter>,
+    );
+    await vi.waitFor(() => expect(FakeSocket.instances.length).toBe(1), { timeout: 3_000 });
+    expect(mocks.createAgencySession).toHaveBeenCalledTimes(2);
+    expect(latest().url).toContain('token=t1');
+  });
+});

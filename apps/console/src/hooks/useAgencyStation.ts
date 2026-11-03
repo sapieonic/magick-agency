@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 import type { AgencyAgentState, AgencyStationServerFrame } from '../types/agency';
 import { AGENCY_STATION_CLOSE } from '../types/agency';
 import { mintStationToken } from '../api/agency';
@@ -11,7 +12,15 @@ import {
 } from '../analytics/events';
 import { ClockOffsetEstimator, elapsedSince } from '../utils/agencyClock';
 import type { CueDispatcher } from '../utils/agencyCues';
-import { encodeAgencyMediaFrame, readAgencyMediaPayload } from '../utils/agencyMedia';
+import {
+  encodeAgencyMediaFrame,
+  isPlayableAlawMessage,
+  isSendableAlawMessage,
+  readAgencyMediaPayload,
+  uplinkFrameFormat,
+  withStationMediaQuery,
+  type AgencyUplinkFrame,
+} from '../utils/agencyMedia';
 import { openWrapup, type WrapupAnchor } from '../utils/agencyWrapup';
 import { DiagnosticsLog } from '../utils/agencyDiagnostics';
 import {
@@ -68,6 +77,17 @@ import { useLatestRef } from './useLatestRef';
  * sink was also driving fifty React state commits per second for the length of
  * every call.
  * `media` is handled explicitly, routed to the audio sink, and **never logged**.
+ *
+ * ── The audio format (`media=`) ──────────────────────────────────────────────
+ * Every upgrade names its format (`withStationMediaQuery`): the caller's
+ * `mediaFormat`, `alaw8` by default on the console (binary A-law, no transcode on the
+ * server), or `pcm16`. The socket keeps that format for its life and everything
+ * audio on it follows: `sendMedia` refuses a frame of the other format, a binary
+ * message is audio only on an `alaw8` socket. Two answers from a server mean it will
+ * not do `alaw8`, and both turn this station to `pcm16` for good, which every server
+ * speaks: a 1008 `invalid_media` refusal of the upgrade (reconnect as `pcm16`), and a
+ * JSON `media` frame on an `alaw8` socket (a server that ignored the parameter is
+ * treating the socket as `pcm16`). `mediaFormat` in the result tells the capture graph.
  */
 
 export type {
@@ -139,9 +159,26 @@ export function useAgencyStation(
      * the frame handler that writes it must keep one identity for the shift.
      */
     diagnostics?: DiagnosticsLog;
+    /**
+     * The audio format to ask the server for (`media=`). Absent: `pcm16`, the wire
+     * default. The console passes `alaw8` unless the tenant's `agency_console_alaw8`
+     * flag is off. Read at each connect, so a change applies from the next socket and
+     * never re-opens the current one.
+     */
+    mediaFormat?: AgencyStationMediaFormat;
   } = {},
 ): UseAgencyStationResult {
   const enabled = options.enabled ?? true;
+  /**
+   * The format asked for, and whether the server has said it will not do `alaw8`
+   * (sticky for this station: see the module note). `socketFormatRef` is what the
+   * current socket speaks, read by `sendMedia` and the message handler at frame time;
+   * `socketFormat` mirrors it for the caller's capture graph.
+   */
+  const preferredFormatRef = useLatestRef<AgencyStationMediaFormat>(options.mediaFormat ?? 'pcm16');
+  const alawRefusedRef = useRef(false);
+  const socketFormatRef = useRef<AgencyStationMediaFormat>(preferredFormatRef.current);
+  const [socketFormat, setSocketFormat] = useState<AgencyStationMediaFormat>(preferredFormatRef.current);
   const cues = options.cues;
 
   /**
@@ -435,7 +472,20 @@ export function useAgencyStation(
            * agent's session.
            */
           const payload = readAgencyMediaPayload(frame);
-          if (payload !== null) audioRef.current?.onMedia(payload);
+          if (payload === null) return;
+          /**
+           * A JSON `media` frame on an `alaw8` socket: the server ignored `media=alaw8`
+           * and is treating this socket as `pcm16` (the current server never sends
+           * one here). Played as what it is, and the socket is switched to `pcm16` so
+           * the agent's uplink, which that server would drop as binary, goes as JSON.
+           */
+          if (socketFormatRef.current === 'alaw8') {
+            alawRefusedRef.current = true;
+            socketFormatRef.current = 'pcm16';
+            setSocketFormat('pcm16');
+            logDiagnostic('media_format', 'JSON media on an alaw8 socket: the server ignored media=alaw8; using pcm16');
+          }
+          audioRef.current?.onMedia(payload);
           return;
         }
 
@@ -1031,7 +1081,18 @@ export function useAgencyStation(
       }
     }
 
-    const socket = new WebSocket(toAbsoluteWsUrl(url));
+    /**
+     * The format is fixed per socket, here, and published before the socket can carry
+     * a frame. `pcm16` once the server has refused `alaw8` (see the module note).
+     */
+    const format: AgencyStationMediaFormat = alawRefusedRef.current ? 'pcm16' : preferredFormatRef.current;
+    socketFormatRef.current = format;
+    setSocketFormat(format);
+
+    const socket = new WebSocket(toAbsoluteWsUrl(withStationMediaQuery(url, format)));
+    // `alaw8` audio arrives as binary messages: as `ArrayBuffer`, never the default
+    // `Blob`, whose bytes can only be read through a promise per 20 ms frame.
+    socket.binaryType = 'arraybuffer';
     socketRef.current = socket;
 
     socket.onopen = () => {
@@ -1176,7 +1237,22 @@ export function useAgencyStation(
        * has already said, or will say, everything the stale one had to.
        */
       if (gen !== generationRef.current) return;
-      if (typeof event.data === 'string') handleFrame(event.data);
+      if (typeof event.data === 'string') {
+        handleFrame(event.data);
+        return;
+      }
+      /**
+       * Binary is `alaw8` audio and nothing else (contracts: binary frames carry only
+       * audio, and only on a socket that chose `alaw8`). Like JSON `media`, it is the
+       * hottest path on the socket and is logged nowhere.
+       */
+      if (
+        socketFormatRef.current === 'alaw8' &&
+        event.data instanceof ArrayBuffer &&
+        isPlayableAlawMessage(event.data.byteLength)
+      ) {
+        audioRef.current?.onAlaw?.(event.data);
+      }
     };
 
     socket.onclose = (event) => {
@@ -1208,6 +1284,22 @@ export function useAgencyStation(
         logDiagnostic('close', '4409 superseded by another window');
         dispatch({ type: 'connection', connection: 'superseded' });
         reportConnection('superseded', event.code);
+        return;
+      }
+      /**
+       * The server refused the upgrade because it does not speak `alaw8`. The same
+       * upgrade would be refused forever, so the station turns to `pcm16`, which every
+       * server speaks, and reconnects on the ordinary ladder (a fresh token, as for any
+       * reconnect). Any other 1008 keeps the ordinary handling below.
+       */
+      if (
+        event.code === AGENCY_STATION_CLOSE.INVALID_UPGRADE &&
+        event.reason === 'invalid_media' &&
+        socketFormatRef.current === 'alaw8'
+      ) {
+        alawRefusedRef.current = true;
+        logDiagnostic('close', '1008 invalid_media: the server refused alaw8; reconnecting as pcm16');
+        scheduleRetry(event.code);
         return;
       }
 
@@ -1338,15 +1430,25 @@ export function useAgencyStation(
    * or CLOSED socket throws, and this runs ~50 times a second inside an
    * `AudioWorkletNode` port handler where a throw is unattributable.
    */
-  const sendMedia = useCallback((payload: string): boolean => {
+  const sendMedia = useCallback((frame: AgencyUplinkFrame): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
-    const frame = encodeAgencyMediaFrame(payload);
+    // A frame in the other format would be dropped by the server without a word: a
+    // JSON `media` frame on an `alaw8` socket, a binary one on `pcm16`. Refused here
+    // instead, so it is counted as unsent. Only around a format switch.
+    if (uplinkFrameFormat(frame) !== socketFormatRef.current) return false;
+    if (typeof frame !== 'string') {
+      // Whole 20 ms frames, at most 1 s: the server's rule for binary uplink.
+      if (!isSendableAlawMessage(frame.byteLength)) return false;
+      socket.send(frame);
+      return true;
+    }
+    const json = encodeAgencyMediaFrame(frame);
     // `null` ⇒ the API would have dropped it for length. Dropping it here instead
     // means the ceiling is one number in one place rather than a silent discard
     // downstream.
-    if (frame === null) return false;
-    socket.send(frame);
+    if (json === null) return false;
+    socket.send(json);
     return true;
   }, []);
 
@@ -1430,6 +1532,7 @@ export function useAgencyStation(
     manualCall,
     reconnect,
     sendMedia,
+    mediaFormat: socketFormat,
   };
 }
 

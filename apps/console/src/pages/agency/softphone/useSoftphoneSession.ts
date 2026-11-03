@@ -11,6 +11,7 @@ import { refusalCopy } from '../../../utils/softphone/refusalCopy';
 import type { StationSocketBootstrap } from '../../../hooks/agencyStation/types';
 import type { AgencySessionBootstrap } from '../../../types/agency';
 import type { AgencyManualCall, AgencySoftphoneBootstrap, AgencySoftphoneSessionResponse } from '../../../types/softphone';
+import { retryOnStationTokenUnavailable } from '../../../utils/agencyErrors';
 
 export type SoftphoneSessionState =
   | { status: 'loading' }
@@ -129,7 +130,7 @@ export function useSoftphoneSession({
         const here = await offHere();
         if (here.kind !== 'open') return { off: true as const, here };
       }
-      return { off: false as const, result: await openSoftphoneSession(tenantId, accountId) };
+      return { off: false as const, result: await retryOnStationTokenUnavailable(() => openSoftphoneSession(tenantId, accountId)) };
     })
       .then(async (outcome) => {
         if (cancelled) return;

@@ -30,8 +30,8 @@ jobs:
       - run: pnpm build
 
   # One job per section, in parallel. Each job has its own Postgres and Redis, so the
-  # sections cannot truncate each other. The wall-clock lane is the two files that wait
-  # on real Redis TTLs (apps/server/vitest.config.integration.ts).
+  # sections cannot truncate each other. The wall-clock lane is the files that wait on
+  # real timers (apps/server/vitest.config.integration.ts).
   integration:
     name: Integration (${{ matrix.section }})
     runs-on: ubuntu-latest

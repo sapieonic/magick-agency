@@ -4,8 +4,13 @@ import {
   AGENCY_MEDIA_SAMPLE_RATE,
   MAX_AGENCY_MEDIA_PAYLOAD_CHARS,
   encodeAgencyMediaFrame,
+  isPlayableAlawMessage,
+  isSendableAlawMessage,
   readAgencyMediaPayload,
+  uplinkFrameFormat,
+  withStationMediaQuery,
 } from '../../utils/agencyMedia';
+import { AGENCY_WS_MAX_MESSAGE_BYTES } from '@magick-agency/contracts/agency';
 
 /**
  * The **wire format**, pinned against the API rather than against our own intent.
@@ -44,38 +49,27 @@ describe('the agency station audio wire format', () => {
 
   describe('the frame ceiling is the API’s, not a guess', () => {
     /**
-     * **This is NOT a check against the server's constant.** Nothing here imports
-     * it, and a test that read `webrtc-bridge-manager.ts` off disk would couple
-     * this console's unit suite to the server's source layout.
-     *
-     * An earlier version asserted `MAX_AGENCY_MEDIA_PAYLOAD_CHARS === 64000 * 2`
-     * — our literal against our other literal, arranged to look like a
-     * derivation from the API's constant. It could not fail for any reason worth
-     * knowing about: if the API tightened its bound to the arithmetically correct
-     * `ceil(64000/3)*4 = 85336`, every frame between 85337 and 128000 would
-     * start vanishing into the API's silent drop with this test still green.
-     *
-     * So the assertions below pin the two things that are actually ours to
-     * defend — the guard's boundary behaviour, and that real traffic is nowhere
-     * near it — and the agreement with the server's constant is named as a manual obligation in
-     * `agencyMedia.ts` rather than pretended at here.
+     * The server's bound is the wire contract's `AGENCY_WS_MAX_MESSAGE_BYTES` (the
+     * server's `WS_MAX_PAYLOAD_DEFAULT_BYTES` is that constant), so both sides read one
+     * number; these assertions pin the arithmetic and the guard's boundary behaviour.
      */
-    it('is the transcribed value, re-checked by hand against the API', () => {
-      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(128000);
+    it('is the server’s 64 KiB message bound less the JSON envelope', () => {
+      const envelope = JSON.stringify({ event: 'media', media: { payload: '' } }).length;
+      expect(envelope).toBe(40);
+      expect(AGENCY_WS_MAX_MESSAGE_BYTES).toBe(64 * 1024);
+      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(AGENCY_WS_MAX_MESSAGE_BYTES - envelope);
+      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBe(65_496);
     });
 
-    it('is comfortably above base64’s true 4/3 expansion of the API’s byte limit', () => {
-      // The property that makes the transcription safe *today*: whatever the API
-      // meant by `* 2`, 128000 is not below the honest encoded bound, so we
-      // never reject a frame the API would have accepted.
-      const honestEncodedBound = Math.ceil(64000 / 3) * 4;
-      expect(honestEncodedBound).toBe(85336);
-      expect(MAX_AGENCY_MEDIA_PAYLOAD_CHARS).toBeGreaterThanOrEqual(honestEncodedBound);
+    it('keeps the largest frame it accepts inside the server’s message bound', () => {
+      const frame = encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS));
+      expect(frame).not.toBeNull();
+      expect(new TextEncoder().encode(frame!).length).toBe(AGENCY_WS_MAX_MESSAGE_BYTES);
     });
 
-    it('refuses a payload the API would silently drop', () => {
-      // The API logs and returns. A frame we hand it over the ceiling is audio that
-      // vanishes downstream with nothing on this side to show for it.
+    it('refuses a payload the server would close the station for', () => {
+      // Over the bound the server's WebSocket closes with 1009, taking the station
+      // down; a frame refused here is counted instead.
       expect(encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS + 1))).toBeNull();
       // And the boundary itself is accepted, so the guard is `>` and not `>=`.
       expect(encodeAgencyMediaFrame('a'.repeat(MAX_AGENCY_MEDIA_PAYLOAD_CHARS))).not.toBeNull();
@@ -86,14 +80,14 @@ describe('the agency station audio wire format', () => {
     });
 
     it('is unreachable by real traffic — it guards a broken graph, not a busy one', () => {
-      // 320 samples × 2 bytes → 640 bytes → 856 base64 characters: 0.7% of the
+      // 320 samples × 2 bytes → 640 bytes → 856 base64 characters: 1.3% of the
       // ceiling. Stated plainly because the opposite reading — that this bound
       // protects a live call from itself — would make it look load-bearing when
       // it is a tripwire for a capture graph that has already gone wrong.
       const bytes = AGENCY_MEDIA_FRAME_SAMPLES * 2;
       const base64Chars = Math.ceil(bytes / 3) * 4;
       expect(base64Chars).toBe(856);
-      expect(base64Chars).toBeLessThan(MAX_AGENCY_MEDIA_PAYLOAD_CHARS / 100);
+      expect(base64Chars).toBeLessThan(MAX_AGENCY_MEDIA_PAYLOAD_CHARS / 50);
     });
   });
 
@@ -124,5 +118,57 @@ describe('the agency station audio wire format', () => {
       expect(() => readAgencyMediaPayload(frame)).not.toThrow();
       expect(readAgencyMediaPayload(frame)).toBeNull();
     });
+  });
+});
+
+describe('media=alaw8', () => {
+  describe('withStationMediaQuery: the upgrade names the socket format', () => {
+    it('appends after the token, leaving the token byte for byte as minted', () => {
+      const token = 'a+b/c=d%2Be';
+      expect(withStationMediaQuery(`/proxy/agency/station/s1?token=${token}`, 'alaw8')).toBe(
+        `/proxy/agency/station/s1?token=${token}&media=alaw8`,
+      );
+    });
+
+    it('names pcm16 explicitly too', () => {
+      expect(withStationMediaQuery('/proxy/agency/station/s1?token=t', 'pcm16')).toBe(
+        '/proxy/agency/station/s1?token=t&media=pcm16',
+      );
+    });
+
+    it('starts a query when there is none, and keeps a fragment last', () => {
+      expect(withStationMediaQuery('/proxy/agency/station/s1', 'alaw8')).toBe('/proxy/agency/station/s1?media=alaw8');
+      expect(withStationMediaQuery('/s?token=t#x', 'alaw8')).toBe('/s?token=t&media=alaw8#x');
+    });
+
+    it('replaces a media parameter already there: the server refuses a repeated one', () => {
+      expect(withStationMediaQuery('/s?media=pcm16&token=t&media=x', 'alaw8')).toBe('/s?token=t&media=alaw8');
+      expect(withStationMediaQuery('/s?media&token=t', 'alaw8')).toBe('/s?token=t&media=alaw8');
+    });
+
+    it('leaves look-alike parameters alone', () => {
+      expect(withStationMediaQuery('/s?token=t&mediax=1', 'alaw8')).toBe('/s?token=t&mediax=1&media=alaw8');
+    });
+
+    it('works on an absolute ws(s) URL', () => {
+      expect(withStationMediaQuery('wss://api.example/proxy/agency/station/s1?token=t', 'alaw8')).toBe(
+        'wss://api.example/proxy/agency/station/s1?token=t&media=alaw8',
+      );
+    });
+  });
+
+  it('a frame says which socket format it belongs to by its type', () => {
+    expect(uplinkFrameFormat('QUJD')).toBe('pcm16');
+    expect(uplinkFrameFormat(new ArrayBuffer(160))).toBe('alaw8');
+  });
+
+  it('uplink: a non-zero whole number of 160-byte frames, at most one second (the server’s rule)', () => {
+    for (const ok of [160, 320, 7840, 8000]) expect(isSendableAlawMessage(ok), `${ok}`).toBe(true);
+    for (const bad of [0, 1, 159, 161, 640 + 1, 8160, 16000]) expect(isSendableAlawMessage(bad), `${bad}`).toBe(false);
+  });
+
+  it('downlink: anything from one byte to one second is played', () => {
+    for (const ok of [1, 160, 8000]) expect(isPlayableAlawMessage(ok), `${ok}`).toBe(true);
+    for (const bad of [0, 8001]) expect(isPlayableAlawMessage(bad), `${bad}`).toBe(false);
   });
 });

@@ -100,7 +100,8 @@ unique.
 4. Install SIGTERM / SIGINT handlers before any background work, so a signal during a slow start
    runs the stops collected so far.
 5. Bootstraps in order, each returning a stop function: `startPlatform` (audit buffers, audit
-   partition maintenance, cache-invalidation subscriber); `startVoice` (S3, clip cache and sweeper,
+   partition maintenance, cache-invalidation subscriber on `<REDIS_KEY_PREFIX>cache:invalidate:db<N>`,
+   scoped to the Redis db because pub/sub is server-wide); `startVoice` (S3, clip cache and sweeper,
    decode scratch reap, guard host and bridge, startup self-heal); `startAgency` (ingest reaper, then
    `AgencyRuntime.start()`, which runs the startup reaper before the pacing supervisor);
    `startAnalysis` (worker, retention purge). Voice starts before agency so the bridge's self-heal
@@ -237,10 +238,19 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   is the agent leg's audio for the socket's life: the handler routes frames on `ws`'s `isBinary`
   (binary is `alaw8` audio, text is JSON control) and tags the socket for the bridge
   (`core/bridge/browser-leg-media.ts`).
+- **Send back-pressure** (`utils/ws-backpressure.ts`). Every write to a station socket (the
+  registry's `send` / `broadcast`, the bridge's relay and status frames on the borrowed leg) and
+  the bridge's media relay to the carrier read `ws.bufferedAmount` first. Media past a soft limit
+  of about 3 s of the leg's own audio (128 KiB `pcm16`, 24 KiB `alaw8`, 40 KiB carrier) is dropped
+  and counted (`websocket_send_backpressure_total`, `droppedBrowserMediaFrames` /
+  `droppedPstnMediaFrames` on the call's end line); control frames are never dropped. A station
+  past the 1 MiB hard cap is not reading at all and is closed 4408 `station_send_backlog` (then
+  terminated if it has not closed 5 s later); the carrier's stream has no hard cap, because closing
+  it hangs the call up.
 - **Pacing** (`pacing-engine.ts`, with `pacing/`: leader lease, caller-ID pool, campaign announcer,
   in-flight tracking). One leader per campaign via a Redis lease (15 s, renewed every
-  5 s; a supervise pass every 2 s takes leadership); the leader ticks each campaign it leads every
-  250 ms. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
+  5 s; a supervise pass every 2 s takes leadership); the leader runs one ROUND every 250 ms over
+  the campaigns it leads. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
   `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency/contact.repository.ts`)
   plus the `uq_agency_attempt_live` unique index, so two leaders cannot dial one contact.
   The claim also keeps one live call per number in a campaign: it skips a contact whose number
@@ -249,11 +259,45 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `pre-dial-gates.ts` checks phone validity, then calling hours, then DNC (fail closed).
   `stop()` waits up to 5 s (`TICK_DRAIN_TIMEOUT_MS`) for ticks in flight, and every dial site
   re-checks `mayDial`, so no tick dials after shutdown begins.
+- **Pacing rounds, skips and invalidation** (`pacing-engine.ts` `runRound`, `pacing/round.ts`,
+  `pacing/invalidation-bus.ts`, `pacing/read-cache.ts`). A round starts a tick for every led
+  campaign together, so campaigns of one account read the account limit and its live calls once
+  per round and draw new dials from one headroom budget (the live-call count is never carried into
+  the next round). A campaign whose last full tick was QUIESCENT (no agent available, no account
+  slot, no usable caller ID, or not running) is skipped with no database or Redis work until an
+  event wakes it or the safety tick (`PACING_SAFETY_TICK_MS`, 1 s) comes due; a campaign that
+  planned a dial ticks every round. The events go over `PacingInvalidationBus`, plain JSON so a
+  child-process IPC implementation can replace the in-process one: `campaign_changed` (every
+  campaign repository write), `account_limit_changed` (the `ConcurrencyControl` seam's limit
+  invalidations, wrapped by `startAgency`), `account_capacity_freed` (attempt and manual-call
+  ends), `agent_available` (a state write into `available`, a station attach), `contacts_changed`
+  (ingest chunks). The campaign row and the account limit are cached between full ticks in a
+  generation-guarded TTL cache (2 s backstop), dropped by their events and re-primed by the
+  supervise pass. `tickOnce` is a forced full tick that reads everything fresh. Measured by
+  `test/integration/load/pacing-statements.test.ts`; `agency_pacing_ticks_total` and
+  `agency_pacing_missed_wakeups_total` show the skip ratio and any wake-up the bus missed.
 - **Dialer** (`agency-dialer.ts`, `dial-dispatcher.ts`, with `dialer/`: live-attempt record, contact
   settlement). Reserves the agent before the dial, re-asserts the lease and asks the pacing engine
   (`stillAuthorised`) right before `createBridgedCall`, registers the lifecycle listener before
   dialing, writes the agent's panel and binds the audio with no `await` between, and stamps
-  `answered_at` and `bridged_at` independently.
+  `answered_at` and `bridged_at` independently. A dial the carrier refused is settled once: the
+  bridge emits `ended` before `createBridgedCall` rejects, and the `ended` arm settles it,
+  except an outcome-unknown one (`TELEPHONY_INIT_OUTCOME_UNKNOWN`), which it leaves to the dial's
+  failure path (`abandonBeforeDial`: `failed`, redial held 15 min); that path abandons nothing
+  the `ended` arm already settled. Any other end while the dial is in flight and unanswered (a
+  hang-up or a station teardown racing `add_lead`) settles the row and the agent at once and
+  leaves the contact claimed until the dial returns (`LiveAttempt.dialSettled`): outcome
+  unknown, it is held too. The hold is one statement with an our-fault charge
+  (`holdOutcomeUnknownContact` in `dialer/contact-settlement.ts`, over the reaper's
+  `requeueOrphaned`), so the our-fault bound ends a run of such dials. A dial that fails in the bridge
+  before the carrier is asked (the row INSERT, or the steps after the
+  session is registered: the max-duration timer, the socket attach, the carrier tokens, the
+  carrier request's inputs) gets no `ended`, so the same failure path settles it: `failed`,
+  uncharged, dialable again after 1 min (`PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`, so a failure
+  that repeats cannot redial one contact on every tick; a delay, not an our-fault charge, so a
+  systemic failure retires nobody). A dial called off before the bridge (the agent's socket or
+  lease went, pacing stopped), or refused admission for capacity (back-pressure, not a fault:
+  pacing already bounds it by the account limit), returns its contact at once.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);
@@ -264,7 +308,24 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `break` and a sweep closes the attempt).
 - **Reaper** (`reaper.ts`). On startup and every 60 s, closes attempts nobody owns: liveness is
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
-  dispatching it.
+  dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded
+  statement, and only while it is still that attempt's (no newer attempt, no soft-phone claim).
+  The stranded-contact sweep (a contact `in_flight` with no live attempt for 5 min) requeues the
+  same way and, in that statement, keeps it until `dialed_at` + 15 min when one of its dials was
+  sent and never answered or ended by a carrier answer, so an outcome-unknown hold whose own
+  write failed is not cut short. The lapsed-wrap-up sweep (`findLapsedWrapups`, then `closeLapsedWrapup` per row) stamps
+  `no_disposition` when one was owed and releases the contact through the outcome policy, in one
+  statement that locks both rows and writes only while the attempt has no disposition and the
+  contact is still parked `connected` for it (no newer attempt, no soft-phone claim); it counts
+  only the closes that landed.
+- **Disposition** (`api/routes/agency/attempts.ts`). `recordDisposition` is one guarded UPDATE:
+  the same code again is a successful replay, a different code a 409. The contact write after it
+  (`AgencyContactRepository.releaseFromDisposition`) is one statement that lands only while the
+  contact is still the attempt's: no newer attempt, no soft-phone claim held or taken since the
+  attempt, and the contact parked `connected` for it (or `pending` on the same code, the replay
+  that corrects a callback time, or DNC-suppressed, where only `last_disposition` lands). A late
+  replay of an old attempt's disposition therefore answers the same 200 and leaves a contact a
+  later call settled, or pacing or the soft phone re-claimed, as it is.
 - **Soft phone** (`softphone/`, [`softphone.md`](softphone.md)). Manual calls outside pacing:
   `ManualDialer` dials agent-first through the bridge with a `manual` correlation and owns the
   call until it ends; `SoftphoneService` (`runtime.softphone`) is the API layer's surface. The
@@ -280,12 +341,22 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 
 - **Bridge** (`core/webrtc-bridge-manager.ts`, `core/webrtc-bridge-session.ts`, with `core/bridge/`:
   admission, the exported types, the per-call WS tokens). Bridges the agent's browser leg (the
-  station) to the carrier's PSTN leg. Its constructor takes the `TelephonyGuardHost`.
+  station) to the carrier's PSTN leg. Its constructor takes the `TelephonyGuardHost`. A dial
+  (`placeOutboundLeg`) that throws after its session is registered and before the carrier request
+  (the max-duration timer, the socket attach, the carrier tokens, and what the request is built
+  from: the webhook base, the provider's adapter, the carrier URLs) is torn down there (terminal row `failed`/`BRIDGE_SETUP_FAILED`, timer, socket listeners, slots,
+  lease entry, tokens) with no `ended`, and the original error rejects the dial; a teardown that
+  lands in that window stops the dial before the carrier is asked. Once the carrier has accepted
+  the dial, a failed `provider_call_id` write is logged and the call carries on.
 - **Browser leg media** (`core/bridge/browser-leg-media.ts`, contracts `AgencyStationMediaFormat`).
   The station socket says how the agent leg speaks: `pcm16` (JSON `media` frames, base64 PCM16
-  16 kHz, the console) or `alaw8` (binary messages of raw G.711 A-law 8 kHz, the mobile app: any
-  whole number of 20 ms / 160-byte frames up to 1 s in, exactly one 160-byte frame per message
-  out). The station handler tags its socket with the format at upgrade; the session reads the tag
+  16 kHz) or `alaw8` (binary messages of raw G.711 A-law 8 kHz: any whole number of 20 ms /
+  160-byte frames up to 1 s in, exactly one 160-byte frame per message out). The mobile app always
+  asks for `alaw8`; the console asks for it unless the tenant's `agency_console_alaw8` flag is off
+  (default on), and turns to `pcm16` for the rest of that station if the server refuses `alaw8`
+  (1008 `invalid_media`) or answers it with JSON `media`. The console makes its A-law in the
+  capture AudioWorklet (half-band low-pass, 16 → 8 kHz) and decodes and interpolates the downlink
+  to its 16 kHz playback context, with filter state kept across frames (`utils/alaw8/g711.js`). The station handler tags its socket with the format at upgrade; the session reads the tag
   at every attach (`adoptBorrowedBrowserLeg`: dial-time, late bind, re-attach), so it is a
   synchronous field read on the bind path and a reconnect that chose another format switches the
   relay with it. The bridge's borrowed-socket listener routes on `isBinary`; media in the other
@@ -336,8 +407,18 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 
 ## Call analysis and transcripts
 
-- **Worker** (`core/dialer-analysis-worker.ts`): promote → expire → claim → recover, every 60 s,
-  concurrency 2 by default; jobs in `dialer_analysis_jobs`, claimed with `FOR UPDATE SKIP LOCKED`.
+- **Worker** (`core/dialer-analysis-worker.ts`): a slot pool. Up to `DIALER_ANALYSIS_CONCURRENCY`
+  (default 8) jobs run at once; when one finishes its slot claims the next at once, a short
+  claim arms a timer for the next due job (settle delay, backoff), and `wake()` fills free slots.
+  A sweep every 60 s (self-dormant when idle) promotes → expires → fills slots → recovers stale
+  claims, and is the safety net. Jobs in `dialer_analysis_jobs`, claimed with
+  `FOR UPDATE SKIP LOCKED`, so several processes can share the queue. Before claiming, a slot
+  reserves a worst-case recording on the recording byte budget
+  (`core/recording-byte-budget.ts`, `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`); the runner shrinks
+  it to the real size. A wait nobody wants leaves the line at once (a released lease's grow, a
+  slot's budget wait at shutdown), so it never holds up the waiters behind it. A vendor rate limit opens a process-wide pause with one probe after it
+  (`core/vendor-rate-limit-breaker.ts`). Shutdown stops new claims, then requeues the jobs in
+  flight, generation-matched.
 - **Runner** (`core/dialer-analysis-runner.ts`): load the call, take config from the job's profile
   snapshot, resume an existing transcript or fetch and transcribe the recording, persist, run the
   LLM analysis, complete in one transaction.
@@ -394,16 +475,16 @@ counter never holds two ceilings:
 
 | Bucket | Key | Default / min | Who |
 |---|---|---|---|
-| `webhook` | `wh:<ip>` | 1000 (`RATE_LIMIT_WEBHOOK_MAX`) | `/api/v1/webhooks/*` |
-| `carrier_media` | `cm:<ip>` | 600 (`RATE_LIMIT_CARRIER_MEDIA_MAX`) | media sockets, TTS clips, both WebRTC legs |
-| `station` | `st:<ip>` | 1200 (`RATE_LIMIT_STATION_MAX`) | the station socket upgrade, `/proxy/agency/station/*` (a single-use query token, not a bearer): a floor behind one NAT walking the reconnect ladder at once must not spend the plain bucket or 429 a mid-call reconnect |
+| `webhook` | `wh:<ip>` | 5000 (`RATE_LIMIT_WEBHOOK_MAX`) | `/api/v1/webhooks/*` |
+| `carrier_media` | `cm:<ip>` | 2000 (`RATE_LIMIT_CARRIER_MEDIA_MAX`) | media sockets, TTS clips, both WebRTC legs |
+| `station` | `st:<ip>` | 3600 (`RATE_LIMIT_STATION_MAX`) | the station socket upgrade, `/proxy/agency/station/*` (a single-use query token, not a bearer): a floor behind one NAT walking the reconnect ladder at once must not spend the plain bucket or 429 a mid-call reconnect |
 | `internal` | `int:<ip>` | 1000 (`RATE_LIMIT_INTERNAL_MAX`) | `/internal/*` (none served) |
-| `ip_auth` | `ipa:<ip>` | 3000 (`RATE_LIMIT_IP_AUTH_MAX`) | any other request carrying `Authorization: Bearer` |
-| `ip` | `<ip>` | 200 (`RATE_LIMIT_MAX`) | everything else: sign-in, invites, `GET /client-config` |
+| `ip_auth` | `ipa:<ip>` | 20 000 (`RATE_LIMIT_IP_AUTH_MAX`) | any other request carrying `Authorization: Bearer` |
+| `ip` | `<ip>` | 2000 (`RATE_LIMIT_MAX`) | everything else, unauthenticated: sign-in refusals, invites (own 20/min cap), `GET /client-config` |
 | `exempt` | none | unlimited | `/healthz`, `/readyz` (exact paths) |
 
 Then, inside every authenticated route, `sessionMiddleware` charges the **per-user** bucket once it
-has verified the caller: key `u:<user id>`, default 300/min (`RATE_LIMIT_USER_MAX`, platform config
+has verified the caller: key `u:<user id>`, default 600/min (`RATE_LIMIT_USER_MAX`, platform config
 block), same window and store. That one binds authenticated traffic: agents behind one carrier-grade
 NAT (Jio, Airtel) share an IP but never a user bucket, and the IP bucket for bearer traffic is
 deliberately coarse. Only the PRESENCE of a bearer picks `ip_auth`; it is not verified there and its
@@ -412,6 +493,10 @@ amended 2026-11-01). A route may add its own tighter per-user cap in its own nam
 (`createUserRateLimit`): `POST /client-config/uplink-probe` allows 6 per user per window (`up:<id>`),
 charged with its authentication in `preParsing`, so no body is read for a caller who fails either.
 Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
+
+The defaults are sized for ~500 agents and ~50 supervisors behind one office NAT, at 500
+concurrent calls (~510 dials and ~170 answers a minute); the arithmetic per bucket is in
+`api/middleware/rate-limit-defaults.ts`, which the middleware and both config blocks read.
 Per-route limits (super-admin login 5/min, public invite routes 20/min) are honoured, each keyed on
 the IP alone (the route pins its `keyGenerator`; an inherited one would split a bearer and a
 non-bearer request into two counters). A 429 from any
@@ -458,6 +543,39 @@ a rate-limit key and never an auth input.
   the apps' guards scan only their own `src/`.
 - **Server branding guard**: `apps/server/test/unit/branding/no-parent-brand.test.ts` scans
   `apps/server/src` and `packages/*/src` with comments stripped.
+
+## Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`)
+
+Off by default: with neither set, everything above is one process, exactly as described. Design
+and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`):
+
+- **The primary** is the process `index.ts` starts. It keeps the HTTP listener, the public API
+  layer, the rate limiter, pacing, the reaper and every leader-only sweep, and the guard's
+  self-heal. With `MEDIA_WORKERS=N` it forks N media workers after the startup reap, so no
+  worker exists while the reap's "every non-terminal row is dead" premise must hold.
+- **A media worker** is a dialer-runtime shard. It owns the sessions with
+  `slotFor(sessionId) mod N == slot`: their station sockets, live attempts, wrap-up, breaks and
+  soft-phone call, and both legs and the audio relay of their calls. No audio frame crosses a
+  process boundary.
+- **Upgrades** are routed through the primary's Fastify hooks (the rate limiter charges them
+  there) and handed to the owner with the socket handle (`ws-handoff.plugin.ts`). The worker
+  completes the handshake (`ws-adopt.ts`, `worker-app.ts`). The station socket goes to its
+  session's slot; the carrier's stream and status posts go to the slot written into the URLs
+  the worker gave the carrier (`&w=<slot>`).
+- **Dials** go from pacing to the owner over IPC (`IpcDialDispatcher`, `dial.execute`), with a
+  leadership grant the worker checks synchronously.
+- **Session-owned internal handlers** (`api/core-owners.ts`) are forwarded by `callCore`'s
+  injector to the owning worker; every other handler runs in the primary.
+- **IPC** is Node's `child_process` channel, with one decoder per message type
+  (`ipc-protocol.ts`) and deadline-bound requests (`ipc-channel.ts`). Redis keeps only its old
+  roles.
+- **A worker that dies** is reaped by slot before it is re-forked (`cluster/primary.ts`
+  `reapSlot`): its call slots are released, its attempts are ended `orphaned` with their
+  contacts requeued, and its agents are written offline. More than 5 exits of one slot in
+  5 minutes makes the primary exit and the container restart.
+- **Analysis children** (`ANALYSIS_WORKERS=K`) run only the slot pool, on the shared
+  `SKIP LOCKED` queue, each with its own budget. A vendor rate limit in one is relayed by the
+  primary to all of them.
 
 ## Observability
 
@@ -510,7 +628,7 @@ a rate-limit key and never an auth input.
 `sndfile-programs`, then runs `pnpm install --frozen-lockfile`, `pnpm lint`, `pnpm test` and
 `pnpm build`; the integration job runs as three parallel jobs, each against its own Postgres 16
 and Redis 7 service containers mapped to 5436 and 6383: `packages/db`, the server suite, and the
-server's wall-clock lane (the two files that wait on real Redis TTLs, listed in
+server's wall-clock lane (the files that wait on real timers, listed in
 `apps/server/vitest.config.integration.ts` and selected by `INTEGRATION_LANE`). Job 1 also runs
 `pnpm test:grafana` and `pnpm test:release`.
 

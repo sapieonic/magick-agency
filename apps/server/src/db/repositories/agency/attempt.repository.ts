@@ -24,10 +24,29 @@ import type {
   AgencyAttemptOutcome,
   AgencyAttemptState,
   AgencyAttemptRow,
+  AgencyContactState,
   AgencyKeysetPage,
 } from '@magick-agency/contracts/agency';
 import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from './query-builders.js';
 import { projectAttemptRow } from './projections.js';
+import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
+
+/**
+ * Tell pacing that live calls ENDED on these rows' accounts, so a campaign held at
+ * its account limit ticks again at once (`pacing/invalidation-bus.ts`). Once per
+ * account. Called after the autocommitted UPDATE returned, so the end is visible to
+ * the count the woken tick runs.
+ */
+function announceCapacityFreed(rows: ReadonlyArray<{ tenant_id: string; account_id: string; state: string }>): void {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row.state !== 'ended') continue;
+    const key = `${row.tenant_id}:${row.account_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    publishPacingInvalidation({ type: 'account_capacity_freed', tenantId: row.tenant_id, accountId: row.account_id });
+  }
+}
 
 const log = createChildLogger({ component: 'agency-repository' });
 
@@ -226,6 +245,7 @@ export class AgencyAttemptRepository {
         patch.abandon_reason ?? null,
       ],
     );
+    if (state === 'ended' && rows[0]) announceCapacityFreed(rows);
     return rows[0] ?? null;
   }
 
@@ -727,6 +747,7 @@ export class AgencyAttemptRepository {
       RETURNING *`,
       [AGENCY_ATTEMPT_LIVE_STATES as unknown as string[], olderThan],
     );
+    announceCapacityFreed(rows);
     return rows;
   }
 
@@ -770,6 +791,7 @@ export class AgencyAttemptRepository {
       RETURNING *`,
       [attemptIds, AGENCY_ATTEMPT_LIVE_STATES as unknown as string[]],
     );
+    announceCapacityFreed(rows);
     return rows;
   }
 
@@ -826,27 +848,103 @@ export class AgencyAttemptRepository {
   }
 
   /**
-   * Stamp the auto-close, if nothing has been written up in the meantime.
+   * Close one lapsed wrap-up that {@link findLapsedWrapups} returned: stamp the attempt's
+   * auto-close code (when one is owed) and write its contact's release, **only while both
+   * rows are still what that read found**. One statement, so the check and both writes
+   * cannot be separated by anything else touching either row.
    *
-   * `disposition_code IS NULL` is the same guarded-UPDATE discipline
-   * `recordDisposition` uses, and here it is what makes the sweep lose a race it
-   * should lose: an agent submitting their real disposition between this sweep's
-   * SELECT and this write keeps it, and the sweep writes nothing.
+   * ── Why the check ───────────────────────────────────────────────────────────
    *
-   * `dispositioned_by_user_id` is deliberately left NULL — nobody recorded this,
-   * which is the entire meaning of the code being written. Attributing it to the
-   * reserved agent would put their name on an admission they did not make.
+   * The sweep reads, then writes, row by row. Between the two the contact can move on:
+   * the agent's disposition releases it (a callback puts it back `pending`), pacing or a
+   * soft-phone call claims it, a new conversation parks it `connected` again for its own
+   * write-up, a DNC mark suppresses it. A release written regardless then pulled an
+   * `in_flight` contact out from under its new live call, reopened or re-closed a contact
+   * the new attempt had settled, and overwrote its `last_outcome` with the old one. The
+   * same shape `AgencyContactRepository.requeueOrphaned` closes for the reaper's requeue.
+   *
+   * So both writes land only while, re-checked on the locked rows:
+   *
+   *  - the attempt is `ended` with no `disposition_code` (an agent who wrote it up in the
+   *    meantime keeps their record; the sweep writes nothing, as before);
+   *  - the contact is `connected` (still parked waiting for that write-up) and no attempt
+   *    on it is newer than this one (`attempt_number` is MAX + 1 per contact, so a
+   *    contact parked `connected` by a LATER call is not this attempt's);
+   *  - no soft-phone call holds the contact's claim.
+   *
+   * `FOR UPDATE OF a, ct` makes the check exact against a concurrent writer: one that
+   * committed first is seen (Postgres re-checks the locked rows' latest versions), and
+   * one that comes second waits and then meets this write (an agent's disposition finds
+   * the code stamped and is refused, the "auto-closed" answer).
+   *
+   * ── What it writes ─────────────────────────────────────────────────────────
+   *
+   * `dispositionCode` set: the attempt's `disposition_code` and `dispositioned_at`, with
+   * no `dispositioned_by_user_id` (nobody recorded it, which is the code's meaning), and
+   * the contact's `last_disposition`. Null: nothing on the attempt. The contact: `state`,
+   * `last_outcome`, `next_attempt_at`, `suppressed_reason`, never `attempt_count` (the
+   * attempt was counted when it ended), under `markState`'s DNC rule (a row carrying
+   * `suppressed_reason = 'dnc'` stays `suppressed` with its `next_attempt_at`).
+   *
+   * Returns the contact state that landed, or null when either row had moved on and
+   * nothing was written.
    */
-  async recordAutoDisposition(attemptId: string, code: string): Promise<AgencyCallAttemptRecord | null> {
-    const { rows } = await getPool().query<AgencyCallAttemptRecord>(
-      `UPDATE agency_call_attempts
-          SET disposition_code = $2,
-              dispositioned_at = now(),
+  async closeLapsedWrapup(opts: {
+    attemptId: string;
+    contactId: string;
+    /** The auto-close code to stamp, or null when none was owed. */
+    dispositionCode: string | null;
+    contactState: string;
+    lastOutcome: string | null;
+    nextAttemptAt: Date | null;
+    suppressedReason: string | null;
+  }): Promise<{ state: AgencyContactState; suppressed_reason: string | null } | null> {
+    const { rows } = await getPool().query<{ state: AgencyContactState; suppressed_reason: string | null }>(
+      `WITH target AS (
+         SELECT a.id AS attempt_id, ct.id AS contact_id
+           FROM agency_call_attempts a
+           JOIN agency_contacts ct ON ct.id = a.contact_id
+          WHERE a.id = $1
+            AND ct.id = $2
+            AND a.state = 'ended'
+            AND a.disposition_code IS NULL
+            AND ct.state = 'connected'
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_call_attempts n
+                   WHERE n.contact_id = ct.id AND n.attempt_number > a.attempt_number)
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_manual_calls m
+                   WHERE m.contact_id = ct.id AND m.settled_at IS NULL AND m.contact_claimed)
+            FOR UPDATE OF a, ct
+       ), stamped AS (
+         UPDATE agency_call_attempts a
+            SET disposition_code = $3,
+                dispositioned_at = now(),
+                updated_at = now()
+           FROM target t
+          WHERE a.id = t.attempt_id
+            AND $3::text IS NOT NULL
+         RETURNING a.id
+       )
+       UPDATE agency_contacts c
+          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $4 END,
+              last_outcome = COALESCE($5, c.last_outcome),
+              last_disposition = COALESCE($3, c.last_disposition),
+              next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at ELSE COALESCE($6, c.next_attempt_at) END,
+              suppressed_reason = CASE WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason ELSE COALESCE($7, c.suppressed_reason) END,
               updated_at = now()
-        WHERE id = $1
-          AND disposition_code IS NULL
-      RETURNING *`,
-      [attemptId, code],
+         FROM target t
+        WHERE c.id = t.contact_id
+      RETURNING c.state, c.suppressed_reason`,
+      [
+        opts.attemptId,
+        opts.contactId,
+        opts.dispositionCode,
+        opts.contactState,
+        opts.lastOutcome,
+        opts.nextAttemptAt,
+        opts.suppressedReason,
+      ],
     );
     return rows[0] ?? null;
   }

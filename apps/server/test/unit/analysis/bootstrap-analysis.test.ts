@@ -20,14 +20,17 @@ const mocks = vi.hoisted(() => ({
   createTranscriber: vi.fn(),
   createAnalysisService: vi.fn(),
   runPurge: vi.fn().mockResolvedValue({}),
+  children: { start: vi.fn().mockResolvedValue(undefined), broadcast: vi.fn(), stop: vi.fn().mockResolvedValue(undefined) },
+  createChildren: vi.fn(),
 }));
+vi.mock('../../../src/cluster/analysis-children.js', () => ({ createAnalysisChildren: mocks.createChildren }));
 vi.mock('../../../src/core/dialer-analysis-worker.js', () => ({ initDialerAnalysisWorker: mocks.initWorker }));
 vi.mock('../../../src/core/dialer-analysis-worker-handle.js', () => ({ setDialerAnalysisWorker: mocks.setHandle }));
 vi.mock('../../../src/transcription/index.js', () => ({ createTranscriber: mocks.createTranscriber }));
 vi.mock('../../../src/analysis/index.js', () => ({ createAnalysisService: mocks.createAnalysisService }));
 vi.mock('../../../src/maintenance/retention-purge.js', () => ({ runRetentionPurge: mocks.runPurge }));
 
-import { BOOT_PURGE_DELAY_MS, startAnalysis } from '../../../src/bootstrap/analysis.js';
+import { BOOT_PURGE_DELAY_MS, plannedAnalysisWorkers, startAnalysis } from '../../../src/bootstrap/analysis.js';
 import { getBridgeAnalysisHooks, resetBridgeAnalysisHooks } from '../../../src/seams/bridge-analysis-hooks.js';
 import type { AppContext } from '../../../src/app-context.js';
 import { parseConfig } from '../../../src/config/load.js';
@@ -49,6 +52,8 @@ beforeEach(() => {
   mocks.initWorker.mockReturnValue(mocks.worker);
   mocks.createTranscriber.mockReturnValue({ provider: 'gemini' });
   mocks.createAnalysisService.mockReturnValue({});
+  mocks.createChildren.mockReturnValue(mocks.children);
+  mocks.children.start.mockResolvedValue(undefined);
 });
 afterEach(() => { vi.useRealTimers(); resetBridgeAnalysisHooks(); });
 
@@ -86,6 +91,54 @@ describe('startAnalysis', () => {
     expect(mocks.worker.gracefulShutdown).toHaveBeenCalledOnce();
     expect(mocks.setHandle).toHaveBeenCalledWith(null);
     expect(getBridgeAnalysisHooks()).toBe(before);
+  });
+
+  it('ANALYSIS_WORKERS=0 is the in-process worker, exactly as without the key', async () => {
+    const stop = await startAnalysis(ctx({ dialerAnalysis: { enabled: true, pollIntervalMs: 60000, processes: 0 } }));
+    expect(mocks.initWorker).toHaveBeenCalledOnce();
+    expect(mocks.createChildren).not.toHaveBeenCalled();
+    await stop();
+  });
+
+  it('ANALYSIS_WORKERS > 0 forks the children and runs NO in-process worker; wake reaches every child; stop stops them', async () => {
+    const before = getBridgeAnalysisHooks();
+    const fork = vi.fn();
+    const stop = await startAnalysis(
+      ctx({ dialerAnalysis: { enabled: true, pollIntervalMs: 60000, processes: 2, memoryBudgetBytes: 512 * 1024 * 1024 } }),
+      { forkChild: fork },
+    );
+    expect(mocks.initWorker).not.toHaveBeenCalled();
+    expect(mocks.createChildren).toHaveBeenCalledWith(expect.objectContaining({ count: 2, fork }));
+    expect(mocks.children.start).toHaveBeenCalledOnce();
+    // The bridge's hooks still run here (they enqueue beside the bridge) and wake the children.
+    expect(getBridgeAnalysisHooks()).not.toBe(before);
+    const handle = mocks.setHandle.mock.calls.at(-1)![0] as { wake(): void };
+    handle.wake();
+    expect(mocks.children.broadcast).toHaveBeenCalledWith('analysis.wake', {});
+
+    await stop();
+    expect(mocks.setHandle).toHaveBeenLastCalledWith(null);
+    expect(mocks.children.stop).toHaveBeenCalledOnce();
+    expect(getBridgeAnalysisHooks()).toBe(before);
+  });
+
+  it('a child that never comes up fails the boot, after stopping the ones that did', async () => {
+    mocks.children.start.mockRejectedValueOnce(new Error('analysis worker 1 not ready within 30000 ms'));
+    await expect(startAnalysis(ctx({ dialerAnalysis: { enabled: true, pollIntervalMs: 60000, processes: 2, memoryBudgetBytes: 1 } }), { forkChild: vi.fn() }))
+      .rejects.toThrow(/not ready/);
+    expect(mocks.children.stop).toHaveBeenCalledOnce();
+    expect(mocks.initWorker).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['disabled', { dialerAnalysis: { enabled: false, processes: 2 } }, () => {}],
+    ['no transcriber', { dialerAnalysis: { enabled: true, processes: 2 } }, () => mocks.createTranscriber.mockReturnValue(null)],
+  ])('ANALYSIS_WORKERS > 0 forks nothing when %s', async (_l, over, arm) => {
+    arm();
+    const stop = await startAnalysis(ctx(over), { forkChild: vi.fn() });
+    expect(mocks.createChildren).not.toHaveBeenCalled();
+    expect(mocks.initWorker).not.toHaveBeenCalled();
+    await stop();
   });
 
   it('schedules no retention purge without a window, and runs it on the interval with one', async () => {
@@ -148,3 +201,28 @@ describe('startAnalysis', () => {
     await stop();
   });
 });
+
+describe('plannedAnalysisWorkers (the children the D12 budget counts)', () => {
+  const withProcesses = (over: Record<string, unknown> = {}) =>
+    ctx({ dialerAnalysis: { enabled: true, pollIntervalMs: 60000, processes: 2 }, ...over }).config;
+
+  it('counts ANALYSIS_WORKERS only when analysis is on and its transcriber and service can be built', () => {
+    expect(plannedAnalysisWorkers(withProcesses())).toBe(2);
+    expect(plannedAnalysisWorkers(ctx({ dialerAnalysis: { enabled: false, processes: 2 } }).config)).toBe(0);
+    mocks.createTranscriber.mockReturnValueOnce(null);
+    expect(plannedAnalysisWorkers(withProcesses())).toBe(0);
+    mocks.createAnalysisService.mockReturnValueOnce(null);
+    expect(plannedAnalysisWorkers(withProcesses())).toBe(0);
+  });
+
+  it('the factories run once per boot: startAnalysis reuses what the plan built', async () => {
+    const config = withProcesses();
+    expect(plannedAnalysisWorkers(config)).toBe(2);
+    const stop = await startAnalysis({ config } as unknown as AppContext);
+    expect(mocks.createTranscriber).toHaveBeenCalledTimes(1);
+    expect(mocks.createAnalysisService).toHaveBeenCalledTimes(1);
+    expect(mocks.createChildren).toHaveBeenCalledWith(expect.objectContaining({ count: 2 }));
+    await stop();
+  });
+});
+

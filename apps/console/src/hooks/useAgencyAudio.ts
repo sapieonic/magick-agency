@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
 import { useAudioCapture, classifyCaptureError, type AudioCaptureError } from './useAudioCapture';
 import { useAudioPlayback } from './useAudioPlayback';
 import type { AgencyStationAudioSink } from './useAgencyStation';
 import { trackAgencyMicState } from '../analytics/events';
+import type { AgencyUplinkFrame } from '../utils/agencyMedia';
 
 /**
  * The agent's two-way audio, over the station socket.
  *
- * ── Why this composes the AI-call hooks rather than replacing them ──────────
- * `useAudioCapture` and `useAudioPlayback` already produce and consume exactly
- * the format the API wants on this socket — base64 PCM16 mono 16 kHz, in 20 ms
- * frames — because the AI-call bridge and the agency bridge are the *same*
- * `WebRtcBridgeManager` browser leg. Writing a second encoder would be two
- * implementations of one wire format, and the second one would be the one
- * nobody exercised until a live shift.
+ * ── Why this composes the capture and playback hooks ──────────────────────
+ * `useAudioCapture` and `useAudioPlayback` produce and consume both formats the
+ * station socket speaks (`utils/agencyMedia.ts`): binary A-law 8 kHz (`alaw8`, the
+ * default) and base64 PCM16 16 kHz (`pcm16`), in 20 ms frames. The socket's format
+ * is the station's to decide (`useAgencyStation`'s `mediaFormat`); `sync` hands it
+ * to the capture graph, and playback takes whichever kind of frame arrives.
  *
  * What genuinely differs is not the audio, it is the **lifetime**. A single
  * browser call is one socket, one call, mic open from `start()` to hangup. The agency station
@@ -74,7 +75,13 @@ export interface AgencyAudioState {
     /** `live.bridgedAt !== null` — and nothing else. Opens the uplink. */
     bridged: boolean;
     /** `station.sendMedia`. Stable, and read at send time. */
-    send: (payload: string) => boolean;
+    send: (frame: AgencyUplinkFrame) => boolean;
+    /**
+     * `station.mediaFormat`: the format the capture graph produces. Absent: `pcm16`.
+     * Applied on every sync, so a station that falls back to `pcm16` mid-call switches
+     * the live graph rather than leaving the agent's frames refused.
+     */
+    format?: AgencyStationMediaFormat;
   }) => void;
   /**
    * Warm both `AudioContext`s and probe the microphone, to surface a permission
@@ -143,6 +150,7 @@ export function useAgencyAudio(campaignId?: string): AgencyAudioState {
    */
   const sink = useRef<AgencyStationAudioSink>({
     onMedia: (payload) => playbackRef.current.play(payload),
+    onAlaw: (bytes) => playbackRef.current.playAlaw(bytes),
   }).current;
 
   /**
@@ -183,11 +191,15 @@ export function useAgencyAudio(campaignId?: string): AgencyAudioState {
       attemptId,
       bridged,
       send,
+      format,
     }: {
       attemptId: string | null;
       bridged: boolean;
-      send: (payload: string) => boolean;
+      send: (frame: AgencyUplinkFrame) => boolean;
+      format?: AgencyStationMediaFormat;
     }) => {
+      // Before anything is armed, so a graph built below is built in this format.
+      captureRef.current.setFormat(format ?? 'pcm16');
       if (attemptId === null) {
         if (armedForRef.current !== null) disarm();
         return;

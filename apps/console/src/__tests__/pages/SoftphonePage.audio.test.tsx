@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   listManualCalls: vi.fn(),
   placeManualCall: vi.fn(),
   useTenant: vi.fn(),
+  flagsOn: new Set<string>(['agency_softphone_enabled']),
   audio: {
     sink: { onMedia: () => {} },
     sync: vi.fn(),
@@ -37,7 +38,7 @@ vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'u-1', display_name: 'Priya Nair', email: 'priya@example.com', avatar_url: null } }),
 }));
 vi.mock('../../contexts/FeatureFlagsContext', () => ({
-  useFeatureFlags: () => ({ isEnabled: (flag: string) => flag === 'agency_softphone_enabled' }),
+  useFeatureFlags: () => ({ isEnabled: (flag: string) => mocks.flagsOn.has(flag) }),
 }));
 
 import SoftphonePage from '../../pages/agency/SoftphonePage';
@@ -84,6 +85,7 @@ beforeEach(() => {
   mocks.getSoftphoneBootstrap.mockResolvedValue(BOOTSTRAP);
   mocks.listManualCalls.mockResolvedValue({ rows: [], next_cursor: null, limit: 8 });
   mocks.placeManualCall.mockResolvedValue({ ok: true, value: manualCall() });
+  mocks.flagsOn = new Set(['agency_softphone_enabled']);
 });
 
 afterEach(() => {
@@ -129,5 +131,20 @@ describe('/dialer/phone audio preflight', () => {
     });
     expect(mocks.audio.preflight).toHaveBeenCalledTimes(1);
     expect(mocks.audio.preflight.mock.invocationCallOrder[0]!).toBeLessThan(mocks.placeManualCall.mock.invocationCallOrder[0]!);
+  });
+});
+
+describe('/dialer/phone call audio format (manual calls ride the same station socket)', () => {
+  it('asks for media=alaw8 with agency_console_alaw8 on, and arms the capture graph in it', async () => {
+    mocks.flagsOn.add('agency_console_alaw8');
+    await mount();
+    expect(latestSocket().url).toContain('media=alaw8');
+    expect(mocks.audio.sync).toHaveBeenLastCalledWith(expect.objectContaining({ format: 'alaw8' }));
+  });
+
+  it('falls back to media=pcm16 with the flag off', async () => {
+    await mount();
+    expect(latestSocket().url).toContain('media=pcm16');
+    expect(mocks.audio.sync).toHaveBeenLastCalledWith(expect.objectContaining({ format: 'pcm16' }));
   });
 });

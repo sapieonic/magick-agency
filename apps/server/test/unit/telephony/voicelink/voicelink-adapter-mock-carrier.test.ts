@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { VoicelinkAdapter } from '../../../../src/telephony/voicelink/voicelink.adapter.js';
 import { VoicelinkTokenManager } from '../../../../src/telephony/voicelink/voicelink-token-manager.js';
 import { MockVoicelinkCarrier } from '../../../mocks/voicelink/index.js';
+import { CarrierRequestTimeoutError, isDialOutcomeUnknown } from '../../../../src/telephony/carrier-errors.js';
 import { createRng, LOAD_SEED, scaled } from '../../../helpers/load-scale.js';
 
 const BURST = scaled(50);
@@ -54,8 +55,15 @@ function dialRequest(to = '+919812345678') {
   };
 }
 
+/**
+ * Short request timeouts, so a hung carrier is abandoned well inside the 2 s the "stops
+ * answering" cases allow; far above the mock's own latency faults (≤ 100 ms) even on a loaded test box.
+ */
+const TEST_LOGIN_TIMEOUT_MS = 1_000;
+const TEST_ADD_LEAD_TIMEOUT_MS = 1_000;
+
 function newAdapter(): VoicelinkAdapter {
-  return new VoicelinkAdapter(carrier.config());
+  return new VoicelinkAdapter(carrier.config({ loginTimeoutMs: TEST_LOGIN_TIMEOUT_MS, addLeadTimeoutMs: TEST_ADD_LEAD_TIMEOUT_MS }));
 }
 
 async function settle<T>(work: Array<Promise<T>>): Promise<{ ok: T[]; errors: string[] }> {
@@ -246,29 +254,41 @@ describe(`VoiceLink adapter + token manager vs the mock carrier (burst ${BURST},
       await expect(adapter.initiateCall(dialRequest())).resolves.toBeDefined();
     });
 
-    it('a 200 add_lead with a non-JSON body currently FAILS the dial (the carrier may have queued the lead)', async () => {
-      // Pinned, not endorsed: `post` throws on `response.json()` after a 2xx, so the bridge
-      // records `telephony_init_failed` for a lead the carrier accepted and will dial — its
-      // media connect then finds no session and is closed. Treating it as accepted has the
-      // opposite risk (a proxy's 200 error page for a lead that was never queued), so the
-      // choice is the product's; this test makes a change to it visible.
+    it('a 200 add_lead with a non-JSON body FAILS the dial, marked outcome-unknown (the carrier may have queued the lead)', async () => {
+      // The dial fails: the bridge records `telephony_init_failed` and releases the agent
+      // and the slots, and a media connect the carrier makes later finds no session and is
+      // closed (which hangs it up). Treating it as accepted has the opposite risk (a proxy's
+      // 200 error page for a lead that was never queued). Marked `dialOutcomeUnknown`, so
+      // the dialer defers the contact's redial instead of dialling it again at once.
       const adapter = newAdapter();
       await adapter.initiateCall(dialRequest());
       carrier.injectFault('add_lead', { kind: 'malformed' });
-      await expect(adapter.initiateCall(dialRequest())).rejects.toThrow();
+      const err = await adapter.initiateCall(dialRequest()).then(() => null, (e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(isDialOutcomeUnknown(err)).toBe(true);
       const last = carrier.requestsTo('add_lead').at(-1)!;
       expect(last.status).toBe(200);
+      // Never retried: one more add_lead than the warm-up, not two.
+      expect(carrier.requestsTo('add_lead')).toHaveLength(2);
+    });
+
+    it('a refused add_lead (HTTP 500) is NOT outcome-unknown: the carrier said no', async () => {
+      const adapter = newAdapter();
+      await adapter.initiateCall(dialRequest());
+      carrier.injectFault('add_lead', { kind: 'status', status: 500 });
+      const err = await adapter.initiateCall(dialRequest()).then(() => null, (e: unknown) => e);
+      expect(String((err as Error).message)).toMatch(/add_lead error 500/);
+      expect(isDialOutcomeUnknown(err)).toBe(false);
     });
   });
 
   describe('a carrier that stops answering', () => {
-    // DEFECT (open): neither the adapter's `post` nor the token manager's `doLogin` sets a
-    // request timeout (no `AbortSignal`), so a carrier that accepts the TCP connection and
-    // never answers holds the dial for undici's default 300s headers timeout. On the dial
-    // path that is an agent reserved on a ringing panel and three concurrency slots held for
-    // five minutes per hung request. Fixing it means choosing a timeout and what a timed-out
-    // add_lead means (the carrier may have queued the lead), which is a product decision.
-    it.fails('a hung add_lead is abandoned within a bounded time', async () => {
+    // Was a pinned DEFECT (`it.fails`, load suites 2026-10-23): neither the adapter's
+    // `post` nor the token manager's `doLogin` set a request timeout, so a carrier that
+    // accepts the TCP connection and never answers held the dial for undici's 300 s
+    // default: an agent reserved on a ringing panel and three concurrency slots per hung
+    // request. Fixed: `addLeadTimeoutMs` / `loginTimeoutMs` (default 15 s / 10 s).
+    it('a hung add_lead is abandoned within a bounded time', async () => {
       const adapter = newAdapter();
       await adapter.initiateCall(dialRequest());
       carrier.injectFault('add_lead', { kind: 'hang' });
@@ -281,9 +301,25 @@ describe(`VoiceLink adapter + token manager vs the mock carrier (burst ${BURST},
       expect(outcome).toBe('settled');
     });
 
-    // Same defect, amplified by single-flight: ONE hung login blocks EVERY dial that
-    // arrives while it is in flight, not just the one that started it.
-    it.fails('a hung login does not stall the whole burst behind it', async () => {
+    it('a timed-out add_lead is outcome-unknown, never retried, and the next dial is unaffected', async () => {
+      const adapter = newAdapter();
+      await adapter.initiateCall(dialRequest());
+      carrier.injectFault('add_lead', { kind: 'hang' });
+      const startedAt = Date.now();
+      const err = await adapter.initiateCall(dialRequest()).then(() => null, (e: unknown) => e);
+      expect(Date.now() - startedAt).toBeLessThan(TEST_ADD_LEAD_TIMEOUT_MS + 1_000);
+      expect(err).toBeInstanceOf(CarrierRequestTimeoutError);
+      expect((err as CarrierRequestTimeoutError).message).toMatch(/add_lead timed out after 1000 ms; the lead may be queued/);
+      expect(isDialOutcomeUnknown(err)).toBe(true);
+      // ONE request for the hung dial: a retry of a lead the carrier may have queued would
+      // be a second call to the same customer.
+      expect(carrier.requestsTo('add_lead')).toHaveLength(2);
+      await expect(adapter.initiateCall(dialRequest())).resolves.toBeDefined();
+    });
+
+    // Same defect, amplified by single-flight: ONE hung login blocked EVERY dial that
+    // arrived while it was in flight, not just the one that started it.
+    it('a hung login does not stall the whole burst behind it', async () => {
       const adapter = newAdapter();
       carrier.injectFault('login', { kind: 'hang' });
       const work = Array.from({ length: BURST }, () => adapter.initiateCall(dialRequest()));
@@ -293,6 +329,19 @@ describe(`VoiceLink adapter + token manager vs the mock carrier (burst ${BURST},
         new Promise<number>((r) => setTimeout(() => r(0), 2_000)),
       ]);
       expect(settledCount).toBe(BURST);
+    });
+
+    it('a timed-out login fails the burst once (no dial placed), and the next dial logs in afresh', async () => {
+      const adapter = newAdapter();
+      carrier.injectFault('login', { kind: 'hang' });
+      const { errors } = await settle(Array.from({ length: BURST }, () => adapter.initiateCall(dialRequest())));
+      expect(errors).toHaveLength(BURST);
+      expect(new Set(errors)).toEqual(new Set(['VoiceLink login timed out after 1000 ms']));
+      expect(carrier.requestsTo('login')).toHaveLength(1);
+      expect(carrier.requestsTo('add_lead')).toHaveLength(0);
+      // The single-flight slot was cleared by the timeout: a new login, and it works.
+      await expect(adapter.initiateCall(dialRequest())).resolves.toBeDefined();
+      expect(carrier.requestsTo('login')).toHaveLength(2);
     });
   });
 
@@ -305,6 +354,36 @@ describe(`VoiceLink adapter + token manager vs the mock carrier (burst ${BURST},
       expect(carrier.requestsTo('login')).toHaveLength(2);
       carrier.injectFault('cdr', { kind: 'reset' });
       await expect(adapter.getCallStatus('no-such-call')).resolves.toEqual({ status: 'unknown' });
+    });
+
+    /**
+     * The 401 retry has its own deadline. A first GET that takes most of the timeout to say
+     * 401 must not leave the retry only the remainder: with one deadline shared from before
+     * the first GET, the retry here is aborted (the two GETs together take ~1.3 s of a 1 s
+     * timeout) and the lookup degrades to "unknown" although the refreshed token was good.
+     * Mutation-checked: hoisting the signal out of `get` reds this.
+     */
+    it('a slow 401 does not eat the retry\'s time: the retry gets its own deadline', async () => {
+      const adapter = newAdapter();
+      await adapter.getCallStatus('warm-up'); // log in first, so the timing below is only the two GETs
+      carrier.reset();
+      const slow = Math.round(TEST_ADD_LEAD_TIMEOUT_MS * 0.65);
+      carrier.injectFault('cdr', { kind: 'latency', ms: slow });
+      carrier.injectFault('cdr', { kind: 'status', status: 401, body: '{"message":"Unauthenticated."}' });
+      carrier.injectFault('cdr', { kind: 'latency', ms: slow });
+      carrier.injectFault('cdr', {
+        kind: 'status',
+        status: 200,
+        body: JSON.stringify({ data: { call_id: 'vl-1', call_status: 'ANSWERED', talk_duration: 42, hangup_reason: 'Normal Clearing' } }),
+      });
+
+      const startedAt = Date.now();
+      await expect(adapter.getCallStatus('vl-1')).resolves.toEqual({
+        status: 'answered', duration: 42, errorMessage: 'Normal Clearing',
+      });
+      expect(Date.now() - startedAt).toBeGreaterThan(TEST_ADD_LEAD_TIMEOUT_MS);
+      expect(carrier.requestsTo('cdr').map((r) => r.status)).toEqual([401, 200]);
+      expect(carrier.requestsTo('login')).toHaveLength(1);
     });
   });
 });

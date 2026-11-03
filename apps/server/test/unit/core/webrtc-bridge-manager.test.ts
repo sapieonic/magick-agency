@@ -87,7 +87,8 @@ const { mockAnalytics } = vi.hoisted(() => ({
 vi.mock('../../../src/analytics/posthog.js', () => mockAnalytics);
 
 import { WebRtcBridgeManager, WebRtcCallError, UNSTORED_WS_TOKEN_CAP } from '../../../src/core/webrtc-bridge-manager.js';
-import { UNSTORED_WS_TOKEN_SWEEP_MS } from '../../../src/core/bridge/ws-tokens.js';
+import { CarrierRequestTimeoutError, isDialOutcomeUnknown } from '../../../src/telephony/carrier-errors.js';
+import { BridgeWsTokens, UNSTORED_WS_TOKEN_SWEEP_MS } from '../../../src/core/bridge/ws-tokens.js';
 import { encodeAlaw, decodeAlaw } from '../../../src/utils/audio.js';
 // The platform's default for an unset allow_recording; the bridge must agree with it.
 import { DEFAULT_ALLOW_RECORDING } from '../../../src/settings/agency-account-settings.js';
@@ -267,6 +268,207 @@ describe('WebRtcBridgeManager dial', () => {
     // slot released via endCall path
     expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
     expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
+  });
+
+  // A timed-out add_lead may have queued the lead at the carrier. The dial still fails and
+  // releases everything at once (the carrier may be down; holding an agent and the slots
+  // for it is the defect the timeout exists to end), but the refusal carries the adapter's
+  // error as `cause` and the ended event says TELEPHONY_INIT_OUTCOME_UNKNOWN, so the dialer
+  // can defer the contact's redial. Mutation-checked: dropping `refusal.cause = err` reds
+  // the `isDialOutcomeUnknown` assertion.
+  it('a dial whose outcome is unknown (add_lead timed out) fails, releases its slots, and says so', async () => {
+    const cm = makeCallManager();
+    const timeout = new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 15_000, true);
+    mockAdapter.initiateCall.mockRejectedValue(timeout);
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string; errorCode?: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+
+    const err = await dial(mgr).then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(WebRtcCallError);
+    expect(err).toMatchObject({ code: 'telephony_init_failed' });
+    expect((err as Error).cause).toBe(timeout);
+    expect(isDialOutcomeUnknown(err)).toBe(true);
+    expect(events.filter((e) => e.phase === 'ended')).toEqual([
+      expect.objectContaining({ errorCode: 'TELEPHONY_INIT_OUTCOME_UNKNOWN' }),
+    ]);
+    expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+    expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
+    expect(mgr.getActiveCallIds()).toEqual([]);
+  });
+
+  it('a plain carrier refusal is not outcome-unknown', async () => {
+    const cm = makeCallManager();
+    mockAdapter.initiateCall.mockRejectedValue(new Error('VoiceLink /v1/add_lead error 500: no'));
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string; errorCode?: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    const err = await dial(mgr).then(() => null, (e: unknown) => e);
+    expect(isDialOutcomeUnknown(err)).toBe(false);
+    expect(events.filter((e) => e.phase === 'ended')).toEqual([
+      expect.objectContaining({ errorCode: 'TELEPHONY_INIT_FAILED' }),
+    ]);
+  });
+});
+
+// A throw between registering the session and the carrier request (steps 4–5 of
+// `placeOutboundLeg`: the max-duration timer, the borrowed socket, the carrier's tokens)
+// escaped with the session, its slots, its lease entry, its armed timer and the borrowed
+// station socket's listeners all left behind until the timer fired 30 minutes later.
+// The leg was never placed, so the teardown hangs nothing up and emits no `ended`: the
+// rejection is the dial's one settlement signal, as for a refused admission or a failed
+// INSERT. Mutation-checked: removing the guard's teardown reds the first case.
+describe('WebRtcBridgeManager dial — a failure before the carrier leg is placed', () => {
+  /** A borrowed socket that counts the listeners the bridge left on it. */
+  function countingWs() {
+    const ws = fakeWs();
+    let live = 0;
+    const on = ws.on.bind(ws);
+    const off = ws.off.bind(ws);
+    ws.on = (ev, cb) => { live++; on(ev, cb); };
+    ws.off = (ev, cb) => { live--; off(ev, cb); };
+    return Object.assign(ws, { listeners: () => live });
+  }
+
+  it('a token-store throw tears the session down once: slots, lease, timer, socket listeners released, no carrier request, no `ended`', async () => {
+    const cm = makeCallManager();
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    const browser = countingWs();
+    let registered: { maxDurationTimer: unknown; slotsHeld: boolean } | undefined;
+    let leasesWhileRegistered: unknown[] = [];
+    const storeFailure = new Error('token store down');
+    const store = vi.spyOn(BridgeWsTokens.prototype, 'storeWsToken').mockImplementation(async (callId: string) => {
+      registered = mgr.getSession(callId) as unknown as typeof registered;
+      leasesWhileRegistered = mgr.heldLeases();
+      throw storeFailure;
+    });
+    try {
+      const err = await dial(mgr, VL_PARAMS, browser).then(() => null, (e: unknown) => e);
+      expect(err).toBe(storeFailure);
+    } finally {
+      store.mockRestore();
+    }
+
+    // The failure really was inside the window: registered, timer armed, socket attached.
+    expect(leasesWhileRegistered).toEqual([expect.objectContaining({ callId: 'call-1' })]);
+    expect(registered).toBeDefined();
+    // Everything that window took is given back.
+    expect(mgr.getActiveCallIds()).toEqual([]);
+    expect(mgr.heldLeases()).toEqual([]);
+    expect(registered!.maxDurationTimer).toBeNull();
+    expect(registered!.slotsHeld).toBe(false);
+    expect(browser.listeners()).toBe(0);
+    expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+    expect(cm.accountConcurrencyGuard.release).toHaveBeenCalledTimes(1);
+    // The leg was never placed: no carrier request, nothing to hang up.
+    expect(mockAdapter.initiateCall).not.toHaveBeenCalled();
+    expect(mockAdapter.endCall).not.toHaveBeenCalled();
+    // One terminal row, saying why.
+    const terminal = mockRepo.update.mock.calls.filter((c: any[]) => c[1]?.ended_at !== undefined);
+    expect(terminal).toEqual([['call-1', expect.objectContaining({
+      status: 'failed', outcome: 'bridge_setup_failed', error_code: 'BRIDGE_SETUP_FAILED',
+    })]]);
+    // No lifecycle event at all: the rejection is the settlement signal.
+    expect(events).toEqual([]);
+
+    // Nothing left to fire later: a late close of the agent's socket ends nothing.
+    browser.emit('close', 1006, Buffer.from(''));
+    await new Promise((r) => setImmediate(r));
+    expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+    expect(events).toEqual([]);
+  });
+
+  /**
+   * The three steps that build the carrier request (the webhook base, the adapter lookup,
+   * the carrier URLs) ask the carrier nothing. They sat inside the carrier request's `try`,
+   * whose catch ended the call `TELEPHONY_INIT_FAILED` with an `ended` event, so the dialer
+   * charged the contact's `failed` allowance for a dial that never left this process (a
+   * missing webhook base, an unknown provider). Each now takes the unplaced path.
+   */
+  it.each([
+    ['the webhook base', (mgr: any) => {
+      mgr.webhookUrls.baseUrl = () => { throw new Error('no webhook base configured'); };
+    }],
+    ['the adapter lookup', (mgr: any) => {
+      mgr.telephonyRegistry.get = () => { throw new Error('Unknown telephony provider: nope'); };
+    }],
+    // An empty base: `buildCarrierUrls` builds the media URL with `new URL('')`, which throws.
+    ['the carrier URLs', (mgr: any) => { mgr.webhookUrls.baseUrl = () => ''; }],
+  ])('a throw building the carrier request (%s) is a failure before the carrier: no `ended`, BRIDGE_SETUP_FAILED, everything released', async (_what, breakIt) => {
+    const cm = makeCallManager();
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    breakIt(mgr);
+    const browser = countingWs();
+
+    const err = await dial(mgr, VL_PARAMS, browser).then(() => null, (e: unknown) => e);
+
+    // The original error rejects the dial, not a carrier refusal.
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(WebRtcCallError);
+    expect(mockAdapter.initiateCall).not.toHaveBeenCalled();
+    const terminal = mockRepo.update.mock.calls.filter((c: any[]) => c[1]?.ended_at !== undefined);
+    expect(terminal).toEqual([['call-1', expect.objectContaining({
+      status: 'failed', outcome: 'bridge_setup_failed', error_code: 'BRIDGE_SETUP_FAILED',
+    })]]);
+    expect(events, 'an `ended` makes the dialer settle it as a placed call the carrier refused').toEqual([]);
+    expect(mgr.getActiveCallIds()).toEqual([]);
+    expect(mgr.heldLeases()).toEqual([]);
+    expect(browser.listeners()).toBe(0);
+    expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('a teardown while the token store is in flight does not dial: one `ended`, no carrier request', async () => {
+    const cm = makeCallManager();
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string; outcome?: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const store = vi.spyOn(BridgeWsTokens.prototype, 'storeWsToken').mockImplementation(() => gate);
+    try {
+      const browser = fakeWs();
+      const placing = dial(mgr, VL_PARAMS, browser);
+      await vi.waitFor(() => expect(store).toHaveBeenCalled());
+      // The agent's station socket drops while the tokens are being stored.
+      browser.emit('close', 1006, Buffer.from(''));
+      await vi.waitFor(() => expect(mgr.getActiveCallIds()).toEqual([]));
+      release();
+      await expect(placing).resolves.toMatchObject({ record: { id: 'call-1' } });
+    } finally {
+      store.mockRestore();
+    }
+    expect(mockAdapter.initiateCall).not.toHaveBeenCalled();
+    expect(events.filter((e) => e.phase === 'ended')).toEqual([
+      expect.objectContaining({ outcome: 'agent_disconnected' }),
+    ]);
+    expect(mgr.heldLeases()).toEqual([]);
+    expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failed `provider_call_id` write after the carrier accepted the dial leaves the call live (it is placed)', async () => {
+    const cm = makeCallManager();
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    mockRepo.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
+      if ('provider_call_id' in patch) throw new Error('pool exhausted');
+      return null;
+    });
+    try {
+      const { record } = await dial(mgr);
+      expect(record.id).toBe('call-1');
+      expect(mgr.getActiveCallIds()).toEqual(['call-1']);
+      expect(events).toEqual([]);
+      expect(cm.concurrencyGuard.release).not.toHaveBeenCalled();
+      expect(mockAdapter.endCall).not.toHaveBeenCalled();
+    } finally {
+      mockRepo.update.mockImplementation(async () => null);
+    }
+    await endByUser(mgr);
   });
 });
 

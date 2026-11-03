@@ -1,5 +1,14 @@
 import { z } from 'zod';
 import { envBoolean, type Env } from '../env.js';
+import {
+  DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX,
+  DEFAULT_RATE_LIMIT_INTERNAL_MAX,
+  DEFAULT_RATE_LIMIT_IP_AUTH_MAX,
+  DEFAULT_RATE_LIMIT_MAX,
+  DEFAULT_RATE_LIMIT_STATION_MAX,
+  DEFAULT_RATE_LIMIT_WEBHOOK_MAX,
+  DEFAULT_RATE_LIMIT_WINDOW,
+} from '../../api/middleware/rate-limit-defaults.js';
 
 /**
  * Voice-engine config: the bridge, guards, VoiceLink adapter, rate limiter, clip
@@ -7,7 +16,24 @@ import { envBoolean, type Env } from '../env.js';
  */
 
 const concurrencySchema = z.object({
-  maxConcurrentCalls: z.coerce.number().default(200),
+  /**
+   * `MAX_CONCURRENT_CALLS`: the process-wide ceiling on call legs holding a concurrency slot
+   * (the global guard). Per-account limits and the carrier allocation (super-admin settings)
+   * are the business limits; this one guards the process, so it must sit above what a full
+   * floor legitimately holds, or the bridge refuses dials the pacing tick placed.
+   *
+   * A slot is held from admission until the leg is finalised, which is longer than talk
+   * time. Sized for 500 agents, ~170 answered calls a minute at ~3 dials per answer
+   * (~510 dials a minute):
+   *  - unanswered dials hold a slot until VoiceLink's terminal report, dial + 45–75 s:
+   *    ~340 a minute × ~60 s ≈ 340 legs;
+   *  - answered calls ring first: ~170 × ~15 s ≈ 40 legs;
+   *  - live talk: ~170 a minute × ~2.3 min ≈ 390 legs;
+   *  - `ending`: an answered hangup waits up to 45 s for the carrier's `call.ended`:
+   *    ~170 × ~30 s ≈ 85 legs.
+   * ≈ 860 at peak; 1000 leaves ~15% headroom. (It was 200: a ~70-agent floor.)
+   */
+  maxConcurrentCalls: z.coerce.number().int().min(1).default(1000),
   callTimeoutSeconds: z.coerce.number().positive().default(300),
   /**
    * How often the background self-heal sweep runs (reconcile concurrency
@@ -40,6 +66,18 @@ const voicelinkSchema = z.object({
    * the bare `customer_number` + separate `country_code` fields add_lead requires.
    */
   defaultCountryCode: z.string().optional().default('91'),
+  /**
+   * `VOICELINK_LOGIN_TIMEOUT_MS`: abandon a login after this long. The login is
+   * single-flight, so every dial waits on it; a timeout rejects them all once and the next
+   * dial logs in afresh. Default 10 s (`voicelink-token-manager.ts`).
+   */
+  loginTimeoutMs: z.coerce.number().int().min(1000).max(120_000).default(10_000),
+  /**
+   * `VOICELINK_ADD_LEAD_TIMEOUT_MS`: abandon an `add_lead` after this long. A timed-out
+   * add_lead fails the dial but may have queued the lead, so it is never retried and the
+   * contact's redial is deferred (`voicelink.adapter.ts`, `post`). Default 15 s.
+   */
+  addLeadTimeoutMs: z.coerce.number().int().min(1000).max(120_000).default(15_000),
 });
 
 /**
@@ -73,20 +111,20 @@ export const telephonySchema = z.object({
   requireField('voicelink.webhookBaseUrl', data.voicelink.webhookBaseUrl);
 });
 
-// The sizing rationale (why webhookMax is 1000, why carrier media has its own bucket,
-// why bearer-carrying traffic gets `ipAuthMax`) is in the rate-limit middleware header.
+// Why each bucket exists is in the rate-limit middleware header; the defaults and their
+// sizing for a 500-agent floor behind one NAT are in `api/middleware/rate-limit-defaults.ts`.
 // The per-USER ceiling is not here: it keys on the verified user, which is the platform
 // block's (`userRateLimit`, `RATE_LIMIT_USER_MAX`).
 const rateLimitSchema = z.object({
-  max: z.coerce.number().int().min(1).default(200),
+  max: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_MAX),
   /** `RATE_LIMIT_IP_AUTH_MAX`: the per-IP ceiling for requests carrying `Authorization: Bearer`. */
-  ipAuthMax: z.coerce.number().int().min(1).default(3000),
-  webhookMax: z.coerce.number().int().min(1).default(1000),
-  carrierMediaMax: z.coerce.number().int().min(1).default(600),
+  ipAuthMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_IP_AUTH_MAX),
+  webhookMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_WEBHOOK_MAX),
+  carrierMediaMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_CARRIER_MEDIA_MAX),
   /** `RATE_LIMIT_STATION_MAX`: station socket upgrades per IP (single-use token, no bearer). */
-  stationMax: z.coerce.number().int().min(1).default(1200),
-  internalMax: z.coerce.number().int().min(1).default(1000),
-  timeWindow: z.string().default('1 minute'),
+  stationMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_STATION_MAX),
+  internalMax: z.coerce.number().int().min(1).default(DEFAULT_RATE_LIMIT_INTERNAL_MAX),
+  timeWindow: z.string().default(DEFAULT_RATE_LIMIT_WINDOW),
 });
 
 // The app's own bucket.
@@ -250,6 +288,8 @@ export function readVoiceEnv(env: Env): Record<string, unknown> {
         password: env['VOICELINK_PASSWORD'],
         webhookBaseUrl: env['VOICELINK_WEBHOOK_BASE_URL'],
         defaultCountryCode: env['VOICELINK_DEFAULT_COUNTRY_CODE'],
+        loginTimeoutMs: env['VOICELINK_LOGIN_TIMEOUT_MS'],
+        addLeadTimeoutMs: env['VOICELINK_ADD_LEAD_TIMEOUT_MS'],
       },
     },
     telephonyCredentials: {

@@ -21,11 +21,19 @@
  *   policy on the charged attempt, as a campaign call's no-answer gets, so pacing
  *   does not ring the customer straight back) and then the Redis claim. A bridged
  *   call waits for its outcome; its claim is kept.
- * - **A dial the bridge refused before the carrier** (concurrency, a dead socket),
- *   or the carrier refused outright, is ended `failed` and UNPLACED (`dialed_at`
+ * - **A dial the bridge refused before the carrier** (concurrency, a dead socket, or
+ *   a failure inside the bridge before the carrier was asked: `dial_failed`), or the
+ *   carrier refused outright, is ended `failed` and UNPLACED (`dialed_at`
  *   cleared: it is no dial in the usage counts), its contact claim RELEASED (no
  *   attempt charged: nothing was dialled) and the Redis claim cleared; the caller
  *   answers the refusal.
+ * - **A dial whose outcome is unknown** (`add_lead` timed out or answered unreadably:
+ *   the carrier may still ring the customer) is NOT unplaced: it is ended `failed`
+ *   with `dialed_at` kept, and its contact is held back as the campaign path holds
+ *   one (`manualNoOutcomeSettlement`: the our-fault ledger, no redial for
+ *   `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`). So is the contact of a call that ended
+ *   while such a dial was still in flight (the agent hung up during `add_lead`):
+ *   `onEnded` waits for the dial's answer (`dialSettled`) before settling the contact.
  */
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
@@ -37,6 +45,7 @@ import type {
   AgencyPriorAttempt,
 } from '@magick-agency/contracts/agency';
 import { WebRtcCallError } from '../../core/webrtc-bridge-manager.js';
+import { DIAL_OUTCOME_UNKNOWN_ERROR_CODE, isDialOutcomeUnknown } from '../../telephony/carrier-errors.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../../core/webrtc-bridge-manager.js';
 import {
   agencyAttemptRepository,
@@ -104,6 +113,15 @@ interface LiveManualCall {
   priors: AgencyPriorAttempt[];
   /** Set by a hang-up that arrived before the bridge held the call. */
   endRequestedBy: EndRequester | null;
+  /** True while `createBridgedCall` is in flight (the carrier's `add_lead` among it). */
+  placing: boolean;
+  /**
+   * Resolves once `createBridgedCall` has returned: true when it rejected with an
+   * outcome-unknown error. `onEnded` awaits it for a call that ended unanswered, since
+   * an end can race the dial (a hang-up during `add_lead`) and only the dial knows
+   * whether the carrier may still ring the customer. Never rejects.
+   */
+  dialSettled: Promise<boolean>;
 }
 
 export type ManualDialFailure = 'concurrency_limit' | 'station_unavailable' | 'dial_failed';
@@ -253,6 +271,7 @@ export class ManualDialer {
   ): Promise<{ ok: true } | { ok: false; failure: ManualDialFailure }> {
     // Registered before the first await: a hang-up (or the reconnect, or the orphan
     // sweep's live set) arriving while the priors load must find the call.
+    let dialReturned!: (outcomeUnknown: boolean) => void;
     const entry: LiveManualCall = {
       id: call.id,
       sessionId: call.session_id,
@@ -260,6 +279,10 @@ export class ManualDialer {
       accountId: call.account_id,
       priors: [],
       endRequestedBy: null,
+      placing: false,
+      // Lifecycle events exist only once the bridge has the call, so nothing awaits this
+      // before the dial below; it is resolved on every way out of that dial.
+      dialSettled: new Promise<boolean>((resolve) => { dialReturned = resolve; }),
     };
     this.track(entry);
     // ── Everything between the registration and the bridge is guarded ──────────
@@ -290,6 +313,7 @@ export class ManualDialer {
     }
 
     let webrtcCallId: string;
+    entry.placing = true;
     try {
       const record = await this.bridge.createBridgedCall({
         tenantId: call.tenant_id,
@@ -307,27 +331,38 @@ export class ManualDialer {
         browserCloseGraceMs: DEFERRED_HANGUP_MS,
       });
       webrtcCallId = record.id;
+      entry.placing = false;
+      dialReturned(false);
     } catch (err) {
+      entry.placing = false;
+      // Before anything below waits on this call's chain: its `onEnded` may be waiting on it.
+      dialReturned(isDialOutcomeUnknown(err));
       if (err instanceof WebRtcCallError && err.code === 'telephony_init_failed') {
-        // The carrier refused the dial. The bridge already ended the leg (awaited before
-        // it threw), so its `ended` event is queued on this call's chain: wait for it, so
-        // the caller's answer is the row as it ended and settled, not a `dialing` one.
+        // The carrier refused the dial (or its outcome is unknown). The bridge already
+        // ended the leg (awaited before it threw), so its `ended` event is queued on this
+        // call's chain: wait for it, so the caller's answer is the row as it ended and
+        // settled, not a `dialing` one. An outcome-unknown dial answers 201 with that row
+        // too (`failed`, "didn't go through"); its contact is held, not released.
         log.warn({ err, manualCallId: call.id }, 'Soft-phone dial refused by the carrier');
         await this.settled(call.id);
         return { ok: true };
       }
       // A refusal this code does not name is the platform's, not the agent's: not a
       // missing station (which would tell them to check a connection that is fine).
+      // So is any other error: every one the bridge rejects with that is not a carrier
+      // refusal (`telephony_init_failed`, above) was thrown before the carrier was asked
+      // (the row INSERT, the carrier tokens, the carrier request's own inputs: the
+      // bridge's `abortUnplacedLeg`, no `ended`), so nothing was dialled and the
+      // reviewed `dial_failed` (503, retry) is the true answer, not a masked 500.
       const failure: ManualDialFailure =
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable' ? 'station_unavailable'
           : err instanceof WebRtcCallError && CONCURRENCY_REFUSALS.has(err.code) ? 'concurrency_limit'
             : 'dial_failed';
       if (!(err instanceof WebRtcCallError)) {
-        log.error({ err, manualCallId: call.id }, 'Soft-phone dial failed before the carrier');
-        await this.serial(call.id, () => this.abandonUnplaced(call.id));
-        throw err;
+        log.error({ err, manualCallId: call.id }, 'Soft-phone dial failed in the bridge before the carrier');
+      } else {
+        log.warn({ err, manualCallId: call.id, failure }, 'Soft-phone dial refused before the carrier');
       }
-      log.warn({ err, manualCallId: call.id, failure }, 'Soft-phone dial refused before the carrier');
       await this.serial(call.id, () => this.abandonUnplaced(call.id));
       return { ok: false, failure };
     }
@@ -387,7 +422,7 @@ export class ManualDialer {
       this.untrack(manualCallId);
     }
     if (!ended) return;
-    await this.closeWithoutOutcome(ended);
+    await this.closeWithoutOutcome(ended, { dialOutcomeUnknown: false });
     const fresh = await agencyManualCallRepository.findById(manualCallId, { tenantId: ended.tenant_id, accountId: ended.account_id });
     if (fresh) await this.sendFrame(fresh);
   }
@@ -434,15 +469,27 @@ export class ManualDialer {
         endReason: manualEndReasonFor(outcome, ev.outcome, entry.endRequestedBy),
         talkSeconds: typeof ev.talkTimeSeconds === 'number' ? Math.max(0, Math.round(ev.talkTimeSeconds)) : null,
         // The carrier refused the dial outright: it was never placed (SP5 meters
-        // nothing for it, and no attempt is charged).
-        unplaced: ev.outcome === 'telephony_init_failed' && !ev.answered && before.bridged_at === null,
+        // nothing for it, and no attempt is charged). Not when its outcome is unknown:
+        // the carrier may have queued it, so it keeps `dialed_at`.
+        unplaced: ev.outcome === 'telephony_init_failed' && ev.errorCode !== DIAL_OUTCOME_UNKNOWN_ERROR_CODE
+          && !ev.answered && before.bridged_at === null,
       });
     } finally {
       this.untrack(entry.id);
     }
     // Already ended (the orphan sweep got there first): report what is there.
     const row = ended ?? before;
-    if (ended && ended.bridged_at === null) await this.closeWithoutOutcome(ended);
+    if (ended && ended.bridged_at === null) {
+      // Unanswered: was the dial's outcome unknown? The bridge's own end says so; an end
+      // that raced the dial (a hang-up during `add_lead`) is answered by the dial, so
+      // wait for it, telling the agent the call ended meanwhile.
+      let dialOutcomeUnknown = ev.errorCode === DIAL_OUTCOME_UNKNOWN_ERROR_CODE;
+      if (!dialOutcomeUnknown && !ev.answered) {
+        if (entry.placing) await this.sendFrame(ended);
+        dialOutcomeUnknown = await entry.dialSettled;
+      }
+      await this.closeWithoutOutcome(ended, { dialOutcomeUnknown });
+    }
     log.info({ manualCallId: entry.id, outcome, bridged: before.bridged_at !== null, owesOutcome: ended?.bridged_at != null }, 'Soft-phone call ended');
     const fresh = await agencyManualCallRepository.findById(entry.id, scope);
     await this.sendFrame(fresh ?? row);
@@ -458,7 +505,10 @@ export class ManualDialer {
    * dial `outcome_pending` with no outcome pad to clear it. If every try fails the
    * lapse sweep closes it within `MANUAL_UNANSWERED_SETTLE_GRACE_MS` plus a sweep.
    */
-  private async closeWithoutOutcome(row: AgencyManualCallRecord): Promise<void> {
+  private async closeWithoutOutcome(
+    row: AgencyManualCallRecord,
+    opts: { dialOutcomeUnknown: boolean },
+  ): Promise<void> {
     for (let attempt = 1; attempt <= SETTLE_ATTEMPTS; attempt++) {
       const client = await getPool().connect().catch((err: unknown) => {
         log.warn({ err, manualCallId: row.id, attempt }, 'Could not reach the database to settle a soft-phone call');
@@ -467,7 +517,7 @@ export class ManualDialer {
       if (client) {
         let settled: boolean | null = null;
         try {
-          const settlement = await noOutcomeSettlementFor(row);
+          const settlement = await noOutcomeSettlementFor(row, new Date(), opts);
           await client.query('BEGIN');
           const done = await agencyManualCallRepository.settleWithoutDisposition(row.id, { client });
           if (done && settlement) await applyNoOutcomeSettlement(done, settlement, { client });

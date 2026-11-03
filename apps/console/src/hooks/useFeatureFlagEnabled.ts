@@ -1,3 +1,5 @@
+import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
+import type { ClientExposedAgencyFlagKey } from '@magick-agency/contracts/flags';
 import { useFeatureFlags } from '../contexts/FeatureFlagsContext';
 
 /**
@@ -24,3 +26,19 @@ export function useFeatureFlagEnabled(flag: string): boolean {
 
 /** The soft phone's flag (`docs/softphone.md`, SP4). */
 export const SOFTPHONE_FLAG = 'agency_softphone_enabled';
+
+/**
+ * The call-audio format flag: on (the default), the station socket carries binary
+ * A-law (`alaw8`); off, base64 PCM16 (`pcm16`), the tenant's way back without a
+ * deploy. Typed against the contracts so a renamed or withdrawn flag fails to compile.
+ */
+export const CONSOLE_ALAW8_FLAG: ClientExposedAgencyFlagKey = 'agency_console_alaw8';
+
+/**
+ * The station socket format this console asks for. **Fails to `pcm16`**, like every
+ * flag read here (no provider, still loading, a failed read): the format every server
+ * speaks, at the higher server cost, never a call without audio.
+ */
+export function useStationMediaFormat(): AgencyStationMediaFormat {
+  return useFeatureFlagEnabled(CONSOLE_ALAW8_FLAG) ? 'alaw8' : 'pcm16';
+}

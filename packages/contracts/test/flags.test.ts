@@ -7,12 +7,14 @@ const EXPECTED = {
   agency_late_binding: { default: false, envVar: 'FF_AGENCY_LATE_BINDING', clientExposed: undefined },
   agency_call_analysis: { default: false, envVar: 'FF_AGENCY_CALL_ANALYSIS', clientExposed: true },
   agency_softphone_enabled: { default: false, envVar: 'FF_AGENCY_SOFTPHONE', clientExposed: true },
+  // The one default-on flag: the way back to pcm16, not a capability (see flags.ts).
+  agency_console_alaw8: { default: true, envVar: 'FF_AGENCY_CONSOLE_ALAW8', clientExposed: true },
 } as const;
 
 describe('agency flags', () => {
-  it('are exactly the four keys', () => {
+  it('are exactly the five keys', () => {
     expect(Object.keys(AGENCY_FLAGS).sort()).toEqual([...AGENCY_FLAG_KEYS].sort());
-    expect(AGENCY_FLAG_KEYS).toHaveLength(4);
+    expect(AGENCY_FLAG_KEYS).toHaveLength(5);
   });
 
   it.each(AGENCY_FLAG_KEYS)('%s keeps its key, type, default, scopes, envVar and exposure', (key) => {
@@ -31,6 +33,7 @@ describe('agency flags', () => {
       agency_dialer_enabled: true,
       agency_call_analysis: false,
       agency_softphone_enabled: false,
+      agency_console_alaw8: true,
     };
     expect(Object.keys(map)).not.toContain('agency_late_binding');
   });

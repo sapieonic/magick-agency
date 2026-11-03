@@ -248,6 +248,8 @@ function reservedAgents(): AgentStateMachine {
   vi.spyOn(agents, 'transition').mockResolvedValue(true);
   vi.spyOn(agents, 'set').mockResolvedValue(undefined as any);
   vi.spyOn(agents, 'renew').mockResolvedValue(true);
+  // The dial's lease renewer reads the tri-state `renewLease` (it stops only on `lost`).
+  vi.spyOn(agents, 'renewLease').mockResolvedValue('renewed');
   return agents;
 }
 

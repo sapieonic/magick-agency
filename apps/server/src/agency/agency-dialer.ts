@@ -1,6 +1,12 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import { WebRtcCallError } from '../core/webrtc-bridge-manager.js';
+import {
+  DIAL_OUTCOME_UNKNOWN_ERROR_CODE,
+  DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS,
+  isDialOutcomeUnknown,
+} from '../telephony/carrier-errors.js';
+import type { UnrecordedEnd } from './reaper.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../core/webrtc-bridge-manager.js';
 import {
   agencyAgentSessionRepository,
@@ -11,7 +17,7 @@ import type { StationRegistry } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS, type AgentSetResult } from './agent-state-machine.js';
 import type { DialCommand, DialOptions } from './dial-dispatcher.js';
 import { buildPanel, isUnannounced, type LiveAttempt } from './dialer/live-attempt.js';
-import { settleContact } from './dialer/contact-settlement.js';
+import { holdOutcomeUnknownContact, settleContact } from './dialer/contact-settlement.js';
 import {
   classifyAttemptOutcome,
   releaseMessageFor,
@@ -58,6 +64,55 @@ export interface AgentReleaseResult {
 }
 
 const log = createChildLogger({ component: 'agency-dialer' });
+
+/** What the `ended` arm decided (`AgencyDialer.settleEnded`), for the contact's settlement. */
+interface EndedSettlement {
+  /** Wrap-up took the agent, so the `ended` arm must not release them. */
+  handedToWrapup: boolean;
+  /** The attempt row was written `ended`. */
+  rowEnded: boolean;
+  outcome: AgencyAttemptOutcome;
+  needsDisposition: boolean;
+}
+
+/** Defined beside the errors that carry the rule; re-exported for the dial path's callers. */
+export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
+
+/**
+ * How long a contact waits after its dial failed in the bridge before the carrier was asked
+ * (the bridge rejected with no `ended`: the call row INSERT, the carrier tokens, the carrier
+ * request's own inputs). Default, pending Manas (`docs/decisions.md`, "Dial failed before the
+ * carrier"). Not an admission refusal ({@link CAPACITY_REFUSALS}): that is back-pressure, not
+ * a fault, and its contact goes back at once.
+ *
+ * Without it the contact went back dialable at once, uncharged, and a failure that repeats
+ * (a missing webhook base, a database refusing the INSERT) redialled the same contact on
+ * every pacing tick once the roster had nothing older to offer: a tight loop of attempt
+ * rows, agent reservations and bridge setups, bounded by nothing.
+ *
+ * A delay rather than a charge to the our-fault ledger, deliberately. Nobody was called, so
+ * the repeat-dial ceiling that ledger enforces has nothing to protect, and its bound would
+ * RETIRE contacts: a systemic failure (every INSERT failing, a config error) fails dials in
+ * milliseconds, and at a bound of 3 it would exhaust the whole roster within seconds,
+ * permanently, for a fault in this process. The delay costs a working contact a minute and
+ * caps the rate at which any one contact can be retried; nothing is lost when the fault
+ * clears. A minute: well past the pacing tick, short beside every retry the policy sets.
+ */
+export const PRE_CARRIER_FAILURE_REDIAL_DELAY_MS = 60_000;
+
+/**
+ * The bridge's admission refusals: a concurrency slot was not available. Nothing failed, so
+ * the contact goes back dialable at once, as before {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS}
+ * existed: pacing caps its dials by the account limit, so the refusal is bounded by the next
+ * tick's capacity, not a loop, and holding the contact a minute would only stall a floor that
+ * frees capacity within seconds (`integration/load/concurrency-cap.test.ts`).
+ */
+const CAPACITY_REFUSALS: ReadonlySet<string> = new Set([
+  'global_concurrency_limit',
+  'account_concurrency_limit',
+  'provider_concurrency_limit',
+  'provider_concurrency_unavailable',
+]);
 
 /**
  * How long a `released` the agent never saw is kept for them to collect on
@@ -119,10 +174,15 @@ export class AgencyDialer {
    * but the agent is back in the pool with their station connected — which is
    * exactly what the reaper's periodic sweep reads as "still owned somewhere" and
    * skips. So the reaper is handed these ids directly
-   * ({@link unrecordedEndedAttemptIds}) and ends them `orphaned`. Process-local
+   * ({@link unrecordedEndedAttempts}) and ends them `orphaned`. Process-local
    * on purpose: after a restart the startup reaper ends every non-terminal row.
+   *
+   * attemptId → whether the dial's outcome is unknown (the carrier may have queued it;
+   * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS}). Every other end here is one this
+   * replica saw happen, so the reaper requeues its contact without the carrier rule's
+   * delay, as this replica would have had the write succeeded.
    */
-  private readonly unrecordedEnds = new Set<string>();
+  private readonly unrecordedEnds = new Map<string, boolean>();
   /**
    * Grace timers for a station that dropped while an UNANNOUNCED dial was ringing,
    * keyed by session id.
@@ -391,11 +451,16 @@ export class AgencyDialer {
     // for. The `answered` arm is where the socket gets bound, so an event that
     // arrived before this line existed would leave a live customer with no agent
     // and no record of the attempt to abandon.
-    this.liveByAttempt.set(attemptId, {
+    // Held as a local too: the dial's failure path below asks whether the `ended` arm
+    // has settled THIS record meanwhile (`liveByAttempt` no longer holds it).
+    let dialReturned!: (outcomeUnknown: boolean) => void;
+    const live: LiveAttempt = {
       cmd, state: 'dialing', bridgedAt: null, answeredAt: null, priors,
       lateBinding, panel: attempt, panelDelivered, dialedAt,
-      abandonReason: null,
-    });
+      abandonReason: null, placing: false, outcomeUnknownEnd: false,
+      dialSettled: new Promise<boolean>((resolve) => { dialReturned = resolve; }),
+    };
+    this.liveByAttempt.set(attemptId, live);
 
     /**
      * Only the DIAL is inside this try.
@@ -461,6 +526,7 @@ export class AgencyDialer {
     }
 
     let record: Awaited<ReturnType<typeof this.bridge.createBridgedCall>>;
+    live.placing = true;
     try {
       // The one line late binding changes about the dial: no socket goes to the
       // carrier leg, so `attachBrowserLeg`'s token-less fallback cannot reach this
@@ -471,14 +537,41 @@ export class AgencyDialer {
         : await this.bridge.createBridgedCall({ ...dialParams, browserSocket: socket });
 
     } catch (err) {
+      live.placing = false;
+      // The bridge wraps the adapter's error as `cause`; read through it. The `ended` arm
+      // may have seen the bridge's outcome-unknown end first (`onEnded`), which says the
+      // same thing whatever the rejection carries.
+      const outcomeUnknown = isDialOutcomeUnknown(err) || live.outcomeUnknownEnd;
+      // Before the check below: an `ended` arm that settled this attempt while the dial
+      // was in flight is waiting on this answer to settle its contact.
+      dialReturned(outcomeUnknown);
+      // ── Settled exactly once ─────────────────────────────────────────────────
+      //
+      // A dial the bridge got as far as the carrier with is ended by the bridge before
+      // this rejection reaches us: its `endCall` emits `ended` and then throws. Every
+      // such end except an outcome-unknown one is the `ended` arm's to settle (the
+      // attempt row, the `released` frame, the agent, and the contact once it has this
+      // dial's answer, `dialSettled`), and it has started to: it forgets the record
+      // synchronously, inside the emit. Abandoning it again here wrote the row a second
+      // time, sent the agent a second `released`, and released the agent a second time,
+      // after pacing may already have reserved them for their next call. The same holds
+      // for a teardown that raced the dial (the agent hung up while `add_lead` was in
+      // flight): the `ended` arm holds the contact back if this answer is outcome-unknown.
+      if (this.liveByAttempt.get(attemptId) !== live) {
+        log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed after its end was settled — the ended arm settles its contact');
+        return;
+      }
       const reason: AgencyReleaseReason =
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
           ? 'reservation_expired'
           : 'failed';
-      log.warn({ err, attemptId }, 'Agency dial failed');
-      await this.abandonBeforeDial(cmd, reason, panelDelivered);
+      const capacityRefused = err instanceof WebRtcCallError && CAPACITY_REFUSALS.has(err.code);
+      log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
+      await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused);
       return;
     }
+    live.placing = false;
+    dialReturned(false);
 
     // Id only — NEVER the state. By the time this runs the carrier may already
     // have answered and `onBridgeLifecycle` may already have written `bridged`
@@ -520,6 +613,16 @@ export class AgencyDialer {
     cmd: DialCommand,
     reason: AgencyReleaseReason,
     notifyAgent: boolean,
+    /**
+     * The carrier may have queued the failed dial: the contact is held back
+     * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
+     * (`holdOutcomeUnknownContact`). Otherwise it goes back uncharged: after
+     * {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS} for a dial that failed in the bridge
+     * (`failed`), at once for a dial called off before it (`reservation_expired`) or
+     * refused admission (`capacityRefused`).
+     */
+    dialOutcomeUnknown = false,
+    capacityRefused = false,
   ): Promise<void> {
     const outcome = reason === 'failed' ? 'failed' : 'orphaned';
     /**
@@ -556,14 +659,28 @@ export class AgencyDialer {
       outcome,
       ended_at: new Date(),
     }).catch((err) => {
-      this.unrecordedEnds.add(cmd.attemptId);
+      this.noteUnrecordedEnd(cmd.attemptId, dialOutcomeUnknown);
       log.error({ err, attemptId: cmd.attemptId }, 'Failed to end abandoned attempt — the reaper ends it');
     });
 
-    // The condition genuinely cleared, so `now()` is correct here — unlike an
-    // out-of-hours unclaim, which must move the clock forward.
-    await agencyContactRepository.unclaim(cmd.contactId, new Date())
-      .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to unclaim contact'));
+    if (dialOutcomeUnknown) {
+      // Not to be dialled again yet, and counted: the hold and the our-fault charge are
+      // one statement, so a contact whose dials keep ending this way is retired at the
+      // our-fault bound rather than redialled every 15 minutes for ever.
+      await holdOutcomeUnknownContact(cmd, outcome);
+    } else {
+      // Called off before the dial (the agent's socket or lease went, pacing stopped): the
+      // condition was the agent's or ours and has cleared, so `now()`. A dial the bridge
+      // failed before the carrier waits PRE_CARRIER_FAILURE_REDIAL_DELAY_MS, so a failure
+      // that repeats cannot redial the same contact on every tick (see the constant). Only
+      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's. An
+      // admission refusal is back-pressure, not a failure: at once (CAPACITY_REFUSALS).
+      const notBefore = reason === 'failed' && !capacityRefused
+        ? new Date(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS)
+        : new Date();
+      await agencyContactRepository.unclaim(cmd.contactId, notBefore)
+        .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to unclaim contact'));
+    }
 
     if (notifyAgent) this.sendReleased(cmd, reason, false, releaseMessageFor(reason));
     // Runs either way — the agent goes back to the pool (or `offline`) whether or
@@ -1044,21 +1161,95 @@ export class AgencyDialer {
    */
   private async onEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
     const cmd = live.cmd;
+    // ── An outcome-unknown dial is the dial's own failure path's to settle ─────
+    //
+    // The bridge ends a dial the carrier may have queued (`add_lead` timed out, or a 2xx
+    // whose body could not be read) with this end, from inside the dial call, and then
+    // the dial call rejects. `executeDial`'s catch is the path that holds the contact
+    // back for `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`, charging the our-fault ledger and
+    // not `attempt_count` (`abandonBeforeDial`). Settling here as well recorded it through the `failed`
+    // retry policy — charging `attempt_count` and choosing the campaign's own delay,
+    // which can be shorter than the hold — and then the hold's `unclaim` found the
+    // contact no longer `in_flight` and did nothing. So the record is left exactly as it
+    // is (registered, lease renewed) for the catch, which runs as soon as the bridge has
+    // released the call's slots.
+    if (live.placing && ev.errorCode === DIAL_OUTCOME_UNKNOWN_ERROR_CODE) {
+      live.outcomeUnknownEnd = true;
+      log.info({ attemptId: cmd.attemptId, callId: ev.callId }, 'Outcome-unknown dial ended by the bridge — the dial\'s failure path settles it');
+      return;
+    }
+    // ── An end that raced the dial: its contact waits for the dial's answer ──
+    //
+    // Any other end while the dial is still in flight and nothing answered: the agent
+    // hung up during a slow `add_lead`, the station went away, the bridge ended the call.
+    // The attempt row, the `released` frame and the agent are settled now, but the
+    // contact cannot be yet: if the dial then fails outcome-unknown, the carrier may
+    // still ring that customer, so the contact must be held back
+    // (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`), and the dial's failure path finds this
+    // attempt already settled and leaves it alone. Settling the contact here through
+    // the policy (the our-fault `canceled` path, a 5-minute delay by default and as
+    // short as a campaign likes) lost the hold. It stays `in_flight` (claimed, so no
+    // tick can take it) for the moment the dial takes to return (`dialSettled`).
+    const contactAfterDial = live.placing && live.answeredAt === null && live.bridgedAt === null;
     this.forgetAttempt(cmd);
 
-    let handedToWrapup = false;
+    let settled: EndedSettlement | null = null;
     try {
-      handedToWrapup = await this.settleEnded(live, ev);
+      settled = await this.settleEnded(live, ev, contactAfterDial);
     } finally {
-      if (!handedToWrapup) await this.releaseAgent(cmd.sessionId);
+      if (!settled?.handedToWrapup) await this.releaseAgent(cmd.sessionId);
+    }
+    if (contactAfterDial) await this.settleContactAfterDial(live, settled);
+  }
+
+  /**
+   * The contact of an attempt the `ended` arm settled while its dial was in flight, once
+   * the dial has returned: held back and charged to the our-fault ledger when the dial
+   * failed outcome-unknown (`holdOutcomeUnknownContact`, the dial failure path's rule),
+   * else routed as the `ended` arm routes any contact (`settleContact`). A row that could
+   * not be written goes to the reaper, told whether the dial's outcome is unknown.
+   */
+  private async settleContactAfterDial(live: LiveAttempt, settled: EndedSettlement | null): Promise<void> {
+    const cmd = live.cmd;
+    const dialOutcomeUnknown = await live.dialSettled;
+    // `settleEnded` threw before it had classified anything: the contact stays
+    // `in_flight` behind the attempt, for the reaper's sweeps.
+    if (!settled) return;
+    if (!settled.rowEnded) {
+      this.noteUnrecordedEnd(cmd.attemptId, dialOutcomeUnknown);
+      return;
+    }
+    if (dialOutcomeUnknown) {
+      log.warn(
+        { attemptId: cmd.attemptId, contactId: cmd.contactId, outcome: settled.outcome },
+        'Dial ended while its outcome was unknown — holding the contact back',
+      );
+      await holdOutcomeUnknownContact(cmd, settled.outcome);
+      return;
+    }
+    try {
+      await settleContact(cmd, settled.outcome, settled.needsDisposition, live.bridgedAt);
+    } catch (err) {
+      log.error(
+        { err, attemptId: cmd.attemptId, contactId: cmd.contactId, outcome: settled.outcome },
+        'Could not settle the contact of an ended attempt — the reaper requeues a stranded contact',
+      );
     }
   }
 
   /**
-   * Classify the ended attempt, record it, and tell the agent. Returns true when
-   * wrap-up took the agent (so `onEnded` must not release them), false otherwise.
+   * Classify the ended attempt, record it, and tell the agent. `handedToWrapup` is true
+   * when wrap-up took the agent (so `onEnded` must not release them).
+   *
+   * `contactAfterDial`: the dial is still in flight, so the contact is left to
+   * {@link settleContactAfterDial} (and so is reporting an unwritten row to the reaper,
+   * which needs the dial's answer too).
    */
-  private async settleEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<boolean> {
+  private async settleEnded(
+    live: LiveAttempt,
+    ev: WebRtcLifecycleEvent,
+    contactAfterDial: boolean,
+  ): Promise<EndedSettlement> {
     const cmd = live.cmd;
     // ── `bridged` means BRIDGED, from the bridge's own stamp ─────────────────
     //
@@ -1183,7 +1374,10 @@ export class AgencyDialer {
       await this.recordEndedAttempt(live, ev, { outcome, abandoned, abandonReason });
     } catch (err) {
       rowEnded = false;
-      this.unrecordedEnds.add(cmd.attemptId);
+      // The bridge saw this call end. Only a dial that failed with an unknown outcome
+      // may still be placed by the carrier. (A backstop: that end, emitted while the dial
+      // is in flight, is left to the dial's failure path above and never reaches here.)
+      if (!contactAfterDial) this.noteUnrecordedEnd(cmd.attemptId, ev.errorCode === DIAL_OUTCOME_UNKNOWN_ERROR_CODE);
       log.error(
         { err, attemptId: cmd.attemptId, outcome },
         'Could not record the ended attempt — releasing the agent without wrap-up; the reaper ends the row and requeues the contact',
@@ -1193,7 +1387,7 @@ export class AgencyDialer {
     // attempt, which no attempt sweep can see; the reaper's stranded-contact sweep
     // requeues it. (A contact parked `connected` at the bridge keeps its wrap-up,
     // and the disposition route or the lapsed-wrap-up sweep releases it.)
-    if (rowEnded) {
+    if (rowEnded && !contactAfterDial) {
       try {
         // Which ledger pays for this attempt and what the retry policy does with
         // the contact — `dialer/contact-settlement.ts`.
@@ -1302,10 +1496,10 @@ export class AgencyDialer {
       });
       // `false` ⇒ `wrapup_seconds = 0`, so the agent goes straight to `available`
       // Falling through is that path.
-      if (entered) return true;
+      if (entered) return { handedToWrapup: true, rowEnded, outcome, needsDisposition };
     }
 
-    return false;
+    return { handedToWrapup: false, rowEnded, outcome, needsDisposition };
   }
 
   /**
@@ -1624,8 +1818,17 @@ export class AgencyDialer {
    * {@link unrecordedEnds}). A copy, for the same reason as
    * {@link activeAttemptIds}.
    */
-  unrecordedEndedAttemptIds(): string[] {
-    return [...this.unrecordedEnds];
+  unrecordedEndedAttempts(): UnrecordedEnd[] {
+    return [...this.unrecordedEnds].map(([attemptId, dialOutcomeUnknown]) => ({ attemptId, dialOutcomeUnknown }));
+  }
+
+  /**
+   * Hand an attempt whose `ended` write failed to the reaper. An outcome-unknown dial
+   * ends on two paths (the bridge's `ended` event and the dial's own rejection), so either
+   * saying "unknown" keeps it unknown.
+   */
+  private noteUnrecordedEnd(attemptId: string, dialOutcomeUnknown: boolean): void {
+    this.unrecordedEnds.set(attemptId, dialOutcomeUnknown || (this.unrecordedEnds.get(attemptId) ?? false));
   }
 
   /** The reaper ended these (or found them already terminal): stop reporting them. */
@@ -1847,9 +2050,13 @@ export class AgencyDialer {
   private startLeaseRenewal(attemptId: string, sessionId: string, state: 'reserved' | 'on_call'): void {
     this.stopLeaseRenewal(attemptId);
     const leaseMs = state === 'on_call' ? AGENT_LEASE_MS.on_call : AGENT_LEASE_MS.reserved_dialing;
+    // Stops only on `lost` (Redis answered: the lease is gone or moved on). A failed renew
+    // (`unknown`: a Redis error or command timeout) keeps the renewer going: the lease
+    // outlives two missed renewals, and a single slow Redis reply must not let a live
+    // call's lease lapse and free the agent for a second customer.
     const timer = setInterval(() => {
-      void this.agents.renew(sessionId, state, leaseMs).then((ok) => {
-        if (!ok) {
+      void this.agents.renewLease(sessionId, state, leaseMs).then((result) => {
+        if (result === 'lost') {
           log.warn({ attemptId, sessionId, state }, 'Agent lease renewal lost — stopping renewer');
           this.stopLeaseRenewal(attemptId);
         }

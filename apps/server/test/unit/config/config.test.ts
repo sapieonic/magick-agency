@@ -27,4 +27,15 @@ describe('parseConfig', () => {
     const result = parseConfig({ ...valid, NODE_ENV: 'staging' });
     expect(result.ok).toBe(false);
   });
+
+  it('READYZ_DETAIL_TOKEN: unset or blank is off; set must be at least 32 characters', () => {
+    const token = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? { ok: true, token: result.config.server.readyzDetailToken } : { ok: false };
+    };
+    expect(token({})).toEqual({ ok: true, token: undefined });
+    expect(token({ READYZ_DETAIL_TOKEN: '  ' })).toEqual({ ok: true, token: undefined });
+    expect(token({ READYZ_DETAIL_TOKEN: 'short' })).toEqual({ ok: false });
+    expect(token({ READYZ_DETAIL_TOKEN: 'x'.repeat(32) })).toEqual({ ok: true, token: 'x'.repeat(32) });
+  });
 });

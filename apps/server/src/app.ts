@@ -12,6 +12,9 @@ import { registerRateLimit, registerUserRateLimit } from './api/middleware/rate-
 import { agencyErrorHandler } from './api/middleware/agency-error-handler.js';
 import { errorMaskHook } from './api/middleware/error-mask.middleware.js';
 import { clientLogContextHook } from './api/middleware/client-log-context.js';
+import { websocketPluginOptions, WS_MAX_PAYLOAD_DEFAULT_BYTES } from './utils/ws-limits.js';
+import { registerWsHandoff, type WsHandoffTarget } from './cluster/ws-handoff.plugin.js';
+import { cachedProbe, READINESS_CACHE_MS, readinessDetailAuthorized } from './cluster/readiness.js';
 
 export interface BuildAppOptions {
   /** Null in tests that only exercise routing; lanes must cope or require it. */
@@ -19,6 +22,20 @@ export interface BuildAppOptions {
   logger?: boolean;
   /** Collects every registered route (handoff rule 10: enumerate from the router). */
   onRoute?: (route: RouteOptions) => void;
+  /**
+   * `local` (default): `@fastify/websocket` completes every upgrade here, as always.
+   * `handoff` (the primary with media workers, `docs/scaling.md` §2.1): every upgrade is
+   * routed through the app's hooks and handed to the owning worker by `wsHandoffTarget`.
+   */
+  wsTransport?: 'local' | 'handoff';
+  wsHandoffTarget?: () => WsHandoffTarget | null;
+  /**
+   * More readiness than Postgres and Redis (the media workers, `docs/scaling.md` §6.6):
+   * `ready` false makes `/readyz` 503; `summary` is merged into every `/readyz` body (no
+   * secrets: each worker's state); `detail` is what `?detail=1` adds, for a caller holding
+   * `READYZ_DETAIL_TOKEN` only. Called at most once a second whatever the probe rate.
+   */
+  readiness?: () => Promise<{ ready: boolean; detail: unknown; summary?: Record<string, unknown> }>;
 }
 
 /**
@@ -118,15 +135,45 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   app.get('/healthz', async () => ({ status: 'ok' }));
 
-  app.get('/readyz', async (_req, reply) => {
-    if (!opts.ctx) return reply.code(503).send({ status: 'unavailable' });
+  // `/readyz` is unauthenticated and exempt from the rate limiter (the ALB, the uptime check
+  // and the container healthcheck call it), so one answer — Postgres, Redis, and with media
+  // workers a `health.ping` to each over IPC — serves every probe for a second
+  // (`cachedProbe`): a flood costs the workers one ping round a second, not one per request.
+  // The plain body is the verdict and each worker's state (D5); `?detail=1` (pids, loop
+  // numbers, the Postgres budget) needs `Authorization: Bearer <READYZ_DETAIL_TOKEN>` and is
+  // refused 401 before anything is probed.
+  const ctx = opts.ctx;
+  const readiness = opts.readiness;
+  type ReadinessAnswer =
+    | { reachable: false }
+    | { reachable: true; ready: boolean; detail: unknown; summary?: Record<string, unknown> };
+  const probe = ctx ? cachedProbe(async (): Promise<ReadinessAnswer> => {
     try {
-      await opts.ctx.pool.query('SELECT 1');
-      await opts.ctx.redis.ping();
-      return { status: 'ready' };
+      await ctx.pool.query('SELECT 1');
+      await ctx.redis.ping();
     } catch {
-      return reply.code(503).send({ status: 'unavailable' });
+      return { reachable: false };
     }
+    if (!readiness) return { reachable: true, ready: true, detail: null };
+    const extra = await readiness().catch(() => ({ ready: false, detail: null }));
+    return { reachable: true, ...extra };
+  }, READINESS_CACHE_MS) : null;
+
+  app.get('/readyz', async (req, reply) => {
+    if (!ctx || !probe) return reply.code(503).send({ status: 'unavailable' });
+    const wantDetail = (req.query as { detail?: string } | undefined)?.detail === '1';
+    if (wantDetail && !readinessDetailAuthorized(req.headers.authorization, ctx.config.server.readyzDetailToken)) {
+      return reply.code(401).send({ status: 'unauthorized' });
+    }
+    const answer = await probe();
+    if (!answer.reachable) return reply.code(503).send({ status: 'unavailable' });
+    if (!readiness) return { status: 'ready' };
+    const body = {
+      status: answer.ready ? 'ready' : 'unavailable',
+      ...(answer.summary ?? {}),
+      ...(wantDetail ? { processes: answer.detail } : {}),
+    };
+    return answer.ready ? body : reply.code(503).send(body);
   });
 
   // The flag service is initialised with the shared Redis at boot, before `listen`; without it
@@ -137,7 +184,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // One `@fastify/websocket` for the whole app, registered once, globally: a second
   // registration in another plugin scope would compete for the server's upgrade event.
   // The PSTN leg and the agency station socket both use it.
-  await app.register(websocket);
+  //
+  // `maxPayload` bounds every inbound message on every WebSocket route (one `ws` server
+  // serves them all): 64 KiB by default (`WS_MAX_PAYLOAD_BYTES`), sized against the largest
+  // legitimate message per route in `utils/ws-limits.ts`. Without it `ws` allows 100 MiB,
+  // buffered and parsed on the event loop; past it the socket is closed with 1009.
+  if (opts.wsTransport === 'handoff') {
+    // The primary of a multi-process server: no handshake here; `maxPayload` is the
+    // worker's, which registers `@fastify/websocket` with the same options.
+    registerWsHandoff(app, { target: opts.wsHandoffTarget ?? (() => null) });
+  } else {
+    await app.register(websocket, websocketPluginOptions(
+      opts.ctx?.config.server.wsMaxPayloadBytes ?? WS_MAX_PAYLOAD_DEFAULT_BYTES,
+    ));
+  }
 
   await app.register(platformPlugin, { ctx: opts.ctx });
   await app.register(agencyPlugin, { ctx: opts.ctx });

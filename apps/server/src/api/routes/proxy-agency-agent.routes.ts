@@ -304,7 +304,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       });
     }
 
-    return reply.code(result.status).send(result.body);
+    return sendCoreRefusal(request, reply, result);
   });
 
   /**
@@ -386,7 +386,7 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
         body['station_ws_url'] = rewriteStationWsUrl(body['station_ws_url']);
       }
     }
-    return reply.code(result.status).send(result.body);
+    return sendCoreRefusal(request, reply, result);
   });
 
   app.post<{ Params: { id: string } }>('/sessions/:id/break', {

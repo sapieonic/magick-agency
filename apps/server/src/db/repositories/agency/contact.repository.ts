@@ -747,6 +747,245 @@ export class AgencyContactRepository {
   }
 
   /**
+   * Return the contact of an attempt the reaper ended to the roster, charged to the
+   * our-fault ledger, **only if the contact still belongs to that attempt**. One
+   * statement: the ownership check, the charge, the bound and the state write cannot be
+   * separated by anything else touching the row.
+   *
+   * ── Why the check ───────────────────────────────────────────────────────────
+   *
+   * The reaper ends an attempt some time after it stopped being driven: the unrecorded-
+   * ends and leak sweeps up to a minute later. Meanwhile the contact may have moved on.
+   * The dialer's abandon path writes the attempt `ended` and unclaims the contact as two
+   * statements, so when only the first fails the contact is `pending` again, and pacing
+   * (or a soft-phone call) can claim it and dial it before the sweep. A requeue that
+   * wrote `pending` regardless then pulled that `in_flight` contact out from under its
+   * new live attempt (claimable again while that call runs), or reopened a contact the
+   * new attempt had already settled (`completed`, or `connected` awaiting its write-up).
+   *
+   * So the write lands only while the contact is still the reaped attempt's:
+   *
+   *  - `reapedAttemptId` set (the startup, slot, leak and unrecorded-ends reaps): the
+   *    contact is `in_flight` (claimed for it) or `connected` (parked by its bridge), no
+   *    attempt on it is newer than the reaped one (`attempt_number` is derived per
+   *    contact as MAX + 1, `AgencyAttemptRepository.create`, so "newer" is exact; and
+   *    `uq_agency_attempt_live` allows no older live one), and no soft-phone call holds
+   *    its claim.
+   *  - `reapedAttemptId` null (the stranded-contact sweep, which has no attempt): the
+   *    contact is `in_flight`, with no live attempt and no soft-phone call holding it,
+   *    the same test `findStrandedInFlight` picked it by.
+   *
+   * A contact that is `pending` already (the abandon path's unclaim did land) is left as
+   * it is, with the `next_attempt_at` that unclaim gave it, and nothing is charged.
+   *
+   * ── What it writes ─────────────────────────────────────────────────────────
+   *
+   * `our_fault_attempts` + 1 (never `attempt_count`: our crash must not spend the
+   * customer's retries), `last_outcome`, and then `pending` at `notBefore`, or
+   * `retiredState` once the post-bump count reaches `bound` (`resolveOurFaultRedial`'s
+   * rule; the caller passes its `ourFaultRedialBound` and `OUR_FAULT_RETIRED_STATE`). A
+   * row carrying `suppressed_reason = 'dnc'` stays `suppressed` with its
+   * `next_attempt_at`, as {@link markState} keeps it.
+   *
+   * `holdUnknownDialsMs` (the stranded-contact sweep's, which has no attempt to read a hold
+   * from): `next_attempt_at` is moved on to `dialed_at` + that much for any dial of this
+   * contact, a campaign attempt or a soft-phone call, that was sent (`dialed_at` set; a
+   * soft-phone dial the carrier never saw has it cleared), never answered or bridged, and
+   * not ended by a carrier answer (`no_answer`, `busy`, `invalid`): the carrier may still be
+   * placing it. In the same statement, so a contact whose own hold write failed
+   * (`holdOutcomeUnknownContact`, a soft-phone settle) is not handed back early by the
+   * sweep that recovers it. It errs on holding: a dial whose end this cannot tell (a carrier
+   * refusal, a failure before the carrier, a teardown, an orphan) is held too.
+   *
+   * Returns the state and count that landed, or null when the contact no longer belongs
+   * to the reaped attempt (or does not exist) and nothing was written.
+   *
+   * The dialer uses it too, for the contact of a dial whose outcome is unknown
+   * (`holdOutcomeUnknownContact`, `agency/dialer/contact-settlement.ts`): the attempt it
+   * just ended as `reapedAttemptId`, `notBefore` the 15-minute hold. The same write, so the
+   * hold and its our-fault charge land together and the bound ends a run of such dials.
+   */
+  async requeueOrphaned(
+    contactId: string,
+    opts: {
+      reapedAttemptId: string | null;
+      notBefore: Date;
+      outcome: string;
+      bound: number;
+      retiredState: string;
+      holdUnknownDialsMs?: number | null;
+    },
+  ): Promise<{ state: AgencyContactState; our_fault_attempts: number } | null> {
+    // GREATEST ignores the NULL the subquery gives when no dial qualifies.
+    const { rows } = await getPool().query<{ state: AgencyContactState; our_fault_attempts: number }>(
+      `UPDATE agency_contacts c
+          SET our_fault_attempts = c.our_fault_attempts + 1,
+              last_outcome = $3,
+              state = CASE
+                        WHEN c.suppressed_reason = 'dnc' THEN 'suppressed'
+                        WHEN c.our_fault_attempts + 1 >= $5 THEN $6
+                        ELSE 'pending'
+                      END,
+              next_attempt_at = CASE
+                                  WHEN c.suppressed_reason = 'dnc' OR c.our_fault_attempts + 1 >= $5 THEN c.next_attempt_at
+                                  WHEN $7::bigint IS NULL THEN $4
+                                  ELSE GREATEST($4, (
+                                    SELECT max(d.dialed_at) + make_interval(secs => $7::bigint / 1000.0)
+                                      FROM (
+                                        SELECT a.dialed_at, a.answered_at, a.bridged_at, a.outcome
+                                          FROM agency_call_attempts a WHERE a.contact_id = c.id
+                                        UNION ALL
+                                        SELECT m.dialed_at, m.answered_at, m.bridged_at, m.outcome
+                                          FROM agency_manual_calls m WHERE m.contact_id = c.id
+                                      ) d
+                                     WHERE d.dialed_at IS NOT NULL
+                                       AND d.answered_at IS NULL
+                                       AND d.bridged_at IS NULL
+                                       AND d.outcome IS DISTINCT FROM 'no_answer'
+                                       AND d.outcome IS DISTINCT FROM 'busy'
+                                       AND d.outcome IS DISTINCT FROM 'invalid'))
+                                END,
+              updated_at = now()
+        WHERE c.id = $1
+          AND CASE
+                WHEN $2::uuid IS NULL THEN
+                  c.state = 'in_flight'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM agency_call_attempts a
+                         WHERE a.contact_id = c.id AND a.state <> 'ended')
+                ELSE
+                  c.state IN ('in_flight', 'connected')
+                  AND EXISTS (
+                        SELECT 1 FROM agency_call_attempts r
+                         WHERE r.id = $2::uuid
+                           AND r.contact_id = c.id
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM agency_call_attempts a
+                                  WHERE a.contact_id = c.id
+                                    AND a.attempt_number > r.attempt_number))
+              END
+          AND NOT EXISTS (
+                SELECT 1 FROM agency_manual_calls m
+                 WHERE m.contact_id = c.id AND m.settled_at IS NULL AND m.contact_claimed)
+      RETURNING c.state, c.our_fault_attempts`,
+      [
+        contactId, opts.reapedAttemptId, opts.outcome, opts.notBefore, opts.bound, opts.retiredState,
+        opts.holdUnknownDialsMs ?? null,
+      ],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Write the disposition route's contact decision for one attempt, **only while the
+   * contact still belongs to that attempt**. One statement: the ownership check and the
+   * write cannot be separated by anything else touching the row. The same shape as
+   * {@link requeueOrphaned} and `AgencyAttemptRepository.closeLapsedWrapup`.
+   *
+   * ── Why the check ───────────────────────────────────────────────────────────
+   *
+   * `recordDisposition` is idempotent on the code, so a same-code replay (the console
+   * retrying a submit after a network blip, a queued retry flushed late, a supervisor
+   * re-submitting a write-up from the attempt history) succeeds and reaches this write
+   * again. Written with {@link markState}, that replay moved the contact whatever had
+   * happened to it since: a `voicemail` replay of call 1 arriving after call 2 had closed
+   * the contact as a sale put it back to `pending` (the customer who said yes is dialled
+   * again), and one arriving while pacing or a soft-phone call held the contact
+   * `in_flight` handed it back to the roster under a live call.
+   *
+   * So the write lands only while, on the row as it is now:
+   *
+   *  - no attempt on the contact is newer than this one (`attempt_number` is MAX + 1 per
+   *    contact, `AgencyAttemptRepository.create`, so "newer" is exact);
+   *  - no soft-phone call holds the contact's claim, and none has claimed it since this
+   *    attempt was created. A manual call settles the contact without an attempt row, so
+   *    the attempt test cannot see it; and it can only have claimed the contact after
+   *    this attempt released it, because {@link claimForManual} claims only `pending`;
+   *  - the contact is in a state this attempt's disposition can own:
+   *     - `connected`: parked waiting for this write-up (the first submit);
+   *     - `pending` with `last_disposition` already this code: the replay that corrects a
+   *       callback time (`callback_at` is last-write-wins on the attempt and the contact's
+   *       `next_attempt_at` follows it, as {@link rescheduleFromManualReplay} does for the
+   *       soft phone);
+   *     - `suppressed_reason = 'dnc'`: an agent who marked DNC mid-call still writes the
+   *       call up afterwards, and `last_disposition` must land (the state stays frozen).
+   *
+   * Anything else is left as it is: `in_flight` (claimed for a new dial whose attempt row
+   * may not exist yet), or `completed` / `exhausted` / `suppressed` by this disposition's
+   * first write or by a later settlement. For a replay that is the idempotent answer: the
+   * first write already landed.
+   *
+   * ── What it writes ─────────────────────────────────────────────────────────
+   *
+   * What {@link markState} wrote for the route: `state`, `last_outcome`,
+   * `last_disposition`, `next_attempt_at` (COALESCEd), `suppressed_reason`, never
+   * `attempt_count` (the attempt was counted when it ended), under the DNC rule (a row
+   * carrying `suppressed_reason = 'dnc'` stays `suppressed` with its `next_attempt_at`
+   * and its reason).
+   *
+   * Returns the state that landed, or null when the contact no longer belongs to the
+   * attempt (or either row does not exist) and nothing was written.
+   */
+  async releaseFromDisposition(opts: {
+    contactId: string;
+    attemptId: string;
+    dispositionCode: string;
+    state: AgencyContactState;
+    lastOutcome: string | null;
+    nextAttemptAt: Date | null;
+    suppressedReason: string | null;
+  }): Promise<{ state: AgencyContactState; suppressed_reason: string | null } | null> {
+    const { rows } = await getPool().query<{ state: AgencyContactState; suppressed_reason: string | null }>(
+      `UPDATE agency_contacts c
+          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $4::varchar END,
+              last_outcome = COALESCE($5::varchar, c.last_outcome),
+              last_disposition = $3::varchar,
+              next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at
+                                     ELSE COALESCE($6::timestamptz, c.next_attempt_at) END,
+              suppressed_reason = CASE WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason
+                                       ELSE COALESCE($7::varchar, c.suppressed_reason) END,
+              updated_at = now()
+         FROM agency_call_attempts r
+        WHERE c.id = $1
+          AND r.id = $2
+          AND r.contact_id = c.id
+          AND (c.state = 'connected'
+               OR (c.state = 'pending' AND c.last_disposition = $3::varchar)
+               OR c.suppressed_reason = 'dnc')
+          AND NOT EXISTS (
+                SELECT 1 FROM agency_call_attempts n
+                 WHERE n.contact_id = c.id AND n.attempt_number > r.attempt_number)
+          AND NOT EXISTS (
+                SELECT 1 FROM agency_manual_calls m
+                 WHERE m.contact_id = c.id AND m.contact_claimed
+                   AND (m.settled_at IS NULL OR m.created_at > r.created_at))
+      RETURNING c.state, c.suppressed_reason`,
+      [
+        opts.contactId,
+        opts.attemptId,
+        opts.dispositionCode,
+        opts.state,
+        opts.lastOutcome,
+        opts.nextAttemptAt,
+        opts.suppressedReason,
+      ],
+    );
+    const landed = rows[0] ?? null;
+    if (landed && landed.state !== opts.state) {
+      log.warn(
+        {
+          contactId: opts.contactId,
+          requestedState: opts.state,
+          state: landed.state,
+          suppressedReason: landed.suppressed_reason,
+        },
+        'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+      );
+    }
+    return landed;
+  }
+
+  /**
    * Write a contact's state, with **one transition the database refuses**: a row
    * carrying `suppressed_reason = 'dnc'` stays `suppressed`, whatever was asked.
    *
@@ -802,9 +1041,9 @@ export class AgencyContactRepository {
    *
    * `WHERE … AND suppressed_reason IS DISTINCT FROM 'dnc'` would refuse the whole
    * UPDATE. Mark-DNC on a live call is supported and the agent's write-up arrives
-   * AFTERWARDS through the disposition route, which reaches this method carrying
-   * `last_disposition`; refusing the row would silently drop the record of what
-   * was said. So the STATE and the retry instant are frozen and every
+   * AFTERWARDS through the disposition route ({@link releaseFromDisposition}, which
+   * applies this same rule) carrying `last_disposition`; refusing the row would
+   * silently drop the record of what was said. So the STATE and the retry instant are frozen and every
    * record-keeping column still lands.
    *
    * `THEN 'suppressed'` rather than `THEN state` is also deliberate: a row left
@@ -820,7 +1059,7 @@ export class AgencyContactRepository {
    * ── Every caller, and the decision about each ─────────────────────────────
    *
    * The guard is HERE and not at the call sites because one of them (`reaper.ts`'s
-   * orphan requeue) hardcodes `'pending'` rather than taking a decision, and a
+   * orphan requeue, since moved to {@link requeueOrphaned}) hardcoded `'pending'` rather than taking a decision, and a
    * rule spelled nine times is a rule with eight chances to be forgotten. The
    * enumeration is recorded so a future reader can check a new caller against it
    * rather than re-deriving which ones mattered:
@@ -836,14 +1075,17 @@ export class AgencyContactRepository {
    *     `ended` handler's, which would launder the row out of `suppressed` and
    *     leave the NEXT write unguarded. Guarded, and the reason the key is the
    *     reason rather than the target state.
-   *   * `reaper.ts` lapsed-wrap-up sweep — `resolveRetryDecision` ⇒ `'pending'`.
-   *     Guarded.
-   *   * `reaper.ts` our-fault-bounded retire — terminal states only. Guarded
-   *     anyway; `suppressed` is at least as terminal as what it asked for.
-   *   * `reaper.ts` orphan requeue — literal `'pending'`. Guarded.
-   *   * `agency.routes.ts` disposition — a disposition decision, which can be
-   *     `'pending'` (a callback). Guarded on the state; `last_disposition` still
-   *     lands, deliberately.
+   *   * `reaper.ts` lapsed-wrap-up sweep — no longer a caller:
+   *     `AgencyAttemptRepository.closeLapsedWrapup` writes its `resolveRetryDecision`
+   *     answer in one guarded statement with the same `CASE`, keyed on the same reason.
+   *   * `reaper.ts` orphan requeue and our-fault-bounded retire — no longer a
+   *     caller: {@link requeueOrphaned} writes them in one statement with the
+   *     same `CASE`, keyed on the same reason.
+   *   * the disposition route (`api/routes/agency/attempts.ts`) — no longer a
+   *     caller: {@link releaseFromDisposition} writes its decision in one statement
+   *     with the same `CASE`, and only while the contact still belongs to the
+   *     attempt being written up. `last_disposition` still lands on a DNC row,
+   *     deliberately.
    *   * `pacing-engine.ts` pre-dial gate — `'suppressed'`. A no-op under the
    *     guard, which is correct, and the `THEN 'suppressed'` branch means it can
    *     still park a legacy `pending` + `dnc` row where it belongs.
@@ -1081,7 +1323,7 @@ export class AgencyContactRepository {
       //     DNC mark is the strongest statement the system has about it. It must not
       //     be at the mercy of a stale value — and this is reachable, not theoretical:
       //     the disposition route writes `suppressed_reason` on this same contact
-      //     (`agency.routes.ts`, `markState` with `decision.suppressedReason`), and
+      //     (`releaseFromDisposition` with `decision.suppressedReason`), and
       //     mark-DNC on an already-dispositioned attempt is explicitly supported. A
       //     plain `COALESCE(col, $3)` would drop the agent's DNC on that path;
       //   * a swept row is a DIFFERENT PERSON who merely shares the number, so

@@ -46,3 +46,27 @@ export function errorCode(err: unknown): string | null {
   const code = (body as { code?: unknown }).code;
   return typeof code === 'string' ? code : null;
 }
+
+/**
+ * How long apart a join is retried while the server answers `503 station_token_unavailable`
+ * (decision D9: Redis could not store the station token, so the server refuses to hand
+ * out one that could never open the socket). A join is idempotent, so it is simply sent
+ * again; the last refusal falls through to the caller's error screen.
+ */
+export const STATION_TOKEN_RETRY_DELAYS_MS: readonly number[] = [500, 1_000, 2_000, 4_000];
+
+/** Run `call`, retrying it on `503 station_token_unavailable` with the delays above. */
+export async function retryOnStationTokenUnavailable<T>(
+  call: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await call();
+    } catch (err) {
+      const delay = STATION_TOKEN_RETRY_DELAYS_MS[attempt];
+      if (errorCode(err) !== 'station_token_unavailable' || delay === undefined) throw err;
+      await sleep(delay);
+    }
+  }
+}

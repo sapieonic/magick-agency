@@ -59,6 +59,11 @@ const { repos } = vi.hoisted(() => ({
     campaign: { findById: vi.fn() },
     contact: {
       markState: vi.fn().mockResolvedValue(undefined),
+      // The route's contact write: guarded on the contact still belonging to the
+      // attempt (`test/integration/agency/agency-disposition-contact-write.test.ts`
+      // runs its SQL). Default: it landed.
+      releaseFromDisposition: vi.fn(async (o: { state: string; suppressedReason: string | null }): Promise<{ state: string; suppressed_reason: string | null } | null> =>
+        ({ state: o.state, suppressed_reason: o.suppressedReason })),
       unclaim: vi.fn().mockResolvedValue(undefined),
       // Read to resolve the contact's own timezone before it
       // schedules a callback. A callback is scheduled in the CUSTOMER's
@@ -133,6 +138,25 @@ async function buildApp() {
 
 const HEADERS = { 'x-mgkvc-tenant': 't1', 'x-mgkvc-account': 'a1' };
 
+/**
+ * The first contact write the route asked for, as `[contactId, state, patch]` with the
+ * patch in the contact row's column names. `next_attempt_at` / `suppressed_reason` are
+ * null when nothing was asked for.
+ */
+function contactWrite(): [string, string, Record<string, any>] {
+  const o = repos.contact.releaseFromDisposition.mock.calls[0]![0] as unknown as {
+    contactId: string; attemptId: string; dispositionCode: string; state: string;
+    lastOutcome: string | null; nextAttemptAt: Date | null; suppressedReason: string | null;
+  };
+  expect(o.attemptId, 'the write is keyed on the attempt it writes up').toBe('att-1');
+  return [o.contactId, o.state, {
+    last_outcome: o.lastOutcome,
+    last_disposition: o.dispositionCode,
+    next_attempt_at: o.nextAttemptAt,
+    suppressed_reason: o.suppressedReason,
+  }];
+}
+
 async function dispose(app: Awaited<ReturnType<typeof buildApp>>, payload: Record<string, unknown>) {
   return app.inject({
     method: 'POST', url: '/api/v1/agency/attempts/att-1/disposition',
@@ -193,10 +217,10 @@ describe('POST /attempts/:id/disposition — the happy path and the contract sha
     const app = await buildApp();
     await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'sale' });
 
-    const [contactId, state, patch] = repos.contact.markState.mock.calls[0]!;
+    const [contactId, state, patch] = contactWrite();
     expect([contactId, state]).toEqual(['contact-1', 'completed']);
     expect(patch.last_disposition).toBe('sale');
-    expect(patch.next_attempt_at).toBeUndefined();
+    expect(patch.next_attempt_at).toBeNull();
     // The attempt was already counted when it ended. Bumping here charges a
     // contact twice for one dial and, at `max_attempts: 3`, exhausts someone
     // after two real conversations.
@@ -268,8 +292,24 @@ describe('POST /attempts/:id/disposition — idempotency', () => {
     // The refusal must be total: a contact moved or a wrap-up released on a
     // rejected submission leaves the agent returned to the pool with the call
     // still unwritten-up.
-    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(repos.contact.releaseFromDisposition).not.toHaveBeenCalled();
     expect(runtime.wrapup.noteDisposition).not.toHaveBeenCalled();
+  });
+
+  it('a replay whose contact has moved on writes nothing to it and still answers the same 200', async () => {
+    // The guarded contact write found the contact no longer this attempt's (the first
+    // submit already released it, or a later call holds it): null, nothing written.
+    // The client cannot tell a replay from a first write, and must not have to.
+    const app = await buildApp();
+    const first = await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'callback', callback_at: '2099-01-02T10:00:00.000Z' });
+    repos.contact.releaseFromDisposition.mockResolvedValueOnce(null);
+    const replay = await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'callback', callback_at: '2099-01-02T10:00:00.000Z' });
+
+    expect(first.statusCode).toBe(200);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual(first.json());
+    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(runtime.wrapup.noteDisposition).toHaveBeenCalledTimes(2);
   });
 
   it('the route never reads the incumbent code to decide — the WRITE decides', async () => {
@@ -306,7 +346,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     expect(res.json().next_attempt_at).toBe(FUTURE);
     expect(res.json().callback_requested_at).toBe(FUTURE);
 
-    const [, state, patch] = repos.contact.markState.mock.calls[0]!;
+    const [, state, patch] = contactWrite();
     expect(state).toBe('pending');
     expect(patch.next_attempt_at.toISOString()).toBe(FUTURE);
   });
@@ -316,7 +356,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
     // session, or agent-facing copy would have to say "I'll call you back".
     const app = await buildApp();
     await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'callback', callback_at: FUTURE });
-    const patch = repos.contact.markState.mock.calls[0]![2];
+    const patch = contactWrite()[2];
     expect(Object.keys(patch)).not.toContain('preferred_agent_user_id');
     expect(JSON.stringify(patch)).not.toContain('sess-1');
   });
@@ -368,7 +408,7 @@ describe('POST /attempts/:id/disposition — callback_at is honoured, not just c
       expect(res.json().next_attempt_at).not.toBe(res.json().callback_requested_at);
 
       // The CONTACT is scheduled for when we will dial...
-      const patch = repos.contact.markState.mock.calls[0]![2];
+      const patch = contactWrite()[2];
       expect(patch.next_attempt_at.toISOString()).toBe('2026-08-17T03:30:00.000Z');
       // ...and the ATTEMPT keeps what was promised. Two different facts, and the
       // audit needs both: what the agent said, and what we scheduled.
@@ -501,7 +541,7 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
     // a retry leaking into it would render as a promise the agent never made.
     expect(res.json().callback_requested_at).toBeNull();
 
-    const [, state, patch] = repos.contact.markState.mock.calls[0]!;
+    const [, state, patch] = contactWrite();
     expect(state).toBe('pending');
     expect(patch.next_attempt_at.toISOString()).toBe('2026-08-11T14:00:00.000Z');
     expect(patch.last_disposition).toBe('voicemail');
@@ -520,7 +560,7 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
     // `exhausted`, not `completed`: a supervisor reads the first as "we worked this
     // list" and the second as "it was never retryable".
     expect(res.json().contact_state).toBe('exhausted');
-    expect(repos.contact.markState.mock.calls[0]![1]).toBe('exhausted');
+    expect(contactWrite()[1]).toBe('exhausted');
   });
 
   it('(b) a `terminal` disposition ends the contact with attempts still remaining', async () => {
@@ -541,7 +581,7 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
     expect(res.statusCode).toBe(200);
     expect(res.json().contact_state).toBe('completed');
     expect(res.json().next_attempt_at).toBeNull();
-    expect(repos.contact.markState.mock.calls[0]![1]).toBe('completed');
+    expect(contactWrite()[1]).toBe('completed');
   });
 
   it('(b) `terminal` BEATS a callback on the same submission, where the two answers differ', async () => {
@@ -564,7 +604,7 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
     // Resolved toward silence: the direction that cannot annoy a customer an
     // operator has already marked done.
     expect(res.json().contact_state).toBe('completed');
-    expect(repos.contact.markState.mock.calls[0]![1]).toBe('completed');
+    expect(contactWrite()[1]).toBe('completed');
     // ── The losing arm must not leave its instant behind ──────────────────
     // Measured defect, fixed with this test: `scheduledAt` is derived from the
     // callback arm, and when that arm LOSES its instant was still written and
@@ -574,7 +614,7 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
     // which is where "what was asked for" belongs.
     expect(res.json().next_attempt_at).toBeNull();
     expect(res.json().callback_requested_at).toBe('2026-08-12T10:00:00.000Z');
-    expect(repos.contact.markState.mock.calls[0]![2].next_attempt_at).toBeUndefined();
+    expect(contactWrite()[2].next_attempt_at).toBeNull();
   });
 
   it('`suppress` with a callback on the same submission schedules NOTHING', async () => {
@@ -594,8 +634,8 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
     expect(res.statusCode).toBe(200);
     expect(res.json().contact_state).toBe('suppressed');
     expect(res.json().next_attempt_at).toBeNull();
-    const patch = repos.contact.markState.mock.calls[0]![2];
-    expect(patch.next_attempt_at).toBeUndefined();
+    const patch = contactWrite()[2];
+    expect(patch.next_attempt_at).toBeNull();
     expect(patch.suppressed_reason).toBe('dnc');
   });
 
@@ -609,7 +649,7 @@ describe('POST /attempts/:id/disposition — precedence over the outcome policy'
 
     expect(res.statusCode).toBe(200);
     expect(res.json().contact_state).toBe('suppressed');
-    const [, state, patch] = repos.contact.markState.mock.calls[0]!;
+    const [, state, patch] = contactWrite();
     expect(state).toBe('suppressed');
     expect(patch.suppressed_reason).toBe('dnc');
   });
@@ -792,7 +832,7 @@ describe('POST /attempts/:id/notes', () => {
     const app = await buildApp();
     await saveNotes(app, { agent_user_id: 'u-agent', notes: 'typing' });
     expect(runtime.wrapup.noteDisposition).not.toHaveBeenCalled();
-    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(repos.contact.releaseFromDisposition).not.toHaveBeenCalled();
   });
 
   it('applies the same ownership rule as the submit', async () => {

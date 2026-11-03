@@ -3,6 +3,8 @@ import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import { AGENCY_STATION_CLOSE, type AgencyClientKind, type AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import { MOBILE_STATION_PROBE_MS, stationHeartbeatGraceMs } from '@magick-agency/domain/timers';
+import { trackWebsocketSendBackpressure } from '@magick-agency/observability/metrics/voice';
+import { closeForSendBacklog, sendVerdict, STATION_PCM16_LIMITS } from '../utils/ws-backpressure.js';
 
 const log = createChildLogger({ component: 'agency-station-registry' });
 
@@ -73,6 +75,27 @@ export class StationRegistry {
     return `${this.keyPrefix}agency:station:${sessionId}`;
   }
 
+  private readonly attachListeners = new Set<(entry: { sessionId: string; campaignId: string | null }) => void>();
+
+  /**
+   * Be told after every attach. An agent whose `available` lease outlived a dropped
+   * socket becomes dialable again on reconnect with no state write at all (the
+   * rehydrate reads the live lease), so the attach itself is the pacing engine's
+   * wake-up for it (wired by the runtime). Total: a throwing listener is logged.
+   */
+  onAttached(listener: (entry: { sessionId: string; campaignId: string | null }) => void): () => void {
+    this.attachListeners.add(listener);
+    return () => { this.attachListeners.delete(listener); };
+  }
+
+  private readonly detachListeners = new Set<(sessionId: string) => void>();
+
+  /** Be told after every detach (a media worker tells the primary's directory). Total. */
+  onDetached(listener: (sessionId: string) => void): () => void {
+    this.detachListeners.add(listener);
+    return () => { this.detachListeners.delete(listener); };
+  }
+
   /** Register a newly-opened station socket and claim ownership of the agent. */
   async attach(input: StationAttachInput): Promise<void> {
     const entry: Omit<StationEntry, 'lastSeen'> = { ...input, clientKind: input.clientKind ?? 'web' };
@@ -105,6 +128,13 @@ export class StationRegistry {
     await this.claimOwnership(entry.sessionId);
     log.info({ sessionId: entry.sessionId, campaignId: entry.campaignId, clientKind: entry.clientKind },
       'Station socket attached');
+    for (const listener of this.attachListeners) {
+      try {
+        listener({ sessionId: entry.sessionId, campaignId: entry.campaignId });
+      } catch (err) {
+        log.warn({ err, sessionId: entry.sessionId }, 'Station attach listener threw');
+      }
+    }
   }
 
   /**
@@ -171,6 +201,9 @@ export class StationRegistry {
     if (!entry || (ws && entry.ws !== ws)) return;
     this.stations.delete(sessionId);
     this.stopProbe(sessionId);
+    for (const listener of this.detachListeners) {
+      try { listener(sessionId); } catch (err) { log.warn({ err, sessionId }, 'Station detach listener threw'); }
+    }
     if (this.redis) {
       await this.redis.del(this.ownershipKey(sessionId)).catch((err) =>
         log.warn({ err, sessionId }, 'Failed to clear station ownership key'));
@@ -488,12 +521,35 @@ export class StationRegistry {
    * round trip it had never made, which is precisely the "proved liveness"
    * signal the console's ladder is built on. `ready` is the same shape with far
    * more state on it — see the route's `stillOurs` fence.
+   *
+   * ── Back-pressure (`utils/ws-backpressure.ts`) ──────────────────────────
+   *
+   * Checked on `ws.bufferedAmount` before the frame is serialised. A control frame is
+   * never dropped. A `media` frame (JSON, so a `pcm16` socket's) past the soft limit is
+   * dropped and this returns false: it was not delivered. Past the hard cap the console is
+   * not reading at all: the socket is closed 4408 `station_send_backlog` (the console
+   * re-mints and reconnects, and `ready` carries the state again) and this returns false,
+   * so a dial tick treats the agent as not there, as for a socket that is gone.
    */
   send(sessionId: string, frame: AgencyStationServerFrame, expectedWs?: WebSocket): boolean {
     const ws = this.stations.get(sessionId)?.ws;
     if (!ws || ws.readyState !== 1 /* OPEN */) return false;
     // "Answer this socket, or answer nobody" — never "answer whoever is here now".
     if (expectedWs !== undefined && ws !== expectedWs) return false;
+    const verdict = sendVerdict(ws, { media: frame.event === 'media' }, STATION_PCM16_LIMITS);
+    if (verdict === 'drop') {
+      trackWebsocketSendBackpressure('station', 'media_dropped');
+      return false;
+    }
+    if (verdict === 'over_cap') {
+      if (closeForSendBacklog(ws)) {
+        trackWebsocketSendBackpressure('station', 'closed');
+        log.warn({ sessionId, event: frame.event, bufferedAmount: ws.bufferedAmount },
+          'Station console stopped reading: send backlog past its cap, closing 4408');
+      }
+      return false;
+    }
+    if (verdict === 'not_open') return false;
     try {
       ws.send(JSON.stringify(frame));
       return true;

@@ -20,7 +20,10 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
  *  - the call stays in the dialer's live set until its `ended` row is written, so the
  *    orphan sweep cannot end it `orphaned` mid-teardown;
  *  - a settle that fails is retried, and the lapse sweep closes an unbridged call
- *    within a minute or so rather than after 30.
+ *    within a minute or so rather than after 30;
+ *  - a dial whose outcome is unknown (`add_lead` timed out: the carrier may still ring
+ *    the customer) is no refusal: `dialed_at` kept, the contact held 15 minutes on the
+ *    our-fault ledger, whichever of the dial and a racing hang-up ends it first.
  */
 const { closeTestPool, getTestPool, truncateAll } = await import('../setup/test-utils.js');
 vi.mock('@magick-agency/db', async (importOriginal) => ({
@@ -38,6 +41,14 @@ const { AgencyReaper } = await import('../../../src/agency/reaper.js');
 const { WebRtcCallError } = await import('../../../src/core/webrtc-bridge-manager.js');
 const { agencyManualCallRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { AUTO_DISPOSITION_CODE } = await import('../../../src/agency/disposition.js');
+const { CarrierRequestTimeoutError, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } = await import('../../../src/telephony/carrier-errors.js');
+
+/** What the bridge throws for an `add_lead` that timed out: the adapter's error as `cause`. */
+function outcomeUnknownRefusal(): Error {
+  const refusal = new WebRtcCallError('VoiceLink /v1/add_lead timed out after 15000 ms', 'telephony_init_failed', 502);
+  refusal.cause = new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 15_000, true);
+  return refusal;
+}
 
 type Listener = (ev: Record<string, unknown>) => void;
 
@@ -64,13 +75,14 @@ const near = (actual: Date | null, expected: number, slackMs = 15_000) => {
 
 let bridge: FakeBridge;
 let agents: { releaseManual: ReturnType<typeof vi.fn> };
+let stations: { send: ReturnType<typeof vi.fn> };
 let dialer: InstanceType<typeof ManualDialer>;
 let reaper: InstanceType<typeof AgencyReaper>;
 
 function boot() {
   bridge = new FakeBridge();
   agents = { releaseManual: vi.fn(async () => undefined) };
-  const stations = { send: vi.fn(() => true) };
+  stations = { send: vi.fn(() => true) };
   dialer = new ManualDialer(bridge as never, stations as never, agents as never);
   dialer.start();
   reaper = new AgencyReaper({
@@ -139,6 +151,26 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
   });
 
+  /**
+   * The bridge's real order for a dial that fails before the carrier is asked (the row
+   * INSERT, the carrier tokens, the carrier request's own inputs: a missing webhook base, a
+   * provider with no adapter): it tears the leg down with NO `ended` and rejects with the
+   * original error (`abortUnplacedLeg`). Nothing was dialled, so the agent gets the reviewed
+   * `dial_failed` (503, retry), not a masked 500, and the claim is given back uncharged.
+   */
+  it('a dial that fails in the bridge before the carrier is no dial and answers dial_failed', async () => {
+    const { contact, call } = await claimedCall({ contact: { attempt_count: 1 } });
+    bridge.createBridgedCall.mockRejectedValueOnce(new TypeError('Invalid URL'));
+    expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: false, failure: 'dial_failed' });
+    expect(dialer.hasLiveCall(call.session_id as string)).toBe(false);
+
+    const row = await callRow(call.id as string);
+    expect(row).toMatchObject({ state: 'ended', outcome: 'failed', dialed_at: null });
+    expect(row.settled_at).not.toBeNull();
+    expect(await contactRow(contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 1, our_fault_attempts: 0 });
+    expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
+  });
+
   it('a dial the carrier refused outright is no dial either (telephony_init_failed)', async () => {
     const { contact, call } = await claimedCall();
     bridge.createBridgedCall.mockImplementationOnce(async () => {
@@ -152,6 +184,126 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     expect(row).toMatchObject({ state: 'ended', outcome: 'failed', dialed_at: null });
     expect(row.settled_at).not.toBeNull();
     expect(await contactRow(contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 0 });
+  });
+
+  // ── outcome unknown: the carrier may still ring the customer ─────────────
+
+  it('a dial whose outcome is unknown is held, not given back: dialed_at kept, 15 min on the our-fault ledger', async () => {
+    // The tag's `failed` policy would redial at once and charge the customer: it must not decide.
+    const { contact, call } = await claimedCall({
+      retryPolicy: { failed: { delay_minutes: 0, max_attempts: 9 } }, contact: { attempt_count: 1 },
+    });
+    bridge.createBridgedCall.mockImplementationOnce(async () => {
+      // As the bridge does: the leg's `ended` (its outcome-unknown code) is emitted before the dial throws.
+      bridge.emit({
+        callId: randomUUID(), correlationId: call.id, phase: 'ended', status: 'failed',
+        outcome: 'telephony_init_failed', errorCode: 'TELEPHONY_INIT_OUTCOME_UNKNOWN', answered: false,
+      });
+      throw outcomeUnknownRefusal();
+    });
+    const before = Date.now();
+    // The agent's answer: the call, ended and settled ("didn't go through").
+    expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: true });
+
+    const row = await callRow(call.id as string);
+    expect(row).toMatchObject({ state: 'ended', outcome: 'failed', end_reason: 'failed' });
+    expect(row.dialed_at, 'an outcome-unknown dial was recorded as never placed').not.toBeNull();
+    expect(row.settled_at).not.toBeNull();
+    const c = await contactRow(contact.id as string);
+    expect(c).toMatchObject({ state: 'pending', attempt_count: 1, our_fault_attempts: 1, last_outcome: 'failed' });
+    expect(c.next_attempt_at.getTime()).toBeGreaterThanOrEqual(before + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
+  });
+
+  it('at the our-fault bound an outcome-unknown dial retires the contact', async () => {
+    const { contact, call } = await claimedCall({ contact: { our_fault_attempts: 2 } });
+    bridge.createBridgedCall.mockImplementationOnce(async () => {
+      bridge.emit({
+        callId: randomUUID(), correlationId: call.id, phase: 'ended', status: 'failed',
+        outcome: 'telephony_init_failed', errorCode: 'TELEPHONY_INIT_OUTCOME_UNKNOWN', answered: false,
+      });
+      throw outcomeUnknownRefusal();
+    });
+    expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: true });
+    expect(await contactRow(contact.id as string)).toMatchObject({ state: 'exhausted', attempt_count: 0, our_fault_attempts: 3 });
+  });
+
+  /**
+   * The agent hangs up while `add_lead` is still in flight, and it then times out. The
+   * bridge's order: the hang-up's teardown emits `ended` (`agent_hangup`); the dial rejects
+   * later, its own end a no-op on the ended call. The hang-up used to settle the contact at
+   * once on the our-fault policy (5 min by default, 1 here).
+   */
+  it('the agent hangs up during an add_lead that then times out: the contact is held, the agent told at once', async () => {
+    const { contact, call } = await claimedCall({ retryPolicy: { canceled: { delay_minutes: 1, max_attempts: 3 } } });
+    let timeOut!: () => void;
+    const timedOut = new Promise<void>((resolve) => { timeOut = resolve; });
+    bridge.createBridgedCall.mockImplementationOnce(async () => { await timedOut; throw outcomeUnknownRefusal(); });
+    const dialing = dialer.dial(call as never, { socket: {} as never });
+    await vi.waitFor(() => expect(bridge.createBridgedCall).toHaveBeenCalled());
+
+    expect(await dialer.hangup(call.id as string, 'agent')).toBe(true);
+    bridge.emit({ callId: randomUUID(), correlationId: call.id, phase: 'ended', status: 'canceled', outcome: 'agent_hangup', answered: false });
+    // The agent sees the call end while the dial is still out; the contact waits for it.
+    await vi.waitFor(() => expect(stations.send.mock.calls.some(([, frame]: any[]) =>
+      frame.event === 'manual_call' && frame.call.state === 'ended')).toBe(true));
+    expect((await contactRow(contact.id as string)).state).toBe('in_flight');
+
+    const before = Date.now();
+    timeOut();
+    expect(await dialing).toEqual({ ok: true });
+    await dialer.settled(call.id as string);
+
+    const row = await callRow(call.id as string);
+    expect(row).toMatchObject({ state: 'ended', outcome: 'canceled', end_reason: 'agent_hangup' });
+    expect(row.settled_at).not.toBeNull();
+    const c = await contactRow(contact.id as string);
+    expect(c).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 1 });
+    expect(c.next_attempt_at.getTime(), 'a raced hang-up lost the outcome-unknown hold')
+      .toBeGreaterThanOrEqual(before + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    expect(agents.releaseManual).toHaveBeenCalledTimes(1);
+  });
+
+  it('the other order: the dial times out before the hang-up ended arrives, held all the same', async () => {
+    const { contact, call } = await claimedCall({ retryPolicy: { canceled: { delay_minutes: 1, max_attempts: 3 } } });
+    bridge.createBridgedCall.mockImplementationOnce(async () => { throw outcomeUnknownRefusal(); });
+    const before = Date.now();
+    expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: true });
+    bridge.emit({ callId: randomUUID(), correlationId: call.id, phase: 'ended', status: 'canceled', outcome: 'agent_hangup', answered: false });
+    await dialer.settled(call.id as string);
+
+    const c = await contactRow(contact.id as string);
+    expect(c).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 1 });
+    expect(c.next_attempt_at.getTime()).toBeGreaterThanOrEqual(before + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+  });
+
+  /**
+   * The dialer's settle never lands; the lapse sweep has only the rows. It asks the media
+   * leg (`agency_calls`, by `manual_call_id`) how the bridge ended it.
+   */
+  it('a lapsed outcome-unknown call keeps the hold: the sweep reads how the media leg ended', async () => {
+    const longAgo = new Date(Date.now() - 2 * MIN);
+    const ended = { state: 'ended', outcome: 'failed', end_reason: 'failed', dialed_at: longAgo, ended_at: longAgo };
+    const unknown = await claimedCall({ retryPolicy: { failed: { delay_minutes: 0, max_attempts: 9 } }, call: ended });
+    const plain = await claimedCall({ retryPolicy: { failed: { delay_minutes: 0, max_attempts: 9 } }, call: ended });
+    const legs = [[unknown.call, 'TELEPHONY_INIT_OUTCOME_UNKNOWN'], [plain.call, 'TELEPHONY_INIT_FAILED']] as const;
+    for (const [c, code] of legs) {
+      await getTestPool().query(
+        `INSERT INTO agency_calls (tenant_id, account_id, caller_id, destination_phone, status, origin, manual_call_id, error_code)
+         VALUES ($1, $2, '+919000000001', '+919812345678', 'failed', 'manual', $3, $4)`,
+        [c.tenant_id, c.account_id, c.id, code],
+      );
+    }
+    const before = Date.now();
+    expect((await reaper.sweepManualCalls()).lapsed).toBe(2);
+
+    const u = await contactRow(unknown.contact.id as string);
+    expect(u).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 1 });
+    expect(u.next_attempt_at.getTime()).toBeGreaterThanOrEqual(before + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    // A placed call that failed for a known reason: the customer's allowance and the policy.
+    const p = await contactRow(plain.contact.id as string);
+    expect(p).toMatchObject({ state: 'pending', attempt_count: 1, our_fault_attempts: 0 });
+    near(p.next_attempt_at, Date.now());
   });
 
   // ── placed, never bridged ─────────────────────────────────────────────────
@@ -293,14 +445,38 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     near(c.next_attempt_at, Date.now() + 30 * MIN);
   });
 
-  it('the startup sweep: an unbridged placed orphan is our fault and requeued now; an unplaced one is just released', async () => {
-    const placed = await claimedCall({ call: { state: 'ringing', dialed_at: new Date() } });
+  /**
+   * A restart mid-dial (`add_lead` in flight, or the customer's phone ringing) leaves the
+   * carrier free to place that call, as for a campaign attempt the startup reap ends
+   * (`reapedRedialNotBefore`): the contact is requeued on the our-fault ledger but not
+   * dialable until 15 min after `dialed_at`. It used to be back on the roster at once, and
+   * pacing could ring the customer a second time while the soft phone's dial still rang.
+   * An answered call (its carrier leg over with its media) and an unplaced one are not held.
+   */
+  it('the startup sweep: an unbridged placed orphan is our fault and held 15 min after its dial; an unplaced one is just released', async () => {
+    const dialedAt = new Date(Date.now() - 2 * MIN);
+    const placed = await claimedCall({ call: { state: 'dialing', dialed_at: dialedAt } });
+    const answered = await claimedCall({ call: { state: 'answered', dialed_at: dialedAt, answered_at: new Date() } });
     const unplaced = await claimedCall({ call: { state: 'queued' } });
     await reaper.reapOnStartup();
 
     const p = await contactRow(placed.contact.id as string);
     expect(p).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 1, last_outcome: 'orphaned' });
-    near(p.next_attempt_at, Date.now());
+    expect(p.next_attempt_at.getTime(), 'dialable while the carrier may still place the orphaned dial')
+      .toBe(dialedAt.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    const a = await contactRow(answered.contact.id as string);
+    expect(a).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 1 });
+    near(a.next_attempt_at, Date.now());
     expect(await contactRow(unplaced.contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 0 });
+  });
+
+  it('the periodic orphan sweep holds an unbridged placed orphan the same way', async () => {
+    const longAgo = new Date(Date.now() - 6 * MIN);
+    const placed = await claimedCall({ call: { state: 'ringing', dialed_at: longAgo, created_at: longAgo } });
+    expect((await reaper.sweepManualCalls()).orphaned).toBe(1);
+
+    const p = await contactRow(placed.contact.id as string);
+    expect(p).toMatchObject({ state: 'pending', our_fault_attempts: 1, last_outcome: 'orphaned' });
+    expect(p.next_attempt_at.getTime()).toBe(longAgo.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
   });
 });

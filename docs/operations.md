@@ -105,7 +105,7 @@ server, so `TRUST_PROXY_HOPS=2` (the value in `docker/.env.example`). Both direc
 this wrong are silent:
 
 - **Set to 1 behind a terminator:** every client resolves to the terminator's address and shares
-  one 200/min bucket.
+  one `ip_auth` bucket and one unauthenticated `ip` bucket (the per-user bucket still holds).
 - **:8080 reachable without going through the terminator:** a client chooses its own
   `request.ip` by sending `X-Forwarded-For`.
 
@@ -174,7 +174,7 @@ production.
 | `TELEPHONY_ENABLED_PROVIDERS=voicelink` + `VOICELINK_BASE_URL`, `_USERNAME`, `_PASSWORD`, `_WEBHOOK_BASE_URL` | Real calls | Required whenever VoiceLink is enabled **or** `NODE_ENV=production`. Caller IDs are per campaign (`caller_ids`), not env. `VOICELINK_DEFAULT_COUNTRY_CODE` default `91` |
 | `TELEPHONY_CREDENTIAL_KEYS` + `TELEPHONY_CREDENTIAL_ACTIVE_KEY` | Tenant carrier credentials (BYOC, B19) | Master keyring that seals the credentials super-admins add (`v1:<base64 32 bytes>,…`). Unset, or no entries after trim (blank, spaces or commas only) = adding one is refused and BYOC calls fail closed. Rotate by adding a new id and making it active; keep old ids listed while secrets are sealed under them (boot logs an ERROR naming a missing one). Back it up separately from the database: losing it makes every stored credential unopenable |
 | `S3_AUDIO_BUCKET` + `AWS_REGION` (default `ap-south-1`), `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | Abandon clips, CSV uploads | Unset: every upload fails ("S3 client not initialized"). Bucket and IAM user per environment: `aws/README.md` |
-| `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; worker every 60 s, concurrency 2. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
+| `DIALER_ANALYSIS_ENABLED=true` + a transcriber key (`DIALER_TRANSCRIBE_API_KEY` / `GEMINI_API_KEY`, or Sarvam) + an LLM key (`POST_CALL_ANALYSIS_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`, or Azure's) | Post-call analysis worker | `DIALER_TRANSCRIBER` default `gemini`, model `gemini-3.5-flash`; 8 analysis slots (`DIALER_ANALYSIS_CONCURRENCY`; sizing below), a 512 MiB recording memory budget, a sweep every 60 s. `POST_CALL_ANALYSIS_PROVIDER`: `openai_compatible` (default; `openai` also accepted; any Chat Completions endpoint via `POST_CALL_ANALYSIS_BASE_URL`, `_HEADERS`, `_STRUCTURED_OUTPUT`), `azure_openai` or `gemini`; model default `gpt-4o-mini`; `POST_CALL_ANALYSIS_TEMPERATURE` default 0.3, `none` sends none. `POST_CALL_ANALYSIS_INPUT`: `transcript` (default) or `audio` (the recording is sent with the transcript; `gemini` only, refused at boot otherwise; timeout default 180 s instead of 30 s). Per tenant it also needs the `agency_call_analysis` flag (default off; `FF_AGENCY_CALL_ANALYSIS` sets the default). Every key: `apps/server/.env.example` |
 | `RECORDING_URL_SIGNING_SECRET` (16+ chars) | Stable signed playback URLs | Unset: a random per-process key, so signed URLs break on restart |
 | `POSTHOG_ENABLED=true` + `POSTHOG_API_KEY` | Product analytics | Host default `https://us.i.posthog.com` |
 | `OTEL_ENABLED=true` + `OTEL_EXPORTER_OTLP_ENDPOINT` + `OTEL_SERVICE_NAME` | Traces, metrics and logs over OTLP (http/protobuf) | All three or nothing starts (the server warns when only the name is missing). `OTEL_SERVICE_NAME`: `magick-agency` = production, `magick-agency-Staging`, `magick-agency-Dedicated`; anything else (e.g. `agency-dev-<you>`) is not alerted on. Grafana Cloud also needs `OTEL_EXPORTER_OTLP_HEADERS=Authorization=Basic <base64 id:token>`. `OTEL_METRICS_EXPORT_INTERVAL_MS` default 60000. Alert rules and dashboard: `grafana/README.md` |
@@ -187,20 +187,31 @@ production.
 | `PORT`, `HOST` | `3021`, `0.0.0.0` | Listen address. See the proxy invariant before leaving `0.0.0.0` |
 | `NODE_ENV` | `development` | `production` turns on Postgres TLS and makes Firebase and VoiceLink mandatory |
 | `TRUST_PROXY_HOPS` | `1` (min 1) | Number of reverse proxies in front (Q9) |
-| `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `10` | pg pool |
+| `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
+| `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
+| `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
 | `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Only `true` / `false` parse; `false` is the one opt-out |
-| `REDIS_KEY_PREFIX` | empty | Prefix on every Redis key |
-| `MAX_CONCURRENT_CALLS` | `200` | Global guard ceiling (per-account limits come from super-admin settings, default 5) |
+| `REDIS_KEY_PREFIX` | empty | Prefix on every Redis key, and on the cache-invalidation pub/sub channel (`<prefix>cache:invalidate:db<N>`, N the URL's Redis db). Pub/sub is server-wide, not per db, so two deployments on one Redis are separated by a different prefix or a different db |
+| `REDIS_COMMAND_TIMEOUT_MS`, `REDIS_MAX_RETRIES_PER_REQUEST`, `REDIS_CONNECT_TIMEOUT_MS` | `2000`, `1`, `2000` | Redis client bounds: a Redis that is gone or stalled fails each command within the timeout (a rejection, so call tokens fail open per Q6, and the agent lease renewer keeps renewing through it). ioredis's defaults took ~10 s to show on `/readyz` and held some requests ~30 s |
+| `MAX_CONCURRENT_CALLS` | `1000` | Global guard ceiling: call legs holding a slot, ringing and `ending` included (a 500-call floor holds ~860 at peak; sizing in `config/blocks/voice.ts`). Per-account limits come from super-admin settings, default 5 |
+| `VOICELINK_LOGIN_TIMEOUT_MS`, `VOICELINK_ADD_LEAD_TIMEOUT_MS` | `10000`, `15000` | VoiceLink REST timeouts, per request (a 401's retry gets a fresh one; the `add_lead` value also bounds a CDR lookup). A timed-out `add_lead` fails the dial (agent and slots released at once) but may have queued the lead: never retried, the contact's redial deferred 15 min, a late carrier media connect refused and hung up (`voicelink.adapter.ts`, `post`) |
 | `CALL_TIMEOUT_SECONDS` | `300` | Guard lease timeout |
 | `CONCURRENCY_RECONCILE_INTERVAL_MS` | `300000` | Self-heal reconcile cadence |
 | `STALE_CALL_SWEEP_MINUTES` | `30` | Stale bridged-call sweep |
-| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 200, 1000, 600, 1000, `1 minute` | Rate-limit buckets (`architecture.md`, "Rate limiting and client IP") |
-| `RATE_LIMIT_IP_AUTH_MAX` | 3000 | Per-IP bucket for requests carrying a bearer: a call floor behind one NAT (Q9, amended 2026-11-01) |
-| `RATE_LIMIT_USER_MAX` | 300 | Per verified user, charged by the session middleware; the bucket that binds signed-in traffic |
+| `RATE_LIMIT_MAX`, `_WEBHOOK_MAX`, `_CARRIER_MEDIA_MAX`, `_STATION_MAX`, `_INTERNAL_MAX`, `RATE_LIMIT_WINDOW` | 2000, 5000, 2000, 3600, 1000, `1 minute` | Rate-limit buckets (`architecture.md`, "Rate limiting and client IP"), sized for ~550 users behind one NAT and ~510 dials a minute (`apps/server/src/api/middleware/rate-limit-defaults.ts`) |
+| `RATE_LIMIT_IP_AUTH_MAX` | 20000 | Per-IP bucket for requests carrying a bearer: a call floor behind one NAT (Q9, amended 2026-11-01), the whole signed-in floor's traffic |
+| `RATE_LIMIT_USER_MAX` | 600 | Per verified user, charged by the session middleware; the bucket that binds signed-in traffic |
 | `MOBILE_MIN_SUPPORTED_VERSION`, `MOBILE_LATEST_VERSION` | `0.1.0`, `0.1.0` | `GET /client-config`; `MAJOR.MINOR.PATCH`, and the minimum may not be newer than the latest (boot refuses) |
 | `MOBILE_IOS_STORE_URL`, `MOBILE_ANDROID_STORE_URL` | unset | Store links on `GET /client-config`; https only |
 | `VOICELINK_RECORDING_HOSTS` | `recording.app.voicelink.co.in` | Recording fetch allow-list |
+| `DIALER_ANALYSIS_CONCURRENCY` | `8` (1-256) | Analysis jobs in flight in this process; see "Sizing the analysis worker" |
+| `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` | `536870912` (512 MiB) | Recording bytes the analysis slots may hold; at least 2 × `DIALER_MAX_RECORDING_BYTES` |
+| `MEDIA_WORKERS` | `0` (0-64) | Media worker processes ([`scaling.md`](scaling.md)). 0 = one process, as before. N = a primary plus N workers that hold the agents' sockets and relay the audio. On 2 vCPUs more than 1 buys little; 500 calls needs more cores whatever the layout (§8.1) |
+| `MEDIA_WORKER_HEAP_MB` | `768` | Each media worker's `--max-old-space-size` (the primary keeps the entrypoint's) |
+| `WORKER_CRASH_LOOP_MAX` | `5` | More exits of one media worker in 5 minutes makes the primary exit and the container restart (D4) |
+| `MEDIA_WORKER_DB_POOL_MAX` | `10` | Each media worker's own pg pool (a worker writes only its own calls' rows; pacing, the sweeps and the API stay on the primary's `DB_POOL_MAX`) |
+| `ANALYSIS_WORKERS` | `0` (0-32) | Separate analysis processes, each with its own slots and budget; 0 keeps the slots in the server process. See "Sizing the analysis worker" |
 | `AGENCY_TRANSCRIPT_RETENTION_DAYS` | `30` (falls back to `DIALER_TRANSCRIPT_RETENTION_DAYS`) | Transcripts nulled after this |
 | `AGENCY_RETENTION_DAYS` | unset | Call and analysis rows deleted after this; unset = kept. Must be ≥ `RETENTION_MIN_DAYS` (30) |
 | `RETENTION_PURGE_INTERVAL_MS` | 1 day | Purge cadence (also runs 60 s after boot) |
@@ -208,11 +219,138 @@ production.
 | `AUDIT_PARTITION_MAINTENANCE_ENABLED` | `true` | Creates partitions 3 months ahead and drops old ones, daily |
 | `INVITE_TOKEN_TTL_DAYS` | `7` (1–90) | Invite expiry |
 | `PLATFORM_BRAND_NAME`, `_ACCENT`, `_LOGO_URL` | `Magick Agency`, `#7c5cfc`, unset | Brand in mail (B17) |
-| `LOCAL_CACHE_ENABLED` | `false` | In-process cache layer over Redis (5 s TTL) |
+| `LOCAL_CACHE_ENABLED` | `false` | In-process cache layer over Redis (5 s TTL), kept honest by invalidations on `<REDIS_KEY_PREFIX>cache:invalidate:db<N>`. A release that changed the channel's name (the `:db<N>` suffix arrived in one) does not carry invalidations between an old and a new process while both run; each process's own copies still drop, and the others' within the local TTL |
 | `LOG_LEVEL` | `info` | |
 
 `apps/server/.env.example` carries the reasoning for the proxy, TLS, recording-host, retention and
 Redis settings.
+
+### Sizing the analysis worker
+
+The analysis worker keeps up to `DIALER_ANALYSIS_CONCURRENCY` jobs in flight in this process
+and starts the next one the moment a slot frees, so its throughput is slots ÷ minutes per job.
+Size it as:
+
+**slots ≈ calls ending per minute × minutes per job**, then cap it by the vendors' rate limits.
+
+- *Calls ending per minute*: only analysed calls count (the `agency_call_analysis` flag on, talk
+  time ≥ `DIALER_ANALYSIS_MIN_TALK_TIME_SECONDS`). A floor of N agents on ~3-minute calls ends
+  about N ÷ 3 calls a minute; 500 simultaneous calls end ~167 a minute.
+- *Minutes per job*: the `dialer_analysis_duration_seconds` stages added up (fetch + transcribe +
+  analyze; the *Dialer Analysis Latency* panel). Measure it; the default below assumes 2 minutes.
+  Audio input adds a second upload.
+- *Vendor limits*: each slot makes about one transcription request per 10 minutes of audio
+  (`DIALER_TRANSCRIBE_WINDOW_SECONDS`) and one analysis request (two uploads with audio input).
+  Keep slots × requests per job ÷ minutes per job under the key's requests-per-minute quota, with
+  headroom for retries. Use a dedicated `DIALER_TRANSCRIBE_API_KEY`.
+- *Postgres*: a slot holds a pool connection only for a claim, a heartbeat or the final
+  transaction. In the server process the slots share `DB_POOL_MAX` (default 30) with HTTP;
+  raise it with large slot counts. An analysis worker process has its own pool of
+  `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`, which counts towards the host's total
+  ("Sizing the media workers", *Postgres connections*).
+
+The default of 8 covers about 4 analysed calls a minute at 2 minutes a job (a floor of ~12 agents
+on 3-minute calls). At the 500-call target (~167 calls a minute) and 2 minutes a job the queue
+needs ~330 slots, more than one process allows (`DIALER_ANALYSIS_CONCURRENCY` accepts 1-256) and
+past most single-key quotas: raise the quotas and run more than one analysis process (claims are
+`FOR UPDATE SKIP LOCKED`, so processes share the queue safely), or accept a backlog that drains
+off-peak.
+
+**Analysis worker processes (`ANALYSIS_WORKERS`).** With `ANALYSIS_WORKERS=K` (0-32, default 0)
+the server forks K analysis processes and runs no analysis slot of its own. Each child runs
+`DIALER_ANALYSIS_CONCURRENCY` slots under its own `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES` and a heap of
+that budget plus 512 MB, so recording buffers and vendor waits stay off the process that serves
+calls. Total slots are K × `DIALER_ANALYSIS_CONCURRENCY`. The server keeps the retention purge,
+enqueues jobs when calls end and wakes the children over IPC. A vendor rate limit in one child
+pauses all of them (the primary relays the pause; each then sends one probe when it ends). A
+child that exits is restarted (1 s, 2 s, 4 s, … up to 30 s); its claimed jobs return to the
+queue through the stale recovery, without using an attempt. On shutdown each child requeues
+its own in-flight jobs (generation-matched) and exits; one that has not exited within 15 s is
+killed. 0 is the behaviour before the key existed. Design: [`scaling.md`](scaling.md).
+
+**Memory.** Each slot may buffer a whole recording (up to `DIALER_MAX_RECORDING_BYTES`, 50 MiB)
+and upload it, which copies it once more. A slot reserves 2 × that cap on the recording memory
+budget (`DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`, default 512 MiB) before it claims a job, and drops
+to 2 × the real size once the recording is fetched (to zero once a transcript-only job has its
+transcript). A slot that finds the budget spent waits without a claim. The default fits five
+worst-case recordings at once, or hundreds of ordinary ones (a 3-minute mono MP3 is 1-3 MB),
+next to everything else in a 4 GB heap. The server refuses to start with a budget below
+2 × `DIALER_MAX_RECORDING_BYTES`.
+
+**Rate limits.** A vendor rate limit (HTTP 429 / `RESOURCE_EXHAUSTED`) requeues the job without
+using an attempt and pauses all new claims in this process for 30 s, doubling with each
+consecutive pause up to 15 min. After a pause one probe job runs; slots fill again only when it
+completes. A rate-limited job is requeued no earlier than the pause.
+
+**What to watch** (dashboard row *Analysis*): `dialer_analysis_slot_utilization` pinned at 1
+while `dialer_analysis_queue_depth{status="queued"}` grows means too few slots;
+`dialer_analysis_budget_waits_total` rising means the memory budget, not the slots, is the limit;
+`dialer_analysis_rate_limit_pauses_total` rising means the vendor quota is. `dialer_analysis_in_flight`
+and `dialer_analysis_memory_reserved_bytes` show the pool itself.
+
+### Sizing the media workers
+
+`MEDIA_WORKERS=N` moves the agents' station sockets and their calls' audio relay into N
+processes, so the relay no longer shares a loop with pacing, webhooks and the API
+([`scaling.md`](scaling.md)).
+
+**What it buys.** Each process is one CPU core at most. The relay costs about 35–40 µs of CPU
+per relayed frame, and a call is 100 frames a second (50 each way). So:
+- 200 calls is about 0.75 of a core;
+- 500 calls is about 1.9 cores for the relay alone;
+- nginx and the TLS terminator also handle every frame on the same host (not measured here).
+
+**Measured.** From `apps/server/scripts/load/cluster-media-load.ts`: the real server, the mock
+carrier, real station sockets, 50 frames a second each way per call, 20 s windows. The machine
+is a shared 4-core dev box, and the load generators themselves used 1.1–1.8 of its cores, so
+read the ratios, not the absolutes:
+
+| Calls | `MEDIA_WORKERS` | Calls bridged | Primary (or single) loop: ELU, p99 delay | Each media worker: ELU, p99 delay |
+|---|---|---|---|---|
+| 200 | 0 | 200 | 0.98, 24 ms | – |
+| 200 | 2 | 200 | 0.05, 4 ms | 0.59 / 0.64, 6 ms |
+| 200, half on the mobile app (`--client 0.5`) | 2 | 200 | 0.05, 5 ms | 0.71 / 0.73, 13 ms (web only, same day: 0.62 / 0.68, 7–8 ms) |
+| 500 | 0 | 250, then no more | 1.00, 69 ms | – |
+| 500 | 2 | 500 | 0.06, 5 ms | 0.97 / 0.95, 44–62 ms |
+| 500 | 3 | 500 | 0.05, 6 ms | 0.88 / 0.81 / 0.90, 23–34 ms |
+
+In every run with workers the primary's loop stays near idle while the workers carry the audio.
+One process saturates at 200 calls, and at 500 it cannot bridge more than about 250.
+
+**How many.**
+- Leave one core for the primary, nginx, the TLS terminator and Redis:
+  `MEDIA_WORKERS = min(vCPUs − 1, ceil(calls ÷ 170))`. 170 calls keeps a worker around 0.6 ELU.
+- On 2 vCPUs, `MEDIA_WORKERS=1` keeps the relay off the loop that paces and serves the API. It
+  does not raise the call ceiling: the relay still has one core.
+- 500 calls needs more than 2 vCPUs whatever the process layout.
+- More processes than cores is allowed and logged once at boot (cores, media, analysis,
+  primary); they then share cores, and a worker waiting for a core delays its calls' audio.
+- Size the RAM for the primary's heap (the entrypoint's 4 GB), plus
+  `MEDIA_WORKERS × MEDIA_WORKER_HEAP_MB`, plus the analysis children, plus Redis, nginx and the
+  OS.
+
+**Postgres connections.** Every process opens its own pool, so the host can open the sum:
+
+`DB_POOL_MAX` + `MEDIA_WORKERS × MEDIA_WORKER_DB_POOL_MAX` + `ANALYSIS_WORKERS × min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`
+
+The database must allow that plus about 5 (a migration run, the super-admin CLI, an operator)
+for the server's role: `max_connections − superuser_reserved_connections`. With the defaults
+the 500-call layout (`MEDIA_WORKERS=3`, `ANALYSIS_WORKERS=2`) is 30 + 3 × 10 + 2 × 10 = 80, plus
+5 = 85, which fits a stock Postgres (100, 3 reserved). The RDS instance `DEPLOYMENT.md` suggests
+(`db.t4g.medium`) derives `max_connections` from its memory (about 400). A smaller managed
+plan can allow fewer than 100: check it before raising any of the three. The pools start empty
+and grow under load, so a host over the limit boots and runs normally and is refused
+connections (`53300 too_many_connections`) only at a peak. So the primary checks the sum at
+boot when workers are configured, before it forks any: past the limit it **refuses to start**
+(exit 1; decision D12), and the log line names both numbers and the settings to lower. When it
+fits it exports `db_connections_planned` (the sum plus the headroom) and
+`db_connections_allowed`; `/readyz?detail=1` (with `READYZ_DETAIL_TOKEN`, "Health") shows the numbers on the primary's entry (`db`).
+Raise `max_connections` before raising `MEDIA_WORKERS`, `ANALYSIS_WORKERS` or a pool.
+
+**What to watch.** The *Processes* dashboard row shows event-loop utilisation by instance
+(`:primary`, `:media0`, …): a worker pinned near 1 needs another core. It also shows child
+exits (`agy-cluster-child-crash` warns on any), IPC requests and handoffs. `/readyz?detail=1`
+gives the same per-process view on the host.
 
 ## Deployment invariants
 
@@ -223,9 +361,11 @@ Redis settings.
    cuts a live call's carrier leg and status webhooks; each refusal logs
    `WebRTC WS token missing while Redis answered`. If Redis is down altogether, tokens are accepted
    (a live call is never hard-failed for a Redis outage).
-2. **One replica.** The bridge remembers tokens whose Redis `SET` failed in-process; the
-   runtime, reaper, retention and partition jobs assume one process. Scaling out needs that memo
-   shared or dropped, and a review of every sweep.
+2. **One host, one server container.** Never scale `server`. With `MEDIA_WORKERS` or
+   `ANALYSIS_WORKERS` set, the one container runs a primary and the workers it forks
+   ([`scaling.md`](scaling.md)). The primary is the only process that runs the reaper, the
+   sweeps, retention and partition jobs. A token's Q6 memo is always minted and verified in
+   the same worker. A second server container would break all of that.
 3. **Reachable only through exactly `TRUST_PROXY_HOPS` proxies.** `request.ip` trusts that many
    `X-Forwarded-For` entries from the right and keys every IP rate-limit bucket. If the port is
    reachable directly, a client can set its own IP and evade the limits; if the real chain has a
@@ -243,10 +383,11 @@ Redis settings.
 
 ## Shutdown and grace period
 
-On SIGTERM or SIGINT the server closes HTTP first, then stops analysis, agency (pacing first,
-waiting up to 5 s for ticks in flight; in-flight campaign-completion mails get up to 30 s), voice (the bridge hangs up live calls and
-releases their slots) and platform (audit buffers flushed), then closes Redis and Postgres
-(`apps/server/src/index.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
+On SIGTERM or SIGINT the server closes HTTP first, then halts pacing (waiting up to 5 s for
+ticks in flight), stops analysis, then agency (in-flight campaign-completion mails get up to
+30 s), voice (the bridge hangs up live calls and releases their slots) and platform (audit
+buffers flushed), then closes Redis and Postgres (`apps/server/src/index.ts`,
+`cluster/shutdown-order.ts`). Docker's default stop grace is 10 s, which would cut the 30 s drain,
 so the production compose file sets `stop_grace_period: 45s` on the server. On any other runtime,
 give the container at least 45 s. `http closed` is logged once the HTTP close has succeeded, so
 the order can be read from the logs. Read it from each line's `time` field rather than the line
@@ -269,6 +410,29 @@ rulings of 2026-10-16/17). 5 s plus 30 s stays inside the 45 s grace.
 
 Agents are not returned to the pool on shutdown; after a restart they come back in `break` and must
 choose to go available.
+
+**With media workers** (`MEDIA_WORKERS > 0`), the primary orders the shutdown; the workers
+ignore SIGTERM and SIGINT. HTTP closes first, then:
+
+1. Pacing halts, before anything drains: ticks are drained (up to 5 s), leases are given up,
+   and every worker is told no dial may go out.
+2. Together: the media workers drain alongside the completion-notice drain (each worker
+   closes its sockets, stops the shard, ends its live calls and exits; one still running
+   after 30 s is killed and its slot reaped, so its calls' slots are released at once; one
+   that crashes during its drain, any exit but code 0, is reaped the same way), and
+   the analysis children requeue their jobs and exit (15 s, then killed).
+3. Agency stops, then voice, then platform (the audit buffers flush last).
+
+Typical worst case about 5 s + 30 s plus a few seconds, inside the compose file's 45 s grace.
+Before step 1, closing HTTP waits for requests in flight; one forwarded to a media worker is
+bounded at 15 s (`core.inject`) and a forwarded carrier webhook at 10 s. Only when such a request
+is in flight at SIGTERM AND a worker needs its full 30 s drain can the total pass 45 s; the
+container is then killed, which costs what a crash costs (the next boot's startup reap settles
+what was left).
+
+The multi-process end-to-end suite (`test/integration/cluster/media-workers.test.ts`) pins that
+the whole tree exits 0 inside 45 s, including with live calls on a worker. A worker whose primary dies hangs its calls up within 5 s and exits.
+Details: [`scaling.md`](scaling.md) §6.
 
 ## Migrations
 
@@ -342,6 +506,26 @@ It reads only the base settings (`DATABASE_URL`, `NODE_ENV`, `DB_SSL_CA`,
 
 `GET /healthz` answers 200 while the process is up. `GET /readyz` answers 200 only when Postgres
 (`SELECT 1`) and Redis (`PING`) respond, else 503. Both are exempt from rate limiting.
+
+With media workers, `/readyz` also needs at least one media worker to have answered a health
+ping within 1 s and not to be draining, and the primary not to be shutting down (D5). Its body
+names each worker's state, `{"status":"ready","mediaWorkers":{"answering":1,"total":2,"workers":[{"slot":0,"state":"not_answering"},{"slot":1,"state":"ok"}]}}`:
+one slow or restarting worker does not take the host out of the load balancer or fail the
+uptime check (it would take all traffic away, not the 1/N that worker serves); watch
+`agy-cluster-child-crash` and the *Processes* row for it instead. One answer (Postgres, Redis and
+one health ping to each worker) serves every probe for a second, so a flood of `/readyz` costs the
+workers one ping round a second; a not-ready verdict is at most that second old.
+
+`GET /readyz?detail=1` needs `Authorization: Bearer <READYZ_DETAIL_TOKEN>` (unset: the detail is
+off; without the token or with another it answers 401 before anything is probed):
+`curl -H "Authorization: Bearer $READYZ_DETAIL_TOKEN" 'http://127.0.0.1:3021/readyz?detail=1'`.
+It adds the per-process view: role, slot, pid, event-loop
+utilisation, p99 loop delay, live calls (media) or jobs (analysis), and whether it is draining.
+The primary's own loop is listed too. The loop numbers are each process's last completed 5 s
+window, closed by the process's own timer (`cluster/loop-sampler.ts`): reading them resets
+nothing, so two probers see the same numbers and a stall stays visible for the whole window.
+For history, the *Processes* row reads the OTel runtime gauges (`nodejs_eventloop_*`, one series
+per process, per export interval), which keep their own histogram and are not touched by probes.
 
 ## Releases and versioning
 

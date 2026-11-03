@@ -4,6 +4,7 @@ import { useAgencyStation, type UseAgencyStationResult } from '../../hooks/useAg
 import { DiagnosticsLog } from '../../utils/agencyDiagnostics';
 import { errorBody } from '../../utils/agencyErrors';
 import { useAgencyAudio, type AgencyAudioState } from '../../hooks/useAgencyAudio';
+import { useStationMediaFormat } from '../../hooks/useFeatureFlagEnabled';
 import { useAgencyCues, type CueFlash } from '../../hooks/useAgencyCues';
 import type { CuePrefs } from '../../utils/agencyCuePrefs';
 import { useServerClock, type ServerClock } from '../../hooks/useServerClock';
@@ -172,6 +173,7 @@ export function useAgencyConsole(
     audio: audio.sink,
     cues: cues.dispatcher,
     diagnostics,
+    mediaFormat: useStationMediaFormat(),
   });
   const {
     agentState,
@@ -238,11 +240,13 @@ export function useAgencyConsole(
       attemptId: target.id,
       bridged: target.bridged,
       send: station.sendMedia,
+      // The socket's format, so the capture graph produces what `sendMedia` takes.
+      format: station.mediaFormat,
     });
     // `audio.sync` and not `audio`: the hook returns a fresh object each render,
     // so depending on the whole thing would re-run this on every repaint of the
     // console. `sync` itself is memoized and stable for the shift.
-  }, [audio.sync, target.id, target.bridged, station.sendMedia]);
+  }, [audio.sync, target.id, target.bridged, station.sendMedia, station.mediaFormat]);
 
   const [announcement, setAnnouncement] = useState('');
   const [presenceBusy, setPresenceBusy] = useState(false);

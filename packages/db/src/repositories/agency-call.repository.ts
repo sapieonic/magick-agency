@@ -304,6 +304,29 @@ export class WebRtcCallRepository {
   }
 
   /**
+   * Fail these calls if they are still live: the media worker that held them exited
+   * (`docs/scaling.md` §6.1), so nothing will ever finalise them. Terminal rows are left
+   * alone, so a call that ended meanwhile keeps its own outcome.
+   */
+  async failActiveByIds(ids: readonly string[], reason: 'worker_exited'): Promise<WebRtcCallRecord[]> {
+    if (ids.length === 0) return [];
+    const result = await getPool().query<WebRtcCallRecord>(
+      `UPDATE agency_calls SET
+         status = 'failed',
+         outcome = 'stuck_active_call',
+         error_code = 'STUCK_ACTIVE_CALL',
+         error_message = $2,
+         ended_at = now(),
+         duration_seconds = COALESCE(duration_seconds, EXTRACT(EPOCH FROM (now() - created_at))::int),
+         talk_time_seconds = COALESCE(talk_time_seconds, 0)
+       WHERE id = ANY($1::uuid[]) AND status IN ('initiating','ringing','in_progress')
+       RETURNING *`,
+      [[...ids], `stuck active call: ${reason}`],
+    );
+    return result.rows;
+  }
+
+  /**
    * Fail stuck WebRTC rows: any active call older than `olderThan` is a row that
    * never settled. Atomically marks it `failed` (error_code='STUCK_ACTIVE_CALL')
    * and returns the updated rows so the caller can dispatch the credit-releasing

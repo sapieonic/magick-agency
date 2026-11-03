@@ -1713,3 +1713,60 @@ describe('PacingEngine.stop() and the tick in flight', () => {
     expect(noticeSettled).toBe(true);
   });
 });
+
+describe('process seams (docs/scaling.md §3.1): reserved-agent return and leadership grants', () => {
+  it('a registered ReservedReturn takes every return, in place of the queued-break check and the plain write', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }, { id: 's2' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const agents = makeAgents({ s1: 'available', s2: 'available' });
+    const { e } = engine(makeStations(['s1', 's2']), agents, vi.fn());
+    const hasQueuedBreak = vi.fn(() => true);
+    e.registerQueuedBreakRelease({ hasQueuedBreak, release: vi.fn() });
+    const returnReserved = vi.fn().mockResolvedValue(undefined);
+    e.registerReservedReturn({ returnReserved });
+
+    await e.tickOnce('camp-1');
+
+    expect(returnReserved).toHaveBeenCalledWith('s2');
+    expect(hasQueuedBreak).not.toHaveBeenCalled();
+    expect(agents.set).not.toHaveBeenCalledWith('s2', 'available');
+  });
+
+  it('a new grant each time leadership is taken; withdrawals are announced with the grant they end; stop announces all', async () => {
+    repos.campaign.findActive.mockResolvedValue([CAMPAIGN]);
+    const { e } = engine(makeStations([]), makeAgents({}));
+    const revoked: Array<[string | null, number]> = [];
+    e.onAuthorisationRevoked((c, upTo) => { revoked.push([c, upTo]); });
+    expect(e.leadershipGrant('camp-1')).toBeNull();
+
+    await (e as any).superviseOnce();
+    const first = e.leadershipGrant('camp-1');
+    expect(first).toEqual(expect.any(Number));
+
+    flags.isEnabled.mockResolvedValue(false); // the kill switch drops leadership
+    await (e as any).superviseOnce();
+    expect(e.leadershipGrant('camp-1')).toBeNull();
+    expect(revoked).toEqual([['camp-1', first]]);
+
+    flags.isEnabled.mockResolvedValue(true);
+    await (e as any).superviseOnce();
+    const second = e.leadershipGrant('camp-1')!;
+    expect(second).toBeGreaterThan(first!);
+
+    await e.stop();
+    expect(revoked.slice(1)).toEqual([[null, second], ['camp-1', second]]);
+    expect(e.leadershipGrant('camp-1')).toBeNull();
+  });
+
+  it('in one process the dial is still authorised by the engine itself, not by a grant', async () => {
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    repos.contact.claimDialable.mockResolvedValue([contact('c1')]);
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+    await e.tickOnce('camp-1');
+    const opts = dispatch.mock.calls[0]![1] as { stillAuthorised: () => boolean };
+    expect(opts.stillAuthorised()).toBe(true);
+    await e.stop();
+    expect(opts.stillAuthorised()).toBe(false);
+  });
+});
+

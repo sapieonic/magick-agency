@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { ApiError } from '../../api/client';
-import { errorBody, errorCode, errorStatus } from '../../utils/agencyErrors';
+import { errorBody, errorCode, errorStatus, retryOnStationTokenUnavailable, STATION_TOKEN_RETRY_DELAYS_MS } from '../../utils/agencyErrors';
 
 /**
  * Built from a real `ApiError`, not a hand-made `{ status, body }`: the field names
@@ -44,5 +44,37 @@ describe('agency error reads', () => {
     // The body is still an envelope — it has a `code` — so callers reading the
     // message are not penalised for a malformed code.
     expect(errorBody({ details: { code: 7, message: 'x' } })).not.toBeNull();
+  });
+});
+
+describe('retryOnStationTokenUnavailable (D9)', () => {
+  const tokenUnavailable = () =>
+    new ApiError(503, { error: 'Service Unavailable', code: 'station_token_unavailable', message: 'Try again in a moment.' });
+
+  it('retries a 503 station_token_unavailable with the stated delays, then returns the answer', async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const out = await retryOnStationTokenUnavailable(async () => {
+      calls += 1;
+      if (calls < 3) throw tokenUnavailable();
+      return 'joined';
+    }, async (ms) => { waits.push(ms); });
+    expect(out).toBe('joined');
+    expect(waits).toEqual(STATION_TOKEN_RETRY_DELAYS_MS.slice(0, 2));
+  });
+
+  it('gives up after the last delay with the refusal, so the screen can still say it', async () => {
+    const waits: number[] = [];
+    const err = tokenUnavailable();
+    await expect(retryOnStationTokenUnavailable(async () => { throw err; }, async (ms) => { waits.push(ms); }))
+      .rejects.toBe(err);
+    expect(waits).toEqual([...STATION_TOKEN_RETRY_DELAYS_MS]);
+  });
+
+  it('never retries any other refusal', async () => {
+    let calls = 0;
+    await expect(retryOnStationTokenUnavailable(async () => { calls += 1; throw refusal(); }, async () => {}))
+      .rejects.toBeInstanceOf(ApiError);
+    expect(calls).toBe(1);
   });
 });

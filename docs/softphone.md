@@ -146,12 +146,21 @@ Owned by `AgencyRuntime`. One call at a time per session.
    deferred-hangup window applies, so a wifi blip mid-conversation survives). `ringing` is
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
    (`concurrency_limit`, a dead socket, or `dial_failed` for a refusal the soft phone does not
-   name) or the carrier refuses outright is ended `failed` and **unplaced**: `dialed_at` (stamped by
+   name, and for any failure inside the bridge before the carrier is asked: the row INSERT, the
+   carrier tokens, the carrier request's inputs such as the webhook base or the provider's
+   adapter, which the bridge tears down with no `ended`) or the carrier refuses outright is
+   ended `failed` and **unplaced**: `dialed_at` (stamped by
    the `dialing` write just before the bridge is asked) is cleared, so it is no dial in the usage
    counts (SP5), its contact claim is released and no attempt is charged; the carrier's refusal
    answers 201 with the row as it ended and settled. So is a dial that throws before the bridge is asked (a
    database fault on the `dialing` write): it is abandoned unplaced and the error reaches the
-   caller, so nothing is left `queued` holding the session.
+   caller, so nothing is left `queued` holding the session. A dial whose **outcome is unknown**
+   (`add_lead` timed out, or answered 200 with a body that cannot be read: the carrier may still
+   ring the customer, `TELEPHONY_INIT_OUTCOME_UNKNOWN`) is not unplaced: it ends `failed` with
+   `dialed_at` kept, answers 201 the same way (the console's "The call didn't go through."), and
+   its claimed contact is held (§5). When the call ends unanswered while the dial is still out
+   (the agent hangs up during `add_lead`), the agent gets the ended `manual_call` at once and the
+   contact waits for the dial's answer before it is settled.
    Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
    `allow_recording` in the bridge as today). Profile: tag's `analysis_profile_id`, else
    settings', else the account default (the analysis hook's fallback).
@@ -195,7 +204,8 @@ Owned by `AgencyRuntime`. One call at a time per session.
 10. **Restart.** The startup reaper ends non-terminal manual rows `orphaned` and settles their
     contact claims; the periodic sweep does the same for rows not owned by this process. A reaped row that
     never bridged is settled in the same statement and its claim settled (§5, "no outcome": a placed
-    one on the our-fault ledger, back on the roster at once, as a reaped attempt's contact is); one that bridged is ended and left
+    one on the our-fault ledger, back on the roster as a reaped attempt's contact is: at once, or,
+    for a dial sent and never answered, no earlier than 15 min after `dialed_at`); one that bridged is ended and left
     awaiting its outcome (the agent talked to the customer and can still write it up after reconnecting), so
     its claim is kept until the outcome or the lapse (`reapOrphaned`). The periodic sweep spares
     this process's live calls and any row younger than 5 minutes. Both sweeps write an
@@ -267,9 +277,10 @@ customer straight back:
 
 | The call | The contact |
 |---|---|
+| the dial's outcome unknown, never answered (the bridge's `TELEPHONY_INIT_OUTCOME_UNKNOWN`, or an end that raced such a dial) | the campaign path's hold: `our_fault_attempts` + 1, `pending` no earlier than 15 min on (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`), `exhausted` at the our-fault bound (the tag's `canceled` / `agent_disconnected` cap applies to a raced hang-up). The reaper's sweeps, which have only the rows, read the media leg's `error_code` (`mediaLegEndedWith`) |
 | never placed (`dialed_at` NULL: refused before the carrier, or by it) | the claim released to its prior state; nothing charged |
 | placed, ended by our side before it bridged (`canceled`: the agent hung up the ring; `agent_disconnected`) | `our_fault_attempts` + 1 and `resolveOurFaultRedial`: `pending` after the our-fault delay, `exhausted` at the bound; the customer's allowance untouched |
-| placed, `orphaned` before it bridged (a restart) | the same ledger and bound, `pending` at once (the reaper's rule for an attempt) |
+| placed, `orphaned` before it bridged (a restart, a dead media worker) | the same ledger and bound, and the reaper's rule for an attempt (`dialOutcomeUnknownNotBefore`): dialled and never answered, the carrier may still place it, so `pending` no earlier than 15 min after `dialed_at`; answered, or dialled longer ago than that, `pending` at once |
 | any other placed call (`no_answer`, `busy`, `failed`, `invalid`; a lapsed bridged call) | `attempt_count` + 1 and the tag's `retry_policy` (`resolveRetryDecision`): `pending` after the outcome's delay, `exhausted` past its max, `completed` when never retried (a lapsed `connected` call under the defaults), `suppressed` for `invalid`; `last_disposition` is `no_disposition` for a lapse |
 
 A retry's `next_attempt_at` is not moved into the calling window, as a campaign retry's is not:
@@ -313,7 +324,7 @@ from `audit` (a success without the envelope is a 502).
 | `POST /softphone/calls` | `softphone.dial` | `{ session_id, to, caller_id?, campaign_id? (null = untagged), fields?, overrides?: { dnc_note?, hours_note? } }` → 201 `AgencyManualCall` |
 | `PATCH /softphone/calls/:id` | `softphone.dial` | `{ fields?, notes? }` while live or awaiting an outcome → the row (`fields` per §3: omitted, or `{}` with no call fields in force, is unchanged) |
 | `POST /softphone/calls/:id/hangup` | `softphone.dial` | → the row; a supervisor may act on behalf |
-| `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf. The same code again is a replay: notes and callback last-write-wins, and a corrected callback moves the `next_attempt_at` of the contact this call settled while it is still `pending` on that code (`rescheduleFromManualReplay`, as the station's replay re-runs `markState`); no DNC mark, settlement or claim release repeats, and its audit row carries `replay: true` |
+| `POST /softphone/calls/:id/disposition` | `softphone.dial` | `{ code, notes?, callback_at?, fields? }` → `AgencyManualCallDispositionResponse`; a supervisor may act on behalf. The same code again is a replay: notes and callback last-write-wins, and a corrected callback moves the `next_attempt_at` of the contact this call settled while it is still `pending` on that code (`rescheduleFromManualReplay`, as the station's replay moves its contact through `releaseFromDisposition`); no DNC mark, settlement or claim release repeats, and its audit row carries `replay: true` |
 | `POST /softphone/calls/:id/dnc` | `softphone.dial` | `{ reason? }`: campaign scope when tagged, else the call's account (`scope: 'account'`); never tenant-wide |
 | `GET /softphone/calls` | `softphone.dial` | own calls; the account's with supervise. Query: `limit` (1–100, default 50), `cursor`, `agent_user_id` (an agent naming another agent: 403), `campaign_id` (uuid or `untagged`), `status`, `outcome`, `disposition_code`, `phone` (digits, suffix match), `contact_id` (the roster contact the call matched, claimed or linked, settled calls included: `idx_agency_manual_calls_contact_history`; an agent still sees only their own calls), `from`, `to` (exclusive). Rows carry `agent_name` and the media leg's `analysis_status` |
 | `GET /softphone/calls/:id` | `softphone.dial` | `AgencyManualCallDetail`: the call (contact context, prior attempts, `agent_name`), `dispositioned_by_name`, the override notes, `call_availability`, and — with supervise only — the media leg (recording, transcript, AI analysis) with the attempt detail's entitlement strip (`allow_recording`, `analyze_calls` of the account). An agent reading their own call gets the call record with `media: null`: a call's media is `agency.supervise`'s, as a campaign call's is (`rbac.ts`); the internal handler and the public route both withhold it |
@@ -379,7 +390,10 @@ manual-call actions (not the account-wide settings one) and the reaper's `audit_
   that means anything is a dial character, and `D` is not one.
 - **Audio.** On `/dialer/phone` the playback context is warmed and the microphone probed on the
   agent's first gesture on the page, so the permission prompt never lands mid-call. The mic opens
-  when dialing starts and sends only once bridged; it is released when the call ends. The ringback
+  when dialing starts and sends only once bridged; it is released when the call ends. The audio
+  rides the station socket in the console's format, binary A-law (`media=alaw8`) unless the
+  tenant's `agency_console_alaw8` flag is off ([`architecture.md`](architecture.md), "Browser leg
+  media"), the same as a campaign call. The ringback
   is generated in the browser (400 + 450 Hz, ring-ring). While ringing, Mute silences only the
   ringback ("Mute ring"); the microphone's mute is separate, and answering with the microphone
   muted is announced assertively. The SP3 warning shows while ringing; hang-up is hold-to-confirm

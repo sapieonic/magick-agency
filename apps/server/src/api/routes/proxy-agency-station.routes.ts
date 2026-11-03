@@ -5,7 +5,9 @@ import { disableNagle } from '../../utils/ws-nodelay.js';
 import { isUnsafeCorePath } from '../../proxy/safe-core-path.js';
 import { handleStationSocket } from '../../agency/station-socket.js';
 import { parseStationUpgradeQuery } from '../../agency/station-upgrade.js';
+import { canonicalUuid } from './helpers/path-params.js';
 import type { AgencyRuntime } from '../../agency/runtime.js';
+import '../../cluster/ws-handoff.plugin.js';
 
 /*
  * The console's station WebSocket, served at `/proxy/agency/station/:sessionId`
@@ -100,9 +102,13 @@ export async function proxyAgencyStationRoutes(
 ): Promise<void> {
   app.get<{ Params: { sessionId: string }; Querystring: { token?: string; client?: string; media?: string } }>(
     '/:sessionId',
-    { websocket: true },
+    // With media workers, the primary hands this upgrade to the session's worker
+    // (`docs/scaling.md` §2.1); in one process the key is unused.
+    { websocket: true, config: { wsOwner: { by: 'session', param: 'sessionId' } } },
     (clientSocket, request) => {
-      const { sessionId } = request.params;
+      // Lower-cased like every other route's UUID params (`canonicalUuid`): the station's
+      // Redis ownership key and the token store are keyed by the id as stored.
+      const sessionId = canonicalUuid(request.params.sessionId);
       const token = request.query?.token;
 
       if (!token) {

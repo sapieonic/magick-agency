@@ -212,6 +212,15 @@ describe('ConcurrencyGuard', () => {
       expect(await guard.tryAcquire('call-4')).toBe(false); // over limit
     });
 
+    it('with N media workers each process admits only its share of the limit (D6)', async () => {
+      guard.setDegradedShare(2); // ceil(3 / 2) = 2
+      expect(await guard.tryAcquire('call-1')).toBe(true);
+      expect(await guard.tryAcquire('call-2')).toBe(true);
+      expect(await guard.tryAcquire('call-3')).toBe(false);
+      guard.setDegradedShare(1); // one process: the whole limit, as before
+      expect(await guard.tryAcquire('call-3')).toBe(true);
+    });
+
     it('release decrements local counter', async () => {
       await guard.tryAcquire('call-1');
       await guard.tryAcquire('call-2');

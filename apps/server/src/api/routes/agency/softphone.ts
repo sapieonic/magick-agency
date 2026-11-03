@@ -51,7 +51,7 @@ import { formatWebRtcCallResponse } from '../../responses/webrtc-call.response.j
 import { UUID_RE } from '../../../utils/uuid.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { SOFTPHONE_LIST_DEFAULT_LIMIT, softphoneListFilters, softphoneListQuerySchema } from '../helpers/softphone-list-query.js';
-import { accountNameInTenant, requireOwnedSession, sendActionError, stationIntervalsFor } from './helpers.js';
+import { accountNameInTenant, mintStationTokenOr503, requireOwnedSession, sendActionError, stationIntervalsFor } from './helpers.js';
 import {
   sendSoftphoneRefusal,
   type SoftphoneHangupAudit,
@@ -359,7 +359,8 @@ export async function registerSoftphoneRoutes(sub: FastifyInstance, runtime: Age
     // Redis, or `break` — and for a soft-phone session always `break/soft_phone`, with
     // its unsettled call re-claimed (`rehydrateAgent`, docs/softphone.md §4.1 step 1).
     const state = await runtime.rehydrateAgent(session.id, session);
-    const minted = await runtime.tokens.mint(session.id);
+    const minted = await mintStationTokenOr503(runtime, session.id, reply);
+    if (!minted) return reply;
     const body: AgencySoftphoneSessionResponse = {
       session_id: session.id,
       kind: 'softphone',

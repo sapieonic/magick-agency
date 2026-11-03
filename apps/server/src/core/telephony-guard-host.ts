@@ -200,12 +200,33 @@ export class TelephonyGuardHost {
   }
 
   /**
+   * A media worker (`docs/scaling.md` §5.5): the self-heal (counters vs locks, stale rows)
+   * is the primary's alone, so a wake here is sent there instead of arming a poll.
+   */
+  private selfHealDelegate: (() => void) | null = null;
+
+  delegateSelfHeal(wake: (() => void) | null): void {
+    this.selfHealDelegate = wake;
+  }
+
+  /** D6: with N media workers each admits `ceil(limit / N)` while Redis is down. */
+  setDegradedShare(processes: number): void {
+    this.concurrencyGuard.setDegradedShare(processes);
+    this.accountConcurrencyGuard.setDegradedShare(processes);
+  }
+
+  /**
    * Wake the demand-driven self-heal poller. Idempotent; resets the idle counter
    * so a fresh call always restores the full dormancy window. Called on startup
    * and on every call end. No-op while shutting down. The timer is unref'd
-   * (never holds the process open) and goes dormant on its own when idle.
+   * (never holds the process open) and goes dormant on its own when idle. In a media
+   * worker the wake goes to the primary instead (`delegateSelfHeal`).
    */
   wakeSelfHeal(): void {
+    if (this.selfHealDelegate) {
+      this.selfHealDelegate();
+      return;
+    }
     this.selfHealEmptySweeps = 0;
     if (this.selfHealTimer || this.shuttingDown) return;
     this.armSelfHealTimer();

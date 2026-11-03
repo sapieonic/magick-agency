@@ -8,7 +8,8 @@ import { insertWebrtcCall } from '../setup/factories.js';
  * is RECORDED and that the job table has no settlement column; the final case
  * covers queue depth and that a completed job is not reclaimed. Also covered end
  * to end: every mirrored `analysis_status` transition, `recoverStale` failing at
- * the lifetime ceiling, `gracefulRequeue`, `requeueRateLimited` and `list`.
+ * the lifetime ceiling, `gracefulRequeue`, `requeueRateLimited`, `list` and
+ * `msUntilNextRunnable` (the worker's next-due timer).
  */
 vi.mock('../../../src/connection.js', () => ({ getPool: () => getTestPool() }));
 const { dialerAnalysisJobRepository: repo } = await import('../../../src/repositories/dialer-analysis-job.repository.js');
@@ -190,5 +191,31 @@ describe('dialerAnalysisJobRepository (integration)', () => {
     expect((await repo.findByCallId(call.id))!.id).toBe(job.id);
     expect((await repo.list({ tenant_id: call.tenant_id, status: 'completed' })).map((j) => j.id)).toEqual([job.id]);
     expect(await repo.list({ tenant_id: '99999999-9999-4999-8999-999999999999' })).toEqual([]);
+  });
+
+  it('msUntilNextRunnable: null with nothing queued, 0 when one is due, else the wait to the earliest queued job', async () => {
+    expect(await repo.msUntilNextRunnable()).toBeNull();
+
+    // Only a far-future and an in-flight job: the in-flight one does not count.
+    const later = await enqueue(await callWithRecording());
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() + interval '90 seconds' WHERE id = $1`, [later.id]);
+    const running = await enqueue(await callWithRecording());
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET status = 'transcribing' WHERE id = $1`, [running.id]);
+    const far = (await repo.msUntilNextRunnable())!;
+    expect(far).toBeGreaterThan(85_000);
+    expect(far).toBeLessThanOrEqual(90_000);
+
+    // A sooner one (a settle delay) wins.
+    const soon = await enqueue(await callWithRecording());
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() + interval '15 seconds' WHERE id = $1`, [soon.id]);
+    const near = (await repo.msUntilNextRunnable())!;
+    expect(near).toBeGreaterThan(10_000);
+    expect(near).toBeLessThanOrEqual(15_000);
+
+    // An overdue one, or one with no next_attempt_at at all, is due now.
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = now() - interval '1 minute' WHERE id = $1`, [soon.id]);
+    expect(await repo.msUntilNextRunnable()).toBe(0);
+    await getTestPool().query(`UPDATE dialer_analysis_jobs SET next_attempt_at = NULL WHERE id = $1`, [soon.id]);
+    expect(await repo.msUntilNextRunnable()).toBe(0);
   });
 });

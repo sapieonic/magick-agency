@@ -1,5 +1,11 @@
 import { useState, useRef, useCallback } from 'react';
-import { getWorkletUrl } from '../utils/audio-worklet-processor';
+import type { AgencyStationMediaFormat } from '@magick-agency/contracts/agency';
+import {
+  getWorkletUrl,
+  STATION_CAPTURE_PROCESSOR,
+  type CapturedFrameMessage,
+} from '../utils/audio-worklet-processor';
+import type { AgencyUplinkFrame } from '../utils/agencyMedia';
 
 /**
  * How the microphone failed, reduced to the cases a *person* can act on.
@@ -59,8 +65,20 @@ interface AudioCaptureState {
    * `start()` attaches a consumer. Idempotent while a stream is live.
    */
   prepare: () => Promise<void>;
-  start: (onChunk: (base64: string) => void) => Promise<void>;
+  /**
+   * Attach the sink. Each 20 ms frame arrives in the capture format
+   * ({@link AudioCaptureState.setFormat}): base64 PCM16 16 kHz (`pcm16`) or a
+   * 160-byte A-law 8 kHz `ArrayBuffer` (`alaw8`).
+   */
+  start: (onChunk: (frame: AgencyUplinkFrame) => void) => Promise<void>;
   stop: () => void;
+  /**
+   * The format frames are produced in: the station socket's (`useAgencyStation`'s
+   * `mediaFormat`). `pcm16` until told otherwise. Read when the graph is built, and
+   * sent to a live worklet, which switches without re-acquiring the microphone: a
+   * station that falls back to `pcm16` mid-call keeps the agent audible.
+   */
+  setFormat: (format: AgencyStationMediaFormat) => void;
   /**
    * Muted state. **Mute is enforced in two places** — the track is disabled at
    * the source *and* the chunk sink is gated — because either alone is a
@@ -166,7 +184,10 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
    * ~50 times a second inside the port handler, and a value closed over there
    * would freeze at whatever it was when the graph was built.
    */
-  const sinkRef = useRef<((base64: string) => void) | null>(null);
+  const sinkRef = useRef<((frame: AgencyUplinkFrame) => void) | null>(null);
+
+  /** The capture format; see `setFormat`. A ref for the same reason as `mutedRef`. */
+  const formatRef = useRef<AgencyStationMediaFormat>('pcm16');
 
   /**
    * The acquisition already in flight, so concurrent `prepare()` calls share one
@@ -209,6 +230,14 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
    * is `release()` in `acquire`.
    */
   const generationRef = useRef(0);
+
+  const setFormat = useCallback((next: AgencyStationMediaFormat) => {
+    if (formatRef.current === next) return;
+    formatRef.current = next;
+    // A live graph switches in place. Frames already posted in the old format can
+    // still arrive; each says its format, and the station drops a mismatch.
+    nodeRef.current?.port.postMessage({ format: next });
+  }, []);
 
   const setMuted = useCallback((next: boolean) => {
     mutedRef.current = next;
@@ -393,12 +422,29 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
       await ctx.audioWorklet.addModule(getWorkletUrl());
       if (cancelled()) return null;
 
+      const format = formatRef.current;
+      /**
+       * `alaw8` is made from a 16 kHz context (decimated 2:1 in the worklet) or an
+       * 8 kHz one (passed through). Every browser the console supports honours the
+       * 16 kHz this hook asks for; a context that came up at another rate cannot be
+       * turned into A-law here, and saying so beats sending audio the server would
+       * hear at the wrong speed. Thrown inside the graph build, so `release()` below
+       * stops the microphone.
+       */
+      if (format === 'alaw8' && ctx.sampleRate !== 16000 && ctx.sampleRate !== 8000) {
+        const err = new Error(`Cannot capture A-law from a ${ctx.sampleRate} Hz context.`);
+        err.name = 'NotSupportedError';
+        throw err;
+      }
+
       const source = ctx.createMediaStreamSource(stream);
       const analyserNode = ctx.createAnalyser();
       analyserNode.fftSize = 256;
       source.connect(analyserNode);
 
-      const workletNode = new AudioWorkletNode(ctx, 'pcm16-processor');
+      const workletNode = new AudioWorkletNode(ctx, STATION_CAPTURE_PROCESSOR, {
+        processorOptions: { format },
+      });
       /**
        * **The port is enabled HERE, not in `start()`, and that is the whole
        * point of this line.**
@@ -426,7 +472,7 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
        * frames in real time while `sinkRef` is null. Nothing accumulates,
        * because nothing is ever queued.
        */
-      workletNode.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
+      workletNode.port.onmessage = (e: MessageEvent<CapturedFrameMessage>) => {
         const sink = sinkRef.current;
         // Armed but not bridged (or already released): there is nowhere for this
         // frame to go. Returning before the copy + base64 also keeps the ringing
@@ -434,7 +480,13 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
         if (sink === null) return;
         // Nothing leaves while muted — not even a silent frame. See `muted`.
         if (mutedRef.current) return;
-        const pcm16 = new Uint8Array(e.data);
+        const { format: frameFormat, data } = e.data;
+        // `alaw8`: the worklet's bytes go on the wire as they are — no copy, no base64.
+        if (frameFormat === 'alaw8') {
+          sink(data);
+          return;
+        }
+        const pcm16 = new Uint8Array(data);
         let binary = '';
         for (let i = 0; i < pcm16.length; i++) {
           binary += String.fromCharCode(pcm16[i]!);
@@ -517,7 +569,7 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
     );
   }, []);
 
-  const start = useCallback(async (onChunk: (base64: string) => void) => {
+  const start = useCallback(async (onChunk: (frame: AgencyUplinkFrame) => void) => {
     // Reuse a mic stream prepared up front; otherwise acquire it now (preserves
     // the original single-call behavior for callers that don't pre-acquire).
     if (!nodeRef.current) await prepare();
@@ -615,5 +667,5 @@ export function useAudioCapture(options: AudioCaptureOptions = {}): AudioCapture
     setError((prev) => (prev?.kind === 'audio_blocked' ? null : prev));
   }, []);
 
-  return { active, analyser, prepare, start, stop, muted, setMuted, error, resume };
+  return { active, analyser, prepare, start, stop, setFormat, muted, setMuted, error, resume };
 }

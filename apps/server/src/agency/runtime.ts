@@ -17,9 +17,9 @@ import {
 import { StationRegistry, stationGraceFor } from './station-registry.js';
 import { AgentStateMachine, AGENT_LEASE_MS } from './agent-state-machine.js';
 import { AgencyDialer } from './agency-dialer.js';
-import { LocalDialDispatcher } from './dial-dispatcher.js';
-import { PacingEngine } from './pacing-engine.js';
-import { AgencyReaper } from './reaper.js';
+import { LocalDialDispatcher, type DialDispatcher } from './dial-dispatcher.js';
+import { PacingEngine, type PacingStations, type ReservedReturn } from './pacing-engine.js';
+import { AgencyReaper, type AgencyReaperDeps } from './reaper.js';
 import { refreshAbandonmentWindow, startAbandonmentMetricsRefresh } from './abandonment-metrics.js';
 import { refreshLiveConcurrency, startLiveConcurrencyRefresh } from './live-concurrency-metrics.js';
 import {
@@ -34,8 +34,23 @@ import { WrapupManager } from './wrapup-manager.js';
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
 import { ManualDialer } from './softphone/manual-dialer.js';
 import { SoftphoneService } from './softphone/softphone-service.js';
+import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 
 const log = createChildLogger({ component: 'agency-runtime' });
+
+/**
+ * How the runtime is assembled in the primary of a multi-process server
+ * (`docs/scaling.md` §3): where pacing reads the stations from, how it dispatches a dial
+ * and hands back a reserved agent, and what the reaper asks about liveness. Absent (one
+ * process): the runtime's own registry, `LocalDialDispatcher`, the queued-break check and
+ * the reaper's in-process questions, exactly as before.
+ */
+export interface AgencyRuntimeOptions {
+  pacingStations?: PacingStations;
+  dispatcher?: DialDispatcher;
+  reservedReturn?: ReservedReturn;
+  reaper?: Partial<Pick<AgencyReaperDeps, 'activeAttemptIds' | 'ownerOf' | 'unrecordedEnds' | 'manual' | 'beforeSweep'>>;
+}
 
 /** A registry entry, as the sweep sees it (`StationRegistry.silentSince`). */
 type StationEntry = ReturnType<StationRegistry['silentSince']>[number];
@@ -95,7 +110,7 @@ export class AgencyRuntime {
    */
   readonly softphone: SoftphoneService;
 
-  constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string) {
+  constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string, options: AgencyRuntimeOptions = {}) {
     // Stable for the life of the process. There is one replica in v1, but the
     // ownership key is written and read from day one so the invariant is exercised
     // continuously rather than being dead code that rots until we scale out.
@@ -129,9 +144,11 @@ export class AgencyRuntime {
       },
       ownerOf: (sessionId) => this.stations.ownerOf(sessionId),
       unrecordedEnds: {
-        ids: () => this.dialer.unrecordedEndedAttemptIds(),
+        entries: () => this.dialer.unrecordedEndedAttempts(),
         forget: (attemptIds) => this.dialer.forgetUnrecordedEnds(attemptIds),
       },
+      clearAgent: (sessionId) => this.agents.clear(sessionId),
+      ...options.reaper,
     });
     this.tokens = new StationTokenStore(redis, keyPrefix);
 
@@ -146,10 +163,12 @@ export class AgencyRuntime {
       dnc: this.dnc,
       manual: this.manualDialer,
     });
-    const dispatcher = new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
+    const dispatcher = options.dispatcher
+      ?? new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
     this.pacing = new PacingEngine(
-      redis, keyPrefix, this.replicaId, this.stations, this.agents, dispatcher, this.dnc,
+      redis, keyPrefix, this.replicaId, options.pacingStations ?? this.stations, this.agents, dispatcher, this.dnc,
     );
+    if (options.reservedReturn) this.pacing.registerReservedReturn(options.reservedReturn);
     // The engine's "something may want to know a campaign finished" seam carries the
     // supervisors' completion notice. See `campaign-completion-notice.ts`.
     this.pacing.registerCompletionNotifier({ notifyCampaignFinished: notifyAgencyCampaignFinished });
@@ -158,6 +177,21 @@ export class AgencyRuntime {
     this.pacing.registerQueuedBreakRelease({
       hasQueuedBreak: (sessionId) => this.breaks.peek(sessionId) !== null,
       release: (sessionId) => this.dialer.releaseAgent(sessionId),
+    });
+    // The pacing engine skips a campaign whose last tick found no available agent
+    // until something can change that (`pacing/invalidation-bus.ts`). These are the
+    // two ways an agent becomes dialable: a state write into `available` (a join,
+    // a wrap-up or break ending, a reservation handed back) and a station attaching
+    // over a lease that is still `available`. The campaign is resolved HERE, where
+    // the station lives, so the event means the same to an engine in another process.
+    const stationsForCampaign = options.pacingStations ?? this.stations;
+    this.agents.onAvailable((sessionId) => publishPacingInvalidation({
+      type: 'agent_available', sessionId,
+      campaignId: this.stations.get(sessionId)?.campaignId ?? stationsForCampaign.get(sessionId)?.campaignId ?? null,
+    }));
+    this.stations.onAttached(({ sessionId, campaignId }) => {
+      // A soft-phone session (no campaign) is never `available`; nothing to wake.
+      if (campaignId) publishPacingInvalidation({ type: 'agent_available', sessionId, campaignId });
     });
   }
 
@@ -605,6 +639,27 @@ export class AgencyRuntime {
   /** Whether the sweep timer is currently armed. */
   isStationSweepArmed(): boolean {
     return this.stationSweepTimer !== null;
+  }
+
+  /**
+   * A media worker's start (`docs/scaling.md` §1.3): the dialer and the soft phone's
+   * dialer listen to the bridge, and nothing else starts. No startup reap (the primary
+   * ran it before any worker existed; a startup reap here would end every other worker's
+   * live calls), no reaper, no pacing, no metric refreshes: those run once, in the primary.
+   */
+  startShard(): void {
+    this.dialer.start();
+    this.manualDialer.start();
+    log.info({ replicaId: this.replicaId }, 'Agency dialer runtime started as a media worker shard');
+  }
+
+  /** A media worker's stop: the shard's timers only (agents are not returned to the pool). */
+  async stopShard(): Promise<void> {
+    this.stopStationSweep();
+    this.dialer.stop();
+    this.manualDialer.stop();
+    this.wrapup.stop();
+    log.info('Agency dialer runtime shard stopped');
   }
 
   async start(): Promise<void> {

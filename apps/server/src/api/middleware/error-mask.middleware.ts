@@ -13,8 +13,9 @@ import { redactUrl } from '../../utils/redact-url.js';
  * Also: the 429 pass-through, the `preserveReviewedUpstreamError` opt-out (the reviewed way
  * to let a fixed-shape 5xx through; its one setter is `sendRevocationCacheUnavailable`,
  * `cache/revocation-unavailable.ts` — decision Q5 — so a role change's 503 keeps its "retry"
- * instruction), the content-length / x-request-id headers, and `MASK_EXEMPT_PATHS` for the
- * probes `/healthz` and `/readyz`.
+ * instruction), the media workers' fixed retry bodies (`REVIEWED_RETRY_BODIES`), the
+ * content-length / x-request-id headers, and `MASK_EXEMPT_PATHS` for the probes `/healthz`
+ * and `/readyz` (with or without a query string).
  *
  * The masked message says "contact support" without an address (decision B17) and is
  * exported as `MASKED_ERROR_MESSAGE`.
@@ -37,6 +38,39 @@ const MAX_LOGGED_ERROR_CHARS = 2000;
  * the request-logging skip set in index.ts.
  */
 const MASK_EXEMPT_PATHS = new Set(['/healthz', '/readyz']);
+
+/** The request's path without its query string (`/readyz?detail=1` is `/readyz`). */
+function pathOf(url: string): string {
+  const q = url.indexOf('?');
+  return q === -1 ? url : url.slice(0, q);
+}
+
+/**
+ * The retryable answers the primary authors when a request it forwards to a media worker
+ * cannot be served (`cluster/media-cluster.ts`): the worker is restarting or did not answer
+ * in time. Whatever route relayed them, they leave as these fixed bodies, never the
+ * "contact support" mask, so a client retries instead of showing a dead end. Only the
+ * status and `code` are read from the payload; the body sent is always the one here, so no
+ * other text can ride on a matching code.
+ */
+const REVIEWED_RETRY_BODIES: ReadonlyMap<string, { status: number; body: Record<string, string> }> = new Map([
+  ['worker_unavailable', { status: 503, body: { error: 'Service Unavailable', code: 'worker_unavailable', message: 'Try again in a moment.' } }],
+  ['worker_timeout', { status: 504, body: { error: 'Gateway Timeout', code: 'worker_timeout', message: 'Try again in a moment.' } }],
+]);
+
+function reviewedRetryBody(statusCode: number, payload: unknown): string | null {
+  let text: string | undefined;
+  if (typeof payload === 'string') text = payload;
+  else if (Buffer.isBuffer(payload)) text = payload.toString('utf8');
+  if (text === undefined || text.length > 512) return null;
+  try {
+    const code = (JSON.parse(text) as { code?: unknown } | null)?.code;
+    const reviewed = typeof code === 'string' ? REVIEWED_RETRY_BODIES.get(code) : undefined;
+    return reviewed && reviewed.status === statusCode ? JSON.stringify(reviewed.body) : null;
+  } catch {
+    return null;
+  }
+}
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -102,7 +136,7 @@ export async function errorMaskHook(
 ): Promise<unknown> {
   const statusCode = reply.statusCode;
   if (statusCode < 400) return payload;
-  if (MASK_EXEMPT_PATHS.has(request.url)) return payload;
+  if (MASK_EXEMPT_PATHS.has(pathOf(request.url))) return payload;
   if (request.preserveReviewedUpstreamError === true) return payload;
   // Client-facing 429s are authored pacing signals (see policy above).
   if (statusCode === 429) return payload;
@@ -111,6 +145,13 @@ export async function errorMaskHook(
   const mask = statusCode >= 500;
 
   if (!mask) return payload;
+
+  const retry = reviewedRetryBody(statusCode, payload);
+  if (retry !== null) {
+    reply.header('content-type', 'application/json; charset=utf-8');
+    reply.header('content-length', Buffer.byteLength(retry));
+    return retry;
+  }
 
   const requestId = String((request as { requestId?: string }).requestId ?? request.id);
 

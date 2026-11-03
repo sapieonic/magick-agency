@@ -57,7 +57,8 @@ import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertA
 import { config } from '../../../src/config/index.js';
 import { buildApp } from '../../../src/app.js';
 import type { AppContext } from '../../../src/app-context.js';
-import { resetAgencyRuntimeForTests } from '../../../src/bootstrap/agency.js';
+import { getAgencyRuntime, resetAgencyRuntimeForTests } from '../../../src/bootstrap/agency.js';
+import { StationTokenUnavailableError } from '../../../src/agency/station-token.js';
 import { resetVoiceEngineForTests } from '../../../src/bootstrap/voice.js';
 import { DEFERRED_HANGUP_MS } from '@magick-agency/domain/timers';
 
@@ -226,6 +227,22 @@ describe('runtime routes through the real app (integration)', () => {
       expect(rows[0].agent_user_id).toBe(w.agentA.id);
     });
 
+    it('D9: a station token that cannot be stored makes the join a 503 station_token_unavailable; the retried join is served', async () => {
+      const mint = vi.spyOn(getAgencyRuntime()!.tokens, 'mint')
+        .mockRejectedValueOnce(new StationTokenUnavailableError('any'));
+      try {
+        const refused = await post('/proxy/agency/sessions', w.agentA, { campaign_id: w.campaign });
+        expect(refused.statusCode, refused.body).toBe(503);
+        expect(refused.json()).toMatchObject({ code: 'station_token_unavailable' });
+        expect(refused.body).not.toContain('token=');
+      } finally {
+        mint.mockRestore();
+      }
+      const retried = await post('/proxy/agency/sessions', w.agentA, { campaign_id: w.campaign });
+      expect([200, 201], retried.body).toContain(retried.statusCode);
+      expect(retried.json().station_ws_url).toMatch(/\?token=/);
+    });
+
     it("another tenant's or a sibling account's campaign is a 404", async () => {
       for (const campaign_id of [w.foreignCampaign, w.siblingCampaign]) {
         const res = await post('/proxy/agency/sessions', w.agentA, { campaign_id });
@@ -358,6 +375,22 @@ describe('runtime routes through the real app (integration)', () => {
       const res = await post(`/proxy/agency/sessions/${w.sessionB}/${action}`, w.agentA, body);
       expect(res.statusCode, res.body).toBe(404);
       expect(await sessionRow(w.sessionB)).toEqual(before);
+    });
+
+    it('D9: a token that cannot be stored is a 503 station_token_unavailable through the public layer, never a URL', async () => {
+      const mint = vi.spyOn(getAgencyRuntime()!.tokens, 'mint')
+        .mockRejectedValueOnce(new StationTokenUnavailableError(w.sessionB));
+      try {
+        const res = await post(`/proxy/agency/sessions/${w.sessionB}/station-token`, w.agentB);
+        expect(res.statusCode, res.body).toBe(503);
+        expect(res.json()).toMatchObject({ code: 'station_token_unavailable' });
+        expect(res.body).not.toContain('token=');
+        // The retry the client makes is served normally.
+        const again = await post(`/proxy/agency/sessions/${w.sessionB}/station-token`, w.agentB);
+        expect(again.statusCode, again.body).toBe(200);
+      } finally {
+        mint.mockRestore();
+      }
     });
 
     it("the owner mints their own token, and it opens their own station socket (ready)", async () => {

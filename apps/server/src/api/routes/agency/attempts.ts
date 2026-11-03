@@ -218,26 +218,50 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // the precedence contradicting itself in the field a console and a compliance
     // export both read.
     const nextAttemptAt = decision.nextAttemptAt ? (scheduledAt ?? decision.nextAttemptAt) : null;
-    await agencyContactRepository.markState(attempt.contact_id, contactState, {
-      last_outcome: attempt.outcome,
-      last_disposition: resolved.entry.code,
-      ...(nextAttemptAt ? { next_attempt_at: nextAttemptAt } : {}),
-      ...(decision.suppressedReason ? { suppressed_reason: decision.suppressedReason } : {}),
+    // ── Only while the contact is still this attempt's ─────────────────────
+    // A same-code replay is a success above and reaches this write again, possibly
+    // long after the first: the console's queued retry, a supervisor re-submitting
+    // from the attempt history. By then a later call may have settled the contact,
+    // or pacing / a soft-phone call may hold it `in_flight`. An unconditional write
+    // here put a contact a later call had closed as a sale back on the roster, and
+    // handed a claimed contact back under its live call. `releaseFromDisposition`
+    // writes in one statement and only while the contact is still parked for this
+    // attempt (or `pending` on this same code, the callback-correcting replay, or
+    // DNC-suppressed, where only the record lands); otherwise it writes nothing.
+    //
+    // The response is the same either way: the disposition IS recorded, and a
+    // replay's first write already moved the contact. `contact_state` and
+    // `next_attempt_at` report this disposition's decision, as they always have.
+    //
+    // ⚠️ The write COALESCEs `next_attempt_at`, so a contact moved to
+    // `suppressed`/`completed`/`exhausted` with no new instant KEEPS its previous
+    // one. Harmless today — `claimDialable` gates on `state = 'pending'`, so nothing
+    // reads it — but a test asserting "no retry was scheduled" here would be
+    // observing a stale value rather than an absence. Assert the STATE.
+    const landed = await agencyContactRepository.releaseFromDisposition({
+      contactId: attempt.contact_id,
+      attemptId: attempt.id,
+      dispositionCode: resolved.entry.code,
+      state: contactState,
+      lastOutcome: attempt.outcome,
+      nextAttemptAt,
+      suppressedReason: decision.suppressedReason ?? null,
     });
-    // ⚠️ `markState` writes `next_attempt_at = COALESCE($6, next_attempt_at)`, so a
-    // contact moved to `suppressed`/`completed`/`exhausted` with no new instant
-    // KEEPS its previous one. Harmless today — `claimDialable` gates on
-    // `state = 'pending'`, so nothing reads it — but it means a test asserting "no
-    // retry was scheduled" here would be observing a stale value rather than an
-    // absence. Assert the STATE. Nothing clears the column yet.
-    log.info(
-      {
-        contactId: attempt.contact_id, attemptId: attempt.id,
-        dispositionCode: resolved.entry.code, contactState,
-        dispositionReason: decision.reason, nextAttemptAt,
-      },
-      'Contact released by the disposition policy',
-    );
+    if (landed) {
+      log.info(
+        {
+          contactId: attempt.contact_id, attemptId: attempt.id,
+          dispositionCode: resolved.entry.code, contactState: landed.state,
+          dispositionReason: decision.reason, nextAttemptAt,
+        },
+        'Contact released by the disposition policy',
+      );
+    } else {
+      log.info(
+        { contactId: attempt.contact_id, attemptId: attempt.id, dispositionCode: resolved.entry.code },
+        'Disposition recorded; the contact no longer belongs to this attempt and was left as it is',
+      );
+    }
 
     // ── 6. Release the wrap-up, if this attempt is the one holding it ─────
     // `noteDisposition` is a no-op unless the session is in wrap-up FOR THIS

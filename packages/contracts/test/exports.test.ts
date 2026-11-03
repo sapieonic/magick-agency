@@ -12,6 +12,7 @@ import {
   AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
   AGENCY_STATION_ALAW8_FRAME_BYTES,
   AGENCY_STATION_ALAW8_MAX_FRAME_BYTES,
+  AGENCY_WS_MAX_MESSAGE_BYTES,
   AGENCY_STATION_CLOSE,
   AGENCY_CLIENT_KINDS,
   AGENCY_STATION_MEDIA_FORMATS,
@@ -118,6 +119,9 @@ describe('package surface', () => {
     expect(AGENCY_STATION_ALAW8_FRAME_BYTES).toBe(160);
     expect(AGENCY_STATION_ALAW8_MAX_FRAME_BYTES).toBe(8000);
     expect(AGENCY_STATION_ALAW8_MAX_FRAME_BYTES % AGENCY_STATION_ALAW8_FRAME_BYTES).toBe(0);
+    // The server's default WebSocket message bound, which clients size their frames under.
+    expect(AGENCY_WS_MAX_MESSAGE_BYTES).toBe(65_536);
+    expect(AGENCY_WS_MAX_MESSAGE_BYTES).toBeGreaterThan(AGENCY_STATION_ALAW8_MAX_FRAME_BYTES);
   });
 
   it('declares the session refusals agency answers with', () => {

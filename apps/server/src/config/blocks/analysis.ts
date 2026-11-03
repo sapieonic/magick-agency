@@ -108,6 +108,20 @@ const postCallAnalysisSchema = z.object({
 }));
 
 /**
+ * Copies of a recording an analysis slot can hold at its peak: the fetcher's chunks
+ * plus the concatenated buffer, or the buffer plus the `Blob` an upload wraps it in.
+ * The worker's recording byte budget reserves `maxRecordingBytes` × this per slot.
+ */
+export const RECORDING_COPIES = 2;
+
+/**
+ * Default `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`: 512 MiB. Five worst-case (50 MiB)
+ * recordings at once, or hundreds of typical ones (a 3-minute mono MP3 is 1-3 MB),
+ * well inside a 4 GB heap next to everything else the process holds.
+ */
+export const DEFAULT_DIALER_ANALYSIS_MEMORY_BUDGET_BYTES = 512 * 1024 * 1024;
+
+/**
  * Dialer Call Analysis — post-call transcription + analysis of agency calls.
  * Presence of this block (env `DIALER_ANALYSIS_ENABLED` truthy) activates the
  * worker + transcriber; the `agency_call_analysis` feature flag additionally gates
@@ -143,8 +157,29 @@ const dialerAnalysisSchema = z.object({
   maxAttempts: z.coerce.number().int().min(1).default(3),
   /** Lifetime attempt ceiling incl. manual retries — the "stop mashing Retry" guard. */
   maxAttemptsTotal: z.coerce.number().int().min(1).default(8),
-  /** Per-replica concurrent transcriptions (NOT cluster-wide — size accordingly, M4). */
-  concurrency: z.coerce.number().int().min(1).default(2),
+  /**
+   * Analysis slots in this process (NOT cluster-wide — size accordingly, M4). The worker
+   * keeps this many jobs in flight and starts the next as soon as one finishes. Size:
+   * slots ≈ calls ending per minute × minutes per job, capped by the vendors' rate
+   * limits. 8 covers ~4 calls a minute at ~2 minutes a job; see docs/operations.md.
+   */
+  concurrency: z.coerce.number().int().min(1).max(256).default(8),
+  /**
+   * Separate analysis processes the server forks, each running `concurrency` slots
+   * under its own `memoryBudgetBytes` (`ANALYSIS_WORKERS`, `docs/scaling.md` §1.3). 0
+   * (the default) keeps the slots in the server process itself, exactly as before. With
+   * K > 0 the server runs no slot of its own: it enqueues, wakes the children over IPC
+   * and keeps the retention purge. Claims are `FOR UPDATE SKIP LOCKED`, so the children
+   * share the queue with no other coordination.
+   */
+  processes: z.coerce.number().int().min(0).max(32).default(0),
+  /**
+   * Recording bytes the slots may hold in memory at once. A slot reserves
+   * `maxRecordingBytes` × 2 before it claims a job and shrinks to the real size once
+   * the recording is fetched, so slots × recording size cannot outgrow this. Must hold
+   * at least one worst-case recording (checked below).
+   */
+  memoryBudgetBytes: z.coerce.number().int().min(1024).default(DEFAULT_DIALER_ANALYSIS_MEMORY_BUDGET_BYTES),
   /** Worker poll interval when armed (self-dormant when idle). */
   pollIntervalMs: z.coerce.number().int().min(1000).default(60000),
   /** Short settle delay before first fetch — a URL served pre-finalization truncates. */
@@ -159,6 +194,18 @@ const dialerAnalysisSchema = z.object({
   recordingFetchRetries: z.coerce.number().int().min(0).max(10).default(2),
   /** Base delay (s) between in-attempt recording-fetch retries; doubles each retry. */
   recordingFetchRetryDelaySeconds: z.coerce.number().int().min(1).default(15),
+}).superRefine((data, ctx) => {
+  // A budget below one worst-case recording would let that recording exceed it.
+  const worstCase = data.maxRecordingBytes * RECORDING_COPIES;
+  if (data.memoryBudgetBytes < worstCase) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['memoryBudgetBytes'],
+      message:
+        `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES (${data.memoryBudgetBytes}) must be >= `
+        + `${RECORDING_COPIES} × DIALER_MAX_RECORDING_BYTES (${worstCase})`,
+    });
+  }
 });
 
 /**
@@ -275,6 +322,8 @@ export function readAnalysisEnv(env: Env): Record<string, unknown> {
       maxAttempts: env['DIALER_ANALYSIS_MAX_ATTEMPTS'],
       maxAttemptsTotal: env['DIALER_ANALYSIS_MAX_ATTEMPTS_TOTAL'],
       concurrency: env['DIALER_ANALYSIS_CONCURRENCY'],
+      processes: env['ANALYSIS_WORKERS'],
+      memoryBudgetBytes: env['DIALER_ANALYSIS_MEMORY_BUDGET_BYTES'],
       pollIntervalMs: env['DIALER_ANALYSIS_POLL_INTERVAL_MS'],
       settleSeconds: env['DIALER_ANALYSIS_SETTLE_SECONDS'],
       recordingFetchRetries: env['DIALER_ANALYSIS_RECORDING_FETCH_RETRIES'],

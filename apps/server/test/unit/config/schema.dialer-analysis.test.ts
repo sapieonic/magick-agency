@@ -21,10 +21,24 @@ describe('dialerAnalysis configuration schema', () => {
       recordingFetchRetryDelaySeconds: 15,
       maxAttempts: 3,
       maxAttemptsTotal: 8,
-      concurrency: 2,
+      concurrency: 8,
+      memoryBudgetBytes: 512 * 1024 * 1024,
+      maxRecordingBytes: 50 * 1024 * 1024,
       minTalkTimeSeconds: 10,
       recordingWaitMinutes: 30,
     });
+  });
+
+  it('refuses a recording memory budget below two worst-case recordings, naming both env vars', () => {
+    const tooSmall = dialerSchema.safeParse({ maxRecordingBytes: 10 * 1024 * 1024, memoryBudgetBytes: 20 * 1024 * 1024 - 1 });
+    expect(tooSmall.success).toBe(false);
+    const message = tooSmall.success ? '' : tooSmall.error.issues.map((i) => i.message).join(' ');
+    expect(message).toContain('DIALER_ANALYSIS_MEMORY_BUDGET_BYTES');
+    expect(message).toContain('DIALER_MAX_RECORDING_BYTES');
+    expect(dialerSchema.safeParse({ maxRecordingBytes: 10 * 1024 * 1024, memoryBudgetBytes: 20 * 1024 * 1024 }).success).toBe(true);
+    // The default cap needs 100 MiB; a budget raised past the default 512 MiB is fine too.
+    expect(dialerSchema.safeParse({ memoryBudgetBytes: 100 * 1024 * 1024 - 1 }).success).toBe(false);
+    expect(dialerSchema.safeParse({ memoryBudgetBytes: 2 * 1024 * 1024 * 1024 }).success).toBe(true);
   });
 
   it('parses the string false as false rather than the z.coerce.boolean trap', () => {
@@ -35,6 +49,7 @@ describe('dialerAnalysis configuration schema', () => {
   it('rejects invalid transcribers and numeric bounds', () => {
     expect(dialerSchema.safeParse({ transcriber: 'whisper' }).success).toBe(false);
     expect(dialerSchema.safeParse({ concurrency: 0 }).success).toBe(false);
+    expect(dialerSchema.safeParse({ concurrency: 257 }).success).toBe(false);
     expect(dialerSchema.safeParse({ maxAttempts: 0 }).success).toBe(false);
     expect(dialerSchema.safeParse({ maxAttemptsTotal: 0 }).success).toBe(false);
     expect(dialerSchema.safeParse({ recordingWaitMinutes: 0 }).success).toBe(false);

@@ -11,8 +11,17 @@ import type {
 import type { VoicelinkConfig, VoicelinkAddLeadResponse, VoicelinkCdrResponse, VoicelinkWebhookBody } from './voicelink.types.js';
 import { VoicelinkTokenManager } from './voicelink-token-manager.js';
 import { parseVoicelinkWebhook } from './voicelink.webhook.js';
+import { CarrierDialOutcomeUnknownError, CarrierRequestTimeoutError, isAbortTimeout } from '../carrier-errors.js';
 
 const log = createChildLogger({ component: 'voicelink-adapter' });
+
+/**
+ * Default `add_lead` timeout (`VOICELINK_ADD_LEAD_TIMEOUT_MS`). Without one a carrier that
+ * accepts the connection and never answers held the dial for undici's 300 s default: an
+ * agent reserved on a ringing panel and three concurrency slots, per hung request. 15 s is
+ * well above a healthy `add_lead` (a queue insert) and short against the agent's wait.
+ */
+export const DEFAULT_VOICELINK_ADD_LEAD_TIMEOUT_MS = 15_000;
 
 /**
  * VoiceLink telephony adapter.
@@ -183,32 +192,94 @@ export class VoicelinkAdapter implements TelephonyProvider {
    * POSTs to a VoiceLink endpoint with a Bearer token. On HTTP 401 it forces a
    * token refresh and retries the request exactly once (a stale Sanctum token is
    * the expected 401 cause). Any non-ok, non-401 response throws.
+   *
+   * ── Bounded, and what a request that runs out of time means ──────────────
+   * Each request (the 401 retry included) is abandoned after `addLeadTimeoutMs`
+   * (default {@link DEFAULT_VOICELINK_ADD_LEAD_TIMEOUT_MS}); the login before it has its
+   * own bound (`loginTimeoutMs`). The timeout covers the body read too.
+   *
+   * An `add_lead` that times out, or that answers 2xx in a body that is not JSON, may have
+   * QUEUED the lead: the carrier can still ring the customer. Both throw an error marked
+   * `dialOutcomeUnknown` ({@link CarrierRequestTimeoutError},
+   * {@link CarrierDialOutcomeUnknownError}), and the choices around it are the safest of
+   * the ones open:
+   *
+   *  - **Never retried.** A retry of a lead the carrier may have queued is a second call
+   *    to the same customer. Only a 401 is retried, and a 401 queued nothing.
+   *  - **The dial fails.** The bridge ends the call `telephony_init_failed`
+   *    (`TELEPHONY_INIT_OUTCOME_UNKNOWN`), which releases the agent and the concurrency
+   *    slots at once and clears the call's media token. Holding them instead until the
+   *    carrier shows up would hold an agent and three slots for a carrier that may be
+   *    down. If the carrier does ring the customer later, its media connect finds no
+   *    call and is refused and closed, and closing VoiceLink's media stream hangs that
+   *    call up: the customer is never left on a line with nobody behind it.
+   *  - **No early redial.** The agency dialer puts the contact back with its next attempt
+   *    deferred (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`), not at once, so the pacing tick
+   *    cannot dial the customer while the carrier may still be dialling them.
+   *
+   * A connection reset is a plain network error, as before: it is far more often a
+   * request that never left (a refused or broken connection) than one the carrier read.
    */
   private async post(path: string, body: Record<string, unknown>): Promise<VoicelinkAddLeadResponse> {
     const url = `${this.config.baseUrl}${path}`;
-    const send = async (token: string): Promise<Response> =>
-      fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
+    const timeoutMs = this.config.addLeadTimeoutMs ?? DEFAULT_VOICELINK_ADD_LEAD_TIMEOUT_MS;
+    const operation = `VoiceLink ${path}`;
 
-    let response = await send(await this.tokenManager.getToken());
-    if (response.status === 401) {
+    /**
+     * One request with its own deadline. `unauthorized` for a 401 when `refreshOn401`, else
+     * the parsed body; a 401 on the retry is an ordinary refusal.
+     */
+    const send = async (token: string, refreshOn401: boolean): Promise<{ unauthorized: true } | { data: VoicelinkAddLeadResponse }> => {
+      const signal = AbortSignal.timeout(timeoutMs);
+      // Set once headers arrive: a timeout while reading a non-ok body is still a refusal
+      // (the carrier said no), not an unknown outcome.
+      let status: number | null = null;
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+          signal,
+        });
+        status = response.status;
+        if (response.status === 401 && refreshOn401) {
+          await response.body?.cancel().catch(() => undefined);
+          return { unauthorized: true };
+        }
+        if (!response.ok) {
+          const errBody = await response.text();
+          throw new Error(`VoiceLink ${path} error ${response.status}: ${errBody}`);
+        }
+        const text = await response.text();
+        try {
+          return { data: JSON.parse(text) as VoicelinkAddLeadResponse };
+        } catch {
+          throw new CarrierDialOutcomeUnknownError(
+            `VoiceLink ${path} answered ${response.status} with a body that is not JSON; the lead may be queued at the carrier`,
+          );
+        }
+      } catch (err) {
+        if (!isAbortTimeout(err)) throw err;
+        const outcomeUnknown = status === null || (status >= 200 && status < 300);
+        log.error({ path, timeoutMs, status, outcomeUnknown }, 'VoiceLink request timed out');
+        if (status !== null && !outcomeUnknown) {
+          throw new Error(`VoiceLink ${path} error ${status}: (body not read within ${timeoutMs} ms)`);
+        }
+        throw new CarrierRequestTimeoutError(operation, timeoutMs, true);
+      }
+    };
+
+    let result = await send(await this.tokenManager.getToken(), true);
+    if ('unauthorized' in result) {
       // Stale token — refresh once and retry.
-      response = await send(await this.tokenManager.refresh());
+      result = await send(await this.tokenManager.refresh(), false);
     }
-
-    if (!response.ok) {
-      const errBody = await response.text();
-      throw new Error(`VoiceLink ${path} error ${response.status}: ${errBody}`);
-    }
-
-    return (await response.json()) as VoicelinkAddLeadResponse;
+    if ('unauthorized' in result) throw new Error(`VoiceLink ${path} error 401`); // unreachable: refreshOn401 false
+    return result.data;
   }
 
   async endCall(_providerCallId: string): Promise<void> {
@@ -311,10 +382,19 @@ export class VoicelinkAdapter implements TelephonyProvider {
   private async fetchCdr(callId: string): Promise<VoicelinkCdrResponse | null> {
     try {
       const url = `${this.config.baseUrl}/v1/call-log/details?call_id=${encodeURIComponent(callId)}`;
+      const timeoutMs = this.config.addLeadTimeoutMs ?? DEFAULT_VOICELINK_ADD_LEAD_TIMEOUT_MS;
+      // Bounded like add_lead, and per request as `post` is: each GET (the 401 retry
+      // included) gets its own deadline, created when it is sent, which also covers its
+      // body read. One deadline shared from before the first GET would leave the retry only
+      // what the 401 and the re-login had not used. The login has its own bound.
       const get = async (token: string): Promise<Response> =>
-        fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` } });
+        fetch(url, {
+          headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
       let response = await get(await this.tokenManager.getToken());
       if (response.status === 401) {
+        await response.body?.cancel().catch(() => undefined);
         response = await get(await this.tokenManager.refresh());
       }
       if (!response.ok) {

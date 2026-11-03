@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "Magick Agency at a glance: the agency dialer (live attempts, throughput, compliance, pacing), voice capacity, identity and mail, analysis, and runtime health — one pane per agency deployment, filtered by environment and service. Every query selects agency's service names only.",
+  "description": "Magick Agency at a glance: the agency dialer (live attempts, throughput, compliance, pacing), voice capacity, identity and mail, analysis, and runtime health \u2014 one pane per agency deployment, filtered by environment and service. Every query selects agency's service names only.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -32,7 +32,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Magick Agency — Overview",
+  "title": "Magick Agency \u2014 Overview",
   "uid": "magick-agency-overview",
   "version": 1,
   "weekStart": "",
@@ -46,7 +46,7 @@
         "y": 0
       },
       "id": 1,
-      "title": "Agency Dialer — live, throughput, compliance",
+      "title": "Agency Dialer \u2014 live, throughput, compliance",
       "type": "row",
       "panels": []
     },
@@ -55,7 +55,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Agency capacity in use, split by what it is doing: the dialer's campaign attempts by state, and the soft phone's live calls stacked on top. `dialing` is capacity committed to phones that may never answer; `bridged` is conversations actually earning. The split is the point: a flat concurrency number cannot tell 40 phones ringing from 40 conversations, which is the blind spot that made the 2026-09-08 pilot's bridge rate unreadable. Soft-phone calls hold carrier slots exactly like attempts and pacing's headroom subtracts them, but they belong to no campaign, so without the second series this panel showed headroom pacing did not have.\n\nREDUCED WITH `max` ACROSS REPLICAS, THEN SUMMED: the underlying SQL is fleet-wide and every replica publishes the identical series, so `max by` each series' own labels collapses the replicas (a bare `sum` would report one multiple of the truth per replica), and only then are campaigns and tenants summed. Same rule as the abandonment gauge beside it.\n\n`ringing` is a legal attempt state that nothing in the campaign dialer writes — expect no attempt series for it (the soft phone does write it). An empty panel (rather than a zero) means the 90s staleness TTL expired and no replica is publishing: treat that as the metric being down, not the dialer idle.",
+      "description": "Agency capacity in use, split by what it is doing: the dialer's campaign attempts by state, and the soft phone's live calls stacked on top. `dialing` is capacity committed to phones that may never answer; `bridged` is conversations actually earning. The split is the point: a flat concurrency number cannot tell 40 phones ringing from 40 conversations, which is the blind spot that made the 2026-09-08 pilot's bridge rate unreadable. Soft-phone calls hold carrier slots exactly like attempts and pacing's headroom subtracts them, but they belong to no campaign, so without the second series this panel showed headroom pacing did not have.\n\nREDUCED WITH `max` ACROSS REPLICAS, THEN SUMMED: the underlying SQL is fleet-wide and every replica publishes the identical series, so `max by` each series' own labels collapses the replicas (a bare `sum` would report one multiple of the truth per replica), and only then are campaigns and tenants summed. Same rule as the abandonment gauge beside it.\n\n`ringing` is a legal attempt state that nothing in the campaign dialer writes \u2014 expect no attempt series for it (the soft phone does write it). An empty panel (rather than a zero) means the 90s staleness TTL expired and no replica is publishing: treat that as the metric being down, not the dialer idle.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -99,7 +99,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Live Calls by State (campaign + soft phone)",
+      "title": "Agency Dialer \u2014 Live Calls by State (campaign + soft phone)",
       "type": "timeseries",
       "targets": [
         {
@@ -192,7 +192,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Abandonment",
+      "title": "Agency Dialer \u2014 Abandonment",
       "type": "timeseries",
       "targets": [
         {
@@ -202,7 +202,7 @@
           "refId": "A"
         }
       ],
-      "description": "Rolling 24h abandonment rate per campaign, in percent — the compliance number. The 3% line is the usual regulatory ceiling; adjust to your jurisdiction."
+      "description": "Rolling 24h abandonment rate per campaign, in percent \u2014 the compliance number. The 3% line is the usual regulatory ceiling; adjust to your jurisdiction."
     },
     {
       "datasource": {
@@ -281,7 +281,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Throughput",
+      "title": "Agency Dialer \u2014 Throughput",
       "type": "timeseries",
       "targets": [
         {
@@ -310,7 +310,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Every pre-dial gate decision by `gate` and `action`. `cleared`/`dial` is throughput; `suppress` arms are per-contact (DNC, invalid phone, calling window); `gate=\"dnc_unavailable\"` with `action=\"halt\"` is the campaign-wide compliance halt — the DNC registry (a Postgres read of `dnc_entries`) could not answer. `agy-dnc-unavailable` pages on it. Carries `campaign_id`, not `tenant_id`, so the Tenant filter does not apply.",
+      "description": "Every pre-dial gate decision by `gate` and `action`. `cleared`/`dial` is throughput; `suppress` arms are per-contact (DNC, invalid phone, calling window); `gate=\"dnc_unavailable\"` with `action=\"halt\"` is the campaign-wide compliance halt \u2014 the DNC registry (a Postgres read of `dnc_entries`) could not answer. `agy-dnc-unavailable` pages on it. Carries `campaign_id`, not `tenant_id`, so the Tenant filter does not apply.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -426,7 +426,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "THE PACING PANEL. Agent-minutes consumed per minute of wall clock, split by the outcome that consumed them — i.e. how many agents' worth of time each kind of attempt is eating right now.\n\nRead it as a budget. `connected` is the work; everything else is waiting. The 2026-09-08 pilot ran 26% talk / 60% waiting / 13% wrap-up, and the single largest waiting block was busy signals at ~37s each — which no ring timeout can shorten, because a busy phone never rings. That distinction is only visible because this is split by outcome; an aggregate 'average wait' pointed every previous analysis at the wrong lever.\n\nWhat each bucket implies: `busy`/`failed` high = carrier signalling latency (not tunable here); `no_answer` high = a ring timeout would pay, which needs a cancel-capable carrier; `canceled` high = our own teardown latency; `connected` high = talk time, and NOT waste.\n\nPer-replica histogram — aggregate with `sum(rate(...))`, never `max`. The opposite of the SQL-derived gauges on this dashboard.",
+      "description": "THE PACING PANEL. Agent-minutes consumed per minute of wall clock, split by the outcome that consumed them \u2014 i.e. how many agents' worth of time each kind of attempt is eating right now.\n\nRead it as a budget. `connected` is the work; everything else is waiting. The 2026-09-08 pilot ran 26% talk / 60% waiting / 13% wrap-up, and the single largest waiting block was busy signals at ~37s each \u2014 which no ring timeout can shorten, because a busy phone never rings. That distinction is only visible because this is split by outcome; an aggregate 'average wait' pointed every previous analysis at the wrong lever.\n\nWhat each bucket implies: `busy`/`failed` high = carrier signalling latency (not tunable here); `no_answer` high = a ring timeout would pay, which needs a cancel-capable carrier; `canceled` high = our own teardown latency; `connected` high = talk time, and NOT waste.\n\nPer-replica histogram \u2014 aggregate with `sum(rate(...))`, never `max`. The opposite of the SQL-derived gauges on this dashboard.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -469,7 +469,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Where Seat Time Goes",
+      "title": "Agency Dialer \u2014 Where Seat Time Goes",
       "type": "timeseries",
       "targets": [
         {
@@ -528,7 +528,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Attempt Hold Time by Outcome",
+      "title": "Agency Dialer \u2014 Attempt Hold Time by Outcome",
       "type": "timeseries",
       "targets": [
         {
@@ -550,7 +550,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Dial → carrier answer, for attempts that answered. Two decisions read this one distribution:\n\n1. THE RING TIMEOUT WORTH SETTING — where the curve flattens, and what the tail beyond it would forgo. There is no ring timeout on the agency dial path today: `ringTimeoutSeconds` is populated only from a DID on the inbound path, `agency_campaigns` has no such column, and on VoiceLink the dial request accepts no such parameter at all.\n\n2. THE OVER-DIAL ARITHMETIC — §11's marginal-abandonment formula takes a flat answer rate `p`, but the real exposure of a surplus dial is how tightly two answers can CLUSTER, which is this distribution's shape. p50 near p99 means clustering is likely and over-dialing is worse than the formula says.\n\nUnder D1 a voicemail pickup is an answer like any other, so this is the carrier's view — the same view the abandonment predicate takes.",
+      "description": "Dial \u2192 carrier answer, for attempts that answered. Two decisions read this one distribution:\n\n1. THE RING TIMEOUT WORTH SETTING \u2014 where the curve flattens, and what the tail beyond it would forgo. There is no ring timeout on the agency dial path today: `ringTimeoutSeconds` is populated only from a DID on the inbound path, `agency_campaigns` has no such column, and on VoiceLink the dial request accepts no such parameter at all.\n\n2. THE OVER-DIAL ARITHMETIC \u2014 \u00a711's marginal-abandonment formula takes a flat answer rate `p`, but the real exposure of a surplus dial is how tightly two answers can CLUSTER, which is this distribution's shape. p50 near p99 means clustering is likely and over-dialing is worse than the formula says.\n\nUnder D1 a voicemail pickup is an answer like any other, so this is the carrier's view \u2014 the same view the abandonment predicate takes.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -593,7 +593,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Answer Latency",
+      "title": "Agency Dialer \u2014 Answer Latency",
       "type": "timeseries",
       "targets": [
         {
@@ -621,7 +621,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "THE LATE-BINDING ROLLOUT GATE, finally measurable. §7.3 gates the week-long hold on 'bind-latency p99 <150ms and zero bind failures', and §11 carried that criterion as NOT INSTRUMENTED from the day the flag shipped — a refused bind was a WARN line and nothing else.\n\n⚠️ THE WHOLE BUDGET IS 1000ms (`ABANDONMENT_BRIDGE_GRACE_MS`). Every millisecond here is time the compliance predicate counts as abandonment. Measured from the CARRIER's answer instant, so it includes webhook transit — deliberately, because the predicate counts that too.\n\nREAD BOTH SERIES TOGETHER. A bind that never happened records no latency, so a rollout watching only the p99 sees it IMPROVE as binds start failing. `result` is exactly one of three: `bound` is the success; `station_lost` means the station was not there — either gone before we reached for the socket, or the `reserved` frame was refused; `bind_failed` means the socket was live and the bridge declined it, and it is the one that means ROLL THE FLAG BACK rather than slow the pacing down.\n\nNothing else appears. An earlier version of this description named `no_agent` and `refused`, neither of which the code has ever emitted, and handed `station_lost` only half its meaning — worth knowing because the Grafana validator checks metric and label NAMES, not description prose, so a query written against that text would have returned nothing and looked like a healthy rollout.\n\nABORT if p99 crosses 150ms or any non-`bound` result is sustained.",
+      "description": "THE LATE-BINDING ROLLOUT GATE, finally measurable. \u00a77.3 gates the week-long hold on 'bind-latency p99 <150ms and zero bind failures', and \u00a711 carried that criterion as NOT INSTRUMENTED from the day the flag shipped \u2014 a refused bind was a WARN line and nothing else.\n\n\u26a0\ufe0f THE WHOLE BUDGET IS 1000ms (`ABANDONMENT_BRIDGE_GRACE_MS`). Every millisecond here is time the compliance predicate counts as abandonment. Measured from the CARRIER's answer instant, so it includes webhook transit \u2014 deliberately, because the predicate counts that too.\n\nREAD BOTH SERIES TOGETHER. A bind that never happened records no latency, so a rollout watching only the p99 sees it IMPROVE as binds start failing. `result` is exactly one of three: `bound` is the success; `station_lost` means the station was not there \u2014 either gone before we reached for the socket, or the `reserved` frame was refused; `bind_failed` means the socket was live and the bridge declined it, and it is the one that means ROLL THE FLAG BACK rather than slow the pacing down.\n\nNothing else appears. An earlier version of this description named `no_agent` and `refused`, neither of which the code has ever emitted, and handed `station_lost` only half its meaning \u2014 worth knowing because the Grafana validator checks metric and label NAMES, not description prose, so a query written against that text would have returned nothing and looked like a healthy rollout.\n\nABORT if p99 crosses 150ms or any non-`bound` result is sustained.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -664,7 +664,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Late Bind (rollout abort criterion)",
+      "title": "Agency Dialer \u2014 Late Bind (rollout abort criterion)",
       "type": "timeseries",
       "targets": [
         {
@@ -686,7 +686,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "WHY abandoned calls reached no agent. Until this shipped, a bind failure and every other cause were the same increment in `agency_abandoned_total`, and they call for opposite responses.\n\n`station_lost` — the agent's station was not there. A WORKSTATION problem: check sockets and wifi, do not touch the pacing. `bind_failed` — the socket was live and the bridge refused it: **roll the late-binding flag back.** `bridge_late` — it DID bridge, outside the 1s grace; a conversation happened and was merely late. `unattributed` — abandoned with no cause observed, which on the flag-off default path is the ordinary residual: the customer answered, an agent was bound at dial, and media never came up.\n\n⚠️ `no_agent_available` is declared and **cannot currently occur**. Pacing is strictly 1:1 and the dialer refuses to dial once the station has gone, so nothing can dial with nobody free; it is the name reserved for a future pacing controller. If it ever appears without over-dialing having shipped, that is a bug, not a pacing signal. An earlier version of this panel told you it meant \"slow the pacing down\" — and the code was then labelling every flag-off station loss with it.\n\n⚠️ A SEPARATE SERIES, not a `reason` label on `agency_abandoned_total`. Labelling that one would terminate it, and it is the compliance numerator read by the auto-pause guardrail's own cross-check. So `sum(rate(agency_abandoned_reason_total))` should TRACK `sum(rate(agency_abandoned_total))`; a persistent gap means an abandon path that reaches the compliance counter without declaring a reason.\n\n`bridge_late` is the one that is not a failure to reach anybody — the call DID bridge, outside the 1s grace. It is still an abandoned call for compliance.\n\nThis panel is diagnosis. The compliance number is `agency_abandonment_rate_24h`, which is SQL-derived and taken with `max`.",
+      "description": "WHY abandoned calls reached no agent. Until this shipped, a bind failure and every other cause were the same increment in `agency_abandoned_total`, and they call for opposite responses.\n\n`station_lost` \u2014 the agent's station was not there. A WORKSTATION problem: check sockets and wifi, do not touch the pacing. `bind_failed` \u2014 the socket was live and the bridge refused it: **roll the late-binding flag back.** `bridge_late` \u2014 it DID bridge, outside the 1s grace; a conversation happened and was merely late. `unattributed` \u2014 abandoned with no cause observed, which on the flag-off default path is the ordinary residual: the customer answered, an agent was bound at dial, and media never came up.\n\n\u26a0\ufe0f `no_agent_available` is declared and **cannot currently occur**. Pacing is strictly 1:1 and the dialer refuses to dial once the station has gone, so nothing can dial with nobody free; it is the name reserved for a future pacing controller. If it ever appears without over-dialing having shipped, that is a bug, not a pacing signal. An earlier version of this panel told you it meant \"slow the pacing down\" \u2014 and the code was then labelling every flag-off station loss with it.\n\n\u26a0\ufe0f A SEPARATE SERIES, not a `reason` label on `agency_abandoned_total`. Labelling that one would terminate it, and it is the compliance numerator read by the auto-pause guardrail's own cross-check. So `sum(rate(agency_abandoned_reason_total))` should TRACK `sum(rate(agency_abandoned_total))`; a persistent gap means an abandon path that reaches the compliance counter without declaring a reason.\n\n`bridge_late` is the one that is not a failure to reach anybody \u2014 the call DID bridge, outside the 1s grace. It is still an abandoned call for compliance.\n\nThis panel is diagnosis. The compliance number is `agency_abandonment_rate_24h`, which is SQL-derived and taken with `max`.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -729,7 +729,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Abandonment Causes",
+      "title": "Agency Dialer \u2014 Abandonment Causes",
       "type": "timeseries",
       "targets": [
         {
@@ -745,7 +745,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "How long wrap-up actually takes, by how it ended. The supervisor view already averages this in SQL, but there was no time series — so 'wrap-up is 18.5s mean against a 30s window' stayed a one-pilot artefact nobody could re-check.\n\n`resolution` keeps it honest, for the same reason the attempt row records `wrapup_resolution`: a `forced` or `agent_left` wrap-up measures an interruption, not how long write-up work takes. Only `disposition_submitted`, `auto_return` and `agent_returned` are evidence.\n\nTHIS IS THE ONLY MEASUREMENT OF THE DISPOSITION-SPEED WORK. The pilot filed ZERO of 32 dispositions by keyboard; any drop in the `disposition_submitted` series after a hotkey or keyboard map ships is the entire result. Note most wrap-ups are TIMERLESS — held on an outstanding required disposition rather than a countdown — so this measures how fast agents file, not how long a window was configured.",
+      "description": "How long wrap-up actually takes, by how it ended. The supervisor view already averages this in SQL, but there was no time series \u2014 so 'wrap-up is 18.5s mean against a 30s window' stayed a one-pilot artefact nobody could re-check.\n\n`resolution` keeps it honest, for the same reason the attempt row records `wrapup_resolution`: a `forced` or `agent_left` wrap-up measures an interruption, not how long write-up work takes. Only `disposition_submitted`, `auto_return` and `agent_returned` are evidence.\n\nTHIS IS THE ONLY MEASUREMENT OF THE DISPOSITION-SPEED WORK. The pilot filed ZERO of 32 dispositions by keyboard; any drop in the `disposition_submitted` series after a hotkey or keyboard map ships is the entire result. Note most wrap-ups are TIMERLESS \u2014 held on an outstanding required disposition rather than a countdown \u2014 so this measures how fast agents file, not how long a window was configured.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -788,7 +788,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Wrap-up Duration",
+      "title": "Agency Dialer \u2014 Wrap-up Duration",
       "type": "timeseries",
       "targets": [
         {
@@ -810,7 +810,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "🚨 ALERT ON ANY SUSTAINED NON-ZERO. Each increment is a real person permanently removed from a campaign because WE failed to reach them — not because they were unavailable.\n\nThe our-fault redial ledger (`our_fault_attempts`, bound `OUR_FAULT_REDIAL_BOUND` = 3) exists so our own dropped sockets and cancelled dials do not spend a customer's retry allowance. But exhausting it writes the contact `exhausted`, and §11 records that this had NO SURFACE ANYWHERE: invisible in every view, with a plausible audit trail. This panel is that surface.\n\n`outcome` makes it actionable, and there are THREE values with three different responses. `agent_disconnected` points at agent workstations — sockets, wifi, browser crashes. `canceled` points at our own teardown paths. `orphaned` points at replica crashes and leaked attempts: it is emitted by the REAPER, not the dial site, so it arrives on a different code path and in bursts after a restart rather than as a trickle. A rise in `orphaned` alone is an infrastructure signal and nothing to do with pacing or with agents. It is simultaneously a revenue loss and a list-quality lie, so it is worth paging on rather than reviewing weekly.\n\n⚠️ The series has TWO PRODUCERS. `agency-dialer.ts` counts the dial-site retirements and `reaper.ts` counts the orphaned ones; an earlier version of this description explained only the dial site's two values, so the third would have appeared on the one panel that tells you to page with no gloss at all.\n\nRELATED OPEN QUESTION: an `abandoned` attempt does NOT currently route to this ledger — it spends the customer's own allowance at `max_attempts: 2`, so two calls we dropped retire them. Whether that is right is a repeat-dial judgement recorded in §11, and `agency_abandoned_reason_total` is the evidence for deciding it.",
+      "description": "\ud83d\udea8 ALERT ON ANY SUSTAINED NON-ZERO. Each increment is a real person permanently removed from a campaign because WE failed to reach them \u2014 not because they were unavailable.\n\nThe our-fault redial ledger (`our_fault_attempts`, bound `OUR_FAULT_REDIAL_BOUND` = 3) exists so our own dropped sockets and cancelled dials do not spend a customer's retry allowance. But exhausting it writes the contact `exhausted`, and \u00a711 records that this had NO SURFACE ANYWHERE: invisible in every view, with a plausible audit trail. This panel is that surface.\n\n`outcome` makes it actionable, and there are THREE values with three different responses. `agent_disconnected` points at agent workstations \u2014 sockets, wifi, browser crashes. `canceled` points at our own teardown paths. `orphaned` points at replica crashes and leaked attempts: it is emitted by the REAPER, not the dial site, so it arrives on a different code path and in bursts after a restart rather than as a trickle. A rise in `orphaned` alone is an infrastructure signal and nothing to do with pacing or with agents. It is simultaneously a revenue loss and a list-quality lie, so it is worth paging on rather than reviewing weekly.\n\n\u26a0\ufe0f The series has TWO PRODUCERS. `agency-dialer.ts` counts the dial-site retirements and `reaper.ts` counts the orphaned ones; an earlier version of this description explained only the dial site's two values, so the third would have appeared on the one panel that tells you to page with no gloss at all.\n\nRELATED OPEN QUESTION: an `abandoned` attempt does NOT currently route to this ledger \u2014 it spends the customer's own allowance at `max_attempts: 2`, so two calls we dropped retire them. Whether that is right is a repeat-dial judgement recorded in \u00a711, and `agency_abandoned_reason_total` is the evidence for deciding it.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -853,7 +853,7 @@
           "sort": "desc"
         }
       },
-      "title": "Agency Dialer — Contacts Retired by OUR Fault",
+      "title": "Agency Dialer \u2014 Contacts Retired by OUR Fault",
       "type": "timeseries",
       "targets": [
         {
@@ -1081,7 +1081,7 @@
           "refId": "A"
         }
       ],
-      "description": "`failure` and `partial` both park concurrency leases — a slow leak of capacity that shows up later as calls rejected at the admission gate. Alert on the rate, not one occurrence."
+      "description": "`failure` and `partial` both park concurrency leases \u2014 a slow leak of capacity that shows up later as calls rejected at the admission gate. Alert on the rate, not one occurrence."
     },
     {
       "datasource": {
@@ -1170,14 +1170,14 @@
           "refId": "A"
         }
       ],
-      "description": "Provider-mode telephony admissions by outcome. Rejected admissions are dials turned away at the telephony concurrency gate — capacity is full or a lease is parked (see Telephony Lease Release Outcomes)."
+      "description": "Provider-mode telephony admissions by outcome. Rejected admissions are dials turned away at the telephony concurrency gate \u2014 capacity is full or a lease is parked (see Telephony Lease Release Outcomes)."
     },
     {
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Requests the rate limiter refused, by bucket and route class. `webhook`, `carrier_media` and `internal` clients cannot back off, so any sustained rate there is data loss (`agy-rate-limit-infra-rejected`, critical). `ip` holds every browser — consoles and agent stations, often many behind one office NAT (`agy-rate-limit-ip-rejected`, warning).",
+      "description": "Requests the rate limiter refused, by bucket and route class. `webhook`, `carrier_media` and `internal` clients cannot back off, so any sustained rate there is data loss (`agy-rate-limit-infra-rejected`, critical). `ip` holds every browser \u2014 consoles and agent stations, often many behind one office NAT (`agy-rate-limit-ip-rejected`, warning).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1443,7 +1443,7 @@
           "sort": "desc"
         }
       },
-      "title": "Invites — Emails and Claims",
+      "title": "Invites \u2014 Emails and Claims",
       "type": "timeseries",
       "targets": [
         {
@@ -1625,7 +1625,177 @@
           "refId": "B"
         }
       ],
-      "description": "`stage` is fetch | transcribe | analyze — which third of the dialer analysis pipeline is slow."
+      "description": "`stage` is fetch | transcribe | analyze \u2014 which third of the dialer analysis pipeline is slow."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "slot utilization"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 84
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Dialer Analysis Slots",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(dialer_analysis_in_flight{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "jobs in flight",
+          "refId": "A"
+        },
+        {
+          "expr": "max(dialer_analysis_slot_utilization{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "slot utilization",
+          "refId": "B"
+        }
+      ],
+      "description": "Analysis jobs running, and the share of DIALER_ANALYSIS_CONCURRENCY in use. Utilization pinned at 1 while the queued depth grows means the slots are the bottleneck: raise the concurrency (within the vendors' rate limits) or run another analysis process.",
+      "id": 109
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "none",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "recording bytes reserved"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bytes"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 84
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Dialer Analysis Back-pressure",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(dialer_analysis_budget_waits_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "memory budget waits /s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(dialer_analysis_rate_limit_pauses_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "vendor rate-limit pauses /s",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(dialer_analysis_memory_reserved_bytes{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "recording bytes reserved",
+          "refId": "C"
+        }
+      ],
+      "description": "Why free analysis slots are not claiming: waits for the recording memory budget (DIALER_ANALYSIS_MEMORY_BUDGET_BYTES), and pauses after an AI vendor rate limit. Reserved bytes are the recordings the slots hold.",
+      "id": 110
     },
     {
       "collapsed": false,
@@ -1633,7 +1803,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 84
+        "y": 92
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -1670,7 +1840,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 85
+        "y": 93
       },
       "id": 106,
       "options": {
@@ -1734,7 +1904,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 85
+        "y": 93
       },
       "id": 107,
       "options": {
@@ -1792,7 +1962,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 85
+        "y": 93
       },
       "id": 108,
       "options": {
@@ -1852,7 +2022,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 93
+        "y": 101
       },
       "id": 87,
       "options": {
@@ -1869,7 +2039,7 @@
           "sort": "desc"
         }
       },
-      "title": "Telemetry — Cardinality-Overflow Series",
+      "title": "Telemetry \u2014 Cardinality-Overflow Series",
       "type": "timeseries",
       "targets": [
         {
@@ -1909,7 +2079,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 93
+        "y": 101
       },
       "id": 74,
       "options": {
@@ -1967,7 +2137,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 101
+        "y": 109
       },
       "id": 50,
       "options": {
@@ -1998,6 +2168,251 @@
         }
       ],
       "description": "ERROR and FATAL lines per interval, from Loki. Requires the `loki_datasource` variable (Grafana Cloud: `grafanacloud-logs`). severity_number >= 17 is OTel ERROR and above. The `agy-error-log-volume` rule pages on 10+ in 15m. Logs reach Loki only through the OTel SDK, so this is empty exactly when metrics are (OTEL_ENABLED, endpoint and OTEL_SERVICE_NAME must all be set)."
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 117
+      },
+      "id": 111,
+      "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
+      "type": "row",
+      "panels": []
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Each process's loop, by `instance` (`<host>:primary`, `:media0`, `:analysis0`, \u2026, docs/scaling.md \u00a77). With media workers the primary should sit low while the workers carry the audio; a worker pinned near 1 is saturated. One series per process; in one-process mode, one series.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 118
+      },
+      "id": 112,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Event-Loop Utilization by Process",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (service_name, instance) (nodejs_eventloop_utilization_ratio{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Child exits seen by the primary. `expected=false` is a crash: the slot is reaped and re-forked; more than WORKER_CRASH_LOOP_MAX in 5 minutes makes the primary exit. `agy-cluster-child-crash` pages on any media crash.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 118
+      },
+      "id": 113,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Child Process Exits",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (service_name, role, expected) (increase(cluster_child_exits_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{role}} expected={{expected}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Requests between the primary and its children (dial.execute, core.inject, carrier.webhook, reaper.snapshot, \u2026). A rising `timeout` share for one type means the receiving process's loop is behind.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 126
+      },
+      "id": 114,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "IPC Requests by Type and Outcome",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (service_name, type, outcome) (rate(ipc_requests_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{type}} {{outcome}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Upgrades the primary handed to a media worker (`handed_off`) or refused with 503 (`no_owner`: the owning worker is down or the carrier URL has no slot; `buffered` / `not_sent` / `unsupported` should stay at zero).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 126
+      },
+      "id": 115,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "WebSocket Handoffs",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (service_name, route, result) (rate(ws_handoff_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "{{route}} {{result}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "templating": {
@@ -2098,7 +2513,7 @@
         "sort": 1,
         "type": "query",
         "allValue": "magick-agency(-.+)?",
-        "description": "Agency's deployments: magick-agency (production), magick-agency-Staging, magick-agency-Dedicated, from OTEL_SERVICE_NAME. All means `magick-agency(-.+)?` — the same regex the alert rules select (agency_service_name_regex in grafana/terraform/variables.tf; the validators keep them equal), so no other service ever appears here."
+        "description": "Agency's deployments: magick-agency (production), magick-agency-Staging, magick-agency-Dedicated, from OTEL_SERVICE_NAME. All means `magick-agency(-.+)?` \u2014 the same regex the alert rules select (agency_service_name_regex in grafana/terraform/variables.tf; the validators keep them equal), so no other service ever appears here."
       },
       {
         "current": {

@@ -256,6 +256,31 @@ export class AgentStateMachine {
     private readonly keyPrefix: string,
   ) {}
 
+  private readonly availableListeners = new Set<(sessionId: string) => void>();
+
+  /**
+   * Be told, after the write, every time a session ENTERS `available` through
+   * {@link set} or {@link transition}: a join, the end of a wrap-up or a break, a
+   * reservation handed back. The pacing engine's wake-up for an idle campaign
+   * (`pacing/invalidation-bus.ts`, wired by the runtime). Synchronous and total: a
+   * listener that throws is logged, never surfaced to the writer. Returns the
+   * unsubscribe.
+   */
+  onAvailable(listener: (sessionId: string) => void): () => void {
+    this.availableListeners.add(listener);
+    return () => { this.availableListeners.delete(listener); };
+  }
+
+  private announceAvailable(sessionId: string): void {
+    for (const listener of this.availableListeners) {
+      try {
+        listener(sessionId);
+      } catch (err) {
+        log.warn({ err, sessionId }, 'Agent availability listener threw');
+      }
+    }
+  }
+
   private key(sessionId: string): string {
     return `${this.keyPrefix}agency:agent:${sessionId}:state`;
   }
@@ -298,6 +323,7 @@ export class AgentStateMachine {
         CAS_SCRIPT, 1, this.key(sessionId),
         from, to, opts.attemptId ?? '', opts.leaseMs, Date.now().toString(),
       );
+      if (res === 1 && to === 'available') this.announceAvailable(sessionId);
       return res === 1;
     } catch (err) {
       log.error({ err, sessionId, from, to }, 'Agent state CAS failed');
@@ -324,6 +350,7 @@ export class AgentStateMachine {
       );
       const result = setResultFrom(res);
       if (result !== 'ok') log.info({ sessionId, state, result }, 'Agent state set refused');
+      else if (state === 'available') this.announceAvailable(sessionId);
       return result;
     } catch (err) {
       log.error({ err, sessionId, state }, 'Agent state set failed');
@@ -396,15 +423,30 @@ export class AgentStateMachine {
     }
   }
 
-  /** Renew a lease the caller is responsible for. False ⇒ the lease is gone. */
+  /**
+   * Renew a lease the caller is responsible for. False ⇒ not renewed: the lease is gone, or
+   * Redis failed. A caller that must tell those apart uses {@link renewLease}.
+   */
   async renew(sessionId: string, expectedState: AgencyAgentState, leaseMs: number): Promise<boolean> {
-    if (!this.redis) return false;
+    return (await this.renewLease(sessionId, expectedState, leaseMs)) === 'renewed';
+  }
+
+  /**
+   * Renew a lease, saying WHY when it was not renewed: `lost` when Redis answered and the
+   * lease is gone or in another state (the CAS missed), `unknown` when Redis failed (an
+   * error, or the client's command timeout: `REDIS_COMMAND_TIMEOUT_MS`). The difference
+   * matters to a renewer that runs for a whole call: `lost` is final, `unknown` is a
+   * moment, and the lease (15 s, renewed every 5 s) outlives two failed renewals. Same
+   * shape as the pacing leader lease's `renew`.
+   */
+  async renewLease(sessionId: string, expectedState: AgencyAgentState, leaseMs: number): Promise<'renewed' | 'lost' | 'unknown'> {
+    if (!this.redis) return 'lost';
     try {
       const res = await this.redis.eval(RENEW_SCRIPT, 1, this.key(sessionId), expectedState, leaseMs);
-      return res === 1;
+      return res === 1 ? 'renewed' : 'lost';
     } catch (err) {
       log.warn({ err, sessionId }, 'Agent lease renew failed');
-      return false;
+      return 'unknown';
     }
   }
 

@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-01.
+"is it done". As of 2026-11-02.
 
 ## Summary
 
@@ -73,7 +73,9 @@ re-running plan (`apps/server/test/integration/agency/agency-contact-claim-limit
 
 - Pacing reading agent states only after headroom: the `no_agents` vs `no_slots` telemetry needs
   the reads.
-- Caching `getMaxConcurrentCalls`: it would defeat cross-replica invalidation.
+- Caching `getMaxConcurrentCalls`: it would defeat cross-replica invalidation. Superseded
+  2026-11-02: pacing caches it with event invalidation and a 2 s TTL, and never feeds the guard's
+  Redis cache (scaling phase A).
 - Throttling `countOutstanding`: it changes which tick finalizes.
 - One per-campaign `LeadState` map in pacing: the collections have different lifetimes.
 - Splitting the bridge's media relay, carrier events and teardown, and pacing's `maybeFinalize`:
@@ -133,7 +135,10 @@ the morning rush).
 | `src/db/repositories/agency/agent-session.repository.ts` | Racing first joins each logged a `NULL → break` "session started" event |
 
 **Defects found and left open**, each pinned by an `it.fails` (flip it to `it` with the fix). All
-need Manas or a deliberate change to a shared file:
+need Manas or a deliberate change to a shared file. The first three (frame size, send buffer,
+VoiceLink timeouts) were fixed on 2026-11-02 ("Scaling for 500 simultaneous calls"), and the
+disposition replay on 2026-11-03 ("Review fixes on the scaling branch"); their rows stay for the
+record:
 
 | Defect | Pinned in | What deciding it needs |
 |---|---|---|
@@ -151,9 +156,9 @@ need Manas or a deliberate change to a shared file:
 | A multipart part with no headers makes `request.file()` never settle; the request hangs | `integration/load/hostile-input-fuzz.test.ts` | A parse deadline that also tears down the socket |
 
 **Observed, not pinned:** the per-IP rate-limit bucket (200/min default) is shared by a whole floor
-behind one office NAT, so `RATE_LIMIT_MAX` needs sizing for such a deployment; with the
+behind one office NAT, so `RATE_LIMIT_MAX` needs sizing for such a deployment (sized 2026-11-02); with the
 production ioredis defaults a Redis outage takes about 10 s to surface on `/readyz` and some
-requests wait about 30 s (no command timeout); the PSTN socket refuses a bad token with a bare
+requests wait about 30 s (no command timeout; bounded at 2 s on 2026-11-02); the PSTN socket refuses a bad token with a bare
 close (1005), not a 44xx code; a 200 `add_lead` with a non-JSON body fails the dial though the lead
 may be queued; `StationTokenStore.mint`'s local fallback during a Redis error is never consulted by
 `verifyAndConsume`, so it fails closed and is dead code; `nextWindowOpen` returns up to an hour late
@@ -349,6 +354,94 @@ Then, so the next failure on a tester's phone can be read without their logs:
   the rules each turn a test red.
 - Tab labels that would wrap on a narrow phone take a short name ("Stats", "Calls").
 
+### Scaling for 500 simultaneous calls 2026-11-02 (phase A)
+
+Manas asked on 2026-11-02 for the changes that let one host carry 400–500 simultaneous calls,
+without bigger or more infrastructure. A relay bench on real `ws` sockets with the bridge's own
+per-frame steps showed the audio relay as the binding constraint: one event loop carried ~55
+console calls at 70% busy (the console's `pcm16` path decodes, resamples and re-encodes every
+20 ms frame) and ~200 on binary A-law. Phase A is the work inside the current single-process
+design; phase B (media and analysis worker processes over IPC) is the structural
+step to 500.
+
+| Area | Change | Evidence |
+|---|---|---|
+| Bridge transcoder (`utils/audio-fir.ts`, `audio.ts`) | Allocation-free per frame; `encodeAlaw` table-driven (64 KiB, built at load from the per-sample encoder) | Byte-identical to a frozen pre-rewrite copy (`audio-fir.reference.test.ts`, every A-law value exhaustively); ~38→8 µs down, ~80→10 µs up per frame (`scripts/bench-transcoder.ts`) |
+| Console call audio | Binary A-law on the station socket (`media=alaw8`), relayed by VoiceLink with no transcode; the 16→8 kHz conversion is in the capture worklet. `pcm16` stays per tenant (`agency_console_alaw8`, default on) and as an automatic fallback (1008 `invalid_media`, or JSON media on an `alaw8` socket) | Codec pinned to the mobile app's cross-language checksums and the server's tables; headless Chromium tone check (1 kHz within 0.1 dB, 5 kHz −62 dB). Chromium only |
+| Console frame bound | `pcm16` uplink payloads capped at the server's 64 KiB message bound less the JSON envelope (65 496 characters; was 128 000) | `agencyMedia.test.ts` |
+| WebSocket frames | `maxPayload` 64 KiB on every WebSocket route (`WS_MAX_PAYLOAD_BYTES`, `utils/ws-limits.ts`, sized per route from `onRoute`) | `station-inbound-fuzz` `it.fails` flipped |
+| Send back-pressure (`utils/ws-backpressure.ts`) | Media dropped past ~3 s of backlog (per format), control frames never; a station past 1 MiB closed 4408 `station_send_backlog`; the carrier stream has a soft limit only | `station-backpressure` `it.fails` flipped; `websocket_send_backpressure_total` |
+| VoiceLink REST | Login 10 s, `add_lead` 15 s (`VOICELINK_LOGIN_TIMEOUT_MS`, `VOICELINK_ADD_LEAD_TIMEOUT_MS`). An outcome-unknown `add_lead` (timeout, or a 200 with a non-JSON body) fails and releases at once, is never retried, and the contact's redial is deferred 15 min; a late carrier media connect for it is refused | Two `voicelink-adapter-mock-carrier` `it.fails` flipped |
+| Redis client (`utils/redis-options.ts`) | 2 s command timeout, 1 retry, 2 s connect timeout. A timeout is an error, never a nil, so Q6 tokens fail open on it. The agent lease renewer now stops only on `lost`, not on an `unknown` renew (it used to stop on any failure) | Stalled-Redis and nil-Redis cases, unit and integration |
+| Ceilings | `MAX_CONCURRENT_CALLS` 1000 (slots are held from admission to the carrier's final report: ~860 at 500 agents); `DB_POOL_MAX` 30 with pool metrics (`db_pool_acquire_seconds`, `db_pool_clients_*`); rate limits sized for 500 agents behind one NAT, all in `api/middleware/rate-limit-defaults.ts` | Arithmetic in that module |
+| Analysis worker | A slot pool (`DIALER_ANALYSIS_CONCURRENCY`, default 8) refilled as each job finishes; a recording byte budget (`DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`, 512 MiB); a process-wide vendor rate-limit breaker (30 s doubling to 15 min, one probe) | Was ≤ 2 jobs a minute; 40 jobs on 4 slots drain in 0.7 s on real Postgres; two workers sharing a queue never double-claim. 500 calls needs ~330 slots: several analysis processes (phase B) |
+| Pacing | One 250 ms round for every led campaign; a campaign that could reserve nothing is skipped until an event (`PacingInvalidationBus`, JSON events, in-process now, IPC-ready) or the 1 s safety tick; account limit and live calls read once per account per round; campaign row and limit cached with generation guard, event invalidation and a 2 s TTL | 50 campaigns × 10 agents: Postgres 592→128 statements/s idle, 996→191 busy (`load/pacing-statements.test.ts`); every floor suite re-run on the scheduled path (`FLOOR_SCHEDULED=1`) |
+
+Still open from the load suites: eight integration `it.fails` (the provider-share pacing cap needs a
+per-provider live-call count, which attempts do not carry). Not exercised: Firefox, Safari and Edge
+on the console's A-law path, and anything against a real VoiceLink call.
+
+### Several processes on one host 2026-11-02 (phase B, [`scaling.md`](scaling.md))
+
+Built to carry 400–500 simultaneous calls on one host. Off by default: with `MEDIA_WORKERS` and
+`ANALYSIS_WORKERS` unset the server is one process, exactly as before, and every earlier suite
+runs unchanged.
+
+- **Media workers (`MEDIA_WORKERS=N`).** The process the operator starts becomes a primary.
+  - The primary accepts every request and upgrade, charges the rate limits, and hands each
+    station and carrier socket, with its handle, to the worker that owns it.
+  - A worker owns the sessions `slotFor(sessionId)` gives its slot. It holds their runtime state
+    and relays their calls' audio; no frame crosses a process boundary.
+  - Pacing, the reaper and every leader-only sweep stay in the primary.
+  - Dials, session-owned internal handlers and carrier webhooks go to the owner over
+    `child_process` IPC. Redis keeps only its old roles.
+- **Analysis workers (`ANALYSIS_WORKERS=K`).** The analysis slot pool runs in K processes on the
+  shared queue. One vendor rate limit pauses all of them, relayed by the primary.
+- **Failure.** A worker that dies is reaped by slot before it is re-forked:
+  - exactly the telephony slots it held are released (each admission and release is reported
+    as it happens);
+  - its call rows are failed, its attempts ended `orphaned` with their contacts requeued, and
+    its agents written offline;
+  - a crash loop makes the primary exit.
+
+  A worker whose primary dies hangs up and exits. Shutdown stays inside the 45 s grace.
+- **Measured** (shared 4-core dev machine; [`operations.md`](operations.md), "Sizing the media
+  workers"):
+  - one process saturates at 200 calls (ELU 0.98) and cannot bridge more than about 250 of 500;
+  - with 2 workers all 500 bridge, the primary's loop stays at 0.06, and each worker runs near
+    0.95;
+  - 500 calls needs more than 2 vCPUs whatever the layout.
+- **Evidence.**
+  - The real server entry with two media workers against the mock VoiceLink carrier: calls
+    dialled, bridged and relayed through the owning workers, then a graceful exit.
+  - One worker SIGKILLed mid-call: the other's audio continues; the dead slot is reaped, with a
+    call admitted under 1 s before the kill released by the reap, not the lock TTL; the slot
+    comes back.
+  - The primary SIGKILLed: the workers exit, and the next boot's startup reap closes everything.
+  - The handoff with real forked workers; multi-process analysis (no double claim, a SIGKILL
+    mid-job recovered without using an attempt, generation-matched requeue).
+  - The mobile app's station inside a worker (`cluster/mobile-stations.test.ts`, the app
+    simulated through the public API on `client=mobile&media=alaw8`): the 3 s probe and its
+    pongs on the adopted socket; a silent phone terminated 10–15 s after its last sign of
+    life and not dialable until back; M1 (back inside 8 s, the call resumes on the same
+    worker with audio both ways; not back, it ends); `device_away` applied in the owning
+    worker, at once or queued behind a call; 160-byte `alaw8` frames at 50/s both ways.
+    200 calls, half on the app, 2 workers: all bridged, frames heard as expected, probe
+    pings 0.34/s per phone.
+  - Each guard mutation-checked.
+
+**Not verified:**
+- **Whether VoiceLink ends a call when its media socket drops**, and how fast. VoiceLink has no
+  hangup endpoint, so after a media worker dies a closed media socket is the only lever on the
+  customer's leg. This needs a VoiceLink sandbox check.
+- Nothing has run on a real host behind nginx and the TLS terminator. Their per-frame CPU on the
+  same cores is not measured.
+- Trace context does not cross IPC (each process traces on its own).
+- A real phone against a multi-process server: the app is simulated (a `ws` client that
+  answers or withholds pongs); an OS suspending the app, a radio handover and the Flutter
+  suites are not part of these runs.
+- The Grafana panels and `agy-cluster-child-crash` are written and validated, not applied.
+
 ### Roster upload: choosing the duplicate column 2026-11-02
 
 A loan book can carry one borrower twice: the same number on two rows with different loan numbers.
@@ -366,9 +459,106 @@ phone number (the default, unchanged), any kept column, or none.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
   duplicate column".
 
+### Review fixes on the scaling branch 2026-11-03
+
+PR #29's review (8 comments) and the defects found while fixing it. Each fix has a test that
+fails on the old code and goes red when the fix is reverted.
+
+- **Review comments.** `/readyz?detail=1` behind `READYZ_DETAIL_TOKEN` and one readiness answer
+  cached 1 s (D13); the loop sampler on a fixed 5 s window, read without reset; a snapshot keeps a
+  lease admitted before its call registers (the bridge owns the lease set; synchronous IPC
+  handlers answer in the same turn); a worker that crashes during shutdown is reaped and counted;
+  the child-crash alert sees the first crash; `fetchCdr`'s 401 retry has its own timeout;
+  releasing a recording budget lease cancels its pending grow; only an outcome-unknown
+  unrecorded end is held 15 min.
+- **The 15 min outcome-unknown hold, made whole.** The dial is settled once (the bridge's `ended`
+  no longer settles it first); a hang-up or teardown racing a slow `add_lead` keeps the contact
+  claimed until the dial's outcome is known; the hold is charged to the our-fault ledger, so its
+  bound retires a contact whose `add_lead` keeps timing out; the soft phone holds the same way,
+  including a call orphaned by a restart; a failed hold write no longer shortens it to the
+  stranded sweep's 5 min.
+- **Guarded contact writes.** The reaper's requeues (`requeueOrphaned`), the lapsed-wrap-up close
+  (`closeLapsedWrapup`) and the disposition route (`releaseFromDisposition`) each write in one
+  statement only while the contact is still the attempt's: no newer attempt, no soft-phone claim.
+  `disposition-storm.test.ts` case 5 is now an `it`.
+- **Dials that fail before the carrier.** A throw after the bridge session is registered (timer,
+  socket, tokens, the carrier request's inputs) tears the call down with no `ended` and is not
+  charged as a carrier refusal; the contact waits 60 s instead of redialling every tick. A
+  failed `provider_call_id` write no longer ends a placed call.
+- **Cache invalidation channel** scoped to the Redis db (`<prefix>cache:invalidate:db<N>`):
+  deployments on one Redis no longer clear each other's local caches.
+
+**Left open** (found during the fixes; not pinned):
+- A campaign dial that fails before the carrier keeps `dialed_at`, so stats count it as placed
+  (the same family as the capacity-refusal row above).
+- The stranded-contact sweep, which runs only after a hold write failed, holds any sent and
+  unanswered dial 15 min, a plain refusal included: the attempt row cannot tell them apart.
+- A hang-up followed by a plain carrier refusal is charged as our-fault `canceled`, though the
+  carrier never placed the call (unchanged behaviour).
+- The soft phone's 201 can carry a `dialing` row when the dial rejects before the teardown's
+  `ended` arrives; the contact is still held correctly.
+- A skipped first write-up (a supervisor writing up a superseded call) answers the decision's
+  `contact_state`, not the contact's.
+- `load/pacing-skip.test.ts` failed once in a full integration run beside other worktrees' runs
+  and passed alone; the cause is not found.
+
 ## Test counts
 
-Latest run, 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
+Latest run, 2026-11-03, after PR #29's review fixes, on `f97a281`, from inside each package
+(`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 32 and `pnpm test:release` 10
+pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7650 passed + 42 skipped (383 files) | 1584 passed + 9 expected fail (171 files) |
+| `packages/db` | 427 | 512 (47 files) |
+| `apps/console` | 4944 (252 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 249 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+
+One expected fail fewer: `disposition-storm.test.ts` case 5 is fixed and is now an `it`.
+
+Run of 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
+package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
+`pnpm test:release` 10 pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7590 passed + 42 skipped (380 files) | 1545 passed + 10 expected fail + 1 failed (167 files) |
+| `packages/db` | 427 | 512 (47 files) |
+| `apps/console` | 4944 (252 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 249 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+
+The 1 failed is `load/agent-churn.test.ts`, the known intermittent (below: 2 of 8 on `c9fd548`):
+its seed (24301) replayed green 3 of 3, and 6 more random seeds were green.
+
+Run of 2026-11-02, after the scaling phase A merges, from inside each package (`pnpm lint`
+clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7430 passed + 42 skipped (360 files) | 1511 passed + 10 expected fail (161 files) |
+| `packages/db` | 427 | 506 (46 files) |
+| `apps/console` | 4917 (251 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 249 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+
+The baseline before it, the same day: server 7334 unit + 4 expected fail + 42 skipped (352 files).
+`flows/concurrency-guards.test.ts` ("costs exactly ONE Redis eval") counts evals with Redis's
+server-wide `INFO commandstats`, so it fails when another suite shares the Redis instance; it
+passes on a Redis of its own.
+
+Run of 2026-10-31, after the soft phone's review fixes, from inside each package, on a UTF-8
 test database (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
 `pnpm test:release` 10 pass):
 
@@ -493,6 +683,9 @@ files are listed in [`modules.md`](modules.md).
 
 **Deployment pieces:**
 
+- **Several processes on one host are built but have not run on a real host** behind nginx and the
+  TLS terminator; whether VoiceLink ends a call when its media socket drops is unverified (it has
+  no hangup endpoint). See "Several processes on one host 2026-11-02" above.
 - **OpenTelemetry export is built but has not run against Grafana Cloud.** The SDK
   (`apps/server/src/instrumentation.ts`) pushes traces, metrics and logs over OTLP when
   `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` are set; it was
@@ -515,6 +708,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused |
+| Scaling defaults (2026-11-02/03) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial (now charged to the our-fault ledger, so its bound retires a contact), a dial failed before the carrier (uncharged, redial after 60 s), Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default; and D13 (the `/readyz?detail=1` token, the 1 s readiness cache, the 5 s loop window) |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
@@ -529,8 +723,10 @@ in [`operations.md`](operations.md).
 1. **Redis keeps keys for their TTL.** Persistence on (AOF or RDB) and `maxmemory-policy
    noeviction` (or a `volatile-*` policy with nothing else competing). Call tokens are verified
    against Redis; a token lost early is refused, which cuts a live call's carrier leg (Q6).
-2. **Single replica.** The unstored-token memo is in-process (Q6), the dialer runtime has one
-   replica id, and several sweeps assume one process.
+2. **One host, one server container.** With media or analysis workers it is a primary and
+   its forked children ([`scaling.md`](scaling.md)). The primary alone runs the reaper and the
+   leader-only sweeps, and a Q6 token is minted and verified in the same worker. A second
+   container would break both.
 3. **Exactly `TRUST_PROXY_HOPS` proxies in front.** The server must not be reachable except
    through them, or `X-Forwarded-For` spoofing defeats the IP rate limits (Q9).
 4. **Postgres TLS** is on only when `NODE_ENV=production`, and then the certificate is verified
@@ -553,7 +749,10 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       `VITE_FIREBASE_*` build values; values containing `$` or ` #` single-quoted.
 - [ ] Redis: persistence on, `noeviction` (the compose file's `redis` does both; an external Redis
       must too). Its volume is backed up or at least survives a host restart.
-- [ ] One replica only: never scale `server`.
+- [ ] One server container only: never scale `server`. For more calls, set `MEDIA_WORKERS`
+      (and `ANALYSIS_WORKERS`) on a host with the cores for them ([`scaling.md`](scaling.md)
+      §8.1). The heap per media worker is `MEDIA_WORKER_HEAP_MB`; the primary keeps the
+      entrypoint's 4 GB. Size the host's RAM for the sum.
 - [ ] TLS terminator in front of nginx :8080; `TRUST_PROXY_HOPS=2` (terminator + nginx; one more
       per extra proxy in front); :8080 reachable only from the terminator (loopback by default);
       port 3021 not reachable at all (the compose file publishes none).
@@ -562,6 +761,8 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       with strong passwords on every admin (`DEPLOYMENT.md` 8.4 lists the costs).
 - [ ] Host memory: the server may grow to a 4 GB heap (`docker/entrypoint.sh`). On a 4 GB VM (the
       `aws/terraform` default) that is all of the RAM; lower the heap or size up before load.
+- [ ] Postgres allows the pool: `DB_POOL_MAX` is 30 by default; lower it on a managed database
+      with a small connection limit, and leave room for migrations and admin sessions.
 - [ ] `NODE_ENV=production` (the image sets it); `DATABASE_URL` without TLS parameters; `DB_SSL_CA`
       if the database uses a private CA.
 - [ ] First boot logs `migrations complete` before `magick-agency v<version> listening` (the entrypoint runs

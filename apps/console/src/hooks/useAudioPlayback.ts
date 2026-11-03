@@ -1,4 +1,8 @@
 import { useRef, useState, useCallback } from 'react';
+import { AlawDownlinkDecoder } from '../utils/alaw8/g711.js';
+
+/** The playback context's rate, and the rate of every buffer scheduled on it. */
+const PLAYBACK_SAMPLE_RATE = 16000;
 
 export interface AudioPlaybackOptions {
   /**
@@ -22,7 +26,15 @@ export interface AudioPlaybackOptions {
 }
 
 interface AudioPlaybackState {
+  /** One `pcm16` frame: base64 PCM16 mono 16 kHz. */
   play: (base64: string) => void;
+  /**
+   * One `alaw8` frame: raw G.711 A-law 8 kHz bytes (the server sends 160 per message).
+   * Decoded and interpolated to 16 kHz with filter state kept across frames, then
+   * scheduled exactly like a `pcm16` frame: same context, same cushion, same
+   * sample-contiguous queue.
+   */
+  playAlaw: (bytes: ArrayBuffer) => void;
   flush: () => void;
   cleanup: () => void;
   warmup: () => void;
@@ -43,6 +55,12 @@ interface AudioPlaybackState {
 export function useAudioPlayback(options: AudioPlaybackOptions = {}): AudioPlaybackState {
   const ctxRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
+  /**
+   * The `alaw8` decoder, one per stream. Its interpolator remembers the end of the last
+   * frame, which is what keeps a 20 ms boundary from being a click; `flush()` starts a
+   * new one when the stream it was following is over.
+   */
+  const alawRef = useRef<AlawDownlinkDecoder | null>(null);
   const sourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const nextPlayTimeRef = useRef(0);
   const [blocked, setBlocked] = useState(false);
@@ -97,7 +115,7 @@ export function useAudioPlayback(options: AudioPlaybackOptions = {}): AudioPlayb
         }
         return null;
       }
-      const ctx = new Ctor({ sampleRate: 16000 });
+      const ctx = new Ctor({ sampleRate: PLAYBACK_SAMPLE_RATE });
       const gain = ctx.createGain();
       gain.connect(ctx.destination);
       ctxRef.current = ctx;
@@ -113,26 +131,19 @@ export function useAudioPlayback(options: AudioPlaybackOptions = {}): AudioPlayb
     return { ctx: ctxRef.current, gain: gainRef.current! };
   };
 
-  const play = useCallback((base64: string) => {
+  /**
+   * Queue 16 kHz samples behind whatever is already scheduled. The one scheduler both
+   * formats share, so `alaw8` inherits the cushion and the contiguity rules below
+   * unchanged.
+   */
+  const schedule = (float32: Float32Array): void => {
     const ready = ensureContext();
     // No Web Audio. Dropping the frame is the only option; `blocked` is already
     // set, so the console is saying why rather than going quietly silent.
     if (ready === null) return;
     const { ctx, gain } = ready;
 
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
-    }
-
-    const int16 = new Int16Array(bytes.buffer);
-    const float32 = new Float32Array(int16.length);
-    for (let i = 0; i < int16.length; i++) {
-      float32[i] = int16[i]! / (int16[i]! < 0 ? 0x8000 : 0x7fff);
-    }
-
-    const buffer = ctx.createBuffer(1, float32.length, 16000);
+    const buffer = ctx.createBuffer(1, float32.length, PLAYBACK_SAMPLE_RATE);
     buffer.getChannelData(0).set(float32);
 
     const source = ctx.createBufferSource();
@@ -163,6 +174,27 @@ export function useAudioPlayback(options: AudioPlaybackOptions = {}): AudioPlayb
     source.onended = () => {
       sourcesRef.current = sourcesRef.current.filter(s => s !== source);
     };
+  };
+
+  const play = useCallback((base64: string) => {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+
+    const int16 = new Int16Array(bytes.buffer);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i]! / (int16[i]! < 0 ? 0x8000 : 0x7fff);
+    }
+    schedule(float32);
+  }, []);
+
+  const playAlaw = useCallback((bytes: ArrayBuffer) => {
+    if (bytes.byteLength === 0) return;
+    if (alawRef.current === null) alawRef.current = new AlawDownlinkDecoder();
+    schedule(alawRef.current.decode(new Uint8Array(bytes)));
   }, []);
 
   const flush = useCallback(() => {
@@ -175,6 +207,9 @@ export function useAudioPlayback(options: AudioPlaybackOptions = {}): AudioPlayb
     // reconnect: the queue is dropped and the cushion is rebuilt from scratch
     // rather than the new stream inheriting the dead one's schedule.
     nextPlayTimeRef.current = 0;
+    // And the `alaw8` filter history with it: the next call's first frame must not be
+    // smeared with the last one's tail.
+    alawRef.current = null;
   }, []);
 
   const cleanup = useCallback(() => {
@@ -197,5 +232,5 @@ export function useAudioPlayback(options: AudioPlaybackOptions = {}): AudioPlayb
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { play, flush, cleanup, warmup, blocked, resume };
+  return { play, playAlaw, flush, cleanup, warmup, blocked, resume };
 }

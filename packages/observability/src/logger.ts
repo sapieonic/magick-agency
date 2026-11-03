@@ -142,10 +142,22 @@ export function serializeRequest(request: unknown): Record<string, unknown> {
   return serialized;
 }
 
+/**
+ * A child process of a multi-process server (docs/scaling.md §7) says which on every line:
+ * `role` (`media`, `analysis`) and `slot`, from the environment the primary forked it
+ * with. Absent on the process the operator started, so one-process lines are unchanged.
+ */
+function processBase(env: NodeJS.ProcessEnv = process.env): Record<string, string | number> {
+  const role = env['MA_PROCESS_ROLE'];
+  if (!role) return {};
+  const slot = Number(env['MA_WORKER_SLOT']);
+  return Number.isInteger(slot) ? { role, slot } : { role };
+}
+
 export const logger = pino({
   level: process.env['LOG_LEVEL'] || 'info',
   transport: buildTransport(),
-  base: { service: SERVICE_NAME, version: APP_VERSION },
+  base: { service: SERVICE_NAME, version: APP_VERSION, ...processBase() },
   timestamp: pino.stdTimeFunctions.isoTime,
   // Inject the ambient async-scoped context (tenantId, accountId, …) into every
   // log line — across all child/component loggers — so identifiers become

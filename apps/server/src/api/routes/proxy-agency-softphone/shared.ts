@@ -101,13 +101,14 @@ export async function requireSoftphoneEnabled(request: FastifyRequest, reply: Fa
 
 /**
  * Send a refusal from the internal handler as it came. A 4xx passes the error mask
- * untouched; the two 5xx a soft-phone route authors on purpose, `503 dnc_unavailable`
- * (SP1: the DNC lookup failed, fail closed, retry) and `503 dial_failed` (the agent state
- * store or the bridge could not place the dial; nothing was dialled, retry), are reviewed
- * fixed-shape bodies the console reads by code, so they are let through the mask like the
- * revocation cache's 503. Any other 5xx is masked.
+ * untouched; the 5xx the agent routes author on purpose are reviewed fixed-shape bodies the
+ * clients read by code, so they are let through the mask like the revocation cache's 503:
+ * `503 dnc_unavailable` (SP1: the DNC lookup failed, fail closed, retry), `503 dial_failed`
+ * (the agent state store or the bridge could not place the dial; nothing was dialled,
+ * retry) and `503 station_token_unavailable` (D9: the station token could not be stored;
+ * retry). Any other 5xx is masked.
  */
-const REVIEWED_503_CODES: ReadonlySet<unknown> = new Set(['dnc_unavailable', 'dial_failed']);
+const REVIEWED_503_CODES: ReadonlySet<unknown> = new Set(['dnc_unavailable', 'dial_failed', 'station_token_unavailable']);
 
 export function sendCoreRefusal(request: FastifyRequest, reply: FastifyReply, result: CoreCallResult): FastifyReply {
   const code = result.body && typeof result.body === 'object' ? (result.body as { code?: unknown }).code : undefined;

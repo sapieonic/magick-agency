@@ -49,7 +49,7 @@ describe('RedisCache.delForRevocation (Q5)', () => {
     expect(await cache.delForRevocation(KEY)).toBe(false);
     expect(del).toHaveBeenCalledTimes(REVOCATION_DEL_ATTEMPTS);
     expect(log.error).toHaveBeenCalledWith(expect.objectContaining({ keys: [KEY], attempts: REVOCATION_DEL_ATTEMPTS }), expect.any(String));
-    expect(redis.publish).toHaveBeenCalledWith('inv', JSON.stringify({ op: 'del', keys: [KEY] }));
+    expect(redis.publish).toHaveBeenCalledWith('inv:db0', JSON.stringify({ op: 'del', keys: [KEY] }));
     // The local copy is gone even though Redis kept its own.
     (redis.get as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     expect(await cache.get(KEY)).toBeNull();

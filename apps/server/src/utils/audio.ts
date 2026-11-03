@@ -88,7 +88,11 @@ function encodeMulawSample(sample: number): number {
 //
 // A-law silence is 0xD5 (decodes to +8, ≈0); this matches the captured frames.
 
-const alawDecodeTable = new Int16Array(256);
+/**
+ * A-law codeword → int16 sample, all 256 codewords. Exported for the bridge
+ * transcoder (`audio-fir.ts`), which decodes into its own buffers; read-only.
+ */
+export const alawDecodeTable = new Int16Array(256);
 for (let i = 0; i < 256; i++) {
   const aval = i ^ 0x55; // A-law toggles the even bits before transmission
   let t = (aval & 0x0f) << 4;
@@ -120,7 +124,7 @@ export function encodeAlaw(pcmData: Int16Array): Buffer {
   // allocUnsafe: every byte is overwritten in the loop below — safe, avoids zero-fill on hot path
   const alaw = Buffer.allocUnsafe(pcmData.length);
   for (let i = 0; i < pcmData.length; i++) {
-    alaw[i] = encodeAlawSample(pcmData[i]!);
+    alaw[i] = alawEncodeTable[pcmData[i]! + 32768]!;
   }
   return alaw;
 }
@@ -159,6 +163,17 @@ function encodeAlawSample(sample: number): number {
   }
   return (aval ^ mask) & 0xff;
 }
+
+/**
+ * int16 sample → A-law codeword for every one of the 65,536 sample values, indexed by
+ * `sample + 32768`. Built once at load from `encodeAlawSample`, so a lookup returns
+ * exactly what that function returns (`test/unit/utils/audio-fir.reference.test.ts`
+ * checks all 65,536 against the original per-sample encoder). 64 KiB buys a
+ * branch-free encoder: the bridge encodes every outbound sample of every call.
+ * Exported for the bridge transcoder (`audio-fir.ts`); read-only.
+ */
+export const alawEncodeTable = new Uint8Array(65536);
+for (let i = 0; i < 65536; i++) alawEncodeTable[i] = encodeAlawSample(i - 32768);
 
 /**
  * Band-limited windowed-sinc resampler.
