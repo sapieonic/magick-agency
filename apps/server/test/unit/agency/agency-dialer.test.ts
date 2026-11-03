@@ -44,6 +44,8 @@ const { repos } = vi.hoisted(() => ({
       // Returns the POST-bump budget (the our-fault ledger). A number, not undefined: the
       // dial path decides the retry from whatever this returns.
       chargeAttempt: vi.fn().mockResolvedValue(1),
+      // The outcome-unknown hold (`holdOutcomeUnknownContact`): the state that landed.
+      requeueOrphaned: vi.fn().mockResolvedValue({ state: 'pending', our_fault_attempts: 1 }),
     },
     session: { setState: vi.fn().mockResolvedValue(undefined) },
   },

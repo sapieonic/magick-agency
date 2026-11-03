@@ -266,18 +266,20 @@ export async function holdOutcomeUnknownContact(
   outcome: AgencyAttemptOutcome,
 ): Promise<void> {
   const notBefore = new Date(Date.now() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
-  const landed = await agencyContactRepository.requeueOrphaned(cmd.contactId, {
-    reapedAttemptId: cmd.attemptId,
-    notBefore,
-    outcome,
-    bound: ourFaultRedialBound(OUR_FAULT_OUTCOMES.has(outcome) ? cmd.campaign.retry_policy : null, outcome),
-    retiredState: OUR_FAULT_RETIRED_STATE,
-  }).catch((err) => {
+  let landed: Awaited<ReturnType<typeof agencyContactRepository.requeueOrphaned>>;
+  try {
+    landed = await agencyContactRepository.requeueOrphaned(cmd.contactId, {
+      reapedAttemptId: cmd.attemptId,
+      notBefore,
+      outcome,
+      bound: ourFaultRedialBound(OUR_FAULT_OUTCOMES.has(outcome) ? cmd.campaign.retry_policy : null, outcome),
+      retiredState: OUR_FAULT_RETIRED_STATE,
+    });
+  } catch (err) {
     log.error({ err, contactId: cmd.contactId, attemptId: cmd.attemptId },
       'Could not hold the contact of an outcome-unknown dial — the stranded-contact sweep requeues it');
-    return undefined;
-  });
-  if (landed === undefined) return;
+    return;
+  }
   if (landed === null) {
     log.info({ contactId: cmd.contactId, attemptId: cmd.attemptId },
       'Contact of an outcome-unknown dial has moved on since its attempt — left as it is');
