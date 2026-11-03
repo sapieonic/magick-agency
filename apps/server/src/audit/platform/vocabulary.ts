@@ -171,6 +171,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned from campaign', group: 'Staffing', product: 'agency' },
+  { value: 'agency_contacts.assigned', label: 'Contacts assigned to agents', group: 'Staffing', product: 'agency' },
+  { value: 'agency_contacts.unassigned_on_unstaff', label: "Unstaffed agent's contacts returned to the pool (or kept)", group: 'Staffing', product: 'agency' },
   { value: 'agency_session.joined', label: 'Agent joined session', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.left', label: 'Agent left session', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.break_started', label: 'Agent break started', group: 'Staffing', product: 'agency' },

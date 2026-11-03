@@ -13,9 +13,7 @@ import { dncRoutes } from './routes/dnc.routes.js';
 import { phoneNumberRoutes } from './routes/phone-number.routes.js';
 import { proxyAgencyCampaignsRoutes } from './routes/proxy-agency-campaigns.routes.js';
 import { proxyAgencyStaffingRoutes } from './routes/proxy-agency-staffing.routes.js';
-import { registerMyContactActionRoutes } from './routes/proxy-agency-assignment/my-contact-actions.js';
-import { sessionMiddleware } from '../auth/session.middleware.js';
-import { tenantContextMiddleware } from './middleware/tenant-context.middleware.js';
+import { proxyAgencyAssignmentRoutes } from './routes/proxy-agency-assignment.routes.js';
 import { proxyAgencyPerformanceRoutes } from './routes/proxy-agency-performance.routes.js';
 import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
 import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
@@ -125,14 +123,10 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
     await scope.register(proxyAgencyStaffingRoutes, { prefix: P.proxyAgency });
   });
 
-  // ── The agent's actions on their own contacts (contact assignment: agent retry and the
-  //    per-contact call; their own 404 for `:contactId`). Registered here until the
-  //    assignment family's plugin exists; they belong in it. ──────────────────────────
+  // ── Contact assignment (its own 404s for `:id` / `:contactId`) ─────────────────────
   await app.register(async (scope) => {
-    scope.addHook('preHandler', sessionMiddleware);
-    scope.addHook('preHandler', tenantContextMiddleware);
-    await registerMyContactActionRoutes(scope);
-  }, { prefix: P.proxyAgency });
+    await scope.register(proxyAgencyAssignmentRoutes, { prefix: P.proxyAgency });
+  });
 
   // ── Agent performance (its own 400 for `:userId`) ──────────────────────────────────
   await app.register(async (scope) => {

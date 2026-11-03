@@ -52,5 +52,18 @@ export {
 export type { AgencyLiveAttemptStateRow, AgencyLiveManualCallStateRow } from './agency/fleet-metrics.repository.js';
 export { AgencyAgentStatsRepository, agencyAgentStatsRepository } from './agency/agent-stats.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
+export { AgencyAssignmentRepository, agencyAssignmentRepository, planCtes } from './agency/assignment.repository.js';
+export type {
+  AssignmentCampaignScope,
+  AssignmentCommitOutcome,
+  UnstaffReturn,
+} from './agency/assignment.repository.js';
+export {
+  AgencyAssignmentReadRepository,
+  agencyAssignmentReadRepository,
+  emptyBucketCounts,
+  heroColumns,
+} from './agency/assignment-reads.repository.js';
+export type { MyContactsTally, OwnerTally, ProgressRaw } from './agency/assignment-reads.repository.js';
 export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';
 export type { AgencyManualCallJoinedRow } from './agency/projections.js';

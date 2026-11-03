@@ -106,6 +106,10 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/my-assignments',
   'GET /proxy/agency/my-attempts',
   'GET /proxy/agency/my-campaigns',
+  // Contact assignment: the caller's own contacts (`agency.contacts.own`, floored at `agent`).
+  // The flag and the staffing check refuse past the guards; the subject is always the caller.
+  'GET /proxy/agency/my-contacts',
+  'GET /proxy/agency/my-contacts/summary',
   'GET /proxy/agency/my-stats',
   // The agent's own station actions: `agency.station.connect`,
   // `agency.attempts.handle|dispose` and `agency.dnc.write` all floor at `agent`. The internal handler instance then

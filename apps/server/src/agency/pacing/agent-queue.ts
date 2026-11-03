@@ -2,8 +2,8 @@
  * An agent's own queue on a `strict` or `preferred` campaign (contact assignment, D3): whether
  * something is due for them now, and when nothing is, why (`AgencyQueueState`). Pacing reads it
  * for every available agent on each tick (who is worth reserving, and the `queue` frame sent
- * on a change); the session bootstrap and the station's `ready` frame read it for one agent.
- * One reading for all three, so they cannot disagree.
+ * on a change); the session bootstrap, the station's `ready` frame and the agent's My contacts
+ * summary read it for one agent. One reading for all four, so they cannot disagree.
  *
  * The rule, for an agent with nothing due (a due agent is `{ due: true, reason: null,
  * next_due_at: null }`):
@@ -75,6 +75,29 @@ export function queueStateFrom(
   const allCallbacks = (!ownOpen || own.ownHasNonCallback === false)
     && (!poolOpen || pool!.hasNonCallback === false);
   return { due: false, reason: allCallbacks ? 'callbacks_later' : 'waiting_for_retry', next_due_at: nextIso };
+}
+
+/**
+ * The queue an agent reads on a `pool` campaign (the My contacts summary): there is no per-agent
+ * queue, so it is the campaign's open contacts through the same rule, read from their earliest
+ * `next_attempt_at` alone. Open pool contacts are taken to include one that is not a callback,
+ * so the answer is `waiting_for_retry`, never `callbacks_later`. The station gets no `queue`
+ * frame on a pool campaign, so nothing can disagree with this.
+ */
+export function poolModeQueueState(
+  campaign: Pick<AgencyCampaignRecord, 'calling_window_start' | 'calling_window_end' | 'calling_days' | 'default_timezone'>,
+  nextOpenAt: Date | null,
+  now: Date,
+): AgencyQueueState {
+  return queueStateFrom(
+    { ownDue: false, ownNextAt: null, ownHasNonCallback: null },
+    {
+      dueCount: nextOpenAt !== null && nextOpenAt.getTime() <= now.getTime() ? 1 : 0,
+      nextAt: nextOpenAt,
+      hasNonCallback: nextOpenAt !== null ? true : null,
+    },
+    campaignWindowClosed(campaign, now),
+  );
 }
 
 /** Two states are the same frame (the engine sends a `queue` frame only on a change). */

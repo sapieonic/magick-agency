@@ -26,6 +26,7 @@ import { settledValue } from './helpers/settled.js';
 import { createChildLogger } from '@magick-agency/observability';
 import { ADDRESS_REBOUND_DURING_INVITE } from '../../auth/firebase-identity.js';
 import { parseOr400 } from './helpers/parse-or-400.js';
+import { returnContactsOnUnstaff } from '../../agency/assignment/unstaff.js';
 
 const log = createChildLogger({ component: 'user-routes' });
 
@@ -199,6 +200,19 @@ async function closeAgencyStaffing(
         details: { campaign_id: row.campaign_id, user_id: targetUserId, reason },
       });
     }
+
+    // D6: their open contacts on those campaigns follow each campaign's `on_unstaff`, in one
+    // statement over every campaign closed above (so the same tenant/account scope). The
+    // history rows' actor is NULL (a membership change, not a supervisor's move); the audit
+    // rows name the admin. Never throws.
+    await returnContactsOnUnstaff({
+      tenantId: request.tenantId!,
+      userId: targetUserId,
+      campaignIds: closed.map((r) => r.campaign_id),
+      eventActorUserId: null,
+      actor: requestAuditActor(request),
+      cause: reason,
+    });
   } catch (err) {
     // Logged at ERROR — it is a real fault and leaves rows to clean up — but
     // swallowed, because the caller's authoritative change has already committed
