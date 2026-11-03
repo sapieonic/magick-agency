@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/sapieonic/magick-agency/compare/console-v0.4.0...console-v0.5.0) (2026-11-03)
+
+
+### Features
+
+* **server,console,mobile,contracts,db,domain:** redial the same customer from the wrap-up screen ([#31](https://github.com/sapieonic/magick-agency/issues/31)) ([a3cf3ae](https://github.com/sapieonic/magick-agency/commit/a3cf3aef0c5c34833be7f1c000dbec88570d758e))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.5.0
+
 ## [0.4.0](https://github.com/sapieonic/magick-agency/compare/console-v0.3.0...console-v0.4.0) (2026-11-03)
 
 

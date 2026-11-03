@@ -1,11 +1,11 @@
 {
-  "apps/server": "0.4.0",
-  "apps/console": "0.4.0",
-  "apps/super-admin": "0.2.2",
-  "packages/contracts": "0.4.0",
-  "packages/db": "0.4.0",
-  "packages/domain": "0.2.2",
+  "apps/server": "0.5.0",
+  "apps/console": "0.5.0",
+  "apps/super-admin": "0.2.3",
+  "packages/contracts": "0.5.0",
+  "packages/db": "0.5.0",
+  "packages/domain": "0.3.0",
   "packages/observability": "0.3.0",
   "packages/web-ui": "0.1.0",
-  "apps/mobile": "0.2.1"
+  "apps/mobile": "0.3.0"
 }

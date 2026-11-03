@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/sapieonic/magick-agency/compare/mobile-v0.2.1...mobile-v0.3.0) (2026-11-03)
+
+
+### Features
+
+* **server,console,mobile,contracts,db,domain:** redial the same customer from the wrap-up screen ([#31](https://github.com/sapieonic/magick-agency/issues/31)) ([a3cf3ae](https://github.com/sapieonic/magick-agency/commit/a3cf3aef0c5c34833be7f1c000dbec88570d758e))
+
 ## [0.2.1](https://github.com/sapieonic/magick-agency/compare/mobile-v0.2.0...mobile-v0.2.1) (2026-11-01)
 
 
