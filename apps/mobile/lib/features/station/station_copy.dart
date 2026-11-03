@@ -210,6 +210,19 @@ abstract final class StationCopy {
       '“$label” adds $phone to the Do Not Call list for ${campaign.trim().isEmpty ? 'this campaign' : campaign}. You can’t undo this from the app — an admin has to remove it.';
   static const suppressConfirmAction = 'Save and stop calling';
 
+  // ── Wrap-up redial ──
+  static const redial = 'Redial';
+  static const redialling = 'Redialling…';
+  static const noRedialsLeft = 'No redials left';
+  static String redialsLeft(int n) => n <= 0 ? noRedialsLeft : (n == 1 ? '1 redial left' : '$n redials left');
+
+  /// What a screen reader says for the button: the action and what it costs.
+  static String redialSemantics(int n) =>
+      n <= 0 ? 'Redial, no redials left for this call' : 'Redial this customer, ${redialsLeft(n)}';
+
+  /// The live call's label while a redial rings or is connected.
+  static String redialOf(int n, int? limit) => limit == null || limit < n ? 'Redial $n' : 'Redial $n of $limit';
+
   // ── Callback ──
   static const callbackTitle = 'When should we call back?';
   static String callbackChip(CallbackChoice c) => switch (c) {

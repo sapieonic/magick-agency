@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/station/station_view.dart';
+import '../../../ui/primitives.dart';
 import '../logic/format.dart';
 import '../station_copy.dart';
 import 'contact_details.dart';
@@ -23,6 +24,13 @@ class RingingView extends ConsumerWidget {
     final call = ref.watch(stationViewProvider.select((v) => _contactOnly(v?.call)));
     return CallLayout(
       body: [
+        if (call != null && call.isRedial) ...[
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: RedialTag(number: call.redialNumber!, limit: call.redialLimit),
+          ),
+          const SizedBox(height: Space.sm),
+        ],
         if (call != null) CallHeadline(call: call),
         if (call != null) ..._details(call),
       ],
@@ -56,7 +64,29 @@ CallView? _contactOnly(CallView? c) => c == null || c.countdownSeconds == null
         priorAttempts: c.priorAttempts,
         bridgedAt: c.bridgedAt,
         recording: c.recording,
+        redialNumber: c.redialNumber,
+        redialLimit: c.redialLimit,
       );
+
+/// "Redial 1 of 2": this call is a wrap-up redial, the agent calling back the
+/// customer they just spoke to. Shown while it rings and once connected.
+class RedialTag extends StatelessWidget {
+  const RedialTag({super.key, required this.number, this.limit});
+
+  /// [CallView.redialNumber] and [CallView.redialLimit].
+  final int number;
+  final int? limit;
+
+  @override
+  Widget build(BuildContext context) {
+    return StatusPill(
+      StationCopy.redialOf(number, limit),
+      key: const Key('redial-label'),
+      tone: Tone.accent,
+      leading: Icon(Icons.replay, size: 14, color: Tone.accent.fg(context.tokens)),
+    );
+  }
+}
 
 /// "Priya Raman" over "+91 98400 12345 · Attempt 2"; the number leads when
 /// there is no name.

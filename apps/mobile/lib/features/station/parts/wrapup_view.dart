@@ -14,7 +14,8 @@ import 'notes_field.dart';
 import 'on_call_view.dart' show QueuedBreakChip;
 import 'sheets.dart';
 
-/// Wrap-up: pick the outcome, a callback time when it needs one, notes, save.
+/// Wrap-up: pick the outcome, a callback time when it needs one, notes, save;
+/// or, when the campaign allows it, redial the customer before saving.
 ///
 /// The station screen keys this on the call, so a new call starts with an
 /// empty form, and the notes controller (owned by the screen) carries the
@@ -43,11 +44,16 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
         return name != null && name.isNotEmpty ? name : formatPhone(c.phoneE164);
       }),
     );
-    final saving = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.savingDisposition));
+    final saving = ref.watch(
+      stationViewProvider.select((v) => v?.busy == StationBusy.savingDisposition || v?.busy == StationBusy.redialing),
+    );
     final attemptId = ref.watch(stationViewProvider.select((v) => v?.call?.attemptId));
     final text = Theme.of(context).textTheme;
     final selected = findDisposition(options, _form.code);
     final locked = saved != null || saving;
+    // Large text stacks the pinned buttons; Redial then sits under the pad,
+    // where the page scrolls, so Save stays on screen.
+    final redialUnderPad = redialStacks(context);
 
     return CallLayout(
       body: [
@@ -61,6 +67,7 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
             onSelect: (code) => setState(() => _form = _form.select(code)),
           ),
         ),
+        if (redialUnderPad) LinkGate(child: _RedialControl(onRedial: _redial, padding: const EdgeInsets.only(top: Space.md))),
         if (selected != null && selected.requiresCallbackTime && saved == null) ...[
           const SizedBox(height: Space.lg),
           LinkGate(
@@ -79,9 +86,16 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
         const LinkGate(child: QueuedBreakChip(offer: false)),
       ],
       bottom: LinkGate(
-        child: _SaveArea(form: _form, notes: widget.notes, onSave: _save),
+        child: _SaveArea(form: _form, notes: widget.notes, onSave: _save, onRedial: _redial),
       ),
     );
+  }
+
+  Future<void> _redial() async {
+    final view = ref.read(stationViewProvider);
+    if (view == null) return;
+    // The call the agent is looking at: a tap on a stale screen redials nothing.
+    await ref.read(stationActionsProvider).redial(attemptId: view.call?.attemptId);
   }
 
   Future<void> _save() async {
@@ -121,20 +135,25 @@ class _WrapupViewState extends ConsumerState<WrapupPhaseView> {
 
 /// "Save outcome", with the reason it is disabled written beside it: a bare
 /// greyed button reads as broken. Rebuilds on each keystroke (a required note)
-/// without rebuilding the grid above.
+/// without rebuilding the grid above. With wrap-up redial offered, Redial sits
+/// beside it: either saves the outcome or calls the customer back now.
 class _SaveArea extends ConsumerWidget {
-  const _SaveArea({required this.form, required this.notes, required this.onSave});
+  const _SaveArea({required this.form, required this.notes, required this.onSave, required this.onRedial});
 
   final DispositionForm form;
   final TextEditingController notes;
   final Future<void> Function() onSave;
+  final Future<void> Function() onRedial;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final options = ref.watch(stationViewProvider.select((v) => v?.dispositions ?? const <DispositionOption>[]));
     final saved = ref.watch(stationViewProvider.select((v) => v?.dispositionSaved));
     final autoReturn = ref.watch(stationViewProvider.select((v) => v?.wrapup?.autoReturn ?? true));
-    final saving = ref.watch(stationViewProvider.select((v) => v?.busy == StationBusy.savingDisposition));
+    final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
+    final saving = busy == StationBusy.savingDisposition;
+    final redialing = busy == StationBusy.redialing;
+    final redialBeside = ref.watch(stationViewProvider.select(_redialRemaining)) != null && !redialStacks(context);
     final clock = ref.watch(stationClockProvider);
     final t = context.tokens;
     final text = Theme.of(context).textTheme;
@@ -167,11 +186,17 @@ class _SaveArea extends ConsumerWidget {
       listenable: notes,
       builder: (context, _) {
         final block = dispositionBlock(options, form, notes.text, clock());
+        final save = FilledButton(
+          key: const Key('save-outcome'),
+          onPressed: block == null && !saving && !redialing ? onSave : null,
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+          child: BusyLabel(label: saving ? StationCopy.savingOutcome : StationCopy.saveOutcome, busy: saving, color: t.onAccent),
+        );
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (block != null && !saving) ...[
+            if (block != null && !saving && !redialing) ...[
               Text(
                 StationCopy.blockCopy(block),
                 key: const Key('save-blocked'),
@@ -179,15 +204,96 @@ class _SaveArea extends ConsumerWidget {
               ),
               const SizedBox(height: Space.sm),
             ],
-            FilledButton(
-              key: const Key('save-outcome'),
-              onPressed: block == null && !saving ? onSave : null,
-              style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(52)),
-              child: BusyLabel(label: saving ? StationCopy.savingOutcome : StationCopy.saveOutcome, busy: saving, color: t.onAccent),
-            ),
+            if (redialBeside)
+              Row(
+                children: [
+                  Expanded(child: _RedialControl(onRedial: onRedial)),
+                  const SizedBox(width: Space.md),
+                  Expanded(child: save),
+                ],
+              )
+            else
+              save,
           ],
         );
       },
+    );
+  }
+}
+
+/// The text is large enough that Redial and Save would stack ([ButtonPair]'s
+/// threshold): Redial moves under the outcome pad instead of the pinned area.
+bool redialStacks(BuildContext context) => MediaQuery.textScalerOf(context).scale(16) / 16 > 1.35;
+
+/// Redials left on the wrap-up on screen, or null when Redial is not offered.
+/// Never offered once an outcome is saved (here or elsewhere): there is
+/// nothing left to redial for.
+int? _redialRemaining(StationView? v) {
+  final w = v?.wrapup;
+  if (w == null || w.dispositionSubmitted || v?.dispositionSaved != null) return null;
+  return w.redialRemaining;
+}
+
+/// Redial when the wrap-up offers it, else nothing.
+class _RedialControl extends ConsumerWidget {
+  const _RedialControl({required this.onRedial, this.padding = EdgeInsets.zero});
+
+  final Future<void> Function() onRedial;
+  final EdgeInsetsGeometry padding;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final remaining = ref.watch(stationViewProvider.select(_redialRemaining));
+    final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
+    if (remaining == null) return const SizedBox.shrink();
+    return Padding(
+      padding: padding,
+      child: _RedialButton(
+        remaining: remaining,
+        busy: busy == StationBusy.redialing,
+        onPressed: remaining > 0 && busy == StationBusy.none ? onRedial : null,
+      ),
+    );
+  }
+}
+
+/// Redial, with what it leaves ("2 redials left") written on it; disabled at
+/// zero ("No redials left") and while any action is in flight.
+class _RedialButton extends StatelessWidget {
+  const _RedialButton({required this.remaining, required this.busy, required this.onPressed});
+
+  final int remaining;
+  final bool busy;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      enabled: onPressed != null,
+      label: busy ? StationCopy.redialling : StationCopy.redialSemantics(remaining),
+      excludeSemantics: true,
+      onTap: onPressed,
+      child: OutlinedButton(
+        key: const Key('redial'),
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
+        child: busy
+            ? const BusyLabel(label: StationCopy.redialling, busy: true)
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(StationCopy.redial),
+                  Text(
+                    StationCopy.redialsLeft(remaining),
+                    key: const Key('redial-remaining'),
+                    textAlign: TextAlign.center,
+                    style: text.labelSmall,
+                  ),
+                ],
+              ),
+      ),
     );
   }
 }

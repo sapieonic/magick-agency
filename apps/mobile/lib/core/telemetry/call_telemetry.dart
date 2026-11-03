@@ -42,7 +42,10 @@ final class _Tracked {
 /// * a campaign call: `agency_attempt_bridged`, `agency_attempt_released`;
 /// * a soft-phone call: `agency_softphone_call_bridged`,
 ///   `agency_softphone_call_ended` (the console has neither; the server
-///   settles its calls).
+///   settles its calls);
+/// * a wrap-up redial: `agency_redial_requested` when Redial is pressed and
+///   the request goes out, `agency_redial_refused` when it is refused or
+///   fails (pressed minus refused is placed).
 ///
 /// The station controller feeds it frames and audio; the soft phone tells it
 /// which calls it placed ([manualPlaced]).
@@ -63,6 +66,16 @@ final class CallTelemetry {
   DateTime? _reservedAt;
   DateTime? _bridgedAt;
   _Tracked? _manual;
+
+  // ─── Wrap-up redial ───────────────────────────────────────────────────────
+
+  /// [remaining]: the redials the wrap-up showed when Redial was pressed.
+  void redialRequested({required String? campaignId, required int remaining}) =>
+      Telemetry.event('agency_redial_requested', {'campaign_id': campaignId, 'redial_remaining': remaining});
+
+  /// [code]: the refusal's code, null for a transport failure.
+  void redialRefused({required String? campaignId, required String? code}) =>
+      Telemetry.event('agency_redial_refused', {'campaign_id': campaignId, 'code': code});
 
   // ─── Campaign calls ───────────────────────────────────────────────────────
 

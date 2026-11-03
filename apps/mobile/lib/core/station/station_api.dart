@@ -79,6 +79,19 @@ final class StationApi {
     await _post(_via(accountId), '$_base/sessions/$sessionId/leave', timeout: timeout);
   }
 
+  /// Redials the customer of the wrap-up for [attemptId] (wrap-up redial).
+  /// The body is advisory: the redial's call reaches the station as frames
+  /// (`reserved` with `attempt.redial`, ...), so one that does not decode is
+  /// not a failure of the action. A refusal is a 409 [ApiHttpError].
+  Future<RedialResponse?> redial(String sessionId, String attemptId) async {
+    final body = await _post(
+      _client,
+      '$_base/sessions/$sessionId/redial',
+      body: RedialRequest(attemptId: attemptId).toJson(),
+    );
+    return _tryDecode(body, RedialResponse.fromJson);
+  }
+
   Future<HangupResponse?> hangup(String attemptId) async {
     final body = await _post(_client, '$_base/attempts/$attemptId/hangup');
     return _tryDecode(body, HangupResponse.fromJson);

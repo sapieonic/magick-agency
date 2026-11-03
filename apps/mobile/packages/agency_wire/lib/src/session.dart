@@ -294,6 +294,7 @@ final class SessionBootstrap {
     required List<Disposition> dispositionCatalog,
     required this.wrapupSeconds,
     required this.wrapupAutoReturn,
+    this.allowWrapupRedial = false,
     required this.recordCalls,
     required List<BreakReason> breakReasons,
     required this.contextDisplay,
@@ -323,6 +324,7 @@ final class SessionBootstrap {
       dispositionCatalog: j.list('disposition_catalog', Disposition.fromJson),
       wrapupSeconds: j.integer('wrapup_seconds'),
       wrapupAutoReturn: j.boolean('wrapup_auto_return'),
+      allowWrapupRedial: j.boolOrNull('allow_wrapup_redial') ?? false,
       recordCalls: j.boolean('record_calls'),
       breakReasons: j.list('break_reasons', BreakReason.fromJson),
       contextDisplay: ContextDisplay.fromJson(j.obj('context_display')),
@@ -362,6 +364,11 @@ final class SessionBootstrap {
   final int wrapupSeconds;
   final bool wrapupAutoReturn;
 
+  /// Whether the campaign lets the agent redial the customer from wrap-up,
+  /// as it stood at join. Absent (an older server) reads as false. The
+  /// `wrapup` frame's `redial_remaining` is the live answer for one wrap-up.
+  final bool allowWrapupRedial;
+
   /// Whether calls are recorded: the app must disclose it.
   final bool recordCalls;
   final List<BreakReason> breakReasons;
@@ -395,6 +402,7 @@ final class SessionBootstrap {
       listEquals(other.dispositionCatalog, dispositionCatalog) &&
       other.wrapupSeconds == wrapupSeconds &&
       other.wrapupAutoReturn == wrapupAutoReturn &&
+      other.allowWrapupRedial == allowWrapupRedial &&
       other.recordCalls == recordCalls &&
       listEquals(other.breakReasons, breakReasons) &&
       other.contextDisplay == contextDisplay &&
@@ -415,6 +423,7 @@ final class SessionBootstrap {
     listHash(dispositionCatalog),
     wrapupSeconds,
     wrapupAutoReturn,
+    allowWrapupRedial,
     recordCalls,
     listHash(breakReasons),
     contextDisplay,

@@ -48,6 +48,7 @@ class StationViewMapper {
   MissedReleaseView? _missed;
   WrapupAnchor? _wrapupSource;
   bool _wrapupSaved = false;
+  ({int? remaining})? _wrapupRedial;
   WrapupView? _wrapup;
 
   /// The offset the view applies now.
@@ -83,6 +84,7 @@ class StationViewMapper {
     required String? dncOutcome,
     required bool missedReleaseDismissed,
     required bool awayPauseRequested,
+    ({int? remaining})? redialOverride,
   }) {
     applyOffset(s.clockOffsetMs);
     final phase = phaseOf(s.agentState);
@@ -115,7 +117,7 @@ class StationViewMapper {
       breakOptions: _breakOptionsFor(breakReasons),
       call: _callFor(s, bootstrap, catalog, countdown),
       release: _releaseFor(s.release),
-      wrapup: _wrapupFor(s.wrapup, dispositionSavedCode != null),
+      wrapup: _wrapupFor(s.wrapup, dispositionSavedCode != null, redialOverride),
       dispositions: _dispositionsFor(catalog),
       dispositionSaved: dispositionSavedCode,
       notes: notes,
@@ -234,6 +236,8 @@ class StationViewMapper {
         countdownSeconds: seconds,
         bridgedAt: correctedInstant(bridgedAt, _offset),
         recording: recording,
+        redialNumber: previous.redialNumber,
+        redialLimit: previous.redialLimit,
       );
     }
     _callOffset = _offset;
@@ -259,6 +263,8 @@ class StationViewMapper {
       countdownSeconds: seconds,
       bridgedAt: correctedInstant(bridgedAt, _offset),
       recording: recording,
+      redialNumber: attempt.redial?.number,
+      redialLimit: attempt.redial?.limit,
     );
   }
 
@@ -283,10 +289,14 @@ class StationViewMapper {
     return _missed = MissedReleaseView(headline: '$missedReleasePrefix: ${copy.headline}', detail: copy.subtext);
   }
 
-  WrapupView? _wrapupFor(WrapupAnchor? anchor, bool savedHere) {
-    if (identical(anchor, _wrapupSource) && savedHere == _wrapupSaved) return _wrapup;
+  /// [redial]: what a refused redial taught the core about this wrap-up's
+  /// redials (used up, or not offered after all), until the next frame states
+  /// them. Null: the anchor's own count.
+  WrapupView? _wrapupFor(WrapupAnchor? anchor, bool savedHere, ({int? remaining})? redial) {
+    if (identical(anchor, _wrapupSource) && savedHere == _wrapupSaved && redial == _wrapupRedial) return _wrapup;
     _wrapupSource = anchor;
     _wrapupSaved = savedHere;
+    _wrapupRedial = redial;
     if (anchor == null) return _wrapup = null;
     return _wrapup = WrapupView(
       endsAt: anchor.deadline,
@@ -298,6 +308,7 @@ class StationViewMapper {
       },
       dispositionSubmitted: anchor.dispositionSubmitted || savedHere,
       autoReturn: anchor.autoReturn,
+      redialRemaining: redial != null ? redial.remaining : anchor.redialRemaining,
     );
   }
 }

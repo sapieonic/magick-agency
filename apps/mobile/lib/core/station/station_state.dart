@@ -23,6 +23,11 @@ import '../softphone/call_state.dart' show newerCall;
 ///   break then states its own `break_reason` when the server sends one, and
 ///   [SessionStateAction] fills the rest back in from the HTTP answer of the
 ///   request that caused the transition.
+/// * `wrapup` for a different attempt than the panel retained drops that
+///   panel (as `ready` already does). A wrap-up redial that fails before it
+///   connects can open a wrap-up on the redial's attempt without a `reserved`
+///   first; the panel held for the call it redialled must not keep the notes
+///   and the outcome keyed to that closed call.
 
 /// The socket, as the reducer tracks it. Mirrors the console's `StationConnection`.
 enum StationConnection { idle, connecting, open, reconnecting, sessionGone, superseded, disconnected }
@@ -69,6 +74,7 @@ final class WrapupAnchor {
     required this.autoReturn,
     this.secondsTotal = 0,
     this.dispositionSubmitted = false,
+    this.redialRemaining,
   });
 
   final String attemptId;
@@ -90,6 +96,10 @@ final class WrapupAnchor {
   /// As the frame stated it. The console keeps this in its submit hook.
   final bool dispositionSubmitted;
 
+  /// Wrap-up redials left, as the frame stated it: null when redial is not
+  /// offered, 0 when the limit is used up.
+  final int? redialRemaining;
+
   @override
   bool operator ==(Object other) =>
       other is WrapupAnchor &&
@@ -100,7 +110,8 @@ final class WrapupAnchor {
       other.heldReason == heldReason &&
       other.autoReturn == autoReturn &&
       other.secondsTotal == secondsTotal &&
-      other.dispositionSubmitted == dispositionSubmitted;
+      other.dispositionSubmitted == dispositionSubmitted &&
+      other.redialRemaining == redialRemaining;
 
   @override
   int get hashCode => Object.hash(
@@ -112,6 +123,7 @@ final class WrapupAnchor {
         autoReturn,
         secondsTotal,
         dispositionSubmitted,
+        redialRemaining,
       );
 }
 
@@ -135,6 +147,7 @@ WrapupAnchor openWrapup(WrapupState wrapup, int offsetMs, DateTime now) {
     autoReturn: wrapup.autoReturn,
     secondsTotal: wrapup.secondsTotal,
     dispositionSubmitted: wrapup.dispositionSubmitted,
+    redialRemaining: wrapup.redialRemaining,
   );
 }
 
@@ -437,7 +450,13 @@ StationState stationReducer(StationState state, StationAction action) {
       return next;
 
     case WrapupAction(:final anchor):
-      return identical(anchor, state.wrapup) ? state : state._with(wrapup: anchor);
+      if (identical(anchor, state.wrapup)) return state;
+      // Mobile addition: a panel held for another attempt belongs to a call
+      // this wrap-up is not about (a redial that failed before `reserved`).
+      final held = state.retainedAttempt;
+      return held != null && held.attemptId != anchor.attemptId
+          ? state._with(wrapup: anchor, retainedAttempt: null)
+          : state._with(wrapup: anchor);
 
     case ReservedAction(:final attempt):
       // A new reservation always wins: whatever is on screen belongs to a call that is over.

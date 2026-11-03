@@ -64,6 +64,8 @@ class FakeStationActions implements StationActions {
   Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt}) =>
       _rec('submitDisposition', [code, notes, callbackAt]);
   @override
+  Future<void> redial({String? attemptId}) => _rec('redial', [attemptId]);
+  @override
   Future<void> markDnc({String? reason, String? attemptId}) => _rec('markDnc', [reason, attemptId]);
   @override
   Future<LeaveOutcome> leave() async {
@@ -379,6 +381,8 @@ CallView call({
   int otherFields = 6,
   String attemptId = 'a1',
   String phone = '+919840012345',
+  int? redialNumber,
+  int? redialLimit,
 }) => CallView(
   attemptId: attemptId,
   phoneE164: phone,
@@ -403,6 +407,8 @@ CallView call({
   countdownSeconds: countdown,
   bridgedAt: bridgedAt,
   recording: recording,
+  redialNumber: redialNumber,
+  redialLimit: redialLimit,
 );
 
 StationView station({

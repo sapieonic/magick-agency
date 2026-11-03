@@ -84,6 +84,8 @@ final class SecureNotesStore implements NotesStore {
 ///   restore would send `''`, which clears the server's copy wholesale.
 /// * Mobile addition: a network failure is retried ([retryDelays]) before it
 ///   is reported as failed; the console has no retry.
+/// * Wrap-up redial ([carryForward]): the draft held for the call being
+///   redialled moves to the redial's attempt, without a request of its own.
 class NotesAutosave {
   NotesAutosave({
     required this._save,
@@ -110,6 +112,10 @@ class NotesAutosave {
   /// The last text the server confirmed, per attempt (what the field shows if
   /// that attempt comes back with nothing unsent).
   final Map<String, String> _confirmed = {};
+
+  /// A redial's attempt → the attempt it redials ([carryForward]): where a
+  /// restore with nothing stored for the redial looks next.
+  final Map<String, String> _carriedFrom = {};
 
   String? _attemptId;
   String _text = '';
@@ -172,6 +178,10 @@ class NotesAutosave {
     String? restored;
     try {
       restored = await _store.read(attemptId);
+      // A redial with nothing of its own yet: the call it redials holds the draft
+      // (an app restarted mid-redial remembers it only in the store).
+      final from = _carriedFrom[attemptId];
+      if (restored == null && from != null) restored = await _store.read(from);
     } catch (e) {
       _log.warn('notes restore failed', {'error': e.runtimeType.toString()});
     }
@@ -206,6 +216,39 @@ class NotesAutosave {
       unawaited(_flush(pending));
     });
     _refresh();
+  }
+
+  /// [to] is a wrap-up redial of [from] (`attempt.redial.of_attempt_id`). The
+  /// server copied [from]'s saved notes onto [to] when it created it, and
+  /// every notes or outcome write REPLACES them, so the draft held for [from]
+  /// moves to [to]: the redial's call and wrap-up show the same text, and it
+  /// is what the outcome carries. Call it BEFORE [attemptChanged] moves to
+  /// [to], so the field opens on the draft rather than empty.
+  ///
+  /// No request is made here. Text the server already has stays confirmed on
+  /// [to] (it holds the copy); text not yet saved stays unsent on [to] and
+  /// goes with the next keystroke's save or the outcome. Its save still
+  /// waiting for [from] is dropped: that call is closed, and a write to it
+  /// never reaches the redial. Text [to] already has (a reconnect onto it) wins.
+  void carryForward({required String from, required String to}) {
+    if (_disposed || from == to) return;
+    _carriedFrom[to] = from;
+    if (_unsent.containsKey(to) || _confirmed.containsKey(to)) return;
+    final unsent = _unsent.remove(from);
+    final draft = unsent ?? _confirmed[from];
+    if (draft == null) return;
+    if (_pending?.attemptId == from) {
+      _debounceTimer?.cancel();
+      _debounceTimer = null;
+      _pending = null;
+    }
+    _retryTimers.remove(from)?.cancel();
+    if (unsent != null) {
+      _unsent[to] = draft;
+    } else {
+      _confirmed[to] = draft;
+    }
+    unawaited(_persist(to, draft));
   }
 
   /// The app is leaving the foreground: put unsent text in the store now.
