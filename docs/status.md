@@ -487,6 +487,14 @@ can redial the same customer and is connected back to themselves, at most twice 
   [`decisions.md`](decisions.md) §4, "Wrap-up redial", WR1–WR10. Not verified on a real carrier
   or phone. A notes edit sent in the last 2 s before Redial can land on the original attempt after
   the server copied the notes; the clients carry the draft, so the outcome's notes are complete.
+- Run of 2026-11-03 on this branch (`pnpm lint` clean in 8 packages; `pnpm test:release` 10 and
+  `pnpm test:grafana` 32 pass): server 7691 unit + 42 skipped / 1601 integration + 9 expected fail
+  (the cluster `mobile-stations` file timed out once under load and passed alone twice);
+  `packages/db` 427 / 518; console 4992; contracts 252; super-admin 436; web-ui 235; domain 61;
+  observability 14; app `flutter test` 1303, `agency_wire` 341, `flutter analyze` clean. The new
+  route shifted the seeded sample of `hostile-input-fuzz.test.ts` case 3 onto the uplink probe,
+  whose per-user bucket the sweep had spent (429, not 413); it is excluded there, its 413 being
+  pinned in its own suite.
 
 ### Review fixes on the scaling branch 2026-11-03
 
