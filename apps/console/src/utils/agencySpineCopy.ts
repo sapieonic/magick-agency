@@ -8,6 +8,7 @@
 
 import type { AgencyAttempt, AgencyRosterContact } from '../types/agency-spine';
 import { suppressedReasonLabel } from '../types/agency-spine';
+import { systemDispositionLabel } from './agency/systemDisposition';
 import type { AgencyCampaign, AgencyDispositionEntry } from '../types/agency-campaign';
 
 /**
@@ -32,13 +33,16 @@ import type { AgencyCampaign, AgencyDispositionEntry } from '../types/agency-cam
  * a historical call filed under a retired code is exactly the row an audit is
  * about — the same reasoning `activityActionLabel` uses for an unrecognised
  * action, and `AgencyCampaignStatusBadge` for an unrecognised status.
+ *
+ * A code the SYSTEM writes (`redialed`, `utils/agency/systemDisposition`) is named
+ * first: no catalog may hold it, so it is never the operator's to label.
  */
 export function dispositionLabel(
   code: string | null | undefined,
   catalog: readonly AgencyDispositionEntry[] | undefined,
 ): string | null {
   if (!code) return null;
-  return catalog?.find((entry) => entry.code === code)?.label ?? code;
+  return systemDispositionLabel(code) ?? catalog?.find((entry) => entry.code === code)?.label ?? code;
 }
 
 /**

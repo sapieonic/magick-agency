@@ -47,6 +47,7 @@ import {
 } from '../../types/agency-spine';
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import spine from '../../components/agency/SpineListLayout.module.css';
+import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
 import styles from './AgencyCampaignAttemptsPage.module.css';
 
 const PAGE_SIZE = 50;
@@ -514,8 +515,19 @@ export function AgencyCampaignAttemptsPage() {
                         </span>
                       </td>
                       <td>
-                        {dispositionLabel(attempt.disposition_code, campaign?.disposition_catalog)
-                          ?? <span className={styles.mutedCell}>—</span>}
+                        {isSystemDispositionCode(attempt.disposition_code) ? (
+                          /* Written by the system, not the agent: styled as such, with what wrote it. */
+                          <span
+                            className={styles.mutedCell}
+                            title={SYSTEM_DISPOSITION_HINTS[attempt.disposition_code]}
+                            data-system-disposition=""
+                          >
+                            {dispositionLabel(attempt.disposition_code, campaign?.disposition_catalog)}
+                          </span>
+                        ) : (
+                          dispositionLabel(attempt.disposition_code, campaign?.disposition_catalog)
+                            ?? <span className={styles.mutedCell}>—</span>
+                        )}
                         {attempt.dispositioned_on_behalf && (
                           <span className={styles.onBehalf} title="Filed by someone other than the agent on the call">
                             on behalf

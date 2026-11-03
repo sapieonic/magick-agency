@@ -39,6 +39,11 @@ import { FilterChip } from './FilterChip';
 import { FiltersCard } from './FiltersCard';
 import spine from './SpineListLayout.module.css';
 import { formatCount } from '../../utils/format/number';
+import {
+  SYSTEM_DISPOSITION_HINTS,
+  isSystemDispositionCode,
+  systemDispositionLabel,
+} from '../../utils/agency/systemDisposition';
 import styles from './AgentAttemptsPanel.module.css';
 
 /**
@@ -660,7 +665,17 @@ function AttemptRow({
         </span>
       </td>
       <td>
-        {attempt.disposition_code ?? <span className={styles.mutedCell}>Not written up</span>}
+        {isSystemDispositionCode(attempt.disposition_code) ? (
+          <span
+            className={styles.mutedCell}
+            title={SYSTEM_DISPOSITION_HINTS[attempt.disposition_code]}
+            data-system-disposition=""
+          >
+            {systemDispositionLabel(attempt.disposition_code)}
+          </span>
+        ) : (
+          attempt.disposition_code ?? <span className={styles.mutedCell}>Not written up</span>
+        )}
         {attempt.dispositioned_on_behalf && (
           <span
             className={styles.onBehalf}

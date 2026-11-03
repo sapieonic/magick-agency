@@ -585,6 +585,16 @@
   color: var(--text-secondary);
 }
 
+/*
+ * A code the system wrote (`redialed`, a wrap-up redial): named, but lighter and
+ * italic, so it reads as the system's record rather than an outcome someone chose.
+ */
+.priorOutcome[data-system] {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
 .priorNote {
   color: var(--text-secondary);
 }
