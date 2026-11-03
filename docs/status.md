@@ -136,8 +136,9 @@ the morning rush).
 
 **Defects found and left open**, each pinned by an `it.fails` (flip it to `it` with the fix). All
 need Manas or a deliberate change to a shared file. The first three (frame size, send buffer,
-VoiceLink timeouts) were fixed on 2026-11-02 ("Scaling for 500 simultaneous calls"); their rows
-stay for the record:
+VoiceLink timeouts) were fixed on 2026-11-02 ("Scaling for 500 simultaneous calls"), and the
+disposition replay on 2026-11-03 ("Review fixes on the scaling branch"); their rows stay for the
+record:
 
 | Defect | Pinned in | What deciding it needs |
 |---|---|---|
@@ -458,6 +459,49 @@ phone number (the default, unchanged), any kept column, or none.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
   duplicate column".
 
+### Review fixes on the scaling branch 2026-11-03
+
+PR #29's review (8 comments) and the defects found while fixing it. Each fix has a test that
+fails on the old code and goes red when the fix is reverted.
+
+- **Review comments.** `/readyz?detail=1` behind `READYZ_DETAIL_TOKEN` and one readiness answer
+  cached 1 s (D13); the loop sampler on a fixed 5 s window, read without reset; a snapshot keeps a
+  lease admitted before its call registers (the bridge owns the lease set; synchronous IPC
+  handlers answer in the same turn); a worker that crashes during shutdown is reaped and counted;
+  the child-crash alert sees the first crash; `fetchCdr`'s 401 retry has its own timeout;
+  releasing a recording budget lease cancels its pending grow; only an outcome-unknown
+  unrecorded end is held 15 min.
+- **The 15 min outcome-unknown hold, made whole.** The dial is settled once (the bridge's `ended`
+  no longer settles it first); a hang-up or teardown racing a slow `add_lead` keeps the contact
+  claimed until the dial's outcome is known; the hold is charged to the our-fault ledger, so its
+  bound retires a contact whose `add_lead` keeps timing out; the soft phone holds the same way,
+  including a call orphaned by a restart; a failed hold write no longer shortens it to the
+  stranded sweep's 5 min.
+- **Guarded contact writes.** The reaper's requeues (`requeueOrphaned`), the lapsed-wrap-up close
+  (`closeLapsedWrapup`) and the disposition route (`releaseFromDisposition`) each write in one
+  statement only while the contact is still the attempt's: no newer attempt, no soft-phone claim.
+  `disposition-storm.test.ts` case 5 is now an `it`.
+- **Dials that fail before the carrier.** A throw after the bridge session is registered (timer,
+  socket, tokens, the carrier request's inputs) tears the call down with no `ended` and is not
+  charged as a carrier refusal; the contact waits 60 s instead of redialling every tick. A
+  failed `provider_call_id` write no longer ends a placed call.
+- **Cache invalidation channel** scoped to the Redis db (`<prefix>cache:invalidate:db<N>`):
+  deployments on one Redis no longer clear each other's local caches.
+
+**Left open** (found during the fixes; not pinned):
+- A campaign dial that fails before the carrier keeps `dialed_at`, so stats count it as placed
+  (the same family as the capacity-refusal row above).
+- The stranded-contact sweep, which runs only after a hold write failed, holds any sent and
+  unanswered dial 15 min, a plain refusal included: the attempt row cannot tell them apart.
+- A hang-up followed by a plain carrier refusal is charged as our-fault `canceled`, though the
+  carrier never placed the call (unchanged behaviour).
+- The soft phone's 201 can carry a `dialing` row when the dial rejects before the teardown's
+  `ended` arrives; the contact is still held correctly.
+- A skipped first write-up (a supervisor writing up a superseded call) answers the decision's
+  `contact_state`, not the contact's.
+- `load/pacing-skip.test.ts` failed once in a full integration run beside other worktrees' runs
+  and passed alone; the cause is not found.
+
 ## Test counts
 
 Latest run, 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
@@ -647,7 +691,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
 | B15 roster supersede | Build it, or leave replace and clear refused |
-| Scaling defaults (2026-11-02) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial, Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default |
+| Scaling defaults (2026-11-02/03) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial (now charged to the our-fault ledger, so its bound retires a contact), a dial failed before the carrier (uncharged, redial after 60 s), Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default; and D13 (the `/readyz?detail=1` token, the 1 s readiness cache, the 5 s loop window) |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
