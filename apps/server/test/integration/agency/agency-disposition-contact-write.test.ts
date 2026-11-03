@@ -22,11 +22,13 @@ const { agencyAttemptRepository, agencyContactRepository } = await import(
  * contact that has moved on (or not), with the real writes that move it, and asserts the
  * row.
  *
- * Before the fix the route wrote with an unconditional `markState`: (b)–(f) all moved the
- * contact. Mutation-checked: dropping the newest-attempt clause reds (c); dropping the
- * state arms (any state passes) reds (b) and (d); dropping the soft-phone clause reds (e)
- * and (f); dropping only its `m.created_at > r.created_at` half reds (f); dropping the
- * `pending`-on-this-code arm reds (g); dropping the DNC arm reds (h).
+ * Before the fix the route wrote with an unconditional `markState`: (b), (c), (e) and (f)
+ * moved the contact. Mutation-checked: dropping the newest-attempt clause reds (c);
+ * dropping the state arms (any state passes) reds (b) and (d); dropping the soft-phone
+ * clause, or only its `m.created_at > r.created_at` half, reds (f) ((e) is held by the
+ * state arms too: a claimed contact is `in_flight`); dropping the `pending`-on-this-code
+ * arm reds (g); dropping the DNC arm reds (h). Putting the route's unconditional
+ * `markState` back reds `disposition-storm.test.ts` case 5.
  */
 
 const CALLBACK_1 = new Date('2099-01-02T10:00:00.000Z');
