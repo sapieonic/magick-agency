@@ -106,6 +106,7 @@ export class MediaCluster implements WsHandoffTarget {
     this.directory = new StationDirectory({
       readOwner: opts.readOwner,
       broadcastToWorkers: (campaignId, frame) => { this.supervisor.broadcast('station.broadcast', { campaignId, frame }); },
+      sendToWorker: (slot, sessionId, frame) => this.supervisor.channel(slot)?.emit('station.send', { sessionId, frame }) ?? false,
     });
     this.supervisor = new ChildSupervisor({
       role: 'media',

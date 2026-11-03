@@ -221,6 +221,7 @@ export interface StationAttachedBody { sessionId: string; campaignId: string | n
 export interface StationDetachedBody { sessionId: string }
 export interface StationSnapshotBody { replicaId: string; sessions: Array<{ sessionId: string; campaignId: string | null }> }
 export interface StationBroadcastBody { campaignId: string; frame: AgencyStationServerFrame }
+export interface StationSendBody { sessionId: string; frame: AgencyStationServerFrame }
 export interface PacingRevokeBody { campaignId: string | null; upTo: number }
 export interface AccountScopeBody { tenantId: string; accountId: string }
 export interface AttemptIdsBody { attemptIds: string[] }
@@ -266,6 +267,10 @@ export function parseStationSnapshot(raw: unknown): StationSnapshotBody | null {
 export function parseStationBroadcast(raw: unknown): StationBroadcastBody | null {
   if (!isRecord(raw) || !isId(raw['campaignId']) || !isRecord(raw['frame']) || typeof raw['frame']['event'] !== 'string') return null;
   return { campaignId: raw['campaignId'], frame: raw['frame'] as unknown as AgencyStationServerFrame };
+}
+export function parseStationSend(raw: unknown): StationSendBody | null {
+  if (!isRecord(raw) || !isId(raw['sessionId']) || !isRecord(raw['frame']) || typeof raw['frame']['event'] !== 'string') return null;
+  return { sessionId: raw['sessionId'], frame: raw['frame'] as unknown as AgencyStationServerFrame };
 }
 export function parsePacingRevoke(raw: unknown): PacingRevokeBody | null {
   if (!isRecord(raw) || !nullableId(raw['campaignId']) || !isNonNegativeInt(raw['upTo'])) return null;
@@ -365,6 +370,7 @@ export interface IpcEventMap {
   'station.detached': StationDetachedBody;
   'station.snapshot': StationSnapshotBody;
   'station.broadcast': StationBroadcastBody;
+  'station.send': StationSendBody;
   'concurrency.invalidate': AccountScopeBody;
   'reaper.forget_unrecorded': AttemptIdsBody;
   'voice.wake_self_heal': EmptyBody;
@@ -398,6 +404,7 @@ export const IPC_EVENT_DECODERS: { readonly [K in IpcEventType]: Decoder<IpcEven
   'station.detached': parseStationDetached,
   'station.snapshot': parseStationSnapshot,
   'station.broadcast': parseStationBroadcast,
+  'station.send': parseStationSend,
   'concurrency.invalidate': parseAccountScope,
   'reaper.forget_unrecorded': parseAttemptIds,
   'voice.wake_self_heal': parseEmptyBody,

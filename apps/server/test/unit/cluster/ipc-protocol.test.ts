@@ -120,6 +120,7 @@ describe('body decoders', () => {
       'station.detached': { sessionId: 's' },
       'station.snapshot': { replicaId: 'h:mw0:1', sessions: [{ sessionId: 's', campaignId: 'c' }] },
       'station.broadcast': { campaignId: 'c', frame: { event: 'campaign_state', campaign_id: 'c' } },
+      'station.send': { sessionId: 's', frame: { event: 'queue', campaign_id: 'c', due: false, reason: 'queue_empty', next_due_at: null } },
       'concurrency.invalidate': { tenantId: 't', accountId: 'a' },
       'reaper.forget_unrecorded': { attemptIds: ['a1', 'a2'] },
       'voice.wake_self_heal': {},

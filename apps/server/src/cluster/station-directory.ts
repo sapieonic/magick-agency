@@ -11,6 +11,8 @@
  *    primary knows exactly which replicas are alive: the ones whose channel is open.
  *  - **broadcast**: a campaign frame goes to every worker, which sends it to its own
  *    stations; the count returned (logged only) is what the directory knows is attached.
+ *  - **send**: one agent's frame goes to the worker holding that station (the contact-assignment
+ *    `queue` frame); true when a live worker holds it, which is all the primary can know.
  *
  * Routing never reads it: the owner of a session is `slotFor(sessionId)`, attached or not.
  */
@@ -28,6 +30,8 @@ export interface StationDirectoryDeps {
   readOwner: (sessionId: string) => Promise<string | null>;
   /** Send a campaign frame to every ready worker. */
   broadcastToWorkers: (campaignId: string, frame: AgencyStationServerFrame) => void;
+  /** Send one session's frame to the worker in `slot`; false when that worker has no open channel. */
+  sendToWorker: (slot: number, sessionId: string, frame: AgencyStationServerFrame) => boolean;
 }
 
 export class StationDirectory implements PacingStations {
@@ -102,6 +106,11 @@ export class StationDirectory implements PacingStations {
     let n = 0;
     for (const e of this.entries.values()) if (e.campaignId === campaignId) n++;
     return n;
+  }
+
+  send(sessionId: string, frame: AgencyStationServerFrame): boolean {
+    if (!this.isLocallyOwned(sessionId)) return false;
+    return this.deps.sendToWorker(this.entries.get(sessionId)!.slot, sessionId, frame);
   }
 
   size(): number {

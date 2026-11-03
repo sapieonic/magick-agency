@@ -10,6 +10,14 @@
  */
 export { AgencyCampaignRepository, agencyCampaignRepository } from './agency/campaign.repository.js';
 export { AgencyContactRepository, agencyContactRepository } from './agency/contact.repository.js';
+export type {
+  AgencyAgentClaim,
+  AgencyAgentQueueProbe,
+  AgencyAgentQueueProbeRow,
+  AgencyCallbackFallbackMove,
+  AgencyOwnerClaimMode,
+  AgencyPoolQueueProbe,
+} from './agency/contact.repository.js';
 export { AgencyAttemptRepository, agencyAttemptRepository } from './agency/attempt.repository.js';
 export { AgencyAgentSessionRepository, agencyAgentSessionRepository } from './agency/agent-session.repository.js';
 export type { AgencySoftphoneJoinResult } from './agency/agent-session.repository.js';

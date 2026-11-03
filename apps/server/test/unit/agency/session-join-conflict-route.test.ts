@@ -68,7 +68,7 @@ const { repos } = vi.hoisted(() => ({
   repos: {
     attempt: { findById: vi.fn(), findPriorForContactLineage: vi.fn().mockResolvedValue([]) },
     campaign: { findById: vi.fn() },
-    contact: { findById: vi.fn() },
+    contact: { findById: vi.fn(), probeAgentQueues: vi.fn() },
     session: { findById: vi.fn(), findLiveForAgent: vi.fn(), joinOrRehydrate: vi.fn(), setState: vi.fn(), leave: vi.fn() },
     staffing: { isActiveOnCampaign: vi.fn() },
   },
@@ -101,6 +101,11 @@ const REQUESTED = {
 };
 
 const OTHER = { ...REQUESTED, id: 'camp-old', name: 'Q3 Renewals' };
+
+/** An all-day, every-day calling window, so a queue read does not depend on when the suite runs. */
+const ALL_DAY = {
+  calling_window_start: '00:00:00', calling_window_end: '24:00:00', calling_days: [1, 2, 3, 4, 5, 6, 7], default_timezone: 'UTC',
+};
 
 /** The live session the agent still holds on `camp-old`. */
 function liveSession(patch: Record<string, unknown> = {}) {
@@ -506,6 +511,53 @@ describe('POST /sessions — the happy path stays intact', () => {
     }
   });
 
+  it('carries the assignment mode and agent retry, and no queue, on a pool campaign', async () => {
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new' }),
+    });
+    // A row from before 0009 (no column) reads as `pool`; agent retry as a boolean.
+    for (const campaign of [REQUESTED, { ...REQUESTED, assignment_mode: 'pool', allow_agent_retry: true }]) {
+      repos.campaign.findById.mockResolvedValue(campaign);
+      const body = (await join()).json();
+      expect(body.assignment_mode).toBe('pool');
+      expect(body.allow_agent_retry).toBe((campaign as { allow_agent_retry?: boolean }).allow_agent_retry === true);
+      expect(body).not.toHaveProperty('queue');
+    }
+    expect(repos.contact.probeAgentQueues).not.toHaveBeenCalled();
+  });
+
+  it("carries this agent's queue on a strict campaign, read for the joining agent", async () => {
+    repos.campaign.findById.mockResolvedValue({ ...REQUESTED, ...ALL_DAY, assignment_mode: 'strict', allow_agent_retry: false });
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new' }),
+    });
+    const later = new Date(Date.now() + 3_600_000);
+    repos.contact.probeAgentQueues.mockResolvedValue({
+      agents: [{ agentUserId: 'u-agent', ownDue: false, ownNextAt: later, ownHasNonCallback: true }], pool: null,
+    });
+
+    const body = (await join()).json();
+
+    expect(body.assignment_mode).toBe('strict');
+    expect(body.allow_agent_retry).toBe(false);
+    expect(body.queue).toEqual({ due: false, reason: 'waiting_for_retry', next_due_at: later.toISOString() });
+    expect(repos.contact.probeAgentQueues).toHaveBeenCalledWith('camp-new', ['u-agent'], expect.objectContaining({ callbackCodes: [] }));
+  });
+
+  it('joins without the queue when it cannot be read (best effort, like the retry context)', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...REQUESTED, assignment_mode: 'preferred' });
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new' }),
+    });
+    repos.contact.probeAgentQueues.mockRejectedValue(new Error('db down'));
+
+    const res = await join();
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().assignment_mode).toBe('preferred');
+    expect(res.json()).not.toHaveProperty('queue');
+  });
+
   it('names the break reason the row holds when the agent is on break (the app paused while away)', async () => {
     // The mobile app is paused with `device_away` when it leaves the foreground, and is
     // often killed by the OS while paused. On relaunch the bootstrap is what it renders
@@ -700,6 +752,28 @@ describe('the agent fixtures are what this handler sends', () => {
     expect(body.intervals).toEqual(fixture['intervals']);
     expect(rewriteStationWsUrl(body.station_ws_url)).toBe(fixture['station_ws_url']);
     expect(AGENT_FIXTURES['bootstrap_retry_rehydrated']!['intervals']).toEqual(body.intervals);
+  });
+
+  it("bootstrap_first_join: a strict campaign's mode, agent retry and empty queue", async () => {
+    const fixture = AGENT_FIXTURES['bootstrap_first_join']!;
+    repos.campaign.findById.mockResolvedValue({
+      ...REQUESTED, ...ALL_DAY, assignment_mode: fixture['assignment_mode'], allow_agent_retry: fixture['allow_agent_retry'],
+    });
+    repos.session.joinOrRehydrate.mockResolvedValue({
+      ok: true, session: liveSession({ id: fixture['session_id'], campaign_id: 'camp-new' }),
+    });
+    // Nothing assigned to the agent: no open contact of theirs.
+    repos.contact.probeAgentQueues.mockResolvedValue({
+      agents: [{ agentUserId: 'u-agent', ownDue: false, ownNextAt: null, ownHasNonCallback: null }], pool: null,
+    });
+
+    const body = (await join({ campaign_id: 'camp-new', agent_user_id: 'u-agent', client_kind: 'mobile' })).json();
+
+    expect(body.assignment_mode).toBe(fixture['assignment_mode']);
+    expect(body.allow_agent_retry).toBe(fixture['allow_agent_retry']);
+    expect(body.queue).toEqual(fixture['queue']);
+    // The pool-mode sample carries none of it, as a pool join omits `queue`.
+    expect(AGENT_FIXTURES['bootstrap_retry_rehydrated']).not.toHaveProperty('queue');
   });
 
   it('conflict_other_campaign: the same fields the handler sends', async () => {

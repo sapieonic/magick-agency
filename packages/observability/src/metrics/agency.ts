@@ -446,6 +446,8 @@ export const agencyPreDialGateTotal = counter<'campaign_id' | 'gate' | 'action'>
 // gate decisions is not idle, it is broken. It was prom-client only once, so the
 // idle reasons — the thing that distinguishes "no agents on shift" from "the
 // roster is exhausted" from "the tick is broken" — were invisible in Grafana Cloud.
+// `reason="nothing_due"` is contact assignment's (strict / preferred campaigns): agents
+// are available but none has a contact due, so none was reserved.
 export const agencyTickIdleTotal = counter<'campaign_id' | 'reason'>(meter, 'agency_tick_idle_total', {
   description: 'Ticks that dialed nothing, by benign reason (no agents, no slots, no contacts)',
 });

@@ -53,6 +53,10 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // ARE that attribution: without them the decision has nothing behind it.
   'agency_attempts.exported',
   'agency_contacts.exported',
+  // Contact assignment (D5): due callbacks whose owner stayed away past the campaign's grace
+  // went to the pool. One row per sweep batch (the system actor); the per-contact moves are in
+  // `agency_contact_assignment_events` under the same `batch_id`.
+  'agency_contacts.callback_fallback',
   'agency_campaign_agent.assigned',
   'agency_campaign_agent.unassigned',
   // ── The soft phone (docs/softphone.md §6) ─────────────────────────────────

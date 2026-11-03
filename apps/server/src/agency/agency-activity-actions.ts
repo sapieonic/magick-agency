@@ -165,6 +165,7 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls' },
   { value: 'agency_manual_call.orphaned', label: 'Soft-phone call closed after a restart', group: 'Calls' },
   { value: 'agency_manual_call.lapsed', label: 'Soft-phone outcome lapsed', group: 'Calls' },
+  { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned', group: 'Staffing' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },
   { value: 'agency_session.joined', label: 'Agent joined', group: 'Staffing' },
