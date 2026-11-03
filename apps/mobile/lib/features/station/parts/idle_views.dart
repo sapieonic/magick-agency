@@ -2,9 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../app/routes.dart';
 import '../../../app/theme/app_theme.dart';
 import '../../../app/theme/tokens.dart';
+import '../../../core/flags/feature_flags.dart' show contactAssignmentEnabledProvider;
 import '../../../core/softphone/softphone_view.dart' show softphoneAvailabilityProvider;
 import '../../../core/station/station_view.dart';
 import '../../../ui/primitives.dart';
@@ -19,7 +22,10 @@ import 'sheets.dart';
 /// The phases with no call on screen: available, offline, on break, and the
 /// pause the app takes when the agent leaves it.
 
-/// Available: waiting for the next customer.
+/// Available: waiting for the next customer. On a `strict` or `preferred`
+/// campaign with nothing due for the agent (contact assignment), it says so
+/// and why ("Nothing due now") instead of the plain waiting words: no call is
+/// on its way, and the agent should know it is not the line.
 class WaitingView extends ConsumerWidget {
   const WaitingView({super.key});
 
@@ -29,18 +35,29 @@ class WaitingView extends ConsumerWidget {
     final dialing = ref.watch(stationViewProvider.select((v) => v?.campaignDialing ?? true));
     final message = ref.watch(stationViewProvider.select((v) => v?.campaignMessage));
     final busy = ref.watch(stationViewProvider.select((v) => v?.busy ?? StationBusy.none));
+    final queue = ref.watch(stationViewProvider.select((v) => v?.queue));
     final now = ref.watch(stationClockProvider);
     final t = context.tokens;
+    // A paused campaign says so first: nothing is due because nothing is dialled.
+    final nothingDue = dialing && queue != null && queue.nothingDue;
+    final next = queue?.nextDueAt;
 
     return IdleLayout(
       body: [
         const RecentReleaseCard(),
         _StateCard(
-          key: const Key('waiting-card'),
+          key: Key(nothingDue ? 'nothing-due-card' : 'waiting-card'),
           pill: const StatusPill(StationCopy.available, tone: Tone.live, leading: LiveDot()),
-          headline: dialing ? StationCopy.waitingHeadline : StationCopy.pausedHeadline,
+          headline: !dialing
+              ? StationCopy.pausedHeadline
+              : (nothingDue ? StationCopy.nothingDueHeadline : StationCopy.waitingHeadline),
           headlineColor: dialing ? null : t.warning,
-          detail: dialing ? StationCopy.waitingHint : (message != null && message.trim().isNotEmpty ? message : StationCopy.pausedHint),
+          detail: !dialing
+              ? (message != null && message.trim().isNotEmpty ? message : StationCopy.pausedHint)
+              : nothingDue
+                  ? '${StationCopy.nothingDueDetail(queue.reason ?? QueueIdle.other, next == null ? null : formatDueAt(next, now()))} '
+                      '${StationCopy.nothingDueKeepOpen}'
+                  : StationCopy.waitingHint,
           footer: since == null
               ? null
               : TickingBuilder(
@@ -59,6 +76,7 @@ class WaitingView extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
+          const MyContactsButton(),
           SwitchToSoftphoneButton(busy: busy),
           ButtonPair(
             first: LinkGate(
@@ -71,6 +89,30 @@ class WaitingView extends ConsumerWidget {
             second: LeaveStationButton(busy: busy),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// "My contacts" (contact assignment) on the waiting screen, while the
+/// surface is on for the agent's account: whom the agent holds on this
+/// campaign, and calling one of them now. Nothing otherwise. Followed by a
+/// gap, so it sits above the screen's other actions.
+class MyContactsButton extends ConsumerWidget {
+  const MyContactsButton({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final enabled = ref.watch(contactAssignmentEnabledProvider);
+    final campaignId = ref.watch(stationViewProvider.select((v) => v?.campaignId));
+    if (!enabled || campaignId == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.sm),
+      child: OutlinedButton.icon(
+        key: const Key('my-contacts'),
+        onPressed: () => GoRouter.maybeOf(context)?.go(Routes.myContacts(campaignId)),
+        icon: const Icon(Icons.people_alt_outlined),
+        label: const Text(StationCopy.myContacts),
       ),
     );
   }

@@ -49,6 +49,8 @@ final everyRoute = [
   Routes.station('c2'),
   Routes.preflight('c1'),
   Routes.preflight('c2'),
+  Routes.myContacts('c1'),
+  Routes.myContacts('c2'),
   Routes.invite('tok'),
 ];
 
@@ -101,6 +103,21 @@ void main() {
       expect(appRedirect(ready, campAvailable, Routes.phone, phoneVisible: true), Routes.station('c1'));
       expect(appRedirect(ready, campAvailable, Routes.preflight('c1'), phoneVisible: true), isNull);
       expect(appRedirect(ready, campAvailable, Routes.preflight('c2'), phoneVisible: true), Routes.station('c1'));
+    });
+
+    test('available on a campaign: its own My contacts stays open, until a call takes the screen', () {
+      expect(appRedirect(ready, campAvailable, Routes.myContacts('c1')), isNull);
+      // Another campaign's contacts cannot be called from this station.
+      expect(appRedirect(ready, campAvailable, Routes.myContacts('c2')), Routes.station('c1'));
+      // The call My contacts placed (or any call) takes the agent to the station.
+      const ringing = StationSignals(onDuty: true, campaignId: 'c1', callActive: true);
+      expect(appRedirect(ready, ringing, Routes.myContacts('c1')), Routes.station('c1'));
+      // Off duty, or on a break: the agent moves freely, My contacts included.
+      expect(appRedirect(ready, const StationSignals(), Routes.myContacts('c2')), isNull);
+      expect(
+        appRedirect(ready, const StationSignals(onDuty: true, onBreak: true, campaignId: 'c1'), Routes.myContacts('c2')),
+        isNull,
+      );
     });
 
     test('homeRouteOf: the station for a campaign session, the Phone tab for a soft-phone one', () {

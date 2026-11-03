@@ -7,6 +7,7 @@
 library;
 
 export 'src/actions.dart';
+export 'src/assignment.dart';
 export 'src/enums.dart' hide wireIndex;
 export 'src/errors.dart';
 export 'src/json.dart' show WireFormatException;

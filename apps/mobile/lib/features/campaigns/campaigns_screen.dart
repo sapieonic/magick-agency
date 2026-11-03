@@ -7,6 +7,7 @@ import '../../app/routes.dart';
 import '../../app/theme/tokens.dart';
 import '../../core/api/api_error.dart';
 import '../../core/auth/app_gate.dart';
+import '../../core/flags/feature_flags.dart';
 import '../../core/station/station_signals.dart';
 import '../../ui/primitives.dart';
 import '../accounts/account_switcher.dart';
@@ -225,19 +226,29 @@ class SoftphoneOpenBanner extends StatelessWidget {
   }
 }
 
-class _CampaignCard extends StatelessWidget {
+class _CampaignCard extends ConsumerWidget {
   const _CampaignCard({required this.assignment, required this.onDutyCampaign});
 
   final Assignment assignment;
   final String? onDutyCampaign;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
     final t = context.tokens;
     final entry = assignmentEntry(assignment);
     final name = campaignDisplayName(assignment);
     final isOnDutyHere = onDutyCampaign == assignment.campaignId;
+    // Contact assignment: the agent's own contacts here. Not while on duty on
+    // another campaign (its station holds the agent; this one is not callable).
+    final contacts = ref.watch(contactAssignmentEnabledProvider) && (onDutyCampaign == null || isOnDutyHere)
+        ? TextButton.icon(
+            key: Key('my-contacts-${assignment.campaignId}'),
+            onPressed: () => context.go(Routes.myContacts(assignment.campaignId)),
+            icon: const Icon(Icons.people_alt_outlined, size: 18),
+            label: Semantics(label: 'My contacts in $name', excludeSemantics: true, child: const Text('My contacts')),
+          )
+        : null;
 
     final Widget? action;
     if (isOnDutyHere) {
@@ -274,9 +285,14 @@ class _CampaignCard extends StatelessWidget {
             const SizedBox(height: Space.xs),
             Text(entry.note!, style: text.bodySmall),
           ],
-          if (action != null) ...[
+          if (action != null || contacts != null) ...[
             const SizedBox(height: Space.md),
-            Align(alignment: Alignment.centerLeft, child: action),
+            Wrap(
+              spacing: Space.sm,
+              runSpacing: Space.sm,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [?action, ?contacts],
+            ),
           ],
         ],
       ),

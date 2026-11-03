@@ -552,7 +552,7 @@ final class InviteClaimRefusal {
 
 // ─── Feature flags ──────────────────────────────────────────────────────────
 
-/// `GET /proxy/feature-flags`: client-exposed flags resolved for the caller.
+/// `GET /feature-flags` (account-scoped): client-exposed flags resolved for the caller.
 ///
 /// Contract: `FeatureFlagMap` (`api/platform/feature-flags.ts`). A flag absent
 /// from the map is off.
@@ -577,6 +577,11 @@ final class FeatureFlags {
   static const dialerEnabled = 'agency_dialer_enabled';
   static const callAnalysis = 'agency_call_analysis';
   static const softphoneEnabled = 'agency_softphone_enabled';
+
+  /// Contact assignment: the agent's My contacts, agent retry and the
+  /// per-contact call. Gates the surface only: the station's queue state is
+  /// shown whatever it says (the server's pacing reads the stored mode).
+  static const contactAssignmentEnabled = 'agency_contact_assignment_enabled';
 
   final Map<String, Object> values;
 

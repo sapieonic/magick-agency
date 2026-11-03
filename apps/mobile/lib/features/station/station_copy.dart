@@ -44,6 +44,27 @@ abstract final class StationCopy {
   static const pausedHeadline = 'Campaign paused — no calls will come through';
   static const pausedHint = 'Nothing will be sent to you until the campaign is running again.';
   static String availableFor(String clock) => 'Available for $clock';
+
+  // ── Nothing due (contact assignment: a strict or preferred campaign) ──
+  static const nothingDueHeadline = 'Nothing due now';
+
+  /// Why nothing is due for the agent, and when the next contact is ([at],
+  /// already formatted; null when none is scheduled).
+  static String nothingDueDetail(QueueIdle reason, String? at) => switch (reason) {
+    QueueIdle.queueEmpty => 'No contacts are waiting for you. Your supervisor can assign more.',
+    QueueIdle.waitingForRetry => at == null
+        ? 'Your contacts are scheduled for another try later.'
+        : 'Your contacts are scheduled for another try. The next one is due at $at.',
+    QueueIdle.callbacksLater => at == null
+        ? 'Your callbacks are booked for later.'
+        : 'Your callbacks are booked for later. The next one is at $at.',
+    QueueIdle.outsideCallingHours => at == null
+        ? 'It’s outside this campaign’s calling hours.'
+        : 'It’s outside this campaign’s calling hours. Calls resume at $at.',
+    QueueIdle.other => at == null ? 'No calls are due for you right now.' : 'Your next contact is due at $at.',
+  };
+  static const nothingDueKeepOpen = 'Stay on this screen: calls come through as soon as one is due.';
+  static const myContacts = 'My contacts';
   static const takeBreak = 'Take a break';
   static const leave = 'Leave';
 

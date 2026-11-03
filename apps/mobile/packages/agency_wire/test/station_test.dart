@@ -272,6 +272,63 @@ void main() {
         StationFrame.decode(fixtureText('station.json', 'reserved')),
       );
     });
+
+    group('queue (contact assignment)', () {
+      test('nothing due: the reason and when the next contact falls due', () {
+        final f = sample<QueueFrame>('queue_nothing_due');
+        expect(f.event, StationEvent.queue);
+        expect(f.campaignId, '8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d');
+        expect(f.queue.due, isFalse);
+        expect(f.queue.reason, QueueIdleReason.callbacksLater);
+        expect(f.queue.nextDueAt, DateTime.utc(2026, 11, 4, 10, 30));
+        expect(f.queue.nextDueAt!.isUtc, isTrue);
+      });
+
+      test('due: no reason, no next time', () {
+        final f = sample<QueueFrame>('queue_due');
+        expect(f.queue, QueueState(due: true));
+        expect(f.queue.reason, isNull);
+        expect(f, isNot(sample<QueueFrame>('queue_nothing_due')));
+      });
+
+      test('the state round-trips through toJson', () {
+        final json = fixture('station.json', 'queue_nothing_due');
+        final f = sample<QueueFrame>('queue_nothing_due');
+        expect(f.queue.toJson(), {
+          for (final k in ['due', 'reason', 'next_due_at']) k: json[k],
+        });
+        expect(QueueState.fromJson(f.queue.toJson()), f.queue);
+      });
+
+      test('a reason this build does not know is kept, still "nothing due"', () {
+        final f = decodeAs<QueueFrame>(
+          '{"event":"queue","campaign_id":"c","due":false,"reason":"supervisor_hold","next_due_at":null}',
+        );
+        expect(f.queue.due, isFalse);
+        expect(f.queue.reason, QueueIdleReason.unknown);
+        expect(f.queue.reasonRaw, 'supervisor_hold');
+      });
+
+      test('a queue frame missing `due` is an UnknownFrame, never a throw', () {
+        final f = StationFrame.decode('{"event":"queue","campaign_id":"c","reason":null}');
+        expect(f, isA<UnknownFrame>());
+        expect(f.event, StationEvent.queue);
+      });
+
+      test('ready carries the queue on a strict or preferred campaign, and nothing otherwise', () {
+        final json = fixture('station.json', 'ready_first_join');
+        expect(sample<ReadyFrame>('ready_first_join').queue, isNull);
+        final withQueue = decodeAs<ReadyFrame>(
+          jsonEncode({
+            ...json,
+            'queue': {'due': false, 'reason': 'outside_calling_hours', 'next_due_at': '2026-11-04T03:30:00.000Z'},
+          }),
+        );
+        expect(withQueue.queue!.reason, QueueIdleReason.outsideCallingHours);
+        expect(withQueue.queue!.nextDueAt, DateTime.utc(2026, 11, 4, 3, 30));
+        expect(withQueue, isNot(sample<ReadyFrame>('ready_first_join')));
+      });
+    });
   });
 
   group('StationFrame.decode: tolerance (never throws)', () {

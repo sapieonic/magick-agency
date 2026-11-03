@@ -23,6 +23,7 @@ void main() {
         'voicemail',
         'callback',
         'do_not_call',
+        'promise_to_pay',
       ]);
       expect(b.dispositionFor('interested')!.isSuccess, isTrue);
       expect(b.dispositionFor('not_interested')!.isSuccess, isNull, reason: 'absent stays absent');
@@ -78,6 +79,59 @@ void main() {
         isFalse,
       );
       expect(SessionBootstrap.fromJson(json), isNot(SessionBootstrap.fromJson(without(json, 'allow_wrapup_redial'))));
+    });
+
+    test('contact assignment: mode, agent retry and the queue at join', () {
+      final b = SessionBootstrap.fromJson(json);
+      expect(b.assignmentMode, AssignmentMode.strict);
+      expect(b.assignmentMode.hasOwnQueue, isTrue);
+      expect(b.allowAgentRetry, isTrue);
+      expect(b.queue, QueueState(due: false, reason: QueueIdleReason.queueEmpty));
+      expect(b.queue!.nextDueAt, isNull);
+      // An outcome's override grant; the built-ins grant nothing.
+      final ptp = b.dispositionFor('promise_to_pay')!;
+      expect(ptp.overrideGrant, const DispositionOverride(extraAttempts: 3, retryDelay: true));
+      expect(ptp.overrideGrant!.kinds, [OverrideKind.extraAttempts, OverrideKind.retryDelay]);
+      expect(ptp.overrideGrant!.callingHours, isNull, reason: 'absent stays absent');
+      expect(b.dispositionFor('callback')!.overrideGrant, isNull);
+    });
+
+    test('contact assignment: an older server is a pool campaign with no queue and no retry', () {
+      final old = SessionBootstrap.fromJson(
+        without(without(without(json, 'assignment_mode'), 'allow_agent_retry'), 'queue'),
+      );
+      expect(old.assignmentMode, AssignmentMode.pool);
+      expect(old.assignmentModeRaw, 'pool');
+      expect(old.assignmentMode.hasOwnQueue, isFalse);
+      expect(old.allowAgentRetry, isFalse);
+      expect(old.queue, isNull);
+      expect(old, isNot(SessionBootstrap.fromJson(json)));
+      // A mode this build does not know is kept, not a failure.
+      final newer = SessionBootstrap.fromJson({...json, 'assignment_mode': 'round_robin'});
+      expect(newer.assignmentMode, AssignmentMode.unknown);
+      expect(newer.assignmentModeRaw, 'round_robin');
+      expect(newer.assignmentMode.hasOwnQueue, isFalse);
+      // So is a queue reason.
+      final reason = SessionBootstrap.fromJson({
+        ...json,
+        'queue': {'due': false, 'reason': 'supervisor_hold', 'next_due_at': null},
+      }).queue!;
+      expect(reason.reason, QueueIdleReason.unknown);
+      expect(reason.reasonRaw, 'supervisor_hold');
+    });
+
+    test('an override grant with a mistyped part names the key', () {
+      final catalog = [
+        {
+          'code': 'x',
+          'label': 'X',
+          'override': {'extra_attempts': 'three'},
+        },
+      ];
+      expect(
+        () => SessionBootstrap.fromJson({...json, 'disposition_catalog': catalog}),
+        throwsA(isA<WireFormatException>().having((e) => e.key, 'key', 'extra_attempts')),
+      );
     });
 
     test('the heartbeat grace is read, not assumed', () {

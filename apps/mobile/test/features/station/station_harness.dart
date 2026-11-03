@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:magick_agency_agent/app/routes.dart';
 import 'package:magick_agency_agent/app/theme/app_theme.dart';
 import 'package:magick_agency_agent/app/theme/tokens.dart';
+import 'package:magick_agency_agent/core/flags/feature_flags.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_host.dart';
 import 'package:magick_agency_agent/core/softphone/softphone_view.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
@@ -273,6 +274,7 @@ Future<StationHarness> pumpStation(
   Brightness brightness = Brightness.dark,
   SoftphoneAvailability availability = SoftphoneAvailability.hidden,
   SoftphoneView softphone = const SoftphoneView(),
+  bool contactAssignment = false,
 }) async {
   tester.view.devicePixelRatio = 3;
   tester.view.physicalSize = size * 3;
@@ -308,6 +310,7 @@ Future<StationHarness> pumpStation(
       softphoneActionsProvider.overrideWith((ref) => h.softphoneActions),
       softphoneViewProvider.overrideWith((ref) => ref.watch(softphoneHolder)),
       softphoneAvailabilityProvider.overrideWith((ref) => ref.watch(availabilityHolder)),
+      contactAssignmentEnabledProvider.overrideWithValue(contactAssignment),
     ],
   );
   addTearDown(container.dispose);
@@ -331,6 +334,10 @@ Future<StationHarness> pumpStation(
         GoRoute(
           path: 'station/:campaignId',
           builder: (_, s) => StationScreen(campaignId: s.pathParameters['campaignId']!),
+        ),
+        GoRoute(
+          path: 'contacts/:campaignId',
+          builder: (_, s) => Scaffold(body: Text('my-contacts ${s.pathParameters['campaignId']}')),
         ),
       ],
     ),
@@ -432,6 +439,7 @@ StationView station({
   String? actionError,
   String? fatal,
   String campaignId = 'c1',
+  QueueView? queue,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -457,6 +465,7 @@ StationView station({
   busy: busy,
   actionError: actionError,
   fatal: fatal,
+  queue: queue,
 );
 
 const hungUpRelease = ReleaseView(
