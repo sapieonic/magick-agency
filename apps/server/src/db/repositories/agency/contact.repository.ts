@@ -747,6 +747,101 @@ export class AgencyContactRepository {
   }
 
   /**
+   * Return the contact of an attempt the reaper ended to the roster, charged to the
+   * our-fault ledger, **only if the contact still belongs to that attempt**. One
+   * statement: the ownership check, the charge, the bound and the state write cannot be
+   * separated by anything else touching the row.
+   *
+   * ── Why the check ───────────────────────────────────────────────────────────
+   *
+   * The reaper ends an attempt some time after it stopped being driven: the unrecorded-
+   * ends and leak sweeps up to a minute later. Meanwhile the contact may have moved on.
+   * The dialer's abandon path writes the attempt `ended` and unclaims the contact as two
+   * statements, so when only the first fails the contact is `pending` again, and pacing
+   * (or a soft-phone call) can claim it and dial it before the sweep. A requeue that
+   * wrote `pending` regardless then pulled that `in_flight` contact out from under its
+   * new live attempt (claimable again while that call runs), or reopened a contact the
+   * new attempt had already settled (`completed`, or `connected` awaiting its write-up).
+   *
+   * So the write lands only while the contact is still the reaped attempt's:
+   *
+   *  - `reapedAttemptId` set (the startup, slot, leak and unrecorded-ends reaps): the
+   *    contact is `in_flight` (claimed for it) or `connected` (parked by its bridge), no
+   *    attempt on it is newer than the reaped one (`attempt_number` is derived per
+   *    contact as MAX + 1, `AgencyAttemptRepository.create`, so "newer" is exact; and
+   *    `uq_agency_attempt_live` allows no older live one), and no soft-phone call holds
+   *    its claim.
+   *  - `reapedAttemptId` null (the stranded-contact sweep, which has no attempt): the
+   *    contact is `in_flight`, with no live attempt and no soft-phone call holding it,
+   *    the same test `findStrandedInFlight` picked it by.
+   *
+   * A contact that is `pending` already (the abandon path's unclaim did land) is left as
+   * it is, with the `next_attempt_at` that unclaim gave it, and nothing is charged.
+   *
+   * ── What it writes ─────────────────────────────────────────────────────────
+   *
+   * `our_fault_attempts` + 1 (never `attempt_count`: our crash must not spend the
+   * customer's retries), `last_outcome`, and then `pending` at `notBefore`, or
+   * `retiredState` once the post-bump count reaches `bound` (`resolveOurFaultRedial`'s
+   * rule; the caller passes its `ourFaultRedialBound` and `OUR_FAULT_RETIRED_STATE`). A
+   * row carrying `suppressed_reason = 'dnc'` stays `suppressed` with its
+   * `next_attempt_at`, as {@link markState} keeps it.
+   *
+   * Returns the state and count that landed, or null when the contact no longer belongs
+   * to the reaped attempt (or does not exist) and nothing was written.
+   */
+  async requeueOrphaned(
+    contactId: string,
+    opts: {
+      reapedAttemptId: string | null;
+      notBefore: Date;
+      outcome: string;
+      bound: number;
+      retiredState: string;
+    },
+  ): Promise<{ state: AgencyContactState; our_fault_attempts: number } | null> {
+    const { rows } = await getPool().query<{ state: AgencyContactState; our_fault_attempts: number }>(
+      `UPDATE agency_contacts c
+          SET our_fault_attempts = c.our_fault_attempts + 1,
+              last_outcome = $3,
+              state = CASE
+                        WHEN c.suppressed_reason = 'dnc' THEN 'suppressed'
+                        WHEN c.our_fault_attempts + 1 >= $5 THEN $6
+                        ELSE 'pending'
+                      END,
+              next_attempt_at = CASE
+                                  WHEN c.suppressed_reason = 'dnc' OR c.our_fault_attempts + 1 >= $5 THEN c.next_attempt_at
+                                  ELSE $4
+                                END,
+              updated_at = now()
+        WHERE c.id = $1
+          AND CASE
+                WHEN $2::uuid IS NULL THEN
+                  c.state = 'in_flight'
+                  AND NOT EXISTS (
+                        SELECT 1 FROM agency_call_attempts a
+                         WHERE a.contact_id = c.id AND a.state <> 'ended')
+                ELSE
+                  c.state IN ('in_flight', 'connected')
+                  AND EXISTS (
+                        SELECT 1 FROM agency_call_attempts r
+                         WHERE r.id = $2::uuid
+                           AND r.contact_id = c.id
+                           AND NOT EXISTS (
+                                 SELECT 1 FROM agency_call_attempts a
+                                  WHERE a.contact_id = c.id
+                                    AND a.attempt_number > r.attempt_number))
+              END
+          AND NOT EXISTS (
+                SELECT 1 FROM agency_manual_calls m
+                 WHERE m.contact_id = c.id AND m.settled_at IS NULL AND m.contact_claimed)
+      RETURNING c.state, c.our_fault_attempts`,
+      [contactId, opts.reapedAttemptId, opts.outcome, opts.notBefore, opts.bound, opts.retiredState],
+    );
+    return rows[0] ?? null;
+  }
+
+  /**
    * Write a contact's state, with **one transition the database refuses**: a row
    * carrying `suppressed_reason = 'dnc'` stays `suppressed`, whatever was asked.
    *
@@ -820,7 +915,7 @@ export class AgencyContactRepository {
    * ── Every caller, and the decision about each ─────────────────────────────
    *
    * The guard is HERE and not at the call sites because one of them (`reaper.ts`'s
-   * orphan requeue) hardcodes `'pending'` rather than taking a decision, and a
+   * orphan requeue, since moved to {@link requeueOrphaned}) hardcoded `'pending'` rather than taking a decision, and a
    * rule spelled nine times is a rule with eight chances to be forgotten. The
    * enumeration is recorded so a future reader can check a new caller against it
    * rather than re-deriving which ones mattered:
@@ -838,9 +933,9 @@ export class AgencyContactRepository {
    *     reason rather than the target state.
    *   * `reaper.ts` lapsed-wrap-up sweep — `resolveRetryDecision` ⇒ `'pending'`.
    *     Guarded.
-   *   * `reaper.ts` our-fault-bounded retire — terminal states only. Guarded
-   *     anyway; `suppressed` is at least as terminal as what it asked for.
-   *   * `reaper.ts` orphan requeue — literal `'pending'`. Guarded.
+   *   * `reaper.ts` orphan requeue and our-fault-bounded retire — no longer a
+   *     caller: {@link requeueOrphaned} writes them in one statement with the
+   *     same `CASE`, keyed on the same reason.
    *   * `agency.routes.ts` disposition — a disposition decision, which can be
    *     `'pending'` (a callback). Guarded on the state; `last_disposition` still
    *     lands, deliberately.

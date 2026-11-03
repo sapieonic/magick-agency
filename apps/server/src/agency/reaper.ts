@@ -10,7 +10,7 @@ import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../telephony/carrier-error
 import { auditLogger } from '../audit/audit-logger.js';
 import { AUTO_DISPOSITION_CODE } from './disposition.js';
 import { requiresDisposition } from './outcome-classifier.js';
-import { resolveOurFaultRedial, resolveRetryDecision } from './retry-policy.js';
+import { OUR_FAULT_RETIRED_STATE, ourFaultRedialBound, resolveRetryDecision } from './retry-policy.js';
 import {
   applyNoOutcomeSettlement,
   noOutcomeSettlementFor,
@@ -212,7 +212,7 @@ export class AgencyReaper {
     // `reapNonTerminal`'s "dead by definition" is true.
     const attempts = await agencyAttemptRepository.reapNonTerminal(null);
     for (const attempt of attempts) {
-      await this.requeueOrphanedContact(attempt.contact_id, 'startup', {
+      await this.requeueOrphanedContact(attempt.contact_id, attempt.id, 'startup', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
       }, reapedRedialNotBefore(attempt));
     }
@@ -248,7 +248,7 @@ export class AgencyReaper {
     const ids = live.filter((a) => a.reserved_agent_id && isDead(a.reserved_agent_id)).map((a) => a.id);
     const reaped = ids.length > 0 ? await agencyAttemptRepository.reapByIds(ids) : [];
     for (const attempt of reaped) {
-      await this.requeueOrphanedContact(attempt.contact_id, 'startup', {
+      await this.requeueOrphanedContact(attempt.contact_id, attempt.id, 'startup', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
       }, reapedRedialNotBefore(attempt));
     }
@@ -364,7 +364,7 @@ export class AgencyReaper {
     // be a second one).
     const reaped = await agencyAttemptRepository.reapByIds(leaked);
     for (const attempt of reaped) {
-      await this.requeueOrphanedContact(attempt.contact_id, 'leak', {
+      await this.requeueOrphanedContact(attempt.contact_id, attempt.id, 'leak', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
       }, reapedRedialNotBefore(attempt));
     }
@@ -399,7 +399,7 @@ export class AgencyReaper {
     const reaped = await agencyAttemptRepository.reapByIds(ids);
     this.deps.unrecordedEnds?.forget(ids);
     for (const attempt of reaped) {
-      await this.requeueOrphanedContact(attempt.contact_id, 'leak', {
+      await this.requeueOrphanedContact(attempt.contact_id, attempt.id, 'leak', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
       }, outcomeUnknown.has(attempt.id) ? reapedRedialNotBefore(attempt) : new Date());
     }
@@ -543,7 +543,7 @@ export class AgencyReaper {
     const cutoff = new Date(Date.now() - STRANDED_CONTACT_THRESHOLD_MS);
     const stranded = await agencyContactRepository.findStrandedInFlight(cutoff);
     for (const contact of stranded) {
-      await this.requeueOrphanedContact(contact.id, 'stranded', {
+      await this.requeueOrphanedContact(contact.id, null, 'stranded', {
         tenantId: contact.tenant_id, campaignId: contact.campaign_id,
       });
     }
@@ -649,13 +649,29 @@ export class AgencyReaper {
   }
 
   /**
-   * Return a reaped attempt's contact to the roster.
+   * Return a reaped attempt's contact to the roster, if it is still that attempt's.
    *
    * Shared by every reap path (and the stranded-contact sweep) so the
    * retry-allowance rule below cannot be true in one and quietly absent in another.
+   *
+   * ── Only a contact the reaped attempt still holds ────────────────────────
+   *
+   * The check and the write are ONE statement
+   * (`AgencyContactRepository.requeueOrphaned`), never a read here and a write after.
+   * A reap lands a while after the attempt stopped being driven (the sweeps up to a
+   * minute later), and by then the contact may be someone else's: the dialer's abandon
+   * path ends the attempt and unclaims the contact as two writes, so when only the
+   * first fails the contact is back on the roster, and pacing or a soft-phone call can
+   * claim and dial it before the sweep. Writing `pending` regardless pulled that contact
+   * out from under its new live attempt (claimable again mid-call), or reopened one the
+   * new attempt had already settled. Now a contact that has moved on (a newer attempt, a
+   * soft-phone claim, `pending` already, or settled) is left exactly as it is, and
+   * nothing is charged to it.
    */
   private async requeueOrphanedContact(
     contactId: string,
+    /** The attempt the caller just reaped; null for the stranded-contact sweep, which has none. */
+    reapedAttemptId: string | null,
     source: 'startup' | 'leak' | 'stranded',
     /**
      * Label set for {@link agencyOurFaultRetirementTotal}, taken from the attempt
@@ -684,56 +700,65 @@ export class AgencyReaper {
      */
     notBefore: Date = new Date(),
   ): Promise<void> {
-    // ── The our-fault bound belongs here too ─────────────────────────────────
+    // ── The our-fault ledger, and its bound ──────────────────────────────────
     //
-    // Not bumping `attempt_count` is right. The other half is the bound: if our
-    // crashes cost the contact NOTHING, a replica
-    // crash-looping on one contact requeues that number without limit — the same
-    // unbounded repeat-dial exposure the dial path's agent-drop skip opens, and
-    // it is regulated regardless of which of our faults caused it.
+    // NOT `attempt_count`, and that is a product decision rather than an
+    // oversight: **our crash must not consume the customer's retry allowance.**
+    // With `max_attempts: 3`, three server restarts would otherwise exhaust a
+    // contact and mark them `exhausted` having never been spoken to — silent
+    // contact loss behind a plausible-looking audit trail. (`attempt_number` is
+    // derived from the attempts table, so `attempt_count` is purely the retry
+    // budget; do not "fix" a future numbering problem by bumping here.)
     //
-    // ONE principle applies in both places. Skipping the
-    // customer's allowance while charging a separate our-fault ledger IS that
-    // principle; applying it only to agent drops would leave the reaper as the
-    // way around the bound.
-    const ourFaultUsed = await agencyContactRepository
-      .chargeOurFaultAttempt(contactId, 'orphaned')
+    // The other half is the bound: if our crashes cost the contact NOTHING, a
+    // replica crash-looping on one contact requeues that number without limit —
+    // the same unbounded repeat-dial exposure the dial path's agent-drop skip
+    // opens, and it is regulated regardless of which of our faults caused it.
+    // ONE principle applies in both places, and `resolveOurFaultRedial`'s bound
+    // (`ourFaultRedialBound`) is the one ceiling both obey; only the BOUND is
+    // taken from it. The requeue deliberately does not take the dial path's
+    // cool-off: crash recovery wants the contact dialable as soon as the roster
+    // reaches it. The one exception is `notBefore`, and it is not a cool-off but
+    // the carrier rule: a dial sent and never answered may still be placed by
+    // the carrier, so it waits out DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS from its
+    // `dialed_at`.
+    //
+    // Note for the disposition policy: an orphaned attempt is not uniformly "never
+    // happened". The reaper sweeps `ringing`/`answered`/`bridged` too, and those
+    // customers' phones did ring. Reaping overwrites `state`, but `dialed_at`,
+    // `answered_at` and `bridged_at` survive — so the retry policy can charge
+    // for an attempt that reached the customer and spare one that never left.
+    //
+    // A contact marked DNC before the replica died stays `suppressed`: the
+    // statement keeps it, as `markState` does.
+    const landed = await agencyContactRepository
+      .requeueOrphaned(contactId, {
+        reapedAttemptId,
+        notBefore,
+        outcome: 'orphaned',
+        bound: ourFaultRedialBound(null, 'orphaned'),
+        retiredState: OUR_FAULT_RETIRED_STATE,
+      })
       .catch((err) => {
-        log.error({ err, contactId, source }, 'Failed to charge the our-fault ledger');
-        // Fail OPEN toward requeueing. A bookkeeping failure must not strand a
-        // contact: `0` requeues it, which is the safe direction — the bound is a
-        // ceiling on repeat dialling, and a
-        // single uncounted requeue cannot breach it on its own.
-        return 0;
+        // Nothing was written. A contact still `in_flight` is the stranded-contact
+        // sweep's on a later pass.
+        log.error({ err, contactId, reapedAttemptId, source }, 'Failed to requeue orphaned contact');
+        return undefined;
       });
-    // Only the BOUND is taken from the decision. The requeue below deliberately
-    // does not take the dial path's cool-off: crash recovery wants the contact
-    // dialable as soon as the roster reaches it, and that cool-off would delay
-    // every contact after a routine deploy. The one exception is `notBefore`, and
-    // it is not a cool-off but the carrier rule: a dial sent and never answered
-    // may still be placed by the carrier, so it waits out
-    // DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS from its `dialed_at`. The
-    // shared function is still the right home for the ceiling — one place
-    // decides how many our-fault redials a contact may have, both callers obey it.
-    const decision = resolveOurFaultRedial(null, 'orphaned', new Date(), ourFaultUsed);
+    if (landed === undefined) return;
+    if (landed === null) {
+      log.info(
+        { contactId, reapedAttemptId, source },
+        'Orphaned contact has moved on since its attempt (requeued, re-claimed or settled) — left as it is',
+      );
+      return;
+    }
 
-    if (decision.contactState !== 'pending') {
-      // Terminal and observable, never a silent stall. The contact is retired
-      // with its retry allowance intact, so an operator can see it was our
-      // faults — not the customer's number — that ended the attempt.
-      const retired = await agencyContactRepository
-        .markState(contactId, decision.contactState, { last_outcome: 'orphaned' })
-        // ⚠️ The boolean is `markState`'s OWN answer to "did the requested state
-        // land", not `.then(() => true)`. The first version used the latter,
-        // which reports success whenever the query did not throw — and
-        // `markState` resolves when its DNC guard refuses the transition. This
-        // method's own comment below already records that a DNC'd contact can be
-        // sitting here, so crash recovery colliding with a mid-call DNC was
-        // incrementing a retirement that never happened.
-        .catch((err) => {
-          log.error({ err, contactId, source }, 'Failed to retire an our-fault-bounded contact');
-          return false;
-        });
+    if (landed.state === 'suppressed') {
+      log.warn({ contactId, source }, 'Refused to requeue a DNC-suppressed contact — the row stays suppressed');
+      return;
+    }
+    if (landed.state === OUR_FAULT_RETIRED_STATE) {
       /**
        * ── The SECOND producer of our-fault retirements ──────────────────────
        *
@@ -749,56 +774,20 @@ export class AgencyReaper {
        * teardown paths, `orphaned` points at replica crashes and leaks. Both
        * retire a real person we never reached.
        *
-       * Counted only when the retirement actually LANDED, matching the dial
-       * site. Two distinct ways it can fail to, and the `.catch` above covers
-       * only the first: `markState` can reject (a bookkeeping failure must not
-       * break crash recovery, hence the guard and the explicit boolean rather
-       * than control flow), and it can RESOLVE while refusing the transition,
-       * because its DNC guard keeps a suppressed row suppressed in SQL and
-       * merely warns. `markState` returns which happened; this gates on it.
+       * Counted only when the retirement actually LANDED: the statement returns
+       * the state it wrote, so a DNC-suppressed row (kept `suppressed`), a
+       * contact that had moved on (nothing written) and a rejected write all
+       * count nothing.
        */
-      if (retired) {
-        const labels = {
-          tenant_id: scope.tenantId,
-          campaign_id: scope.campaignId,
-          outcome: 'orphaned',
-        };
-        agencyOurFaultRetirementTotal.inc(labels);
-      }
+      agencyOurFaultRetirementTotal.inc({
+        tenant_id: scope.tenantId,
+        campaign_id: scope.campaignId,
+        outcome: 'orphaned',
+      });
       log.warn(
-        { contactId, source, ourFaultUsed, retryReason: decision.reason },
+        { contactId, source, ourFaultUsed: landed.our_fault_attempts },
         'Our-fault redial bound reached — orphaned contact retired without spending its retry allowance',
       );
-      return;
     }
-
-    await agencyContactRepository
-      // NO `bump_attempt`, and that is a product decision rather than an
-      // oversight: **our crash must not consume the customer's retry allowance.**
-      // With `max_attempts: 3`, three server restarts would otherwise exhaust a
-      // contact and mark them `exhausted` having never been spoken to — silent
-      // contact loss behind a plausible-looking audit trail.
-      //
-      // This used to interact with attempt-number derivation to make a recovered
-      // contact permanently undialable. That is fixed at the root:
-      // `attempt_number` is now derived from the attempts table, so `attempt_count`
-      // is purely the retry budget and the two can no longer diverge. Do not
-      // "fix" a future numbering problem by bumping here.
-      //
-      // Note for the disposition policy: an orphaned attempt is not uniformly "never
-      // happened". The reaper sweeps `ringing`/`answered`/`bridged` too, and those
-      // customers' phones did ring. Reaping overwrites `state`, but `dialed_at`,
-      // `answered_at` and `bridged_at` survive — so the retry policy can charge
-      // for an attempt that reached the customer and spare one that never left.
-      //
-      // ⚠️ This `'pending'` is a LITERAL, not a decision, and a contact marked DNC
-      // before the replica died would be requeued by it. `markState` refuses the
-      // transition in SQL — the guard is in the repository precisely because this
-      // site takes no decision it could have been attached to. See its header.
-      .markState(contactId, 'pending', {
-        last_outcome: 'orphaned',
-        next_attempt_at: notBefore,
-      })
-      .catch((err) => log.error({ err, contactId, source }, 'Failed to requeue orphaned contact'));
   }
 }

@@ -286,6 +286,32 @@ export function resolveRetryDecision(
 }
 
 /**
+ * Where a contact retired by the our-fault bound lands ({@link resolveOurFaultRedial}).
+ * Exported for the reaper's requeue, which decides in one SQL statement
+ * (`AgencyContactRepository.requeueOrphaned`) and must land the same state.
+ */
+export const OUR_FAULT_RETIRED_STATE = 'exhausted' as const;
+
+/**
+ * How many our-fault redials a contact may have for `outcome`: the platform's
+ * {@link OUR_FAULT_REDIAL_BOUND}, or a campaign's stricter `max_attempts` for it.
+ * {@link resolveOurFaultRedial} retires a contact once its post-bump count reaches it.
+ */
+export function ourFaultRedialBound(
+  policy: AgencyRetryPolicy | null,
+  outcome: AgencyAttemptOutcome | null,
+): number {
+  const configured = outcome ? policy?.[outcome]?.max_attempts : undefined;
+  // `min`, never the configured value alone. A campaign asking for 10 gets the
+  // bound; a campaign asking for 1 gets 1. Non-finite/absent config is ignored
+  // rather than treated as 0, or a malformed policy would silently retire every
+  // our-fault contact on its first drop.
+  return Number.isFinite(configured)
+    ? Math.min(Math.max(0, Math.trunc(configured as number)), OUR_FAULT_REDIAL_BOUND)
+    : OUR_FAULT_REDIAL_BOUND;
+}
+
+/**
  * Decide what happens to a contact whose attempt died of OUR fault before it ever
  * reached them.
  *
@@ -336,16 +362,7 @@ export function resolveOurFaultRedial(
   now: Date,
   ourFaultAttemptsUsed: number,
 ): RetryDecision {
-  const configured = outcome ? policy?.[outcome]?.max_attempts : undefined;
-  // `min`, never the configured value alone. A campaign asking for 10 gets the
-  // bound; a campaign asking for 1 gets 1. Non-finite/absent config is ignored
-  // rather than treated as 0, or a malformed policy would silently retire every
-  // our-fault contact on its first drop.
-  const effectiveBound = Number.isFinite(configured)
-    ? Math.min(Math.max(0, Math.trunc(configured as number)), OUR_FAULT_REDIAL_BOUND)
-    : OUR_FAULT_REDIAL_BOUND;
-
-  if (ourFaultAttemptsUsed >= effectiveBound) {
+  if (ourFaultAttemptsUsed >= ourFaultRedialBound(policy, outcome)) {
     // Terminal and OBSERVABLE, not a silent stall. `exhausted`
     // rather than `completed` because the list was genuinely worked; the caller
     // writes `last_outcome` to the our-fault outcome, so a supervisor querying
@@ -357,7 +374,7 @@ export function resolveOurFaultRedial(
     // DNC/invalid/manual, and putting a reason on a non-suppressed row would put
     // one fact in two columns that can disagree.
     return {
-      contactState: 'exhausted',
+      contactState: OUR_FAULT_RETIRED_STATE,
       nextAttemptAt: null,
       suppressedReason: null,
       reason: 'our_fault_bound_reached',
