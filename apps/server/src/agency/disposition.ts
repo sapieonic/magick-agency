@@ -53,8 +53,15 @@ export function resolveDisposition(
  */
 export function dispositionRefusal(attempt: AgencyCallAttemptRecord): AgencyActionErrorCode | null {
   // A wrap-up redial owes the CONVERSATION's outcome whatever its own: one that rang out
-  // still carries it (`wrapup-redial.ts`), so it is dispositionable without a bridge.
-  if (attempt.bridged_at === null && !attempt.redial_number) return 'attempt_not_dispositionable';
+  // still carries it (`wrapup-redial.ts`), so it is dispositionable without a bridge,
+  // but only once it has ENDED. While it is still queued or ringing nothing has parked
+  // the customer for this write-up (the contact is `in_flight` under the live dial), so
+  // the disposition could not release them, and the dial's end would park them
+  // `connected` behind a write-up already taken: held for ever. A redial that bridged is
+  // dispositionable mid-call like any conversation (the bridge parked the customer).
+  if (attempt.bridged_at === null && (!attempt.redial_number || attempt.state !== 'ended')) {
+    return 'attempt_not_dispositionable';
+  }
   // An OPEN question, and this line is the whole of it. An agent whose
   // wrap-up lapsed and who then submits their real disposition is refused, and
   // the record of what was actually said is lost in favour of the auto-close.

@@ -120,8 +120,12 @@ export async function settleContact(
     // and the redial limit, not the retry budget, bounds how often it is redialled.
     await parkRedialContact(cmd, outcome);
   } else if (outcome === 'connected' && needsDisposition) {
-    await agencyContactRepository.markState(cmd.contactId, 'connected', {
-      last_outcome: outcome, bump_attempt: true,
+    // Held for the write-up only while the call still holds the contact: an agent who
+    // saved the outcome mid-call has already had the contact released by the
+    // disposition route, and re-parking it would hold it `connected` for ever (nothing
+    // releases a `connected` contact behind a dispositioned attempt). Charged either way.
+    await agencyContactRepository.parkForWriteUp({
+      contactId: cmd.contactId, attemptId: cmd.attemptId, lastOutcome: outcome, bumpAttempt: true,
     });
   } else if (ourFaultBeforeBridge) {
     // Charged to the SEPARATE ledger. `attempt_count` is untouched, and the
@@ -237,13 +241,21 @@ export async function settleContact(
  * `connected` (from `in_flight`), `last_outcome` this dial's, `attempt_count` not
  * charged. The disposition route or the lapsed-wrap-up sweep releases it, as for any
  * conversation. A contact marked DNC meanwhile stays `suppressed` (`markState`'s rule).
+ *
+ * Only while the redial still holds the customer (`parkForWriteUp`): a disposition
+ * saved during a bridged redial has already released them, and re-parking them here
+ * would leave them `connected` behind a write-up already taken, for ever.
  */
 export async function parkRedialContact(cmd: DialCommand, outcome: AgencyAttemptOutcome): Promise<void> {
   try {
-    await agencyContactRepository.markState(cmd.contactId, 'connected', { last_outcome: outcome });
+    const parked = await agencyContactRepository.parkForWriteUp({
+      contactId: cmd.contactId, attemptId: cmd.attemptId, lastOutcome: outcome,
+    });
     log.info(
-      { contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, redialOf: cmd.redial?.ofAttemptId },
-      'Wrap-up redial ended — the customer stays held for the outcome',
+      { contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, redialOf: cmd.redial?.ofAttemptId, parked },
+      parked
+        ? 'Wrap-up redial ended — the customer stays held for the outcome'
+        : 'Wrap-up redial ended — its outcome was already saved; the customer is left as the write-up left them',
     );
   } catch (err) {
     log.error(

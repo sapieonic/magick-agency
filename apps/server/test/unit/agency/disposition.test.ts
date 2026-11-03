@@ -145,6 +145,18 @@ describe('dispositionRefusal', () => {
     expect(dispositionRefusal(attempt({ disposition_code: 'redialed' }))).toBeNull();
   });
 
+  it('refuses a wrap-up redial that is still queued or ringing (not bridged, not ended)', () => {
+    // Nothing has parked the customer for this write-up yet: the contact is `in_flight`
+    // under the live dial, so a disposition here could not release them, and the dial's
+    // end would then park them `connected` behind a write-up already taken.
+    for (const state of ['queued', 'dialing', 'answered'] as const) {
+      expect(dispositionRefusal(attempt({ bridged_at: null, outcome: null, ended_at: null, state, redial_number: 1 })))
+        .toBe('attempt_not_dispositionable');
+    }
+    // A redial that BRIDGED is dispositionable mid-call, like any conversation.
+    expect(dispositionRefusal(attempt({ state: 'bridged', outcome: null, ended_at: null, redial_number: 2 }))).toBeNull();
+  });
+
   it('refuses an auto-closed attempt DISTINCTLY from an already-dispositioned one', () => {
     // Different facts, and only one of them is the agent's doing — the console
     // says "this call was auto-closed" rather than "you already did this".

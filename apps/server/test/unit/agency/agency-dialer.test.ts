@@ -42,6 +42,9 @@ const { repos } = vi.hoisted(() => ({
     contact: {
       unclaim: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
+      // The settle-time park of a conversation owed a write-up (guarded: only while the
+      // call still holds the contact). True: parked.
+      parkForWriteUp: vi.fn().mockResolvedValue(true),
       // Returns the POST-bump budget (the our-fault ledger). A number, not undefined: the
       // dial path decides the retry from whatever this returns.
       chargeAttempt: vi.fn().mockResolvedValue(1),
@@ -427,8 +430,11 @@ describe('AgencyDialer release contract', () => {
     const released = ws.sent.find((f) => f.event === 'released');
     expect(released.reason).toBe('completed');
     expect(released.requires_disposition).toBe(true);
-    // The contact waits for that disposition rather than being marked done.
-    expect(repos.contact.markState).toHaveBeenCalledWith('contact-1', 'connected', expect.anything());
+    // The contact waits for that disposition rather than being marked done: parked at
+    // the settle through the guarded write (only while the call still holds it), charged.
+    expect(repos.contact.parkForWriteUp).toHaveBeenCalledWith({
+      contactId: 'contact-1', attemptId: 'att-1', lastOutcome: 'connected', bumpAttempt: true,
+    });
   });
 
   it('does NOT park a connected contact when no disposition is owed', async () => {
@@ -602,10 +608,14 @@ describe('AgencyDialer release contract', () => {
     // catalog was never the broken case: whichever of the two the slow bridge write
     // lets go last, the contact is still held in `connected`. Asserted without
     // fixing their order for exactly that reason.
-    expect(states).toEqual(['connected', 'connected']);
-    // Exactly one of them is the settle-time re-affirm, and it still charges the
-    // attempt through `bump_attempt` rather than `chargeAttempt`.
-    expect(patches.filter(Boolean)).toEqual([{ last_outcome: 'connected', bump_attempt: true }]);
+    // The bridge's park is a `markState`; the settle-time re-affirm is the guarded
+    // `parkForWriteUp`, which still charges the attempt (`bumpAttempt`) rather than
+    // `chargeAttempt`.
+    expect(states).toEqual(['connected']);
+    expect(patches.filter(Boolean)).toEqual([]);
+    expect(repos.contact.parkForWriteUp).toHaveBeenCalledWith(
+      expect.objectContaining({ contactId: 'contact-1', lastOutcome: 'connected', bumpAttempt: true }));
+    expect(repos.contact.chargeAttempt).not.toHaveBeenCalled();
     expect(released.requires_disposition).toBe(true);
   });
 
