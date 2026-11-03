@@ -801,6 +801,26 @@ describe('a redial that fails before its `reserved` reaches the console', () => 
     await expectCarriedAndSaveable();
   });
 
+  it('carries the draft with no panel to carry, on a console reloaded mid-wrap-up', async () => {
+    await mounted();
+    await act(async () => {
+      latest().emit({
+        event: 'ready',
+        session_id: 'sess-1',
+        state: 'wrapup',
+        active_wrapup: wrapupFrame('att-1', { redial_remaining: 2 }).wrapup,
+      });
+    });
+    await typeNotes(DRAFT);
+    await pressRedial();
+    await redialEndsBeforeReserved();
+
+    expect(notesField().value).toBe(DRAFT);
+    expect(JSON.parse(window.localStorage.getItem('agency.notes.att-2')!).notes).toBe(DRAFT);
+    // There was no panel to restate: the reload had none either.
+    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+  });
+
   it('does not carry anything after a refusal: nothing was placed', async () => {
     await inWrapup({ redial_remaining: 2 });
     await typeNotes(DRAFT);
