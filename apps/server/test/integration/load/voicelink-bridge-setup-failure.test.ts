@@ -49,8 +49,10 @@ import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../..
 import { startVoice } from '../../../src/bootstrap/voice.js';
 import { BridgeWsTokens } from '../../../src/core/bridge/ws-tokens.js';
 import { WebhookUrlBuilder } from '../../../src/core/webhook-url-builder.js';
+import { webrtcCallRepository } from '@magick-agency/db/repositories/agency-call.repository';
 import { agencyAgentSessionRepository } from '../../../src/db/repositories/agency.repository.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
+import { PRE_CARRIER_FAILURE_REDIAL_DELAY_MS } from '../../../src/agency/agency-dialer.js';
 import { insertAgencyCampaign, insertAgencyContact } from '../agency/agency-factories.js';
 import {
   LOAD_ACCOUNT, LOAD_TENANT, assertNoLeaks, closeLoadDb, initLoadDb, startLoadRig, stopLoadRig,
@@ -208,6 +210,29 @@ describe('a dial that fails in the bridge before the carrier is asked releases e
         [campaign.id],
       )).rows;
 
+      // The failed dial gives the contact back uncharged but not at once: a failure that
+      // repeats would redial it on every tick (`PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`).
+      await waitFor('the setup failure settled', async () => {
+        const rows = await readAttempts();
+        return rows.length === 1 && rows[0]!.state === 'ended' && rows[0]!.contact_state === 'pending'
+          && runtime.dialer.activeAttemptIds().length === 0
+          && (await runtime.agents.get(sessionId))?.state === 'available';
+      }, 30_000, async () => JSON.stringify(await readAttempts()));
+      const { rows: [held] } = await getTestPool().query<{ attempt_count: number; our_fault_attempts: number; wait: number }>(
+        `SELECT c.attempt_count, c.our_fault_attempts,
+                EXTRACT(EPOCH FROM c.next_attempt_at - a.ended_at)::float8 AS wait
+           FROM agency_contacts c JOIN agency_call_attempts a ON a.contact_id = c.id
+          WHERE c.campaign_id = $1`,
+        [campaign.id],
+      );
+      expect({ charged: held!.attempt_count, ourFault: held!.our_fault_attempts }).toEqual({ charged: 0, ourFault: 0 });
+      expect(held!.wait, 'dialable again on the next tick').toBeCloseTo(PRE_CARRIER_FAILURE_REDIAL_DELAY_MS / 1000, -1);
+      // Two safety ticks with the agent free and the contact the only one: not redialled.
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(await readAttempts()).toHaveLength(1);
+      // The delay runs out (moved here, not waited for): the contact's next dial goes out.
+      await getTestPool().query('UPDATE agency_contacts SET next_attempt_at = now() WHERE campaign_id = $1', [campaign.id]);
+
       await waitFor('both dials settled', async () => {
         const rows = await readAttempts();
         return rows.length === 2
@@ -257,4 +282,79 @@ describe('a dial that fails in the bridge before the carrier is asked releases e
     },
     60_000,
   );
+
+  /**
+   * A failure that does not clear: every call row INSERT refused (a database fault, say),
+   * with four agents on a short list. Each dial fails in milliseconds and frees its agent at
+   * once, so before the delay the same contacts were redialled on every tick, without
+   * bound. The delay caps each contact at one dial in the window, and, because nothing is
+   * charged, a fault that never clears retires nobody: the list is intact when it is fixed.
+   */
+  it('a failure that repeats: each contact dialled once in the window, nothing charged, nobody retired', async () => {
+    rig = await startLoadRig();
+    const r = rig;
+    const campaign = await insertAgencyCampaign({
+      tenant_id: LOAD_TENANT,
+      account_id: LOAD_ACCOUNT,
+      status: 'running',
+      wrapup_seconds: 0,
+      disposition_catalog: JSON.stringify([]),
+      retry_policy: JSON.stringify(RETRY_POLICY),
+    });
+    for (let i = 0; i < 3; i++) {
+      await insertAgencyContact(campaign.id as string, {
+        tenant_id: LOAD_TENANT, account_id: LOAD_ACCOUNT, phone_e164: `+91973000010${i}`, source_row_number: i + 1,
+      });
+    }
+    const inserts = vi.spyOn(webrtcCallRepository, 'create').mockRejectedValue(new Error('insert refused'));
+
+    const ctx: AppContext = { config, pool: getPool(), redis: getTestRedis() };
+    stopVoice = await startVoice(ctx);
+    stopAgency = await startAgency(ctx);
+    const runtime = getAgencyRuntime()!;
+    const port = new URL(r.origin).port;
+    const sockets: WebSocket[] = [];
+    for (let i = 0; i < 4; i++) {
+      const join = await agencyAgentSessionRepository.joinOrRehydrate({
+        tenantId: LOAD_TENANT, accountId: LOAD_ACCOUNT, campaignId: campaign.id as string,
+        agentUserId: `6c1d0c8e-3d0e-4c7a-8b44-00000000b00${i}`, replicaId: runtime.replicaId,
+      });
+      if (!join.ok) throw new Error('join refused');
+      const sessionId = join.session.id;
+      const { token } = await runtime.tokens.mint(sessionId);
+      const frames: Array<Record<string, unknown>> = [];
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/proxy/agency/station/${sessionId}?token=${token}`);
+      ws.on('message', (raw) => frames.push(JSON.parse(raw.toString()) as Record<string, unknown>));
+      await waitFor('station ready', () => frames.some((f) => f['event'] === 'ready'));
+      runtime.wrapup.cancel(sessionId, 'agent_returned');
+      await runtime.agents.set(sessionId, 'available', { leaseMs: AGENT_LEASE_MS.available });
+      await agencyAgentSessionRepository.setState(sessionId, 'available');
+      sockets.push(ws);
+    }
+    try {
+      await waitFor('every contact dialled', async () => (await getTestPool().query(
+        'SELECT DISTINCT contact_id FROM agency_call_attempts WHERE campaign_id = $1', [campaign.id])).rowCount === 3);
+      // Several safety ticks with free agents and nothing else to dial.
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+
+      const { rows: perContact } = await getTestPool().query<{ dials: number; state: string; attempt_count: number; our_fault_attempts: number }>(
+        `SELECT count(a.id)::int AS dials, c.state, c.attempt_count, c.our_fault_attempts
+           FROM agency_contacts c LEFT JOIN agency_call_attempts a ON a.contact_id = c.id
+          WHERE c.campaign_id = $1
+          GROUP BY c.id`,
+        [campaign.id],
+      );
+      expect(perContact.map((c) => c.dials), 'a contact redialled while its dials keep failing before the carrier')
+        .toEqual([1, 1, 1]);
+      expect(perContact.every((c) => c.state === 'pending' && c.attempt_count === 0 && c.our_fault_attempts === 0)).toBe(true);
+      expect(inserts).toHaveBeenCalledTimes(3);
+      expect(r.carrier.requests.filter((q) => q.route === 'add_lead')).toHaveLength(0);
+    } finally {
+      for (const ws of sockets) {
+        if (ws.readyState !== WebSocket.CLOSED) {
+          await new Promise<void>((resolve) => { ws.once('close', () => resolve()); ws.close(); });
+        }
+      }
+    }
+  }, 60_000);
 });

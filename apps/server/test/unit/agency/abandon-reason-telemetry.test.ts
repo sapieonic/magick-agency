@@ -93,7 +93,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyAgentSessionRepository: repos.session,
 }));
 
-import { AgencyDialer, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../../src/agency/agency-dialer.js';
+import { AgencyDialer, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, PRE_CARRIER_FAILURE_REDIAL_DELAY_MS } from '../../../src/agency/agency-dialer.js';
 import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
 import { CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
 import { OUR_FAULT_REDIAL_BOUND } from '../../../src/agency/retry-policy.js';
@@ -862,11 +862,50 @@ describe('seat time on the paths that never reach the settle site', () => {
     expect(repos.contact.chargeAttempt).not.toHaveBeenCalled();
   });
 
-  it('returns the contact at once when the carrier plainly refused the dial', async () => {
+  /**
+   * A dial that fails in the bridge before the carrier is asked (an admission refusal, the
+   * call row INSERT, the carrier tokens, the carrier request's inputs). The bridge's real
+   * order for it: no `ended`, only the rejection (`abortUnplacedLeg`). (A carrier refusal is
+   * settled by the `ended` arm, below.) The contact went back dialable at once, so a failure
+   * that repeats redialled the same contact on every pacing tick, bounded by nothing. It now
+   * waits `PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`, uncharged: nobody was called, and a charge
+   * would let a systemic failure retire the whole roster at the our-fault bound in seconds.
+   * A dial called off before the bridge (the agent's socket went) is still returned at once.
+   */
+  it.each([
+    ['the call row INSERT', () => new Error('insert into agency_calls failed')],
+    ['an admission refusal', () => new WebRtcCallError('full', 'account_concurrency_limit', 429)],
+  ])('holds the contact a minute, uncharged, when the dial failed in the bridge before the carrier (%s)', async (_what, makeErr) => {
     const bridge = fakeBridge();
-    const refusal = new WebRtcCallError('VoiceLink /v1/add_lead error 500: no', 'telephony_init_failed', 502);
-    refusal.cause = new Error('VoiceLink /v1/add_lead error 500: no');
-    bridge.createBridgedCall.mockRejectedValue(refusal);
+    bridge.createBridgedCall.mockRejectedValue(makeErr());
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = new AgentStateMachine(null, '');
+    vi.spyOn(agents, 'transition').mockResolvedValue(true);
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    await stations.attach({
+      sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
+      agentUserId: 'user-1', ws: fakeWs() as any,
+    });
+
+    const before = Date.now();
+    await dialer.executeDial(makeCmd());
+
+    expect(persistedOutcome()).toBe('failed');
+    expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
+    const nextAt = (repos.contact.unclaim.mock.calls[0]![1] as Date).getTime();
+    expect(nextAt, 'dialable again on the next tick').toBeGreaterThanOrEqual(before + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS);
+    expect(nextAt).toBeLessThanOrEqual(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS);
+    expect(PRE_CARRIER_FAILURE_REDIAL_DELAY_MS).toBe(60_000);
+    // Uncharged on both ledgers.
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
+    expect(repos.contact.chargeAttempt).not.toHaveBeenCalled();
+    expect(repos.contact.chargeOurFaultAttempt).not.toHaveBeenCalled();
+  });
+
+  it('returns the contact at once when the dial is called off before the carrier (the station socket went)', async () => {
+    const bridge = fakeBridge();
+    bridge.createBridgedCall.mockRejectedValue(new WebRtcCallError('Station socket is not open', 'station_socket_unavailable', 409));
     const stations = new StationRegistry(null, '', 'r1');
     const agents = new AgentStateMachine(null, '');
     vi.spyOn(agents, 'transition').mockResolvedValue(true);
@@ -879,9 +918,9 @@ describe('seat time on the paths that never reach the settle site', () => {
 
     await dialer.executeDial(makeCmd());
 
+    expect(persistedOutcome()).toBe('orphaned');
     expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
-    const nextAt = (repos.contact.unclaim.mock.calls[0]![1] as Date).getTime();
-    expect(nextAt).toBeLessThanOrEqual(Date.now());
+    expect((repos.contact.unclaim.mock.calls[0]![1] as Date).getTime()).toBeLessThanOrEqual(Date.now());
     expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
   });
 

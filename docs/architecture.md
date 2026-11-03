@@ -292,7 +292,10 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   before the carrier is asked (an admission refusal, the row INSERT, or the steps after the
   session is registered: the max-duration timer, the socket attach, the carrier tokens, the
   carrier request's inputs) gets no `ended`, so the same failure path settles it: `failed`,
-  uncharged, dialable at once.
+  uncharged, dialable again after 1 min (`PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`, so a failure
+  that repeats cannot redial one contact on every tick; a delay, not an our-fault charge, so a
+  systemic failure retires nobody). A dial called off before the bridge (the agent's socket or
+  lease went, pacing stopped) returns its contact at once.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);
