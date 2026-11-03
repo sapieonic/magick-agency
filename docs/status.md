@@ -643,28 +643,27 @@ app.
 
 ## Test counts
 
-Latest run, 2026-11-03, the contact assignment branch on `2d867e6`, from inside each package
-(`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and `pnpm test:release` 10 pass). The
-server unit suite ran on `2f1dac8`, before two later commits that change only comments and a
-`packages/db` test:
+Latest run, 2026-11-03, the contact assignment branch after the review fixes (`3b90b99`), from
+inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
+`pnpm test:release` 10 pass):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7876 passed + 42 skipped (393 files) | rest lane 1732 passed + 9 expected fail (185 files), twice; wall-clock lane 15 (3 files) |
+| `apps/server` | 7883 passed + 42 skipped (393 files) | rest lane 1744 passed + 9 expected fail (185 files); wall-clock lane 15 (3 files) |
 | `packages/db` | 427 (25 files) | 534 (49 files) |
-| `apps/console` | 5136 (268 files) | — |
+| `apps/console` | 5154 (268 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 280 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1392, `agency_wire` 397, `flutter analyze` clean, `contracts-literals --check` up to date | — |
+| `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean, `contracts-literals --check` up to date | — |
 
 **Open: one scale test times out in some full runs.** `assignment-repository.test.ts` "splits
 10,000 contacts across 5 agents" takes about 1.1 s alone, but in 2 of 4 full rest-lane runs on
 the build container it passed the 20 s test timeout when it ran in the middle of the lane (each
 time the lane was otherwise 1730 passed; the second run also had the known `agent-churn`
-intermittent). It passed in the two runs where it ran first and last. Ruled out: lock waits (no
+intermittent). It passed in the two runs where it ran first and last, and in the run above. Ruled out: lock waits (no
 lock-timeout errors), stale planner statistics, rows left by earlier files, and CPU contention
 alone (the second failure was on a quiet machine). Not ruled out: I/O stalls on that disk
 (checkpoints ran through both windows, but through the passing ones too). Its timeout is
