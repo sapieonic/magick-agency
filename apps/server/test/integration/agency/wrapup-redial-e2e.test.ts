@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  * internal handler), the real runtime, bridge, Redis and Postgres; only the carrier is
  * faked (as `runtime-e2e.test.ts` and `softphone-routes.test.ts` do).
  *
- * One agent, one customer, the whole chain the ClickUp acceptance names:
+ * One agent, one customer, the whole chain the ticket's acceptance names:
  *   call connects → wrap-up offers 2 redials → redial #1 rings out → wrap-up on the
  *   redial (1 left), customer still held, retry budget untouched → DNC refuses a redial
  *   and the agent stays in wrap-up → redial #2 connects → wrap-up with 0 left → the 3rd
@@ -321,6 +321,109 @@ describe('wrap-up redial — real app, real runtime, fake carrier (integration)'
       { id: thirdId, outcome: 'connected', disposition_code: 'interested', redial_of_attempt_id: secondId, redial_number: 2 },
     ]);
     expect(chain[1]!.outcome).not.toBe('connected');
+  }, 60_000);
+
+  it('a reconnect mid-wrap-up restores the redial; a ringing redial holds the outcome and the pool shut; a mid-call outcome is not re-parked', async () => {
+    await getTestPool().query(
+      "UPDATE agency_campaigns SET status = 'completed' WHERE account_id = $1 AND status = 'running'", [account]);
+    const { rows: live } = await getTestPool().query<{ id: string }>(
+      'SELECT id FROM agency_agent_sessions WHERE agent_user_id = $1 AND left_at IS NULL', [agent.id]);
+    for (const s of live) await post(`/proxy/agency/sessions/${s.id}/leave`, agent);
+    const campaign = await insertAgencyCampaign({
+      tenant_id: tenant, account_id: account, status: 'running',
+      wrapup_seconds: 60, wrapup_auto_return: true, disposition_catalog: CATALOG,
+      allow_wrapup_redial: true,
+    });
+    const contact = await insertAgencyContact(campaign.id, { tenant_id: tenant, account_id: account, phone_e164: '+919812340003' });
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id) VALUES ($1, $2, $3, $4)`,
+      [tenant, account, campaign.id, agent.id],
+    );
+
+    // A station: join (or re-join, as a page reload does), open the socket, wait for `ready`.
+    const sockets: WebSocket[] = [];
+    const connect = async (): Promise<{ sessionId: string; frames: Frame[]; ready: Frame }> => {
+      const joined = await post('/proxy/agency/sessions', agent, { campaign_id: campaign.id });
+      expect(joined.statusCode, joined.body).toBeLessThan(300);
+      const boot = joined.json();
+      const frames: Frame[] = [];
+      const ws = new WebSocket(`ws://127.0.0.1:${port}${boot.station_ws_url}`);
+      sockets.push(ws);
+      ws.on('message', (raw, isBinary) => { if (!isBinary) frames.push(JSON.parse(raw.toString())); });
+      const ready = await waitFor('ready', () => frames.find((f) => f['event'] === 'ready'));
+      return { sessionId: boot.session_id as string, frames, ready };
+    };
+    const drop = async (ws: WebSocket) => {
+      const closed = new Promise<void>((resolve) => ws.once('close', () => resolve()));
+      ws.close();
+      await closed;
+    };
+
+    try {
+      let { sessionId, frames } = await connect();
+      const avail = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+      expect(avail.statusCode, avail.body).toBe(200);
+      const lastOf = (event: string) => [...frames].reverse().find((f) => f['event'] === event);
+
+      // ── 1. A connected call ends: wrap-up offers 2 redials. ────────────────────
+      const first = await waitFor('reserved', () => frames.find((f) => f['event'] === 'reserved')?.['attempt']);
+      const firstId = first.attempt_id as string;
+      const firstLeg = await legOf(firstId);
+      answer(firstLeg);
+      await waitFor('bridged', () => lastOf('bridged'));
+      await customerHangsUp(firstLeg);
+      await waitFor('wrap-up', () => [...frames].reverse().find((f) => f['event'] === 'wrapup' && f['wrapup'].attempt_id === firstId));
+
+      // ── 2. The station drops and comes back (a page reload) mid-wrap-up. ─────────
+      await drop(sockets.at(-1)!);
+      await waitFor('offline on close', async () => (await runtime.agents.get(sessionId))?.state === 'offline');
+      const back = await connect();
+      expect(back.sessionId).toBe(sessionId);
+      frames = back.frames;
+      // Restored as `wrapup` (not `offline`/`break`), with the redial still on offer.
+      expect(back.ready['state']).toBe('wrapup');
+      expect(back.ready['active_wrapup']).toMatchObject({ attempt_id: firstId, redial_remaining: 2, requires_disposition: true });
+      expect((await runtime.agents.get(sessionId))?.state).toBe('wrapup');
+
+      // ── 3. The FIRST Redial after the reconnect is accepted. ─────────────────────
+      const r1 = await post(`/proxy/agency/sessions/${sessionId}/redial`, agent, { attempt_id: firstId });
+      expect(r1.statusCode, r1.body).toBe(200);
+      const redialId = r1.json().attempt_id as string;
+      const redialLeg = await legOf(redialId);
+
+      // ── 4. While it rings: no outcome on it, no way into the pool, no leaving. ───
+      const early = await post(`/proxy/agency/attempts/${redialId}/disposition`, agent, { disposition_code: 'interested' });
+      expect(early.statusCode).toBe(409);
+      expect(early.json().code).toBe('attempt_not_dispositionable');
+      const availRinging = await post(`/proxy/agency/sessions/${sessionId}/available`, agent);
+      expect(availRinging.statusCode).toBe(409);
+      expect(availRinging.json().code).toBe('agent_on_live_call');
+      expect((await contactRow(contact.id)).state).toBe('in_flight');
+
+      // ── 5. It connects; a reconnect mid-call is told it is a redial. ─────────────
+      answer(redialLeg);
+      await waitFor('redial bridged', async () => (await agencyAttemptRepository.findById(redialId))?.bridged_at);
+      await drop(sockets.at(-1)!);
+      const midCall = await connect();
+      frames = midCall.frames;
+      expect(midCall.ready['active_attempt']).toMatchObject({ attempt_id: redialId });
+      expect(midCall.ready['active_attempt']['redial']).toEqual({ of_attempt_id: firstId, number: 1, remaining: 1 });
+
+      // ── 6. The outcome is saved mid-call; the call's end does not re-park the customer. ─
+      const saved = await post(`/proxy/agency/attempts/${redialId}/disposition`, agent, { disposition_code: 'interested' });
+      expect(saved.statusCode, saved.body).toBe(200);
+      expect((await contactRow(contact.id)).state).toBe('completed');
+      await customerHangsUp(redialLeg);
+      await waitFor('redial ended', async () => (await agencyAttemptRepository.findById(redialId))?.state === 'ended');
+      await waitFor('available', async () => (await runtime.agents.get(sessionId))?.state === 'available');
+      // Give any late settle write its chance to land, then: still completed.
+      await new Promise((r) => setTimeout(r, 300));
+      expect((await contactRow(contact.id)).state).toBe('completed');
+    } finally {
+      for (const ws of sockets) {
+        if (ws.readyState !== WebSocket.CLOSED) await drop(ws);
+      }
+    }
   }, 60_000);
 
   it('refuses when the campaign has redial off (the bootstrap says so too), and a malformed attempt id at the edge', async () => {
