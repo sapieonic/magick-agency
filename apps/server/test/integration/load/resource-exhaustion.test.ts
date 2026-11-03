@@ -44,6 +44,7 @@ import { getTestPool, truncateAll } from '../../../../../packages/db/test/helper
 import { TEST_REDIS_URL } from '../../helpers/test-redis.js';
 import { config } from '../../../src/config/index.js';
 import { redisClientOptions } from '../../../src/utils/redis-options.js';
+import { READINESS_CACHE_MS } from '../../../src/cluster/readiness.js';
 import { createRng, scaled } from '../../helpers/load-scale.js';
 import {
   call, expectHealthy, expectMasked, scalar, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
@@ -57,6 +58,12 @@ const POOL_MAX = 3;
  * defaults needed ~10 s for `/readyz` and up to ~30 s for a request.
  */
 const REDIS_OUTAGE_BOUND_MS = 10_000;
+/**
+ * `/readyz` serves one cached answer for `READINESS_CACHE_MS` (D13), so a probe sent right
+ * after a change can still carry the answer from before it. Each case waits that out once after
+ * changing the state, so its probe sees the new state.
+ */
+const outlastReadinessCache = (): Promise<void> => new Promise((r) => setTimeout(r, READINESS_CACHE_MS + 50));
 const AGENTS = scaled(25);
 const rng = createRng();
 
@@ -211,6 +218,7 @@ describe('resource exhaustion (integration, load)', () => {
     for (let i = 0; i < POOL_MAX; i++) held.push(await getPool().connect());
     let answers: LightMyRequestResponse[];
     try {
+      await outlastReadinessCache();
       const probes = Promise.all([
         app().inject({ method: 'GET', url: '/healthz' }),
         app().inject({ method: 'GET', url: '/readyz' }),
@@ -234,6 +242,7 @@ describe('resource exhaustion (integration, load)', () => {
     // Recovery: the same requests, now served.
     const again = await Promise.all(floor.agents.slice(0, 6).map((a) => call(app(), 'GET', '/proxy/agency/my-campaigns', a, floor)));
     for (const res of again) expect(res.statusCode, res.body).toBe(200);
+    await outlastReadinessCache();
     expect((await app().inject({ method: 'GET', url: '/readyz' })).statusCode).toBe(200);
     expect(getPool().waitingCount).toBe(0);
   }, 60_000);
@@ -241,6 +250,7 @@ describe('resource exhaustion (integration, load)', () => {
   it('3. Redis going away: liveness holds, readiness and the API fail cleanly and bounded, and both recover on their own', async () => {
     expect((await authedGet()).statusCode).toBe(200);
     await forwarder.stop();
+    await outlastReadinessCache();
     let during: LightMyRequestResponse[];
     const t0 = Date.now();
     try {
@@ -280,6 +290,7 @@ describe('resource exhaustion (integration, load)', () => {
   it('4. Redis stalled (connected, answering nothing): readiness and the API fail within the command timeout, and recover', async () => {
     expect((await authedGet()).statusCode).toBe(200);
     forwarder.stall();
+    await outlastReadinessCache();
     let during: LightMyRequestResponse[];
     const t0 = Date.now();
     try {
