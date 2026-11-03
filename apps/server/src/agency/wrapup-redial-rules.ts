@@ -31,6 +31,11 @@ export function wrapupRedialRemaining(
 export interface RedialRefusal {
   code: AgencyActionErrorCode;
   message: string;
+  /**
+   * The attempt is not this session's to redial: answered 404, exactly as a missing
+   * attempt is, so a caller learns nothing about another session's or tenant's calls.
+   */
+  notFound?: true;
 }
 
 export const REDIAL_MESSAGES = {
@@ -38,6 +43,8 @@ export const REDIAL_MESSAGES = {
   campaign_not_running: 'The campaign is not running, so the customer cannot be redialled. Save the outcome.',
   not_your_call: 'This call is not yours to redial.',
   not_in_wrapup: 'You are not in wrap-up for this call any more.',
+  not_offered: 'Redial is not available for this call. Save the outcome.',
+  state_unavailable: 'Your status could not be checked just now, so the customer was not redialled. Try again, or save the outcome.',
   not_redialable: 'Only a call that connected can be redialled. Save the outcome.',
   not_held: 'This customer is no longer held for your outcome, so they cannot be redialled.',
   limit: `You have already redialled this customer ${AGENCY_WRAPUP_REDIAL_LIMIT} times. Save the outcome.`,
@@ -66,7 +73,9 @@ export function redialRefusalForAttempt(
   campaign: Pick<AgencyCampaignRecord, 'allow_wrapup_redial' | 'status'>,
   sessionId: string,
 ): RedialRefusal | null {
-  if (attempt.reserved_agent_id !== sessionId) return { code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_your_call };
+  if (attempt.reserved_agent_id !== sessionId) {
+    return { code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_your_call, notFound: true };
+  }
   if (!campaign.allow_wrapup_redial) return { code: 'redial_not_allowed', message: REDIAL_MESSAGES.campaign_off };
   if (attempt.disposition_code !== null) {
     return { code: 'disposition_already_submitted', message: REDIAL_MESSAGES.disposition_submitted };

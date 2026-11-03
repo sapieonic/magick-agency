@@ -27,7 +27,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: {},
 }));
 
-import { WrapupManager } from '../../../src/agency/wrapup-manager.js';
+import { REDIAL_SETUP_MAX_MS, WrapupManager } from '../../../src/agency/wrapup-manager.js';
 import type { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import type { StationRegistry } from '../../../src/agency/station-registry.js';
 
@@ -80,19 +80,75 @@ describe('WrapupManager — wrap-up redial', () => {
   });
 
   it('Redial stops the auto-return countdown: the agent is never returned while the redial runs', async () => {
-    const { wrapup, onReturn } = manager();
-    await wrapup.enter(enterParams({ requiresDisposition: false, wrapupSeconds: 30, autoReturn: true }));
+    // The production shape: redial is only offered while an outcome is owed.
+    const { wrapup, onReturn, stations } = manager();
+    await wrapup.enter(enterParams({ wrapupSeconds: 30, autoReturn: true }));
     expect(wrapup.stateFor('s1')?.ends_at).not.toBeNull();
 
     await vi.advanceTimersByTimeAsync(10_000);
     const take = wrapup.takeForRedial('s1', 'att-1');
     expect(take.ok).toBe(true);
     expect(wrapup.stateFor('s1')).toBeNull();
+    const framesAtTake = stations.frames('wrapup').length;
 
-    // Well past the window: nothing fires.
+    // Well past the window: nothing fires — no return, and no hold pushed for a
+    // wrap-up that no longer exists.
     await vi.advanceTimersByTimeAsync(120_000);
     expect(onReturn).not.toHaveBeenCalled();
+    expect(stations.frames('wrapup')).toHaveLength(framesAtTake);
     expect(wrapup.active()).toBe(0);
+  });
+
+  it('marks the redial as being set up from the take until the agent is back in wrap-up', async () => {
+    const { wrapup } = manager();
+    await wrapup.enter(enterParams());
+    expect(wrapup.redialBeingSetUp('s1')).toBe(false);
+    expect(wrapup.takeForRedial('s1', 'att-1').ok).toBe(true);
+    expect(wrapup.redialBeingSetUp('s1')).toBe(true);
+    // Back in wrap-up (a refused redial, or the redial's own end): cleared.
+    await wrapup.enter(enterParams({ attemptId: 'att-2' }));
+    expect(wrapup.redialBeingSetUp('s1')).toBe(false);
+  });
+
+  it('the set-up mark ends when the dialer registers the redial, and goes stale past its bound', async () => {
+    const { wrapup } = manager();
+    await wrapup.enter(enterParams());
+    wrapup.takeForRedial('s1', 'att-1');
+    wrapup.endRedialSetup('s1');
+    expect(wrapup.redialBeingSetUp('s1')).toBe(false);
+
+    await wrapup.enter(enterParams());
+    wrapup.takeForRedial('s1', 'att-1');
+    await vi.advanceTimersByTimeAsync(REDIAL_SETUP_MAX_MS + 1);
+    expect(wrapup.redialBeingSetUp('s1')).toBe(false);
+  });
+
+  it('endTaken records how a taken wrap-up ended and clears the set-up mark, without returning the agent', async () => {
+    const { wrapup, onReturn } = manager();
+    await wrapup.enter(enterParams());
+    const take = wrapup.takeForRedial('s1', 'att-1');
+    if (!take.ok) throw new Error('expected the take');
+    repos.attempt.setState.mockClear();
+    wrapup.endTaken(take.taken, 'disposition_submitted');
+    await vi.runAllTimersAsync();
+    expect(repos.attempt.setState).toHaveBeenCalledWith('att-1', 'ended', expect.objectContaining({
+      wrapup_resolution: 'disposition_submitted',
+    }));
+    expect(wrapup.redialBeingSetUp('s1')).toBe(false);
+    expect(onReturn).not.toHaveBeenCalled();
+  });
+
+  it('setRedialRemaining withdraws and restores the offer on the live wrap-up for that attempt only', async () => {
+    const { wrapup, stations } = manager();
+    await wrapup.enter(enterParams({ redialRemaining: 1 }));
+    wrapup.setRedialRemaining('s1', 'att-other', null);
+    expect(wrapup.stateFor('s1')?.redial_remaining).toBe(1);
+    wrapup.setRedialRemaining('s1', 'att-1', null);
+    expect(wrapup.stateFor('s1')).not.toHaveProperty('redial_remaining');
+    expect(stations.frames('wrapup').at(-1).wrapup).not.toHaveProperty('redial_remaining');
+    expect(wrapup.takeForRedial('s1', 'att-1')).toEqual({ ok: false, reason: 'not_offered' });
+    wrapup.setRedialRemaining('s1', 'att-1', 1);
+    expect(stations.frames('wrapup').at(-1).wrapup.redial_remaining).toBe(1);
   });
 
   it('a held (outcome-owed) wrap-up can be taken too, and is never returned by a timer afterwards', async () => {
@@ -121,15 +177,20 @@ describe('WrapupManager — wrap-up redial', () => {
 
   it('a refused redial re-enters with a fresh window', async () => {
     const { wrapup, onReturn } = manager();
-    await wrapup.enter(enterParams({ requiresDisposition: false, wrapupSeconds: 30 }));
+    await wrapup.enter(enterParams({ wrapupSeconds: 30 }));
+    const firstEndsAt = Date.parse(wrapup.stateFor('s1')!.ends_at!);
     await vi.advanceTimersByTimeAsync(25_000);
     expect(wrapup.takeForRedial('s1', 'att-1').ok).toBe(true);
-    await wrapup.enter(enterParams({ requiresDisposition: false, wrapupSeconds: 30 }));
+    await wrapup.enter(enterParams({ wrapupSeconds: 30 }));
+    // A FRESH deadline: 30 s from the re-entry, 25 s later than the first one.
+    expect(Date.parse(wrapup.stateFor('s1')!.ends_at!) - firstEndsAt).toBe(25_000);
     // The old countdown is gone: 10 s later (35 s after the first entry) nothing fired.
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(onReturn).not.toHaveBeenCalled();
+    expect(wrapup.stateFor('s1')?.held_reason).toBeNull();
+    // The new one lapses into the disposition hold — never a return with an outcome owed.
     await vi.advanceTimersByTimeAsync(21_000);
-    expect(onReturn).toHaveBeenCalledTimes(1);
+    expect(wrapup.stateFor('s1')?.held_reason).toBe('disposition_required');
+    expect(onReturn).not.toHaveBeenCalled();
   });
 
   describe('refusals leave the wrap-up exactly as it was', () => {
@@ -157,10 +218,12 @@ describe('WrapupManager — wrap-up redial', () => {
 
     it('the countdown keeps running after a refusal', async () => {
       const { wrapup, onReturn } = manager();
-      await wrapup.enter(enterParams({ requiresDisposition: false, redialRemaining: 0, wrapupSeconds: 30 }));
+      await wrapup.enter(enterParams({ redialRemaining: 0, wrapupSeconds: 30 }));
       wrapup.takeForRedial('s1', 'att-1');
+      expect(wrapup.redialBeingSetUp('s1')).toBe(false);
       await vi.advanceTimersByTimeAsync(31_000);
-      expect(onReturn).toHaveBeenCalledTimes(1);
+      expect(wrapup.stateFor('s1')?.held_reason).toBe('disposition_required');
+      expect(onReturn).not.toHaveBeenCalled();
     });
   });
 });

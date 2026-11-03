@@ -111,8 +111,27 @@ export type WrapupRedialRefusal =
  * returning agent in `break`, so there is no live socket to run a countdown for,
  * and the sweep is the thing that closes the attempt.
  */
+/**
+ * How long a redial taken by {@link WrapupManager.takeForRedial} may stay "being set up"
+ * before {@link WrapupManager.redialBeingSetUp} stops reporting it. The set-up (the rows,
+ * the reservation, the dispatch up to the dialer registering the attempt) takes a few
+ * hundred milliseconds; every path out of it clears the mark. The bound exists only so a
+ * path that failed to clear it (a throw in a catch) cannot lock the agent out of
+ * `/available` and `/leave` for the life of the process.
+ */
+export const REDIAL_SETUP_MAX_MS = 60_000;
+
 export class WrapupManager {
   private readonly entries = new Map<string, WrapupEntry>();
+  /**
+   * Sessions whose wrap-up was taken for a redial that is still being set up: from
+   * {@link takeForRedial} until the dialer registers the redial's attempt
+   * ({@link endRedialSetup}), the agent is back in wrap-up ({@link enter}), or is
+   * released. No wrap-up entry exists in that window, so `stateFor` is null; this is
+   * what lets `/available`, force-available and `/leave` see the redial anyway.
+   * Session id → when it was taken.
+   */
+  private readonly redialSetups = new Map<string, number>();
 
   constructor(
     private readonly stations: StationRegistry,
@@ -203,6 +222,8 @@ export class WrapupManager {
      */
     redialRemaining?: number | null;
   }): Promise<boolean> {
+    // Back in wrap-up (or never left it): no redial is being set up for this session.
+    this.redialSetups.delete(params.sessionId);
     const timed = params.wrapupSeconds > 0;
     if (!timed && !params.requiresDisposition) return false;
 
@@ -479,16 +500,66 @@ export class WrapupManager {
     this.entries.delete(sessionId);
     if (entry.timer) clearTimeout(entry.timer);
     entry.timer = null;
+    this.redialSetups.set(sessionId, Date.now());
     log.info({ sessionId, attemptId }, 'Wrap-up taken for a redial');
     return { ok: true, taken: entry };
   }
 
   /**
    * The redial taken by {@link takeForRedial} was placed: record how that wrap-up ended
-   * (`redialed`). Never throws, never returns the agent.
+   * (`redialed`). Never throws, never returns the agent. The redial is still being set
+   * up until the dialer registers its attempt ({@link endRedialSetup}).
    */
   finishRedial(taken: TakenWrapup): void {
     void this.persistEnd(taken.attemptId, 'redialed', taken);
+  }
+
+  /**
+   * A wrap-up taken by {@link takeForRedial} ended without a redial and without being
+   * re-entered: record how (`disposition_submitted` when the agent's outcome won the
+   * race to the row) and clear the set-up mark. Never throws, never returns the agent:
+   * the caller does.
+   */
+  endTaken(taken: TakenWrapup, resolution: WrapupResolution): void {
+    this.redialSetups.delete(taken.sessionId);
+    void this.persistEnd(taken.attemptId, resolution, taken);
+  }
+
+  /**
+   * Is a redial being set up for this session: its wrap-up taken, its attempt not yet
+   * registered by the dialer? See {@link redialSetups}. A mark older than
+   * {@link REDIAL_SETUP_MAX_MS} is stale and reads false.
+   */
+  redialBeingSetUp(sessionId: string): boolean {
+    const takenAt = this.redialSetups.get(sessionId);
+    if (takenAt === undefined) return false;
+    if (Date.now() - takenAt > REDIAL_SETUP_MAX_MS) {
+      this.redialSetups.delete(sessionId);
+      log.warn({ sessionId }, 'A wrap-up redial set-up mark outlived its bound — dropped');
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * The redial's set-up is over for this session: the dialer registered its attempt
+   * (from then on `AgencyDialer.hasLiveRedial` answers), or the agent was released.
+   */
+  endRedialSetup(sessionId: string): void {
+    this.redialSetups.delete(sessionId);
+  }
+
+  /**
+   * Change the redials offered on this session's live wrap-up for `attemptId` (null:
+   * none) and re-announce it. A no-op when the session's wrap-up is not for that attempt.
+   * The dialer withdraws the offer while a redial's own dial outcome is unknown (the
+   * carrier may still ring the customer), and restores it once the dial's answer is known.
+   */
+  setRedialRemaining(sessionId: string, attemptId: string, remaining: number | null): void {
+    const entry = this.entries.get(sessionId);
+    if (!entry || entry.attemptId !== attemptId || entry.redialRemaining === remaining) return;
+    entry.redialRemaining = remaining;
+    this.push(entry);
   }
 
   /** Supervisor override — end a held wrap-up and return the agent. */
@@ -622,6 +693,7 @@ export class WrapupManager {
       if (entry.timer) clearTimeout(entry.timer);
     }
     this.entries.clear();
+    this.redialSetups.clear();
   }
 
   private snapshot(entry: WrapupEntry): AgencyWrapupState {

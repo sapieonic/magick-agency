@@ -32,6 +32,16 @@ import { SOFTPHONE_SESSION_AUDIT_KEY, type SoftphoneSessionExitAudit } from './s
 import { runDeviceAway } from './device-away.js';
 import { breakReasonFor } from '../../../agency/station-socket.js';
 
+/**
+ * `/available`, force-available and `/leave` while a wrap-up redial is in flight
+ * (`AgencyDialer.hasRedialInFlight`). `agent_on_live_call`, as for any live call: the
+ * redial is one, or is about to be.
+ */
+const REDIAL_IN_FLIGHT_REFUSAL: AgencyActionErrorResponse = {
+  error: 'Conflict', code: 'agent_on_live_call',
+  message: 'You are redialling the customer. Save the outcome once that call has ended.',
+};
+
 const log = createChildLogger({ component: 'agency-routes' });
 
 /** The `softphone_audit` key for an answer that left the soft phone, else nothing. */
@@ -396,6 +406,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       };
       return reply.code(409).send(err);
     }
+    // ── …nor an agent with a wrap-up redial in flight ─────────────────────
+    //
+    // From the moment Redial is pressed (the wrap-up is taken, so `stateFor` above is
+    // null) until the redial ends and wrap-up reopens, the conversation's outcome is
+    // owed and nothing else here says so. Going available then would put the agent in
+    // the pool mid-redial with the write-up never taken.
+    if (runtime.dialer.hasRedialInFlight(session.id)) {
+      return reply.code(409).send(REDIAL_IN_FLIGHT_REFUSAL);
+    }
 
     // Any wrap-up that IS allowed to end ends here rather than being orphaned
     // with a live timer that would later return an agent who is already back.
@@ -483,6 +502,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       };
       return reply.code(409).send(err);
     };
+    // A wrap-up redial in flight is a live call owing the conversation's outcome: no
+    // wrap-up to force, and a plain release would put the agent in the pool mid-call.
+    // The supervisor waits for it to end (wrap-up reopens, and can then be forced).
+    if (runtime.dialer.hasRedialInFlight(session.id)) {
+      return reply.code(409).send({
+        ...REDIAL_IN_FLIGHT_REFUSAL,
+        message: 'The agent is redialling a customer from wrap-up. Force them available once that call has ended.',
+      });
+    }
     // A forced wrap-up never starts on the soft phone; a plain release from it ends it.
     const leavingSoftphone = onSoftphoneBreak(await runtime.agents.get(session.id), session);
     const forced = await runtime.wrapup.force(session.id);
@@ -804,6 +832,15 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
         message: 'Hang up your soft-phone call before leaving the station.',
       };
       return reply.code(409).send(err);
+    }
+    // A wrap-up redial being set up has no live attempt yet (the dialer registers it a
+    // moment later): leaving now would detach the station the redial is about to ring
+    // into. Refused like the live call it is about to be.
+    if (runtime.dialer.hasRedialInFlight(session.id) && !runtime.dialer.hasLiveAttempt(session.id)) {
+      return reply.code(409).send({
+        ...REDIAL_IN_FLIGHT_REFUSAL,
+        message: 'Your redial is being placed. You can leave once that call has ended.',
+      });
     }
     if (runtime.dialer.hasLiveAttempt(session.id)) {
       // ── Under late binding the agent can see NO call, so the message had to

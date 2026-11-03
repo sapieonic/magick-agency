@@ -61,20 +61,28 @@ const REDIAL_RESERVING_MARKER = 'reserving';
 
 export interface WrapupRedialDeps {
   agents: Pick<AgentStateMachine, 'reserveFromWrapup' | 'transition'>;
-  wrapup: Pick<WrapupManager, 'stateFor' | 'takeForRedial' | 'finishRedial'>;
+  wrapup: Pick<WrapupManager, 'stateFor' | 'takeForRedial' | 'finishRedial' | 'endTaken'>;
   stations: Pick<StationRegistry, 'ownerOf'>;
   dnc: DncRegistry;
   dispatcher: DialDispatcher;
-  dialer: Pick<AgencyDialer, 'enterRedialWrapup' | 'releaseAgent' | 'abandonUndispatchedRedial'>;
+  dialer: Pick<AgencyDialer, 'enterRedialWrapup' | 'releaseAgent' | 'releaseOwingOutcome' | 'abandonUndispatchedRedial'>;
 }
 
+/**
+ * The statuses: 404 when the attempt is not this session's to redial (missing, another
+ * session's, another tenant's: one answer, so a caller learns nothing about attempts
+ * that are not theirs), 503 when the agent's state could not be read, 409 for every
+ * other refusal. (400 for a malformed id is the route's.)
+ */
 export type WrapupRedialResult =
   | { ok: true; response: AgencyRedialResponse }
-  | ({ ok: false; status: 404 | 409 } & RedialRefusal);
+  | { ok: false; status: 404 | 409 | 503; code: RedialRefusal['code']; message: string };
 
-function refuse(refusal: RedialRefusal, status: 404 | 409 = 409): WrapupRedialResult {
-  return { ok: false, status, ...refusal };
+function refuse(refusal: RedialRefusal, status: 404 | 409 | 503 = 409): WrapupRedialResult {
+  return { ok: false, status: refusal.notFound ? 404 : status, code: refusal.code, message: refusal.message };
 }
+
+const NOT_YOURS: RedialRefusal = { code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_your_call, notFound: true };
 
 /** A gate's refusal, as the agent is told it. `null` for `dial`. */
 export function redialRefusalForGate(decision: PreDialDecision): RedialRefusal | null {
@@ -117,9 +125,11 @@ export async function startWrapupRedial(
 
   // ── 1. The rows ───────────────────────────────────────────────────────────
   const attempt = await agencyAttemptRepository.findById(attemptId);
-  if (!attempt) return refuse({ code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_your_call }, 404);
+  // Before the campaign read, so another session's (or tenant's) attempt answers
+  // exactly as a missing one does.
+  if (!attempt || attempt.reserved_agent_id !== sessionId) return refuse(NOT_YOURS);
   const campaign = await agencyCampaignRepository.findById(attempt.campaign_id);
-  if (!campaign) return refuse({ code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_your_call }, 404);
+  if (!campaign) return refuse(NOT_YOURS);
   const rowRefusal = redialRefusalForAttempt(attempt, campaign, sessionId);
   if (rowRefusal) return refuse(rowRefusal);
 
@@ -132,7 +142,10 @@ export async function startWrapupRedial(
     return refuse({ code: 'disposition_already_submitted', message: REDIAL_MESSAGES.disposition_submitted });
   }
   if (live.redial_remaining === undefined || live.redial_remaining === null) {
-    return refuse({ code: 'redial_not_allowed', message: REDIAL_MESSAGES.campaign_off });
+    // The campaign allows it (the row checks passed), so this wrap-up withheld it: no
+    // outcome owed, or the last redial's dial outcome is unknown (the carrier may still
+    // ring the customer).
+    return refuse({ code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_offered });
   }
   if (live.redial_remaining <= 0) return refuse({ code: 'redial_limit_reached', message: REDIAL_MESSAGES.limit });
 
@@ -163,13 +176,16 @@ export async function startWrapupRedial(
   if (!take.ok) return refuse(refusalForTake(take.reason));
   const { taken } = take;
 
-  // From here on, a refusal re-opens the wrap-up on the attempt it was taken from.
+  // From here on, a refusal re-opens the wrap-up on the attempt it was taken from (a
+  // fresh window, the redials its number leaves). When it cannot be reopened the agent
+  // is held out of the pool (`releaseOwingOutcome`: `offline` with no station, else
+  // `break`), never released to `available` with the outcome owed.
   const backToWrapup = async (): Promise<void> => {
     const reopened = await deps.dialer.enterRedialWrapup({
       sessionId, attemptId, campaignId: campaign.id, tenantId: campaign.tenant_id, campaign,
       redialNumber: attempt.redial_number,
     });
-    if (!reopened) await deps.dialer.releaseAgent(sessionId);
+    if (!reopened) await deps.dialer.releaseOwingOutcome(sessionId);
   };
 
   // ── 6. The agent: wrapup → reserved ────────────────────────────────────────
@@ -177,12 +193,23 @@ export async function startWrapupRedial(
   if (reserved !== 'reserved') {
     log.warn({ sessionId, attemptId, reserved }, 'Wrap-up redial could not reserve the agent — back to wrap-up');
     await backToWrapup();
-    return refuse({ code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_in_wrapup });
+    // `unavailable`: the agent state store did not answer, which is not "you left
+    // wrap-up" and must not read as it.
+    return reserved === 'unavailable'
+      ? refuse({ code: 'redial_blocked', message: REDIAL_MESSAGES.state_unavailable }, 503)
+      : refuse({ code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_in_wrapup });
   }
-  // Undo the reservation, then reopen the wrap-up. `enter` writes `wrapup`
-  // unconditionally; the CAS first means a lease that lapsed meanwhile is not revived.
+  // Undo the reservation, then reopen the wrap-up. The CAS is the normal path. When it
+  // loses, the agent is no longer `reserved`: the 10s pre-dial lease lapsed, or the
+  // station closed and wrote `offline` (nothing else writes over a reservation: pacing
+  // reserves only from `available`, and `/available`, force-available and `/leave`
+  // refuse while a redial is being set up). `enterRedialWrapup` then decides on the
+  // station, not on the lost lease: a station still here gets its wrap-up back (`enter`
+  // writes `wrapup`, which is exactly the state an agent owing an outcome belongs in),
+  // a gone one is held `offline`.
   const unreserve = async (): Promise<void> => {
-    await deps.agents.transition(sessionId, 'reserved', 'wrapup', { leaseMs: AGENT_LEASE_MS.wrapup });
+    const restored = await deps.agents.transition(sessionId, 'reserved', 'wrapup', { leaseMs: AGENT_LEASE_MS.wrapup });
+    if (!restored) log.warn({ sessionId, attemptId }, 'Wrap-up redial reservation was lost before it could be undone');
     await backToWrapup();
   };
 
@@ -205,7 +232,10 @@ export async function startWrapupRedial(
     if (begun.reason === 'disposition_already_submitted') {
       // The agent's disposition landed while the wrap-up was taken, so its
       // `noteDisposition` found nothing to end: the outcome is in, and the agent is
-      // done. Returned to the pool (or their queued break) through the one release path.
+      // done. The taken wrap-up ends `disposition_submitted` (as `noteDisposition`
+      // would have ended it), and the agent goes back to the pool (or their queued
+      // break) through the one release path.
+      deps.wrapup.endTaken(taken, 'disposition_submitted');
       await deps.agents.transition(sessionId, 'reserved', 'wrapup', { leaseMs: AGENT_LEASE_MS.wrapup });
       await deps.dialer.releaseAgent(sessionId);
       return refuse({ code: 'disposition_already_submitted', message: REDIAL_MESSAGES.disposition_submitted });

@@ -468,6 +468,8 @@ export class AgencyDialer {
       dialSettled: new Promise<boolean>((resolve) => { dialReturned = resolve; }),
     };
     this.liveByAttempt.set(attemptId, live);
+    // A wrap-up redial's set-up ends here: from now on `hasLiveRedial` answers for it.
+    if (cmd.redial) this.wrapup.endRedialSetup(sessionId);
 
     /**
      * Only the DIAL is inside this try.
@@ -674,8 +676,9 @@ export class AgencyDialer {
       // A wrap-up redial that never reached the carrier (or failed in the bridge): the
       // customer goes back to being held for the outcome the agent still owes on this
       // conversation, uncharged, and the agent back to wrap-up below. An outcome-unknown
-      // dial is no exception: the contact is parked `connected`, which pacing never
-      // claims, so no redial of ours follows it; the agent decides.
+      // dial is no exception for the contact: it is parked `connected`, which pacing
+      // never claims, so no paced dial follows it. But the carrier may still ring the
+      // customer, so the reopened wrap-up offers NO further redial (below).
       await parkRedialContact(cmd, outcome);
     } else if (dialOutcomeUnknown) {
       // Not to be dialled again yet, and counted: the hold and the our-fault charge are
@@ -698,8 +701,14 @@ export class AgencyDialer {
 
     if (notifyAgent) this.sendReleased(cmd, reason, !!cmd.redial, releaseMessageFor(reason));
     // A redial's agent goes back to wrap-up with the outcome pad (a fresh window, or
-    // none when an outcome is required), never to the pool with an outcome owed.
-    if (cmd.redial && await this.enterRedialWrapup(cmd)) return;
+    // none when an outcome is required), never to the pool with an outcome owed: when
+    // the wrap-up cannot be reopened, `releaseOwingOutcome` holds them out of the pool.
+    if (cmd.redial) {
+      if (!await this.enterRedialWrapup(cmd, { offerRedial: !dialOutcomeUnknown })) {
+        await this.releaseOwingOutcome(cmd.sessionId);
+      }
+      return;
+    }
     // Runs either way — the agent goes back to the pool (or `offline`) whether or
     // not they were told a call had been reserved for them. Suppressing the frame
     // must never suppress the release, or a silent abandon would leave the agent
@@ -732,7 +741,14 @@ export class AgencyDialer {
     /** 0 for the attempt a refused redial was taken from when it was a paced dial. */
     redialNumber?: number;
     redial?: { number: number };
-  }): Promise<boolean> {
+  }, opts: {
+    /**
+     * False: offer no further redial on the reopened wrap-up. A redial whose own dial
+     * outcome is unknown (the carrier may have queued it and may still ring the
+     * customer) must not be followed by a second call to the same person.
+     */
+    offerRedial?: boolean;
+  } = {}): Promise<boolean> {
     if (!this.stations.isLocallyOwned(target.sessionId)) return false;
     const number = target.redial?.number ?? target.redialNumber ?? 0;
     try {
@@ -745,12 +761,61 @@ export class AgencyDialer {
         autoReturn: target.campaign.wrapup_auto_return,
         requiresDisposition: true,
         readPendingBreak: () => this.breaks.peek(target.sessionId),
-        redialRemaining: wrapupRedialRemaining(target.campaign, true, number),
+        redialRemaining: opts.offerRedial === false ? null : wrapupRedialRemaining(target.campaign, true, number),
       });
     } catch (err) {
-      log.error({ err, sessionId: target.sessionId, attemptId: target.attemptId }, 'Could not put the agent back in wrap-up after a redial — releasing');
+      log.error({ err, sessionId: target.sessionId, attemptId: target.attemptId }, 'Could not put the agent back in wrap-up after a redial — holding them out of the pool');
       return false;
     }
+  }
+
+  /**
+   * The release for an agent who still owes a conversation's outcome but could not be
+   * put back in wrap-up (a wrap-up redial's fallback, when {@link enterRedialWrapup}
+   * returned false). Never `available`:
+   *
+   *  - the station is gone: `offline`, exactly as {@link releaseAgent} writes it (they
+   *    rehydrate into `break`);
+   *  - the station is here but the wrap-up could not be opened (`WrapupManager.enter`
+   *    threw): `break`, with the break they queued if any, so pacing cannot dial into
+   *    an agent with an outcome owed. The outcome stays owed on the attempt row: the
+   *    agent can still save it (the disposition route does not need a wrap-up), and the
+   *    lapsed-wrap-up sweep closes it `no_disposition` otherwise. They go available
+   *    themselves.
+   *
+   * A paced conversation whose `enter` throws is released through {@link releaseAgent}
+   * (to the pool): that is the documented fallback of the `ended` arm and is unchanged.
+   */
+  async releaseOwingOutcome(sessionId: string): Promise<AgentReleaseResult> {
+    this.wrapup.endRedialSetup(sessionId);
+    if (!this.stations.isLocallyOwned(sessionId)) return this.releaseAgent(sessionId);
+    const queuedBreak = this.breaks.take(sessionId);
+    const set = await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });
+    await mirrored(
+      agencyAgentSessionRepository.setState(sessionId, 'break', queuedBreak?.code ?? null),
+      sessionId, 'Could not mirror held agent state',
+    );
+    this.stations.send(sessionId, {
+      event: 'agent_state',
+      state: 'break',
+      since: new Date().toISOString(),
+      ...(queuedBreak ? { break_reason: queuedBreak.code } : {}),
+    });
+    log.warn({ sessionId }, 'Could not reopen wrap-up with an outcome owed — agent held on break, out of the pool');
+    return { state: 'break', result: set };
+  }
+
+  /**
+   * Is a wrap-up redial in flight for this agent: being set up (its wrap-up taken, its
+   * attempt not yet registered here), or registered and live (queued, ringing, on the
+   * call, or in its deferred hangup)? While it is, the conversation's outcome is owed and
+   * no wrap-up entry exists to say so, so `/available`, force-available and `/leave`
+   * refuse on this.
+   */
+  hasRedialInFlight(sessionId: string): boolean {
+    if (this.wrapup.redialBeingSetUp(sessionId)) return true;
+    const attemptId = this.attemptIdFor(sessionId);
+    return attemptId !== null && !!this.liveByAttempt.get(attemptId)?.cmd.redial;
   }
 
   /** Bridge told us something happened to a call we placed. */
@@ -1260,7 +1325,12 @@ export class AgencyDialer {
     try {
       settled = await this.settleEnded(live, ev, contactAfterDial);
     } finally {
-      if (!settled?.handedToWrapup) await this.releaseAgent(cmd.sessionId);
+      if (!settled?.handedToWrapup) {
+        // A wrap-up redial owes the conversation's outcome whatever its own (unless the
+        // catalog changed underneath it): never to the pool from here.
+        if (cmd.redial && (settled?.needsDisposition ?? true)) await this.releaseOwingOutcome(cmd.sessionId);
+        else await this.releaseAgent(cmd.sessionId);
+      }
     }
     if (contactAfterDial) await this.settleContactAfterDial(live, settled);
   }
@@ -1289,6 +1359,16 @@ export class AgencyDialer {
       );
       await holdOutcomeUnknownContact(cmd, settled.outcome);
       return;
+    }
+    // A wrap-up redial's dial answered with a KNOWN outcome: the wrap-up it reopened
+    // (with no redial offered while that answer was pending) offers the redials its
+    // number leaves. Outcome-unknown keeps the offer withdrawn: the carrier may still
+    // ring the customer, and the agent must not place a second call to them.
+    if (cmd.redial && !dialOutcomeUnknown && settled.handedToWrapup) {
+      this.wrapup.setRedialRemaining(
+        cmd.sessionId, cmd.attemptId,
+        wrapupRedialRemaining(cmd.campaign, settled.needsDisposition, cmd.redial.number),
+      );
     }
     try {
       await settleContact(cmd, settled.outcome, settled.needsDisposition, live.bridgedAt);
@@ -1565,7 +1645,13 @@ export class AgencyDialer {
         // registry still never leaves this class, so the `take()` hazard the value
         // form existed to avoid is unchanged.
         readPendingBreak: () => this.breaks.peek(cmd.sessionId),
-        redialRemaining: wrapupRedialRemaining(cmd.campaign, needsDisposition, cmd.redial?.number ?? 0),
+        // A redial whose dial is still in flight (`contactAfterDial`: the end raced the
+        // dial) may yet answer outcome-unknown, when the carrier may still ring the
+        // customer: no further redial is offered until the dial's answer is in
+        // (`settleContactAfterDial` restores the offer when it is known).
+        redialRemaining: contactAfterDial && cmd.redial
+          ? null
+          : wrapupRedialRemaining(cmd.campaign, needsDisposition, cmd.redial?.number ?? 0),
       });
       // `false` ⇒ `wrapup_seconds = 0`, so the agent goes straight to `available`
       // Falling through is that path.
