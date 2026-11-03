@@ -6,6 +6,7 @@ import type {
 } from '../types/agency-campaign';
 import { hhmm } from './format/weekdays';
 import type { AgencyDispositionOverride } from '@magick-agency/contracts/agency';
+import { ASSIGNMENT_MODE_COPY } from './agencyAssignmentCopy';
 import {
   type AssignmentConfigState,
   type CampaignConfigState,
@@ -411,6 +412,50 @@ function assignmentFromCampaign(campaign: AgencyCampaign): AssignmentConfigState
 }
 
 /**
+ * What a stored campaign still holds of contact assignment beyond the defaults, as
+ * short phrases for the settings page's flag-off notice (empty when it holds
+ * nothing). Read from the LOADED campaign, never the form, so the notice stays
+ * put until a reset is actually saved.
+ */
+export function storedAssignmentLeftovers(campaign: AgencyCampaign): string[] {
+  const a = assignmentFromCampaign(campaign);
+  const d = DEFAULT_ASSIGNMENT_CONFIG;
+  const parts: string[] = [];
+  if (a.mode !== d.mode) parts.push(`the “${ASSIGNMENT_MODE_COPY[a.mode].label}” assignment mode`);
+  if (a.allowAgentRetry !== d.allowAgentRetry) parts.push('agent retry');
+  if (a.onUnstaff !== d.onUnstaff) parts.push('keeping contacts with agents taken off it');
+  if (
+    a.callbackGraceMinutes !== d.callbackGraceMinutes
+    || a.callbackFallback !== d.callbackFallback
+    || a.agentRetryRounds !== d.agentRetryRounds
+    || a.agentRetryCooldownMinutes !== d.agentRetryCooldownMinutes
+  ) {
+    parts.push('changed callback or retry timings');
+  }
+  const overrides = (campaign.disposition_catalog ?? []).filter((entry) => entry.override != null).length;
+  if (overrides > 0) parts.push(`${overrides} outcome override${overrides === 1 ? '' : 's'}`);
+  return parts;
+}
+
+/**
+ * The form with contact assignment put back to the defaults: every setting at
+ * `DEFAULT_ASSIGNMENT_CONFIG` and no catalog entry carrying an `override`. The
+ * way out after the flag is turned off; saved with an assignment scope that SENDS
+ * the defaults (the server lets a default through with the flag off).
+ */
+export function resetAssignmentConfig(state: CampaignConfigState): CampaignConfigState {
+  return {
+    ...state,
+    assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
+    dispositions: state.dispositions.map((entry) => {
+      const { override: _dropped, ...rest } = cloneDisposition(entry);
+      void _dropped;
+      return rest;
+    }),
+  };
+}
+
+/**
  * Postgres renders a `TIME` column as `HH:MM:SS`; `<input type="time">` wants
  * `HH:MM`. Without this a loaded campaign shows an empty time field, which the
  * operator then re-types — and a round trip that loses a value is exactly what
@@ -487,8 +532,14 @@ const NEVER_SENT_RETRY_OUTCOMES = ['invalid'] as const;
  *    out keeps every other save on a running campaign from depending on how the
  *    server compares an unchanged mode.
  *  - `none`: the `agency_contact_assignment_enabled` flag is off. The settings are
- *    not shown and not sent: the server refuses a non-default value with the flag
- *    off, and a campaign set up while it was on must keep saving its other fields.
+ *    not shown and not sent, so the campaign keeps what it stores. The catalog is
+ *    still sent whole, stored `override`s included: the server's gate
+ *    (`campaign-assignment-gate.ts`) lets through, with the flag off, any setting
+ *    or override EQUAL to what the campaign already stores, and any value at its
+ *    default; only a change away from both needs the flag. So an unchanged
+ *    campaign set up while the flag was on keeps saving its other fields, and
+ *    the way back to the defaults (`resetAssignmentConfig`, saved with
+ *    `all` / `settings_only`) is always allowed.
  */
 export type AssignmentPayloadScope = 'all' | 'settings_only' | 'none';
 

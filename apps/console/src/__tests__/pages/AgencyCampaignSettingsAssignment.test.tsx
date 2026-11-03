@@ -167,6 +167,101 @@ describe('outcome overrides', () => {
 });
 
 describe('with the flag off', () => {
+  /** A campaign set up while the flag was on: strict, agent retry, one outcome override. */
+  const LEFT_OVER = {
+    assignment_mode: 'strict' as const,
+    allow_agent_retry: true,
+    agent_retry_rounds: 3,
+    disposition_catalog: [
+      { code: 'callback', label: 'Callback', requires_datetime: true, override: { extra_attempts: 2, calling_hours: true } },
+      { code: 'do_not_call', label: 'Do not call', suppress: true },
+    ],
+  };
+  const DEFAULTS_SENT = {
+    on_unstaff: 'return_to_pool',
+    callback_owner_grace_minutes: 30,
+    callback_fallback: 'pool',
+    allow_agent_retry: false,
+    agent_retry_rounds: 1,
+    agent_retry_cooldown_minutes: 30,
+  };
+
+  it('a plain save re-sends the stored overrides unchanged and no assignment setting', async () => {
+    mocks.flag.mockReturnValue(false);
+    mocks.getAgencyCampaign.mockResolvedValue(campaign(LEFT_OVER));
+    renderPage();
+    await screen.findByRole('button', { name: 'Save settings' });
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    const body = mocks.updateAgencyCampaign.mock.calls[0]![1];
+    for (const key of ['assignment_mode', 'allow_agent_retry', 'agent_retry_rounds', 'on_unstaff']) {
+      expect(body).not.toHaveProperty(key);
+    }
+    expect(body.disposition_catalog[0].override).toEqual({ extra_attempts: 2, calling_hours: true });
+  });
+
+  it('says what the campaign still uses, and "Reset to defaults" sends the defaults and drops every override', async () => {
+    mocks.flag.mockReturnValue(false);
+    mocks.getAgencyCampaign.mockResolvedValue(campaign(LEFT_OVER));
+    renderPage();
+    const notice = await screen.findByTestId('assignment-off-notice');
+    expect(notice.textContent).toContain('Contact assignment is turned off for this account');
+    expect(notice.textContent).toContain(
+      'the “Own contacts only” assignment mode, agent retry, changed callback or retry timings and 1 outcome override',
+    );
+    expect(screen.queryByTestId('assignment-reset-pause')).toBeNull();
+    fireEvent.click(screen.getByTestId('assignment-reset'));
+    expect(screen.getByTestId('assignment-reset-pending')).toBeTruthy();
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    const body = mocks.updateAgencyCampaign.mock.calls[0]![1];
+    expect(body).toMatchObject({ assignment_mode: 'pool', ...DEFAULTS_SENT });
+    for (const entry of body.disposition_catalog) expect(entry).not.toHaveProperty('override');
+    // The saved campaign holds nothing any more: the notice goes.
+    await waitFor(() => expect(screen.queryByTestId('assignment-off-notice')).toBeNull());
+  });
+
+  it('on a running campaign says to pause for the mode, and the reset leaves the mode out', async () => {
+    mocks.flag.mockReturnValue(false);
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ ...LEFT_OVER, status: 'running' }));
+    renderPage();
+    await screen.findByTestId('assignment-off-notice');
+    expect(screen.getByTestId('assignment-reset-pause').textContent).toContain('pause it first');
+    fireEvent.click(screen.getByTestId('assignment-reset'));
+    save();
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    const body = mocks.updateAgencyCampaign.mock.calls[0]![1];
+    expect(body).not.toHaveProperty('assignment_mode');
+    expect(body).toMatchObject(DEFAULTS_SENT);
+    for (const entry of body.disposition_catalog) expect(entry).not.toHaveProperty('override');
+  });
+
+  it('says 409 mode_change_requires_pause on the notice (the campaign started since it loaded)', async () => {
+    mocks.flag.mockReturnValue(false);
+    mocks.getAgencyCampaign.mockResolvedValue(campaign(LEFT_OVER));
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(new ApiError(409, {
+      error: 'Conflict', code: 'mode_change_requires_pause', message: 'Pause first.',
+    }));
+    renderPage();
+    fireEvent.click(await screen.findByTestId('assignment-reset'));
+    save();
+    await waitFor(() => expect(within(screen.getByTestId('assignment-off-notice'))
+      .getByText('Pause the campaign before you change how contacts are assigned.')).toBeTruthy());
+  });
+
+  it('shows no notice for a campaign at the defaults, nor with the flag on', async () => {
+    mocks.flag.mockReturnValue(false);
+    renderPage();
+    await screen.findByRole('button', { name: 'Save settings' });
+    expect(screen.queryByTestId('assignment-off-notice')).toBeNull();
+    cleanup();
+    mocks.flag.mockReturnValue(true);
+    mocks.getAgencyCampaign.mockResolvedValue(campaign(LEFT_OVER));
+    renderPage();
+    await screen.findByTestId('assignment-mode');
+    expect(screen.queryByTestId('assignment-off-notice')).toBeNull();
+  });
+
   it('shows neither group and sends no assignment setting', async () => {
     mocks.flag.mockReturnValue(false);
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ assignment_mode: 'strict' }));

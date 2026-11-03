@@ -9,6 +9,8 @@ import {
   editCatalog,
   emptyCampaignConfig,
   overrideSummary,
+  resetAssignmentConfig,
+  storedAssignmentLeftovers,
   validateConfig,
   type CampaignConfigState,
   type CatalogEditState,
@@ -190,5 +192,36 @@ describe('the summary line mentions the override', () => {
   it('says nothing about an override nothing would read', () => {
     expect(overrideSummary({ code: 'x', label: 'X' })).toBeNull();
     expect(overrideSummary({ code: 'x', label: 'X', suppress: true, override: { retry_delay: true } })).toBeNull();
+  });
+});
+
+describe('the way back after the flag is turned off', () => {
+  it('lists what a stored campaign holds beyond the defaults, and nothing for one at the defaults', () => {
+    expect(storedAssignmentLeftovers(CAMPAIGN)).toEqual([
+      'the “Own contacts only” assignment mode',
+      'agent retry',
+      'keeping contacts with agents taken off it',
+      'changed callback or retry timings',
+      '1 outcome override',
+    ]);
+    expect(storedAssignmentLeftovers({ id: 'c', name: 'n', status: 'running' })).toEqual([]);
+  });
+
+  it('resets to the defaults and drops every override, and the payload sends the defaults', () => {
+    const reset = resetAssignmentConfig(configFromCampaign(CAMPAIGN));
+    expect(reset.assignment).toEqual(DEFAULT_ASSIGNMENT_CONFIG);
+    expect(reset.dispositions.some((entry) => 'override' in entry)).toBe(false);
+    expect(buildConfigPayload(reset, 'all')).toMatchObject({
+      assignment_mode: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.assignment_mode,
+      allow_agent_retry: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.allow_agent_retry,
+      on_unstaff: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.on_unstaff,
+    });
+  });
+
+  it('with the flag off (scope none) re-sends the stored overrides unchanged', () => {
+    const payload = buildConfigPayload(configFromCampaign(CAMPAIGN), 'none');
+    expect(payload).not.toHaveProperty('assignment_mode');
+    expect(payload).not.toHaveProperty('allow_agent_retry');
+    expect(payload.disposition_catalog![0]!.override).toEqual({ extra_attempts: 2, calling_hours: true });
   });
 });
