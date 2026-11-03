@@ -37,6 +37,7 @@ export const AGENT_RETRY_REFUSAL_COPY: Record<AgencyAgentRetryErrorCode, string>
   no_caller_id: 'The campaign has no caller ID to dial from. Tell your supervisor.',
   no_station: 'Your station isn’t connected. Wait for it to reconnect, then try again.',
   dial_failed: 'The call couldn’t be placed. The contact is still yours — try again.',
+  feature_disabled: 'Calling is turned off for this account. Ask your admin.',
 };
 
 /** Why one contact cannot be retried by its agent now. */

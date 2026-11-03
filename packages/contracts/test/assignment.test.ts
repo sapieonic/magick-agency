@@ -64,12 +64,13 @@ describe('contact assignment vocabularies', () => {
   it('refusal codes keep their order and are distinct', () => {
     expect([...AGENCY_ASSIGNMENT_ERROR_CODES]).toEqual([
       'assignment_disabled', 'assignment_invalid', 'agent_not_staffed', 'preview_stale',
-      'mode_change_requires_pause', 'contact_not_found',
+      'mode_change_requires_pause', 'contact_not_found', 'campaign_not_found',
     ]);
     expect([...AGENCY_AGENT_RETRY_ERROR_CODES]).toEqual([
       'assignment_disabled', 'not_staffed', 'agent_retry_disabled', 'contact_not_found', 'contact_not_retryable',
       'contact_in_flight', 'campaign_not_running', 'agent_not_available', 'outside_calling_hours',
       'override_note_invalid', 'dnc_listed', 'dnc_unavailable', 'no_caller_id', 'no_station', 'dial_failed',
+      'feature_disabled',
     ]);
     expect(new Set(AGENCY_AGENT_RETRY_ERROR_CODES).size).toBe(AGENCY_AGENT_RETRY_ERROR_CODES.length);
   });

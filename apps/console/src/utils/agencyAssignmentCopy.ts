@@ -164,6 +164,7 @@ export const ASSIGNMENT_REFUSAL_COPY: Record<AgencyAssignmentErrorCode, string> 
     'The roster changed since you looked. Here is the up-to-date result — check it and confirm again.',
   mode_change_requires_pause: 'Pause the campaign before you change how contacts are assigned.',
   contact_not_found: 'That contact is no longer on this campaign.',
+  campaign_not_found: 'This campaign no longer exists, or isn’t in this account.',
 };
 
 /** Who a contact belongs to, for the roster's "Assigned to" column. */

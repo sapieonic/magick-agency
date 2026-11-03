@@ -235,7 +235,7 @@ describe('the agent\'s own contacts', () => {
     expect(badBucket.statusCode).toBe(400);
   });
 
-  it('the summary counts the caller\'s own contacts; unstaffed is 403, another tenant\'s campaign 404', async () => {
+  it('the summary counts the caller\'s own contacts; unstaffed and another tenant\'s campaign are the same 403 not_staffed', async () => {
     const res = await call(app(), 'GET', `/proxy/agency/my-contacts/summary?campaign_id=${A()}`, agent(0), floor);
     expect(res.statusCode, res.body).toBe(200);
     const total = await ownedBy(agent(0).id);
@@ -251,8 +251,11 @@ describe('the agent\'s own contacts', () => {
     // A supervisor-role caller is not special: these are their OWN contacts.
     const asSupervisor = await call(app(), 'GET', `/proxy/agency/my-contacts?campaign_id=${A()}`, sup(), floor);
     expect(asSupervisor.statusCode).toBe(403);
+    // Another tenant's campaign is the unstaffed answer (CA14: nothing elsewhere is confirmed),
+    // on the reads as on the actions.
     const foreign = await call(app(), 'GET', `/proxy/agency/my-contacts?campaign_id=${floors[1]!.campaigns[0]}`, agent(0), floor);
-    expect(foreign.statusCode).toBe(404);
+    expect(foreign.statusCode).toBe(403);
+    expect(foreign.body).toBe(unstaffed.body);
   });
 });
 

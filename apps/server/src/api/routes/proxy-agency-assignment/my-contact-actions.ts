@@ -11,23 +11,26 @@
  * ── The gates, in order, on both routes ──────────────────────────────────────
  *  1. RBAC `agency.contacts.own` (floored at `agent`). The subject is ALWAYS the caller
  *     (`request.user.id`); no route names another agent.
- *  2. The `agency_contact_assignment_enabled` flag (CA9): off → `403 assignment_disabled`.
- *  3. The campaign is in the caller's tenant and account AND the caller has an active staffing
- *     row on it → else `403 not_staffed` (one answer: a campaign elsewhere is not confirmed).
+ *  2-3. `staffedCampaign` (shared with the reads): the `agency_contact_assignment_enabled` flag
+ *     (CA9, `403 assignment_disabled`), then the campaign in the caller's tenant and account AND
+ *     the caller actively staffed on it → else `403 not_staffed` (one answer: a campaign
+ *     elsewhere is not confirmed).
  *  4. Retry only: the campaign allows agent retry (`allow_agent_retry`) → else
- *     `403 agent_retry_disabled`. The call route does NOT require it as a route gate: a due
+ *     `403 agent_retry_disabled`; and it is `running` or `paused` → else
+ *     `409 campaign_not_running` (a reopened contact on a finished campaign would be dialled by
+ *     nothing, its round spent for nothing). The call route does NOT require it as a route gate: a due
  *     contact, or one holding a retry-delay override, may be dialled without it (CA7); a dial
  *     that would need a retry round answers `409 contact_not_retryable` (`retry_disabled`).
  *
  * The retry is set-based and served here (repositories, no internal handler). The call runs in
  * the dialer runtime, in the process holding the agent's station (`POST
  * /api/v1/agency/sessions/:id/my-contact-call`, `session_param`), reached through `callCore`.
- * Both write one `platform_audit_log` row (CA12), ids only.
+ * Both write one `platform_audit_log` row (CA12), ids only: the reopen names the contacts it
+ * reopened (up to {@link AUDITED_CONTACT_IDS_MAX}), the dial its contact and attempt.
  */
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { createChildLogger } from '@magick-agency/observability';
-import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import {
   AGENCY_ASSIGNMENT_RANGE_MAX,
   type AgencyAgentRetryErrorCode,
@@ -37,8 +40,7 @@ import {
 } from '@magick-agency/contracts/api/agency/assignment';
 import { AGENCY_OVERRIDE_NOTE_MAX, AGENCY_OVERRIDE_NOTE_MIN } from '@magick-agency/contracts/agency';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
-import { agencyAgentRetryRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAgentRetryRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { agentRetrySettingsOf, MY_CONTACT_CALL_MESSAGES } from '../../../agency/my-contact-call.js';
 import { validateOverrideNoteText } from '../../../agency/contact-overrides.js';
@@ -50,6 +52,7 @@ import { parseOr400 } from '../helpers/parse-or-400.js';
 import { stringField } from '../helpers/core-campaign.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { AGENT_RETRY_STATUSES, staffedCampaign } from './shared.js';
 
 const log = createChildLogger({ component: 'proxy-agency-my-contacts' });
 
@@ -88,38 +91,11 @@ function sendRefusal(
   return reply.code(status).send(body);
 }
 
-function accountAudit(request: FastifyRequest): { tenant_id: string; account_id?: string } {
-  return { tenant_id: request.tenantId!, ...(request.accountId ? { account_id: request.accountId } : {}) };
-}
+/** The reopened contact ids one audit row carries; past this, `contact_ids_truncated`. */
+export const AUDITED_CONTACT_IDS_MAX = 500;
 
-/**
- * Gates 2 and 3: the flag, then the campaign in scope and the caller staffed on it. The
- * campaign, or null once a refusal is sent.
- */
-async function ownContactsScope(
-  request: FastifyRequest,
-  reply: FastifyReply,
-  userId: string,
-  campaignId: string,
-): Promise<AgencyCampaignRecord | null> {
-  const tenantId = request.tenantId!;
-  const accountId = request.accountId;
-  const enabled = await getFeatureFlagService().isEnabled(FLAGS.agency_contact_assignment_enabled, {
-    tenantId, ...(accountId ? { accountId } : {}),
-  });
-  if (!enabled) {
-    sendRefusal(reply, 403, 'assignment_disabled');
-    return null;
-  }
-  const campaign = await agencyCampaignRepository.findById(campaignId);
-  const staffed = campaign && campaign.tenant_id === tenantId && campaign.account_id === accountId
-    ? await agencyCampaignAgentRepository.isActiveOnCampaign(tenantId, campaignId, userId)
-    : false;
-  if (!campaign || !staffed) {
-    sendRefusal(reply, 403, 'not_staffed');
-    return null;
-  }
-  return campaign;
+function campaignAudit(campaign: AgencyCampaignRecord): { tenant_id: string; account_id?: string } {
+  return { tenant_id: campaign.tenant_id, ...(campaign.account_id ? { account_id: campaign.account_id } : {}) };
 }
 
 export async function registerMyContactActionRoutes(app: FastifyInstance): Promise<void> {
@@ -137,9 +113,10 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
     if (!userId) return reply;
     const parsed = parseOr400(retrySchema, request.body ?? {}, reply, 'agency');
     if (!parsed) return reply;
-    const campaign = await ownContactsScope(request, reply, userId, parsed.data.campaign_id);
+    const campaign = await staffedCampaign(request, reply, parsed.data.campaign_id.toLowerCase(), userId);
     if (!campaign) return reply;
     if (!campaign.allow_agent_retry) return sendRefusal(reply, 403, 'agent_retry_disabled');
+    if (!AGENT_RETRY_STATUSES.has(campaign.status)) return sendRefusal(reply, 409, 'campaign_not_running');
 
     const result = await agencyAgentRetryRepository.reopenForAgent({
       campaignId: campaign.id,
@@ -150,7 +127,7 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
     if (result.reopened.length > 0) {
       publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
       platformAuditLogger.log({
-        ...accountAudit(request),
+        ...campaignAudit(campaign),
         ...requestAuditActor(request),
         action: 'agency_contacts.agent_retry_reopened',
         resource_type: 'agency_campaign',
@@ -159,6 +136,8 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
         details: {
           campaign_id: campaign.id,
           reopened: result.reopened.length,
+          contact_ids: result.reopened.slice(0, AUDITED_CONTACT_IDS_MAX),
+          ...(result.reopened.length > AUDITED_CONTACT_IDS_MAX ? { contact_ids_truncated: true } : {}),
           skipped_total: result.skippedTotal,
           all: parsed.data.all === true,
         },
@@ -189,7 +168,7 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
     if (!UUID_RE.test(request.params.contactId)) return sendRefusal(reply, 404, 'contact_not_found');
     const parsed = parseOr400(callSchema, request.body ?? {}, reply, 'agency');
     if (!parsed) return reply;
-    const campaign = await ownContactsScope(request, reply, userId, parsed.data.campaign_id);
+    const campaign = await staffedCampaign(request, reply, parsed.data.campaign_id.toLowerCase(), userId);
     if (!campaign) return reply;
     // The note's shape, before anything else is asked: a note given is a note that counts.
     if (parsed.data.override_note !== undefined && validateOverrideNoteText(parsed.data.override_note) === null) {
@@ -206,8 +185,8 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
         ...(parsed.data.override_note !== undefined ? { override_note: parsed.data.override_note } : {}),
         agent_user_id: userId,
       },
-      tenantId: request.tenantId!,
-      accountId: request.accountId,
+      tenantId: campaign.tenant_id,
+      accountId: campaign.account_id ?? undefined,
     });
     if (result.status >= 400) {
       const code = result.body && typeof result.body === 'object' ? (result.body as { code?: unknown }).code : undefined;
@@ -222,7 +201,7 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
     const body = result.body as AgencyMyContactCallResponse & { basis?: unknown };
     const attemptId = stringField(result.body, 'attempt_id');
     platformAuditLogger.log({
-      ...accountAudit(request),
+      ...campaignAudit(campaign),
       ...requestAuditActor(request),
       action: 'agency_contact.agent_dialed',
       resource_type: 'agency_contact',

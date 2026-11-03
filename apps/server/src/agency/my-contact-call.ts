@@ -118,6 +118,7 @@ export const MY_CONTACT_CALL_MESSAGES: Readonly<Record<AgencyAgentRetryErrorCode
   no_caller_id: 'The campaign has no usable caller ID.',
   no_station: 'Your station is not connected. Reconnect and try again.',
   dial_failed: 'The call could not be placed. The contact is back in your list.',
+  feature_disabled: 'The agency dialer is not enabled for this account.',
 };
 
 function refuse(

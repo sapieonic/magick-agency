@@ -7,9 +7,10 @@
  * the agent's station is: with media workers, the worker holding the socket, whose dispatcher
  * and dialer own the call, as for the wrap-up redial.
  *
- * The public route has already checked the flag, the campaign's scope and the caller's
- * staffing, and validated the body; this re-checks what the dialer runtime alone can (the
- * session is the caller's live, available session on the campaign) and refuses in the
+ * The public route has already checked the assignment flag, the campaign's scope and the
+ * caller's staffing, and validated the body; this checks the `agency_dialer_enabled` kill
+ * switch (`403 feature_disabled`), re-checks what the dialer runtime alone can (the session
+ * is the caller's live, available session on the campaign) and refuses in the
  * agent-retry vocabulary (`AgencyAgentRetryErrorResponse`), which the public route passes on.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -18,6 +19,7 @@ import type { AgencyRuntime } from '../../../agency/runtime.js';
 import { MY_CONTACT_CALL_MESSAGES, startMyContactCall } from '../../../agency/my-contact-call.js';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { requireOwnedSession } from './helpers.js';
 
 interface MyContactCallBody {
@@ -42,6 +44,16 @@ export async function registerMyContactCallRoutes(sub: FastifyInstance, runtime:
     // `409 session_ended`. The public route answers those as `agent_not_available`.
     const session = await requireOwnedSession(request, reply);
     if (!session) return reply;
+    // The kill switch, re-read on every dial as pacing re-reads it each tick: an account whose
+    // dialer was turned off stops dialling even while a campaign row still says `running`, and
+    // a dial placed for it cannot be un-dialled.
+    if (!(await getFeatureFlagService().isEnabled(FLAGS.agency_dialer_enabled, {
+      tenantId: getTenantId(request), accountId: getAccountId(request),
+    }))) {
+      return reply.code(403).send({
+        error: 'Forbidden', code: 'feature_disabled', message: MY_CONTACT_CALL_MESSAGES.feature_disabled,
+      } satisfies AgencyAgentRetryErrorResponse);
+    }
     const body = (request.body ?? {}) as MyContactCallBody;
     // Validated at the edge: a non-UUID reaching a `uuid` cast is a 22P02, not an answer.
     if (typeof body.contact_id !== 'string' || !UUID_RE.test(body.contact_id)) {

@@ -482,7 +482,8 @@
       "dnc_unavailable",
       "no_caller_id",
       "no_station",
-      "dial_failed"
+      "dial_failed",
+      "feature_disabled"
     ]
   }
 }

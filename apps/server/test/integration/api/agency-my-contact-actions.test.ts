@@ -15,10 +15,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *     nothing it should not, and writes one audit row;
  *  5. call: another agent's contact is the missing contact's 404; another agent's session is
  *     `agent_not_available`; a note out of bounds is `override_note_invalid`; a reached contact
- *     is `contact_not_retryable` with its block.
+ *     is `contact_not_retryable` with its block;
+ *  6. call with the `agency_dialer_enabled` kill switch off for the account: 403
+ *     `feature_disabled`, nothing claimed;
+ *  7. retry on a finished campaign: 409 `campaign_not_running`, nothing reopened, and the
+ *     summary's `retry.allowed` is false;
+ *  8. the assignment flag off for the ACCOUNT, asked without `X-Account-Id`: still 403
+ *     `assignment_disabled` (the campaign's account is read).
  *
  * Mutation-checked: dropping the owner predicate from the reopen reds 4; from
- * `evaluateForAgentDial` reds 5 (another agent's contact dials past the 404).
+ * `evaluateForAgentDial` reds 5 (another agent's contact dials past the 404); the kill-switch
+ * read reds 6; the status gate reds 7; the campaign-account flag re-read reds 8.
  */
 
 const mocks = vi.hoisted(() => {
@@ -30,10 +37,25 @@ vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyI
 import { randomUUID } from 'node:crypto';
 import { getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import {
-  call, drainAudits, expectHealthy, scalar, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
+  call, drainAudits, expectHealthy, headersFor, scalar, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import { getAgencyRuntime } from '../../../src/bootstrap/agency.js';
+import { getFeatureFlagService } from '../../../src/feature-flags/index.js';
+
+/** An account-level flag override for `floor`, in force until the returned undo runs. */
+async function accountFlag(key: string, value: boolean): Promise<() => Promise<void>> {
+  await getTestPool().query(
+    `INSERT INTO feature_flag_overrides (flag_key, scope_type, tenant_id, account_id, value)
+     VALUES ($1, 'account', $2, $3, $4::jsonb)`, [key, floor.tenant, floor.account, JSON.stringify(value)]);
+  await getFeatureFlagService().invalidate({ tenantId: floor.tenant });
+  return async () => {
+    await getTestPool().query(
+      `DELETE FROM feature_flag_overrides WHERE flag_key = $1 AND scope_type = 'account' AND account_id = $2`,
+      [key, floor.account]);
+    await getFeatureFlagService().invalidate({ tenantId: floor.tenant });
+  };
+}
 
 let loaded: LoadApp;
 let floor: TenantFloor;
@@ -148,8 +170,9 @@ describe('the agent\'s own-contact actions (integration)', () => {
         WHERE action = 'agency_contacts.agent_retry_reopened' ORDER BY created_at DESC LIMIT 1`);
     expect(audit).toMatchObject({
       user_id: A().id, campaign_id: CAMPAIGN(), resource_type: 'agency_campaign',
-      details: { campaign_id: CAMPAIGN(), reopened: 1, skipped_total: 1 },
+      details: { campaign_id: CAMPAIGN(), reopened: 1, contact_ids: [mine], skipped_total: 1 },
     });
+    expect(JSON.stringify(audit.details)).not.toContain(theirs);
   });
 
   it('5. call: another agent\'s contact is a 404; another agent\'s session is agent_not_available; a bad note is a 400; a reached contact names its block', async () => {
@@ -182,5 +205,61 @@ describe('the agent\'s own-contact actions (integration)', () => {
     expect(reached.statusCode, reached.body).toBe(409);
     expect(reached.json()).toMatchObject({ code: 'contact_not_retryable', details: { blocked: 'not_retryable' } });
     expect((await getAgencyRuntime()!.agents.get(sessionId))?.state).toBe('available');
+  });
+
+  it('6. call with the dialer kill switch off for the account: 403 feature_disabled, nothing claimed', async () => {
+    const joined = await call(app(), 'POST', '/proxy/agency/sessions', A(), floor, { campaign_id: CAMPAIGN() });
+    expect(joined.statusCode, joined.body).toBe(201);
+    const sessionId = joined.json().session_id as string;
+    await getAgencyRuntime()!.agents.set(sessionId, 'available');
+    const due = await contact(A(), { state: 'pending', next_attempt_at: new Date(Date.now() - 60_000) });
+    const undo = await accountFlag('agency_dialer_enabled', false);
+    try {
+      const r = await dial(A(), due, { campaign_id: CAMPAIGN(), session_id: sessionId });
+      expect(r.statusCode, r.body).toBe(403);
+      expect(r.json()).toMatchObject({ code: 'feature_disabled' });
+      expect(await stateOf(due)).toBe('pending');
+      expect((await getAgencyRuntime()!.agents.get(sessionId))?.state).toBe('available');
+    } finally {
+      await undo();
+    }
+  });
+
+  it('7. retry on a finished campaign: 409 campaign_not_running, nothing reopened, retry.allowed false', async () => {
+    await getTestPool().query('UPDATE agency_campaigns SET allow_agent_retry = true WHERE id = $1', [CAMPAIGN()]);
+    const mine = await contact(A());
+    await getTestPool().query("UPDATE agency_campaigns SET status = 'completed' WHERE id = $1", [CAMPAIGN()]);
+    try {
+      const r = await retry(A(), { campaign_id: CAMPAIGN(), all: true });
+      expect(r.statusCode, r.body).toBe(409);
+      expect(r.json().code).toBe('campaign_not_running');
+      expect(await stateOf(mine)).toBe('exhausted');
+      const summary = await call(app(), 'GET', `/proxy/agency/my-contacts/summary?campaign_id=${CAMPAIGN()}`, A(), floor);
+      expect(summary.statusCode, summary.body).toBe(200);
+      expect(summary.json().retry.allowed).toBe(false);
+      await getTestPool().query("UPDATE agency_campaigns SET status = 'paused' WHERE id = $1", [CAMPAIGN()]);
+      const paused = await call(app(), 'GET', `/proxy/agency/my-contacts/summary?campaign_id=${CAMPAIGN()}`, A(), floor);
+      expect(paused.json().retry.allowed).toBe(true);
+    } finally {
+      await getTestPool().query("UPDATE agency_campaigns SET status = 'running' WHERE id = $1", [CAMPAIGN()]);
+    }
+  });
+
+  it('8. the assignment flag off for the account, asked without X-Account-Id: still 403 assignment_disabled', async () => {
+    const url = `/proxy/agency/my-contacts/summary?campaign_id=${CAMPAIGN()}`;
+    const { 'x-account-id': _dropped, ...noAccount } = headersFor(A(), floor);
+    void _dropped;
+    const before = await app().inject({ method: 'GET', url, headers: noAccount });
+    expect(before.statusCode, before.body).toBe(200);
+    const undo = await accountFlag('agency_contact_assignment_enabled', false);
+    try {
+      const r = await app().inject({ method: 'GET', url, headers: noAccount });
+      expect(r.statusCode, r.body).toBe(403);
+      expect(r.json().code).toBe('assignment_disabled');
+      const withHeader = await call(app(), 'GET', url, A(), floor);
+      expect(withHeader.json().code).toBe('assignment_disabled');
+    } finally {
+      await undo();
+    }
   });
 });

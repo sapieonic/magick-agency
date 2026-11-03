@@ -78,6 +78,9 @@ enum AgentRetryErrorCode implements WireEnum {
 
   /// 502: the dial could not be placed; the contact and the agent were returned.
   dialFailed('dial_failed'),
+
+  /// 403: the agency dialer is turned off for the account; nothing was dialled.
+  featureDisabled('feature_disabled'),
   unknown('');
 
   const AgentRetryErrorCode(this.wire);

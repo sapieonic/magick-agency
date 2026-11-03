@@ -402,6 +402,10 @@ export interface AgencyMyContactsSummary {
   /** In strict mode, open contacts nobody owns (never dialled until a supervisor assigns them). */
   unassigned_open: number;
   retry: {
+    /**
+     * The agent may reopen contacts now: the campaign allows agent retry AND is `running` or
+     * `paused` (on a finished campaign `POST /my-contacts/retry` answers `campaign_not_running`).
+     */
     allowed: boolean;
     rounds: number;
     cooldown_minutes: number;
@@ -481,7 +485,9 @@ export type AgencyAssignmentErrorCode =
   /** 409. `assignment_mode` changes only while the campaign is draft or paused. */
   | 'mode_change_requires_pause'
   /** 404. No such contact on this campaign (history read). */
-  | 'contact_not_found';
+  | 'contact_not_found'
+  /** 404. No such campaign in the caller's tenant and account. */
+  | 'campaign_not_found';
 export const AGENCY_ASSIGNMENT_ERROR_CODES = [
   'assignment_disabled',
   'assignment_invalid',
@@ -489,6 +495,7 @@ export const AGENCY_ASSIGNMENT_ERROR_CODES = [
   'preview_stale',
   'mode_change_requires_pause',
   'contact_not_found',
+  'campaign_not_found',
 ] as const;
 
 /** Refusals of the agent's own-contact routes ({@link AgencyAgentRetryErrorResponse}). */
@@ -522,7 +529,9 @@ export type AgencyAgentRetryErrorCode =
   /** 503. The caller's station is not connected on this server. */
   | 'no_station'
   /** 502. The dial could not be placed; the contact and the agent were returned. */
-  | 'dial_failed';
+  | 'dial_failed'
+  /** 403. The agency dialer is turned off for the account (`agency_dialer_enabled`); nothing was dialled. */
+  | 'feature_disabled';
 export const AGENCY_AGENT_RETRY_ERROR_CODES = [
   'assignment_disabled',
   'not_staffed',
@@ -539,6 +548,7 @@ export const AGENCY_AGENT_RETRY_ERROR_CODES = [
   'no_caller_id',
   'no_station',
   'dial_failed',
+  'feature_disabled',
 ] as const;
 
 /** A refusal body, as every agency refusal: a short title, the code, readable copy, details. */

@@ -141,6 +141,7 @@ abstract final class MyContactsCopy {
           'Your phone isn’t connected to the station yet. Wait until it says Connected, then try again.',
         AgentRetryErrorCode.dialFailed =>
           'The call couldn’t be placed just now, and nothing was dialled. Try again in a moment.',
+        AgentRetryErrorCode.featureDisabled => 'Calling is turned off for this account. Ask your admin.',
         AgentRetryErrorCode.unknown => r.message.isNotEmpty ? r.message : _fallback,
       };
 

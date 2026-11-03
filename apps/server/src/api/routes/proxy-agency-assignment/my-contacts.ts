@@ -1,8 +1,8 @@
 /*
  * The agent's own contacts: `GET /my-contacts/summary` and `GET /my-contacts`.
  * `agency.contacts.own` (floored at `agent`); the subject is ALWAYS `request.user.id`, never a
- * parameter; the campaign must be one the caller is actively staffed on (`403 not_staffed`);
- * the `agency_contact_assignment_enabled` flag (`403 assignment_disabled`). A contact of
+ * parameter; the `agency_contact_assignment_enabled` flag (`403 assignment_disabled`); the
+ * campaign must be one the caller is actively staffed on (`403 not_staffed`, `staffedCampaign`). A contact of
  * another agent never appears: the repository's owner predicate is the caller's id.
  *
  * The agent's ACTIONS on these contacts (retry, call) are registered beside these by their
@@ -25,7 +25,7 @@ import { UUID_RE } from '../../../utils/uuid.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
-import { requireAssignmentEnabled, staffedCampaign } from './shared.js';
+import { agentRetryOpen, staffedCampaign } from './shared.js';
 
 const campaignId = z.string().regex(UUID_RE, 'must be a campaign id');
 
@@ -57,7 +57,6 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
     if (!userId) return reply;
     const query = parseOr400(summaryQuery, request.query ?? {}, reply, 'agency');
     if (!query) return reply;
-    if (!(await requireAssignmentEnabled(request, reply))) return reply;
     const campaign = await staffedCampaign(request, reply, query.data.campaign_id.toLowerCase(), userId);
     if (!campaign) return reply;
 
@@ -75,7 +74,8 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
       queue,
       unassigned_open: campaign.assignment_mode === 'strict' ? tally.pool.open ?? 0 : 0,
       retry: {
-        allowed: campaign.allow_agent_retry,
+        // Off on a finished campaign too: the retry route would refuse `campaign_not_running`.
+        allowed: agentRetryOpen(campaign),
         rounds: campaign.agent_retry_rounds,
         cooldown_minutes: campaign.agent_retry_cooldown_minutes,
         eligible: tally.own.eligible,
@@ -101,7 +101,6 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
     }
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
-    if (!(await requireAssignmentEnabled(request, reply))) return reply;
     const campaign = await staffedCampaign(request, reply, query.data.campaign_id.toLowerCase(), userId);
     if (!campaign) return reply;
 
