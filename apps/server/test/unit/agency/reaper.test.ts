@@ -54,7 +54,9 @@ const { repos } = vi.hoisted(() => ({
       reapByIds: vi.fn().mockResolvedValue([]),
       // Auto-disposition path.
       findLapsedWrapups: vi.fn().mockResolvedValue([]),
-      recordAutoDisposition: vi.fn(),
+      // The stamp and the release, one guarded statement: resolves the contact state
+      // that landed, or null when the row moved on since the read.
+      closeLapsedWrapup: vi.fn(),
       // Needed by the real dialer in part B.
       setState: vi.fn().mockResolvedValue(null),
       attachWebrtcCall: vi.fn().mockResolvedValue(undefined),
@@ -199,9 +201,9 @@ beforeEach(() => {
   repos.attempt.findNonTerminalOlderThan.mockResolvedValue([]);
   repos.attempt.reapByIds.mockResolvedValue([]);
   repos.attempt.findLapsedWrapups.mockResolvedValue([]);
-  // The guarded UPDATE's success case: it returns the row it stamped.
-  repos.attempt.recordAutoDisposition.mockImplementation(async (id: string, code: string) =>
-    ({ id, disposition_code: code }));
+  // The guarded statement's success case: the requested contact state landed.
+  repos.attempt.closeLapsedWrapup.mockImplementation(async (o: { contactState: string }) =>
+    ({ state: o.contactState, suppressed_reason: null }));
   repos.session.markAllOffline.mockResolvedValue(0);
   repos.contact.requeueOrphaned.mockResolvedValue({ state: 'pending', our_fault_attempts: 1 });
 });
@@ -800,7 +802,9 @@ describe('AgencyReaper auto-disposition sweep', () => {
     // The shared constant, never a second literal: `dispositionRefusal` has to
     // recognise this exact code as "auto-closed" rather than "you already did
     // this", which is a different message to a different person.
-    expect(repos.attempt.recordAutoDisposition).toHaveBeenCalledWith('att-1', AUTO_DISPOSITION_CODE);
+    expect(repos.attempt.closeLapsedWrapup).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: 'att-1', dispositionCode: AUTO_DISPOSITION_CODE,
+    }));
     expect(AUTO_DISPOSITION_CODE).toBe('no_disposition');
   });
 
@@ -817,10 +821,10 @@ describe('AgencyReaper auto-disposition sweep', () => {
     // Nothing else in the system releases a contact from `connected` — the
     // disposition route is the only other path out. Without this the contact is
     // parked forever and the campaign can never reach `completed`.
-    expect(repos.contact.markState).toHaveBeenCalledWith('c1', 'completed', expect.objectContaining({
-      last_outcome: 'connected',
-      last_disposition: AUTO_DISPOSITION_CODE,
+    expect(repos.attempt.closeLapsedWrapup).toHaveBeenCalledWith(expect.objectContaining({
+      contactId: 'c1', contactState: 'completed', lastOutcome: 'connected', dispositionCode: AUTO_DISPOSITION_CODE,
     }));
+    expect(repos.contact.markState).not.toHaveBeenCalled();
   });
 
   it('does NOT bump the attempt count', async () => {
@@ -832,7 +836,10 @@ describe('AgencyReaper auto-disposition sweep', () => {
     // The attempt was counted when it ended. Bumping here charges a contact twice
     // for one dial and, at `max_attempts: 3`, exhausts someone after two real
     // conversations — the same reason the disposition route does not bump.
-    expect(repos.contact.markState.mock.calls[0]![2]).not.toHaveProperty('bump_attempt');
+    // `closeLapsedWrapup` has no way to bump: its write never touches `attempt_count`
+    // (pinned against real SQL in `agency-reaper-sql.test.ts`), and nothing else writes.
+    expect(repos.attempt.closeLapsedWrapup).toHaveBeenCalledTimes(1);
+    expect(repos.contact.markState).not.toHaveBeenCalled();
   });
 
   it('writes NO disposition when the campaign never asked for one', async () => {
@@ -847,9 +854,9 @@ describe('AgencyReaper auto-disposition sweep', () => {
 
     expect(await new AgencyReaper(noDeps()).sweepLapsedWrapups()).toBe(1);
 
-    expect(repos.attempt.recordAutoDisposition).not.toHaveBeenCalled();
-    expect(repos.contact.markState).toHaveBeenCalledWith('c1', 'completed', expect.anything());
-    expect(repos.contact.markState.mock.calls[0]![2]).not.toHaveProperty('last_disposition');
+    expect(repos.attempt.closeLapsedWrapup).toHaveBeenCalledWith(expect.objectContaining({
+      contactId: 'c1', contactState: 'completed', dispositionCode: null,
+    }));
   });
 
   it('passes the campaign catalog explicitly — never lets it default to undefined', async () => {
@@ -863,8 +870,9 @@ describe('AgencyReaper auto-disposition sweep', () => {
 
     await new AgencyReaper(noDeps()).sweepLapsedWrapups();
 
-    expect(repos.attempt.recordAutoDisposition).not.toHaveBeenCalled();
-    expect(repos.contact.markState).toHaveBeenCalledWith('c1', 'completed', expect.anything());
+    expect(repos.attempt.closeLapsedWrapup).toHaveBeenCalledWith(expect.objectContaining({
+      contactId: 'c1', contactState: 'completed', dispositionCode: null,
+    }));
   });
 
   it('never dispositions an outcome that required none', async () => {
@@ -879,17 +887,17 @@ describe('AgencyReaper auto-disposition sweep', () => {
     ]);
 
     await new AgencyReaper(noDeps()).sweepLapsedWrapups();
-    expect(repos.attempt.recordAutoDisposition).not.toHaveBeenCalled();
+    expect(repos.attempt.closeLapsedWrapup).toHaveBeenCalledWith(expect.objectContaining({ dispositionCode: null }));
   });
 
-  it('loses the race to an agent who submitted their real disposition', async () => {
-    // The guarded UPDATE returns null when `disposition_code` is no longer NULL.
-    // The agent's record of what was said to a customer stands, and the route has
-    // already released the contact — so there is nothing here to repair.
+  it('counts nothing for a row that moved on since the read (the guarded write returned null)', async () => {
+    // Null when `disposition_code` is no longer NULL (the agent's record stands, and
+    // the route released the contact) or the contact is no longer parked for this
+    // attempt. Whatever moved it owns it; there is nothing here to repair.
     repos.attempt.findLapsedWrapups.mockResolvedValue([
       attemptRow({ id: 'att-1', contact_id: 'c1', outcome: 'connected', campaign_disposition_catalog: [{ code: 's' }] }),
     ]);
-    repos.attempt.recordAutoDisposition.mockResolvedValue(null);
+    repos.attempt.closeLapsedWrapup.mockResolvedValue(null);
 
     expect(await new AgencyReaper(noDeps()).sweepLapsedWrapups()).toBe(0);
     expect(repos.contact.markState).not.toHaveBeenCalled();
@@ -937,17 +945,17 @@ describe('AgencyReaper auto-disposition sweep', () => {
       attemptRow({ id: 'att-1', contact_id: 'c1', outcome: 'connected', campaign_disposition_catalog: [{ code: 's' }] }),
       attemptRow({ id: 'att-2', contact_id: 'c2', outcome: 'connected', campaign_disposition_catalog: [{ code: 's' }] }),
     ]);
-    repos.contact.markState.mockRejectedValueOnce(new Error('db blip'));
+    repos.attempt.closeLapsedWrapup.mockRejectedValueOnce(new Error('db blip'));
 
     // One stuck contact must not leave the rest stranded — the sweep is the only
-    // thing that will ever come back for them.
-    expect(await new AgencyReaper(noDeps()).sweepLapsedWrapups()).toBe(2);
-    expect(repos.contact.markState).toHaveBeenCalledTimes(2);
+    // thing that will ever come back for them. Only the write that landed counts.
+    expect(await new AgencyReaper(noDeps()).sweepLapsedWrapups()).toBe(1);
+    expect(repos.attempt.closeLapsedWrapup).toHaveBeenCalledTimes(2);
   });
 
   it('is a quiet no-op when nothing has lapsed', async () => {
     expect(await new AgencyReaper(noDeps()).sweepLapsedWrapups()).toBe(0);
-    expect(repos.attempt.recordAutoDisposition).not.toHaveBeenCalled();
+    expect(repos.attempt.closeLapsedWrapup).not.toHaveBeenCalled();
     expect(repos.contact.markState).not.toHaveBeenCalled();
   });
 });

@@ -450,10 +450,15 @@ export class AgencyReaper {
    *   the difference is worth knowing before trusting it: an empty-catalog
    *   campaign does not park its contacts in `connected` at bridge time, so by
    *   the time a wrap-up lapses the `ended` handler's outcome policy has normally
-   *   released the contact already and this write is idempotent. What it still
+   *   released the contact already and the read does not find it. What it still
    *   genuinely rescues is the contact stranded by a catalog that changed
    *   mid-flight — parked `connected` under the old one, owed nothing under the
    *   new — which no other path would ever release.
+   *
+   * Every write is conditional on the row still being what the read found
+   * (`closeLapsedWrapup`, one statement for the stamp and the release), and only a
+   * write that landed is counted: a contact that moved on in between belongs to
+   * whatever moved it.
    *
    * The catalog comes off the joined campaign row and is **never defaulted**:
    * `requiresDisposition(outcome, undefined)` returns *true*, so passing nothing
@@ -470,19 +475,6 @@ export class AgencyReaper {
       // unconfigured campaign from "never owed one" to "owed one".
       const owed = requiresDisposition(row.outcome, row.campaign_disposition_catalog ?? []);
 
-      if (owed) {
-        const stamped = await agencyAttemptRepository
-          .recordAutoDisposition(row.id, AUTO_DISPOSITION_CODE)
-          .catch((err) => {
-            log.error({ err, attemptId: row.id }, 'Failed to write auto-disposition');
-            return null;
-          });
-        // Null means an agent wrote their real disposition in the meantime. Their
-        // record stands and the route already released the contact, so there is
-        // nothing here to repair.
-        if (!stamped) continue;
-      }
-
       // With no disposition recorded, the OUTCOME policy decides. The auto-close is
       // one of exactly two cases the precedence rule names as falling to the outcome
       // policy, which is why it routes here rather than hard-coding a state.
@@ -494,24 +486,49 @@ export class AgencyReaper {
       const decision = resolveRetryDecision(
         row.campaign_retry_policy, row.outcome, now, row.contact_attempt_count,
       );
-      await agencyContactRepository
-        .markState(row.contact_id, decision.contactState, {
-          last_outcome: row.outcome,
-          // No `bump_attempt`: the attempt was counted when it ended. Bumping here
-          // would charge a contact twice for one dial — the same reason the
-          // disposition route does not bump either.
-          ...(owed ? { last_disposition: AUTO_DISPOSITION_CODE } : {}),
-          ...(decision.nextAttemptAt ? { next_attempt_at: decision.nextAttemptAt } : {}),
-          ...(decision.suppressedReason ? { suppressed_reason: decision.suppressedReason } : {}),
+      // The stamp and the release are ONE guarded statement, and it writes only while
+      // the attempt and the contact are still what the read above found (no write-up
+      // yet, the contact still parked `connected` for THIS attempt). The read and this
+      // write were once a SELECT and two unconditional writes: a contact the agent's
+      // disposition released, and pacing re-claimed, in between was pulled out from
+      // under its new call and given this attempt's outcome. No `bump_attempt`: the
+      // attempt was counted when it ended, and bumping here would charge a contact
+      // twice for one dial (the disposition route does not bump either).
+      const landed = await agencyAttemptRepository
+        .closeLapsedWrapup({
+          attemptId: row.id,
+          contactId: row.contact_id,
+          dispositionCode: owed ? AUTO_DISPOSITION_CODE : null,
+          contactState: decision.contactState,
+          lastOutcome: row.outcome,
+          nextAttemptAt: decision.nextAttemptAt ?? null,
+          suppressedReason: decision.suppressedReason ?? null,
         })
-        .catch((err) => log.error({ err, contactId: row.contact_id }, 'Failed to release auto-closed contact'));
+        .catch((err) => {
+          log.error({ err, attemptId: row.id, contactId: row.contact_id }, 'Failed to close a lapsed wrap-up — the next sweep retries it');
+          return undefined;
+        });
+      if (landed === undefined) continue;
+      // Null: the row moved on since the read (an agent's real write-up, a contact
+      // released and claimed again, a newer call parked on it). Whatever moved it owns
+      // it now; nothing was written and nothing is counted.
+      if (landed === null) {
+        log.info({ attemptId: row.id, contactId: row.contact_id }, 'Lapsed wrap-up moved on before it was closed — left as it is');
+        continue;
+      }
+      if (landed.state !== decision.contactState) {
+        log.warn(
+          { contactId: row.contact_id, requestedState: decision.contactState, state: landed.state, suppressedReason: landed.suppressed_reason },
+          'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+        );
+      }
       closed++;
       log.info(
         {
           attemptId: row.id,
           contactId: row.contact_id,
           dispositionOwed: owed,
-          contactState: decision.contactState,
+          contactState: landed.state,
           retryReason: decision.reason,
         },
         owed ? 'Wrap-up lapsed — auto-dispositioned' : 'Wrap-up lapsed with no disposition owed — contact released',
