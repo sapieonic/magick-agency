@@ -26,6 +26,9 @@ import {
   validateConfig,
   configFromCampaign,
   fieldErrorsFromResponse,
+  resetAssignmentConfig,
+  storedAssignmentLeftovers,
+  type AssignmentPayloadScope,
   type CampaignConfigState,
 } from '../../utils/agencyCampaignConfigForm';
 import {
@@ -92,6 +95,12 @@ export function AgencyCampaignSettingsPage() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  /**
+   * "Reset to defaults" was pressed with the flag off: the form holds the defaults
+   * and no overrides, and the next save SENDS them (the server lets a default
+   * through with the flag off). Cleared by a successful save or a reload.
+   */
+  const [assignmentResetPending, setAssignmentResetPending] = useState(false);
 
   const canEdit = hasPermission(role, 'agency.campaigns.write');
   // Contact assignment's settings and outcome overrides: shown and sent only while
@@ -139,6 +148,7 @@ export function AgencyCampaignSettingsPage() {
       setName(record.name);
       setCallerIds(record.caller_ids ?? []);
       setRecording(recordingStateFromCampaign(record));
+      setAssignmentResetPending(false);
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : 'Could not load this campaign.');
     } finally {
@@ -192,7 +202,12 @@ export function AgencyCampaignSettingsPage() {
     const recordingFields = recordingPayload({ recordingEnabled, analyticsEnabled, next: recording });
     // The mode is locked (and so unchanged) unless the LOADED campaign is draft or paused.
     const modeLocked = assignmentModeLocked(campaign?.status);
-    const assignmentScope = !assignmentEnabled ? 'none' : modeLocked ? 'settings_only' : 'all';
+    // With the flag off nothing is sent (the stored values ride along unchanged),
+    // unless a reset is pending: then the defaults are sent, the mode too when it
+    // may change.
+    const assignmentScope: AssignmentPayloadScope = !assignmentEnabled && !assignmentResetPending
+      ? 'none'
+      : modeLocked ? 'settings_only' : 'all';
     try {
       // The name is not part of `buildConfigPayload` — that builds the behaviour
       // block. Merged into one PATCH so a rename and a window change are one
@@ -235,6 +250,7 @@ export function AgencyCampaignSettingsPage() {
       setName(updated.name);
       setCallerIds(updated.caller_ids ?? []);
       setRecording(recordingStateFromCampaign(updated));
+      setAssignmentResetPending(false);
       showToast('Campaign settings saved.', 'success');
       trackAgencyCampaignConfigSaved({
         campaign_id: id,
@@ -281,7 +297,7 @@ export function AgencyCampaignSettingsPage() {
     }
   }, [
     id, config, name, callerIds, recording, recordingEnabled, analyticsEnabled,
-    tenantId, accountId, showToast, assignmentEnabled, campaign?.status,
+    tenantId, accountId, showToast, assignmentEnabled, campaign?.status, assignmentResetPending,
   ]);
 
   if (loading) return <LoadingSpinner />;
@@ -289,6 +305,15 @@ export function AgencyCampaignSettingsPage() {
   if (!campaign || !config || !recording) return null;
 
   const block = configBlockReason(config);
+  /*
+    Contact assignment turned off after a campaign was set up with it: pacing still
+    follows what the campaign stores (CA9 gates the surface, never the runtime), and
+    with the settings hidden there was no way back. Keyed on the LOADED campaign,
+    so the notice stays until the reset is saved.
+  */
+  const assignmentLeftovers = assignmentEnabled ? [] : storedAssignmentLeftovers(campaign);
+  const modeResetBlocked = assignmentModeLocked(campaign.status)
+    && (campaign.assignment_mode ?? 'pool') !== 'pool';
   const isLive = campaign.status === 'running' || campaign.status === 'stopping';
 
   const summaryGate = analysisGate({ enabled: analyticsEnabled, current: recording.profileId });
@@ -465,6 +490,41 @@ export function AgencyCampaignSettingsPage() {
         )}
       </div>
 
+      {assignmentLeftovers.length > 0 && (
+        <div className={styles.liveNote} role="note" data-testid="assignment-off-notice">
+          <p>
+            {`Contact assignment is turned off for this account, but this campaign still uses ${joinList(assignmentLeftovers)}. Dialling keeps following them until they are reset.`}
+          </p>
+          {modeResetBlocked && (
+            <p data-testid="assignment-reset-pause">
+              Its assignment mode can change only while the campaign is paused or a draft: pause
+              it first to put the mode back to the shared pool. A reset now puts back everything else.
+            </p>
+          )}
+          {fieldErrors['assignment_mode'] && (
+            <p className={styles.fieldError}>{fieldErrors['assignment_mode']}</p>
+          )}
+          {canEdit && (assignmentResetPending ? (
+            <p data-testid="assignment-reset-pending">
+              Contact assignment goes back to the defaults, and every outcome override is removed,
+              when you save.
+            </p>
+          ) : (
+            <button
+              type="button"
+              className={styles.linkButton}
+              onClick={() => {
+                setConfig(resetAssignmentConfig(config));
+                setAssignmentResetPending(true);
+              }}
+              data-testid="assignment-reset"
+            >
+              Reset to defaults
+            </button>
+          ))}
+        </div>
+      )}
+
       <CampaignBehaviourSection
         state={config}
         onChange={setConfig}
@@ -490,6 +550,12 @@ export function AgencyCampaignSettingsPage() {
 }
 
 export default AgencyCampaignSettingsPage;
+
+/** `a`, `a and b`, `a, b and c`. */
+function joinList(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
 
 /** The assignment half of `agency_campaign_config_saved`: enum labels and counts only. */
 function assignmentAnalytics(config: CampaignConfigState) {

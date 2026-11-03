@@ -159,6 +159,22 @@ describe('My contacts in the header', () => {
     expect(screen.getByTestId('idle-guide')).toBeTruthy();
   });
 
+  it('suspends the station shortcuts while it is open, and they come back when it closes', async () => {
+    await mounted();
+    await act(async () => {
+      latestSocket().emit({ event: 'agent_state', state: 'available', since: '2026-11-03T10:00:00.000Z' });
+    });
+    fireEvent.click(screen.getByTestId('my-contacts-open'));
+    expect(screen.getByTestId('my-contacts')).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'b' });
+    expect(screen.queryByRole('menu', { name: 'Break reasons' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close My contacts' }));
+    expect(screen.queryByTestId('my-contacts')).toBeNull();
+    fireEvent.keyDown(window, { key: 'b' });
+    expect(screen.getByRole('menu', { name: 'Break reasons' })).toBeTruthy();
+  });
+
   it('is refused in place, with the reason, while a call is reserved — and closes if open', async () => {
     await mounted();
     await act(async () => {

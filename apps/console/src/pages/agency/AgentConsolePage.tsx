@@ -161,6 +161,8 @@ export default function AgentConsolePage() {
   useEffect(() => {
     if (myContactsLock !== null) setMyContactsOpen(false);
   }, [myContactsLock]);
+  /** The panel is on screen (the same condition its mount below reads). */
+  const myContactsShown = myContactsOpen && myContactsLock === null && bootstrap !== null;
 
   /**
    * Focus moves exactly ONCE per call — to the console root, on reservation — and
@@ -206,8 +208,12 @@ export default function AgentConsolePage() {
     userId: user?.id ?? null,
   });
 
+  // Suspended under the soft phone (its own keyboard) and under My contacts: the
+  // panel is a modal with its own focus trap, and a station key behind it (`b`
+  // opening the break menu, `/` pulling focus out of the trap) acts on a screen
+  // the agent cannot see.
   useStationShortcuts(
-    { agentState, cons, bootstrap, suspended: softphone.active },
+    { agentState, cons, bootstrap, suspended: softphone.active || myContactsShown },
     { breakMenuRef, notesRef, fieldFilterRef, padRef, dncRef },
   );
 
@@ -613,7 +619,7 @@ export default function AgentConsolePage() {
         the original sentence describes what confirming will do, and once it has
         failed the only news is that it did not.
       */}
-      {myContactsOpen && myContactsLock === null && bootstrap ? (
+      {myContactsShown && bootstrap ? (
         <MyContactsPanel
           campaignId={bootstrap.campaign_id}
           campaignName={bootstrap.campaign_name}

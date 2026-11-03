@@ -88,6 +88,33 @@ describe('buildOperation', () => {
     expect(buildOperation({ ...draft, columnName: '' }, []).ok).toBe(false);
   });
 
+  it('holds a count to the server’s 1 to 10,00,000, and says so', () => {
+    expect(buildOperation(emptyDraft('count', { agentId: 'a', count: '1000000' }), []).ok).toBe(true);
+    expect(buildOperation(emptyDraft('count', { agentId: 'a', count: '1000001' }), [])).toEqual({
+      ok: false, reason: 'Enter how many contacts, a whole number from 1 to 10,00,000.',
+    });
+    expect(buildOperation(emptyDraft('reassign', { fromId: 'a', agentId: 'b', count: '1000001' }), [])).toEqual({
+      ok: false, reason: 'Enter a whole number from 1 to 10,00,000, or leave it blank for all.',
+    });
+    expect(buildOperation(emptyDraft('unassign', { fromId: 'a', count: '9007199254740991' }), []).ok).toBe(false);
+  });
+
+  it('holds a column filter to the server’s bounds: name ≤ 200, ≤ 100 values, each ≤ 500 characters', () => {
+    const base = emptyDraft('filter', { agentIds: ['a'], columnName: 'Region' });
+    const values = (n: number) => Array.from({ length: n }, (_, i) => `v${i}`).join(',');
+    expect(buildOperation({ ...base, columnValues: values(100) }, []).ok).toBe(true);
+    expect(buildOperation({ ...base, columnValues: values(101) }, [])).toEqual({
+      ok: false, reason: 'Enter at most 100 values at a time (you have 101).',
+    });
+    expect(buildOperation({ ...base, columnValues: 'x'.repeat(500) }, []).ok).toBe(true);
+    expect(buildOperation({ ...base, columnValues: 'x'.repeat(501) }, [])).toEqual({
+      ok: false, reason: 'Each value is at most 500 characters.',
+    });
+    expect(buildOperation({ ...base, columnName: 'n'.repeat(201), columnValues: 'North' }, [])).toEqual({
+      ok: false, reason: 'A column name is at most 200 characters.',
+    });
+  });
+
   it('sends the ticked rows for a range, capped at the contract maximum', () => {
     expect(buildOperation(emptyDraft('range', { agentId: 'a' }), ['c1', 'c2'])).toEqual({
       ok: true,

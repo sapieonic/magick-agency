@@ -3,7 +3,11 @@ import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-li
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { ApiError } from '../../api/client';
 import type { AgencyKeysetPage, AgencyRosterContact } from '../../types/agency-spine';
-import type { AgencyAssignmentPreview } from '@magick-agency/contracts/api/agency/assignment';
+import type {
+  AgencyAssignmentPreview,
+  AgencyAssignmentProgress,
+  AgencyAssignmentProgressRow,
+} from '@magick-agency/contracts/api/agency/assignment';
 
 /**
  * The roster's contact-assignment tools: who owns each contact, the owner
@@ -21,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   listCampaignAgents: vi.fn(),
   previewAssignment: vi.fn(),
   commitAssignment: vi.fn(),
+  getAssignmentProgress: vi.fn(),
   flag: vi.fn(),
 }));
 
@@ -41,6 +46,7 @@ vi.mock('../../api/agency', () => ({ listCampaignAgents: mocks.listCampaignAgent
 vi.mock('../../api/agencyAssignment', () => ({
   previewAssignment: mocks.previewAssignment,
   commitAssignment: mocks.commitAssignment,
+  getAssignmentProgress: mocks.getAssignmentProgress,
 }));
 vi.mock('../../hooks/useFeatureFlagEnabled', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../hooks/useFeatureFlagEnabled')>()),
@@ -68,6 +74,21 @@ const PREVIEW: AgencyAssignmentPreview = {
   unchanged: 0, to_pool: 0, same_number_groups: 0,
   per_agent: [{ agent_user_id: 'agent-b', receiving: 2, giving: 0 }],
 };
+
+const NO_COUNTS = { pending: 0, callback: 0, not_reached: 0, in_progress: 0, reached: 0, exhausted: 0, suppressed: 0 };
+function holder(agent_user_id: string, agent_name: string | null, staffed: boolean): AgencyAssignmentProgressRow {
+  return {
+    agent_user_id, agent_name, staffed, live: false, last_seen_at: null, assigned: 3, counts: NO_COUNTS,
+    attempted: 0, due_now: 0, last_activity_at: null, due_while_absent: 0,
+  };
+}
+function progress(agents: AgencyAssignmentProgressRow[]): AgencyAssignmentProgress {
+  return {
+    campaign_id: 'camp-1', assignment_mode: 'strict', agents,
+    pool: { total: 2, counts: NO_COUNTS, due_now: 0 }, unassigned_open: 2, absent_after_minutes: 15,
+    generated_at: '2026-11-03T10:00:00.000Z',
+  };
+}
 
 function page(rows: AgencyRosterContact[]): AgencyKeysetPage<AgencyRosterContact> {
   return { rows, next_cursor: null, limit: 50 };
@@ -100,6 +121,9 @@ beforeEach(() => {
       { user_id: 'agent-b', name: 'Bilal', email: 'b@x.test', role: 'agent', assigned_at: '' },
     ],
   });
+  mocks.getAssignmentProgress.mockResolvedValue(progress([
+    holder('agent-a', 'Asha', true), holder('agent-b', 'Bilal', true), holder('gone-user', null, false),
+  ]));
   mocks.previewAssignment.mockResolvedValue(PREVIEW);
   mocks.commitAssignment.mockResolvedValue({
     kind: 'range', batch_id: 'batch-1', moved: 2, skipped_live: 1, unchanged: 0, to_pool: 0, per_agent: [],
@@ -152,6 +176,39 @@ describe('who owns each contact', () => {
   it('offers a chip for an owner in the link who is no longer staffed', async () => {
     await rendered('?assigned_to=gone-user');
     expect(within(screen.getByTestId('roster-assignee-filter')).getByLabelText('Former member')).toBeTruthy();
+  });
+
+  it('names an unstaffed holder (on_unstaff keep), offers them as an owner chip and a Reassign source — never a target', async () => {
+    mocks.getAssignmentProgress.mockResolvedValue(progress([
+      holder('agent-a', 'Asha', true), holder('agent-b', 'Bilal', true), holder('agent-c', 'Chitra', false),
+    ]));
+    mocks.getCampaignContacts.mockResolvedValue(page([BASE, { ...BASE, id: 'c5', assigned_user_id: 'agent-c' }]));
+    await rendered();
+    await waitFor(() => expect(screen.getByTestId('roster-assignee-c5').textContent).toBe('Chitra'));
+    expect(within(screen.getByTestId('roster-assignee-filter')).getByLabelText('Chitra')).toBeTruthy();
+    expect(mocks.getAssignmentProgress).toHaveBeenCalledWith('camp-1', {}, 'tenant-1', 'account-1');
+
+    fireEvent.click(screen.getByTestId('assign-op-reassign'));
+    const dialog = await screen.findByTestId('assignment-dialog');
+    const from = within(dialog).getByTestId('assign-from') as HTMLSelectElement;
+    const to = within(dialog).getByTestId('assign-to') as HTMLSelectElement;
+    expect([...from.options].map((o) => o.textContent)).toContain('Chitra');
+    expect([...to.options].map((o) => o.textContent)).not.toContain('Chitra');
+
+    // Counts read with the console's grouping (formatCount), not the browser's.
+    mocks.previewAssignment.mockResolvedValueOnce({ ...PREVIEW, kind: 'reassign', matched: 123456, moving: 123456 });
+    fireEvent.change(from, { target: { value: 'agent-c' } });
+    fireEvent.change(to, { target: { value: 'agent-a' } });
+    fireEvent.click(within(dialog).getByTestId('assign-preview'));
+    await within(dialog).findByTestId('assign-preview-result');
+    expect(mocks.previewAssignment.mock.lastCall![1]).toMatchObject({ kind: 'reassign', from_user_id: 'agent-c' });
+    expect(within(dialog).getByTestId('assign-moving').textContent).toBe('1,23,456');
+  });
+
+  it('falls back to the staffed agents when the holders cannot be read', async () => {
+    mocks.getAssignmentProgress.mockRejectedValue(new ApiError(500, { message: 'x' }));
+    await rendered();
+    expect(screen.getByTestId('roster-assignee-c3').textContent).toBe('Former member');
   });
 });
 

@@ -89,6 +89,16 @@ export const QUEUE_IDLE_COPY: Record<AgencyQueueIdleReason, { withTime: string; 
 export const NOTHING_DUE_HEADING = 'Nothing due now';
 
 /**
+ * Nothing due for a reason this console has no words for (a newer server's, or
+ * none stated). Still "nothing due": a call is not coming, so the guide must not
+ * fall back to promising one.
+ */
+export const QUEUE_IDLE_NEUTRAL_COPY = {
+  withTime: 'Nothing is due for you right now. Your next contact is due {next}.',
+  withoutTime: 'Nothing is due for you right now.',
+} as const;
+
+/**
  * The idle guide's lead line when the agent's own queue has nothing due, or
  * `null` when the ordinary "a call will reach you" copy is true (pool mode, no
  * queue stated, or something due).
@@ -97,9 +107,8 @@ export function nothingDueCopy(
   queue: AgencyQueueState | null | undefined,
   formatTime: (iso: string) => string,
 ): string | null {
-  if (!queue || queue.due || !queue.reason) return null;
-  const copy = QUEUE_IDLE_COPY[queue.reason];
-  if (!copy) return null;
+  if (!queue || queue.due) return null;
+  const copy = (queue.reason ? QUEUE_IDLE_COPY[queue.reason] : undefined) ?? QUEUE_IDLE_NEUTRAL_COPY;
   return queue.next_due_at
     ? copy.withTime.replace('{next}', formatTime(queue.next_due_at))
     : copy.withoutTime;

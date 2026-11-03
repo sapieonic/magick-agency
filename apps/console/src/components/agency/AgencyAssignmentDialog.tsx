@@ -26,6 +26,7 @@ import {
   type AssignmentDraft,
 } from '../../utils/agencyAssignmentOps';
 import { CONTACT_STATE_LABELS } from '../../types/agency-spine';
+import { formatCount } from '../../utils/format/number';
 import type {
   AgencyAssignmentErrorCode,
   AgencyAssignmentKind,
@@ -325,7 +326,7 @@ export function AgencyAssignmentDialog({
           {draft.kind === 'range' ? (
             <>
               <p className={frame.cohort} data-testid="assign-selected-count">
-                {`${selectedIds.length.toLocaleString()} selected row${selectedIds.length === 1 ? '' : 's'}.`}
+                {`${formatCount(selectedIds.length)} selected row${selectedIds.length === 1 ? '' : 's'}.`}
               </p>
               {agentPicker('Give them to', draft.agentId, (agentId) => update({ agentId }), agents, 'assign-agent')}
             </>
@@ -437,7 +438,7 @@ export function AgencyAssignmentDialog({
                     onChange={() => update({ unassignSource: 'selected' })}
                     disabled={selectedIds.length === 0}
                   />
-                  {`The ${selectedIds.length.toLocaleString()} selected row${selectedIds.length === 1 ? '' : 's'}`}
+                  {`The ${formatCount(selectedIds.length)} selected row${selectedIds.length === 1 ? '' : 's'}`}
                 </label>
               </fieldset>
               {draft.unassignSource === 'agent' ? (
@@ -525,14 +526,14 @@ function PreviewBlock({
       ) : null}
       <p className={frame.count} data-testid="assign-sentence">{previewSentence(preview)}</p>
       <dl className={styles.stats}>
-        <div><dt>Moving</dt><dd data-testid="assign-moving">{preview.moving.toLocaleString()}</dd></div>
+        <div><dt>Moving</dt><dd data-testid="assign-moving">{formatCount(preview.moving)}</dd></div>
         <div>
           <dt>{CONTACT_BUCKET_LABELS.in_progress} — won’t move</dt>
-          <dd data-testid="assign-skipped-live">{preview.skipped_live.toLocaleString()}</dd>
+          <dd data-testid="assign-skipped-live">{formatCount(preview.skipped_live)}</dd>
         </div>
-        <div><dt>Unchanged</dt><dd>{preview.unchanged.toLocaleString()}</dd></div>
-        <div><dt>To the pool</dt><dd>{preview.to_pool.toLocaleString()}</dd></div>
-        <div><dt>Same-number groups</dt><dd>{preview.same_number_groups.toLocaleString()}</dd></div>
+        <div><dt>Unchanged</dt><dd>{formatCount(preview.unchanged)}</dd></div>
+        <div><dt>To the pool</dt><dd>{formatCount(preview.to_pool)}</dd></div>
+        <div><dt>Same-number groups</dt><dd>{formatCount(preview.same_number_groups)}</dd></div>
       </dl>
       {preview.per_agent.length > 0 ? (
         <div className={frame.breakdown}>
@@ -542,9 +543,9 @@ function PreviewBlock({
               <li key={line.agent_user_id} className={frame.breakdownRow} data-testid={`assign-agent-${line.agent_user_id}`}>
                 <span>{agentName(line.agent_user_id)}</span>
                 <span className={frame.breakdownCount}>
-                  {line.receiving > 0 ? `+${line.receiving.toLocaleString()}` : ''}
+                  {line.receiving > 0 ? `+${formatCount(line.receiving)}` : ''}
                   {line.receiving > 0 && line.giving > 0 ? ' / ' : ''}
-                  {line.giving > 0 ? `−${line.giving.toLocaleString()}` : ''}
+                  {line.giving > 0 ? `−${formatCount(line.giving)}` : ''}
                   {line.receiving === 0 && line.giving === 0 ? '0' : ''}
                 </span>
               </li>

@@ -11,6 +11,7 @@ import {
   MY_CONTACT_FILTER_BUCKETS,
   agentRetryRefusal,
   contactCallGate,
+  type CallGate,
   overrideBadge,
   overrideNoteLength,
   overrideNoteValid,
@@ -72,6 +73,13 @@ export interface MyContactsPanelProps {
   /** Injectable clock for the due-now test. */
   now?: () => number;
 }
+
+/** Why the note prompt opened: the window is closed and this contact may be called outside it. */
+export const NOTE_NEEDED_REASON =
+  'The campaign is outside its calling hours. You may still call this contact — say why in a note.';
+
+/** A disabled Call's reason while the note prompt is open for another contact. */
+export const NOTE_PROMPT_OPEN_REASON = 'Finish or cancel the note above first.';
 
 /** A pending "Call" waiting for the agent's calling-hours note. */
 interface NotePrompt {
@@ -289,11 +297,15 @@ export function MyContactsPanel({
         retry_round_spent: false,
       });
       const message = agentRetryRefusal(err, 'The call wasn’t placed.');
-      // The window closed and this contact may be called outside it, with a note:
-      // ask for the note instead of only refusing.
-      if (code === 'outside_calling_hours' && contact.override?.calling_hours && overrideNote === undefined) {
-        setNotePrompt({ contact, reason: message });
-      } else if (notePrompt) {
+      if (code === 'override_note_invalid' && overrideNote === undefined) {
+        // The contact's window is closed and it holds an unspent calling-hours
+        // override: the server asks for the agent's reason (`override_note_invalid`
+        // with no note sent; without the override it would be
+        // `outside_calling_hours`). Ask for the note instead of only refusing.
+        setNotePrompt({ contact, reason: NOTE_NEEDED_REASON });
+      } else if (notePrompt?.contact.id === contact.id) {
+        // A refusal of the prompt's own call (a note that was sent included) stays
+        // inside the prompt, beside the note. Never re-targeted to another contact.
         setNotePrompt({ contact, reason: message });
       } else {
         setNotice({ tone: 'error', text: message });
@@ -306,13 +318,15 @@ export function MyContactsPanel({
   const onCall = (contact: AgencyMyContact) => {
     // Known to be outside the window already: the note is needed, so ask first.
     if (contact.override?.calling_hours && queue?.reason === 'outside_calling_hours') {
-      setNotePrompt({ contact, reason: 'The campaign is outside its calling hours.' });
+      setNotePrompt({ contact, reason: NOTE_NEEDED_REASON });
       return;
     }
     void placeCall(contact);
   };
 
   const station = useMemo(() => ({ sessionId, agentState, dialing }), [sessionId, agentState, dialing]);
+  // The row checkboxes pick what "Retry" sends, so they exist only while it is offered.
+  const retryOffered = summary !== null && showRetryNotReached(summary);
   const nowMs = now();
   const noteLength = overrideNoteLength(note);
 
@@ -368,7 +382,7 @@ export function MyContactsPanel({
           {countButton('suppressed', 'DNC')}
         </div>
 
-        {summary && showRetryNotReached(summary) ? (
+        {retryOffered && summary ? (
           <div className={styles.retryRow}>
             {confirmRetry ? (
               <div className={styles.confirm} role="group" aria-label="Confirm retry" data-testid="my-retry-confirm">
@@ -483,12 +497,16 @@ export function MyContactsPanel({
           {!loading && rows.length > 0 ? (
             <ul className={styles.list}>
               {rows.map((contact) => {
-                const gate = contactCallGate(contact, station, nowMs);
+                // While the note prompt is open for one contact, no other row can
+                // dial: its Call would otherwise race the prompt's own.
+                const gate: CallGate = notePrompt && notePrompt.contact.id !== contact.id
+                  ? { ok: false, reason: NOTE_PROMPT_OPEN_REASON }
+                  : contactCallGate(contact, station, nowMs);
                 const badge = overrideBadge(contact.override);
                 const reasonId = `my-call-reason-${contact.id}`;
                 return (
                   <li key={contact.id} className={styles.row} data-testid={`my-row-${contact.id}`}>
-                    {summary?.retry.allowed ? (
+                    {retryOffered ? (
                       <input
                         type="checkbox"
                         className={styles.pick}
