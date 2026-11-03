@@ -156,7 +156,6 @@ export interface AgencyCreateSessionRequest {
  * guarantee has no tolerance for that. Everything here is campaign config that
  * cannot change mid-session without a new session.
  */
-// `AGENCY_WRAPUP_REDIAL_LIMIT` is declared in `./actions`; named above for the reader.
 export interface AgencySessionBootstrap {
   session_id: string;
   campaign_id: string;

@@ -9,6 +9,7 @@
 // record must count the SAME thing, and two spellings of a JSONB predicate is how
 // two screens come to disagree about how many sales there were.
 import { successDispositionSql } from '@magick-agency/domain/success-disposition';
+import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
 
 /**
  * "This roster row's number, digits only" — the PREFILTER for
@@ -322,6 +323,25 @@ ${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
 }
 
 /**
+ * The attempt (aliased `a`) that stands for ONE CONVERSATION in every connect and
+ * conversion count: a bridged paced attempt, or the last attempt of a wrap-up redial
+ * chain.
+ *
+ * A conversation the agent redialled from wrap-up is two or three attempts: the
+ * original (bridged, closed with the system code `redialed` when the redial was placed)
+ * and its redials (`redial_number > 0`, each but the last also `redialed`). Counted per
+ * bridged attempt, one conversation was two or three connects, and the original,
+ * carrying `redialed`, was booked a HUMAN connect whatever the conversation turned out
+ * to be. So it is counted once, at the attempt that carries its outcome: the one not
+ * closed `redialed`. That attempt is a redial whether or not it bridged itself (one that
+ * rang out still carries the conversation's write-up).
+ *
+ * Talk time is NOT gated on this: every bridged leg is agent talk time, redial or not.
+ */
+export const CONVERSATION_ATTEMPT_SQL = `((a.bridged_at IS NOT NULL AND a.redial_number = 0) OR a.redial_number > 0)
+                AND a.disposition_code IS DISTINCT FROM '${AGENCY_REDIALED_DISPOSITION_CODE}'`;
+
+/**
  * The FIVE metric expressions every agency attempts aggregate selects, in ONE
  * spelling.
  *
@@ -355,8 +375,10 @@ ${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
  * cast it back to `numeric` — text ordering would rank `'9'` above `'400'`.
  */
 export const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
-              COUNT(*) FILTER (WHERE a.bridged_at IS NOT NULL)::text AS connected,
-              COUNT(*) FILTER (WHERE a.bridged_at IS NOT NULL
+              -- Conversations, not bridged legs: a redialled conversation counts once
+              -- (CONVERSATION_ATTEMPT_SQL). attempts counts every dial, redials included.
+              COUNT(*) FILTER (WHERE ${CONVERSATION_ATTEMPT_SQL})::text AS connected,
+              COUNT(*) FILTER (WHERE ${CONVERSATION_ATTEMPT_SQL}
                 AND ${successDispositionSql({ attempt: 'a', catalog: 'c.disposition_catalog' })})::text
                 AS successes,
               -- The AGENT's leg: ended_at - bridged_at, never the persisted

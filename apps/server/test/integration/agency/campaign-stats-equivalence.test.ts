@@ -37,6 +37,17 @@ const { AUTO_DISPOSITION_CODE } = await import('../../../src/agency/disposition.
 
 const VOICEMAIL = 'voicemail';
 
+/**
+ * The campaign's CONVERSATIONS, spelled independently of `CONVERSATION_ATTEMPT_SQL`: a
+ * bridged attempt nobody redialled from wrap-up, or the last attempt of a redial chain
+ * (a redial nobody redialled again), bridged or not. By the chain's STRUCTURE
+ * (`redial_of_attempt_id`), not by the `redialed` code the production predicate reads.
+ */
+const CONVERSATIONS = `(SELECT x.* FROM agency_call_attempts x
+     WHERE x.campaign_id = $1
+       AND (x.bridged_at IS NOT NULL OR x.redial_number > 0)
+       AND NOT EXISTS (SELECT 1 FROM agency_call_attempts n WHERE n.redial_of_attempt_id = x.id))`;
+
 /** One subquery per counter: the pre-aggregation statement, verbatim in meaning. */
 const REFERENCE_STATS_SQL = `SELECT
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1)::text AS contacts_total,
@@ -48,9 +59,12 @@ const REFERENCE_STATS_SQL = `SELECT
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at > now())::text AS retries_pending,
   (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND state <> 'ended')::text AS attempts_live,
   (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1)::text AS attempts_total,
-  (SELECT COUNT(*) FROM agency_call_attempts WHERE campaign_id = $1 AND outcome = 'connected')::text AS attempts_connected,
   (SELECT COUNT(*) FROM agency_call_attempts
-     WHERE campaign_id = $1 AND attempt_number > 1 AND dialed_at IS NOT NULL)::text AS attempts_retried,
+     WHERE campaign_id = $1 AND outcome = 'connected' AND redial_number = 0)::text AS attempts_connected,
+  (SELECT COUNT(*) FROM agency_call_attempts
+     WHERE campaign_id = $1 AND attempt_number > 1 AND dialed_at IS NOT NULL AND redial_number = 0)::text AS attempts_retried,
+  (SELECT COUNT(*) FROM agency_call_attempts
+     WHERE campaign_id = $1 AND redial_number > 0 AND dialed_at IS NOT NULL)::text AS attempts_redialed,
   (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL)::text AS agents_live,
   (SELECT COUNT(*) FROM agency_call_attempts
      WHERE campaign_id = $1 AND state = 'ended' AND answered_at IS NOT NULL
@@ -58,18 +72,14 @@ const REFERENCE_STATS_SQL = `SELECT
   (SELECT COUNT(*) FROM agency_call_attempts
      WHERE campaign_id = $1 AND answered_at > now() - ($2 || ' hours')::interval
        AND (${ABANDONED_ATTEMPT_PREDICATE_SQL}))::text AS abandoned_24h,
-  (SELECT COUNT(*) FROM agency_call_attempts
-     WHERE campaign_id = $1 AND bridged_at IS NOT NULL AND disposition_code IS NOT NULL
+  (SELECT COUNT(*) FROM ${CONVERSATIONS} WHERE disposition_code IS NOT NULL
        AND disposition_code <> $3 AND disposition_code <> $4)::text AS human_connects,
-  (SELECT COUNT(*) FROM agency_call_attempts
-     WHERE campaign_id = $1 AND bridged_at IS NOT NULL
-       AND (disposition_code IS NULL OR disposition_code = $4))::text AS unclassified_connects,
-  (SELECT COUNT(*) FROM agency_call_attempts
-     WHERE campaign_id = $1 AND bridged_at IS NOT NULL AND disposition_code = $3)::text AS machine_connects,
-  (SELECT COUNT(*) FROM agency_call_attempts a
+  (SELECT COUNT(*) FROM ${CONVERSATIONS}
+     WHERE disposition_code IS NULL OR disposition_code = $4)::text AS unclassified_connects,
+  (SELECT COUNT(*) FROM ${CONVERSATIONS} WHERE disposition_code = $3)::text AS machine_connects,
+  (SELECT COUNT(*) FROM ${CONVERSATIONS} a
      JOIN agency_campaigns c ON c.id = a.campaign_id
-     WHERE a.campaign_id = $1 AND a.bridged_at IS NOT NULL
-       AND ${successDispositionSql({ attempt: 'a', catalog: 'c.disposition_catalog' })})::text AS attempts_success,
+     WHERE ${successDispositionSql({ attempt: 'a', catalog: 'c.disposition_catalog' })})::text AS attempts_success,
   (SELECT EXISTS (
      SELECT 1 FROM agency_campaigns c, LATERAL jsonb_array_elements(c.disposition_catalog) e
       WHERE c.id = $1 AND e->>'code' = $3))::text AS machine_connects_available,
@@ -179,6 +189,34 @@ async function seedCampaign(catalog: unknown[], status = 'running'): Promise<str
   await attempt(spare[2]!, { state: 'ended', outcome: 'failed', dialed_at: minutesAgo(3), ended_at: minutesAgo(3) });
   await attempt(spare[3]!, { state: 'ended', outcome: 'busy', attempt_number: 3, dialed_at: minutesAgo(20), ended_at: minutesAgo(20) });
 
+  // Wrap-up redial chains. One conversation each, however many legs.
+  // (a) connected → redial 1 rang out → redial 2 connected and was written up `sale`.
+  const r0 = await attempt(spare[4]!, {
+    attempt_number: 1, state: 'ended', outcome: 'connected', disposition_code: 'redialed',
+    dialed_at: minutesAgo(35), answered_at: minutesAgo(34), bridged_at: minutesAgo(34), ended_at: minutesAgo(33),
+    wrapup_started_at: minutesAgo(33), wrapup_ended_at: plusSeconds(minutesAgo(33), 10), wrapup_resolution: 'redialed',
+  });
+  const r1 = await attempt(spare[4]!, {
+    attempt_number: 2, state: 'ended', outcome: 'no_answer', disposition_code: 'redialed',
+    redial_of_attempt_id: r0.id, redial_number: 1,
+    dialed_at: minutesAgo(32), ended_at: minutesAgo(31),
+  });
+  await attempt(spare[4]!, {
+    attempt_number: 3, state: 'ended', outcome: 'connected', disposition_code: 'sale',
+    redial_of_attempt_id: r1.id, redial_number: 2,
+    dialed_at: minutesAgo(30), answered_at: minutesAgo(29), bridged_at: minutesAgo(29), ended_at: minutesAgo(28),
+  });
+  // (b) connected → redial 1 rang out and carries the outcome (`not_interested`), unbridged.
+  const q0 = await attempt(spare[5]!, {
+    attempt_number: 1, state: 'ended', outcome: 'connected', disposition_code: 'redialed',
+    dialed_at: minutesAgo(27), answered_at: minutesAgo(26), bridged_at: minutesAgo(26), ended_at: minutesAgo(25),
+  });
+  await attempt(spare[5]!, {
+    attempt_number: 2, state: 'ended', outcome: 'busy', disposition_code: 'not_interested',
+    redial_of_attempt_id: q0.id, redial_number: 1,
+    dialed_at: minutesAgo(24), ended_at: minutesAgo(24),
+  });
+
   // The floor: two live sessions (one on a break), one that left.
   await insertAgentSession(id, { state: 'available' });
   await insertAgentSession(id, { state: 'break', break_reason: 'lunch' });
@@ -217,6 +255,7 @@ describe('campaign stats — single-pass aggregates vs one subquery per counter 
       attempts_total: stats.attempts_total,
       attempts_connected: stats.attempts_connected,
       attempts_retried: stats.attempts_retried,
+      attempts_redialed: stats.attempts_redialed,
       agents_live: stats.agents_live,
       answered_24h: stats.answered_24h,
       abandoned_24h: stats.abandoned_24h,
@@ -241,6 +280,7 @@ describe('campaign stats — single-pass aggregates vs one subquery per counter 
       attempts_total: num('attempts_total'),
       attempts_connected: num('attempts_connected'),
       attempts_retried: num('attempts_retried'),
+      attempts_redialed: num('attempts_redialed'),
       agents_live: num('agents_live'),
       answered_24h: num('answered_24h'),
       abandoned_24h: num('abandoned_24h'),
@@ -260,15 +300,19 @@ describe('campaign stats — single-pass aggregates vs one subquery per counter 
     expect(stats.contacts_pending).toBe(3);
     expect(stats.retries_pending).toBe(2);
     expect(stats.attempts_live).toBe(5);
-    expect(stats.attempts_total).toBe(16);
-    expect(stats.attempts_retried).toBe(5); // the queued attempt_number 2 was never placed
+    expect(stats.attempts_total).toBe(21);
+    // The queued attempt_number 2 was never placed; the three wrap-up redials are not retries.
+    expect(stats.attempts_retried).toBe(5);
+    expect(stats.attempts_redialed).toBe(3);
     expect(stats.agents_live).toBe(2);
-    expect(stats.answered_24h).toBe(7);
+    expect(stats.answered_24h).toBe(10);
     expect(stats.abandoned_24h).toBe(2);
-    expect(stats.human_connects).toBe(4);
+    // +2 conversations from the redial chains (the `sale` and the unbridged `not_interested`),
+    // not +4 legs, and never a `redialed` leg as a human connect.
+    expect(stats.human_connects).toBe(6);
     expect(stats.machine_connects).toBe(1);
     expect(stats.unclassified_connects).toBe(3);
-    expect(stats.attempts_success).toBe(3);
+    expect(stats.attempts_success).toBe(4);
     expect(stats.machine_connects_available).toBe(true);
     expect(stats.avg_wrapup_seconds).toBe(37.5);
     expect(stats.abandonment_ceiling_pct).toBe(4.5);

@@ -215,8 +215,11 @@ describe('attempts_retried counts dials PLACED, not retries queued', () => {
     // dialled third attempts: 65 without the gate, 15 with it. Same gate the series
     // aggregate applies to the same table.
     expect(sqlOf()).toMatch(
-      /FILTER \(WHERE attempt_number > 1 AND dialed_at IS NOT NULL\) AS attempts_retried/,
+      /FILTER \(WHERE attempt_number > 1 AND dialed_at IS NOT NULL AND redial_number = 0\) AS attempts_retried/,
     );
+    // A wrap-up redial is not a retry (it continues the conversation it redials): it is
+    // counted, placed, as `attempts_redialed`.
+    expect(sqlOf()).toMatch(/FILTER \(WHERE redial_number > 0 AND dialed_at IS NOT NULL\) AS attempts_redialed/);
     // And it is a different predicate from `retries_pending`, which is about
     // contacts whose `next_attempt_at` is in the future.
     expect(sqlOf()).toContain('next_attempt_at > now()) AS retries_pending');

@@ -89,7 +89,7 @@
   "error_redial_limit_reached": {
     "error": "Conflict",
     "code": "redial_limit_reached",
-    "message": "You have already redialled this customer twice. Save the outcome."
+    "message": "You have already redialled this customer 2 times. Save the outcome."
   },
   "error_redial_blocked_dnc": {
     "error": "Conflict",

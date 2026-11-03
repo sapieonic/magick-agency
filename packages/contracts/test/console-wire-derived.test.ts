@@ -110,6 +110,8 @@ interface OldAgencySupervisorAgent {
   connected: boolean | null;
   break_reason: string | null;
   calls_handled: number;
+  // Added deliberately (wrap-up redial, 0008): the session's redials.
+  redials?: number;
   // Added deliberately (mobile app, 0006): the floor's phone marker.
   client_kind: 'web' | 'mobile';
 }
@@ -149,6 +151,8 @@ interface OldAgencyCampaignStats {
   attempts_success?: number;
   success_rate_pct?: number | null;
   attempts_retried?: number;
+  // Added deliberately (wrap-up redial, 0008).
+  attempts_redialed?: number;
   agents_peak?: number | null;
 }
 
@@ -210,6 +214,9 @@ interface OldAgencyAttempt {
   ended_at: string | null;
   talk_seconds: number | null;
   wrapup_seconds: number | null;
+  // Added deliberately (wrap-up redial, 0008): the chain link.
+  redial_of_attempt_id?: string | null;
+  redial_number?: number;
   created_at: string;
 }
 

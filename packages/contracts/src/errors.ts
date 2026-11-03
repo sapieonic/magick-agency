@@ -160,10 +160,17 @@ export type AgencyActionErrorCode =
    */
   | 'state_changing'
   /**
-   * `POST /sessions/:id/redial` refused (409): the campaign does not allow wrap-up
-   * redial, the session is not in a wrap-up for this attempt, the attempt is not one an
-   * outcome is owed on, or the customer is no longer held for it. Nothing changed; the
-   * agent can still save the outcome.
+   * `POST /sessions/:id/redial` refused. The statuses the route answers with it:
+   *  - 400: the request named no well-formed attempt id;
+   *  - 404: the attempt is not this session's to redial (missing, another session's,
+   *    another tenant's: one answer, so nothing is learned about calls that are not
+   *    yours);
+   *  - 409: the campaign does not allow wrap-up redial (or is not running), the session
+   *    is not in a wrap-up for this attempt, redial is not offered on this wrap-up, the
+   *    attempt is not one an outcome is owed on, or the customer is no longer held for it.
+   * Nothing changed; the agent can still save the outcome. The other redial codes below
+   * are 409, except `redial_blocked`, which is also 503 when the agent's state could not
+   * be read.
    */
   | 'redial_not_allowed'
   /** `POST /sessions/:id/redial` refused (409): `AGENCY_WRAPUP_REDIAL_LIMIT` redials already made. */
@@ -178,9 +185,10 @@ export type AgencyActionErrorCode =
   /** As `redial_blocked_dnc`, for the contact's calling window being closed. */
   | 'redial_blocked_calling_hours'
   /**
-   * As `redial_blocked_dnc`, for every other reason the dial could not be placed: an
-   * invalid number, the DNC registry unreachable (fails closed), no usable caller ID, or
-   * the agent's station not connected. `message` says which.
+   * As `redial_blocked_dnc` (409), for every other reason the dial could not be placed:
+   * an invalid number, the DNC registry unreachable (fails closed), no usable caller ID,
+   * or the agent's station not connected. 503 when the agent's state could not be read
+   * (Redis did not answer): nothing changed, try again. `message` says which.
    */
   | 'redial_blocked';
 

@@ -62,7 +62,7 @@ const ATTEMPT_ROW_SELECT_SQL = `a.id, a.campaign_id, a.contact_id, a.attempt_num
              a.disposition_code, a.notes, a.callback_at,
              a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
              a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
-             a.talk_seconds, a.wrapup_seconds, a.created_at`;
+             a.talk_seconds, a.wrapup_seconds, a.redial_of_attempt_id, a.redial_number, a.created_at`;
 
 /**
  * The contact join of every attempt read. `c.campaign_id = a.campaign_id` is

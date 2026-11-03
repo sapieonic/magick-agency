@@ -74,12 +74,14 @@ package root.
 
 - `api/agency/agency.ts`: `AgencyAgentState`, `AgencyAttemptState`, `AgencyAttemptOutcome`,
   `AgencyCampaignStatus`, `AgencyReleaseReason`, `AgencyCampaignChangeReason`,
-  `AgencyStationErrorCode`, `AgencyActionErrorCode` (20 members) and `AGENCY_ACTION_ERROR_CODES`,
+  `AgencyStationErrorCode`, `AgencyActionErrorCode` (26 members) and `AGENCY_ACTION_ERROR_CODES`,
   `AgencyActionErrorResponse`, `AgencyNotesResponse`, `AgencyStationTokenResponse`,
   `AgencyDisposition`, `AgencyContextDisplay`, `AgencyBreakReason`, `AgencyRetryContext`,
   `AgencyActiveAttempt`, `AgencyMissedRelease`, `AgencyReservedAttempt`, `AgencyPriorAttempt`, and
   the media / reserved / countdown / bridged / released / agent_state / campaign_state / pong /
-  error / bridge_ended frames.
+  error / bridge_ended frames; for the wrap-up redial, `AgencyRedialInfo`, `AgencyRedialResponse`
+  and the constants `AGENCY_WRAPUP_REDIAL_LIMIT` and `AGENCY_REDIALED_DISPOSITION_CODE`
+  (`AgencyRedialRequest` is not re-exported: see §5).
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
   `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,
   `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null).
@@ -124,5 +126,8 @@ joined from `users`).
   layer from the authenticated session, never taken from the client; it remains in `agency.ts`
   because the internal handlers parse it. A candidate for removal.
 - `on_behalf` is likewise decided server-side, from `agency.supervise`.
+- `agent_user_id` on `AgencyRedialRequest` (`POST /sessions/:id/redial`): the console sends only
+  `{ attempt_id }`, and the public API layer adds the actor; `AgencyRedialRequest` is therefore not
+  re-exported into the console namespace. No `on_behalf`: only the session's own agent may redial.
 - The soft-phone request bodies (`../../agency/softphone.ts`) carry the same two fields for the
   internal handlers; the console's are derived without them (§1).

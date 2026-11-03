@@ -89,6 +89,9 @@ export function projectAttemptRow(row: AgencyCallAttemptRecord & {
     ended_at: iso(row.ended_at),
     talk_seconds: row.talk_seconds,
     wrapup_seconds: row.wrapup_seconds,
+    // Wrap-up redial (0008): the chain link, so a history can show "redial 1 of …".
+    redial_of_attempt_id: row.redial_of_attempt_id,
+    redial_number: row.redial_number,
     created_at: iso(row.created_at) ?? '',
   };
 }
