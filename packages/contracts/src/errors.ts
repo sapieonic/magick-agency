@@ -158,14 +158,39 @@ export type AgencyActionErrorCode =
    * reservation or a release, re-decided and lost again). Nothing changed; retry. A
    * concurrency refusal, not a fault, so it is a 4xx the error mask passes unchanged.
    */
-  | 'state_changing';
+  | 'state_changing'
+  /**
+   * `POST /sessions/:id/redial` refused (409): the campaign does not allow wrap-up
+   * redial, the session is not in a wrap-up for this attempt, the attempt is not one an
+   * outcome is owed on, or the customer is no longer held for it. Nothing changed; the
+   * agent can still save the outcome.
+   */
+  | 'redial_not_allowed'
+  /** `POST /sessions/:id/redial` refused (409): `AGENCY_WRAPUP_REDIAL_LIMIT` redials already made. */
+  | 'redial_limit_reached'
+  /** `POST /sessions/:id/redial` refused (409): an outcome is already saved for this call. */
+  | 'disposition_already_submitted'
+  /**
+   * `POST /sessions/:id/redial` refused (409) by the pre-dial checks: the number is on a
+   * do-not-call list. The agent stays in wrap-up and can still save the outcome.
+   */
+  | 'redial_blocked_dnc'
+  /** As `redial_blocked_dnc`, for the contact's calling window being closed. */
+  | 'redial_blocked_calling_hours'
+  /**
+   * As `redial_blocked_dnc`, for every other reason the dial could not be placed: an
+   * invalid number, the DNC registry unreachable (fails closed), no usable caller ID, or
+   * the agent's station not connected. `message` says which.
+   */
+  | 'redial_blocked';
 
 /**
  * Runtime list of {@link AgencyActionErrorCode} (the union above is the
  * authority).
  *
- * ⚠️ **20 members** — 16 before `session_on_other_campaign` and
- * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`.
+ * ⚠️ **26 members** — 16 before `session_on_other_campaign` and
+ * `agent_on_live_call`, 18 before `not_staffed`, 19 before `state_changing`, 20 before
+ * the six wrap-up redial codes.
  * `test/errors.test.ts` snapshots the list.
  *
  * Order is the declaration order of the union.
@@ -191,6 +216,12 @@ export const AGENCY_ACTION_ERROR_CODES = [
   'feature_disabled',
   'not_staffed',
   'state_changing',
+  'redial_not_allowed',
+  'redial_limit_reached',
+  'disposition_already_submitted',
+  'redial_blocked_dnc',
+  'redial_blocked_calling_hours',
+  'redial_blocked',
 ] as const satisfies readonly AgencyActionErrorCode[];
 
 /**

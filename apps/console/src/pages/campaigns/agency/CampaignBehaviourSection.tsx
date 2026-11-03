@@ -115,6 +115,7 @@ export function CampaignBehaviourSection({
       <WrapupFields
         wrapupSeconds={state.wrapupSeconds}
         autoReturn={state.autoReturn}
+        allowRedial={state.allowWrapupRedial}
         onChange={(patch) => onChange({ ...state, ...patch })}
         errors={errors}
       />

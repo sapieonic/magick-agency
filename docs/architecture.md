@@ -306,6 +306,20 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Wrap-up** (`wrapup-manager.ts`). An in-process countdown plus the attempt row
   (`wrapup_seconds`, `ended_at`), never a Redis TTL; not resumed after a restart (agents return in
   `break` and a sweep closes the attempt).
+- **Wrap-up redial** (`wrapup-redial.ts`, `POST /sessions/:id/redial`, decisions WR1–WR10). On a
+  campaign with `allow_wrapup_redial`, an agent in a wrap-up that owes an outcome may redial the
+  same customer, at most `AGENCY_WRAPUP_REDIAL_LIMIT` (2) times per call; the `wrapup` frame's
+  `redial_remaining` says how many are left. Everything that can refuse runs first, so a refusal
+  leaves the wrap-up and its countdown as they were: the rows, the station, a caller ID and the
+  pre-dial gates (which mint the clearance the dispatcher checks, as for a paced dial). Then the
+  wrap-up is taken synchronously (`takeForRedial`: the countdown stops, so auto-return cannot fire
+  during the redial), the agent moves `wrapup → reserved` by CAS (`reserveFromWrapup`), and one
+  transaction (`beginWrapupRedial`) locks the redialled attempt, takes the customer back
+  `connected → in_flight` while still parked for it, stamps it `redialed` and inserts the redial
+  (`redial_of_attempt_id`, `redial_number`). The dial goes through the dispatcher to
+  `executeDial`, always early-bound. Whatever the redial's outcome, the customer stays held for the
+  outcome (`parkRedialContact`, no retry charge) and the agent lands in wrap-up on the redial; a
+  failure after the take reopens the wrap-up (a fresh window), never the pool.
 - **Reaper** (`reaper.ts`). On startup and every 60 s, closes attempts nobody owns: liveness is
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
   dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded
@@ -317,7 +331,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `no_disposition` when one was owed and releases the contact through the outcome policy, in one
   statement that locks both rows and writes only while the attempt has no disposition and the
   contact is still parked `connected` for it (no newer attempt, no soft-phone claim); it counts
-  only the closes that landed.
+  only the closes that landed. An un-dispositioned wrap-up redial is swept like a connected call.
 - **Disposition** (`api/routes/agency/attempts.ts`). `recordDisposition` is one guarded UPDATE:
   the same code again is a successful replay, a different code a 409. The contact write after it
   (`AgencyContactRepository.releaseFromDisposition`) is one statement that lands only while the

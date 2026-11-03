@@ -15,6 +15,7 @@ import type {
   AgencyNotesResponse,
   AgencyDncResponse,
 } from '../types/agency';
+import type { AgencyRedialResponse } from '@magick-agency/contracts/agency';
 import type {
   AgencyAgentAssignment,
   AgencyAssignedAgent,
@@ -228,6 +229,35 @@ export async function submitDisposition(
   return apiFetch<AgencyDispositionResponse>(
     `${AGENCY_BASE}/attempts/${attemptId}/disposition`,
     { method: 'POST', body: JSON.stringify(payload) },
+    tenantId,
+    accountId,
+  );
+}
+
+/**
+ * Wrap-up redial: dial the customer of the wrap-up on screen again, before its
+ * outcome is saved (`allow_wrapup_redial` campaigns, at most
+ * `AGENCY_WRAPUP_REDIAL_LIMIT` redials per call).
+ *
+ * `attempt_id` names the wrap-up the agent is looking at, so a click on a stale
+ * screen cannot redial a different call. The server attributes the request to the
+ * signed-in agent; the console never sends `agent_user_id`, as with every other
+ * session and attempt action here.
+ *
+ * Success means the dial was placed. The call itself arrives on the station socket
+ * like any other (`reserved` with `attempt.redial`, `bridged`, `released`, then a
+ * wrap-up on the new attempt). A 409 carries one of the `redial_*` codes (or
+ * `disposition_already_submitted`) and leaves the wrap-up as it was.
+ */
+export async function redialFromWrapup(
+  sessionId: string,
+  attemptId: string,
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyRedialResponse> {
+  return apiFetch<AgencyRedialResponse>(
+    `${AGENCY_BASE}/sessions/${sessionId}/redial`,
+    { method: 'POST', body: JSON.stringify({ attempt_id: attemptId }) },
     tenantId,
     accountId,
   );

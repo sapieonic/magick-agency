@@ -85,6 +85,8 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       default_timezone: body?.default_timezone as string | undefined,
       wrapup_seconds: body?.wrapup_seconds as number | undefined,
       wrapup_auto_return: body?.wrapup_auto_return as boolean | undefined,
+      // Omitted ⇒ `false`, the column DEFAULT (0008). Shape-checked by `configRejected`.
+      allow_wrapup_redial: body?.allow_wrapup_redial as boolean | undefined,
       retry_policy: body?.retry_policy,
       disposition_catalog: body?.disposition_catalog,
       context_display: body?.context_display,

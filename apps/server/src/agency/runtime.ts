@@ -109,6 +109,11 @@ export class AgencyRuntime {
    * `AgencySoftphoneErrorCode`. See `softphone/softphone-service.ts`.
    */
   readonly softphone: SoftphoneService;
+  /**
+   * The one dial dispatcher: the pacing engine's, and the wrap-up redial's
+   * (`wrapup-redial.ts`), so a redial passes the same clearance and ownership checks.
+   */
+  readonly dispatcher: DialDispatcher;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string, options: AgencyRuntimeOptions = {}) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -165,6 +170,7 @@ export class AgencyRuntime {
     });
     const dispatcher = options.dispatcher
       ?? new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
+    this.dispatcher = dispatcher;
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, options.pacingStations ?? this.stations, this.agents, dispatcher, this.dnc,
     );

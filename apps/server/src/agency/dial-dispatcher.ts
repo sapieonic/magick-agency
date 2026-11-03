@@ -23,6 +23,13 @@ export interface DialCommand {
   attemptNumber: number;
   campaign: AgencyCampaignRecord;
   contact: AgencyContactRecord;
+  /**
+   * Set on a wrap-up redial (`wrapup-redial.ts`): the attempt it redials and its number
+   * (1, 2). Absent on a paced dial. The dialer reads it to keep the customer held for the
+   * outcome the agent still owes, whatever the redial's own outcome, and to put the agent
+   * back in wrap-up instead of the pool when the redial fails before connecting.
+   */
+  redial?: { ofAttemptId: string; number: number };
 }
 
 /**

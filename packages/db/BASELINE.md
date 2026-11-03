@@ -442,6 +442,33 @@ blank value is never a duplicate. NULL keeps the earlier behaviour, which `dedup
 the ingest service. No index, no rewrite. **Down** drops the column. **Tests**:
 `test/integration/db/ingest-dedupe-column-migration.test.ts` and the down → up inventory suite.
 
+### 0008 — `migrations/0008_wrapup_redial.sql`
+
+Wrap-up redial: an agent in wrap-up after a connected call, before saving the outcome, redials
+the same customer (`POST /proxy/agency/sessions/:id/redial`, `apps/server/src/agency/wrapup-redial.ts`).
+
+- **`agency_campaigns.allow_wrapup_redial`** `BOOLEAN NOT NULL DEFAULT false`: the campaign
+  setting. Copied to a retry campaign like the other config columns.
+- **`agency_call_attempts.redial_of_attempt_id`** `UUID NULL REFERENCES agency_call_attempts(id)
+  ON DELETE SET NULL`: the attempt this one redials. That attempt keeps its outcome
+  (`connected`) and is closed with the reserved system disposition `redialed` and
+  `wrapup_resolution = 'redialed'`.
+- **`agency_call_attempts.redial_number`** `SMALLINT NOT NULL DEFAULT 0`: 0 for a paced dial,
+  1 and 2 for the redials of one call. The limit (`AGENCY_WRAPUP_REDIAL_LIMIT`, 2) lives in the
+  contract and the server enforces it; `ck_agency_attempt_redial_number` only refuses a negative
+  number, and `ck_agency_attempt_redial_link` requires a link to carry a number above 0 (the
+  converse is not checked: a purged original leaves the link NULL and the number).
+- **Unique index `uq_agency_attempt_redial_of`** `(redial_of_attempt_id) WHERE redial_of_attempt_id
+  IS NOT NULL`: one redial per attempt, the backstop behind `beginWrapupRedial`'s row lock.
+- **`ck_agency_wrapup_resolution`** re-created with `redialed`. The supervisor's average wrap-up
+  does not count it.
+- A redial attempt is otherwise an ordinary row: `uq_agency_attempt_live` and
+  `uq_agency_attempt_number` apply, and every stat and the abandonment predicate count it.
+
+**Down** maps `redialed` resolutions to `agent_left`, restores the old CHECK, and drops the index,
+the two CHECKs and the three columns. **Tests**: `test/integration/db/wrapup-redial-migration.test.ts`
+and the down → up inventory suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

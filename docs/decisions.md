@@ -264,6 +264,25 @@ ratified by Manas on 2026-11-02 (D5 and D12 as amended, D9 as proposed):
 | D13 | Readiness detail and probe cost | `/readyz?detail=1` (pids, loop numbers, the Postgres budget) needs `Authorization: Bearer <READYZ_DETAIL_TOKEN>`, compared in constant time; unset, the detail is off; otherwise 401 before anything is probed. A static token rather than the super-admin login: the detail must answer while Postgres is the problem (the super-admin check reads the database), and a read-only, scoped token is what a script or `curl` should hold. Not IP-gated (`TRUST_PROXY_HOPS` makes `request.ip` proxy-asserted). The plain body keeps the verdict and each worker's state name (D5). One readiness answer (Postgres, Redis, a `health.ping` to each worker) serves every probe for 1 s (`READINESS_CACHE_MS`), concurrent probes share one run; a not-ready verdict is at most 1 s old. Each process samples its loop over a fixed 5 s window on its own timer (`LOOP_SAMPLE_WINDOW_MS`), and readers never reset it | **default, pending Manas** |
 | B16 (amended) | Public API layer → internal handlers | Public handlers still call `callCore` in-process. With media workers, an internal handler that reads per-session runtime state is forwarded to the session's worker (`api/core-owners.ts` classifies every agency route; an unclassified one fails at boot). B16's "one process, no network hop" becomes "no network hop" | **Decided** (Manas, 2026-11-02) |
 
+Wrap-up redial, 2026-11-03 (ClickUp "Wrap-up redial"; built as asked, the choices the ask left
+open made as below). An agent in wrap-up after a connected call, before saving the outcome,
+redials the same customer and is connected to them again (`POST /proxy/agency/sessions/:id/redial`,
+`apps/server/src/agency/wrapup-redial.ts`), on campaigns with `allow_wrapup_redial` on (default
+off, migration 0008):
+
+| # | Topic | Default used | Status |
+|---|---|---|---|
+| WR1 | What closes the redialled call | It keeps its own outcome (`connected`: the call happened, so stats and talk time stay true) and gets the reserved system disposition `redialed` (`AGENCY_REDIALED_DISPOSITION_CODE`, refused in a campaign's catalog) and `wrapup_resolution = 'redialed'`. The redial is a new attempt row linked by `redial_of_attempt_id`, numbered by `redial_number` | **default, pending Manas** |
+| WR2 | Limit | `AGENCY_WRAPUP_REDIAL_LIMIT` = 2 redials per original call (3 calls at most), one constant in the contracts, enforced on the server; the wrap-up frame's `redial_remaining` is what the clients render | **Decided** (ask) |
+| WR3 | Retry budget | A redial does not spend the contact's `attempt_count` (`max_attempts`): it continues one conversation; the hard limit WR2 bounds it. Neither the retry nor the our-fault ledger is charged | **default, pending Manas** (the ask's open question; the recommendation) |
+| WR4 | Which wrap-ups offer it | One that owes an outcome (a non-empty catalog), after a call that bridged, or after a redial whatever its outcome. A campaign with no catalog releases the customer at the end of the call, so there is no one held to redial. A paused or stopped campaign refuses it | **default, pending Manas** |
+| WR5 | A redial that does not connect | The customer stays held (`connected`, uncharged) and the agent is back in wrap-up on the redial attempt, owing the outcome there (a redial is dispositionable without a bridge), with the redials its number leaves. A refused redial (gates, the agent no longer in wrap-up) leaves or reopens the wrap-up on the original; never back to the pool with an outcome owed | **Decided** (ask) |
+| WR6 | Pre-dial checks | The pacing tick's gates (calling hours, DNC, number validity, all failing closed) run before anything is written; a refusal is a named code (`redial_blocked_dnc`, `redial_blocked_calling_hours`, `redial_blocked`) and leaves the agent in wrap-up with the countdown running | **Decided** (ask) |
+| WR7 | Binding and caller ID | A redial is always early-bound (the agent sees the ringing panel, whatever `FF_AGENCY_LATE_BINDING` says) and dials from the caller ID of the call it redials while that number is still in the campaign's pool | **default, pending Manas** |
+| WR8 | Notes | The notes on the redialled attempt are copied onto the redial when it starts, so the write-up continues where it was | **default, pending Manas** |
+| WR9 | A dial whose outcome is unknown | A redial the carrier may have queued (`add_lead` timed out) is not held back 15 minutes like a paced one: the customer stays parked `connected`, which pacing never claims, and the agent decides (save, or redial again within the limit) | **default, pending Manas** |
+| WR10 | Crash mid-redial | The startup reaper ends a non-terminal redial `orphaned` and requeues the customer `pending` on the our-fault ledger, as for any attempt; the outcome owed on the conversation is then lost. The lapsed-wrap-up sweep treats an un-dispositioned redial like a connected call (`no_disposition`, routed as `connected`) | **default, pending Manas** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
@@ -281,5 +300,6 @@ ratified by Manas on 2026-11-02 (D5 and D12 as amended, D9 as proposed):
 | 9 | Metering | Out of v1; design not started | Manas |
 | B15 | Roster supersede | Three schema changes plus a replace lock; `AGENCY_ROSTER_REPLACE_ENABLED` stays off until then | Manas |
 | — | Soft phone vs one live call per number | Should a tagged soft-phone call to a number whose contact is `connected` (bridged, or in wrap-up) be refused, as `in_flight` is? And is the millisecond race between a manual claim and a pacing claim on two rows of one number worth a per-number lock? (§4, "Roster upload, choosing the duplicate column") | Manas |
+| WR1, WR3, WR4, WR7–WR10 | Wrap-up redial defaults | Built, pending ratification (§4, "Wrap-up redial"). WR3 is the ask's open question: do redials use up the contact's `max_attempts`? Built as no | Manas (ratify) |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |

@@ -30,7 +30,14 @@ export type WrapupResolution =
   | 'agent_returned'
   | 'forced'
   | 'agent_left'
-  | 'campaign_stopped';
+  | 'campaign_stopped'
+  /**
+   * The agent redialled the customer from this wrap-up (`wrapup-redial.ts`). The
+   * write-up moves to the redial attempt; this one is closed with the system code
+   * `redialed`. Not evidence of how long wrap-up work takes, so the supervisor's
+   * average leaves it out, like `forced`.
+   */
+  | 'redialed';
 
 interface WrapupEntry {
   sessionId: string;
@@ -57,7 +64,33 @@ interface WrapupEntry {
   endsAt: Date | null;
   heldReason: AgencyWrapupHoldReason | null;
   timer: NodeJS.Timeout | null;
+  /**
+   * Wrap-up redials left from this wrap-up, or null when redial is not offered. Decided
+   * by the caller at entry (the campaign's `allow_wrapup_redial`, an owed outcome, the
+   * attempt's place in its redial chain); the redial route re-checks all of it.
+   */
+  redialRemaining: number | null;
 }
+
+/** A wrap-up taken out of the manager for a redial ({@link WrapupManager.takeForRedial}). */
+export interface TakenWrapup {
+  readonly sessionId: string;
+  readonly attemptId: string;
+  readonly campaignId: string;
+  readonly tenantId: string;
+  readonly startedAt: Date;
+}
+
+/** Why {@link WrapupManager.takeForRedial} refused. */
+export type WrapupRedialRefusal =
+  /** No wrap-up on this replica for this session, or it is for a different attempt. */
+  | 'not_in_wrapup'
+  /** Redial was not offered on this wrap-up. */
+  | 'not_offered'
+  /** The redial limit is used up. */
+  | 'limit_reached'
+  /** The disposition is already in; the wrap-up is ending. */
+  | 'disposition_submitted';
 
 /**
  * Wrap-up: the window after a conversation in which the agent is out of the pool,
@@ -163,6 +196,12 @@ export class WrapupManager {
      * Announced on the state frame only. Nothing here queues, cancels or consumes it.
      */
     readPendingBreak?: () => AgencyBreakReason | null;
+    /**
+     * Wrap-up redials left from this wrap-up, or null/absent when redial is not offered
+     * (see `WrapupEntry.redialRemaining`). Announced on the `wrapup` frame as
+     * `redial_remaining`.
+     */
+    redialRemaining?: number | null;
   }): Promise<boolean> {
     const timed = params.wrapupSeconds > 0;
     if (!timed && !params.requiresDisposition) return false;
@@ -194,6 +233,7 @@ export class WrapupManager {
       // rather than after a timer that will never fire.
       heldReason: !timed ? 'disposition_required' : null,
       timer: null,
+      redialRemaining: params.redialRemaining ?? null,
     };
     this.entries.set(params.sessionId, entry);
 
@@ -415,6 +455,42 @@ export class WrapupManager {
     return true;
   }
 
+  /**
+   * Take this session's wrap-up out of the manager for a redial, WITHOUT returning the
+   * agent: the countdown stops here, synchronously, so auto-return can never fire while
+   * the redial is ringing or connected. The agent stays `wrapup` in Redis until the
+   * caller's CAS moves them to `reserved`.
+   *
+   * Nothing is persisted yet. The caller either commits ({@link finishRedial}, which
+   * records `wrapup_resolution = 'redialed'`) once the redial is placed, or, when the
+   * redial is refused after this point, re-enters wrap-up with {@link enter} — a fresh
+   * window, or no timer when an outcome is required — so the agent is never sent back to
+   * the pool with an outcome still owed.
+   *
+   * Refuses (and changes nothing) unless the session's wrap-up is for `attemptId`, redial
+   * was offered on it with redials left, and no disposition has landed.
+   */
+  takeForRedial(sessionId: string, attemptId: string): { ok: true; taken: TakenWrapup } | { ok: false; reason: WrapupRedialRefusal } {
+    const entry = this.entries.get(sessionId);
+    if (!entry || entry.attemptId !== attemptId) return { ok: false, reason: 'not_in_wrapup' };
+    if (entry.dispositionSubmitted) return { ok: false, reason: 'disposition_submitted' };
+    if (entry.redialRemaining === null) return { ok: false, reason: 'not_offered' };
+    if (entry.redialRemaining <= 0) return { ok: false, reason: 'limit_reached' };
+    this.entries.delete(sessionId);
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = null;
+    log.info({ sessionId, attemptId }, 'Wrap-up taken for a redial');
+    return { ok: true, taken: entry };
+  }
+
+  /**
+   * The redial taken by {@link takeForRedial} was placed: record how that wrap-up ended
+   * (`redialed`). Never throws, never returns the agent.
+   */
+  finishRedial(taken: TakenWrapup): void {
+    void this.persistEnd(taken.attemptId, 'redialed', taken);
+  }
+
   /** Supervisor override — end a held wrap-up and return the agent. */
   async force(sessionId: string): Promise<boolean> {
     if (!this.entries.has(sessionId)) return false;
@@ -479,7 +555,7 @@ export class WrapupManager {
     // the observation below was dead code — a histogram that looked conditional
     // and never was. This method is private; if a third exit path appears, it
     // has an entry too, because an entry is what a wrap-up IS.
-    entry: WrapupEntry,
+    entry: Pick<WrapupEntry, 'startedAt' | 'tenantId'>,
   ): Promise<void> {
     /**
      * The duration series, observed here because this is the ONE function both
@@ -557,6 +633,8 @@ export class WrapupManager {
       requires_disposition: entry.requiresDisposition,
       disposition_submitted: entry.dispositionSubmitted,
       held_reason: entry.heldReason,
+      // Only when offered: absent reads as "no redial" on every client.
+      ...(entry.redialRemaining !== null ? { redial_remaining: entry.redialRemaining } : {}),
     };
   }
 

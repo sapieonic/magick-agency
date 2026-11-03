@@ -40,6 +40,8 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_session.softphone_started',
   'agency_session.softphone_ended',
   'agency_attempt.hung_up',
+  // Wrap-up redial: the agent redialled the customer from wrap-up (`wrapup-redial.ts`).
+  'agency_attempt.redialed',
   'agency_disposition.created',
   // The bulk export of a campaign's attempts or roster is not gated behind a
   // permission of its own — the decision is that a second gate to keep aligned with `agency.supervise` is a second gate to

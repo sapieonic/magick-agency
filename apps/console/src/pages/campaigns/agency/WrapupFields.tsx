@@ -1,3 +1,4 @@
+import { AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
 import type { ConfigFieldErrors } from './configFieldErrors';
 import styles from './CampaignBehaviourSection.module.css';
 
@@ -11,12 +12,14 @@ import styles from './CampaignBehaviourSection.module.css';
 interface WrapupFieldsProps {
   wrapupSeconds: number;
   autoReturn: boolean;
-  onChange: (patch: { wrapupSeconds?: number; autoReturn?: boolean }) => void;
+  /** `allow_wrapup_redial`. */
+  allowRedial: boolean;
+  onChange: (patch: { wrapupSeconds?: number; autoReturn?: boolean; allowWrapupRedial?: boolean }) => void;
   errors: ConfigFieldErrors;
 }
 
 /** The wrap-up allowance, and whether the countdown returns an agent to the pool by itself. */
-export function WrapupFields({ wrapupSeconds, autoReturn, onChange, errors }: WrapupFieldsProps) {
+export function WrapupFields({ wrapupSeconds, autoReturn, allowRedial, onChange, errors }: WrapupFieldsProps) {
   return (
     <>
       <h3 className={styles.subhead}>Wrap-up</h3>
@@ -68,6 +71,26 @@ export function WrapupFields({ wrapupSeconds, autoReturn, onChange, errors }: Wr
             : autoReturn
               ? `After ${wrapupSeconds}s an agent becomes available again on their own — they can be handed a new call without touching anything.`
               : 'An agent stays in wrap-up until they mark themselves ready, however long that takes. Nothing hands them a new call in the meantime.'}
+        </p>
+      </div>
+
+      {/*
+        Wrap-up redial. A connected call that drops can be dialled again from the
+        wrap-up screen, before the outcome is saved; the limit is the platform's
+        (`AGENCY_WRAPUP_REDIAL_LIMIT`), so the hint states it rather than offering it.
+      */}
+      <div className="form-group">
+        <label className={styles.check}>
+          <input
+            type="checkbox"
+            checked={allowRedial}
+            onChange={(event) => onChange({ allowWrapupRedial: event.target.checked })}
+            data-testid="allow-wrapup-redial"
+          />
+          Allow redial from wrap-up
+        </label>
+        <p className={styles.hint} data-testid="allow-wrapup-redial-hint">
+          {`If a connected call drops, the agent can redial the customer up to ${AGENCY_WRAPUP_REDIAL_LIMIT} times from wrap-up before saving the outcome.`}
         </p>
       </div>
     </>

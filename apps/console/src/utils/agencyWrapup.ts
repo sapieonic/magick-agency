@@ -44,6 +44,13 @@ export interface WrapupAnchor {
    * `false` even where the campaign sets auto-return true.
    */
   autoReturn: boolean;
+  /**
+   * Wrap-up redial: how many more times the agent may redial this customer from
+   * this wrap-up, off the frame's `redial_remaining`. `null` (absent on the wire,
+   * or `null`) means redial is not offered here and the button is not shown; `0`
+   * means the limit is used up and the button is shown disabled.
+   */
+  redialRemaining: number | null;
 }
 
 /**
@@ -72,6 +79,7 @@ export function openWrapup(
     requiresDisposition: wrapup.requires_disposition,
     heldReason: wrapup.held_reason ?? null,
     autoReturn: wrapup.auto_return,
+    redialRemaining: wrapup.redial_remaining ?? null,
   };
 }
 

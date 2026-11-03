@@ -81,7 +81,7 @@ const PARENT = {
   caller_ids: ['+14155550100'], telephony_provider: 'vobiz', sip_connection_id: null,
   calling_window_start: '09:00:00', calling_window_end: '20:00:00',
   calling_days: [1, 2, 3, 4, 5], default_timezone: 'UTC',
-  wrapup_seconds: 30, wrapup_auto_return: true,
+  wrapup_seconds: 30, wrapup_auto_return: true, allow_wrapup_redial: true,
   retry_policy: {}, disposition_catalog: [{ code: 'not_interested', label: 'Not Interested' }],
   context_display: {}, break_reasons: [],
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
@@ -341,6 +341,30 @@ describe('config is inherited from the parent, then patched', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().details).toHaveProperty('calling_window_end');
+    expect(campaigns.retryFromCampaign).not.toHaveBeenCalled();
+  });
+
+  it('inherits allow_wrapup_redial from the parent and takes an override of it', async () => {
+    // A config column like `wrapup_auto_return`: in `RETRY_INHERITED_CONFIG_KEYS`,
+    // so the child inherits it and an override naming it is not "not a campaign
+    // config field".
+    await postRetry({ selector: { state: ['pending'] } });
+    expect(campaigns.retryFromCampaign.mock.calls[0]![0].config.allow_wrapup_redial).toBe(true);
+
+    vi.clearAllMocks();
+    const res = await postRetry({
+      selector: { state: ['pending'] }, config_overrides: { allow_wrapup_redial: false },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(campaigns.retryFromCampaign.mock.calls[0]![0].config.allow_wrapup_redial).toBe(false);
+  });
+
+  it('refuses a non-boolean allow_wrapup_redial override and creates nothing', async () => {
+    const res = await postRetry({
+      selector: { state: ['pending'] }, config_overrides: { allow_wrapup_redial: 'yes' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details).toEqual({ allow_wrapup_redial: 'allow_wrapup_redial must be a boolean.' });
     expect(campaigns.retryFromCampaign).not.toHaveBeenCalled();
   });
 

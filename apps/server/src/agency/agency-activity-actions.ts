@@ -143,6 +143,7 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign' },
   { value: 'agency_disposition.created', label: 'Disposition filed', group: 'Calls' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls' },
+  { value: 'agency_attempt.redialed', label: 'Customer redialled from wrap-up', group: 'Calls' },
   // A bulk export of every number on a campaign takes no permission
   // beyond `agency.supervise`, on the reasoning that a second gate to keep
   // aligned is a second gate to drift. Attribution is what answers the exposure

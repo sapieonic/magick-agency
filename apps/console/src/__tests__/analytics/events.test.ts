@@ -10,6 +10,8 @@ import {
   trackExportEvent,
   trackApiErrorEvent,
   trackAgencyWaitingForDialer,
+  trackAgencyRedialRequested,
+  trackAgencyRedialRefused,
   trackAgencyInviteClaimSucceeded,
   trackWorkspaceInviteViewed,
   trackWorkspaceInviteClaimAttempted,
@@ -230,5 +232,23 @@ describe('analytics/events catalog', () => {
     posthog.captureEvent('agency_not_an_event', {});
     // @ts-expect-error — `campaign_id` is this event's whole shape
     track('agency_waiting_for_dialer', { campaign: 'camp-1' });
+  });
+
+  it('emits the wrap-up redial pair with ids and counts only', () => {
+    capture.mockClear();
+    trackAgencyRedialRequested({ campaign_id: 'camp-1', redial_remaining: 2 });
+    trackAgencyRedialRefused({ campaign_id: 'camp-1', code: 'redial_blocked_dnc' });
+    trackAgencyRedialRefused({ campaign_id: 'camp-1', code: null });
+    expect(capture).toHaveBeenNthCalledWith(1, 'agency_redial_requested', {
+      campaign_id: 'camp-1',
+      redial_remaining: 2,
+    });
+    expect(capture).toHaveBeenNthCalledWith(2, 'agency_redial_refused', {
+      campaign_id: 'camp-1',
+      code: 'redial_blocked_dnc',
+    });
+    expect(capture).toHaveBeenNthCalledWith(3, 'agency_redial_refused', { campaign_id: 'camp-1', code: null });
+    // @ts-expect-error — the refusal code is the closed action-error union
+    trackAgencyRedialRefused({ campaign_id: 'camp-1', code: 'not_a_code' });
   });
 });

@@ -1,5 +1,6 @@
 import { isUsableTimezone } from './calling-hours.js';
 import {
+  AGENCY_REDIALED_DISPOSITION_CODE,
   DEVICE_AWAY_BREAK_REASON,
   RESERVED_BREAK_REASONS,
   SOFTPHONE_BREAK_REASON,
@@ -224,6 +225,40 @@ function validateRetryRule(rule: Record<string, unknown>, at: string): CampaignC
   return issues;
 }
 
+/**
+ * Disposition codes the SYSTEM writes, which a campaign's catalog may not list, and
+ * what writes each (the refusal tells the operator). A catalog entry with one of
+ * these codes would let an agent file, by hand, the record the system keeps for a
+ * different event, and reports could no longer tell the two apart.
+ *
+ * Exported because the public API layer's validator (`agency-campaign-config.ts`)
+ * refuses the same codes with the same message: the two lists must not drift.
+ */
+export const RESERVED_DISPOSITION_CODE_OWNER: Readonly<Record<string, string>> = {
+  [AGENCY_REDIALED_DISPOSITION_CODE]:
+    'the system writes it on a call the agent redialed from wrap-up',
+};
+
+/** The refusal for a catalog entry using a reserved code, or null. Shared with the public validator. */
+export function reservedDispositionCodeMessage(code: string): string | null {
+  const owner = Object.hasOwn(RESERVED_DISPOSITION_CODE_OWNER, code)
+    ? RESERVED_DISPOSITION_CODE_OWNER[code]
+    : undefined;
+  return owner ? `Disposition code '${code}' is reserved: ${owner}. Choose another code.` : null;
+}
+
+/**
+ * `allow_wrapup_redial` (0008) is a `BOOLEAN NOT NULL` column. Refused here unless a
+ * JSON boolean: a `null` PATCH would reach the NOT NULL as a `23502`, a string
+ * like `'yes'` would be coerced by Postgres into a setting nobody chose, and both
+ * surface as something other than a field the operator can correct.
+ */
+function validateBooleanSetting(record: Record<string, unknown>, field: string): CampaignConfigIssue[] {
+  const value = record[field];
+  if (value === undefined || typeof value === 'boolean') return [];
+  return [{ field, message: `${field} must be a boolean.` }];
+}
+
 function validateDispositionCatalog(catalog: unknown): CampaignConfigIssue[] {
   if (!Array.isArray(catalog)) {
     return [{ field: 'disposition_catalog', message: 'disposition_catalog must be an array.' }];
@@ -256,6 +291,8 @@ function validateDispositionCatalog(catalog: unknown): CampaignConfigIssue[] {
       issues.push({ field: `${at}.code`, message: `Duplicate disposition code '${code}'.` });
     } else {
       seen.add(code);
+      const reserved = reservedDispositionCodeMessage(code);
+      if (reserved) issues.push({ field: `${at}.code`, message: reserved });
     }
 
     const label = entry['label'];
@@ -462,6 +499,7 @@ export function validateAgencyCampaignConfig(
   if (record['break_reasons'] !== undefined) {
     issues.push(...validateBreakReasonsReserved(record['break_reasons']));
   }
+  issues.push(...validateBooleanSetting(record, 'allow_wrapup_redial'));
   issues.push(...validateCallingWindow(record, base));
   return issues;
 }

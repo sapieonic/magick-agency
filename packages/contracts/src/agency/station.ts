@@ -320,6 +320,13 @@ export interface AgencyStationReservedFrame {
   attempt: AgencyReservedAttempt;
 }
 
+/** A wrap-up redial, as the station panel carries it. */
+export interface AgencyRedialInfo {
+  of_attempt_id: string;
+  number: number;
+  remaining: number;
+}
+
 export interface AgencyReservedAttempt {
   attempt_id: string;
   campaign_id: string;
@@ -339,6 +346,12 @@ export interface AgencyReservedAttempt {
   context: Record<string, unknown>;
   /** Prior attempts on this contact, newest first. Empty on a first dial. */
   prior_attempts: AgencyPriorAttempt[];
+  /**
+   * Set when this call is a wrap-up redial (`POST /sessions/:id/redial`): the attempt it
+   * redials, its number (1, 2) and how many redials are left after it. Absent on a call
+   * the pacing engine placed.
+   */
+  redial?: AgencyRedialInfo;
 }
 
 /**

@@ -35,7 +35,7 @@ function campaign(patch: Partial<AgencyCampaignRecord> = {}): AgencyCampaignReco
     caller_ids: ['+911'], telephony_provider: 'vobiz',
     calling_window_start: '00:00:00', calling_window_end: '24:00:00',
     calling_days: [0, 1, 2, 3, 4, 5, 6], default_timezone: 'UTC',
-    wrapup_seconds: 30, abandon_announcement_id: null, wrapup_auto_return: true,
+    wrapup_seconds: 30, abandon_announcement_id: null, wrapup_auto_return: true, allow_wrapup_redial: false,
     retry_policy: {} as never, disposition_catalog: [], break_reasons: [],
     context_display: {} as never, record_calls: false, analysis_profile_id: null,
     status: 'running',

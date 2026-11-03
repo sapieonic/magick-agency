@@ -900,3 +900,40 @@ describe('one built-in catalog for the create default, the semantics set and the
     expect(BUILT_IN_DISPOSITIONS).toBe(AGENCY_DEFAULT_DISPOSITION_CATALOG);
   });
 });
+
+describe('allow_wrapup_redial (wrap-up redial)', () => {
+  it('accepts a boolean either way, and says nothing when absent', () => {
+    expect(validateAgencyCampaignConfig({ allow_wrapup_redial: true })).toEqual([]);
+    expect(validateAgencyCampaignConfig({ allow_wrapup_redial: false })).toEqual([]);
+    expect(fields({ name: 'x' })).not.toContain('allow_wrapup_redial');
+  });
+
+  it('refuses anything that is not a JSON boolean, null included', () => {
+    for (const bad of ['true', 'yes', 1, null, {}]) {
+      expect(messageFor({ allow_wrapup_redial: bad }, 'allow_wrapup_redial'), String(bad))
+        .toBe('allow_wrapup_redial must be a boolean.');
+    }
+  });
+
+  it('adds no default on create: the column default (false) applies', () => {
+    expect(withCampaignConfigDefaults({ name: 'x' })).not.toHaveProperty('allow_wrapup_redial');
+  });
+});
+
+describe("the reserved system disposition code 'redialed'", () => {
+  it('refuses it on the entry\'s code field, naming why', () => {
+    const body = {
+      disposition_catalog: [
+        { code: 'not_interested', label: 'Not interested' },
+        { code: 'redialed', label: 'Redialed' },
+      ],
+    };
+    expect(fields(body)).toEqual(['disposition_catalog[1].code']);
+    expect(messageFor(body, 'disposition_catalog[1].code')).toContain("'redialed' is reserved");
+  });
+
+  it('is not in the default catalog a create is seeded with', () => {
+    expect(DEFAULT_DISPOSITION_CATALOG.map((d) => d.code)).not.toContain('redialed');
+    expect(validateAgencyCampaignConfig(withCampaignConfigDefaults({ name: 'x' }))).toEqual([]);
+  });
+});

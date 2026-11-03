@@ -47,6 +47,7 @@ const ANCHOR: WrapupAnchor = {
   requiresDisposition: true,
   heldReason: null,
   autoReturn: true,
+  redialRemaining: null,
 };
 
 const run = (actions: StationAction[], from: StationState = INITIAL_STATION_STATE) =>
@@ -113,6 +114,44 @@ describe('stationReducer — the groups move together', () => {
     expect(none.retainedAttempt).toBeNull();
     const mismatched = run([{ type: 'released', frame: RELEASED, at: 1, retain: NEXT }], onCall());
     expect(mismatched.retainedAttempt).toBeNull();
+  });
+});
+
+describe('stationReducer — a wrap-up for another attempt (wrap-up redial)', () => {
+  it('keeps the retained panel when the wrap-up is for the same attempt', () => {
+    expect(inWrapup().retainedAttempt).toBe(ATTEMPT);
+  });
+
+  /**
+   * A redial that fails before it connects opens a wrap-up on the NEW attempt. A
+   * panel still retained for the redialed one would win `currentAttemptId` and the
+   * outcome would be saved against a call the server already closed.
+   */
+  it('drops a retained panel for a different attempt, so the outcome goes to the anchor’s', () => {
+    const s = stationReducer(inWrapup(), {
+      type: 'wrapup',
+      anchor: { ...ANCHOR, attemptId: 'att-2', redialRemaining: 1 },
+    });
+    expect(s.retainedAttempt).toBeNull();
+    expect(s.wrapup?.attemptId).toBe('att-2');
+    expect(s.wrapup?.redialRemaining).toBe(1);
+  });
+
+  it('carries attempt.redial through reserved and ready unchanged', () => {
+    const redial = { of_attempt_id: 'att-1', number: 1, remaining: 1 };
+    const reserved = run([{ type: 'reserved', attempt: { ...NEXT, redial } }]);
+    expect(reserved.live?.attempt.redial).toEqual(redial);
+
+    const restored = stationReducer(INITIAL_STATION_STATE, {
+      type: 'ready',
+      frame: ready({
+        state: 'on_call',
+        active_attempt: { ...NEXT, redial, bridged_at: '2026-08-11T10:00:04.000Z', state: 'bridged' },
+      }),
+      wrapup: null,
+    });
+    expect(restored.live?.attempt.redial).toEqual(redial);
+    expect(restored.live?.bridgedAt).toBe('2026-08-11T10:00:04.000Z');
   });
 });
 

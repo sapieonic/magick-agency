@@ -307,6 +307,30 @@ export class AgentStateMachine {
   }
 
   /**
+   * Reserve an agent in WRAP-UP for a redial of the customer they were just talking to
+   * (`wrapup-redial.ts`). The same CAS as {@link reserve}, from `wrapup` instead of
+   * `available`, so the redial cannot take an agent who has meanwhile been returned to the
+   * pool (and reserved by a tick), put on a break, or lost their lease. `lost` ⇒ they are
+   * no longer in wrap-up; the redial is refused.
+   *
+   * The short pre-dial lease, exactly as a paced reservation: the dial must follow at once,
+   * and `executeDial` extends it to `reserved_dialing` before the carrier is contacted.
+   */
+  async reserveFromWrapup(sessionId: string, attemptMarker: string): Promise<ReservationResult> {
+    if (!this.redis) return 'unavailable';
+    try {
+      const res = await this.redis.eval(
+        CAS_SCRIPT, 1, this.key(sessionId),
+        'wrapup', 'reserved', attemptMarker, AGENT_LEASE_MS.reserved_predial, Date.now().toString(),
+      );
+      return res === 1 ? 'reserved' : 'lost';
+    } catch (err) {
+      log.error({ err, sessionId }, 'Wrap-up redial reservation failed — treating as unavailable');
+      return 'unavailable';
+    }
+  }
+
+  /**
    * CAS between two known states. Returns false when the agent moved underneath us
    * — and for a move to `available` the soft phone's guard refuses (see
    * {@link AVAILABLE_GUARD_LUA}).

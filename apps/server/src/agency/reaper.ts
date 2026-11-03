@@ -471,7 +471,10 @@ export class AgencyReaper {
     for (const row of rows) {
       // Explicitly the campaign's own catalog. `?? undefined` would flip an
       // unconfigured campaign from "never owed one" to "owed one".
-      const owed = requiresDisposition(row.outcome, row.campaign_disposition_catalog ?? []);
+      // A wrap-up redial owes the conversation's outcome whatever its own, so it is
+      // asked, and routed, as the `connected` call it continues.
+      const conversationOutcome = row.redial_number > 0 ? 'connected' : row.outcome;
+      const owed = requiresDisposition(conversationOutcome, row.campaign_disposition_catalog ?? []);
 
       // With no disposition recorded, the OUTCOME policy decides. The auto-close is
       // one of exactly two cases the precedence rule names as falling to the outcome
@@ -482,7 +485,7 @@ export class AgencyReaper {
       // policy is defined on. The dial path is the opposite — it bumps, and passes
       // the post-bump value.
       const decision = resolveRetryDecision(
-        row.campaign_retry_policy, row.outcome, now, row.contact_attempt_count,
+        row.campaign_retry_policy, conversationOutcome, now, row.contact_attempt_count,
       );
       // The stamp and the release are ONE guarded statement, and it writes only while
       // the attempt and the contact are still what the read above found (no write-up

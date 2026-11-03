@@ -57,7 +57,14 @@
     "error": "Validation failed",
     "code": "unknown_disposition_code",
     "message": "That outcome is not on this campaign's list.",
-    "allowed_codes": ["interested", "not_interested", "wrong_number", "voicemail", "callback", "do_not_call"]
+    "allowed_codes": [
+      "interested",
+      "not_interested",
+      "wrong_number",
+      "voicemail",
+      "callback",
+      "do_not_call"
+    ]
   },
   "error_break_already_applied": {
     "error": "Conflict",
@@ -68,5 +75,25 @@
     "error": "Conflict",
     "code": "session_ended",
     "message": "This station session has ended."
+  },
+  "redial_request": {
+    "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d"
+  },
+  "redial_response": {
+    "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
+    "attempt_id": "6b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8",
+    "redial_of_attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+    "redial_number": 1,
+    "redial_remaining": 1
+  },
+  "error_redial_limit_reached": {
+    "error": "Conflict",
+    "code": "redial_limit_reached",
+    "message": "You have already redialled this customer twice. Save the outcome."
+  },
+  "error_redial_blocked_dnc": {
+    "error": "Conflict",
+    "code": "redial_blocked_dnc",
+    "message": "This number is on a do-not-call list, so it cannot be redialled. Save the outcome."
   }
 }

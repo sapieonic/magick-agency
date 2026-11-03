@@ -52,7 +52,9 @@ export function resolveDisposition(
  * disposition and never will.
  */
 export function dispositionRefusal(attempt: AgencyCallAttemptRecord): AgencyActionErrorCode | null {
-  if (attempt.bridged_at === null) return 'attempt_not_dispositionable';
+  // A wrap-up redial owes the CONVERSATION's outcome whatever its own: one that rang out
+  // still carries it (`wrapup-redial.ts`), so it is dispositionable without a bridge.
+  if (attempt.bridged_at === null && !attempt.redial_number) return 'attempt_not_dispositionable';
   // An OPEN question, and this line is the whole of it. An agent whose
   // wrap-up lapsed and who then submits their real disposition is refused, and
   // the record of what was actually said is lost in favour of the auto-close.

@@ -113,7 +113,13 @@ export async function settleContact(
    */
   const ourFaultBeforeBridge = (outcome === 'agent_disconnected' || outcome === 'canceled')
     && bridgedAt === null;
-  if (outcome === 'connected' && needsDisposition) {
+  if (cmd.redial && needsDisposition) {
+    // A wrap-up redial: the customer stays held for the outcome owed on the
+    // conversation, whatever this dial's own outcome. Neither ledger is charged: the
+    // redial continues one conversation (its first dial was charged when it ended),
+    // and the redial limit, not the retry budget, bounds how often it is redialled.
+    await parkRedialContact(cmd, outcome);
+  } else if (outcome === 'connected' && needsDisposition) {
     await agencyContactRepository.markState(cmd.contactId, 'connected', {
       last_outcome: outcome, bump_attempt: true,
     });
@@ -222,6 +228,27 @@ export async function settleContact(
         nextAttemptAt: decision.nextAttemptAt,
       },
       'Contact released by the outcome retry policy',
+    );
+  }
+}
+
+/**
+ * Hold the customer of a wrap-up redial for the outcome the agent owes: back to
+ * `connected` (from `in_flight`), `last_outcome` this dial's, `attempt_count` not
+ * charged. The disposition route or the lapsed-wrap-up sweep releases it, as for any
+ * conversation. A contact marked DNC meanwhile stays `suppressed` (`markState`'s rule).
+ */
+export async function parkRedialContact(cmd: DialCommand, outcome: AgencyAttemptOutcome): Promise<void> {
+  try {
+    await agencyContactRepository.markState(cmd.contactId, 'connected', { last_outcome: outcome });
+    log.info(
+      { contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, redialOf: cmd.redial?.ofAttemptId },
+      'Wrap-up redial ended — the customer stays held for the outcome',
+    );
+  } catch (err) {
+    log.error(
+      { err, contactId: cmd.contactId, attemptId: cmd.attemptId },
+      'Could not hold the customer of a wrap-up redial — the stranded-contact sweep requeues it',
     );
   }
 }

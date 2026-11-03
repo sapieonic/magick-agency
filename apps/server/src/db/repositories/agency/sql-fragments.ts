@@ -404,8 +404,8 @@ export function readAttemptMetrics(row: {
 }
 
 /**
- * The twenty columns a campaign is created with, in the order `create()` and
- * `retryFromCampaign` bind `$1..$20`. A retry appends its five lineage columns
+ * The twenty-one columns a campaign is created with, in the order `create()` and
+ * `retryFromCampaign` bind `$1..$21`. A retry appends its five lineage columns
  * after them. One list, so a column added to the config is added to both writers or
  * to neither — an optional input field beside an explicit column list typechecks
  * and silently drops the value.
@@ -414,4 +414,4 @@ export const CAMPAIGN_INSERT_COLUMNS_SQL = `tenant_id, account_id, name, caller_
           calling_window_start, calling_window_end, calling_days, default_timezone,
           wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
           context_display, break_reasons, record_calls, analysis_profile_id, created_by,
-          abandon_announcement_id, abandonment_ceiling_pct`;
+          abandon_announcement_id, abandonment_ceiling_pct, allow_wrapup_redial`;

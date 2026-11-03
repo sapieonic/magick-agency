@@ -259,6 +259,9 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
       disposition_catalog: campaign.disposition_catalog ?? [],
       wrapup_seconds: campaign.wrapup_seconds,
       wrapup_auto_return: campaign.wrapup_auto_return,
+      // Wrap-up redial (0008): the campaign's setting at join. `=== true` so the
+      // payload always carries a boolean, never `undefined` or `null`.
+      allow_wrapup_redial: campaign.allow_wrapup_redial === true,
       record_calls: campaign.record_calls,
       break_reasons: resolveBreakReasons(campaign.break_reasons),
       context_display: campaign.context_display ?? {},

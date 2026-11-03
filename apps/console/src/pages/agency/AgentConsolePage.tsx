@@ -19,6 +19,7 @@ import {
 } from '../../components/agency/DispositionPad';
 import type { DncControlHandle } from '../../components/agency/DncControl';
 import { NotesField } from '../../components/agency/NotesField';
+import { WrapupRedial } from '../../components/agency/WrapupRedial';
 import type { BreakMenuHandle } from '../../components/agency/BreakMenu';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
@@ -512,6 +513,9 @@ export default function AgentConsolePage() {
             onNeedsNote={() => notesRef.current?.focus()}
             handleRef={padRef}
           />
+          {/* Wrap-up redial: shown only while the wrap-up offers it, after the
+              call has ended — see `WrapupRedial`. */}
+          <WrapupRedial redial={cons.redial} />
           <NotesField
             ref={notesRef}
             value={cons.notes}

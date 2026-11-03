@@ -185,6 +185,7 @@ const EXPECTED_AGENT_ROUTES = [
   'POST /proxy/agency/sessions/:id/break/cancel',
   'POST /proxy/agency/sessions/:id/force-available',
   'POST /proxy/agency/sessions/:id/leave',
+  'POST /proxy/agency/sessions/:id/redial',
   'POST /proxy/agency/sessions/:id/station-token',
 ];
 
@@ -193,6 +194,7 @@ const BODIES: Record<string, unknown> = {
   [`${PREFIX}/sessions`]: { campaign_id: '00000000-0000-4000-8000-000000000001' },
   [`${PREFIX}/sessions/sess-1/break`]: { reason: 'lunch' },
   [`${PREFIX}/attempts/att-1/disposition`]: { disposition_code: 'sale' },
+  [`${PREFIX}/sessions/sess-1/redial`]: { attempt_id: '00000000-0000-4000-8000-000000000002' },
   [`${PREFIX}/attempts/att-1/notes`]: { notes: 'ok' },
 };
 
@@ -252,10 +254,10 @@ beforeEach(() => {
 });
 
 describe('the agent proxy registers the whole action surface', () => {
-  it('registers exactly these eleven routes', async () => {
+  it('registers exactly these twelve routes', async () => {
     const { routes } = await buildAgentApp();
 
-    // A sorted set comparison rather than a count: `toHaveLength(11)` would pass
+    // A sorted set comparison rather than a count: `toHaveLength(12)` would pass
     // if a route were swapped for a different one, which is the change most
     // likely to be made by accident.
     expect([...routes].sort()).toEqual(EXPECTED_AGENT_ROUTES);
@@ -266,11 +268,11 @@ describe('the agent proxy registers the whole action surface', () => {
 
     /**
      * The assertion this whole file is named for. `1` is what
-     * `grep -cE '\.(get|post)\('` returns against this plugin, because ten of
-     * the eleven registrations carry a generic type parameter. Pinned as a number
+     * `grep -cE '\.(get|post)\('` returns against this plugin, because eleven of
+     * the twelve registrations carry a generic type parameter. Pinned as a number
      * so a future reader can see the size of the gap between the two methods.
      */
-    expect(routes.length).toBe(11);
+    expect(routes.length).toBe(12);
     expect(routes.length).not.toBe(1);
   });
 });
@@ -406,6 +408,7 @@ describe('every agent action route carries its RBAC permission', () => {
     ['post', '/sessions/:id/break', 'agency.station.connect'],
     ['post', '/sessions/:id/break/cancel', 'agency.station.connect'],
     ['post', '/sessions/:id/force-available', 'agency.supervise'],
+    ['post', '/sessions/:id/redial', 'agency.attempts.handle'],
     ['post', '/attempts/:id/hangup', 'agency.attempts.handle'],
     ['post', '/attempts/:id/disposition', 'agency.attempts.dispose'],
     ['post', '/attempts/:id/notes', 'agency.attempts.dispose'],

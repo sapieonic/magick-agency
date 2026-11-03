@@ -14,6 +14,8 @@ import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason
 import { useAgencyNotes } from '../../hooks/useAgencyNotes';
 import { useBreakQueue } from '../../hooks/useBreakQueue';
 import { useDispositionSubmit } from '../../hooks/useDispositionSubmit';
+import { useWrapupRedial, type WrapupRedialState } from '../../hooks/useWrapupRedial';
+import { PAD_REDIALING_COPY } from '../../utils/agencyRedialCopy';
 import { NOTES_DISABLED_COPY, PAD_DISABLED_COPY, padGate } from '../../utils/agencyPadGate';
 import type { DispositionFormState, DispositionBlockReason } from '../../utils/agencyDispositionForm';
 import type { NotesStatus } from '../../utils/agencyNotes';
@@ -130,6 +132,12 @@ export interface AgencyConsoleState {
   /** Switch this campaign session to the soft phone (`POST /sessions/:id/softphone`). */
   requestSoftphone: () => void;
   softphoneRejection: string | null;
+
+  /**
+   * Wrap-up redial: the Redial button beside the pad. While a redial is in flight
+   * the pad and its submit are locked (`padEnabled` false, `submit` refused).
+   */
+  redial: WrapupRedialState;
 
   /** Non-blocking line in the idle slot after the next call completes. */
   lostDispositionNotice: string | null;
@@ -305,7 +313,33 @@ export function useAgencyConsole(
   });
   keysRemappedSink.current = disposition.noteKeysRemapped;
 
-  const padEnabled = gate.padUnlocked && disposition.waitingForDialer === null;
+  const redial = useWrapupRedial({
+    bootstrap,
+    tenantId,
+    accountId,
+    wrapup,
+    live,
+    connection,
+    padAvailable:
+      gate.padUnlocked
+      && disposition.waitingForDialer === null
+      && !disposition.submitting
+      && !disposition.dispositionSubmitted,
+  });
+
+  /**
+   * A redial in flight locks the pad: an outcome saved now would land on the call
+   * being redialed, which the server has already closed. A refused redial frees it.
+   */
+  const padEnabled = gate.padUnlocked && disposition.waitingForDialer === null && !redial.inFlight;
+  const { submit: submitDisposition } = disposition;
+  const { isInFlight: redialInFlight } = redial;
+  const submit = useCallback(() => {
+    // Read synchronously: the notes field's `Ctrl+Enter` reaches here without
+    // going near the disabled Save button.
+    if (redialInFlight()) return;
+    submitDisposition();
+  }, [redialInFlight, submitDisposition]);
 
   // ── Presence ──────────────────────────────────────────────────────────────
   const goAvailable = useCallback(
@@ -407,12 +441,14 @@ export function useAgencyConsole(
     // A disabled control always carries a *true* stated reason. "available when
     // connected" is a lie once the pad is locked because the save landed and the
     // dialer has gone quiet.
-    padDisabledReason: padEnabled ? null : (disposition.waitingForDialer ?? PAD_DISABLED_COPY),
+    padDisabledReason: padEnabled
+      ? null
+      : (disposition.waitingForDialer ?? (redial.inFlight ? PAD_REDIALING_COPY : PAD_DISABLED_COPY)),
     padRejection: disposition.padRejection,
     keysRemapped: disposition.keysRemapped,
     submitting: disposition.submitting,
     dispositionSubmitted: disposition.dispositionSubmitted,
-    submit: disposition.submit,
+    submit,
     noteCodeSelectionMethod: disposition.noteCodeSelectionMethod,
     waitingForDialer: disposition.waitingForDialer,
     notes: notes.notes,
@@ -436,6 +472,7 @@ export function useAgencyConsole(
     pendingSoftphone: breaks.pendingBreakCode === SOFTPHONE_BREAK_REASON,
     requestSoftphone: breaks.requestSoftphone,
     softphoneRejection: breaks.softphoneRejection,
+    redial,
     lostDispositionNotice: disposition.lostDispositionNotice,
     announcement,
   };

@@ -317,5 +317,79 @@
       "created_at": "2026-11-01T08:40:01.700Z",
       "updated_at": "2026-11-01T08:44:20.050Z"
     }
+  },
+  "reserved_redial": {
+    "event": "reserved",
+    "attempt": {
+      "attempt_id": "6b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8",
+      "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "campaign_name": "Q4 Renewals — Pune",
+      "contact_id": "e5d4c3b2-0a9f-4e8d-9c7b-6a5f4e3d2c1b",
+      "phone_e164": "+918765432109",
+      "caller_id": "+912071234567",
+      "attempt_number": 4,
+      "context": {
+        "Name": "Rahul Deshpande",
+        "Policy No": "PL-2023-099120",
+        "Renewal Due": "2026-11-04",
+        "Premium (INR)": 22100.5,
+        "Notes from branch": "Prefers Marathi. <b>not markup</b>",
+        "Opted in": true,
+        "Alt phone": null
+      },
+      "prior_attempts": [
+        {
+          "attempt_number": 2,
+          "outcome": "connected",
+          "disposition_code": "callback",
+          "notes": "Asked us to call after 6pm.",
+          "ended_at": "2026-10-31T09:40:11.000Z",
+          "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+          "campaign_name": "Q4 Renewals — Pune",
+          "dialed_at": "2026-10-31T09:37:58.300Z"
+        },
+        {
+          "attempt_number": 1,
+          "outcome": null,
+          "disposition_code": "voicemail",
+          "notes": null,
+          "ended_at": null,
+          "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
+          "campaign_name": "Q3 Winback",
+          "dialed_at": null
+        }
+      ],
+      "redial": {
+        "of_attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+        "number": 1,
+        "remaining": 1
+      }
+    }
+  },
+  "wrapup_redial_offered": {
+    "event": "wrapup",
+    "wrapup": {
+      "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+      "ends_at": "2026-11-01T06:44:02.000Z",
+      "seconds_total": 30,
+      "auto_return": true,
+      "requires_disposition": true,
+      "disposition_submitted": false,
+      "held_reason": null,
+      "redial_remaining": 2
+    }
+  },
+  "wrapup_redial_used_up": {
+    "event": "wrapup",
+    "wrapup": {
+      "attempt_id": "b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d",
+      "ends_at": null,
+      "seconds_total": 0,
+      "auto_return": false,
+      "requires_disposition": true,
+      "disposition_submitted": false,
+      "held_reason": "disposition_required",
+      "redial_remaining": 0
+    }
   }
 }

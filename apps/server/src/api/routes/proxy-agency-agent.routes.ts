@@ -74,6 +74,14 @@ function accountAudit(request: FastifyRequest): { tenant_id: string; account_id?
  * then attaches the pair it derived from the session itself. Attribution is
  * never client-supplied.
  */
+/**
+ * `POST /sessions/:id/redial`: the attempt whose wrap-up the agent is looking at.
+ * `agent_user_id` is not a client field (the actor is added server-side; zod strips it).
+ */
+const redialSchema = z.object({
+  attempt_id: z.string().uuid(),
+});
+
 const dispositionSchema = z.object({
   disposition_code: z.string().min(1).max(50),
   notes: z.string().max(4000).optional(),
@@ -528,6 +536,47 @@ export async function proxyAgencyAgentRoutes(app: FastifyInstance): Promise<void
       });
     }
     return reply.code(result.status).send(result.body);
+  });
+
+  /**
+   * POST /proxy/agency/sessions/:id/redial — wrap-up redial.
+   *
+   * The agent, in wrap-up after a connected call and before saving the outcome, redials
+   * the same customer and is connected to them again (`agency/wrapup-redial.ts`). The
+   * session's own agent only: the actor is sent without `on_behalf` mattering, because
+   * the internal handler's `requireOwnedSession` does not let a supervisor act here.
+   * Floored at `agency.attempts.handle`, the permission that handles a live call.
+   */
+  app.post<{ Params: { id: string } }>('/sessions/:id/redial', {
+    preHandler: requirePermission('agency.attempts.handle'),
+  }, async (request, reply) => {
+    const parsed = parseOr400(redialSchema, request.body ?? {}, reply, 'agency');
+    if (!parsed) return reply;
+    const actor = sessionActorOrRefuse(request, reply);
+    if (!actor) return reply;
+    const result = await callCore({
+      method: 'POST',
+      path: `/agency/sessions/${request.params.id}/redial`,
+      body: { ...parsed.data, ...actor },
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    });
+    if (result.status < 400) {
+      const redialOf = stringField(result.body, 'redial_of_attempt_id');
+      const redialId = stringField(result.body, 'attempt_id');
+      platformAuditLogger.log({
+        ...accountAudit(request),
+        ...resolvedUserAuditActor(request, actor.agent_user_id),
+        action: 'agency_attempt.redialed',
+        resource_type: 'agency_attempt',
+        ...(redialOf ? { resource_id: redialOf } : {}),
+        details: {
+          session_id: request.params.id,
+          ...(redialId ? { redial_attempt_id: redialId } : {}),
+        },
+      });
+    }
+    return sendCoreRefusal(request, reply, result);
   });
 
   /**

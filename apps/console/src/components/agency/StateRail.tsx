@@ -5,6 +5,7 @@ import { formatDuration } from '../../utils/agencyClock';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { resolveReleaseCopy } from '../../utils/agencyReleaseCopy';
 import { hasWrapup, type WrapupAnchor } from '../../utils/agencyWrapup';
+import { redialTag } from '../../utils/agencyRedialCopy';
 import { VISUAL_CUE_SPECS } from '../../utils/agencyCues';
 import type { ServerClock } from '../../hooks/useServerClock';
 import type { CueFlash } from '../../hooks/useAgencyCues';
@@ -210,11 +211,25 @@ export function describeRail(input: {
     };
   }
 
+  /**
+   * A wrap-up redial is the same customer on the same screen, so it reads as the
+   * same kind of call with its tag: "Redial 1 of 2 — calling…" while it rings, and
+   * the tag beside the number once connected.
+   */
+  const redial = live?.attempt.redial;
   if (live?.bridgedAt) {
-    return { tone: 'success', label: 'On call', detail: live.attempt.phone_e164 };
+    return {
+      tone: 'success',
+      label: 'On call',
+      detail: redial ? `${redialTag(redial)} · ${live.attempt.phone_e164}` : live.attempt.phone_e164,
+    };
   }
   if (live) {
-    return { tone: 'warning', label: 'Ringing — get ready', detail: live.attempt.phone_e164 };
+    return {
+      tone: 'warning',
+      label: redial ? `${redialTag(redial)} — calling…` : 'Ringing — get ready',
+      detail: live.attempt.phone_e164,
+    };
   }
 
   /**

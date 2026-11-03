@@ -398,6 +398,56 @@ export interface AgencyWrapupState {
   requires_disposition: boolean;
   disposition_submitted: boolean;
   held_reason: AgencyWrapupHoldReason | null;
+  /**
+   * Wrap-up redial (`POST /sessions/:id/redial`): how many more times the agent may
+   * redial this customer from this wrap-up. Absent or `null`: redial is not offered (the
+   * campaign's `allow_wrapup_redial` is off, or no outcome is owed). `0`: the limit is
+   * used up, so the button is shown disabled. At most {@link AGENCY_WRAPUP_REDIAL_LIMIT}.
+   */
+  redial_remaining?: number | null;
+}
+
+/**
+ * How many times an agent may redial one customer from the wrap-up screen: 2 redials
+ * per original call, so 3 calls at most. The one bound; the server enforces it and the
+ * clients only render it (`AgencyWrapupState.redial_remaining`).
+ */
+export const AGENCY_WRAPUP_REDIAL_LIMIT = 2;
+
+/**
+ * The reserved system disposition a wrap-up redial writes on the attempt it redials.
+ * That attempt keeps its outcome (`connected`); this code says its write-up moved to the
+ * redial. A campaign's disposition catalog may not use it.
+ */
+export const AGENCY_REDIALED_DISPOSITION_CODE = 'redialed';
+
+/**
+ * `POST /sessions/:id/redial` — redial the customer of the wrap-up this session is in.
+ * The session's own agent only (`agent_user_id` must be the caller; no `on_behalf`).
+ */
+export interface AgencyRedialRequest {
+  agent_user_id: string;
+  /**
+   * The attempt whose wrap-up the agent is looking at. Required, so a click on a stale
+   * screen cannot redial a different call than the one shown.
+   */
+  attempt_id: string;
+}
+
+/**
+ * The redial was placed with the dialer. The call's progress arrives on the station
+ * socket like any call (`reserved`, `bridged`, `released`); this says it started.
+ */
+export interface AgencyRedialResponse {
+  session_id: string;
+  /** The new attempt (the redial). */
+  attempt_id: string;
+  /** The attempt it redials, now closed with {@link AGENCY_REDIALED_DISPOSITION_CODE}. */
+  redial_of_attempt_id: string;
+  /** 1 for the first redial of a call, 2 for the second. */
+  redial_number: number;
+  /** Redials left after this one. */
+  redial_remaining: number;
 }
 
 /**

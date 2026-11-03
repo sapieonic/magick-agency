@@ -37,6 +37,7 @@ interface OldAgencySessionBootstrap {
   disposition_catalog: Api.AgencyDisposition[];
   wrapup_seconds: number;
   wrapup_auto_return: boolean;
+  allow_wrapup_redial?: boolean;
   record_calls: boolean;
   break_reasons: Api.AgencyBreakReason[];
   context_display: Api.AgencyContextDisplay;
@@ -83,6 +84,7 @@ interface OldAgencyWrapupState {
   requires_disposition: boolean;
   disposition_submitted: boolean;
   held_reason?: Api.AgencyWrapupHold | null;
+  redial_remaining?: number | null;
   auto_return: boolean;
 }
 

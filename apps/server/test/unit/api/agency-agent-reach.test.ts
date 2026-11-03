@@ -120,6 +120,7 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/sessions/:id/break',
   'POST /proxy/agency/sessions/:id/break/cancel',
   'POST /proxy/agency/sessions/:id/leave',
+  'POST /proxy/agency/sessions/:id/redial',
   'POST /proxy/agency/sessions/:id/station-token',
   // The soft phone (docs/softphone.md §6, SP4): `agency.softphone.dial` floors at `agent`.
   // Every route but `PUT /softphone/settings` (`agency.softphone.manage`, account_admin).
