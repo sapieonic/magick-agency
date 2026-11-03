@@ -1,7 +1,12 @@
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
 import { WebRtcCallError } from '../core/webrtc-bridge-manager.js';
-import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
+import {
+  DIAL_OUTCOME_UNKNOWN_ERROR_CODE,
+  DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS,
+  isDialOutcomeUnknown,
+} from '../telephony/carrier-errors.js';
+import type { UnrecordedEnd } from './reaper.js';
 import type { WebRtcBridgeManager, WebRtcLifecycleEvent } from '../core/webrtc-bridge-manager.js';
 import {
   agencyAgentSessionRepository,
@@ -123,10 +128,15 @@ export class AgencyDialer {
    * but the agent is back in the pool with their station connected — which is
    * exactly what the reaper's periodic sweep reads as "still owned somewhere" and
    * skips. So the reaper is handed these ids directly
-   * ({@link unrecordedEndedAttemptIds}) and ends them `orphaned`. Process-local
+   * ({@link unrecordedEndedAttempts}) and ends them `orphaned`. Process-local
    * on purpose: after a restart the startup reaper ends every non-terminal row.
+   *
+   * attemptId → whether the dial's outcome is unknown (the carrier may have queued it;
+   * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS}). Every other end here is one this
+   * replica saw happen, so the reaper requeues its contact without the carrier rule's
+   * delay, as this replica would have had the write succeeded.
    */
-  private readonly unrecordedEnds = new Set<string>();
+  private readonly unrecordedEnds = new Map<string, boolean>();
   /**
    * Grace timers for a station that dropped while an UNANNOUNCED dial was ringing,
    * keyed by session id.
@@ -568,7 +578,8 @@ export class AgencyDialer {
       outcome,
       ended_at: new Date(),
     }).catch((err) => {
-      this.unrecordedEnds.add(cmd.attemptId);
+      // `retryNotBefore` is set exactly when the carrier may have queued the dial.
+      this.noteUnrecordedEnd(cmd.attemptId, retryNotBefore !== undefined);
       log.error({ err, attemptId: cmd.attemptId }, 'Failed to end abandoned attempt — the reaper ends it');
     });
 
@@ -1196,7 +1207,9 @@ export class AgencyDialer {
       await this.recordEndedAttempt(live, ev, { outcome, abandoned, abandonReason });
     } catch (err) {
       rowEnded = false;
-      this.unrecordedEnds.add(cmd.attemptId);
+      // The bridge saw this call end. Only a dial that failed with an unknown outcome
+      // may still be placed by the carrier.
+      this.noteUnrecordedEnd(cmd.attemptId, ev.errorCode === DIAL_OUTCOME_UNKNOWN_ERROR_CODE);
       log.error(
         { err, attemptId: cmd.attemptId, outcome },
         'Could not record the ended attempt — releasing the agent without wrap-up; the reaper ends the row and requeues the contact',
@@ -1637,8 +1650,17 @@ export class AgencyDialer {
    * {@link unrecordedEnds}). A copy, for the same reason as
    * {@link activeAttemptIds}.
    */
-  unrecordedEndedAttemptIds(): string[] {
-    return [...this.unrecordedEnds];
+  unrecordedEndedAttempts(): UnrecordedEnd[] {
+    return [...this.unrecordedEnds].map(([attemptId, dialOutcomeUnknown]) => ({ attemptId, dialOutcomeUnknown }));
+  }
+
+  /**
+   * Hand an attempt whose `ended` write failed to the reaper. An outcome-unknown dial
+   * ends on two paths (the bridge's `ended` event and the dial's own rejection), so either
+   * saying "unknown" keeps it unknown.
+   */
+  private noteUnrecordedEnd(attemptId: string, dialOutcomeUnknown: boolean): void {
+    this.unrecordedEnds.set(attemptId, dialOutcomeUnknown || (this.unrecordedEnds.get(attemptId) ?? false));
   }
 
   /** The reaper ended these (or found them already terminal): stop reporting them. */

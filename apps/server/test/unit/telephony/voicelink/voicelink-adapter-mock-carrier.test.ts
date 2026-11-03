@@ -355,5 +355,35 @@ describe(`VoiceLink adapter + token manager vs the mock carrier (burst ${BURST},
       carrier.injectFault('cdr', { kind: 'reset' });
       await expect(adapter.getCallStatus('no-such-call')).resolves.toEqual({ status: 'unknown' });
     });
+
+    /**
+     * The 401 retry has its own deadline. A first GET that takes most of the timeout to say
+     * 401 must not leave the retry only the remainder: with one deadline shared from before
+     * the first GET, the retry here is aborted (the two GETs together take ~1.3 s of a 1 s
+     * timeout) and the lookup degrades to "unknown" although the refreshed token was good.
+     * Mutation-checked: hoisting the signal out of `get` reds this.
+     */
+    it('a slow 401 does not eat the retry\'s time: the retry gets its own deadline', async () => {
+      const adapter = newAdapter();
+      await adapter.getCallStatus('warm-up'); // log in first, so the timing below is only the two GETs
+      carrier.reset();
+      const slow = Math.round(TEST_ADD_LEAD_TIMEOUT_MS * 0.65);
+      carrier.injectFault('cdr', { kind: 'latency', ms: slow });
+      carrier.injectFault('cdr', { kind: 'status', status: 401, body: '{"message":"Unauthenticated."}' });
+      carrier.injectFault('cdr', { kind: 'latency', ms: slow });
+      carrier.injectFault('cdr', {
+        kind: 'status',
+        status: 200,
+        body: JSON.stringify({ data: { call_id: 'vl-1', call_status: 'ANSWERED', talk_duration: 42, hangup_reason: 'Normal Clearing' } }),
+      });
+
+      const startedAt = Date.now();
+      await expect(adapter.getCallStatus('vl-1')).resolves.toEqual({
+        status: 'answered', duration: 42, errorMessage: 'Normal Clearing',
+      });
+      expect(Date.now() - startedAt).toBeGreaterThan(TEST_ADD_LEAD_TIMEOUT_MS);
+      expect(carrier.requestsTo('cdr').map((r) => r.status)).toEqual([401, 200]);
+      expect(carrier.requestsTo('login')).toHaveLength(1);
+    });
   });
 });

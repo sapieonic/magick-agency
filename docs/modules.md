@@ -82,7 +82,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-migration.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~17 |
+| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | 18 |
 | `apps/server/test/integration/agency/agency-retry-idempotency.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
@@ -140,7 +140,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 65 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 37 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 41 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -224,7 +224,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 22 |
-| `apps/server/test/unit/agency/reaper.test.ts` | 43 |
+| `apps/server/test/unit/agency/reaper.test.ts` | 44 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
@@ -564,7 +564,7 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 15 |
-| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 10 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 11 |
 | `apps/server/test/unit/cluster/loop-sampler.test.ts` | 5 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 14 |
 | `apps/server/test/unit/cluster/media-cluster.test.ts` | 6 |
@@ -625,12 +625,12 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
 | `apps/server/test/unit/core/dialer-analysis-runner.test.ts` | 39 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
-| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 21 |
+| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 22 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
 | `apps/server/test/unit/core/pace-schedule.test.ts` | 15 |
 | `apps/server/test/unit/core/paced-audio-streamer.test.ts` | 15 |
 | `apps/server/test/unit/core/provider-concurrency-guard.test.ts` | 19 |
-| `apps/server/test/unit/core/recording-byte-budget.test.ts` | 6 |
+| `apps/server/test/unit/core/recording-byte-budget.test.ts` | 10 |
 | `apps/server/test/unit/core/telephony-concurrency-group.test.ts` | 1 |
 | `apps/server/test/unit/core/telephony-guard-host.test.ts` | 31 |
 | `apps/server/test/unit/core/telephony-release-wiring.test.ts` | 2 |
@@ -940,7 +940,7 @@ a WebSocket *client*, which a stub server cannot be.
 |---|---|---|
 | `apps/server/test/unit/load/load-scale.test.ts` | 3 | The shared PRNG is deterministic and in bounds |
 | `apps/server/test/unit/load/mock-voicelink-carrier.test.ts` | 6 | The mock carrier itself: URL rewrite, auth and 422, fault ordering, a `start` the product parses, audio surviving the real codec |
-| `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 21 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; a hung `add_lead` or login is abandoned at its timeout (the former 2 `it.fails`), a timed-out or unreadable `add_lead` is outcome-unknown and never retried |
+| `apps/server/test/unit/telephony/voicelink/voicelink-adapter-mock-carrier.test.ts` | 22 | Adapter and token manager over real sockets: single-flight login under a burst, one re-login per 401 burst, faults fail only the dials they hit; a hung `add_lead` or login is abandoned at its timeout (the former 2 `it.fails`), a timed-out or unreadable `add_lead` is outcome-unknown and never retried; a CDR lookup's 401 retry gets its own deadline |
 | `apps/server/test/unit/load/bridge-row-write-order.test.ts` | 1 | No live status lands over a terminal one, 200 calls with shuffled ringing / answered / terminal |
 | `apps/server/test/unit/load/station-storm.test.ts` | 4 | 150 consoles across 3 tenants: registered once, no cross-talk, tab races leave one live station (4409 for the rest) |
 | `apps/server/test/unit/load/station-heartbeat-scale.test.ts` | 1 | Exactly the silent consoles are reaped 4408 after grace; the sweep stops when the floor empties |

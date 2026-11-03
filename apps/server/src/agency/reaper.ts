@@ -92,7 +92,7 @@ export interface AgencyReaperDeps {
   ownerOf: (sessionId: string) => Promise<string | null>;
   /**
    * Attempts this replica stopped driving without managing to write them `ended`
-   * (`AgencyDialer.unrecordedEndedAttemptIds` / `forgetUnrecordedEnds`).
+   * (`AgencyDialer.unrecordedEndedAttempts` / `forgetUnrecordedEnds`).
    *
    * Neither ownership question can clear these: the dialer has dropped them from
    * `liveByAttempt`, and their agent is back in the pool with the station still
@@ -100,7 +100,7 @@ export interface AgencyReaperDeps {
    * stays. Absent ⇒ none (the reaper-only tests).
    */
   unrecordedEnds?: {
-    ids: () => string[];
+    entries: () => UnrecordedEnd[];
     forget: (attemptIds: readonly string[]) => void;
   };
   /**
@@ -125,6 +125,21 @@ export interface AgencyReaperDeps {
   clearAgent?: (sessionId: string) => Promise<void>;
 }
 
+/**
+ * An attempt the dialer saw end (or abandoned) but could not write `ended`.
+ *
+ * `dialOutcomeUnknown` is true only when the dial failed in a way that may have queued it
+ * at the carrier (an `add_lead` that timed out, or a 2xx whose body could not be read):
+ * the one end after which the carrier may still ring the customer. Every other end is
+ * known (the bridge saw the call end, or the dial was never placed), so its contact is
+ * requeued without the carrier rule's delay, as the dialer would have done had its write
+ * succeeded.
+ */
+export interface UnrecordedEnd {
+  attemptId: string;
+  dialOutcomeUnknown: boolean;
+}
+
 /** What {@link AgencyReaper.reapSessions} closed. */
 export interface SessionReapReport {
   attempts: number;
@@ -135,7 +150,7 @@ export interface SessionReapReport {
 }
 
 /**
- * When a reaped attempt's contact may be dialled again.
+ * When a reaped attempt's contact may be dialled again, when nothing saw the attempt end.
  *
  * An attempt stamped `dialing` (`dialed_at` set) that never recorded an answer or a bridge
  * died with its dial's outcome unknown: the process (a media worker, or the whole server)
@@ -144,6 +159,10 @@ export interface SessionReapReport {
  * outcome-unknown `add_lead` ({@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS}): no redial until
  * that long after the dial was sent. Every other reaped attempt (never sent, or answered:
  * the carrier's call is over with its media socket) is dialable at once, as before.
+ *
+ * For the startup reap, the slot reap and the leak sweep: the rows they end are ones no
+ * live owner saw end. The dialer's unrecorded ends are not (the dialer saw them end), and
+ * {@link AgencyReaper.sweepOnce} applies this only to those it reports outcome-unknown.
  */
 export function reapedRedialNotBefore(
   attempt: Pick<AgencyCallAttemptRecord, 'dialed_at' | 'answered_at' | 'bridged_at'>,
@@ -364,16 +383,25 @@ export class AgencyReaper {
    * driving them. `reapByIds`' live-state guard leaves alone any that was written
    * terminal meanwhile. The ids are forgotten only once the write succeeded, so a
    * database still failing keeps them for the next sweep.
+   *
+   * The contact is dialable at once: the end is known, so the outcome-unknown rule that
+   * the other reaps take from the row ({@link reapedRedialNotBefore}: dialled, never
+   * answered) does not fit here. A no-answer attempt matches that shape, and holding its
+   * contact for 15 minutes after a transient write failure would stall a campaign near
+   * the end of its list on a call that is over. The one exception is a dial the dialer
+   * itself reported outcome-unknown: the carrier may still place it, so it keeps the rule.
    */
   private async reapUnrecordedEnds(): Promise<number> {
-    const ids = this.deps.unrecordedEnds?.ids() ?? [];
-    if (ids.length === 0) return 0;
+    const ends = this.deps.unrecordedEnds?.entries() ?? [];
+    if (ends.length === 0) return 0;
+    const ids = ends.map((e) => e.attemptId);
+    const outcomeUnknown = new Set(ends.filter((e) => e.dialOutcomeUnknown).map((e) => e.attemptId));
     const reaped = await agencyAttemptRepository.reapByIds(ids);
     this.deps.unrecordedEnds?.forget(ids);
     for (const attempt of reaped) {
       await this.requeueOrphanedContact(attempt.contact_id, 'leak', {
         tenantId: attempt.tenant_id, campaignId: attempt.campaign_id,
-      }, reapedRedialNotBefore(attempt));
+      }, outcomeUnknown.has(attempt.id) ? reapedRedialNotBefore(attempt) : new Date());
     }
     if (reaped.length > 0) {
       log.warn({ count: reaped.length }, 'Agency reaper ended attempts the dialer could not record');

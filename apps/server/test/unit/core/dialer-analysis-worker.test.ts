@@ -76,6 +76,7 @@ vi.mock('../../../src/core/dialer-analysis-worker-handle.js', () => ({
 import { DialerAnalysisWorker, initDialerAnalysisWorker } from '../../../src/core/dialer-analysis-worker.js';
 import type { DialerAnalysisConfig, DialerAnalysisRunContext } from '../../../src/core/dialer-analysis-runner.js';
 import { VendorRateLimitBreaker } from '../../../src/core/vendor-rate-limit-breaker.js';
+import type { RecordingByteBudget } from '../../../src/core/recording-byte-budget.js';
 import type { DialerAnalysisJobRecord } from '@magick-agency/db/models/dialer-analysis-job.model';
 
 const CFG: DialerAnalysisConfig = {
@@ -411,6 +412,35 @@ describe('slot pool', () => {
     expect(runs.running()).toEqual(['j0', 'j2', 'j3']);
     expect(held()).toBe(460);
     await w.gracefulShutdown();
+  });
+
+  /**
+   * A slot waiting for budget at shutdown leaves the line then, not when a running job
+   * later frees its bytes: nothing that outlives the worker takes bytes or holds the line.
+   * Mutation-checked: dropping the abort in `gracefulShutdown` leaves one waiter.
+   */
+  it('shutdown takes a slot\'s pending budget wait out of the line at once', async () => {
+    vi.useFakeTimers();
+    queueOf(10);
+    const runs = heldRuns();
+    // 200 bytes per slot, a 500-byte budget: two run, a third slot waits for budget.
+    const w = poolWorker({ concurrency: 4, maxRecordingBytes: 100, memoryBudgetBytes: 500 });
+    const budget = (w as unknown as { budget: RecordingByteBudget }).budget;
+    w.wake();
+    await flush();
+    expect(runs.running()).toEqual(['j0', 'j1']);
+    expect(budget.waiting).toBe(1);
+
+    await w.gracefulShutdown();
+    await flush();
+    expect(budget.waiting).toBe(0);
+    expect(budget.reservedBytes).toBe(400); // only the two running jobs' leases
+
+    runs.finish('j0');
+    runs.finish('j1');
+    await flush();
+    expect(budget.reservedBytes).toBe(0);
+    expect(runs.running()).toEqual([]);
   });
 
   it('shutdown mid-flight requeues exactly the in-flight jobs, including a claim that lands during shutdown, and starts nothing new', async () => {

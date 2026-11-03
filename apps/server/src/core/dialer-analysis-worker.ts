@@ -116,6 +116,8 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
   /** A budget reservation in progress for the next free slot, and the leases it won. */
   private budgetWait: Promise<void> | null = null;
   private readonly granted: RecordingLease[] = [];
+  /** Aborted at shutdown: a budget wait still in line leaves it rather than taking bytes later. */
+  private readonly budgetAbort = new AbortController();
 
   constructor(opts: DialerAnalysisWorkerOptions) {
     this.cfg = opts.config;
@@ -192,6 +194,7 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
     // 2. A claim already sent to the database lands in `inFlight` (and is not started);
     //    wait for it so its rows are re-queued below rather than left to the stale sweep.
     if (this.filling) await this.filling.catch(() => 0);
+    this.budgetAbort.abort();
     for (const lease of this.granted.splice(0)) lease.release();
     // 3. Re-queue everything this process holds.
     const claims = Array.from(this.inFlight, ([id, generation]) => ({ id, generation }));
@@ -373,7 +376,7 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
   /** Wait (in the background, holding no claim) for budget for one more slot, then fill. */
   private waitForBudget(): void {
     if (this.budgetWait || this.stopped) return;
-    this.budgetWait = this.budget.acquire(this.reserveBytes).then((lease) => {
+    this.budgetWait = this.budget.acquire(this.reserveBytes, { signal: this.budgetAbort.signal }).then((lease) => {
       this.budgetWait = null;
       if (this.stopped) {
         lease.release();
@@ -381,6 +384,9 @@ export class DialerAnalysisWorker implements DialerAnalysisWorkerHandle {
       }
       this.granted.push(lease);
       void this.requestFill();
+    }, () => {
+      // Aborted at shutdown: the wait left the line holding nothing.
+      this.budgetWait = null;
     });
   }
 

@@ -91,6 +91,16 @@ describe('body decoders', () => {
     expect(decode({ op: 'dropped', concurrencyKey: 'k' })).toBeNull();
   });
 
+  it('reaper.snapshot: each unrecorded end says whether its dial outcome is unknown; anything else refused', () => {
+    const decode = IPC_REQUEST_DECODERS['reaper.snapshot'].res;
+    const snap = (unrecordedEnds: unknown) => ({ activeAttemptIds: [], unrecordedEnds, manualActiveIds: [], activeCallIds: [], leases: [] });
+    const ends = [{ attemptId: 'a1', dialOutcomeUnknown: true }, { attemptId: 'a2', dialOutcomeUnknown: false }];
+    expect(decode(roundTrip(snap(ends)))).toEqual(snap(ends));
+    expect(decode(snap(['a1']))).toBeNull();
+    expect(decode(snap([{ attemptId: 'a1' }]))).toBeNull();
+    expect(decode(snap([{ attemptId: '', dialOutcomeUnknown: false }]))).toBeNull();
+  });
+
   it('every request type has both decoders and a default deadline', () => {
     for (const type of Object.keys(IPC_REQUEST_DECODERS) as Array<keyof typeof IPC_REQUEST_DECODERS>) {
       expect(typeof IPC_REQUEST_DECODERS[type].req).toBe('function');

@@ -382,12 +382,19 @@ export class VoicelinkAdapter implements TelephonyProvider {
   private async fetchCdr(callId: string): Promise<VoicelinkCdrResponse | null> {
     try {
       const url = `${this.config.baseUrl}/v1/call-log/details?call_id=${encodeURIComponent(callId)}`;
-      // Bounded like add_lead: the whole read, body included, under one deadline.
-      const signal = AbortSignal.timeout(this.config.addLeadTimeoutMs ?? DEFAULT_VOICELINK_ADD_LEAD_TIMEOUT_MS);
+      const timeoutMs = this.config.addLeadTimeoutMs ?? DEFAULT_VOICELINK_ADD_LEAD_TIMEOUT_MS;
+      // Bounded like add_lead, and per request as `post` is: each GET (the 401 retry
+      // included) gets its own deadline, created when it is sent, which also covers its
+      // body read. One deadline shared from before the first GET would leave the retry only
+      // what the 401 and the re-login had not used. The login has its own bound.
       const get = async (token: string): Promise<Response> =>
-        fetch(url, { headers: { Accept: 'application/json', Authorization: `Bearer ${token}` }, signal });
+        fetch(url, {
+          headers: { Accept: 'application/json', Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
       let response = await get(await this.tokenManager.getToken());
       if (response.status === 401) {
+        await response.body?.cancel().catch(() => undefined);
         response = await get(await this.tokenManager.refresh());
       }
       if (!response.ok) {
