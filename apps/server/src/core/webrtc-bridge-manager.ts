@@ -49,7 +49,7 @@ import { isDialOutcomeUnknown } from '../telephony/carrier-errors.js';
 import {
   CARRIER_MEDIA_LIMITS, closeForSendBacklog, sendVerdict, STATION_ALAW8_LIMITS, STATION_PCM16_LIMITS,
 } from '../utils/ws-backpressure.js';
-import { buildCarrierUrls } from './bridge/carrier-urls.js';
+import { buildCarrierUrls, type CarrierUrls } from './bridge/carrier-urls.js';
 
 /** One call's telephony slots, held under its concurrency key (`WebRtcBridgeManager.heldLeases`). */
 export interface HeldLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
@@ -598,14 +598,15 @@ export class WebRtcBridgeManager {
     const lease = this.leases.get(concurrencyKey);
     if (lease) this.leases.set(concurrencyKey, { ...lease, callId: record.id });
 
-    // 4–5 run with the session registered, the slots held, and (from 4) the max-duration
+    // 4–5b run with the session registered, the slots held, and (from 4) the max-duration
     // timer armed, but with no carrier leg placed. A throw anywhere in them must tear all of
     // that down here: before this guard a throw (a token store, say) escaped with the
     // session, its slots, its lease entry, its timer and the borrowed station socket's
     // listeners all left in place until the max-duration timer fired, 30 minutes on.
     // See `abortUnplacedLeg` for why that teardown emits no `ended`.
-    let providerToken: string | undefined;
-    let webhookToken: string | undefined;
+    let base: string;
+    let adapter: ReturnType<TelephonyProviderRegistry['get']>;
+    let carrierUrls: CarrierUrls;
     try {
       // 4. Max-duration guard (resolved above, reused for the slot TTL).
       session.maxDurationSeconds = maxDuration;
@@ -638,6 +639,8 @@ export class WebRtcBridgeManager {
       // legs get their own purpose-bound tokens (embedded only in the URLs we send
       // the carrier). No browser token: every leg is borrowed.
       const tokenTtl = maxDuration + SLOT_TTL_GRACE_SECONDS;
+      let providerToken: string | undefined;
+      let webhookToken: string | undefined;
       if (session.carrier) {
         providerToken = crypto.randomUUID();
         webhookToken = crypto.randomUUID();
@@ -646,6 +649,32 @@ export class WebRtcBridgeManager {
           this.tokens.storeWsToken(record.id, webhookToken, tokenTtl, 'webhook'),
         ]);
       }
+
+      // 5b. Everything the carrier request is built from. None of it asks the carrier
+      // anything, so a throw here (no webhook base configured, a provider with no adapter)
+      // is a failure before the carrier, torn down by the catch below. Inside the carrier
+      // request's own try it was reported as the carrier refusing the dial
+      // (`TELEPHONY_INIT_FAILED`, with an `ended`), and the dialer charged the contact's
+      // `failed` allowance for a dial that never left this process.
+      //
+      // `base` is the provider's own webhook namespace (…/webhooks/voicelink), so
+      // `${base}/webrtc-status/${id}` resolves to the per-provider route.
+      base = this.webhookUrls.baseUrl(provider);
+      // The service's own carrier account only: the synchronous registry lookup.
+      adapter = this.telephonyRegistry.get(provider);
+      // A carrier with no answer XML (VoiceLink) dials OUT to a stream URL baked
+      // into the dial request, so hand it the bridge's dedicated PSTN leg explicitly.
+      // Embed the webhook token so forged lifecycle events (which drive
+      // status/concurrency) are rejected. A provider with no carrier module gets an
+      // untokenized URL.
+      carrierUrls = buildCarrierUrls({
+        base,
+        callId: record.id,
+        mediaUrlInDialRequest: Boolean(session.carrier?.mediaUrlInDialRequest),
+        providerToken,
+        webhookToken,
+        routeHint: this.options.carrierRouteHint ?? null,
+      });
 
       auditLogger.log({
         callId: record.id,
@@ -672,34 +701,17 @@ export class WebRtcBridgeManager {
 
     // 6. Place the outbound telephony leg. Only the carrier request is inside this try:
     // its catch reports a dial the carrier refused (or may have queued) and hangs nothing
-    // up. A step after `initiateCall` resolved runs with the leg placed and must not land
-    // there (see the `provider_call_id` write below).
+    // up. A step before it (5b) asks the carrier nothing and is torn down as unplaced; a
+    // step after `initiateCall` resolved runs with the leg placed and must not land here
+    // either (see the `provider_call_id` write below).
     try {
-      // `base` is the provider's own webhook namespace (…/webhooks/voicelink), so
-      // `${base}/webrtc-status/${id}` resolves to the per-provider route.
-      const base = this.webhookUrls.baseUrl(provider);
-      // The service's own carrier account only: the synchronous registry lookup.
-      const adapter = this.telephonyRegistry.get(provider);
-      // A carrier with no answer XML (VoiceLink) dials OUT to a stream URL baked
-      // into the dial request, so hand it the bridge's dedicated PSTN leg explicitly.
-      // Embed the webhook token so forged lifecycle events (which drive
-      // status/concurrency) are rejected. A provider with no carrier module gets an
-      // untokenized URL.
-      const { mediaStreamUrl, statusCallbackUrl } = buildCarrierUrls({
-        base,
-        callId: record.id,
-        mediaUrlInDialRequest: Boolean(session.carrier?.mediaUrlInDialRequest),
-        providerToken,
-        webhookToken,
-        routeHint: this.options.carrierRouteHint ?? null,
-      });
       const result = await adapter.initiateCall({
         callId: record.id,
         to: params.destinationPhone,
         from: params.callerId,
         webhookUrl: `${base}/webrtc-answer/${record.id}`,
-        statusCallbackUrl,
-        mediaStreamUrl,
+        statusCallbackUrl: carrierUrls.statusCallbackUrl,
+        mediaStreamUrl: carrierUrls.mediaStreamUrl,
         maxDuration,
         // The VoiceLink adapter does not send this flag; the carrier's recording URL
         // arrives on its terminal webhook.

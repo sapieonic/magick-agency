@@ -146,7 +146,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
    deferred-hangup window applies, so a wifi blip mid-conversation survives). `ringing` is
    written when the carrier accepts the dial. A dial the bridge refuses before the carrier
    (`concurrency_limit`, a dead socket, or `dial_failed` for a refusal the soft phone does not
-   name) or the carrier refuses outright is ended `failed` and **unplaced**: `dialed_at` (stamped by
+   name, and for any failure inside the bridge before the carrier is asked: the row INSERT, the
+   carrier tokens, the carrier request's inputs such as the webhook base or the provider's
+   adapter, which the bridge tears down with no `ended`) or the carrier refuses outright is
+   ended `failed` and **unplaced**: `dialed_at` (stamped by
    the `dialing` write just before the bridge is asked) is cleared, so it is no dial in the usage
    counts (SP5), its contact claim is released and no attempt is charged; the carrier's refusal
    answers 201 with the row as it ended and settled. So is a dial that throws before the bridge is asked (a

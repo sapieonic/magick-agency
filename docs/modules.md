@@ -265,7 +265,7 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 |---|---|
 | `apps/server/test/integration/agency/chaos/softphone-restart-mid-call.test.ts` | 3 |
 | `apps/server/test/integration/agency/softphone-agent-claim.test.ts` | 8 |
-| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 15 |
+| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 16 |
 | `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 14 |
 | `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
 | `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 21 |
@@ -648,7 +648,7 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/webrtc-bridge-late-binding.test.ts` | 17 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.bridged.test.ts` | 8 |
 | `apps/server/test/unit/core/webrtc-bridge-manager.seams.test.ts` | 12 |
-| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 67 |
+| `apps/server/test/unit/core/webrtc-bridge-manager.test.ts` | 70 |
 | `apps/server/test/unit/core/webrtc-bridge-ring-cancel.test.ts` | 15 |
 | `apps/server/test/unit/core/webrtc-bridge-manual-correlation.test.ts` | 6 |
 | `apps/server/test/unit/core/webrtc-bridge-seam-contract.test.ts` | 4 |
@@ -957,7 +957,7 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/voicelink-webhook-storm.test.ts` | ~3 | 40 calls of duplicated, shuffled, concurrent webhooks settle once with recordings and carrier ids kept; 1 `it.fails` (terminal overtaking `answered`) |
 | `apps/server/test/integration/load/voicelink-full-stack.test.ts` | ~1 | Real app, real stations, pacing engine dialling through the real adapter into the mock carrier; no leaks |
 | `apps/server/test/integration/load/voicelink-dial-outcome-unknown.test.ts` | 1 | The same stack, five refused dials (unreadable 200, `add_lead` timeout, 500, an agent hang-up during a hung `add_lead`, an outcome-unknown dial at the our-fault bound): each settled once; an outcome-unknown one (the raced hang-up too) `pending` on the our-fault ledger, `attempt_count` untouched and not dialable before `dialed_at` + 15 min, `exhausted` at the bound; a plain refusal by the retry policy; one `released` per dial; no leaks |
-| `apps/server/test/integration/load/voicelink-bridge-setup-failure.test.ts` | 1 | The same stack, the carrier-token store failing after the bridge session is registered: no session, slots, lease, timer or media token left, no `ended`, the attempt `failed` and uncharged, one `released`; the contact's next dial reaches the carrier |
+| `apps/server/test/integration/load/voicelink-bridge-setup-failure.test.ts` | 2 | The same stack, the carrier-token store or the webhook base (an input of the carrier request) failing after the bridge session is registered: no session, slots, lease, timer or media token left, no `ended`, the attempt `failed` and uncharged (`BRIDGE_SETUP_FAILED`, not a carrier refusal), one `released`; the contact's next dial reaches the carrier |
 | `apps/server/test/integration/load/station-floor.test.ts` | ~2 | 150-agent join / connect / available storm and a reconnect storm through the real routes |
 | `apps/server/test/integration/load/station-floor-soak.test.ts` | ~1 | 100 agents, about 520 calls through wrap-up and disposition; console = Redis = session row |
 | `apps/server/test/integration/load/floor-run.test.ts` | ~1 | 100 agents, 5 campaigns, 3 tenants, 2,200 contacts to exhaustion; invariants and the pacing law every round |

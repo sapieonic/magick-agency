@@ -151,6 +151,26 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
   });
 
+  /**
+   * The bridge's real order for a dial that fails before the carrier is asked (the row
+   * INSERT, the carrier tokens, the carrier request's own inputs: a missing webhook base, a
+   * provider with no adapter): it tears the leg down with NO `ended` and rejects with the
+   * original error (`abortUnplacedLeg`). Nothing was dialled, so the agent gets the reviewed
+   * `dial_failed` (503, retry), not a masked 500, and the claim is given back uncharged.
+   */
+  it('a dial that fails in the bridge before the carrier is no dial and answers dial_failed', async () => {
+    const { contact, call } = await claimedCall({ contact: { attempt_count: 1 } });
+    bridge.createBridgedCall.mockRejectedValueOnce(new TypeError('Invalid URL'));
+    expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: false, failure: 'dial_failed' });
+    expect(dialer.hasLiveCall(call.session_id as string)).toBe(false);
+
+    const row = await callRow(call.id as string);
+    expect(row).toMatchObject({ state: 'ended', outcome: 'failed', dialed_at: null });
+    expect(row.settled_at).not.toBeNull();
+    expect(await contactRow(contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 1, our_fault_attempts: 0 });
+    expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
+  });
+
   it('a dial the carrier refused outright is no dial either (telephony_init_failed)', async () => {
     const { contact, call } = await claimedCall();
     bridge.createBridgedCall.mockImplementationOnce(async () => {
