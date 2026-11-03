@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { AGENCY_ACTION_ERROR_CODES } from '../../types/agency';
 import {
+  PERMANENT_REDIAL_REFUSALS,
   REDIAL_FAILED_COPY,
   REDIAL_REFUSAL_CODES,
+  REDIAL_UNCERTAIN_COPY,
   REDIAL_REFUSAL_COPY,
   redialRefusalCopy,
   redialRemainingCopy,
@@ -21,7 +23,6 @@ describe('wrap-up redial copy', () => {
   });
 
   it.each([
-    ['redial_not_allowed', 'Redial isn’t available for this call. Save the outcome instead.'],
     ['redial_limit_reached', 'No redials left for this call. Save the outcome.'],
     ['disposition_already_submitted', 'The outcome for this call is already saved, so it can’t be redialed.'],
     ['redial_blocked_dnc', 'This number is on a Do Not Call list, so it can’t be redialed. Save the outcome.'],
@@ -44,10 +45,36 @@ describe('wrap-up redial copy', () => {
     );
   });
 
-  it('falls back for a transport failure or an unexpected code', () => {
-    expect(redialRefusalCopy(new Error('Failed to fetch'))).toBe(REDIAL_FAILED_COPY);
+  it('shows redial_not_allowed’s message as received (the campaign off or not running, the wrap-up over, ...)', () => {
+    expect(
+      redialRefusalCopy(
+        apiError(409, {
+          error: 'Conflict',
+          code: 'redial_not_allowed',
+          message: 'The campaign is not running, so the customer cannot be redialled. Save the outcome.',
+        }),
+      ),
+    ).toBe('The campaign is not running, so the customer cannot be redialled. Save the outcome.');
+    expect(redialRefusalCopy(apiError(409, { error: 'Conflict', code: 'redial_not_allowed', message: '' }))).toBe(
+      'Redial isn’t available for this call. Save the outcome instead.',
+    );
+  });
+
+  it('does not claim a redial with no usable answer failed: it may have been placed', () => {
+    expect(redialRefusalCopy(new Error('Failed to fetch'))).toBe(REDIAL_UNCERTAIN_COPY);
+    expect(redialRefusalCopy(apiError(502, { error: 'Bad Gateway' }))).toBe(REDIAL_UNCERTAIN_COPY);
+    expect(REDIAL_UNCERTAIN_COPY).not.toMatch(/couldn’t|failed/i);
+  });
+
+  it('says it could not redial when the server answered with a refusal it does not name', () => {
     expect(redialRefusalCopy(apiError(409, { error: 'Conflict', code: 'state_changing', message: 'x' }))).toBe(
       REDIAL_FAILED_COPY,
+    );
+  });
+
+  it('holds only the refusals that cannot change within the wrap-up as permanent', () => {
+    expect([...PERMANENT_REDIAL_REFUSALS].sort()).toEqual(
+      ['disposition_already_submitted', 'redial_blocked_dnc', 'redial_not_allowed'].sort(),
     );
   });
 

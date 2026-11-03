@@ -1,13 +1,16 @@
 import { useCallback, useRef, useState } from 'react';
 import { redialFromWrapup } from '../api/agency';
 import { useLatestRef } from './useLatestRef';
-import { errorCode } from '../utils/agencyErrors';
+import { errorCode, errorStatus } from '../utils/agencyErrors';
 import {
+  PERMANENT_REDIAL_REFUSALS,
+  REDIAL_DISABLED_COPY,
   REDIAL_IN_FLIGHT_COPY,
   redialRefusalCopy,
   redialRemainingCopy,
 } from '../utils/agencyRedialCopy';
 import { trackAgencyRedialRefused, trackAgencyRedialRequested } from '../analytics/events';
+import type { RedialCarryRecorder } from './useRedialCarry';
 import type { LiveAttempt, StationConnection } from './agencyStation/types';
 import type { WrapupAnchor } from '../utils/agencyWrapup';
 import type { AgencyActionErrorCode, AgencySessionBootstrap } from '../types/agency';
@@ -30,6 +33,16 @@ import type { AgencyActionErrorCode, AgencySessionBootstrap } from '../types/age
  * progress is the socket's, and `reserved` (which replaces the wrap-up) is what
  * ends it. A refusal ends it at once and states why; the pad is usable again.
  *
+ * Once the 200 lands the server has stopped the wrap-up timer (`countdownStopped`),
+ * so the console stops showing a countdown that no longer ends anything.
+ *
+ * ── Disabled, and saying why ────────────────────────────────────────────────
+ * The line beside the button is the count only while the button can be pressed.
+ * Disabled, it states the reason instead (`REDIAL_DISABLED_COPY`): in flight, none
+ * left, refused for good, the outcome saving or saved, the socket not open, the
+ * campaign not dialing. A refusal that holds for the rest of the wrap-up
+ * (`PERMANENT_REDIAL_REFUSALS`) keeps the button disabled until the next one.
+ *
  * The result is tagged with the wrap-up's attempt and read only while that wrap-up
  * is the one on screen with no call live, the same lifetime rule `useDncAction`
  * applies: a new wrap-up (a redial that failed before connecting opens one on the
@@ -46,8 +59,13 @@ export interface WrapupRedialState {
   inFlight: boolean;
   /** The refusal of the last press, stated. Null when there is none. */
   refusal: string | null;
-  /** The line beside the button: the remaining count, or "Redialing…". */
+  /**
+   * The line beside the button: the remaining count while it can be pressed,
+   * otherwise why it cannot ("Redialing…", "No redials left", ...).
+   */
   statusLine: string | null;
+  /** The redial is placed (200): the server stopped this wrap-up's timer. */
+  countdownStopped: boolean;
   redial: () => void;
   /**
    * Synchronous: a redial is in flight for the wrap-up on screen. For the
@@ -63,9 +81,27 @@ interface RedialResult {
   refusal: string | null;
   /** `redial_limit_reached` came back: the frame's count is stale, treat it as 0. */
   exhausted: boolean;
+  /** A refusal that holds for the rest of this wrap-up (`PERMANENT_REDIAL_REFUSALS`). */
+  blocked: boolean;
+  /** The 200 came back: the dial is placed and the wrap-up timer stopped. */
+  placed: boolean;
 }
 
-const NO_RESULT: RedialResult = { attemptId: null, inFlight: false, refusal: null, exhausted: false };
+const NO_RESULT: RedialResult = {
+  attemptId: null,
+  inFlight: false,
+  refusal: null,
+  exhausted: false,
+  blocked: false,
+  placed: false,
+};
+
+/**
+ * Why the outcome pad cannot be acted on, as far as redial cares: the outcome is
+ * being saved, it is saved (or the console waits on the dialer after the save), or
+ * the pad is locked outright.
+ */
+export type RedialPadBlock = 'saving' | 'saved' | 'locked';
 
 export function useWrapupRedial(options: {
   bootstrap: AgencySessionBootstrap | null;
@@ -74,14 +110,20 @@ export function useWrapupRedial(options: {
   wrapup: WrapupAnchor | null;
   live: LiveAttempt | null;
   connection: StationConnection;
+  /** `campaign_state.dialing`: the server refuses a redial on a campaign that is not running. */
+  dialing: boolean;
   /**
-   * The outcome pad could be acted on now (unlocked, not waiting on the dialer,
-   * not submitting, nothing saved yet). A redial is refused whenever the save is,
-   * and once the save has landed there is no call left to redial.
+   * Why the outcome pad cannot be acted on now, or null when it can. A redial is
+   * refused whenever the save is, and once the save has landed there is no call
+   * left to redial.
    */
-  padAvailable: boolean;
+  padBlock: RedialPadBlock | null;
+  /** The page's assertive announcement: "Redialing…" is the press's direct result. */
+  announce: (text: string) => void;
+  /** Lets the notes draft and the panel follow the press (`useRedialCarry`). */
+  carry: RedialCarryRecorder;
 }): WrapupRedialState {
-  const { bootstrap, tenantId, accountId, wrapup, live, connection, padAvailable } = options;
+  const { bootstrap, tenantId, accountId, wrapup, live, connection, dialing, padBlock, announce, carry } = options;
 
   const [result, setResult] = useState<RedialResult>(NO_RESULT);
   const wrapupAttemptId = live === null && wrapup !== null ? wrapup.attemptId : null;
@@ -94,12 +136,26 @@ export function useWrapupRedial(options: {
    * so placing one while it is reconnecting dials a customer the agent cannot hear.
    * The server refuses that case too (`redial_blocked`); this keeps the press away.
    */
-  const enabled =
-    offered && (remaining ?? 0) > 0 && !current.inFlight && padAvailable && connection === 'open';
+  const disabledReason: string | null = !offered
+    ? null
+    : current.inFlight
+      ? REDIAL_IN_FLIGHT_COPY
+      : (remaining ?? 0) <= 0
+        ? redialRemainingCopy(0)
+        : current.blocked
+          ? REDIAL_DISABLED_COPY.blocked
+          : padBlock !== null
+            ? REDIAL_DISABLED_COPY[padBlock]
+            : connection !== 'open'
+              ? REDIAL_DISABLED_COPY.connection
+              : !dialing
+                ? REDIAL_DISABLED_COPY.notDialing
+                : null;
+  const enabled = offered && disabledReason === null;
 
   /** The wrap-up attempt a request is out for — the synchronous double-press guard. */
   const pendingRef = useRef<string | null>(null);
-  const latest = useLatestRef({ wrapupAttemptId, enabled, remaining, bootstrap });
+  const latest = useLatestRef({ wrapupAttemptId, enabled, remaining, bootstrap, announce, carry });
 
   const isInFlight = useCallback(() => {
     const { wrapupAttemptId: onScreen } = latest.current;
@@ -107,32 +163,53 @@ export function useWrapupRedial(options: {
   }, [latest]);
 
   const redial = useCallback(() => {
-    const { wrapupAttemptId: attemptId, enabled: mayPress, remaining: left, bootstrap: boot } = latest.current;
+    const {
+      wrapupAttemptId: attemptId,
+      enabled: mayPress,
+      remaining: left,
+      bootstrap: boot,
+      announce: say,
+      carry: recorder,
+    } = latest.current;
     if (!boot || attemptId === null || !mayPress) return;
+    // The synchronous guard: two presses in one task both see this render's `enabled`.
     if (pendingRef.current === attemptId) return;
     pendingRef.current = attemptId;
-    setResult({ attemptId, inFlight: true, refusal: null, exhausted: false });
+    setResult({ ...NO_RESULT, attemptId, inFlight: true });
+    recorder.pressed(attemptId);
+    say(REDIAL_IN_FLIGHT_COPY);
     trackAgencyRedialRequested({ campaign_id: boot.campaign_id, redial_remaining: left ?? 0 });
 
-    redialFromWrapup(boot.session_id, attemptId, tenantId, accountId).catch((err: unknown) => {
-      // Placed means waiting for `reserved`; only a refusal frees the controls.
-      if (pendingRef.current === attemptId) pendingRef.current = null;
-      const code = errorCode(err);
-      setResult((prev) =>
-        prev.attemptId === attemptId
-          ? {
-              ...prev,
-              inFlight: false,
-              refusal: redialRefusalCopy(err),
-              exhausted: prev.exhausted || code === 'redial_limit_reached',
-            }
-          : prev,
-      );
-      trackAgencyRedialRefused({
-        campaign_id: boot.campaign_id,
-        code: code as AgencyActionErrorCode | null,
-      });
-    });
+    redialFromWrapup(boot.session_id, attemptId, tenantId, accountId).then(
+      (response) => {
+        // Placed means waiting for `reserved`, which ends the wait; the timer is stopped.
+        recorder.placed(response);
+        setResult((prev) => (prev.attemptId === attemptId ? { ...prev, placed: true } : prev));
+      },
+      (err: unknown) => {
+        // A refusal frees the controls. So does no answer at all, though the redial
+        // may have been placed: the copy says so rather than claiming it failed.
+        if (pendingRef.current === attemptId) pendingRef.current = null;
+        const code = errorCode(err);
+        const status = errorStatus(err);
+        recorder.settled(attemptId, status !== null && status < 500);
+        setResult((prev) =>
+          prev.attemptId === attemptId
+            ? {
+                ...prev,
+                inFlight: false,
+                refusal: redialRefusalCopy(err),
+                exhausted: prev.exhausted || code === 'redial_limit_reached',
+                blocked: prev.blocked || (code !== null && PERMANENT_REDIAL_REFUSALS.has(code)),
+              }
+            : prev,
+        );
+        trackAgencyRedialRefused({
+          campaign_id: boot.campaign_id,
+          code: code as AgencyActionErrorCode | null,
+        });
+      },
+    );
   }, [latest, tenantId, accountId]);
 
   return {
@@ -141,7 +218,8 @@ export function useWrapupRedial(options: {
     enabled,
     inFlight: current.inFlight,
     refusal: current.refusal,
-    statusLine: !offered ? null : current.inFlight ? REDIAL_IN_FLIGHT_COPY : redialRemainingCopy(remaining ?? 0),
+    statusLine: !offered ? null : (disabledReason ?? redialRemainingCopy(remaining ?? 0)),
+    countdownStopped: current.placed,
     redial,
     isInFlight,
   };

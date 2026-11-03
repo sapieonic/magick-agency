@@ -283,6 +283,7 @@ export function useStationJoin({
       break_reason_count: bootstrap.break_reasons.length,
       wrapup_seconds: bootstrap.wrapup_seconds,
       wrapup_auto_return: bootstrap.wrapup_auto_return,
+      allow_wrapup_redial: bootstrap.allow_wrapup_redial ?? false,
       record_calls: bootstrap.record_calls,
       // `AgencySessionBootstrap.context_display` carries only the hero/order/
       // hidden display overrides, not the full set of contact-context fields a

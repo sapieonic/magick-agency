@@ -26,6 +26,7 @@ vi.mock('../../contexts/AuthContext', () => ({
 const analyticsMocks = vi.hoisted(() => ({
   trackAgencyRedialRequested: vi.fn(),
   trackAgencyRedialRefused: vi.fn(),
+  trackAgencyStationJoined: vi.fn(),
 }));
 vi.mock('../../analytics/events', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../analytics/events')>();
@@ -33,7 +34,14 @@ vi.mock('../../analytics/events', async (importOriginal) => {
 });
 
 import AgentConsolePage from '../../pages/agency/AgentConsolePage';
-import { PAD_REDIALING_COPY, REDIAL_REFUSAL_COPY } from '../../utils/agencyRedialCopy';
+import {
+  PAD_REDIALING_COPY,
+  REDIAL_DISABLED_COPY,
+  REDIAL_IN_FLIGHT_COPY,
+  REDIAL_REFUSAL_COPY,
+  REDIAL_UNCERTAIN_COPY,
+} from '../../utils/agencyRedialCopy';
+import type { AgencyRedialResponse } from '@magick-agency/contracts/agency';
 import type { AgencyReservedAttempt, AgencySessionBootstrap } from '../../types/agency';
 
 /**
@@ -122,6 +130,26 @@ function apiError(statusCode: number, details: unknown) {
   return Object.assign(new Error('ignored'), { statusCode, details });
 }
 
+/** A redial request the test answers when it chooses. */
+function deferredRedial() {
+  let resolve!: (r: AgencyRedialResponse) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<AgencyRedialResponse>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  mocks.redialFromWrapup.mockReturnValueOnce(promise);
+  return { resolve, reject };
+}
+
+const PLACED: AgencyRedialResponse = {
+  session_id: 'sess-1',
+  attempt_id: 'att-2',
+  redial_of_attempt_id: 'att-1',
+  redial_number: 1,
+  redial_remaining: 1,
+};
+
 beforeEach(() => {
   FakeSocket.instances = [];
   Object.values(mocks).forEach((m) => m.mockReset());
@@ -182,13 +210,36 @@ function wrapupFrame(attemptId: string, redial: Record<string, unknown>) {
   };
 }
 
+/**
+ * A redial that failed before its `reserved` was sent (the dispatcher refused it, a
+ * check failed after the take): the server says the NEW attempt ended and opens its
+ * wrap-up, on a console that never saw that attempt.
+ */
+async function redialEndsBeforeReserved(attemptId = 'att-2', at = '10:01') {
+  await act(async () => {
+    latest().emit({
+      event: 'released',
+      attempt_id: attemptId,
+      reason: 'failed',
+      requires_disposition: true,
+      message: 'The call could not be placed.',
+    });
+    latest().emit({ event: 'agent_state', state: 'wrapup', since: `2026-08-11T${at}:00.000Z` });
+    latest().emit(wrapupFrame(attemptId, { redial_remaining: 1 }));
+  });
+}
+
 /** A connected call on `attempt` that dropped, now in a wrap-up owing its outcome. */
 async function callEndsInto(attempt: AgencyReservedAttempt, redial: Record<string, unknown>, at = '10:00') {
+  // The call renders before it ends, as it does on a real socket: the panel a
+  // `released` retains is the one on screen when it lands.
   await act(async () => {
     latest().emit({ event: 'reserved', attempt });
     latest().emit({ event: 'agent_state', state: 'reserved', since: `2026-08-11T${at}:00.000Z` });
     latest().emit({ event: 'bridged', attempt_id: attempt.attempt_id, bridged_at: `2026-08-11T${at}:04.000Z` });
     latest().emit({ event: 'agent_state', state: 'on_call', since: `2026-08-11T${at}:04.000Z` });
+  });
+  await act(async () => {
     latest().emit({
       event: 'released',
       attempt_id: attempt.attempt_id,
@@ -340,17 +391,22 @@ describe('pressing Redial', () => {
 });
 
 describe('a refused redial leaves the agent in wrap-up with the pad usable', () => {
+  const CAMPAIGN_STOPPED = 'The campaign is not running, so the customer cannot be redialled. Save the outcome.';
+  // [code, the server's message, what the agent reads, what the button then says (null: enabled)]
   it.each([
-    ['redial_not_allowed', REDIAL_REFUSAL_COPY.redial_not_allowed],
-    ['redial_limit_reached', REDIAL_REFUSAL_COPY.redial_limit_reached],
-    ['disposition_already_submitted', REDIAL_REFUSAL_COPY.disposition_already_submitted],
-    ['redial_blocked_dnc', REDIAL_REFUSAL_COPY.redial_blocked_dnc],
-    ['redial_blocked_calling_hours', REDIAL_REFUSAL_COPY.redial_blocked_calling_hours],
-    ['redial_blocked', 'Couldn’t redial: The number is not valid.'],
-  ])('%s', async (code, copy) => {
-    mocks.redialFromWrapup.mockRejectedValue(
-      apiError(409, { error: 'Conflict', code, message: 'The number is not valid.' }),
-    );
+    ['redial_not_allowed', CAMPAIGN_STOPPED, CAMPAIGN_STOPPED, REDIAL_DISABLED_COPY.blocked],
+    ['redial_limit_reached', 'x', REDIAL_REFUSAL_COPY.redial_limit_reached, 'No redials left'],
+    [
+      'disposition_already_submitted',
+      'x',
+      REDIAL_REFUSAL_COPY.disposition_already_submitted,
+      REDIAL_DISABLED_COPY.blocked,
+    ],
+    ['redial_blocked_dnc', 'x', REDIAL_REFUSAL_COPY.redial_blocked_dnc, REDIAL_DISABLED_COPY.blocked],
+    ['redial_blocked_calling_hours', 'x', REDIAL_REFUSAL_COPY.redial_blocked_calling_hours, null],
+    ['redial_blocked', 'The number is not valid.', 'Couldn’t redial: The number is not valid.', null],
+  ])('%s', async (code, message, copy, disabledLine) => {
+    mocks.redialFromWrapup.mockRejectedValue(apiError(409, { error: 'Conflict', code, message }));
     await inWrapup({ redial_remaining: 2 });
     await pressRedial();
 
@@ -358,10 +414,13 @@ describe('a refused redial leaves the agent in wrap-up with the pad usable', () 
     expect(screen.getByTestId('wrapup-redial-refusal').getAttribute('role')).toBe('alert');
     expect(analyticsMocks.trackAgencyRedialRefused).toHaveBeenCalledWith({ campaign_id: 'camp-1', code });
 
-    // The limit is the one refusal that also retires the button: the frame's count is stale.
-    if (code === 'redial_limit_reached') {
+    if (disabledLine !== null) {
+      // A refusal that holds for this wrap-up retires the button, and says why
+      // beside it — never "2 redials left" on a button that will not press.
       expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
-      expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('No redials left');
+      expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(disabledLine);
+      await pressRedial();
+      expect(mocks.redialFromWrapup).toHaveBeenCalledTimes(1);
     } else {
       expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
       expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('2 redials left');
@@ -381,14 +440,12 @@ describe('a refused redial leaves the agent in wrap-up with the pad usable', () 
     );
   });
 
-  it('says so plainly when the request itself failed, and lets the agent try again', async () => {
+  it('does not claim a redial with no answer failed, and lets the agent try again', async () => {
     mocks.redialFromWrapup.mockRejectedValueOnce(new Error('Failed to fetch'));
     await inWrapup({ redial_remaining: 1 });
     await pressRedial();
     await waitFor(() =>
-      expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(
-        'Couldn’t redial. Try again, or save the outcome.',
-      ),
+      expect(screen.getByTestId('wrapup-redial-refusal').textContent).toBe(REDIAL_UNCERTAIN_COPY),
     );
     expect(analyticsMocks.trackAgencyRedialRefused).toHaveBeenCalledWith({ campaign_id: 'camp-1', code: null });
 
@@ -558,5 +615,227 @@ describe('the notes draft follows the customer onto the redial', () => {
       });
     });
     expect(notesField().value).toBe(DRAFT);
+  });
+});
+
+describe('the press itself', () => {
+  it('sends one request for two presses in the same task, before React could re-render', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    const button = screen.getByTestId('wrapup-redial');
+    // Both clicks land on the same render: `enabled` is still true for the second,
+    // so only the synchronous guard stands between them and a second redial.
+    await act(async () => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect(mocks.redialFromWrapup).toHaveBeenCalledTimes(1);
+    expect(analyticsMocks.trackAgencyRedialRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it('announces "Redialing…" in the page’s assertive region', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    deferredRedial();
+    await pressRedial();
+    const region = document.querySelector('[aria-live="assertive"]')!;
+    expect(region.textContent).toBe(REDIAL_IN_FLIGHT_COPY);
+  });
+});
+
+describe('a disabled Redial states a true reason', () => {
+  it('while the station socket is not open', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await act(async () => {
+      latest().onclose?.({ code: 1006, reason: '' });
+    });
+    expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(REDIAL_DISABLED_COPY.connection);
+    await pressRedial();
+    expect(mocks.redialFromWrapup).not.toHaveBeenCalled();
+  });
+
+  it('while the campaign is not dialing (the server refuses a redial on a paused campaign)', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await act(async () => {
+      latest().emit({ event: 'campaign_state', campaign_id: 'camp-1', status: 'paused', reason: 'manual', dialing: false, message: 'Paused.' });
+    });
+    expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(REDIAL_DISABLED_COPY.notDialing);
+    await pressRedial();
+    expect(mocks.redialFromWrapup).not.toHaveBeenCalled();
+
+    await act(async () => {
+      latest().emit({ event: 'campaign_state', campaign_id: 'camp-1', status: 'running', reason: 'manual', dialing: true, message: 'Running.' });
+    });
+    expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('2 redials left');
+  });
+
+  it('once the outcome is saved', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    fireEvent.click(screen.getByRole('button', { name: /Sale/ }));
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe(REDIAL_DISABLED_COPY.saved);
+  });
+});
+
+describe('the wrap-up countdown once the redial is placed', () => {
+  it('runs while the request is out, and is withheld once the 200 says the server stopped it', async () => {
+    await mounted();
+    await callEndsInto(ATTEMPT, {});
+    await act(async () => {
+      // A counting wrap-up: the server's timer is running.
+      latest().emit(
+        wrapupFrame('att-1', {
+          redial_remaining: 2,
+          ends_at: new Date(Date.now() + 60_000).toISOString(),
+          held_reason: null,
+          auto_return: true,
+        }),
+      );
+    });
+    expect(screen.queryByTestId('wrapup-digits')).not.toBeNull();
+
+    const request = deferredRedial();
+    await pressRedial();
+    // Still out: the server may yet refuse before it takes the wrap-up, and then
+    // the timer keeps running.
+    expect(screen.queryByTestId('wrapup-digits')).not.toBeNull();
+
+    await act(async () => {
+      request.resolve(PLACED);
+    });
+    expect(screen.queryByTestId('wrapup-digits')).toBeNull();
+    expect(screen.queryByTestId('wrapup-track')).toBeNull();
+  });
+});
+
+describe('the wrap-up ends while the request is out', () => {
+  it('drops the button and the lock, and a late refusal says nothing', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    const request = deferredRedial();
+    await pressRedial();
+    expect(screen.getByText(PAD_REDIALING_COPY)).toBeTruthy();
+
+    // The window lapsed (or a supervisor ended it) before the server took it.
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:01:00.000Z' });
+    });
+    expect(redialButton()).toBeNull();
+    expect(screen.queryByText(PAD_REDIALING_COPY)).toBeNull();
+
+    await act(async () => {
+      request.reject(apiError(409, { error: 'Conflict', code: 'redial_not_allowed', message: 'You are not in wrap-up for this call any more.' }));
+    });
+    expect(screen.queryByTestId('wrapup-redial-refusal')).toBeNull();
+    expect(redialButton()).toBeNull();
+  });
+});
+
+describe('a redial that fails before its `reserved` reaches the console', () => {
+  const notesField = () => document.getElementById('agency-notes') as HTMLTextAreaElement;
+  const DRAFT = 'Dropped mid-sentence — wants the gold plan.';
+
+  async function typeNotes(text: string) {
+    await act(async () => {
+      fireEvent.change(notesField(), { target: { value: text } });
+    });
+  }
+
+  async function expectCarriedAndSaveable() {
+    // The draft moved onto the redial's attempt, as it would on the usual path.
+    expect(notesField().value).toBe(DRAFT);
+    expect(JSON.parse(window.localStorage.getItem('agency.notes.att-2')!).notes).toBe(DRAFT);
+    expect(window.localStorage.getItem('agency.notes.att-1')).toBeNull();
+    // The panel stays on the same customer, tagged as the redial.
+    expect(screen.getByTestId('contact-redial-tag').textContent).toContain('Redial 1 of 2');
+    // A new wrap-up offers Redial again, on the new attempt.
+    expect(redialButton()!.getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('1 redial left');
+
+    fireEvent.click(screen.getByRole('button', { name: /Sale/ }));
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    expect(mocks.submitDisposition).toHaveBeenCalledWith(
+      'att-2',
+      expect.objectContaining({ disposition_code: 'sale', notes: DRAFT }),
+      'tenant-1',
+      'account-1',
+    );
+  }
+
+  it('carries the draft and the panel when the frames beat the 200', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    const request = deferredRedial();
+    await pressRedial();
+
+    await redialEndsBeforeReserved();
+    await act(async () => {
+      request.resolve(PLACED);
+    });
+    await expectCarriedAndSaveable();
+  });
+
+  it('carries the draft and the panel when the 200 lands first', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    await pressRedial();
+    await act(async () => {});
+
+    await redialEndsBeforeReserved();
+    await expectCarriedAndSaveable();
+  });
+
+  it('carries them when the request got no answer, since the redial may have been placed', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    mocks.redialFromWrapup.mockRejectedValueOnce(new Error('Failed to fetch'));
+    await pressRedial();
+    await waitFor(() => expect(screen.getByTestId('wrapup-redial-refusal')).toBeTruthy());
+
+    await redialEndsBeforeReserved();
+    await expectCarriedAndSaveable();
+  });
+
+  it('does not carry anything after a refusal: nothing was placed', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    mocks.redialFromWrapup.mockRejectedValueOnce(
+      apiError(409, { error: 'Conflict', code: 'redial_blocked_calling_hours', message: 'x' }),
+    );
+    await pressRedial();
+    await waitFor(() => expect(screen.getByTestId('wrapup-redial-refusal')).toBeTruthy());
+
+    // A wrap-up on another attempt, out of nowhere: not this press's.
+    await redialEndsBeforeReserved('att-7');
+    expect(notesField().value).toBe('');
+    expect(JSON.parse(window.localStorage.getItem('agency.notes.att-1')!).notes).toBe(DRAFT);
+    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+  });
+
+  it('does not carry into a later wrap-up once a call has gone live', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    mocks.redialFromWrapup.mockRejectedValueOnce(new Error('Failed to fetch'));
+    await pressRedial();
+    await waitFor(() => expect(screen.getByTestId('wrapup-redial-refusal')).toBeTruthy());
+
+    // An ordinary paced call, then its own wrap-up.
+    await callEndsInto({ ...ATTEMPT, attempt_id: 'att-9', contact_id: 'c-9' }, { redial_remaining: 2 }, '10:05');
+    expect(notesField().value).toBe('');
+    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+  });
+});
+
+describe('station join analytics', () => {
+  it('reports the campaign’s allow_wrapup_redial beside its wrap-up settings', async () => {
+    await mounted();
+    expect(analyticsMocks.trackAgencyStationJoined).toHaveBeenCalledWith(
+      expect.objectContaining({ wrapup_auto_return: false, allow_wrapup_redial: true }),
+    );
   });
 });

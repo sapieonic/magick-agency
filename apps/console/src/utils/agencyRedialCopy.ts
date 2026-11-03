@@ -1,6 +1,6 @@
 import type { AgencyRedialInfo } from '@magick-agency/contracts/agency';
 import type { AgencyActionErrorCode } from '../types/agency';
-import { errorBody } from './agencyErrors';
+import { errorBody, errorStatus } from './agencyErrors';
 
 /**
  * Wrap-up redial copy: the button's remaining-count line, the live call's
@@ -34,11 +34,53 @@ export const REDIAL_REFUSAL_COPY: Record<RedialRefusalCode, string> = {
   redial_blocked: 'Couldn’t redial this call. Save the outcome.',
 };
 
-/** Any failure that is not one of the route's refusals (network, 5xx, an unexpected code). */
+/**
+ * The server answered, refused, and named no refusal this client knows (a 4xx with
+ * an unexpected code). Nothing was placed.
+ */
 export const REDIAL_FAILED_COPY = 'Couldn’t redial. Try again, or save the outcome.';
 
-/** Shown in place of the remaining count while the request is out. */
+/**
+ * No usable answer (the request never got one, or a 5xx): the redial may have been
+ * placed all the same, so this must not say it failed. If it was, its call arrives
+ * on the socket and replaces the wrap-up.
+ */
+export const REDIAL_UNCERTAIN_COPY =
+  'No answer from the server, so the redial may still go through. If no call starts, try again or save the outcome.';
+
+/**
+ * The refusals that hold for the rest of this wrap-up: pressing again would be
+ * refused the same way, so the button stays disabled until the next wrap-up.
+ * `redial_limit_reached` retires it too, through the count.
+ */
+export const PERMANENT_REDIAL_REFUSALS: ReadonlySet<string> = new Set<RedialRefusalCode>([
+  'redial_not_allowed',
+  'redial_blocked_dnc',
+  'disposition_already_submitted',
+]);
+
+/** Shown in place of the remaining count while the request is out, and announced on the press. */
 export const REDIAL_IN_FLIGHT_COPY = 'Redialing…';
+
+/**
+ * Why a disabled Redial is disabled, in place of the remaining count. A disabled
+ * control always states a true reason: a disabled button beside "2 redials left"
+ * says the opposite of what it is doing.
+ */
+export const REDIAL_DISABLED_COPY = {
+  /** After a refusal that holds for this wrap-up (the refusal itself says why). */
+  blocked: 'Redial isn’t available for this call',
+  /** The outcome is being saved. */
+  saving: 'Saving the outcome…',
+  /** The outcome is saved: there is no call left to redial. */
+  saved: 'Outcome saved',
+  /** The pad itself is locked (another window holds the station). */
+  locked: 'Redial isn’t available in this window',
+  /** The station socket is not open: the redial would ring a customer the agent cannot hear. */
+  connection: 'Redial is available when connected',
+  /** `campaign_state.dialing` is false: the server refuses a redial on a campaign that is not running. */
+  notDialing: 'The campaign isn’t dialing, so redial is off',
+} as const;
 
 /** The pad's stated reason while a redial is in flight. */
 export const PAD_REDIALING_COPY = 'Redialing — the outcome opens again if the call doesn’t go through.';
@@ -48,9 +90,10 @@ function isRefusalCode(code: string | null | undefined): code is RedialRefusalCo
 }
 
 /**
- * What a failed redial says. `redial_blocked` covers several causes (an invalid
- * number, the DNC registry unreachable, no usable caller ID, the station not
- * connected) and its `message` says which, so that one is shown as received.
+ * What a failed redial says. `redial_blocked` and `redial_not_allowed` each cover
+ * several causes (an invalid number, the DNC registry unreachable, no usable caller
+ * ID; the campaign off or not running, the wrap-up already over, the customer no
+ * longer held) and their `message` says which, so those are shown as received.
  */
 export function redialRefusalCopy(err: unknown): string {
   const body = errorBody(err);
@@ -58,7 +101,10 @@ export function redialRefusalCopy(err: unknown): string {
   if (code === 'redial_blocked' && body?.message) {
     return `Couldn’t redial: ${body.message}`;
   }
-  return isRefusalCode(code) ? REDIAL_REFUSAL_COPY[code] : REDIAL_FAILED_COPY;
+  if (code === 'redial_not_allowed' && body?.message) return body.message;
+  if (isRefusalCode(code)) return REDIAL_REFUSAL_COPY[code];
+  const status = errorStatus(err);
+  return status === null || status >= 500 ? REDIAL_UNCERTAIN_COPY : REDIAL_FAILED_COPY;
 }
 
 /** The line beside the Redial button: `2 redials left`, `1 redial left`, `No redials left`. */
