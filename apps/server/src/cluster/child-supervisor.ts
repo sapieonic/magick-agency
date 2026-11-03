@@ -26,7 +26,7 @@ export interface ChildExit {
   slot: number;
   code: number | null;
   signal: NodeJS.Signals | null;
-  /** True when the supervisor asked for it (stop) and it exited within the stop's grace. */
+  /** True when the supervisor asked for it (stop) and it exited cleanly (code 0, no signal) within the stop's grace. */
   expected: boolean;
   pid: number | undefined;
 }
@@ -37,7 +37,7 @@ export interface ChildSupervisorOptions {
   fork: (slot: number) => ChildProcess;
   /** Wire one incarnation's channel (event handlers, request handlers). Called before `ready`. */
   onChannel?: (slot: number, channel: IpcChannel) => void;
-  /** Awaited after an unexpected exit (a crash, or a child the stop had to SIGKILL), before the slot is re-forked. */
+  /** Awaited after an unexpected exit (a crash, also one during a stop, or a child the stop had to SIGKILL), before the slot is re-forked. */
   onExit?: (exit: ChildExit) => void | Promise<void>;
   /** A slot became ready (first boot or a restart). */
   onReady?: (slot: number, pid: number) => void;
@@ -214,10 +214,20 @@ export class ChildSupervisor {
           s.child = null;
           s.channel = null;
         }
-        void this.onChildExit(s, { slot: s.slot, code, signal, expected: this.stopping && !s.killedAtStop, pid: child.pid }).finally(resolve);
+        void this.onChildExit(s, { slot: s.slot, code, signal, expected: this.isCleanStopExit(s, code, signal), pid: child.pid }).finally(resolve);
       });
     });
     child.on('error', (err) => log.error({ err, role: this.opts.role, slot: s.slot }, 'Child process error'));
+  }
+
+  /**
+   * Expected only when the stop asked for it AND the child finished its own shutdown: code 0,
+   * no signal, not killed by the stop. A child that crashes while it stops (an OOM, a
+   * SIGSEGV, an uncaught throw: a signal or a non-zero code) did not close what it owned, so
+   * its exit is unexpected: counted as a crash and reaped by `onExit` (no restart follows).
+   */
+  private isCleanStopExit(s: Slot, code: number | null, signal: NodeJS.Signals | null): boolean {
+    return this.stopping && !s.killedAtStop && code === 0 && signal === null;
   }
 
   private async onChildExit(s: Slot, exit: ChildExit): Promise<void> {

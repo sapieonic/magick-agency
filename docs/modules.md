@@ -559,7 +559,7 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/integration/cluster/ws-handoff.test.ts` | 8 |
 | `apps/server/test/unit/cluster/analysis-children.test.ts` | 3 |
 | `apps/server/test/unit/cluster/child-mains.test.ts` | 3 |
-| `apps/server/test/unit/cluster/child-supervisor.test.ts` | 6 |
+| `apps/server/test/unit/cluster/child-supervisor.test.ts` | 7 |
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 15 |

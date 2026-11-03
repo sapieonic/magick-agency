@@ -771,7 +771,7 @@ As built (`index.ts`, `cluster/shutdown-order.ts`):
 | 0 | SIGTERM. `app.close()`: no new connections or upgrades. In-flight HTTP finishes (normally ms; a request forwarded to a worker is bounded by its deadline, 15 s at most) | serving | serving |
 | ≤ 5 s | **pacing halts** before anything drains: no new tick, leases given up, `pacing.revoke {campaignId: null}` to every worker, ticks in flight waited for (`TICK_DRAIN_TIMEOUT_MS`) | revoked: no dial in preparation goes out | serving (no new job is enqueued by a dial) |
 | then, **concurrently** | completion-notice drain (≤ 30 s) | `shutdown {graceMs: 30000}`: worker `app.close()` (station and media sockets close), `stopShard()` (dialer, wrap-up, manual dialer timers), `bridge.gracefulShutdown()` (hang up live calls, release slots), guard host, PostHog and audit flush, Redis and pool close, OTel flush, `exit 0` | `shutdown {graceMs: 15000}`: stop claims, requeue in flight (generation-matched), PostHog and audit flush, `exit 0` |
-| | waits for every child's `exit` (30 s media, 15 s analysis); a media worker still running is SIGKILLed and its slot reaped (§6.1: slots released, attempts ended and requeued, agents offline) before the stop goes on | | |
+| | waits for every child's `exit` (30 s media, 15 s analysis); a media worker still running is SIGKILLed and its slot reaped (§6.1: slots released, attempts ended and requeued, agents offline) before the stop goes on. Only an `exit 0` after the request is a clean stop: a worker that dies of a signal or exits non-zero during its own shutdown (an OOM, a SIGSEGV) is reaped the same way and counted a crash (`expected="false"`, §7); nothing is restarted | | |
 | ≤ ~37 s | agency stop (reaper and runtime; pacing already halted, notices drained), voice stop (guard host; its self-heal wait is bounded at 15 s and only waits when a sweep is mid-flight), platform (audit buffers last), Redis, pool, OTel, `exit 0` | | |
 
 The bounds that add up in the normal worst case are 5 s + 30 s plus a few seconds, inside the
@@ -782,8 +782,8 @@ are not covered if both stack on a 30 s worker drain: an internal request forwar
 instant of SIGTERM (up to 15 s) and a self-heal sweep in flight (up to 15 s); one process has
 the same tail (5 + 30 + 15 s). The order inside each worker matches the order inside one
 process. Pinned by `test/unit/cluster/shutdown-order.test.ts` (halt first, drains together,
-the rest in reverse), `child-supervisor.test.ts` (a worker killed at stop is reaped before
-the stop resolves), `runtime-boot-order.test.ts` (single-process order) and
+the rest in reverse), `child-supervisor.test.ts` (a worker killed at stop, or one that crashes
+during the stop, is reaped before the stop resolves and counted unexpected), `runtime-boot-order.test.ts` (single-process order) and
 `test/integration/cluster/media-workers.test.ts` (the whole tree exits 0 inside 45 s with
 live calls on both workers).
 
@@ -837,7 +837,8 @@ which replaces the primary too.
   - `ipc_request_duration_seconds{type}`: the round trip of an answered request;
   - `ipc_messages_dropped_total{reason}`: `malformed`, `unsupported`, `late`, `backlogged`;
   - `cluster_child_exits_total{role, expected}`: child exits, `expected="false"` for a crash
-    (or a worker the stop had to kill).
+    (or a worker the stop had to kill). `expected="true"` only for a clean exit (code 0, no
+    signal) after the stop asked for it; a crash during the stop is `false`.
 
   And in `metrics/shared.ts`, beside the pool's own: `db_connections_planned` and
   `db_connections_allowed`, the host's pools against Postgres's limit (D12). A slot reap is
