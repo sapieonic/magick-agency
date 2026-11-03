@@ -17,8 +17,13 @@ import type { PoolClient } from 'pg';
 import { createChildLogger } from '@magick-agency/observability';
 import { agencyOurFaultRetirementTotal } from '@magick-agency/observability/metrics/agency';
 import type { AgencyContactState } from '@magick-agency/contracts/agency';
-import { agencyCampaignRepository, agencyContactRepository } from '../../db/repositories/agency.repository.js';
+import {
+  agencyCampaignRepository,
+  agencyContactRepository,
+  agencyManualCallRepository,
+} from '../../db/repositories/agency.repository.js';
 import type { AgencyManualCallRecord } from '../../db/models/agency.model.js';
+import { DIAL_OUTCOME_UNKNOWN_ERROR_CODE } from '../../telephony/carrier-errors.js';
 import { manualNoOutcomeSettlement, type ManualNoOutcomeSettlement } from './manual-disposition.js';
 
 const log = createChildLogger({ component: 'agency-softphone' });
@@ -36,13 +41,23 @@ export interface NoOutcomeSettled {
  * The settlement a closed call's claimed contact gets, or null when the call holds no
  * claim (untagged, linked only) or the contact row is gone. `placed` is `dialed_at`,
  * which the dialer clears on a dial the carrier never saw (`end`'s `unplaced`).
+ *
+ * `dialOutcomeUnknown`: the dial's outcome is unknown (the carrier may have queued it), as
+ * the dialer saw it. Absent (the reaper's lapse and orphan sweeps, which have only the
+ * row), an unanswered `failed` call asks its media leg whether the bridge ended it
+ * `TELEPHONY_INIT_OUTCOME_UNKNOWN` (`mediaLegEndedWith`), so a settle the dialer could not
+ * land does not lose the hold.
  */
 export async function noOutcomeSettlementFor(
-  row: Pick<AgencyManualCallRecord, 'contact_claimed' | 'contact_id' | 'campaign_id' | 'outcome' | 'dialed_at' | 'bridged_at'>,
+  row: Pick<AgencyManualCallRecord, 'id' | 'contact_claimed' | 'contact_id' | 'campaign_id' | 'outcome' | 'dialed_at' | 'answered_at' | 'bridged_at'>,
   now: Date = new Date(),
+  opts: { dialOutcomeUnknown?: boolean } = {},
 ): Promise<ManualNoOutcomeSettlement | null> {
   if (!row.contact_claimed || !row.contact_id) return null;
-  if (row.dialed_at === null) return { kind: 'release' };
+  const dialOutcomeUnknown = opts.dialOutcomeUnknown
+    ?? (row.dialed_at !== null && row.answered_at === null && row.bridged_at === null && row.outcome === 'failed'
+      && await agencyManualCallRepository.mediaLegEndedWith(row.id, DIAL_OUTCOME_UNKNOWN_ERROR_CODE));
+  if (row.dialed_at === null && !dialOutcomeUnknown) return { kind: 'release' };
   const [contact, tag] = await Promise.all([
     agencyContactRepository.findById(row.contact_id),
     row.campaign_id ? agencyCampaignRepository.findById(row.campaign_id) : Promise.resolve(null),
@@ -50,11 +65,12 @@ export async function noOutcomeSettlementFor(
   if (!contact) return null;
   return manualNoOutcomeSettlement({
     outcome: row.outcome,
-    placed: true,
+    placed: row.dialed_at !== null,
     bridged: row.bridged_at !== null,
     policy: tag?.retry_policy ?? null,
     contact,
     now,
+    dialOutcomeUnknown,
   });
 }
 

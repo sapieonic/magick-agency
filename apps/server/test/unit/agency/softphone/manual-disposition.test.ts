@@ -215,6 +215,38 @@ describe('a call that settles with no outcome (§5: the campaign path\'s retry r
     expect(r.kind === 'settle' && r.decision.nextAttemptAt?.getTime()).toBe(NOW.getTime());
   });
 
+  /**
+   * A dial whose outcome is unknown (`add_lead` timed out, or answered unreadably): the
+   * carrier may still ring the customer. The campaign path's hold: the our-fault ledger,
+   * no redial for 15 minutes, retired at the bound. Placed or not (the dialer keeps
+   * `dialed_at` for it), and whatever the policy's own delays say.
+   */
+  it('a dial whose outcome is unknown: held 15 min on the our-fault ledger, retired at the bound', () => {
+    const hold = NOW.getTime() + 15 * 60_000;
+    for (const placed of [true, false]) {
+      const r = manualNoOutcomeSettlement({
+        ...base, placed, outcome: 'failed', dialOutcomeUnknown: true,
+        policy: { failed: { delay_minutes: 0, max_attempts: 9 } },
+      });
+      expect(r).toMatchObject({ kind: 'settle', charge: 'our_fault', decision: { contactState: 'pending', reason: 'retry_scheduled' } });
+      expect(r.kind === 'settle' && r.decision.nextAttemptAt?.getTime()).toBe(hold);
+    }
+    // A hang-up that raced such a dial is recorded `canceled`: the same hold, not the
+    // our-fault delay (5 min), and the tag's stricter `canceled` cap still applies.
+    const raced = manualNoOutcomeSettlement({ ...base, outcome: 'canceled', dialOutcomeUnknown: true });
+    expect(raced.kind === 'settle' && raced.decision.nextAttemptAt?.getTime()).toBe(hold);
+    expect(manualNoOutcomeSettlement({
+      ...base, outcome: 'canceled', dialOutcomeUnknown: true, policy: { canceled: { max_attempts: 1 } },
+    })).toMatchObject({ charge: 'our_fault', decision: { contactState: 'exhausted', reason: 'our_fault_bound_reached' } });
+    // The bound: the third our-fault redial retires the contact.
+    expect(manualNoOutcomeSettlement({
+      ...base, outcome: 'failed', dialOutcomeUnknown: true, contact: { attempt_count: 0, our_fault_attempts: 2 },
+    })).toMatchObject({ charge: 'our_fault', decision: { contactState: 'exhausted', nextAttemptAt: null } });
+    // A call that bridged is a conversation: the rule does not apply.
+    expect(manualNoOutcomeSettlement({ ...base, bridged: true, outcome: 'connected', dialOutcomeUnknown: true }))
+      .toMatchObject({ charge: 'attempt' });
+  });
+
   it('a lapsed bridged call: the allowance, and connected is never retried by default', () => {
     expect(manualNoOutcomeSettlement({ ...base, bridged: true, outcome: 'connected' }))
       .toMatchObject({ charge: 'attempt', decision: { contactState: 'completed', reason: 'outcome_not_retryable' } });
