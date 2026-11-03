@@ -57,10 +57,13 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
   FLAGS: { agency_dialer_enabled: { key: 'agency_dialer_enabled', type: 'boolean', default: false } },
 }));
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
-const { fallback } = vi.hoisted(() => ({ fallback: { sweep: vi.fn().mockResolvedValue(0) } }));
+const { fallback } = vi.hoisted(() => ({
+  fallback: { sweep: vi.fn().mockResolvedValue(0), unstaffed: vi.fn().mockResolvedValue(0) },
+}));
 vi.mock('../../../src/agency/pacing/callback-fallback.js', () => ({
   CALLBACK_FALLBACK_SWEEP_MS: 30_000,
   sweepCallbackFallback: fallback.sweep,
+  sweepUnstaffedOwners: fallback.unstaffed,
 }));
 
 import { PacingEngine, type PacingTickObservation } from '../../../src/agency/pacing-engine.js';
@@ -143,6 +146,7 @@ beforeEach(() => {
   repos.attempt.create.mockImplementation(async (p: any) => ({ id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1 }));
   settings.getMaxConcurrentCalls.mockResolvedValue(10);
   fallback.sweep.mockResolvedValue(0);
+  fallback.unstaffed.mockResolvedValue(0);
 });
 
 describe('strict / preferred: an agent with nothing due is not reserved (CA3)', () => {
@@ -382,5 +386,32 @@ describe('the callback grace/fallback sweep runs from the leader, throttled (CA5
     await second.e.tickOnce('camp-1');
     expect(fallback.sweep).toHaveBeenCalledTimes(1);
     expect(second.dispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('with on_unstaff return_to_pool the unstaffed-owner return runs too (CA6); one failing does not skip the other', async () => {
+    repos.contact.probeAgentQueues.mockResolvedValue(probe([]));
+    const events: PacingInvalidationEvent[] = [];
+    const unsubscribe = getPacingInvalidationBus().subscribe((ev) => { events.push(ev); });
+    try {
+      repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, on_unstaff: 'keep' });
+      await engine(makeStations(['s1']), makeAgents({ s1: 'available' })).e.tickOnce('camp-1');
+      expect(fallback.unstaffed).not.toHaveBeenCalled();
+      fallback.sweep.mockClear();
+
+      repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, on_unstaff: 'return_to_pool', callback_fallback: 'wait' });
+      fallback.unstaffed.mockResolvedValueOnce(3);
+      await engine(makeStations(['s1']), makeAgents({ s1: 'available' })).e.tickOnce('camp-1');
+      expect(fallback.unstaffed).toHaveBeenCalledTimes(1);
+      expect(fallback.sweep).not.toHaveBeenCalled();
+      expect(events).toContainEqual({ type: 'contacts_changed', campaignId: 'camp-1' });
+
+      repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, on_unstaff: 'return_to_pool' });
+      fallback.unstaffed.mockRejectedValueOnce(new Error('db blip'));
+      await engine(makeStations(['s1']), makeAgents({ s1: 'available' })).e.tickOnce('camp-1');
+      expect(fallback.unstaffed).toHaveBeenCalledTimes(2);
+      expect(fallback.sweep).toHaveBeenCalledTimes(1);
+    } finally {
+      unsubscribe();
+    }
   });
 });

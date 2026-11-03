@@ -268,6 +268,24 @@ export function decodePreviewToken(token: string, op: CanonicalAssignment): Plan
   return { planned, moving, to_pool: toPool, skipped_live: skipped, groups, digest };
 }
 
+/** The smallest preview whose counts may drift at commit ({@link commitDrift}). */
+export const ASSIGNMENT_DRIFT_MIN_MOVES = 100;
+/** How far a large operation's counts may drift between preview and commit. */
+export const ASSIGNMENT_DRIFT_RATIO = 0.02;
+
+/**
+ * How many contacts the commit's move and to-pool counts may differ from the preview's and
+ * still write (CA13). A preview moving fewer than {@link ASSIGNMENT_DRIFT_MIN_MOVES} contacts
+ * gets 0: it commits only contact for contact (a supervisor reading a short list notices one
+ * missing). A larger one gets 2%: on a running campaign the claims and settlements move a few
+ * rows between preview and commit every second, so an exact rule would refuse almost every
+ * commit there; within the drift the commit writes the plan as it now stands (same operation,
+ * same seed, same agents) and reports what it moved. Pure.
+ */
+export function commitDrift(expected: Pick<PlanFingerprint, 'moving'>): number {
+  return expected.moving >= ASSIGNMENT_DRIFT_MIN_MOVES ? Math.floor(expected.moving * ASSIGNMENT_DRIFT_RATIO) : 0;
+}
+
 // ─── Rebalance ──────────────────────────────────────────────────────────────
 
 export interface RebalanceLoad {

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { insertAgencyCampaign, insertAgencyContact, insertAgentSession } from './agency-factories.js';
+import { DEFAULTS, insertAccount, insertTenant, insertUser } from '../setup/factories.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -10,7 +11,8 @@ vi.mock('@magick-agency/db', async (orig) => ({
 const { audit } = vi.hoisted(() => ({ audit: { log: vi.fn() } }));
 vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLogger: audit }));
 
-const { sweepCallbackFallback } = await import('../../../src/agency/pacing/callback-fallback.js');
+const { sweepCallbackFallback, sweepUnstaffedOwners } = await import('../../../src/agency/pacing/callback-fallback.js');
+const { agencyAssignmentRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
 /**
  * The callback grace/fallback (CA5) on real Postgres: a running owner-mode campaign's DUE
@@ -180,3 +182,92 @@ describe('callback grace/fallback sweep', () => {
     expect(claims.map((x) => [x.agentUserId, x.contact.id])).toEqual([[OTHER, cb.id]]);
   });
 });
+
+/**
+ * CA6's catch-up (`sweepUnstaffedOwners`): the unstaff moves only what is `pending` then; a
+ * contact on a call at that moment settles back to `pending` still owned by the unstaffed
+ * agent, who can no longer join, and a strict campaign would never dial it again. The leader's
+ * sweep returns it to the pool.
+ */
+describe('unstaffed-owner sweep (CA6 catch-up)', () => {
+  let staffedUser: string;
+  let goneUser: string;
+
+  beforeEach(async () => {
+    audit.log.mockClear();
+    await truncateAll();
+    await insertTenant({ id: DEFAULTS.tenantId });
+    await insertAccount({ id: DEFAULTS.accountId, tenant_id: DEFAULTS.tenantId });
+    staffedUser = (await insertUser() as { id: string }).id;
+    goneUser = (await insertUser() as { id: string }).id;
+  });
+
+  async function staff(c: { id: string; tenant_id: string; account_id: string }, userId: string, active = true) {
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agents (tenant_id, account_id, campaign_id, user_id, unassigned_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [c.tenant_id, c.account_id, c.id, userId, active ? null : new Date()]);
+  }
+
+  it('a contact live at the unstaff, settled since, goes to the pool; a staffed owner keeps theirs', async () => {
+    const c = await campaign({ on_unstaff: 'return_to_pool' }) as { id: string; tenant_id: string; account_id: string };
+    await staff(c, staffedUser);
+    await staff(c, goneUser);
+    const live = await insertAgencyContact(c.id, { assigned_user_id: goneUser, assigned_at: new Date(), state: 'in_flight' });
+    const kept = await insertAgencyContact(c.id, { assigned_user_id: staffedUser, assigned_at: new Date() });
+
+    // The unstaff: the staffing row closes, the live contact is skipped.
+    await getTestPool().query(
+      'UPDATE agency_campaign_agents SET unassigned_at = now() WHERE campaign_id = $1 AND user_id = $2', [c.id, goneUser]);
+    const [unstaffed] = await agencyAssignmentRepository.returnOnUnstaff({
+      tenantId: c.tenant_id, userId: goneUser, campaignIds: [c.id], actorUserId: null,
+    });
+    expect(unstaffed).toMatchObject({ moved: 0, skipped_live: 1 });
+    // The call settles: back to pending, still the former agent's.
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'pending' WHERE id = $1`, [live.id]);
+    expect(await ownerOf(live.id)).toBe(goneUser);
+
+    expect(await sweepUnstaffedOwners(c as never)).toBe(1);
+    expect(await ownerOf(live.id)).toBeNull();
+    expect(await ownerOf(kept.id)).toBe(staffedUser);
+    const history = await events(c.id);
+    expect(history).toEqual([expect.objectContaining({
+      contact_id: live.id, from_user_id: goneUser, to_user_id: null, actor_user_id: null, reason: 'unstaffed',
+    })]);
+    expect(audit.log).toHaveBeenCalledTimes(1);
+    expect(audit.log.mock.calls[0]![0]).toMatchObject({
+      action: 'agency_contacts.unassigned_on_unstaff', actor_type: 'system',
+      details: { moved: 1, per_agent: { [goneUser]: 1 }, cause: 'sweep' },
+    });
+    // Nothing left: a second sweep is silent.
+    expect(await sweepUnstaffedOwners(c as never)).toBe(0);
+    expect(audit.log).toHaveBeenCalledTimes(1);
+  });
+
+  it('an owner never staffed on the campaign (an inherited owner) loses open contacts; a live one is never touched', async () => {
+    const c = await campaign({ on_unstaff: 'return_to_pool' }) as { id: string; tenant_id: string; account_id: string };
+    const open = await insertAgencyContact(c.id, { assigned_user_id: goneUser, assigned_at: new Date() });
+    const onCall = await insertAgencyContact(c.id, { assigned_user_id: goneUser, assigned_at: new Date(), state: 'connected' });
+    const closed = await insertAgencyContact(c.id, { assigned_user_id: goneUser, assigned_at: new Date(), state: 'completed' });
+    expect(await sweepUnstaffedOwners(c as never)).toBe(1);
+    expect(await ownerOf(open.id)).toBeNull();
+    expect(await ownerOf(onCall.id)).toBe(goneUser);
+    expect(await ownerOf(closed.id)).toBe(goneUser);
+  });
+
+  it('`keep`, a pool campaign, or a campaign that is not running moves nothing', async () => {
+    for (const overrides of [
+      { on_unstaff: 'keep' },
+      { on_unstaff: 'return_to_pool', assignment_mode: 'pool' },
+      { on_unstaff: 'return_to_pool', status: 'paused' },
+    ]) {
+      await truncateAll(); // one running campaign per account
+      const c = await campaign(overrides);
+      const held = await insertAgencyContact(c.id, { assigned_user_id: goneUser, assigned_at: new Date() });
+      expect(await sweepUnstaffedOwners(c as never)).toBe(0);
+      expect(await ownerOf(held.id)).toBe(goneUser);
+    }
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+});
+

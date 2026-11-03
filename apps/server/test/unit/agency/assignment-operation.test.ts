@@ -7,6 +7,7 @@ import {
   receivingAgents,
   type CanonicalAssignment,
   type PlanFingerprint,
+  commitDrift,
 } from '../../../src/agency/assignment/operation.js';
 
 /**
@@ -102,6 +103,17 @@ describe('the preview token', () => {
     expect(decodePreviewToken(token, ok({ kind: 'random_split', agent_user_ids: [B, A], seed: 's1' }))).toBeNull();
     expect(decodePreviewToken('v1.not-json', op)).toBeNull();
     expect(decodePreviewToken('v2.' + token.slice(3), op)).toBeNull();
+  });
+});
+
+describe('commitDrift (CA13)', () => {
+  it('is 0 below 100 moves (contact for contact), and 2% rounded down from 100', () => {
+    expect(commitDrift({ moving: 0 })).toBe(0);
+    expect(commitDrift({ moving: 99 })).toBe(0);
+    expect(commitDrift({ moving: 100 })).toBe(2);
+    expect(commitDrift({ moving: 149 })).toBe(2);
+    expect(commitDrift({ moving: 1_000 })).toBe(20);
+    expect(commitDrift({ moving: 1_000_000 })).toBe(20_000);
   });
 });
 

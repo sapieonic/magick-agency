@@ -75,7 +75,7 @@ import { PacingRound, accountKeyOf } from './pacing/round.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { ownerModeOf, queueStateKey, readAgentQueues, type AgentQueueReading } from './pacing/agent-queue.js';
-import { CALLBACK_FALLBACK_SWEEP_MS, sweepCallbackFallback } from './pacing/callback-fallback.js';
+import { CALLBACK_FALLBACK_SWEEP_MS, sweepCallbackFallback, sweepUnstaffedOwners } from './pacing/callback-fallback.js';
 
 const log = createChildLogger({ component: 'agency-pacing-engine' });
 
@@ -1346,22 +1346,38 @@ export class PacingEngine {
   }
 
   /**
-   * The callback grace/fallback sweep (`pacing/callback-fallback.ts`), at most every
-   * {@link CALLBACK_FALLBACK_SWEEP_MS} per campaign. A move wakes the campaign (and any other
-   * replica's view of it) as new contacts would. A failure is logged and costs the tick nothing.
+   * The owner sweeps (`pacing/callback-fallback.ts`): the unstaffed-owner return (CA6, with
+   * `on_unstaff = 'return_to_pool'`) and the callback grace/fallback (CA5, with
+   * `callback_fallback = 'pool'`), at most every {@link CALLBACK_FALLBACK_SWEEP_MS} per
+   * campaign. A move wakes the campaign (and any other replica's view of it) as new contacts
+   * would. A failure is logged and costs the tick nothing; one sweep's failure does not skip
+   * the other.
    */
   private async maybeSweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<void> {
-    if (!ownerModeOf(campaign) || campaign.callback_fallback !== 'pool') return;
+    if (!ownerModeOf(campaign)) return;
+    const returnUnstaffed = campaign.on_unstaff === 'return_to_pool';
+    const fallBack = campaign.callback_fallback === 'pool';
+    if (!returnUnstaffed && !fallBack) return;
     const now = this.now();
     const last = this.fallbackSweptAt.get(campaign.id);
     if (last !== undefined && now - last < CALLBACK_FALLBACK_SWEEP_MS) return;
     this.fallbackSweptAt.set(campaign.id, now);
-    try {
-      const moved = await sweepCallbackFallback(campaign);
-      if (moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
-    } catch (err) {
-      log.error({ err, campaignId: campaign.id }, 'Callback fallback sweep failed — retried on a later tick');
+    let moved = 0;
+    if (returnUnstaffed) {
+      try {
+        moved += await sweepUnstaffedOwners(campaign);
+      } catch (err) {
+        log.error({ err, campaignId: campaign.id }, 'Unstaffed-owner sweep failed — retried on a later tick');
+      }
     }
+    if (fallBack) {
+      try {
+        moved += await sweepCallbackFallback(campaign);
+      } catch (err) {
+        log.error({ err, campaignId: campaign.id }, 'Callback fallback sweep failed — retried on a later tick');
+      }
+    }
+    if (moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
   }
 
   /** `max_concurrent_calls`: cached between scheduled rounds, read through on a forced one. */

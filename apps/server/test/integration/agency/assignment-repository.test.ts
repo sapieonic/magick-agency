@@ -200,6 +200,38 @@ describe('preview / commit', () => {
     expect(retried.ok && retried.result.moved).toBe(50);
   });
 
+  it('a large split commits through a running campaign\'s churn within 2%, and refuses beyond it', async () => {
+    const ids = await seed(1_000);
+    const split = op({ kind: 'random_split', agent_user_ids: agents, seed: 'busy' });
+    const preview = await repo.agencyAssignmentRepository.preview(split, scope());
+    expect(preview.moving).toBe(1_000);
+    // A tick's worth of churn: 5 claimed, 3 settled reached, 4 new rows in the pool.
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = ANY($1::uuid[])`, [ids.slice(0, 5)]);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'completed' WHERE id = ANY($1::uuid[])`, [ids.slice(5, 8)]);
+    await seed(4, { phone: (i) => `+91888000000${i}` });
+
+    const outcome = await repo.agencyAssignmentRepository.commit({ op: split, scope: scope(), token: preview.preview_token, actorUserId: supervisor });
+    expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+    if (!outcome.ok) return;
+    // The plan as it stood: every non-live row moved (closed pool rows included, CA2), live ones skipped.
+    expect(outcome.result).toMatchObject({ moved: 999, skipped_live: 5 });
+    const { rows } = await getTestPool().query<{ n: number }>('SELECT count(*)::int AS n FROM agency_contact_assignment_events');
+    expect(rows[0]!.n).toBe(999);
+    const per = (await owners());
+    expect(per.get(null)).toBe(5);
+    for (const a of agents) expect(per.get(a)).toBeGreaterThanOrEqual(199);
+
+    // Beyond 2% (21 of 1,000 gone live): refused, nothing written.
+    campaign = await insertAgencyCampaign({ disposition_catalog: JSON.stringify(CATALOG) }) as typeof campaign;
+    for (const a of agents) await staff(a);
+    const again = await seed(1_000);
+    const second = await repo.agencyAssignmentRepository.preview(split, scope());
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = ANY($1::uuid[])`, [again.slice(0, 21)]);
+    const refused = await repo.agencyAssignmentRepository.commit({ op: split, scope: scope(), token: second.preview_token, actorUserId: supervisor });
+    expect(refused.ok).toBe(false);
+    expect((await owners()).get(null)).toBe(1_000);
+  });
+
   it('refuses a token minted for another operation or seed', async () => {
     await seed(10);
     const p1 = await repo.agencyAssignmentRepository.preview(op({ kind: 'random_split', agent_user_ids: agents, seed: 'one' }), scope());
@@ -229,6 +261,20 @@ describe('count, filter, range', () => {
     expect(outcome.ok).toBe(true);
     for (const i of [2, 3, 4, 5]) expect(await ownerOf(ids[i]!)).toBe(agents[0]);
     for (const i of [1, 6, 7]) expect(await ownerOf(ids[i]!)).toBeNull();
+  });
+
+  it('count: closed contacts are nothing to work — reached, exhausted and DNC rows are passed over', async () => {
+    const ids = await seed(6);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'completed' WHERE id = $1`, [ids[0]]);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'exhausted' WHERE id = $1`, [ids[1]]);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'suppressed', suppressed_reason = 'dnc' WHERE id = $1`, [ids[2]]);
+    // A pending row the DNC sweep has marked but not yet closed is not open either.
+    await getTestPool().query(`UPDATE agency_contacts SET suppressed_reason = 'dnc' WHERE id = $1`, [ids[3]]);
+    const { preview, outcome } = await commitPreviewed(op({ kind: 'count', agent_user_id: agents[0], count: 2 }));
+    expect(preview).toMatchObject({ matched: 2, moving: 2 });
+    expect(outcome.ok).toBe(true);
+    for (const i of [4, 5]) expect(await ownerOf(ids[i]!)).toBe(agents[0]);
+    for (const i of [0, 1, 2, 3]) expect(await ownerOf(ids[i]!)).toBeNull();
   });
 
   it('filter: a context column equal to one of the values after trimming, AND the states', async () => {
@@ -264,6 +310,21 @@ describe('count, filter, range', () => {
     expect(await ownerOf(foreign.id as string)).toBeNull();
     const { rows } = await getTestPool().query<{ n: number }>('SELECT count(*)::int AS n FROM agency_contact_assignment_events WHERE contact_id = $1', [ids[0]]);
     expect(rows[0]!.n).toBe(0);
+  });
+});
+
+describe('range never moves a closed contact', () => {
+  it('a reached contact of another agent stays theirs; a live one is skipped_live; the open ones move', async () => {
+    const ids = await seed(4);
+    await getTestPool().query(
+      `UPDATE agency_contacts SET state = 'completed', assigned_user_id = $2, assigned_at = now() WHERE id = $1`, [ids[0], agents[1]]);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = $1`, [ids[1]]);
+    const { preview, outcome } = await commitPreviewed(op({ kind: 'range', agent_user_id: agents[3], contact_ids: ids }));
+    expect(preview).toMatchObject({ matched: 3, moving: 2, skipped_live: 1 });
+    expect(outcome.ok && outcome.result.moved).toBe(2);
+    expect(await ownerOf(ids[0]!)).toBe(agents[1]);
+    expect(await ownerOf(ids[1]!)).toBeNull();
+    for (const i of [2, 3]) expect(await ownerOf(ids[i]!)).toBe(agents[3]);
   });
 });
 

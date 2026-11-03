@@ -33,7 +33,11 @@
  * live, still with the planned owner). The pacing claim uses `SKIP LOCKED`, so it passes
  * over the rows being moved rather than waiting on them. A row that entered the plan
  * unlocked (a contact that changed meanwhile) changes the fingerprint, the gate refuses,
- * nothing is written, and the caller answers `409 preview_stale` with the fresh preview.
+ * nothing is written, and the caller answers `409 preview_stale` with the fresh preview. A
+ * large operation (100+ moves) is let through when its move and to-pool counts are within 2%
+ * of the preview's (`commitDrift`): on a running campaign claims and settlements move rows
+ * every second. It then writes the plan as it stands; the UPDATE re-checks each row under its
+ * own lock, and a shortfall against the plan still rolls everything back.
  */
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
@@ -49,6 +53,7 @@ import type {
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 import {
   agentOrder,
+  commitDrift,
   decodePreviewToken,
   encodePreviewToken,
   rebalanceQuotas,
@@ -93,6 +98,8 @@ interface PlanSpec {
 /** A plan's own clauses for each operation kind (rebalance has its own chain). */
 function specFor(op: Exclude<CanonicalAssignment, { kind: 'rebalance' }>, bind: Bind): PlanSpec {
   const notLive = `c.state NOT IN ${LIVE_STATES_SQL}`;
+  // "Open" (CA2): pending and not DNC — a contact something will still dial.
+  const open = `c.state = 'pending' AND c.suppressed_reason IS DISTINCT FROM 'dnc'`;
   const owned = (onlyUnassigned: boolean) =>
     onlyUnassigned ? 'c.assigned_user_id IS NULL' : `(c.assigned_user_id IS NULL OR c.state = 'pending')`;
   switch (op.kind) {
@@ -124,23 +131,28 @@ function specFor(op: Exclude<CanonicalAssignment, { kind: 'rebalance' }>, bind: 
       };
     }
     case 'count':
-      // "The next N to work": contacts on a call are passed over, not counted against N.
+      // "The next N to work": open unassigned contacts only (a reached, exhausted or DNC row is
+      // nothing to work); contacts on a call are passed over, not counted against N.
       return {
-        selection: ['c.assigned_user_id IS NULL', notLive],
+        selection: ['c.assigned_user_id IS NULL', open],
         order: { kind: 'roster' },
         limit: op.count,
         target: { kind: 'single', agent: op.agent },
         group: op.group,
-        writeGuard: `${notLive} AND c.assigned_user_id IS NULL`,
+        writeGuard: `${open} AND c.assigned_user_id IS NULL`,
       };
     case 'range':
+      // Named ids that are open move; live ones are counted `skipped_live`; any other id (closed,
+      // DNC, not on the campaign) is skipped silently (CA2), so a drag-selected page never moves
+      // another agent's reached contacts.
       return {
-        selection: [`c.id = ANY(${bind.add(op.contactIds)}::uuid[])`],
+        selection: [`c.id = ANY(${bind.add(op.contactIds)}::uuid[])`,
+          `((${open}) OR c.state IN ${LIVE_STATES_SQL})`],
         order: { kind: 'none' },
         limit: null,
         target: { kind: 'single', agent: op.agent },
         group: op.group,
-        writeGuard: notLive,
+        writeGuard: open,
       };
     case 'reassign':
       return {
@@ -396,6 +408,9 @@ export class AgencyAssignmentRepository {
   }): Promise<AssignmentCommitOutcome> {
     const { op, scope } = input;
     const expected = decodePreviewToken(input.token, op);
+    // A token for another operation (or none at all) is stale before anything is locked.
+    if (!expected) return { ok: false, preview: await this.preview(op, scope) };
+    const drift = commitDrift(expected);
     const batchId = randomUUID();
     try {
       const outcome = await withTransaction(async (client, tx) => {
@@ -415,22 +430,24 @@ export class AgencyAssignmentRepository {
           lockBind.values,
         );
 
-        if (!expected) {
-          const fresh = await this.fingerprint(client, op, scope, quotas);
-          await tx.rollback();
-          return { ok: false as const, preview: toPreview(op, fresh) };
-        }
-
         const bind = params();
         const plan = planCtes(op, scope, bind, quotas);
-        const gate = [
+        // Contact for contact, or (a large operation, CA13) its counts within the drift.
+        const moving = bind.add(expected.moving);
+        const toPool = bind.add(expected.to_pool);
+        const exact = [
           `fp.planned = ${bind.add(expected.planned)}::int`,
-          `fp.moving = ${bind.add(expected.moving)}::int`,
-          `fp.to_pool = ${bind.add(expected.to_pool)}::int`,
+          `fp.moving = ${moving}::int`,
+          `fp.to_pool = ${toPool}::int`,
           `fp.skipped_live = ${bind.add(expected.skipped_live)}::int`,
           `fp.groups = ${bind.add(expected.groups)}::int`,
           `fp.digest = ${bind.add(expected.digest)}::text`,
         ].join(' AND ');
+        const within = drift > 0
+          ? ` OR (fp.moving > 0 AND abs(fp.moving - ${moving}::int) <= ${bind.add(drift)}::int`
+            + ` AND abs(fp.to_pool - ${toPool}::int) <= ${bind.add(drift)}::int)`
+          : '';
+        const gate = `(${exact})${within}`;
         const actor = bind.add(input.actorUserId);
         const { rows } = await client.query<FingerprintRow & { ok: boolean; written: number }>(
           `WITH ${plan.ctes},
@@ -484,8 +501,10 @@ export class AgencyAssignmentRepository {
       }
       return outcome;
     } catch (err) {
-      // A shortfall, or a lock we could not take in time: the roster is moving under us.
-      if (err instanceof StalePlan || (err as { code?: string }).code === '55P03') {
+      // A shortfall, a lock we could not take in time, or a deadlock with another writer (the
+      // unstaff return locks in scan order): the roster is moving under us.
+      const code = (err as { code?: string }).code;
+      if (err instanceof StalePlan || code === '55P03' || code === '40P01') {
         return { ok: false, preview: await this.preview(op, scope) };
       }
       throw err;
@@ -583,6 +602,71 @@ export class AgencyAssignmentRepository {
       if (r.moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: r.campaign_id });
     }
     return rows;
+  }
+
+  /**
+   * The unstaff return's catch-up (CA6), one campaign, one statement: every `pending` contact
+   * whose owner has NO active staffing row on the campaign loses its owner (history reason
+   * `unstaffed`, actor NULL: the system, under `batchId`). Run by the pacing leader's owner
+   * sweep on a running `strict` / `preferred` campaign whose `on_unstaff` is `return_to_pool`.
+   *
+   * {@link returnOnUnstaff} moves only what is `pending` at the moment of the unstaff; a contact
+   * on a call then settles back to `pending` still owned by an agent who can no longer join, and
+   * nothing else would ever dial it. The same holds for a callback an unstaffed agent with a
+   * session still open books (CA4), and for a return the unstaff statement lost to an error.
+   *
+   * Cost: the owners are found by a loose index scan of `idx_agency_contacts_assignee` (one
+   * probe per distinct owner), the staffing check is per owner, and only the unstaffed owners'
+   * `pending` rows are read, so a campaign whose owners are all staffed costs a few probes.
+   * Never a live contact: the pick is `pending` under `FOR UPDATE SKIP LOCKED`, and the UPDATE
+   * re-checks it. At most `limit` moves; the rest go on the next sweep.
+   */
+  async returnUnstaffedOwners(input: {
+    campaignId: string;
+    batchId: string;
+    limit: number;
+  }): Promise<Array<{ contactId: string; fromUserId: string }>> {
+    if (input.limit <= 0) return [];
+    const { rows } = await getPool().query<{ contact_id: string; from_user_id: string }>(
+      `WITH RECURSIVE owners(uid) AS (
+         (SELECT c.assigned_user_id FROM agency_contacts c
+           WHERE c.campaign_id = $1 AND c.assigned_user_id IS NOT NULL
+           ORDER BY c.assigned_user_id LIMIT 1)
+         UNION ALL
+         SELECT (SELECT c.assigned_user_id FROM agency_contacts c
+                  WHERE c.campaign_id = $1 AND c.assigned_user_id > o.uid
+                  ORDER BY c.assigned_user_id LIMIT 1)
+           FROM owners o WHERE o.uid IS NOT NULL
+       ),
+       gone AS MATERIALIZED (
+         SELECT o.uid FROM owners o
+          WHERE o.uid IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM agency_campaign_agents a
+               WHERE a.campaign_id = $1 AND a.user_id = o.uid AND a.unassigned_at IS NULL)
+       ),
+       due AS MATERIALIZED (
+         SELECT c.id, c.assigned_user_id
+           FROM agency_contacts c JOIN gone g ON c.assigned_user_id = g.uid
+          WHERE c.campaign_id = $1 AND c.state = 'pending'
+          ORDER BY c.id
+          LIMIT $3
+            FOR UPDATE OF c SKIP LOCKED
+       ),
+       moved AS (
+         UPDATE agency_contacts c
+            SET assigned_user_id = NULL, assigned_at = NULL, assigned_by_user_id = NULL, updated_at = now()
+           FROM due
+          WHERE c.id = due.id AND c.state = 'pending' AND c.assigned_user_id = due.assigned_user_id
+         RETURNING c.id, c.tenant_id, c.campaign_id, due.assigned_user_id AS from_user_id
+       )
+       INSERT INTO agency_contact_assignment_events
+         (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
+       SELECT tenant_id, campaign_id, id, from_user_id, NULL, NULL, 'unstaffed', $2::uuid FROM moved
+       RETURNING contact_id, from_user_id`,
+      [input.campaignId, input.batchId, input.limit],
+    );
+    return rows.map((r) => ({ contactId: r.contact_id, fromUserId: r.from_user_id }));
   }
 
   /** Whether `contactId` is a contact of `campaignId` (the history's 404). */
