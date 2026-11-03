@@ -90,7 +90,10 @@ export function agentRetryBlockSql(alias: string, p: AgentRetrySettingsParams): 
       OR (${c}.state = 'pending' AND ${c}.attempt_count > 0
           AND ${c}.last_outcome IS DISTINCT FROM 'connected'
           AND NOT COALESCE(${c}.last_disposition = ANY(${p.callbackCodes}::text[]), false)
-          AND ${c}.next_attempt_at > now())
+          -- statement_timestamp(), not now(): now() is the TRANSACTION's start, and a reopen
+          -- that began before a concurrent one committed (its next_attempt_at = that one's
+          -- now()) would read the freshly reopened contact as scheduled for later.
+          AND ${c}.next_attempt_at > statement_timestamp())
     ) THEN 'not_retryable'
     WHEN ${c}.agent_retry_rounds_used >= ${p.rounds}::int THEN 'rounds_used'
     WHEN NOT ${c}.override_retry_delay AND ${agentRetryCoolingSql(c, p.cooldownMinutes)} THEN 'cooldown'

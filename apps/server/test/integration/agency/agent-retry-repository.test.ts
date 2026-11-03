@@ -186,13 +186,17 @@ describe('AgencyAgentRetryRepository.reopenForAgent', () => {
   });
 
   it('two concurrent reopens of one contact spend one round between them', async () => {
+    // Repeated: the race (each transaction's own `now()`) needs the second to have begun
+    // before the first committed, which one run may or may not produce.
     const campaign = await insertAgencyCampaign({ status: 'running' });
-    const c = await owned(campaign.id, notReached);
-    const both = await Promise.all([0, 1].map(() => agencyAgentRetryRepository.reopenForAgent({
-      campaignId: campaign.id, userId: AGENT, contactIds: [c.id], settings: { ...SETTINGS, rounds: 5 },
-    })));
-    expect(both.flatMap((o) => o.reopened)).toEqual([c.id]);
-    expect((await row(c.id)).agent_retry_rounds_used).toBe(1);
+    for (let i = 0; i < 10; i++) {
+      const c = await owned(campaign.id, notReached);
+      const all = await Promise.all([0, 1, 2].map(() => agencyAgentRetryRepository.reopenForAgent({
+        campaignId: campaign.id, userId: AGENT, contactIds: [c.id], settings: { ...SETTINGS, rounds: 5 },
+      })));
+      expect(all.flatMap((o) => o.reopened), `run ${i}`).toEqual([c.id]);
+      expect((await row(c.id)).agent_retry_rounds_used, `run ${i}`).toBe(1);
+    }
   });
 });
 
