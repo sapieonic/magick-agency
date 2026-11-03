@@ -37,7 +37,7 @@ export const isUuid = (value: unknown): value is string => typeof value === 'str
 
 /**
  * `agency_contact_assignment_enabled` for the request's tenant and account, else
- * `403 assignment_disabled` (D9). Runs after `requirePermission`, so a caller without the
+ * `403 assignment_disabled` (CA9). Runs after `requirePermission`, so a caller without the
  * permission is told that first. A flag read that throws is a 500: fail closed.
  */
 export async function requireAssignmentEnabled(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {

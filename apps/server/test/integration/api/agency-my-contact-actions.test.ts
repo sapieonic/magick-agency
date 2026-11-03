@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  * ─── The agent's own-contact actions, on the real app and real Postgres ──────────
  *
  * `POST /proxy/agency/my-contacts/retry` and `POST /proxy/agency/my-contacts/:contactId/call`
- * (contact assignment D7) through the session middleware (Firebase stubbed), tenant context,
+ * (contact assignment CA7) through the session middleware (Firebase stubbed), tenant context,
  * RBAC (`agency.contacts.own`), the flag, the staffing check, `callCore` and the internal
  * handler. The dial itself, end to end with a carrier, is `agency/my-contact-call-e2e.test.ts`.
  *

@@ -23,7 +23,7 @@ export { registerAssignmentSupervisorRoutes, registerMyContactRoutes, registerMy
  *    staffing plugin's `my-*` routes state).
  *
  * Every route answers `403 assignment_disabled` while `agency_contact_assignment_enabled` is
- * off for the tenant / account (D9). The routes validate their own ids (404 for a malformed
+ * off for the tenant / account (CA9). The routes validate their own ids (404 for a malformed
  * campaign or contact id, the answer an unknown one gets), so the family gets no wrapper
  * id guard.
  */

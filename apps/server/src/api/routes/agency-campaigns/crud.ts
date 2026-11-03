@@ -48,7 +48,7 @@ export function parseStatusFilter(raw: unknown): AgencyCampaignStatus[] | undefi
   return parts;
 }
 
-/** The statuses in which `assignment_mode` may change (D10): before the first dial, or paused. */
+/** The statuses in which `assignment_mode` may change (CA10): before the first dial, or paused. */
 const ASSIGNMENT_MODE_EDITABLE: ReadonlySet<AgencyCampaignStatus> = new Set(['draft', 'paused']);
 
 /**

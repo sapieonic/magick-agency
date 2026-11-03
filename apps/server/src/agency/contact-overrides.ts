@@ -3,13 +3,13 @@
  * assignment, phase 2): the pure rules. Every write that applies them is a guarded statement
  * in the agency repository; this module only decides.
  *
- *  - {@link overrideGrantOf}: what a catalog entry's `override` grants, normalised (decision D8).
+ *  - {@link overrideGrantOf}: what a catalog entry's `override` grants, normalised (decision CA8).
  *  - {@link applyExtraAttemptOverride}: a max-attempts exhaustion that an unspent
- *    `extra_attempts` turns into one more scheduled try (D8 spend).
+ *    `extra_attempts` turns into one more scheduled try (CA8 spend).
  *  - {@link validateOverrideNoteText}: the calling-hours note, counted as the soft phone counts
  *    its SP2 note (trimmed, code points, 10–500).
  *  - {@link chooseAgentDialBasis}: why an agent may dial one of their contacts now, and what
- *    the dial spends (D7).
+ *    the dial spends (CA7).
  *
  * DNC is never overridable: nothing here reads or grants anything about it, and every caller
  * keeps its DNC refusal ahead of these rules.
@@ -80,7 +80,7 @@ export interface SpendableDecision {
 }
 
 /**
- * Apply an unspent `extra_attempts` override to a decision (D8 spend).
+ * Apply an unspent `extra_attempts` override to a decision (CA8 spend).
  *
  * When `decision` exhausts the contact because the rule's `max_attempts` is spent and
  * `remaining > 0`, the contact stays `pending`, due after the rule's own delay, and one extra
@@ -140,7 +140,7 @@ export function validateOverrideNoteText(raw: unknown): string | null {
   return length >= AGENCY_OVERRIDE_NOTE_MIN && length <= AGENCY_OVERRIDE_NOTE_MAX ? note : null;
 }
 
-// ─── Why an agent may dial one of their contacts now (D7) ───────────────────
+// ─── Why an agent may dial one of their contacts now (CA7) ───────────────────
 
 /**
  * What allows the dial, and so what it spends:

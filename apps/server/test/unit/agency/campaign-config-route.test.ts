@@ -897,7 +897,7 @@ describe('contact assignment settings (0009)', () => {
     expect(campaigns.update).toHaveBeenCalledWith('camp-1', patch);
   });
 
-  describe('assignment_mode changes only while draft or paused (D10)', () => {
+  describe('assignment_mode changes only while draft or paused (CA10)', () => {
     it.each(['running', 'stopping', 'completed', 'stopped'])('a change on a %s campaign is 409 mode_change_requires_pause and writes nothing', async (status) => {
       campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status, assignment_mode: 'pool' });
       const app = await makeApp();
@@ -948,7 +948,7 @@ describe('contact assignment settings (0009)', () => {
   });
 });
 
-describe('an outcome override on a catalog entry (D8)', () => {
+describe('an outcome override on a catalog entry (CA8)', () => {
   it('accepts each part alone, all three together, and the extra_attempts bounds', async () => {
     const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
     for (const override of [

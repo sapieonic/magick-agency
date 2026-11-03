@@ -216,7 +216,7 @@ export async function settleContact(
       cmd.campaign.retry_policy, outcome, new Date(), attemptsUsed,
     );
     // ── `max_attempts` spent: an outcome-granted extra attempt may keep it open ──
-    // (decision D8.) Only this exhaustion: never a suppression, never the our-fault
+    // (decision CA8.) Only this exhaustion: never a suppression, never the our-fault
     // ledger's retirement above. The spend, the decision's write and the attempt's
     // `override_applied` are one transaction (`markExhaustedOrSpendExtraAttempt`), at most
     // once per attempt, under the same DNC freeze as `markState`.

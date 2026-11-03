@@ -1,5 +1,5 @@
 /**
- * D6, on every unstaff path: when an agent's staffing on campaigns closes (a supervisor's
+ * CA6, on every unstaff path: when an agent's staffing on campaigns closes (a supervisor's
  * DELETE, an offboarding through the team routes, a super admin's membership change), their
  * `pending` contacts on each campaign whose `on_unstaff` is `return_to_pool` go back to the
  * pool (history reason `unstaffed`); on `keep` nothing moves. Contacts on a call never move.

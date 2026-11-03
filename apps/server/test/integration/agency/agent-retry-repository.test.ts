@@ -11,7 +11,7 @@ const { agencyAgentRetryRepository } = await import('../../../src/db/repositorie
 /**
  * ─── The agent's own writes on their contacts, on real Postgres ─────────────────
  *
- * `AgencyAgentRetryRepository` (contact assignment D7): the set-based reopen and the claim an
+ * `AgencyAgentRetryRepository` (contact assignment CA7): the set-based reopen and the claim an
  * agent's own dial takes (and gives back). Eligibility is `agentRetryBlockSql`, re-evaluated
  * inside each write under the row lock; ownership is in every WHERE.
  *

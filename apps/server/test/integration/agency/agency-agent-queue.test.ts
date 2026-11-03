@@ -12,7 +12,7 @@ const { agencyContactRepository } = await import('../../../src/db/repositories/a
 const { readAgentQueueState, readAgentQueues } = await import('../../../src/agency/pacing/agent-queue.js');
 
 /**
- * An agent's own queue on a `strict` / `preferred` campaign (D3), read on real Postgres:
+ * An agent's own queue on a `strict` / `preferred` campaign (CA3), read on real Postgres:
  * the probe pacing runs every tick, and the `AgencyQueueState` the bootstrap, `ready` and
  * the `queue` frame carry — one case per reason, and the earliest `next_due_at`.
  */

@@ -134,7 +134,7 @@ export interface PreDialGateInput {
  */
 export interface PreDialGateOptions {
   /**
-   * The agent's own dial of one of their contacts (`my-contact-call.ts`, decision D7/D8):
+   * The agent's own dial of one of their contacts (`my-contact-call.ts`, decision CA7/CA8):
    * a CLOSED calling window passes **only** when the contact holds an unspent calling-hours
    * override (`override_calling_hours`, granted by an outcome) **and** `note` is a valid
    * note (trimmed, 10–500 code points). Nothing else changes: phone validity still

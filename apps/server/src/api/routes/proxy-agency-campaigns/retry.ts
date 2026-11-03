@@ -356,7 +356,7 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
         .send({ error: 'Validation Error', details: issuesToDetails(configIssues) });
     }
 
-    // Contact assignment (D9): an override that sets an assignment setting to a
+    // Contact assignment (CA9): an override that sets an assignment setting to a
     // non-default value, or a catalog entry with an `override`, needs the flag. Only
     // the OVERRIDES are judged — what the child inherits is the parent's stored config,
     // the same line the config validation above draws. Before the first `callCore`, as

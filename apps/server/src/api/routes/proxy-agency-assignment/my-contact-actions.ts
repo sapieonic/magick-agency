@@ -1,5 +1,5 @@
 /*
- * The agent's actions on their OWN contacts (contact assignment, phase 2, decision D7),
+ * The agent's actions on their OWN contacts (contact assignment, phase 2, decision CA7),
  * served at the console's paths under `/proxy/agency`:
  *
  *  - `POST /my-contacts/retry`               reopen not-reached contacts into their queue;
@@ -11,18 +11,18 @@
  * ── The gates, in order, on both routes ──────────────────────────────────────
  *  1. RBAC `agency.contacts.own` (floored at `agent`). The subject is ALWAYS the caller
  *     (`request.user.id`); no route names another agent.
- *  2. The `agency_contact_assignment_enabled` flag (D9): off → `403 assignment_disabled`.
+ *  2. The `agency_contact_assignment_enabled` flag (CA9): off → `403 assignment_disabled`.
  *  3. The campaign is in the caller's tenant and account AND the caller has an active staffing
  *     row on it → else `403 not_staffed` (one answer: a campaign elsewhere is not confirmed).
  *  4. Retry only: the campaign allows agent retry (`allow_agent_retry`) → else
  *     `403 agent_retry_disabled`. The call route does NOT require it as a route gate: a due
- *     contact, or one holding a retry-delay override, may be dialled without it (D7); a dial
+ *     contact, or one holding a retry-delay override, may be dialled without it (CA7); a dial
  *     that would need a retry round answers `409 contact_not_retryable` (`retry_disabled`).
  *
  * The retry is set-based and served here (repositories, no internal handler). The call runs in
  * the dialer runtime, in the process holding the agent's station (`POST
  * /api/v1/agency/sessions/:id/my-contact-call`, `session_param`), reached through `callCore`.
- * Both write one `platform_audit_log` row (D12), ids only.
+ * Both write one `platform_audit_log` row (CA12), ids only.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';

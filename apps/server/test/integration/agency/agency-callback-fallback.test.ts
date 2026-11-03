@@ -13,7 +13,7 @@ vi.mock('../../../src/audit/platform/audit-logger.js', () => ({ platformAuditLog
 const { sweepCallbackFallback } = await import('../../../src/agency/pacing/callback-fallback.js');
 
 /**
- * The callback grace/fallback (D5) on real Postgres: a running owner-mode campaign's DUE
+ * The callback grace/fallback (CA5) on real Postgres: a running owner-mode campaign's DUE
  * callbacks, past the grace, whose owner has no live session on the campaign, lose their
  * owner (`callback_fallback = 'pool'`), each with a history row, under one batch id per
  * sweep, and one audit row per batch. `wait` moves nothing, a live owner keeps them, and a

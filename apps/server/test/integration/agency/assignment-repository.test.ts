@@ -20,7 +20,7 @@ type Canonical = import('../../../src/agency/assignment/operation.js').Canonical
  * The contact-assignment repository on real Postgres: every operation kind planned and
  * committed by the one SQL builder, the preview and the commit agreeing contact for contact,
  * same-number grouping, the live-contact skip, the stale refusal, the history rows, the
- * unstaff return (D6) and the progress counts against `assignment-sql.ts`.
+ * unstaff return (CA6) and the progress counts against `assignment-sql.ts`.
  *
  * Mutation-checked (see the lane report): dropping `WHERE NOT s.live` from the plan reds the
  * live-skip case; perturbing the seed the plan hashes with reds the 10,000-contact
@@ -334,7 +334,7 @@ describe('reassign, unassign, rebalance', () => {
   });
 });
 
-describe('unstaff (D6)', () => {
+describe('unstaff (CA6)', () => {
   it('return_to_pool moves the open contacts and skips live ones; keep moves nothing; a campaign with none is silent', async () => {
     const keep = await insertAgencyCampaign({ on_unstaff: 'keep' }) as { id: string };
     const empty = await insertAgencyCampaign() as { id: string };

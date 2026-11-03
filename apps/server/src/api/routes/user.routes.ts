@@ -201,7 +201,7 @@ async function closeAgencyStaffing(
       });
     }
 
-    // D6: their open contacts on those campaigns follow each campaign's `on_unstaff`, in one
+    // CA6: their open contacts on those campaigns follow each campaign's `on_unstaff`, in one
     // statement over every campaign closed above (so the same tenant/account scope). The
     // history rows' actor is NULL (a membership change, not a supervisor's move); the audit
     // rows name the admin. Never throws.

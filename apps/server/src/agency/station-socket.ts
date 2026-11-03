@@ -490,7 +490,7 @@ export async function handleStationSocket(
   // the reason live on the runtime; this is transport.
   const resumedState = await runtime.rehydrateAgent(sessionId, session);
 
-  // Contact assignment (D3): the agent's own queue on a `strict` / `preferred` campaign, so a
+  // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, so a
   // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
   // change, so a reconnecting station cannot wait for one). Read here, before the fence
   // below, so no await sits between the fence and the side effects. Best effort: a failed

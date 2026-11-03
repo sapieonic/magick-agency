@@ -67,7 +67,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       tenantId: request.tenantId,
       accountId: request.accountId,
     }))) return;
-    // Contact assignment (D9): a non-default assignment setting or an outcome
+    // Contact assignment (CA9): a non-default assignment setting or an outcome
     // `override` needs `agency_contact_assignment_enabled`; defaults pass unread.
     if (!(await assertAssignmentSettingsAllowed(reply, body, {
       tenantId: request.tenantId!,
@@ -125,7 +125,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // rule belongs, and it deliberately has none on PATCH (only `status` itself is
     // unpatchable, so lifecycle stays with /start, /pause, /resume, /stop and a
     // config edit can never race the pacing leader's own writes) — with ONE exception,
-    // `assignment_mode`, which changes only while draft or paused (decision D10; see
+    // `assignment_mode`, which changes only while draft or paused (decision CA10; see
     // below and `assignmentModeChangeRefused`).
     //
     // **When the edit takes effect, stated precisely — "applies to future attempts
@@ -178,7 +178,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       tenantId: request.tenantId,
       accountId: request.accountId,
     }))) return;
-    // Contact assignment (D9), on the same object, for the same reason as above.
+    // Contact assignment (CA9), on the same object, for the same reason as above.
     if (!(await assertAssignmentSettingsAllowed(reply, patchBody, {
       tenantId: request.tenantId!,
       accountId: request.accountId,

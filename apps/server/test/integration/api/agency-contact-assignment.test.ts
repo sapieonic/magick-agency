@@ -302,7 +302,7 @@ describe('the roster', () => {
   });
 });
 
-describe('unstaff (D6) on all three paths', () => {
+describe('unstaff (CA6) on all three paths', () => {
   async function events(reason: string, userId: string) {
     const { rows } = await getTestPool().query<{ n: number; actor: string | null }>(
       `SELECT count(*)::int AS n, min(actor_user_id::text) AS actor FROM agency_contact_assignment_events

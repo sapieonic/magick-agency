@@ -1,6 +1,6 @@
 /**
  * Contact assignment writes: the supervisor's operations (preview and commit), the unstaff
- * return (D6), the per-contact history, and the staffing probe the operations check.
+ * return (CA6), the per-contact history, and the staffing probe the operations check.
  *
  * ── One plan, two uses ──────────────────────────────────────────────────────
  * Every operation is planned by ONE SQL builder ({@link planCtes}): a CTE chain ending in
@@ -153,7 +153,7 @@ function specFor(op: Exclude<CanonicalAssignment, { kind: 'rebalance' }>, bind: 
       };
     case 'unassign':
       if (op.contactIds) {
-        // Only open contacts go back to the pool (D2); on-call ones are counted as skipped.
+        // Only open contacts go back to the pool (CA2); on-call ones are counted as skipped.
         return {
           selection: [`c.id = ANY(${bind.add(op.contactIds)}::uuid[])`, `c.state IN ('pending', 'in_flight', 'connected')`],
           order: { kind: 'none' },
@@ -342,7 +342,7 @@ export type AssignmentCommitOutcome =
   | { ok: true; result: AgencyAssignmentResult }
   | { ok: false; preview: AgencyAssignmentPreview };
 
-/** Per-campaign outcome of an unstaff (D6). */
+/** Per-campaign outcome of an unstaff (CA6). */
 export interface UnstaffReturn {
   campaign_id: string;
   /** The campaign's owning account (the audit row is filed under it). */
@@ -530,7 +530,7 @@ export class AgencyAssignmentRepository {
   }
 
   /**
-   * D6: `userId` was unstaffed from `campaignIds` (the campaigns whose staffing row just
+   * CA6: `userId` was unstaffed from `campaignIds` (the campaigns whose staffing row just
    * closed). On each campaign whose `on_unstaff` is `return_to_pool`, their `pending`
    * contacts lose their owner (history reason `unstaffed`, one batch per campaign); on
    * `keep`, nothing moves. Contacts on a call are never moved. One statement over every

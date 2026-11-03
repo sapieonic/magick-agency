@@ -3,7 +3,7 @@ import { AGENCY_CONTACT_ASSIGNMENT_DEFAULTS } from '@magick-agency/contracts/age
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 
 /*
- * The campaign-write gate for contact assignment (decision D9): the
+ * The campaign-write gate for contact assignment (decision CA9): the
  * `agency_contact_assignment_enabled` flag gates the SURFACE, so a campaign create,
  * PATCH or retry that asks for any of it, while the flag is off for the account, is
  * refused 403 `feature_disabled` and nothing is forwarded. It never gates the runtime:

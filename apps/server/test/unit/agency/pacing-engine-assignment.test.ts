@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
-// Contact assignment in the tick (D1, D3): on a `strict` or `preferred` campaign an agent
+// Contact assignment in the tick (CA1, CA3): on a `strict` or `preferred` campaign an agent
 // with nothing due is not reserved, every reserved agent is paired with the contact claimed
 // FOR them (never by position), and each available agent hears their `queue` frame when it
 // changes. `pool` mode is the tick as it was: `claimDialable` with N, no probe, no frame.
@@ -145,7 +145,7 @@ beforeEach(() => {
   fallback.sweep.mockResolvedValue(0);
 });
 
-describe('strict / preferred: an agent with nothing due is not reserved (D3)', () => {
+describe('strict / preferred: an agent with nothing due is not reserved (CA3)', () => {
   it('reserves only the agents with something due, in fairness order, and claims for them by user', async () => {
     repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1', 'u3']));
     const agents = makeAgents({ s1: 'available', s2: 'available', s3: 'available' });
@@ -195,7 +195,7 @@ describe('strict / preferred: an agent with nothing due is not reserved (D3)', (
   });
 });
 
-describe('strict / preferred: pairing is by agent, never by position (D1)', () => {
+describe('strict / preferred: pairing is by agent, never by position (CA1)', () => {
   it("dials each contact to the agent it was claimed for, whatever order the claim returned", async () => {
     repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1', 'u2']));
     // Returned in the opposite order to the reservation.
@@ -276,7 +276,7 @@ describe('strict / preferred: pairing is by agent, never by position (D1)', () =
   });
 });
 
-describe('the `queue` frame: sent to the agent only when it changes (D3)', () => {
+describe('the `queue` frame: sent to the agent only when it changes (CA3)', () => {
   function queueFrames(send: ReturnType<typeof vi.fn>) {
     return send.mock.calls.filter((c) => (c[1] as { event: string }).event === 'queue').map((c) => [c[0], c[1]]);
   }
@@ -344,7 +344,7 @@ describe('the `queue` frame: sent to the agent only when it changes (D3)', () =>
   });
 });
 
-describe('the callback grace/fallback sweep runs from the leader, throttled (D5)', () => {
+describe('the callback grace/fallback sweep runs from the leader, throttled (CA5)', () => {
   it('sweeps an owner-mode campaign at most every 30 s, and wakes it when callbacks moved', async () => {
     const clock = { t: 5_000_000 };
     repos.contact.probeAgentQueues.mockResolvedValue(probe([]));

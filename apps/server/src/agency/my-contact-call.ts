@@ -1,6 +1,6 @@
 /**
  * The agent dials one of their own contacts now (`POST /proxy/agency/my-contacts/:contactId/call`,
- * contact assignment phase 2, decision D7), on the campaign's NORMAL path: an attempt row, the
+ * contact assignment phase 2, decision CA7), on the campaign's NORMAL path: an attempt row, the
  * campaign's caller IDs, the pre-dial gates' clearance, the one dial dispatcher, and from there
  * exactly what a paced dial gets (the ringing panel, the bridge, recording, the outcome pad,
  * wrap-up and wrap-up redial, settlement by the retry policy). The attempt is marked

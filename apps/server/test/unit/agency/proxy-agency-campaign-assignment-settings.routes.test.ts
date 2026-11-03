@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 /*
- * Contact assignment on the public campaign write routes (decisions D9, D10):
+ * Contact assignment on the public campaign write routes (decisions CA9, CA10):
  *
  *  - the `agency_contact_assignment_enabled` flag gates the SURFACE: create, PATCH and a
  *    retry's `config_overrides` that set an assignment setting to a non-default value, or
@@ -104,7 +104,7 @@ const surfaces = [
   { name: 'PATCH /campaigns/:id', method: 'PATCH' as const, url: `${PREFIX}/campaigns/c1` },
 ];
 
-describe.each(surfaces)('$name — the contact-assignment flag gates the settings (D9)', (surface) => {
+describe.each(surfaces)('$name — the contact-assignment flag gates the settings (CA9)', (surface) => {
   it.each([
     ['assignment_mode', { assignment_mode: 'strict' }],
     ['on_unstaff', { on_unstaff: 'keep' }],
@@ -157,7 +157,7 @@ describe.each(surfaces)('$name — the contact-assignment flag gates the setting
   });
 });
 
-describe('PATCH /campaigns/:id — an assignment_mode change is audited, on success only (D10)', () => {
+describe('PATCH /campaigns/:id — an assignment_mode change is audited, on success only (CA10)', () => {
   beforeEach(() => mocks.flagEnabled.mockResolvedValue(true));
 
   it('a change writes one row with from and to, after the write succeeded', async () => {

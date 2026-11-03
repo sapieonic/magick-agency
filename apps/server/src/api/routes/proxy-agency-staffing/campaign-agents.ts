@@ -375,7 +375,7 @@ export async function registerCampaignAgentRoutes(app: FastifyInstance): Promise
         campaign_id: params.data.id,
         details: { campaign_id: params.data.id, user_id: params.data.userId },
       });
-      // D6: their open contacts on this campaign follow its `on_unstaff` (never throws).
+      // CA6: their open contacts on this campaign follow its `on_unstaff` (never throws).
       await returnContactsOnUnstaff({
         tenantId: request.tenantId!,
         userId: params.data.userId,

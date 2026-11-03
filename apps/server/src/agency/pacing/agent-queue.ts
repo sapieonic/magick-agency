@@ -1,5 +1,5 @@
 /**
- * An agent's own queue on a `strict` or `preferred` campaign (contact assignment, D3): whether
+ * An agent's own queue on a `strict` or `preferred` campaign (contact assignment, CA3): whether
  * something is due for them now, and when nothing is, why (`AgencyQueueState`). Pacing reads it
  * for every available agent on each tick (who is worth reserving, and the `queue` frame sent
  * on a change); the session bootstrap, the station's `ready` frame and the agent's My contacts

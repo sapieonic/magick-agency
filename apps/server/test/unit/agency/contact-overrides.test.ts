@@ -12,7 +12,7 @@ import { resolveRetryDecision } from '../../../src/agency/retry-policy.js';
 import { resolveDispositionDecision } from '../../../src/agency/disposition-policy.js';
 
 /**
- * The pure rules of outcome overrides and of the agent's own dial (contact assignment D7, D8).
+ * The pure rules of outcome overrides and of the agent's own dial (contact assignment CA7, CA8).
  * The writes that apply them are pinned on real Postgres (`agent-retry-*.test.ts`,
  * `contact-override-*.test.ts`).
  *

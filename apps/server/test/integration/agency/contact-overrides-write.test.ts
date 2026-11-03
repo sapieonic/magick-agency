@@ -14,9 +14,9 @@ const { resolveDispositionDecision } = await import('../../../src/agency/disposi
 /**
  * ─── Outcome overrides and callback ownership, written on real Postgres ──────────
  *
- * D8 grant (the disposition's write REPLACES the contact's override columns), D8 spend (an
+ * CA8 grant (the disposition's write REPLACES the contact's override columns), CA8 spend (an
  * `extra_attempts` override keeps a contact whose `max_attempts` is spent `pending`, at the
- * settlement and at the disposition), and D4 (a booked callback in the pool goes to the agent
+ * settlement and at the disposition), and CA4 (a booked callback in the pool goes to the agent
  * who took the call). The acceptance: a "Promise To Pay" outcome granting 3 extra attempts lets
  * the contact be dialled past `max_attempts` exactly 3 more times; a DNC outcome still stops it.
  *
@@ -112,7 +112,7 @@ async function dialNoAnswer(campaign: Record<string, unknown>, contactId: string
   return attempt.id as string;
 }
 
-describe('D8 grant, D4 callback owner: the disposition write', () => {
+describe('CA8 grant, CA4 callback owner: the disposition write', () => {
   beforeEach(truncateAll);
   afterAll(closeTestPool);
 
@@ -174,7 +174,7 @@ describe('D8 grant, D4 callback owner: the disposition write', () => {
   });
 });
 
-describe('D8 spend: extra attempts past max_attempts', () => {
+describe('CA8 spend: extra attempts past max_attempts', () => {
   beforeEach(truncateAll);
   afterAll(closeTestPool);
 

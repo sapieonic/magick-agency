@@ -95,11 +95,11 @@ export interface DispositionRelease {
   state: AgencyContactState;
   suppressed_reason: string | null;
   next_attempt_at: Date;
-  /** An `extra_attempts` override kept the contact `pending` (D8 spend). */
+  /** An `extra_attempts` override kept the contact `pending` (CA8 spend). */
   extraAttemptSpent: boolean;
-  /** The entry's override replaced the contact's (D8 grant). */
+  /** The entry's override replaced the contact's (CA8 grant). */
   overrideGranted: boolean;
-  /** The callback's new owner (D4), or null when the owner did not change. */
+  /** The callback's new owner (CA4), or null when the owner did not change. */
   assignedTo: string | null;
 }
 
@@ -561,7 +561,7 @@ export class AgencyContactRepository {
   }
 
   /**
-   * The callback grace/fallback (D5), one campaign, one statement: every DUE callback (bucket
+   * The callback grace/fallback (CA5), one campaign, one statement: every DUE callback (bucket
    * `callback` by `contactBucketSql`, `next_attempt_at <= now() - grace`) whose owner has no
    * live session on the campaign loses its owner, and each move writes its
    * `agency_contact_assignment_events` row (`callback_fallback`, actor NULL: the system) under
@@ -1299,19 +1299,19 @@ export class AgencyContactRepository {
     nextAttemptAt: Date | null;
     suppressedReason: string | null;
     /**
-     * D8 grant: the recorded entry's `override` (`overrideGrantOf`). The contact's
+     * CA8 grant: the recorded entry's `override` (`overrideGrantOf`). The contact's
      * `override_*` columns are REPLACED with it, `override_disposition` = this code. Absent or
      * null: an existing grant is left alone.
      */
     grant?: OverrideGrant | null;
     /**
-     * D8 spend: the decision is the disposition `retry`'s max-attempts exhaustion
+     * CA8 spend: the decision is the disposition `retry`'s max-attempts exhaustion
      * (`disposition_attempts_reached`); `delayMinutes` is that rule's delay. An unspent
      * `extra_attempts` then keeps the contact `pending` instead.
      */
     extraAttempt?: { reason: string; delayMinutes: number; now: Date } | null;
     /**
-     * D4: the decision booked a callback on a strict / preferred campaign; the agent who took
+     * CA4: the decision booked a callback on a strict / preferred campaign; the agent who took
      * the call (the attempt's reserved agent). A contact in the pool is assigned to them.
      */
     callbackOwner?: { userId: string } | null;
@@ -1377,7 +1377,7 @@ export class AgencyContactRepository {
                                        ELSE COALESCE($6::timestamptz, c.next_attempt_at) END,
                 suppressed_reason = CASE WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason
                                          ELSE COALESCE($7::varchar, c.suppressed_reason) END,
-                -- D8: a grant replaces every part; a spend decrements (never below 0, the CHECK).
+                -- CA8: a grant replaces every part; a spend decrements (never below 0, the CHECK).
                 override_disposition = CASE WHEN $8::boolean THEN $3::varchar ELSE c.override_disposition END,
                 override_granted_at = CASE WHEN $8::boolean THEN now() ELSE c.override_granted_at END,
                 override_retry_delay = CASE WHEN $8::boolean THEN $9::boolean ELSE c.override_retry_delay END,
@@ -1386,7 +1386,7 @@ export class AgencyContactRepository {
                 -- so that would write 0 over every grant on every non-granting outcome.
                 override_extra_attempts = CASE WHEN $11::int IS NULL THEN c.override_extra_attempts
                                                ELSE GREATEST(0, $11::int) END,
-                -- D4: a callback in the pool goes to the agent who took the call.
+                -- CA4: a callback in the pool goes to the agent who took the call.
                 assigned_user_id = COALESCE(c.assigned_user_id, $12::uuid),
                 assigned_at = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN now() ELSE c.assigned_at END,
                 assigned_by_user_id = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN $12::uuid
@@ -1464,7 +1464,7 @@ export class AgencyContactRepository {
 
   /**
    * The settlement's write for an attempt whose outcome-policy decision EXHAUSTS the contact
-   * because the rule's `max_attempts` is spent (`max_attempts_reached`), with the D8 spend:
+   * because the rule's `max_attempts` is spent (`max_attempts_reached`), with the CA8 spend:
    * when the contact holds an unspent `extra_attempts` override it stays `pending`, due after
    * the rule's delay, one extra attempt is spent and the attempt being settled records
    * `override_applied += 'extra_attempts'`. Otherwise it is exactly {@link markState}'s write

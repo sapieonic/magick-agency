@@ -1,5 +1,5 @@
 /**
- * The callback grace/fallback (contact assignment, D5), for one `strict` or `preferred`
+ * The callback grace/fallback (contact assignment, CA5), for one `strict` or `preferred`
  * campaign: a due callback whose owner has no live session on the campaign waits
  * `callback_owner_grace_minutes`; then, with `callback_fallback = 'pool'`, it loses its owner
  * (`AgencyContactRepository.fallBackOverdueCallbacks`: the move and one history row per contact

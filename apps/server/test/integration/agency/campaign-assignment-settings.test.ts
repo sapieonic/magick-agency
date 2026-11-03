@@ -15,8 +15,8 @@ import { insertAgencyCampaign, insertAgencyContact } from './agency-factories.js
  * `update()` (the patchable allow-list), the retry create (`retryFromCampaign`: inherit,
  * override, and `keep_assignments` both ways with its `inherited` history rows), and
  * the routes: the internal handler's POST/PATCH with the `assignment_mode` status rule
- * (D10), and the public PATCH in front of it (the 409 forwarded, the audit row on a real
- * change, the flag's 403 for a non-default setting, D9).
+ * (CA10), and the public PATCH in front of it (the 409 forwarded, the audit row on a real
+ * change, the flag's 403 for a non-default setting, CA9).
  *
  * Every arm reads the columns back with its own SELECT, never off the RETURNING row
  * alone (`packages/db/CLAUDE.md`: an optional input beside an explicit column list

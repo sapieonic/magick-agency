@@ -1207,7 +1207,7 @@ export class PacingEngine {
     candidates.sort((a, b) =>
       a.availableSince - b.availableSince || a.sessionId.localeCompare(b.sessionId));
 
-    // ── Contact assignment: an agent with nothing due is not reserved (D3). ──────
+    // ── Contact assignment: an agent with nothing due is not reserved (CA3). ──────
     // `strict` / `preferred`: one probe of every available agent's own queue (and the pool's,
     // in `preferred`), which also sends each agent their `queue` frame when it changed. Only
     // the agents with something due go on, in the same fairness order; reserving the others
@@ -1875,7 +1875,7 @@ export class PacingEngine {
 
   /**
    * The last `queue` frame each agent was sent, per campaign (`queueStateKey`), so a frame
-   * goes out only on a change (contact assignment, D3). An entry is dropped when its session
+   * goes out only on a change (contact assignment, CA3). An entry is dropped when its session
    * is no longer live on the campaign (left), and the campaign's map when the campaign is
    * `pool` or its leadership is given up. A `ready` frame or the bootstrap carries the state
    * at (re)connect, so a reconnect needs no resend.

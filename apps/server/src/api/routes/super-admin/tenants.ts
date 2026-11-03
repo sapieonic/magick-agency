@@ -60,7 +60,7 @@ async function closeStaffingTenantWide(
     const closed = await agencyCampaignAgentRepository.closeAllForUser(tenantId, userId);
     if (closed.length > 0) {
       log.info({ tenantId, targetUserId: userId, closed: closed.length, reason }, 'Closed agency campaign staffing on super-admin membership change');
-      // D6: their open contacts on those campaigns follow each campaign's `on_unstaff`, in one
+      // CA6: their open contacts on those campaigns follow each campaign's `on_unstaff`, in one
       // statement over every campaign. The platform audit row is the SYSTEM's (a super admin
       // is not a platform user; see above), marked `via: 'super_admin'`, and written because
       // the campaign's supervisors must see where those contacts went. Never throws.

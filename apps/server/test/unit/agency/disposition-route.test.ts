@@ -843,7 +843,7 @@ describe('POST /attempts/:id/notes', () => {
   });
 });
 
-describe('POST /attempts/:id/disposition — overrides and callback ownership (contact assignment D8, D4)', () => {
+describe('POST /attempts/:id/disposition — overrides and callback ownership (contact assignment CA8, CA4)', () => {
   const PTP: AgencyDisposition = {
     code: 'promise_to_pay', label: 'Promise To Pay', requires_datetime: true,
     override: { extra_attempts: 3, retry_delay: true },

@@ -146,7 +146,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // and doing nothing would have an agent promise a customer a call that never
     // comes. It re-enters the roster as an ordinary contact. Nothing binds it to this
     // SESSION; on a strict / preferred campaign it is bound to the AGENT who took the call
-    // (contact assignment, D4: see the ownership note at the write below), on a `pool`
+    // (contact assignment, CA4: see the ownership note at the write below), on a `pool`
     // campaign to nobody: whichever agent is available takes it.
     //
     // No `bump_attempt`: the attempt was already counted when it ended. Bumping
@@ -246,7 +246,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // reads it — but a test asserting "no retry was scheduled" here would be
     // observing a stale value rather than an absence. Assert the STATE.
     //
-    // ── Overrides and callback ownership (contact assignment, D8 and D4) ──────────
+    // ── Overrides and callback ownership (contact assignment, CA8 and CA4) ──────────
     // Decided on the locked row and written by the same guarded statement, so each lands
     // exactly when the release lands, and only on the FIRST write (a same-code replay grants,
     // spends and assigns nothing):
@@ -315,7 +315,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       contact_id: attempt.contact_id,
       campaign_id: attempt.campaign_id,
       disposition_code: resolved.entry.code,
-      // An outcome-granted extra attempt kept the contact open (D8): report where it went.
+      // An outcome-granted extra attempt kept the contact open (CA8): report where it went.
       contact_state: landed?.extraAttemptSpent ? landed.state : contactState,
       // When we will dial, not what was asked for. The echo is a separate field
       // precisely so a console cannot mistake one for the other.

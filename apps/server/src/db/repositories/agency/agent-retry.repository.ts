@@ -1,6 +1,6 @@
 /**
  * `AgencyAgentRetryRepository`: the agent's own writes on their contacts (contact assignment,
- * phase 2, decision D7): reopen not-reached contacts into their queue, and claim one contact
+ * phase 2, decision CA7): reopen not-reached contacts into their queue, and claim one contact
  * for a dial they place themselves (and give that claim back exactly).
  *
  * Eligibility is `agentRetryBlockSql` (`assignment-sql.ts`), the ONE definition the agent's

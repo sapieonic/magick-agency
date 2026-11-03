@@ -1,6 +1,6 @@
 /*
  * The agent's dial of one of their own contacts (`POST /sessions/:id/my-contact-call`), the
- * internal half of `POST /proxy/agency/my-contacts/:contactId/call` (contact assignment, D7).
+ * internal half of `POST /proxy/agency/my-contacts/:contactId/call` (contact assignment, CA7).
  * Part of `agency.routes.ts`. The flow is `agency/my-contact-call.ts`; this is the edge.
  *
  * On the session's path (`session_param` in `api/core-owners.ts`) because the dial runs where

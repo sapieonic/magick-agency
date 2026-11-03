@@ -103,7 +103,7 @@ export function overrideBadge(override: AgencyContactOverride | null): string | 
 
 /**
  * Whether "Call" can be pressed for this contact now, and why not when it cannot.
- * Mirrors the server's manual-call rule (D7): a retry-eligible contact, a
+ * Mirrors the server's manual-call rule (CA7): a retry-eligible contact, a
  * contact due now, or an open contact holding an unspent "call early" override.
  * The server re-checks every part; this only keeps a button from promising a
  * call it will refuse.

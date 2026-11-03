@@ -145,7 +145,7 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_disposition.created', label: 'Disposition filed', group: 'Calls' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls' },
   { value: 'agency_attempt.redialed', label: 'Customer redialled from wrap-up', group: 'Calls' },
-  // Contact assignment: an agent's own retry and dial of their contacts (D12).
+  // Contact assignment: an agent's own retry and dial of their contacts (CA12).
   { value: 'agency_contacts.agent_retry_reopened', label: 'Agent reopened not-reached contacts', group: 'Calls' },
   { value: 'agency_contact.agent_dialed', label: 'Agent called one of their contacts', group: 'Calls' },
   // A bulk export of every number on a campaign takes no permission

@@ -296,7 +296,7 @@ describe('a reconnect onto a break is told the break\'s reason', () => {
   });
 });
 
-// Contact assignment (D3): a reconnect on a strict / preferred campaign is told the agent's
+// Contact assignment (CA3): a reconnect on a strict / preferred campaign is told the agent's
 // queue at once, because pacing sends the `queue` frame only when it changes.
 // FALSIFIED: with `queue` dropped from the frame the first case reds.
 describe("a reconnect on an owner-mode campaign is told the agent's queue", () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 /**
  * The pre-dial gates' ONE option (`PreDialGateOptions.callingHoursOverride`, contact
- * assignment D7/D8): the agent's own dial of one of their contacts may pass a CLOSED calling
+ * assignment CA7/CA8): the agent's own dial of one of their contacts may pass a CLOSED calling
  * window only with an unspent calling-hours override on the contact AND a valid note. Nothing
  * else moves: phone validity, an unresolvable window and DNC decide exactly as without it, and
  * DNC has no override.
