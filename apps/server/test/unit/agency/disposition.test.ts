@@ -138,6 +138,13 @@ describe('dispositionRefusal', () => {
       .toBe('attempt_not_dispositionable');
   });
 
+  it('allows a wrap-up redial that never connected: it owes the conversation\'s outcome', () => {
+    expect(dispositionRefusal(attempt({ bridged_at: null, outcome: 'no_answer', redial_number: 1 }))).toBeNull();
+    // A redialled call whose write-up moved to the redial is refused at the write
+    // (`already_dispositioned`), not here: `redialed` is an ordinary incumbent code.
+    expect(dispositionRefusal(attempt({ disposition_code: 'redialed' }))).toBeNull();
+  });
+
   it('refuses an auto-closed attempt DISTINCTLY from an already-dispositioned one', () => {
     // Different facts, and only one of them is the agent's doing — the console
     // says "this call was auto-closed" rather than "you already did this".
