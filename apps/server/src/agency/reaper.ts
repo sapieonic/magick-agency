@@ -553,6 +553,17 @@ export class AgencyReaper {
    * failed settlement had already charged it is not knowable from here, and the
    * our-fault bound is what keeps a repeatedly failing write from redialling
    * someone without limit.
+   *
+   * ── Not dialable early: the outcome-unknown hold survives a failed write ──
+   *
+   * The contact of a dial whose outcome is unknown is held 15 minutes
+   * (`holdOutcomeUnknownContact`, the soft phone's settle); when that write fails the
+   * contact stays `in_flight` and lands here after only {@link STRANDED_CONTACT_THRESHOLD_MS}.
+   * There is no attempt to ask, so the requeue reads the contact's dials itself
+   * (`holdUnknownDialsMs`, in the same statement): any sent, never answered and not ended by
+   * a carrier answer keeps it until `dialed_at` + {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS}.
+   * Requeuing at once cut that hold to about five minutes, inside which the carrier may
+   * still ring the customer.
    */
   async sweepStrandedContacts(): Promise<number> {
     const cutoff = new Date(Date.now() - STRANDED_CONTACT_THRESHOLD_MS);
@@ -560,7 +571,7 @@ export class AgencyReaper {
     for (const contact of stranded) {
       await this.requeueOrphanedContact(contact.id, null, 'stranded', {
         tenantId: contact.tenant_id, campaignId: contact.campaign_id,
-      });
+      }, new Date(), DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
     }
     if (stranded.length > 0) {
       log.warn({ count: stranded.length }, 'Agency reaper requeued contacts stranded in_flight');
@@ -711,9 +722,14 @@ export class AgencyReaper {
     /**
      * When the contact may be dialled again: now, unless the reaped attempt's dial outcome
      * is unknown ({@link reapedRedialNotBefore}). The stranded-contact sweep has no attempt
-     * to ask and passes nothing.
+     * to ask and passes now.
      */
     notBefore: Date = new Date(),
+    /**
+     * The stranded-contact sweep's: the requeue reads the contact's own dials and holds it
+     * this long after any that may still be placed (`requeueOrphaned`'s `holdUnknownDialsMs`).
+     */
+    holdUnknownDialsMs: number | null = null,
   ): Promise<void> {
     // ── The our-fault ledger, and its bound ──────────────────────────────────
     //
@@ -753,6 +769,7 @@ export class AgencyReaper {
         outcome: 'orphaned',
         bound: ourFaultRedialBound(null, 'orphaned'),
         retiredState: OUR_FAULT_RETIRED_STATE,
+        holdUnknownDialsMs,
       })
       .catch((err) => {
         // Nothing was written. A contact still `in_flight` is the stranded-contact

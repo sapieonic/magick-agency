@@ -849,6 +849,72 @@ describe('findStrandedInFlight and the stranded-contact sweep', () => {
     // Requeued once: `pending` is not `in_flight`, so a second sweep finds nothing.
     expect(await reaper().sweepStrandedContacts()).toBe(0);
   });
+
+  /**
+   * The contact of a dial whose outcome is unknown is held 15 minutes by one write
+   * (`holdOutcomeUnknownContact`, or the soft phone's settle). When that write fails the
+   * contact stays `in_flight`, and this sweep finds it after 5 minutes. It requeued it with
+   * no hold, cutting the 15 minutes to about 5 while the carrier may still ring the
+   * customer. The requeue now reads the contact's own dials, in the same statement, and
+   * keeps any sent and never answered (and not ended by a carrier answer) until `dialed_at`
+   * + 15 min. `dialed_at` is written at INSERT (an UPDATE would move the rows' `updated_at`
+   * and hide them from the sweep) and the hold is read back against it in SQL.
+   */
+  it('keeps the outcome-unknown hold of a contact whose hold write failed: not dialable before dialed_at + 15 min', async () => {
+    const campaignId = await campaign();
+    const DELAY_SECONDS = 15 * 60;
+    const ago = (seconds: number) => new Date(Date.now() - seconds * 1000);
+    /** An `in_flight` contact behind one ended dial `dialedSecondsAgo` back. */
+    const strandedBehind = async (attempt: Record<string, unknown>, dialedSecondsAgo: number, answered = false) => {
+      const c = await insertAgencyContact(campaignId, { state: 'in_flight', updated_at: LONG_AGO() });
+      await insertAgencyAttempt(campaignId, c.id as string, {
+        state: 'ended', updated_at: LONG_AGO(), dialed_at: ago(dialedSecondsAgo),
+        ...(answered ? { answered_at: ago(dialedSecondsAgo - 2) } : {}),
+        ...attempt,
+      });
+      return c.id as string;
+    };
+    // The dialer's own outcome-unknown dial (`failed`), and a teardown that raced one (`canceled`).
+    const unknown = await strandedBehind({ outcome: 'failed' }, 6 * 60);
+    const raced = await strandedBehind({ outcome: 'canceled' }, 6 * 60);
+    // Not held: the carrier answered it (no answer), it was answered, or its hold has run out.
+    const noAnswer = await strandedBehind({ outcome: 'no_answer' }, 6 * 60);
+    const answered = await strandedBehind({ outcome: 'failed' }, 6 * 60, true);
+    const longAgo = await strandedBehind({ outcome: 'failed' }, DELAY_SECONDS + 60);
+    // A soft-phone call that claimed the contact, dialled with its outcome unknown, settled,
+    // and whose contact settle failed (the lapse sweep's catch leaves it to this sweep).
+    const softphone = await insertAgencyContact(campaignId, { state: 'in_flight', updated_at: LONG_AGO() });
+    const session = await insertSoftphoneSession();
+    const manual = await insertManualCall(session, {
+      campaign_id: campaignId, contact_id: softphone.id, contact_claimed: true, contact_prior_state: 'pending',
+      state: 'ended', outcome: 'failed', ended_at: LONG_AGO(), settled_at: LONG_AGO(), dialed_at: ago(6 * 60),
+    });
+    expect(manual.id).toBeTruthy();
+
+    expect(await reaper().sweepStrandedContacts()).toBe(6);
+
+    const { rows } = await getTestPool().query<{ id: string; state: string; our_fault_attempts: number; after_dial: number | null; from_now: number }>(
+      `SELECT c.id, c.state, c.our_fault_attempts,
+              EXTRACT(EPOCH FROM c.next_attempt_at - COALESCE(
+                (SELECT max(a.dialed_at) FROM agency_call_attempts a WHERE a.contact_id = c.id),
+                (SELECT max(m.dialed_at) FROM agency_manual_calls m WHERE m.contact_id = c.id)))::float8 AS after_dial,
+              EXTRACT(EPOCH FROM c.next_attempt_at - now())::float8 AS from_now
+         FROM agency_contacts c WHERE c.campaign_id = $1`,
+      [campaignId],
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const id of [unknown, raced, softphone.id as string]) {
+      const r = byId.get(id)!;
+      expect({ state: r.state, ourFault: r.our_fault_attempts }).toEqual({ state: 'pending', ourFault: 1 });
+      expect(r.after_dial, 'dialable before the outcome-unknown hold ran out').toBeCloseTo(DELAY_SECONDS, 0);
+    }
+    for (const id of [noAnswer, answered, longAgo]) {
+      const r = byId.get(id)!;
+      expect({ state: r.state, ourFault: r.our_fault_attempts }).toEqual({ state: 'pending', ourFault: 1 });
+      expect(r.from_now).toBeLessThanOrEqual(1);
+      expect(r.from_now).toBeGreaterThan(-60);
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

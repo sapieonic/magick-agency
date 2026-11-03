@@ -305,7 +305,10 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
   dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded
   statement, and only while it is still that attempt's (no newer attempt, no soft-phone claim).
-  The lapsed-wrap-up sweep (`findLapsedWrapups`, then `closeLapsedWrapup` per row) stamps
+  The stranded-contact sweep (a contact `in_flight` with no live attempt for 5 min) requeues the
+  same way and, in that statement, keeps it until `dialed_at` + 15 min when one of its dials was
+  sent and never answered or ended by a carrier answer, so an outcome-unknown hold whose own
+  write failed is not cut short. The lapsed-wrap-up sweep (`findLapsedWrapups`, then `closeLapsedWrapup` per row) stamps
   `no_disposition` when one was owed and releases the contact through the outcome policy, in one
   statement that locks both rows and writes only while the attempt has no disposition and the
   contact is still parked `connected` for it (no newer attempt, no soft-phone claim); it counts
