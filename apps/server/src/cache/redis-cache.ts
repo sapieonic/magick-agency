@@ -23,9 +23,28 @@ export interface LocalCacheConfig {
    * Pub/sub channel for invalidation broadcasts. Namespaced with the Redis key
    * prefix by the caller: ioredis applies `keyPrefix` to KEYS, not to channel
    * names, so two deployments sharing one Redis would otherwise cross-talk and
-   * clear each other's caches.
+   * clear each other's caches. {@link RedisCache.init} adds the Redis db number
+   * (see {@link invalidationChannelFor}).
    */
   channel: string;
+}
+
+/**
+ * The channel a cache on `redis` actually uses: the configured channel plus the client's
+ * Redis db number.
+ *
+ * Pub/sub is SERVER-wide in Redis: a channel is not scoped by `SELECT`, so a publish on db 1
+ * reaches a subscriber on db 2. Deployments told apart only by their db number (dev on db 0
+ * and the test suites on 1–15 of one local Redis, or each worktree's integration run on its
+ * own db) shared `cache:invalidate` and dropped each other's local copies: harmless for
+ * correctness (an extra invalidation only forces a re-read) but it flaked the cache suites,
+ * and it is churn no deployment should cause another. The db comes from the client the
+ * cache publishes on (`options.db`, parsed by ioredis from the URL path), so it is always
+ * the db this cache's keys live in. Every process of one deployment derives the same name.
+ */
+export function invalidationChannelFor(redis: Pick<Redis, 'options'>, channel: string): string {
+  // `?.`: a test double without `options` is a db-0 client.
+  return `${channel}:db${redis.options?.db ?? 0}`;
 }
 
 /**
@@ -62,16 +81,19 @@ export class RedisCache {
   init(redis: Redis, localConfig?: LocalCacheConfig): void {
     this.redis = redis;
     // Kept even when the layer is DISABLED: `publishInvalidation` needs the
-    // channel so a disabled instance still notifies enabled peers.
-    if (localConfig) this.localConfig = localConfig;
-    if (localConfig?.enabled) {
+    // channel so a disabled instance still notifies enabled peers. The channel is
+    // scoped to this client's Redis db here, once, so no caller can forget it.
+    const scoped = localConfig
+      ? { ...localConfig, channel: invalidationChannelFor(redis, localConfig.channel) }
+      : undefined;
+    if (scoped) this.localConfig = scoped;
+    if (scoped?.enabled) {
       this.local = new LocalCache({
-        ttlMs: localConfig.ttlMs,
-        maxEntries: localConfig.maxEntries,
+        ttlMs: scoped.ttlMs,
+        maxEntries: scoped.maxEntries,
       });
-      this.localConfig = localConfig;
       log.info(
-        { ttlMs: localConfig.ttlMs, maxEntries: localConfig.maxEntries },
+        { ttlMs: scoped.ttlMs, maxEntries: scoped.maxEntries, channel: scoped.channel },
         'Redis cache initialized with in-process layer',
       );
       return;

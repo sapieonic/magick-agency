@@ -30,9 +30,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *     supervisor's successive reads), every series bucket has `connected ≤ attempts`, no
  *     read 5xxs, and Postgres records no deadlock.
  *  4. **The final dashboard equals the database.**
- *  5. `it.fails` — a DEFECT, see the case: a same-code replay of an OLD attempt's
- *     disposition re-runs the contact transition, resurrecting a contact a later call
- *     already completed.
+ *  5. **A late replay does not move a contact a later call settled.** A same-code replay
+ *     of an OLD attempt's disposition answers the same 200 and leaves the contact a later
+ *     call completed as it is (`releaseFromDisposition`, the contact write guarded on the
+ *     contact still belonging to the attempt).
  */
 
 const mocks = vi.hoisted(() => ({ verifyIdToken: vi.fn() }));
@@ -318,39 +319,47 @@ describe('the disposition storm (integration, load)', () => {
   }, 60_000);
 
   /**
-   * ── DEFECT: a stale same-code replay resurrects a completed contact ──────────────
+   * ── A stale same-code replay does not resurrect a completed contact ──────────────
    *
    * A same-code submit is an idempotent 200 by design (the console retries on a network
    * blip), and the route deliberately never reads the incumbent code — the guarded UPDATE
-   * decides. But everything AFTER that UPDATE runs again on a replay, including
-   * `agencyContactRepository.markState(contact, <policy state>)`. So a replay of an OLD
-   * attempt's disposition — the console flushing a queued retry, or a supervisor
-   * re-submitting a write-up from the attempt history — after a LATER call has already
-   * settled the contact moves the contact back: here `voicemail` on call 1, `interested` on
-   * call 2 (contact `completed`), then the call-1 retry arrives and the contact is `pending`
-   * with a future `next_attempt_at` — a customer who said yes is dialed again. The fix is a
-   * policy decision (should a disposition on a superseded attempt move the contact at all?),
-   * so it is left failing rather than guessed at.
+   * decides. Everything after that UPDATE runs again on a replay, including the contact
+   * write. That write was an unconditional `markState`, so a replay of an OLD attempt's
+   * disposition — the console flushing a queued retry, or a supervisor re-submitting a
+   * write-up from the attempt history — after a LATER call had settled the contact moved
+   * it back: here `voicemail` on call 1, `interested` on call 2 (contact `completed`), then
+   * the call-1 retry arrived and the contact was `pending` with a future `next_attempt_at`,
+   * a customer who said yes dialled again. It is now `releaseFromDisposition`, which writes
+   * only while the contact still belongs to the attempt (no newer attempt, no soft-phone
+   * claim, still parked for it), and the replay still answers the same 200.
+   * Mutation-checked: putting the unconditional `markState` back reds this case.
    */
-  it.fails('5. a late replay of an old attempt\'s disposition does not move a contact a later call settled', async () => {
+  it('5. a late replay of an old attempt\'s disposition does not move a contact a later call settled', async () => {
     const f = floors[0]!;
     const agent = f.agents[0]!;
     const first = seeded.find((s) => s.agent === agent)!;
     const r1 = await call(app(), 'POST', `/proxy/agency/attempts/${first.attempt}/disposition`, agent, f, { disposition_code: 'voicemail' });
     expect(r1.statusCode, r1.body).toBe(200);
 
-    // The retry dial: call 2 on the same contact, which the agent closes as a sale.
+    // The retry dial: call 2 on the same contact, which bridges (the dialer parks the
+    // contact `connected` for its write-up) and which the agent closes as a sale.
     const second = endedCall(f, sessionOf.get(agent.id)!, 2, first.contact).attempt;
     await insertRows('agency_call_attempts', [second]);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'connected' WHERE id = $1`, [first.contact]);
     const r2 = await call(app(), 'POST', `/proxy/agency/attempts/${second.id}/disposition`, agent, f, { disposition_code: 'interested' });
     expect(r2.statusCode, r2.body).toBe(200);
     expect(r2.json().contact_state).toBe('completed');
 
-    // The console's queued retry of call 1's submit finally gets through.
+    // The console's queued retry of call 1's submit finally gets through: the same 200,
+    // the same body as the first submit (bar the instant the retry policy re-derives and
+    // the live agent-state snapshot).
     const replay = await call(app(), 'POST', `/proxy/agency/attempts/${first.attempt}/disposition`, agent, f, { disposition_code: 'voicemail' });
     expect(replay.statusCode, replay.body).toBe(200);
+    const strip = (b: Record<string, unknown>) => ({ ...b, next_attempt_at: typeof b['next_attempt_at'], agent_state: undefined });
+    expect(strip(replay.json())).toEqual(strip(r1.json()));
 
-    const { rows } = await getTestPool().query<{ state: string }>('SELECT state FROM agency_contacts WHERE id = $1', [first.contact]);
-    expect(rows[0]!.state).toBe('completed');
+    const { rows } = await getTestPool().query<{ state: string; last_disposition: string }>(
+      'SELECT state, last_disposition FROM agency_contacts WHERE id = $1', [first.contact]);
+    expect(rows[0]).toEqual({ state: 'completed', last_disposition: 'interested' });
   });
 });

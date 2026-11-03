@@ -66,6 +66,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-context-ordering.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-conversion-counting.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-crash-recovery.test.ts` | ~6 |
+| `apps/server/test/integration/agency/agency-disposition-contact-write.test.ts` | 9 |
 | `apps/server/test/integration/agency/agency-dnc-campaign-scope.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-dnc-mark-route.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-dnc-resurrection.test.ts` | ~12 |
@@ -182,7 +183,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/canceled-outcome-ledger.test.ts` | 11 |
 | `apps/server/test/unit/agency/dial-dispatcher.test.ts` | 7 |
 | `apps/server/test/unit/agency/disposition-policy.test.ts` | 90 |
-| `apps/server/test/unit/agency/disposition-route.test.ts` | 37 |
+| `apps/server/test/unit/agency/disposition-route.test.ts` | 38 |
 | `apps/server/test/unit/agency/disposition.test.ts` | 19 |
 | `apps/server/test/unit/agency/dnc-availability.test.ts` | 6 |
 | `apps/server/test/unit/agency/dnc-mark-route.test.ts` | 37 |
@@ -525,7 +526,7 @@ Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/cache/local-cache-invalidation.test.ts` | ~9 |
+| `apps/server/test/integration/cache/local-cache-invalidation.test.ts` | 10 |
 | `apps/server/test/integration/cache/membership-invalidation.test.ts` | ~3 |
 | `apps/server/test/integration/cache/redis-cache.delbypattern.test.ts` | ~4 |
 | `apps/server/test/integration/cache/tenant-record-cache.test.ts` | ~10 |
@@ -533,7 +534,7 @@ Files: `local-cache.ts`, `redis-cache.ts`, `revocation-unavailable.ts`
 | `apps/server/test/unit/cache/local-cache.test.ts` | 15 |
 | `apps/server/test/unit/cache/redis-cache-invalidation-order.test.ts` | 4 |
 | `apps/server/test/unit/cache/redis-cache-revocation.test.ts` | 3 |
-| `apps/server/test/unit/cache/redis-cache.test.ts` | 23 |
+| `apps/server/test/unit/cache/redis-cache.test.ts` | 24 |
 
 ### `apps/server/src/cluster/`
 
@@ -976,7 +977,7 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/contact-claim-contention.test.ts` | ~7 | Concurrent claimers and settlers, `SKIP LOCKED`, DNC racing claims, overlapping stranded-contact sweeps |
 | `apps/server/test/integration/load/floor-morning-rush.test.ts` | ~5 | 90 agents sign in, join, connect and poll across 3 tenants; every body swept for foreign ids |
 | `apps/server/test/integration/load/session-join-races.test.ts` | ~3 | Racing joins: one session, the documented 409, one "session started" event |
-| `apps/server/test/integration/load/disposition-storm.test.ts` | ~2 | Concurrent and duplicate dispositions with supervisor reads: exactly-once effects, no deadlocks; 1 `it.fails` (stale replay reopens a contact) |
+| `apps/server/test/integration/load/disposition-storm.test.ts` | 2 | Concurrent and duplicate dispositions with supervisor reads: exactly-once effects, no deadlocks; a stale same-code replay of an old attempt leaves a contact a later call settled as it is (the former `it.fails`, stale replay reopens a contact, is fixed) |
 | `apps/server/test/integration/load/campaign-mutation-races.test.ts` | ~6 | Racing lifecycle and PATCH requests end legal and audited; 2 `it.fails` (audit `from`, combined calling window) |
 | `apps/server/test/integration/load/roster-ingest-concurrency.test.ts` | ~3 | Concurrent ingests: totals exact, chunk idempotency keys honoured |
 | `apps/server/test/integration/load/rate-limit-bursts.test.ts` | ~5 | Exact ceilings, 429 body and headers, per-client buckets, probes and webhooks unaffected |

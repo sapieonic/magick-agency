@@ -28,7 +28,9 @@ Constraints (Manas):
 
 1. **IPC, not Redis, for new communication between processes.** The primary forks workers.
    Redis keeps the roles it has today: leases, tokens, concurrency guards, station ownership
-   keys, the cache-invalidation channel. No new pub/sub or queues.
+   keys, the cache-invalidation channel (`<REDIS_KEY_PREFIX>cache:invalidate:db<N>`: Redis
+   pub/sub is server-wide, not per db, so the channel carries both). No new pub/sub or queues;
+   the pacing invalidation bus is in-process, and IPC between processes, never Redis.
 2. **No edge change.** Every request and upgrade still reaches `:3021` through nginx exactly
    as now. The primary accepts everything and hands each upgraded socket to the worker that
    owns it.
