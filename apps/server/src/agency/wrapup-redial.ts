@@ -31,6 +31,23 @@
  * The redial's own end is the dialer's: whatever its outcome, the customer stays held
  * for the outcome (`parkRedialContact`) and the agent lands in wrap-up again on the
  * redial attempt, with the redials its number leaves.
+ *
+ * ── Which dispatcher, with media workers ─────────────────────────────────────
+ *
+ * `runtime.dispatcher` of the process this runs in. With media workers the route is
+ * `session_param` (`api/core-owners.ts`), so this runs in the worker holding the agent's
+ * station, whose dispatcher is a `LocalDialDispatcher` over its own dialer: the
+ * clearance and ownership checks hold (the station is this worker's), the account's
+ * concurrency guard is the bridge's (shared through Redis), and pacing cannot take the
+ * agent (Redis says `reserved`). It does NOT go through the primary's
+ * `IpcDialDispatcher`, and that is deliberate, as for the soft phone's dials (also
+ * placed in the owning worker, outside pacing): the leadership grant and its
+ * `stillAuthorised` check answer "may PACING dial this campaign now", a question about
+ * the tick's authority, and a redial is not the tick's decision but the agent's, about
+ * a customer already in conversation. The campaign's own state is checked here instead
+ * (`redialRefusalForAttempt`: running, setting on). The cost: a redial is outside the
+ * IPC channel's `maxDialsInFlight` back-pressure, which bounds requests on the channel,
+ * not calls (one redial per agent at most, each behind the concurrency guard).
  */
 import { createChildLogger } from '@magick-agency/observability';
 import {
