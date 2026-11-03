@@ -85,6 +85,16 @@ export const baseConfigSchema = z.object({
       .min(WS_LARGEST_LEGITIMATE_MESSAGE_BYTES, `WS_MAX_PAYLOAD_BYTES must be at least ${WS_LARGEST_LEGITIMATE_MESSAGE_BYTES} (the largest legitimate WebSocket message)`)
       .max(16 * 1024 * 1024)
       .default(WS_MAX_PAYLOAD_DEFAULT_BYTES),
+    /**
+     * `READYZ_DETAIL_TOKEN`: the bearer `GET /readyz?detail=1` needs (`Authorization: Bearer
+     * <token>`, compared in constant time, `cluster/readiness.ts`). The detail names each
+     * process's pid, loop numbers and the host's Postgres budget, and plain `/readyz` is
+     * unauthenticated and exempt from the rate limiter, so the detail is off unless this is
+     * set: unset (or blank), `?detail=1` answers 401 and plain `/readyz` is unchanged. Not the
+     * super-admin login: the detail must answer when Postgres is the problem, and a scoped,
+     * read-only token is what a script or an operator's `curl` should hold.
+     */
+    readyzDetailToken: z.string().min(32, 'READYZ_DETAIL_TOKEN must be at least 32 characters').optional(),
   }),
   db: z.object({
     /**
@@ -231,6 +241,8 @@ export function readBaseEnv(env: Env) {
       logLevel: env['LOG_LEVEL'],
       trustProxyHops: env['TRUST_PROXY_HOPS'],
       wsMaxPayloadBytes: env['WS_MAX_PAYLOAD_BYTES'],
+      // Blank is unset (detail off), not a boot error: an empty line in an env file.
+      readyzDetailToken: env['READYZ_DETAIL_TOKEN']?.trim() || undefined,
     },
     db: {
       url: env['DATABASE_URL'],

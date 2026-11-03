@@ -68,6 +68,8 @@ async function main(): Promise<void> {
 
   // MEDIA_WORKERS > 0 (docs/scaling.md): this process is the primary. Its adapters are
   // installed before `buildApp` builds the agency runtime; null = one process, as always.
+  // This process's own loop, over the sampler's fixed window (`cluster/loop-sampler.ts`):
+  // `/readyz?detail=1` reads the last window, it never resets it.
   const primaryLoop = createLoopSampler();
   const media = await prepareMediaPrimary(ctx, {
     onFatal: (why) => {
@@ -102,7 +104,7 @@ async function main(): Promise<void> {
     // number the media split exists to keep low), then each media worker's.
     readiness: async () => {
       const self = {
-        role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop(), inFlight: 0, draining: shuttingDown,
+        role: media ? 'primary' : 'single', slot: 0, pid: process.pid, ...primaryLoop.latest(), inFlight: 0, draining: shuttingDown,
         ...(dbBudget ? { db: dbBudget } : {}),
       };
       if (!media) return { ready: true, detail: [self] };
@@ -148,6 +150,8 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 
+  // Stopped last (the stops run in reverse): the loop window timer, unref'd, holds nothing.
+  plan.stops.push(async () => primaryLoop.stop());
   plan.stops.push(await startPlatform(ctx));
   // Voice before agency: the bridge's startup self-heal runs before the agency
   // runtime starts, and on shutdown (reverse order) the runtime stops before the

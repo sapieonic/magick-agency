@@ -66,7 +66,8 @@ export function startAnalysisChild(deps: AnalysisChildDeps): AnalysisChild {
 
   let draining = false;
   let shuttingDown: Promise<void> | null = null;
-  const sampleLoop = createLoopSampler();
+  // Its own window timer, read (never reset) by `health.ping`; stopped when shutdown ends.
+  const loop = createLoopSampler();
 
   channel.onEvent('analysis.wake', () => { if (!draining) worker.wake(); });
   channel.onEvent('analysis.rate_paused', ({ untilMs, consecutive }) => {
@@ -78,7 +79,7 @@ export function startAnalysisChild(deps: AnalysisChildDeps): AnalysisChild {
   const health = (): HealthBody => {
     return {
       role: 'analysis', slot, pid: process.pid,
-      ...sampleLoop(),
+      ...loop.latest(),
       inFlight: worker.inFlightCount,
       pausedForMs: Math.max(0, Math.round(breaker.reopensInMs())),
       draining,
@@ -89,7 +90,7 @@ export function startAnalysisChild(deps: AnalysisChildDeps): AnalysisChild {
   const shutdown = (): Promise<void> => {
     if (shuttingDown) return shuttingDown;
     draining = true;
-    shuttingDown = worker.gracefulShutdown().finally(() => setDialerAnalysisWorker(null));
+    shuttingDown = worker.gracefulShutdown().finally(() => { setDialerAnalysisWorker(null); loop.stop(); });
     return shuttingDown;
   };
 

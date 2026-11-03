@@ -188,6 +188,7 @@ production.
 | `NODE_ENV` | `development` | `production` turns on Postgres TLS and makes Firebase and VoiceLink mandatory |
 | `TRUST_PROXY_HOPS` | `1` (min 1) | Number of reverse proxies in front (Q9) |
 | `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
+| `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
 | `DB_SSL_REJECT_UNAUTHORIZED` | `true` | Only `true` / `false` parse; `false` is the one opt-out |
@@ -343,7 +344,7 @@ connections (`53300 too_many_connections`) only at a peak. So the primary checks
 boot when workers are configured, before it forks any: past the limit it **refuses to start**
 (exit 1; decision D12), and the log line names both numbers and the settings to lower. When it
 fits it exports `db_connections_planned` (the sum plus the headroom) and
-`db_connections_allowed`; `/readyz?detail=1` shows the numbers on the primary's entry (`db`).
+`db_connections_allowed`; `/readyz?detail=1` (with `READYZ_DETAIL_TOKEN`, "Health") shows the numbers on the primary's entry (`db`).
 Raise `max_connections` before raising `MEDIA_WORKERS`, `ANALYSIS_WORKERS` or a pool.
 
 **What to watch.** The *Processes* dashboard row shows event-loop utilisation by instance
@@ -510,9 +511,20 @@ ping within 1 s and not to be draining, and the primary not to be shutting down 
 names each worker's state, `{"status":"ready","mediaWorkers":{"answering":1,"total":2,"workers":[{"slot":0,"state":"not_answering"},{"slot":1,"state":"ok"}]}}`:
 one slow or restarting worker does not take the host out of the load balancer or fail the
 uptime check (it would take all traffic away, not the 1/N that worker serves); watch
-`agy-cluster-child-crash` and the *Processes* row for it instead. `GET /readyz?detail=1` adds the per-process view: role, slot, pid, event-loop
+`agy-cluster-child-crash` and the *Processes* row for it instead. One answer (Postgres, Redis and
+one health ping to each worker) serves every probe for a second, so a flood of `/readyz` costs the
+workers one ping round a second; a not-ready verdict is at most that second old.
+
+`GET /readyz?detail=1` needs `Authorization: Bearer <READYZ_DETAIL_TOKEN>` (unset: the detail is
+off; without the token or with another it answers 401 before anything is probed):
+`curl -H "Authorization: Bearer $READYZ_DETAIL_TOKEN" 'http://127.0.0.1:3021/readyz?detail=1'`.
+It adds the per-process view: role, slot, pid, event-loop
 utilisation, p99 loop delay, live calls (media) or jobs (analysis), and whether it is draining.
-The primary's own loop is listed too.
+The primary's own loop is listed too. The loop numbers are each process's last completed 5 s
+window, closed by the process's own timer (`cluster/loop-sampler.ts`): reading them resets
+nothing, so two probers see the same numbers and a stall stays visible for the whole window.
+For history, the *Processes* row reads the OTel runtime gauges (`nodejs_eventloop_*`, one series
+per process, per export interval), which keep their own histogram and are not touched by probes.
 
 ## Releases and versioning
 
