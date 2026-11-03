@@ -629,7 +629,37 @@ app.
 
 ## Test counts
 
-Latest run, 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
+Latest run, 2026-11-03, the contact assignment branch on `2d867e6`, from inside each package
+(`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and `pnpm test:release` 10 pass). The
+server unit suite ran on `2f1dac8`, before two later commits that change only comments and a
+`packages/db` test:
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7876 passed + 42 skipped (393 files) | rest lane 1732 passed + 9 expected fail (185 files), twice; wall-clock lane 15 (3 files) |
+| `packages/db` | 427 (25 files) | 534 (49 files) |
+| `apps/console` | 5136 (268 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 280 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+| `apps/mobile` | `flutter test` 1392, `agency_wire` 397, `flutter analyze` clean, `contracts-literals --check` up to date | — |
+
+**Open: one scale test times out in some full runs.** `assignment-repository.test.ts` "splits
+10,000 contacts across 5 agents" takes about 1.1 s alone, but in 2 of 4 full rest-lane runs on
+the build container it passed the 20 s test timeout when it ran in the middle of the lane (each
+time the lane was otherwise 1730 passed; the second run also had the known `agent-churn`
+intermittent). It passed in the two runs where it ran first and last. Ruled out: lock waits (no
+lock-timeout errors), stale planner statistics, rows left by earlier files, and CPU contention
+alone (the second failure was on a quiet machine). Not ruled out: I/O stalls on that disk
+(checkpoints ran through both windows, but through the passing ones too). Its timeout is
+unchanged; if CI shows it, record per-phase timings before deciding between a fix and a longer
+timeout for this one test. Seen on the way and pre-existing: `agency_contacts.source_contact_id`
+(`ON DELETE SET NULL`) has no index, so deleting a contact checks the whole table for rows naming
+it; the likely reason a 200 000-row `DELETE` in a scratch test ran for minutes.
+
+Run of 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
 each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and `pnpm test:release` 10
 pass; details and the one file that fails only in the combined run: "Wrap-up redial 2026-11-03"):
 
