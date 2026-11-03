@@ -177,9 +177,32 @@ export const AGENCY_FLAGS = Object.freeze({
     owner: 'voice',
     description: 'Agency console call audio as binary A-law 8 kHz on the station socket (media=alaw8); off falls back to base64 PCM16 (media=pcm16)',
   },
+
+  // ── Contact assignment, agent-led retry and outcome overrides ────────────────
+  //
+  // Gates the SURFACE: the supervisor's assignment operations and progress, the agent's own
+  // contact list, agent retry, and setting a campaign's `assignment_mode` to anything but
+  // `pool`, `allow_agent_retry` on, or an outcome `override`. Off, every one of those answers
+  // `403 assignment_disabled` (the campaign settings `feature_disabled`), and the console and app
+  // hide them.
+  //
+  // It does NOT gate the runtime: pacing reads `assignment_mode` as stored, so turning the flag
+  // off for a tenant with a running `strict` campaign keeps that campaign strict (its agents'
+  // queues and callbacks keep working) rather than suddenly dialling every agent's contacts to
+  // everyone. Pause it and set it back to `pool` to stop it.
+  agency_contact_assignment_enabled: {
+    key: 'agency_contact_assignment_enabled',
+    type: 'boolean',
+    default: false,
+    envVar: 'FF_AGENCY_CONTACT_ASSIGNMENT', // staging: FF_AGENCY_CONTACT_ASSIGNMENT=true
+    scopes: ['global', 'tenant', 'account'],
+    clientExposed: true, // the console and the app show/hide assignment, My contacts and agent retry
+    owner: 'voice',
+    description: 'Agency contact assignment: supervisors assign roster contacts to agents, agents work their own queue, agent-led retry and outcome overrides',
+  },
 } satisfies Record<string, FlagDefinition<boolean>>);
 
-/** The five agency flag keys. */
+/** The six agency flag keys. */
 export type AgencyFlagKey = keyof typeof AGENCY_FLAGS;
 
 export const AGENCY_FLAG_KEYS = [
@@ -188,6 +211,7 @@ export const AGENCY_FLAG_KEYS = [
   'agency_call_analysis',
   'agency_softphone_enabled',
   'agency_console_alaw8',
+  'agency_contact_assignment_enabled',
 ] as const satisfies readonly AgencyFlagKey[];
 
 const _allFlagKeysListed: AllListed<AgencyFlagKey, typeof AGENCY_FLAG_KEYS> = true;

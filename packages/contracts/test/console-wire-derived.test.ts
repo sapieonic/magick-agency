@@ -38,6 +38,10 @@ interface OldAgencySessionBootstrap {
   wrapup_seconds: number;
   wrapup_auto_return: boolean;
   allow_wrapup_redial?: boolean;
+  // Added deliberately (contact assignment): the mode, agent retry, and the agent's queue at join.
+  assignment_mode?: Api.AgencyAssignmentMode;
+  allow_agent_retry?: boolean;
+  queue?: Api.AgencyQueueState;
   record_calls: boolean;
   break_reasons: Api.AgencyBreakReason[];
   context_display: Api.AgencyContextDisplay;
@@ -95,6 +99,8 @@ interface OldAgencyStationReadyFrame {
   // Added deliberately (mobile app): the break's code, so a reconnect can name it.
   break_reason?: string;
   active_attempt?: Api.AgencyActiveAttempt;
+  // Added deliberately (contact assignment): the agent's queue at reconnect.
+  queue?: Api.AgencyQueueState;
   active_wrapup?: Api.AgencyWrapupState;
   missed_release?: Api.AgencyMissedRelease;
   pending_state?: Api.AgencyAgentState;
@@ -182,6 +188,8 @@ interface OldAgencyDispositionEntry {
   terminal?: boolean;
   suppress?: boolean;
   retry?: Api.AgencyRetryRule;
+  // Added deliberately (contact assignment, phase 2): the outcome's override grant.
+  override?: Api.AgencyDispositionOverride;
 }
 
 interface OldAgencyRetryRule {

@@ -57,7 +57,9 @@ const CONTACT: AgencyContactDetail = {
   id: 'contact-1', phone_e164: '+919876500001', state: 'completed', attempt_count: 4,
   our_fault_attempts: 0, last_outcome: 'connected', last_disposition: 'not_interested',
   next_attempt_at: '2026-08-17T09:00:00.000Z', suppressed_reason: null, timezone: null,
-  csv_line_number: 12, created_at: '2026-08-17T08:00:00.000Z',
+  csv_line_number: 12,
+  assigned_user_id: null,
+  assigned_at: null, created_at: '2026-08-17T08:00:00.000Z',
   updated_at: '2026-08-17T09:30:00.000Z',
   context: {
     'Full Name': 'A Person',

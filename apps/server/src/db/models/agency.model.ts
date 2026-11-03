@@ -23,6 +23,10 @@ import type {
   AgencyManualCallState,
   AgencySessionKind,
   AgencyClientKind,
+  AgencyAssignmentMode,
+  AgencyCallbackFallback,
+  AgencyOnUnstaff,
+  AgencyOverrideKind,
 } from '@magick-agency/contracts/agency';
 
 /**
@@ -81,6 +85,20 @@ export interface AgencyCampaignRecord {
   wrapup_auto_return: boolean;
   /** Wrap-up redial (0008): the agent may redial the customer from wrap-up while the outcome is owed. */
   allow_wrapup_redial: boolean;
+  /** Contact assignment (0009): how pacing reads `agency_contacts.assigned_user_id`. */
+  assignment_mode: AgencyAssignmentMode;
+  /** Contact assignment (0009): an unstaffed agent's open contacts return to the pool, or stay. */
+  on_unstaff: AgencyOnUnstaff;
+  /** Contact assignment (0009): minutes a due callback waits for its owner. */
+  callback_owner_grace_minutes: number;
+  /** Contact assignment (0009): after the grace, the callback goes to the pool, or keeps waiting. */
+  callback_fallback: AgencyCallbackFallback;
+  /** Agent-led retry (0009): agents may reopen the contacts they did not reach. */
+  allow_agent_retry: boolean;
+  /** Agent-led retry (0009): reopens allowed per contact. */
+  agent_retry_rounds: number;
+  /** Agent-led retry (0009): minutes since a contact's last attempt before it may be retried. */
+  agent_retry_cooldown_minutes: number;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /** Operator-configured break codes. Empty ⇒ `DEFAULT_BREAK_REASONS`. */
@@ -253,6 +271,13 @@ export type AgencyCampaignConfigColumns = Pick<
   | 'wrapup_seconds'
   | 'wrapup_auto_return'
   | 'allow_wrapup_redial'
+  | 'assignment_mode'
+  | 'on_unstaff'
+  | 'callback_owner_grace_minutes'
+  | 'callback_fallback'
+  | 'allow_agent_retry'
+  | 'agent_retry_rounds'
+  | 'agent_retry_cooldown_minutes'
   | 'retry_policy'
   | 'disposition_catalog'
   | 'context_display'
@@ -328,6 +353,21 @@ export interface AgencyContactRecord {
    * across the whole lineage. Carries no foreign key on purpose.
    */
   root_contact_id: string | null;
+  /** Contact assignment (0009): the owning agent's user id; null is the shared pool. */
+  assigned_user_id: string | null;
+  assigned_at: Date | null;
+  assigned_by_user_id: string | null;
+  /** Agent-led retry (0009): reopens an agent spent on this contact. */
+  agent_retry_rounds_used: number;
+  /** Outcome override (0009): the code that granted the `override_*` columns, or null. */
+  override_disposition: string | null;
+  /** Outcome override (0009): dials still allowed past `max_attempts`. */
+  override_extra_attempts: number;
+  /** Outcome override (0009): one dial before the next scheduled time. */
+  override_retry_delay: boolean;
+  /** Outcome override (0009): one dial outside calling hours, with a note. */
+  override_calling_hours: boolean;
+  override_granted_at: Date | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -434,6 +474,12 @@ export interface AgencyCallAttemptRecord {
   redial_of_attempt_id: string | null;
   /** Wrap-up redial (0008): 0 for a paced dial; 1, 2 for the redials of one call. */
   redial_number: number;
+  /** Agent-led retry (0009): the agent dialled this contact from their own list. */
+  agent_manual: boolean;
+  /** Outcome override (0009): the overrides this dial spent. */
+  override_applied: AgencyOverrideKind[];
+  /** Outcome override (0009): the agent's calling-hours note, or null. */
+  override_note: string | null;
   created_at: Date;
   updated_at: Date;
 }

@@ -37,6 +37,7 @@ export const SOFTPHONE_REFUSAL_COPY: Record<AgencySoftphoneErrorCode, string> = 
   disposition_invalid: 'That outcome can’t be saved. Check the outcome, its note and its callback time.',
   fields_invalid: 'Some call details need fixing. The fields are marked in Call details.',
   settings_invalid: 'Some settings need fixing.',
+  contact_assigned_elsewhere: 'This number belongs to another agent on this campaign.',
 };
 
 /**

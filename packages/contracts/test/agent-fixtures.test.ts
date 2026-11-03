@@ -131,6 +131,8 @@ const STATION = {
   ready_softphone_session: fits<Core.AgencyStationReadyFrame>()(station.ready_softphone_session),
   agent_state_soft_phone: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_soft_phone),
   agent_state_switch_queued: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_switch_queued),
+  queue_nothing_due: fits<Core.AgencyStationQueueFrame>()(station.queue_nothing_due),
+  queue_due: fits<Core.AgencyStationQueueFrame>()(station.queue_due),
 };
 
 const STATION_CLIENT = {
@@ -173,6 +175,16 @@ const ACTIONS = {
   redial_response: fits<Core.AgencyRedialResponse>()(actions.redial_response),
   error_redial_limit_reached: fits<Core.AgencyActionErrorResponse>()(actions.error_redial_limit_reached),
   error_redial_blocked_dnc: fits<Core.AgencyActionErrorResponse>()(actions.error_redial_blocked_dnc),
+  // Contact assignment: the agent's own-contact actions (public API layer shapes).
+  agent_retry_request_selected: fits<AgencyApi.AgencyAgentRetryRequest>()(actions.agent_retry_request_selected),
+  agent_retry_request_all: fits<AgencyApi.AgencyAgentRetryRequest>()(actions.agent_retry_request_all),
+  agent_retry_response: fits<AgencyApi.AgencyAgentRetryResponse>()(actions.agent_retry_response),
+  my_contact_call_request: fits<AgencyApi.AgencyMyContactCallRequest>()(actions.my_contact_call_request),
+  my_contact_call_request_hours_override: fits<AgencyApi.AgencyMyContactCallRequest>()(
+    actions.my_contact_call_request_hours_override,
+  ),
+  my_contact_call_response: fits<AgencyApi.AgencyMyContactCallResponse>()(actions.my_contact_call_response),
+  error_contact_not_retryable: fits<AgencyApi.AgencyAgentRetryErrorResponse>()(actions.error_contact_not_retryable),
 };
 
 // The soft phone's routes (`/proxy/agency/softphone/*` and the SP7 switch). Bodies the
@@ -204,6 +216,9 @@ const SOFTPHONE = {
   refusal_fields_invalid: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_fields_invalid),
   refusal_disposition_invalid: fits<Core.AgencySoftphoneDispositionInvalidRefusal>()(softphone.refusal_disposition_invalid),
   refusal_softphone_disabled: fits<Core.AgencySoftphoneErrorResponse>()(softphone.refusal_softphone_disabled),
+  refusal_contact_assigned_elsewhere: fits<Core.AgencySoftphoneErrorResponse>()(
+    softphone.refusal_contact_assigned_elsewhere,
+  ),
 };
 
 // The agent's reads are public-API-layer shapes, so they are checked against `AgencyApi`.
@@ -215,6 +230,9 @@ const READS = {
   my_stats_unmeasured: fits<AgencyApi.AgencyAgentStats>()(reads.my_stats_unmeasured),
   my_attempts: fits<AgencyApi.AgencyKeysetPage<AgencyApi.AgencyAttempt>>()(reads.my_attempts),
   my_attempts_last_page: fits<AgencyApi.AgencyKeysetPage<AgencyApi.AgencyAttempt>>()(reads.my_attempts_last_page),
+  my_contacts_summary: fits<AgencyApi.AgencyMyContactsSummary>()(reads.my_contacts_summary),
+  my_contacts: fits<AgencyApi.AgencyKeysetPage<AgencyApi.AgencyMyContact>>()(reads.my_contacts),
+  my_contacts_last_page: fits<AgencyApi.AgencyKeysetPage<AgencyApi.AgencyMyContact>>()(reads.my_contacts_last_page),
 };
 
 const PLATFORM = {
@@ -359,6 +377,23 @@ const LITERAL_FIELDS: Array<[file: string, sample: string, path: string, vocabul
   ['softphone', 'call_detail_agent', 'call.contact.prior_attempts.0.outcome', 'attempt_outcomes'],
   ['softphone', 'call_detail_agent', 'overrides.dnc_entry.scope', 'dnc_entry_scopes'],
   ['softphone', 'call_detail_agent', 'call_availability', 'call_availabilities'],
+  // Contact assignment.
+  ['station', 'queue_nothing_due', 'reason', 'queue_idle_reasons'],
+  ['session', 'bootstrap_first_join', 'assignment_mode', 'assignment_modes'],
+  ['session', 'bootstrap_first_join', 'queue.reason', 'queue_idle_reasons'],
+  ['reads', 'my_contacts_summary', 'assignment_mode', 'assignment_modes'],
+  ['reads', 'my_contacts_summary', 'queue.reason', 'queue_idle_reasons'],
+  ['reads', 'my_contacts', 'rows.0.bucket', 'my_contact_buckets'],
+  ['reads', 'my_contacts', 'rows.0.state', 'contact_states'],
+  ['reads', 'my_contacts', 'rows.1.bucket', 'my_contact_buckets'],
+  ['reads', 'my_contacts', 'rows.2.bucket', 'my_contact_buckets'],
+  ['reads', 'my_contacts', 'rows.1.retry.blocked', 'agent_retry_blocks'],
+  ['reads', 'my_contacts', 'rows.2.retry.blocked', 'agent_retry_blocks'],
+  ['actions', 'agent_retry_response', 'skipped.0.blocked', 'agent_retry_blocks'],
+  ['actions', 'my_contact_call_response', 'override_applied.0', 'override_kinds'],
+  ['actions', 'error_contact_not_retryable', 'code', 'agent_retry_error_codes'],
+  ['actions', 'error_contact_not_retryable', 'details.blocked', 'agent_retry_blocks'],
+  ['softphone', 'refusal_contact_assigned_elsewhere', 'code', 'softphone_error_codes'],
   ['softphone', 'session_state_switch_queued', 'kind', 'session_kinds'],
   ['softphone', 'session_state_switch_queued', 'state', 'agent_states'],
   ['softphone', 'session_state_switch_queued', 'pending_state', 'agent_states'],

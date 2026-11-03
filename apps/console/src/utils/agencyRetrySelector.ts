@@ -70,6 +70,9 @@ export const NON_SELECTOR_CONTACT_FILTERS = {
   phone: true,
   from: true,
   to: true,
+  // Contact assignment: who owns a contact is not a retry dimension. A retry campaign keeps
+  // (or drops) the owners with its own "Keep the parent's assignments" choice instead.
+  assigned_to: true,
 } as const satisfies Record<Exclude<keyof AgencyContactFilters, RetrySelectorKey>, true>;
 
 export type NonSelectorContactFilter = keyof typeof NON_SELECTOR_CONTACT_FILTERS;
@@ -92,6 +95,7 @@ void _everyContactFilterIsClassified;
 /** The words each dropped filter is named by, in the notice. */
 const DROPPED_FILTER_LABEL: Record<NonSelectorContactFilter, string> = {
   phone: 'the phone-number search',
+  assigned_to: 'the “Assigned to” filter',
   from: 'the “from” date',
   to: 'the “to” date',
 };

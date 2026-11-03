@@ -37,6 +37,7 @@ function attempt(patch: Partial<AgencyCallAttemptRecord> = {}): AgencyCallAttemp
     ended_at: new Date(), talk_seconds: 42, wrapup_seconds: 30,
     wrapup_started_at: null, wrapup_ended_at: null, wrapup_resolution: null,
     abandon_reason: null, redial_of_attempt_id: null, redial_number: 0,
+    agent_manual: false, override_applied: [], override_note: null,
     created_at: new Date(), updated_at: new Date(),
     ...patch,
   };

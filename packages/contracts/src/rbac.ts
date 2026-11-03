@@ -117,6 +117,8 @@ export type Permission =
   // The soft phone (`docs/softphone.md`): dialling a typed number outside pacing,
   // and the account's soft-phone settings.
   | 'agency.softphone.dial'
+  // Contact assignment: read and retry the contacts assigned to the caller.
+  | 'agency.contacts.own'
   | 'agency.softphone.manage';
 
 /** Minimum role required for each permission */
@@ -243,6 +245,16 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // them is part of DIAL: the soft phone cannot render without its call fields.
   'agency.softphone.dial': 'agent',
   'agency.softphone.manage': 'account_admin',
+  // ── Contact assignment: the caller's OWN contacts ────────────────────────
+  // Floors at `agent`, the sixth agent-floored action permission. It reads and retries ONLY
+  // the contacts a supervisor assigned to the caller, on a campaign the caller is staffed on:
+  // the subject of every route it guards is the authenticated user, never a parameter, and a
+  // contact of another agent answers the same 404 as a missing one. It does not open the
+  // roster, other agents' contacts or campaign analytics, which stay at `viewer` and
+  // `agency.supervise`, so the hierarchy comment's "no contacts" still holds for every
+  // contact the agent was not given. Every route it guards also requires the
+  // `agency_contact_assignment_enabled` flag.
+  'agency.contacts.own': 'agent',
 };
 
 /** Every permission, for enumeration (tests, route tables, admin screens). */

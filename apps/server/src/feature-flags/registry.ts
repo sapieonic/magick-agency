@@ -109,4 +109,6 @@ export const FLAGS = {
   agency_softphone_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_softphone_enabled),
 
   agency_console_alaw8: defineFlag<boolean>(AGENCY_FLAGS.agency_console_alaw8),
+
+  agency_contact_assignment_enabled: defineFlag<boolean>(AGENCY_FLAGS.agency_contact_assignment_enabled),
 } as const;

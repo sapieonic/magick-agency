@@ -60,7 +60,7 @@ async function inventory(): Promise<string[]> {
 const ALL_MIGRATIONS = [
   '0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index',
   '0005_softphone', '0006_agent_session_client_kind', '0007_ingest_dedupe_column',
-  '0008_wrapup_redial',
+  '0008_wrapup_redial', '0009_contact_assignment',
 ];
 
 describe('migrations down → up', () => {
@@ -138,10 +138,10 @@ describe('migrations down → up', () => {
     const redial = await insertAttempt(campaign.id, contact.id, {
       state: 'ended', attempt_number: 2, outcome: 'no_answer', redial_of_attempt_id: original.id, redial_number: 1,
     });
-    await migrate('down', 1);
+    await migrate('down', ALL_MIGRATIONS.length - ALL_MIGRATIONS.indexOf('0008_wrapup_redial'));
     try {
       const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
-      expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS.slice(0, -1));
+      expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS.slice(0, ALL_MIGRATIONS.indexOf('0008_wrapup_redial')));
       const { rows } = await getTestPool().query<Record<string, unknown>>(
         'SELECT * FROM agency_call_attempts WHERE id = ANY($1::uuid[]) ORDER BY attempt_number', [[original.id, redial.id]]);
       expect(rows).toHaveLength(2);
@@ -157,6 +157,41 @@ describe('migrations down → up', () => {
       'SELECT redial_number, redial_of_attempt_id FROM agency_call_attempts WHERE id = $1', [redial.id]);
     // Re-applied with the column defaults: the link is not restored (it was dropped).
     expect(back.rows[0]).toEqual({ redial_number: 0, redial_of_attempt_id: null });
+    await truncateAll();
+  });
+
+  it('0009 down runs with assigned contacts and their history present: the rows survive, unowned', async () => {
+    await truncateAll();
+    const campaign = await insertCampaign({ assignment_mode: 'strict', allow_agent_retry: true });
+    const agent = randomUUID();
+    const contact = await insertContact(campaign.id, {
+      assigned_user_id: agent, assigned_at: new Date(), override_extra_attempts: 2, override_disposition: 'ptp',
+    });
+    await getTestPool().query(
+      `INSERT INTO agency_contact_assignment_events (tenant_id, campaign_id, contact_id, to_user_id, reason, batch_id)
+       VALUES ($1, $2, $3, $4, 'manual', $5)`,
+      [campaign['tenant_id'], campaign.id, contact.id, agent, randomUUID()]);
+    await insertAttempt(campaign.id, contact.id, {
+      state: 'ended', attempt_number: 1, agent_manual: true, override_applied: ['calling_hours'], override_note: 'customer asked for 9pm',
+    });
+    await migrate('down', 1);
+    try {
+      const { rows } = await getTestPool().query<Record<string, unknown>>('SELECT * FROM agency_contacts WHERE id = $1', [contact.id]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).not.toHaveProperty('assigned_user_id');
+      expect(rows[0]).not.toHaveProperty('override_extra_attempts');
+      const camp = await getTestPool().query('SELECT * FROM agency_campaigns WHERE id = $1', [campaign.id]);
+      expect(camp.rows[0]).not.toHaveProperty('assignment_mode');
+      const attempts = await getTestPool().query('SELECT * FROM agency_call_attempts WHERE contact_id = $1', [contact.id]);
+      expect(attempts.rows[0]).not.toHaveProperty('agent_manual');
+    } finally {
+      await migrate('up');
+    }
+    const back = await getTestPool().query<{ assigned_user_id: string | null; assignment_mode: string }>(
+      `SELECT c.assigned_user_id, k.assignment_mode FROM agency_contacts c
+         JOIN agency_campaigns k ON k.id = c.campaign_id WHERE c.id = $1`, [contact.id]);
+    // Re-applied with the column defaults: the owner is not restored (it was dropped).
+    expect(back.rows[0]).toEqual({ assigned_user_id: null, assignment_mode: 'pool' });
     await truncateAll();
   });
 

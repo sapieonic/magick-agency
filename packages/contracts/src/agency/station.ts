@@ -174,7 +174,9 @@ export type AgencyStationServerFrame =
   | AgencyStationBridgeEndedFrame
   | AgencyStationMediaFrame
   // SP: a soft-phone call's every state change (`./softphone.ts`).
-  | AgencyStationManualCallFrame;
+  | AgencyStationManualCallFrame
+  // Contact assignment: this agent's own queue (strict / preferred campaigns).
+  | AgencyStationQueueFrame;
 
 /**
  * Sent once, immediately on socket open, after session rehydration.
@@ -216,6 +218,8 @@ export interface AgencyStationReadyFrame {
   break_reason?: string;
   /** Set when the socket reconnected onto an attempt that is still live. */
   active_attempt?: AgencyActiveAttempt;
+  /** This agent's queue now, on a `strict` or `preferred` campaign; absent otherwise. */
+  queue?: AgencyQueueState;
   /**
    * **P2.** Set when the reconnecting socket is in `wrapup` — the console needs the
    * absolute deadline to resume the countdown, and a wrap-up that survived a
@@ -523,6 +527,41 @@ export interface AgencyStationCampaignStateFrame {
   dialing: boolean;
   /** Fallback copy for a reason the console does not recognise. */
   message: string;
+}
+
+/**
+ * Why an agent on a `strict` or `preferred` campaign has nothing to dial right now, so the
+ * station can say "Nothing due now" and why instead of a silent wait:
+ *
+ *  - `queue_empty`: nothing open is assigned to them (and, in `preferred` mode, nothing in the pool);
+ *  - `waiting_for_retry`: their open contacts are all scheduled later by the retry policy;
+ *  - `callbacks_later`: their open contacts are all callbacks booked for later;
+ *  - `outside_calling_hours`: the campaign's calling window is closed now.
+ */
+export type AgencyQueueIdleReason =
+  | 'queue_empty'
+  | 'waiting_for_retry'
+  | 'callbacks_later'
+  | 'outside_calling_hours';
+
+/** An agent's own queue on a `strict` or `preferred` campaign. */
+export interface AgencyQueueState {
+  /** Whether a contact is due for this agent now. When `true`, `reason` is null. */
+  due: boolean;
+  reason: AgencyQueueIdleReason | null;
+  /** ISO-8601: when this agent's next contact falls due, or null when none is scheduled. */
+  next_due_at: string | null;
+}
+
+/**
+ * This agent's queue changed between due and nothing due (or the reason changed). Sent only
+ * on `strict` and `preferred` campaigns, only on a change, by the pacing leader, which is the
+ * only thing that knows. The bootstrap's `queue` and the `ready` frame's `queue` carry the
+ * state at join and at reconnect.
+ */
+export interface AgencyStationQueueFrame extends AgencyQueueState {
+  event: 'queue';
+  campaign_id: string;
 }
 
 /**

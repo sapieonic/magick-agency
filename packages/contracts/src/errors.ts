@@ -398,7 +398,9 @@ export type AgencySoftphoneErrorCode =
   /** 400. A call-field value is of the wrong type, an unknown key, or a required field is empty on the outcome. `details` per key. */
   | 'fields_invalid'
   /** 400. `PUT /settings` body is invalid (catalog, call fields, profile or caller ID). `details` per path. */
-  | 'settings_invalid';
+  | 'settings_invalid'
+  /** 409. Contact assignment: the tagged campaign is `strict` and the number's contact belongs to another agent. A supervisor is not refused. */
+  | 'contact_assigned_elsewhere';
 
 /** Runtime list of {@link AgencySoftphoneErrorCode}, in declaration order. */
 export const AGENCY_SOFTPHONE_ERROR_CODES = [
@@ -426,6 +428,7 @@ export const AGENCY_SOFTPHONE_ERROR_CODES = [
   'disposition_invalid',
   'fields_invalid',
   'settings_invalid',
+  'contact_assigned_elsewhere',
 ] as const satisfies readonly AgencySoftphoneErrorCode[];
 
 const _allSoftphoneCodesListed: AllListed<

@@ -10,7 +10,7 @@ before writing a repository or a migration.
 
 - `migrations/0001_baseline.sql` plus numbered migrations after it (0002 telephony credentials,
   0003 and 0004 dialer indexes, 0005 soft phone, 0006 session `client_kind`, 0007 ingest
-  `dedupe_column`, 0008 wrap-up redial). node-pg-migrate,
+  `dedupe_column`, 0008 wrap-up redial, 0009 contact assignment). node-pg-migrate,
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).
 - **Never edit or renumber an applied migration; add a new one.** A migration is a shared file:

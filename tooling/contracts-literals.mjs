@@ -279,6 +279,22 @@ const VOCABULARIES = {
     'api/platform/notifications.ts#NotificationFrequency',
     () => typeUnion('api/platform/notifications.ts', 'NotificationFrequency'),
   ],
+  // Contact assignment: the agent's queue, own contacts and retry.
+  assignment_modes: ['agency/assignment.ts#AGENCY_ASSIGNMENT_MODES', () => constList('agency/assignment.ts', 'AGENCY_ASSIGNMENT_MODES')],
+  queue_idle_reasons: ['agency/station.ts#AgencyQueueIdleReason', () => typeUnion('agency/station.ts', 'AgencyQueueIdleReason')],
+  override_kinds: ['agency/session.ts#AGENCY_OVERRIDE_KINDS', () => constList('agency/session.ts', 'AGENCY_OVERRIDE_KINDS')],
+  my_contact_buckets: [
+    'api/agency/assignment.ts#AGENCY_MY_CONTACT_BUCKETS',
+    () => constList('api/agency/assignment.ts', 'AGENCY_MY_CONTACT_BUCKETS'),
+  ],
+  agent_retry_blocks: [
+    'api/agency/assignment.ts#AGENCY_AGENT_RETRY_BLOCKS',
+    () => constList('api/agency/assignment.ts', 'AGENCY_AGENT_RETRY_BLOCKS'),
+  ],
+  agent_retry_error_codes: [
+    'api/agency/assignment.ts#AGENCY_AGENT_RETRY_ERROR_CODES',
+    () => constList('api/agency/assignment.ts', 'AGENCY_AGENT_RETRY_ERROR_CODES'),
+  ],
 };
 
 /** The JSON document, as it should be committed. */
