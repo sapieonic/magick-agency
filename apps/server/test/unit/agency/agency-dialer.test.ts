@@ -1378,6 +1378,23 @@ describe('AgencyDialer — wrap-up redial', () => {
     expect(setSpy).not.toHaveBeenCalledWith('s1', 'available', expect.anything());
   });
 
+  it('a redial that rang out and whose wrap-up cannot be opened is held on break, never released to available', async () => {
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    const setSpy = vi.spyOn(agents, 'set');
+    const bridge = fakeBridge();
+    const wrapup = fakeWrapup({ entered: true });
+    wrapup.enter.mockRejectedValueOnce(new Error('redis down'));
+    const dialer = new AgencyDialer(bridge as any, stations, agents, wrapup as any, fakeBreaks() as any);
+    dialer.start();
+    await attachStation(stations, 's1', fakeWs());
+    await dialer.executeDial(redialCmd());
+    bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'completed', outcome: 'no_answer', answered: false });
+    await vi.waitFor(() => expect(wrapup.enter).toHaveBeenCalled());
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'break', expect.anything()));
+    expect(setSpy).not.toHaveBeenCalledWith('s1', 'available', expect.anything());
+  });
+
   it('an end that raced an in-flight redial dial withholds the redial offer until the dial answers', async () => {
     for (const queued of [true, false]) {
       vi.clearAllMocks();
