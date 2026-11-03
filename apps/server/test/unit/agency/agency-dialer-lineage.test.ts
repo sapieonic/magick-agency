@@ -39,7 +39,6 @@ const { repos } = vi.hoisted(() => ({
       attachWebrtcCall: vi.fn().mockResolvedValue(undefined),
       findPriorForContactLineage: vi.fn().mockResolvedValue([]),
       recordDisposition: vi.fn().mockResolvedValue(null),
-      recordAutoDisposition: vi.fn().mockResolvedValue(null),
     },
     contact: {
       unclaim: vi.fn().mockResolvedValue(undefined),

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 /**
  * A dial the carrier refused, through the WHOLE server against the mock VoiceLink carrier:
@@ -55,7 +55,7 @@ import { config } from '../../../src/config/index.js';
 import type { AppContext } from '../../../src/app-context.js';
 import { getAgencyRuntime, resetAgencyRuntimeForTests, startAgency } from '../../../src/bootstrap/agency.js';
 import { startVoice } from '../../../src/bootstrap/voice.js';
-import { agencyAgentSessionRepository } from '../../../src/db/repositories/agency.repository.js';
+import { agencyAgentSessionRepository, agencyContactRepository } from '../../../src/db/repositories/agency.repository.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../../src/telephony/carrier-errors.js';
 import { AGENCY_OUR_FAULT_REDIAL_BOUND } from '@magick-agency/contracts/agency';
@@ -101,20 +101,30 @@ describe('a dial the carrier refused is settled once, through the real bridge an
     await resetAgencyRuntimeForTests();
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
+    vi.restoreAllMocks();
     if (pinger) clearInterval(pinger);
+    pinger = null;
     if (station && station.readyState !== WebSocket.CLOSED) {
       const ws = station;
       await new Promise<void>((resolve) => { ws.once('close', () => resolve()); ws.close(); });
     }
+    station = null;
     if (stopAgency) await stopAgency();
+    stopAgency = null;
     if (stopVoice) await stopVoice();
+    stopVoice = null;
     await stopLoadRig(rig);
+    rig = null;
     await resetAgencyRuntimeForTests();
+  });
+
+  afterAll(async () => {
     await closeLoadDb();
   });
 
-  it('holds an outcome-unknown dial\'s contact for 15 min on the our-fault ledger (a raced hang-up too, retired at the bound), settles a plain refusal by policy, and releases the agent once per dial', async () => {
+  /** The stack, a running campaign with `contacts` contacts, and one agent `available` on a real station socket. */
+  async function startFloor(contacts: number) {
     rig = await startLoadRig();
     const r = rig;
     const campaign = await insertAgencyCampaign({
@@ -126,25 +136,20 @@ describe('a dial the carrier refused is settled once, through the real bridge an
       retry_policy: JSON.stringify(RETRY_POLICY),
     });
     const dialOrderBase = Date.now() - 60_000;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < contacts; i++) {
       await insertAgencyContact(campaign.id as string, {
         tenant_id: LOAD_TENANT, account_id: LOAD_ACCOUNT,
         phone_e164: `+9197${String(20_000_000 + i).padStart(8, '0')}`, source_row_number: i + 1,
         // Claimed in this order.
         next_attempt_at: new Date(dialOrderBase + i * 1_000),
-        // The last one has had two our-fault redials already: its third is the bound.
+        // The last of five has had two our-fault redials already: its third is the bound.
         ...(i === 4 ? { our_fault_attempts: 2 } : {}),
       });
     }
-    // One fault per dial, in dial order: two outcome-unknown, one plain refusal, one
-    // `add_lead` the agent hangs up during and that then times out, and one outcome-unknown
-    // at the our-fault bound.
-    r.carrier.injectFault('add_lead', { kind: 'malformed' });
-    r.carrier.injectFault('add_lead', { kind: 'hang' });
-    r.carrier.injectFault('add_lead', { kind: 'status', status: 500 });
-    r.carrier.injectFault('add_lead', { kind: 'hang' });
-    r.carrier.injectFault('add_lead', { kind: 'malformed' });
+    return { r, campaign };
+  }
 
+  async function joinAgent(r: LoadRig, campaignId: string, agentSuffix: string) {
     const ctx: AppContext = { config, pool: getPool(), redis: getTestRedis() };
     stopVoice = await startVoice(ctx);
     stopAgency = await startAgency(ctx);
@@ -152,8 +157,8 @@ describe('a dial the carrier refused is settled once, through the real bridge an
     const port = new URL(r.origin).port;
 
     const join = await agencyAgentSessionRepository.joinOrRehydrate({
-      tenantId: LOAD_TENANT, accountId: LOAD_ACCOUNT, campaignId: campaign.id as string,
-      agentUserId: '6c1d0c8e-3d0e-4c7a-8b44-00000000a001', replicaId: runtime.replicaId,
+      tenantId: LOAD_TENANT, accountId: LOAD_ACCOUNT, campaignId,
+      agentUserId: `6c1d0c8e-3d0e-4c7a-8b44-00000000${agentSuffix}`, replicaId: runtime.replicaId,
     });
     if (!join.ok) throw new Error('join refused');
     const sessionId = join.session.id;
@@ -169,17 +174,73 @@ describe('a dial the carrier refused is settled once, through the real bridge an
     pinger = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ event: 'ping', ts: Date.now() }));
     }, 5_000);
+    return { runtime, sessionId, frames };
+  }
 
-    const readAttempts = async (): Promise<AttemptRow[]> => (await getTestPool().query<AttemptRow>(
-      `SELECT a.id, a.contact_id, a.state, a.outcome, a.dialed_at, k.error_code,
-              c.state AS contact_state, c.attempt_count, c.our_fault_attempts, c.next_attempt_at
-         FROM agency_call_attempts a
-         JOIN agency_contacts c ON c.id = a.contact_id
-         LEFT JOIN agency_calls k ON k.agency_attempt_id = a.id
-        WHERE a.campaign_id = $1
-        ORDER BY a.dialed_at`,
-      [campaign.id],
-    )).rows;
+  const readAttemptsOf = (campaignId: string) => async (): Promise<AttemptRow[]> => (await getTestPool().query<AttemptRow>(
+    `SELECT a.id, a.contact_id, a.state, a.outcome, a.dialed_at, k.error_code,
+            c.state AS contact_state, c.attempt_count, c.our_fault_attempts, c.next_attempt_at
+       FROM agency_call_attempts a
+       JOIN agency_contacts c ON c.id = a.contact_id
+       LEFT JOIN agency_calls k ON k.agency_attempt_id = a.id
+      WHERE a.campaign_id = $1
+      ORDER BY a.dialed_at`,
+    [campaignId],
+  )).rows;
+
+  /**
+   * The hold's one write fails (`holdOutcomeUnknownContact` never throws: it logs and leaves
+   * the contact `in_flight` for the stranded-contact sweep). That sweep finds the contact five
+   * minutes on (`STRANDED_CONTACT_THRESHOLD_MS`; its read is moved six minutes ahead here,
+   * the requeue runs on the real clock) and used to requeue it with no hold: dialable about
+   * ten minutes before the carrier rule allows, while the carrier may still ring the
+   * customer. The requeue keeps the hold now, from the contact's own dial.
+   */
+  it('a failed hold write: the stranded-contact sweep that recovers the contact keeps it held until dialed_at + 15 min', async () => {
+    const { r, campaign } = await startFloor(1);
+    r.carrier.injectFault('add_lead', { kind: 'hang' });
+    const realRequeue = agencyContactRepository.requeueOrphaned.bind(agencyContactRepository);
+    const holdWrites = vi.spyOn(agencyContactRepository, 'requeueOrphaned')
+      .mockImplementationOnce(async () => { throw new Error('pool exhausted'); })
+      .mockImplementation(realRequeue);
+    const { runtime, sessionId } = await joinAgent(r, campaign.id as string, 'a003');
+    const readAttempts = readAttemptsOf(campaign.id as string);
+
+    await waitFor('the outcome-unknown dial settled, its hold write failed', async () => {
+      const rows = await readAttempts();
+      return rows.length === 1 && rows[0]!.state === 'ended' && holdWrites.mock.calls.length === 1
+        && runtime.dialer.activeAttemptIds().length === 0
+        && (await runtime.agents.get(sessionId))?.state === 'available';
+    }, 30_000, async () => JSON.stringify(await readAttempts()));
+    const [stuck] = await readAttempts();
+    expect({ contact: stuck!.contact_state, error: stuck!.error_code })
+      .toEqual({ contact: 'in_flight', error: 'TELEPHONY_INIT_OUTCOME_UNKNOWN' });
+
+    const realFind = agencyContactRepository.findStrandedInFlight.bind(agencyContactRepository);
+    vi.spyOn(agencyContactRepository, 'findStrandedInFlight')
+      .mockImplementationOnce((olderThan, limit) => realFind(new Date(olderThan.getTime() + 6 * 60_000), limit));
+    expect(await runtime.reaper.sweepStrandedContacts()).toBe(1);
+
+    const [recovered] = await readAttempts();
+    expect({ contact: recovered!.contact_state, charged: recovered!.attempt_count, ourFault: recovered!.our_fault_attempts })
+      .toEqual({ contact: 'pending', charged: 0, ourFault: 1 });
+    expect(recovered!.next_attempt_at.getTime(), 'the sweep handed the contact back before the hold ran out')
+      .toBeGreaterThanOrEqual(recovered!.dialed_at.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    expect(r.carrier.requests.filter((q) => q.route === 'add_lead')).toHaveLength(1);
+  }, 60_000);
+
+  it('holds an outcome-unknown dial\'s contact for 15 min on the our-fault ledger (a raced hang-up too, retired at the bound), settles a plain refusal by policy, and releases the agent once per dial', async () => {
+    const { r, campaign } = await startFloor(5);
+    // One fault per dial, in dial order: two outcome-unknown, one plain refusal, one
+    // `add_lead` the agent hangs up during and that then times out, and one outcome-unknown
+    // at the our-fault bound.
+    r.carrier.injectFault('add_lead', { kind: 'malformed' });
+    r.carrier.injectFault('add_lead', { kind: 'hang' });
+    r.carrier.injectFault('add_lead', { kind: 'status', status: 500 });
+    r.carrier.injectFault('add_lead', { kind: 'hang' });
+    r.carrier.injectFault('add_lead', { kind: 'malformed' });
+    const { runtime, sessionId, frames } = await joinAgent(r, campaign.id as string, 'a001');
+    const readAttempts = readAttemptsOf(campaign.id as string);
 
     // The fourth dial: the agent hangs up while its `add_lead` hangs (the timeout is a second).
     await waitFor('the fourth add_lead in flight', () =>

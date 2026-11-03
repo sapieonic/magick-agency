@@ -290,8 +290,12 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   (`holdOutcomeUnknownContact` in `dialer/contact-settlement.ts`, over the reaper's
   `requeueOrphaned`), so the our-fault bound ends a run of such dials. A dial that fails in the bridge
   before the carrier is asked (an admission refusal, the row INSERT, or the steps after the
-  session is registered: the max-duration timer, the socket attach, the carrier tokens) gets no
-  `ended`, so the same failure path settles it: `failed`, uncharged, dialable at once.
+  session is registered: the max-duration timer, the socket attach, the carrier tokens, the
+  carrier request's inputs) gets no `ended`, so the same failure path settles it: `failed`,
+  uncharged, dialable again after 1 min (`PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`, so a failure
+  that repeats cannot redial one contact on every tick; a delay, not an our-fault charge, so a
+  systemic failure retires nobody). A dial called off before the bridge (the agent's socket or
+  lease went, pacing stopped) returns its contact at once.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);
@@ -304,7 +308,10 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
   dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded
   statement, and only while it is still that attempt's (no newer attempt, no soft-phone claim).
-  The lapsed-wrap-up sweep (`findLapsedWrapups`, then `closeLapsedWrapup` per row) stamps
+  The stranded-contact sweep (a contact `in_flight` with no live attempt for 5 min) requeues the
+  same way and, in that statement, keeps it until `dialed_at` + 15 min when one of its dials was
+  sent and never answered or ended by a carrier answer, so an outcome-unknown hold whose own
+  write failed is not cut short. The lapsed-wrap-up sweep (`findLapsedWrapups`, then `closeLapsedWrapup` per row) stamps
   `no_disposition` when one was owed and releases the contact through the outcome policy, in one
   statement that locks both rows and writes only while the attempt has no disposition and the
   contact is still parked `connected` for it (no newer attempt, no soft-phone claim); it counts
@@ -326,7 +333,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   admission, the exported types, the per-call WS tokens). Bridges the agent's browser leg (the
   station) to the carrier's PSTN leg. Its constructor takes the `TelephonyGuardHost`. A dial
   (`placeOutboundLeg`) that throws after its session is registered and before the carrier request
-  is torn down there (terminal row `failed`/`BRIDGE_SETUP_FAILED`, timer, socket listeners, slots,
+  (the max-duration timer, the socket attach, the carrier tokens, and what the request is built
+  from: the webhook base, the provider's adapter, the carrier URLs) is torn down there (terminal row `failed`/`BRIDGE_SETUP_FAILED`, timer, socket listeners, slots,
   lease entry, tokens) with no `ended`, and the original error rejects the dial; a teardown that
   lands in that window stops the dial before the carrier is asked. Once the carrier has accepted
   the dial, a failed `provider_call_id` write is logged and the call carries on.

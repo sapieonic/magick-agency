@@ -21,8 +21,9 @@
  *   policy on the charged attempt, as a campaign call's no-answer gets, so pacing
  *   does not ring the customer straight back) and then the Redis claim. A bridged
  *   call waits for its outcome; its claim is kept.
- * - **A dial the bridge refused before the carrier** (concurrency, a dead socket),
- *   or the carrier refused outright, is ended `failed` and UNPLACED (`dialed_at`
+ * - **A dial the bridge refused before the carrier** (concurrency, a dead socket, or
+ *   a failure inside the bridge before the carrier was asked: `dial_failed`), or the
+ *   carrier refused outright, is ended `failed` and UNPLACED (`dialed_at`
  *   cleared: it is no dial in the usage counts), its contact claim RELEASED (no
  *   attempt charged: nothing was dialled) and the Redis claim cleared; the caller
  *   answers the refusal.
@@ -348,16 +349,20 @@ export class ManualDialer {
       }
       // A refusal this code does not name is the platform's, not the agent's: not a
       // missing station (which would tell them to check a connection that is fine).
+      // So is any other error: every one the bridge rejects with that is not a carrier
+      // refusal (`telephony_init_failed`, above) was thrown before the carrier was asked
+      // (the row INSERT, the carrier tokens, the carrier request's own inputs: the
+      // bridge's `abortUnplacedLeg`, no `ended`), so nothing was dialled and the
+      // reviewed `dial_failed` (503, retry) is the true answer, not a masked 500.
       const failure: ManualDialFailure =
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable' ? 'station_unavailable'
           : err instanceof WebRtcCallError && CONCURRENCY_REFUSALS.has(err.code) ? 'concurrency_limit'
             : 'dial_failed';
       if (!(err instanceof WebRtcCallError)) {
-        log.error({ err, manualCallId: call.id }, 'Soft-phone dial failed before the carrier');
-        await this.serial(call.id, () => this.abandonUnplaced(call.id));
-        throw err;
+        log.error({ err, manualCallId: call.id }, 'Soft-phone dial failed in the bridge before the carrier');
+      } else {
+        log.warn({ err, manualCallId: call.id, failure }, 'Soft-phone dial refused before the carrier');
       }
-      log.warn({ err, manualCallId: call.id, failure }, 'Soft-phone dial refused before the carrier');
       await this.serial(call.id, () => this.abandonUnplaced(call.id));
       return { ok: false, failure };
     }

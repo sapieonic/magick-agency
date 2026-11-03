@@ -380,6 +380,47 @@ describe('WebRtcBridgeManager dial — a failure before the carrier leg is place
     expect(events).toEqual([]);
   });
 
+  /**
+   * The three steps that build the carrier request (the webhook base, the adapter lookup,
+   * the carrier URLs) ask the carrier nothing. They sat inside the carrier request's `try`,
+   * whose catch ended the call `TELEPHONY_INIT_FAILED` with an `ended` event, so the dialer
+   * charged the contact's `failed` allowance for a dial that never left this process (a
+   * missing webhook base, an unknown provider). Each now takes the unplaced path.
+   */
+  it.each([
+    ['the webhook base', (mgr: any) => {
+      mgr.webhookUrls.baseUrl = () => { throw new Error('no webhook base configured'); };
+    }],
+    ['the adapter lookup', (mgr: any) => {
+      mgr.telephonyRegistry.get = () => { throw new Error('Unknown telephony provider: nope'); };
+    }],
+    // An empty base: `buildCarrierUrls` builds the media URL with `new URL('')`, which throws.
+    ['the carrier URLs', (mgr: any) => { mgr.webhookUrls.baseUrl = () => ''; }],
+  ])('a throw building the carrier request (%s) is a failure before the carrier: no `ended`, BRIDGE_SETUP_FAILED, everything released', async (_what, breakIt) => {
+    const cm = makeCallManager();
+    const mgr = new WebRtcBridgeManager(cm as any, null);
+    const events: Array<{ phase: string }> = [];
+    mgr.onLifecycle((ev) => events.push(ev));
+    breakIt(mgr);
+    const browser = countingWs();
+
+    const err = await dial(mgr, VL_PARAMS, browser).then(() => null, (e: unknown) => e);
+
+    // The original error rejects the dial, not a carrier refusal.
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(WebRtcCallError);
+    expect(mockAdapter.initiateCall).not.toHaveBeenCalled();
+    const terminal = mockRepo.update.mock.calls.filter((c: any[]) => c[1]?.ended_at !== undefined);
+    expect(terminal).toEqual([['call-1', expect.objectContaining({
+      status: 'failed', outcome: 'bridge_setup_failed', error_code: 'BRIDGE_SETUP_FAILED',
+    })]]);
+    expect(events, 'an `ended` makes the dialer settle it as a placed call the carrier refused').toEqual([]);
+    expect(mgr.getActiveCallIds()).toEqual([]);
+    expect(mgr.heldLeases()).toEqual([]);
+    expect(browser.listeners()).toBe(0);
+    expect(cm.concurrencyGuard.release).toHaveBeenCalledTimes(1);
+  });
+
   it('a teardown while the token store is in flight does not dial: one `ended`, no carrier request', async () => {
     const cm = makeCallManager();
     const mgr = new WebRtcBridgeManager(cm as any, null);

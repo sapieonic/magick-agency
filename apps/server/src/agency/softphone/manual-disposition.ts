@@ -18,7 +18,7 @@ import { resolveDisposition, validateDispositionFields } from '../disposition.js
 import { resolveDispositionDecision, type DispositionDecision } from '../disposition-policy.js';
 import { resolveOurFaultRedial, resolveRetryDecision, type RetryDecision } from '../retry-policy.js';
 import { resolveCallingWindow, scheduleCallbackInWindow } from '../calling-hours.js';
-import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../telephony/carrier-errors.js';
+import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, dialOutcomeUnknownNotBefore } from '../../telephony/carrier-errors.js';
 import { storedValuesInForce, submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import type { SoftphoneRefusal } from './types.js';
 
@@ -154,8 +154,12 @@ export function manualDispositionDecision(input: {
  * - **Placed, ended by OUR side before it bridged** (`agent_disconnected`,
  *   `canceled` — the agent hung up a ringing call) → the our-fault ledger and
  *   `resolveOurFaultRedial`, as `contact-settlement.ts`'s `ourFaultBeforeBridge`
- *   arm. `orphaned` (a restart) is the reaper's `requeueOrphanedContact` rule: the
- *   same ledger and bound, back on the roster at once.
+ *   arm. `orphaned` (a restart, a dead media worker) is the reaper's rule for an
+ *   attempt (`requeueOrphanedContact` with `reapedRedialNotBefore`): the same ledger
+ *   and bound, back on the roster at once, unless the dial was sent and never answered
+ *   (the process may have died with `add_lead` in flight or the phone ringing, and the
+ *   carrier may still place it): then not before `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`
+ *   after `dialed_at` (`dialOutcomeUnknownNotBefore`).
  * - **Otherwise** (`no_answer`, `busy`, `failed`, a lapsed bridged call …) → the
  *   customer's allowance and the tag's `retry_policy` (`resolveRetryDecision`) on
  *   `attempt_count + 1`, as the dialer's outcome branch and the lapsed-wrap-up sweep
@@ -176,8 +180,12 @@ const OUR_FAULT_BEFORE_BRIDGE: ReadonlySet<AgencyManualCallOutcome> = new Set(['
 
 export function manualNoOutcomeSettlement(input: {
   outcome: AgencyManualCallOutcome | null;
-  /** `dialed_at` is set: the carrier accepted the dial. */
-  placed: boolean;
+  /**
+   * The row's `dialed_at`: set, the dial was placed (the dialer clears it for one the
+   * carrier never saw); null, it was not.
+   */
+  dialedAt: Date | null;
+  answered: boolean;
   bridged: boolean;
   /** The tag's `retry_policy`; null (the tag is gone) is the built-in policy. */
   policy: AgencyCampaignRecord['retry_policy'] | null;
@@ -199,12 +207,15 @@ export function manualNoOutcomeSettlement(input: {
         : decision,
     };
   }
-  if (!input.placed) return { kind: 'release' };
+  if (input.dialedAt === null) return { kind: 'release' };
   if (!input.bridged && outcome === 'orphaned') {
     const decision = resolveOurFaultRedial(null, 'orphaned', input.now, input.contact.our_fault_attempts + 1);
+    const notBefore = dialOutcomeUnknownNotBefore(
+      { dialed_at: input.dialedAt, answered_at: input.answered ? input.now : null, bridged_at: null }, input.now,
+    );
     return {
       kind: 'settle', charge: 'our_fault',
-      decision: decision.contactState === 'pending' ? { ...decision, nextAttemptAt: input.now } : decision,
+      decision: decision.contactState === 'pending' ? { ...decision, nextAttemptAt: notBefore } : decision,
     };
   }
   if (!input.bridged && outcome !== null && OUR_FAULT_BEFORE_BRIDGE.has(outcome)) {

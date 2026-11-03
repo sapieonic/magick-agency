@@ -36,7 +36,8 @@ const { repos } = vi.hoisted(() => ({
       // the property under test would then be "the double is incomplete", which is
       // true of any name at all.
       recordDisposition: vi.fn().mockResolvedValue(null),
-      recordAutoDisposition: vi.fn().mockResolvedValue(null),
+      // The lapsed-wrap-up close: the other writer of a code (`no_disposition`).
+      closeLapsedWrapup: vi.fn().mockResolvedValue(null),
     },
     contact: {
       unclaim: vi.fn().mockResolvedValue(undefined),
@@ -584,7 +585,7 @@ describe('AgencyDialer release contract', () => {
     // deliberate erasure and would deserve to fail here too.
     expect(patches[0].last_disposition).toBeUndefined();
     expect(repos.attempt.recordDisposition).not.toHaveBeenCalled();
-    expect(repos.attempt.recordAutoDisposition).not.toHaveBeenCalled();
+    expect(repos.attempt.closeLapsedWrapup).not.toHaveBeenCalled();
   });
 
   it('acceptance (c): a populated catalog still holds the contact in `connected`', async () => {

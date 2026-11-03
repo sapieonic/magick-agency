@@ -182,11 +182,12 @@ describe('the roster decision', () => {
 
 describe('a call that settles with no outcome (§5: the campaign path\'s retry rules)', () => {
   const contact = { attempt_count: 1, our_fault_attempts: 0 };
-  const base = { placed: true, bridged: false, policy: {}, contact, now: NOW } as const;
+  // Dialled a minute ago, never answered.
+  const base = { dialedAt: new Date(NOW.getTime() - 60_000), answered: false, bridged: false, policy: {}, contact, now: NOW } as const;
 
   it('never placed: the claim is given back, nothing charged, whatever the outcome', () => {
-    expect(manualNoOutcomeSettlement({ ...base, placed: false, outcome: 'failed' })).toEqual({ kind: 'release' });
-    expect(manualNoOutcomeSettlement({ ...base, placed: false, outcome: 'no_answer' })).toEqual({ kind: 'release' });
+    expect(manualNoOutcomeSettlement({ ...base, dialedAt: null, outcome: 'failed' })).toEqual({ kind: 'release' });
+    expect(manualNoOutcomeSettlement({ ...base, dialedAt: null, outcome: 'no_answer' })).toEqual({ kind: 'release' });
   });
 
   it('placed and unanswered: the customer\'s allowance, the policy\'s delay on stored + 1', () => {
@@ -209,10 +210,25 @@ describe('a call that settles with no outcome (§5: the campaign path\'s retry r
       .toMatchObject({ charge: 'our_fault', decision: { contactState: 'exhausted', reason: 'our_fault_bound_reached' } });
   });
 
-  it('an unbridged orphan is the reaper\'s rule: our fault, back on the roster at once', () => {
-    const r = manualNoOutcomeSettlement({ ...base, outcome: 'orphaned' });
-    expect(r).toMatchObject({ charge: 'our_fault', decision: { contactState: 'pending' } });
-    expect(r.kind === 'settle' && r.decision.nextAttemptAt?.getTime()).toBe(NOW.getTime());
+  /**
+   * The reaper's rule for an attempt (`reapedRedialNotBefore`): a process that died with
+   * the dial sent and never answered may have left the carrier dialling the customer, so
+   * the contact waits until 15 min after `dialed_at`. Only a dial answered, or sent longer
+   * ago than that, is back on the roster at once. It used to be at once whatever the shape.
+   */
+  it('an unbridged orphan is the reaper\'s rule: our fault, held 15 min after a dial nothing saw answered', () => {
+    const at = (r: ReturnType<typeof manualNoOutcomeSettlement>) => (r.kind === 'settle' ? r.decision.nextAttemptAt?.getTime() : null);
+    const held = manualNoOutcomeSettlement({ ...base, outcome: 'orphaned' });
+    expect(held).toMatchObject({ charge: 'our_fault', decision: { contactState: 'pending' } });
+    expect(at(held), 'dialable while the carrier may still place the dial').toBe(base.dialedAt.getTime() + 15 * 60_000);
+    // Answered (never bridged): the carrier's call is over with its media; at once.
+    expect(at(manualNoOutcomeSettlement({ ...base, answered: true, outcome: 'orphaned' }))).toBe(NOW.getTime());
+    // Sent longer ago than the hold: at once.
+    expect(at(manualNoOutcomeSettlement({ ...base, dialedAt: new Date(NOW.getTime() - 16 * 60_000), outcome: 'orphaned' })))
+      .toBe(NOW.getTime());
+    // The bound still retires.
+    expect(manualNoOutcomeSettlement({ ...base, outcome: 'orphaned', contact: { attempt_count: 0, our_fault_attempts: 2 } }))
+      .toMatchObject({ charge: 'our_fault', decision: { contactState: 'exhausted', nextAttemptAt: null } });
   });
 
   /**
@@ -223,9 +239,9 @@ describe('a call that settles with no outcome (§5: the campaign path\'s retry r
    */
   it('a dial whose outcome is unknown: held 15 min on the our-fault ledger, retired at the bound', () => {
     const hold = NOW.getTime() + 15 * 60_000;
-    for (const placed of [true, false]) {
+    for (const dialedAt of [base.dialedAt, null]) {
       const r = manualNoOutcomeSettlement({
-        ...base, placed, outcome: 'failed', dialOutcomeUnknown: true,
+        ...base, dialedAt, outcome: 'failed', dialOutcomeUnknown: true,
         policy: { failed: { delay_minutes: 0, max_attempts: 9 } },
       });
       expect(r).toMatchObject({ kind: 'settle', charge: 'our_fault', decision: { contactState: 'pending', reason: 'retry_scheduled' } });

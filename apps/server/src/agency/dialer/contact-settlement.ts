@@ -258,7 +258,9 @@ const OUR_FAULT_OUTCOMES: ReadonlySet<AgencyAttemptOutcome> = new Set(['agent_di
  * `agent_disconnected`, the campaign's cap for that our-fault outcome applies as it would
  * have (`ourFaultRedialBound`: it may only lower the bound).
  *
- * Never throws. A failed write leaves the contact `in_flight`, for the stranded-contact sweep.
+ * Never throws. A failed write leaves the contact `in_flight`, for the stranded-contact sweep,
+ * whose requeue reads this dial (sent, never answered) and keeps the contact until
+ * `dialed_at` + {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS}, so the hold is not cut short.
  */
 export async function holdOutcomeUnknownContact(
   cmd: DialCommand,
@@ -277,7 +279,7 @@ export async function holdOutcomeUnknownContact(
     });
   } catch (err) {
     log.error({ err, contactId: cmd.contactId, attemptId: cmd.attemptId },
-      'Could not hold the contact of an outcome-unknown dial — the stranded-contact sweep requeues it');
+      'Could not hold the contact of an outcome-unknown dial — the stranded-contact sweep requeues it, held');
     return;
   }
   if (landed === null) {

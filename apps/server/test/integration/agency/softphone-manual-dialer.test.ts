@@ -151,6 +151,26 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
   });
 
+  /**
+   * The bridge's real order for a dial that fails before the carrier is asked (the row
+   * INSERT, the carrier tokens, the carrier request's own inputs: a missing webhook base, a
+   * provider with no adapter): it tears the leg down with NO `ended` and rejects with the
+   * original error (`abortUnplacedLeg`). Nothing was dialled, so the agent gets the reviewed
+   * `dial_failed` (503, retry), not a masked 500, and the claim is given back uncharged.
+   */
+  it('a dial that fails in the bridge before the carrier is no dial and answers dial_failed', async () => {
+    const { contact, call } = await claimedCall({ contact: { attempt_count: 1 } });
+    bridge.createBridgedCall.mockRejectedValueOnce(new TypeError('Invalid URL'));
+    expect(await dialer.dial(call as never, { socket: {} as never })).toEqual({ ok: false, failure: 'dial_failed' });
+    expect(dialer.hasLiveCall(call.session_id as string)).toBe(false);
+
+    const row = await callRow(call.id as string);
+    expect(row).toMatchObject({ state: 'ended', outcome: 'failed', dialed_at: null });
+    expect(row.settled_at).not.toBeNull();
+    expect(await contactRow(contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 1, our_fault_attempts: 0 });
+    expect(agents.releaseManual).toHaveBeenCalledWith(row.session_id, row.id);
+  });
+
   it('a dial the carrier refused outright is no dial either (telephony_init_failed)', async () => {
     const { contact, call } = await claimedCall();
     bridge.createBridgedCall.mockImplementationOnce(async () => {
@@ -425,14 +445,38 @@ describe('ManualDialer — closing a call with no outcome (integration)', () => 
     near(c.next_attempt_at, Date.now() + 30 * MIN);
   });
 
-  it('the startup sweep: an unbridged placed orphan is our fault and requeued now; an unplaced one is just released', async () => {
-    const placed = await claimedCall({ call: { state: 'ringing', dialed_at: new Date() } });
+  /**
+   * A restart mid-dial (`add_lead` in flight, or the customer's phone ringing) leaves the
+   * carrier free to place that call, as for a campaign attempt the startup reap ends
+   * (`reapedRedialNotBefore`): the contact is requeued on the our-fault ledger but not
+   * dialable until 15 min after `dialed_at`. It used to be back on the roster at once, and
+   * pacing could ring the customer a second time while the soft phone's dial still rang.
+   * An answered call (its carrier leg over with its media) and an unplaced one are not held.
+   */
+  it('the startup sweep: an unbridged placed orphan is our fault and held 15 min after its dial; an unplaced one is just released', async () => {
+    const dialedAt = new Date(Date.now() - 2 * MIN);
+    const placed = await claimedCall({ call: { state: 'dialing', dialed_at: dialedAt } });
+    const answered = await claimedCall({ call: { state: 'answered', dialed_at: dialedAt, answered_at: new Date() } });
     const unplaced = await claimedCall({ call: { state: 'queued' } });
     await reaper.reapOnStartup();
 
     const p = await contactRow(placed.contact.id as string);
     expect(p).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 1, last_outcome: 'orphaned' });
-    near(p.next_attempt_at, Date.now());
+    expect(p.next_attempt_at.getTime(), 'dialable while the carrier may still place the orphaned dial')
+      .toBe(dialedAt.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    const a = await contactRow(answered.contact.id as string);
+    expect(a).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 1 });
+    near(a.next_attempt_at, Date.now());
     expect(await contactRow(unplaced.contact.id as string)).toMatchObject({ state: 'pending', attempt_count: 0, our_fault_attempts: 0 });
+  });
+
+  it('the periodic orphan sweep holds an unbridged placed orphan the same way', async () => {
+    const longAgo = new Date(Date.now() - 6 * MIN);
+    const placed = await claimedCall({ call: { state: 'ringing', dialed_at: longAgo, created_at: longAgo } });
+    expect((await reaper.sweepManualCalls()).orphaned).toBe(1);
+
+    const p = await contactRow(placed.contact.id as string);
+    expect(p).toMatchObject({ state: 'pending', our_fault_attempts: 1, last_outcome: 'orphaned' });
+    expect(p.next_attempt_at.getTime()).toBe(longAgo.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
   });
 });

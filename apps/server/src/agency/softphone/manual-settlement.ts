@@ -39,8 +39,9 @@ export interface NoOutcomeSettled {
 
 /**
  * The settlement a closed call's claimed contact gets, or null when the call holds no
- * claim (untagged, linked only) or the contact row is gone. `placed` is `dialed_at`,
- * which the dialer clears on a dial the carrier never saw (`end`'s `unplaced`).
+ * claim (untagged, linked only) or the contact row is gone. Placed is `dialed_at` set,
+ * which the dialer clears on a dial the carrier never saw (`end`'s `unplaced`); an
+ * unbridged orphan's hold is taken from it (`dialOutcomeUnknownNotBefore`).
  *
  * `dialOutcomeUnknown`: the dial's outcome is unknown (the carrier may have queued it), as
  * the dialer saw it. Absent (the reaper's lapse and orphan sweeps, which have only the
@@ -65,7 +66,8 @@ export async function noOutcomeSettlementFor(
   if (!contact) return null;
   return manualNoOutcomeSettlement({
     outcome: row.outcome,
-    placed: row.dialed_at !== null,
+    dialedAt: row.dialed_at,
+    answered: row.answered_at !== null,
     bridged: row.bridged_at !== null,
     policy: tag?.retry_policy ?? null,
     contact,

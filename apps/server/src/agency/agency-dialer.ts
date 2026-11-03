@@ -79,6 +79,27 @@ interface EndedSettlement {
 export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
 
 /**
+ * How long a contact waits after its dial failed in the bridge before the carrier was asked
+ * (the bridge rejected with no `ended`: an admission refusal, the call row INSERT, the
+ * carrier tokens, the carrier request's own inputs). Default, pending Manas
+ * (`docs/decisions.md`, "Dial failed before the carrier").
+ *
+ * Without it the contact went back dialable at once, uncharged, and a failure that repeats
+ * (a missing webhook base, a database refusing the INSERT) redialled the same contact on
+ * every pacing tick once the roster had nothing older to offer: a tight loop of attempt
+ * rows, agent reservations and bridge setups, bounded by nothing.
+ *
+ * A delay rather than a charge to the our-fault ledger, deliberately. Nobody was called, so
+ * the repeat-dial ceiling that ledger enforces has nothing to protect, and its bound would
+ * RETIRE contacts: a systemic failure (every INSERT failing, a config error) fails dials in
+ * milliseconds, and at a bound of 3 it would exhaust the whole roster within seconds,
+ * permanently, for a fault in this process. The delay costs a working contact a minute and
+ * caps the rate at which any one contact can be retried; nothing is lost when the fault
+ * clears. A minute: well past the pacing tick, short beside every retry the policy sets.
+ */
+export const PRE_CARRIER_FAILURE_REDIAL_DELAY_MS = 60_000;
+
+/**
  * How long a `released` the agent never saw is kept for them to collect on
  * reconnect. Generous relative to the deferred-hangup window on purpose: the
  * agent who missed it is by definition the one whose network just failed, and a
@@ -579,7 +600,9 @@ export class AgencyDialer {
     /**
      * The carrier may have queued the failed dial: the contact is held back
      * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
-     * (`holdOutcomeUnknownContact`). Otherwise it is dialable again at once, uncharged.
+     * (`holdOutcomeUnknownContact`). Otherwise it goes back uncharged: after
+     * {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS} for a dial that failed in the bridge
+     * (`failed`), at once for a dial called off before it (`reservation_expired`).
      */
     dialOutcomeUnknown = false,
   ): Promise<void> {
@@ -628,9 +651,15 @@ export class AgencyDialer {
       // our-fault bound rather than redialled every 15 minutes for ever.
       await holdOutcomeUnknownContact(cmd, outcome);
     } else {
-      // The condition genuinely cleared, so `now()` is correct here — unlike an
-      // out-of-hours unclaim, which must move the clock forward.
-      await agencyContactRepository.unclaim(cmd.contactId, new Date())
+      // Called off before the dial (the agent's socket or lease went, pacing stopped): the
+      // condition was the agent's or ours and has cleared, so `now()`. A dial the bridge
+      // failed before the carrier waits PRE_CARRIER_FAILURE_REDIAL_DELAY_MS, so a failure
+      // that repeats cannot redial the same contact on every tick (see the constant). Only
+      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's.
+      const notBefore = reason === 'failed'
+        ? new Date(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS)
+        : new Date();
+      await agencyContactRepository.unclaim(cmd.contactId, notBefore)
         .catch((err) => log.error({ err, contactId: cmd.contactId }, 'Failed to unclaim contact'));
     }
 

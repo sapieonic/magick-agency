@@ -787,6 +787,16 @@ export class AgencyContactRepository {
    * row carrying `suppressed_reason = 'dnc'` stays `suppressed` with its
    * `next_attempt_at`, as {@link markState} keeps it.
    *
+   * `holdUnknownDialsMs` (the stranded-contact sweep's, which has no attempt to read a hold
+   * from): `next_attempt_at` is moved on to `dialed_at` + that much for any dial of this
+   * contact, a campaign attempt or a soft-phone call, that was sent (`dialed_at` set; a
+   * soft-phone dial the carrier never saw has it cleared), never answered or bridged, and
+   * not ended by a carrier answer (`no_answer`, `busy`, `invalid`): the carrier may still be
+   * placing it. In the same statement, so a contact whose own hold write failed
+   * (`holdOutcomeUnknownContact`, a soft-phone settle) is not handed back early by the
+   * sweep that recovers it. It errs on holding: a dial whose end this cannot tell (a carrier
+   * refusal, a failure before the carrier, a teardown, an orphan) is held too.
+   *
    * Returns the state and count that landed, or null when the contact no longer belongs
    * to the reaped attempt (or does not exist) and nothing was written.
    *
@@ -803,8 +813,10 @@ export class AgencyContactRepository {
       outcome: string;
       bound: number;
       retiredState: string;
+      holdUnknownDialsMs?: number | null;
     },
   ): Promise<{ state: AgencyContactState; our_fault_attempts: number } | null> {
+    // GREATEST ignores the NULL the subquery gives when no dial qualifies.
     const { rows } = await getPool().query<{ state: AgencyContactState; our_fault_attempts: number }>(
       `UPDATE agency_contacts c
           SET our_fault_attempts = c.our_fault_attempts + 1,
@@ -816,7 +828,22 @@ export class AgencyContactRepository {
                       END,
               next_attempt_at = CASE
                                   WHEN c.suppressed_reason = 'dnc' OR c.our_fault_attempts + 1 >= $5 THEN c.next_attempt_at
-                                  ELSE $4
+                                  WHEN $7::bigint IS NULL THEN $4
+                                  ELSE GREATEST($4, (
+                                    SELECT max(d.dialed_at) + make_interval(secs => $7::bigint / 1000.0)
+                                      FROM (
+                                        SELECT a.dialed_at, a.answered_at, a.bridged_at, a.outcome
+                                          FROM agency_call_attempts a WHERE a.contact_id = c.id
+                                        UNION ALL
+                                        SELECT m.dialed_at, m.answered_at, m.bridged_at, m.outcome
+                                          FROM agency_manual_calls m WHERE m.contact_id = c.id
+                                      ) d
+                                     WHERE d.dialed_at IS NOT NULL
+                                       AND d.answered_at IS NULL
+                                       AND d.bridged_at IS NULL
+                                       AND d.outcome IS DISTINCT FROM 'no_answer'
+                                       AND d.outcome IS DISTINCT FROM 'busy'
+                                       AND d.outcome IS DISTINCT FROM 'invalid'))
                                 END,
               updated_at = now()
         WHERE c.id = $1
@@ -841,7 +868,10 @@ export class AgencyContactRepository {
                 SELECT 1 FROM agency_manual_calls m
                  WHERE m.contact_id = c.id AND m.settled_at IS NULL AND m.contact_claimed)
       RETURNING c.state, c.our_fault_attempts`,
-      [contactId, opts.reapedAttemptId, opts.outcome, opts.notBefore, opts.bound, opts.retiredState],
+      [
+        contactId, opts.reapedAttemptId, opts.outcome, opts.notBefore, opts.bound, opts.retiredState,
+        opts.holdUnknownDialsMs ?? null,
+      ],
     );
     return rows[0] ?? null;
   }
