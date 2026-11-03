@@ -460,20 +460,23 @@ phone number (the default, unchanged), any kept column, or none.
 
 ## Test counts
 
-Latest run, 2026-11-02, after the second review's fixes, from inside each package (`pnpm lint`
-clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and `pnpm test:release` 10 pass;
-super-admin, web-ui and domain unchanged since the row below, not re-run):
+Latest run, 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
+package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
+`pnpm test:release` 10 pass):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7569 passed + 42 skipped (380 files) | 1538 passed + 10 expected fail (166 files) |
-| `packages/db` | 427 | 509 (46 files) |
-| `apps/console` | 4921 (251 files) | — |
+| `apps/server` | 7590 passed + 42 skipped (380 files) | 1545 passed + 10 expected fail + 1 failed (167 files) |
+| `packages/db` | 427 | 512 (47 files) |
+| `apps/console` | 4944 (252 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 249 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
+
+The 1 failed is `load/agent-churn.test.ts`, the known intermittent (below: 2 of 8 on `c9fd548`):
+its seed (24301) replayed green 3 of 3, and 6 more random seeds were green.
 
 Run of 2026-11-02, after the scaling phase A merges, from inside each package (`pnpm lint`
 clean in 8 packages; `pnpm build`, `pnpm test:grafana` and `pnpm test:release` pass):
