@@ -61,7 +61,7 @@ export interface WrapupRedialState {
   refusal: string | null;
   /**
    * The line beside the button: the remaining count while it can be pressed,
-   * otherwise why it cannot ("Redialing…", "No redials left", ...).
+   * otherwise why it cannot ("Redialling…", "No redials left", ...).
    */
   statusLine: string | null;
   /** The redial is placed (200): the server stopped this wrap-up's timer. */
@@ -118,7 +118,7 @@ export function useWrapupRedial(options: {
    * left to redial.
    */
   padBlock: RedialPadBlock | null;
-  /** The page's assertive announcement: "Redialing…" is the press's direct result. */
+  /** The page's assertive announcement: "Redialling…" is the press's direct result. */
   announce: (text: string) => void;
   /** Lets the notes draft and the panel follow the press (`useRedialCarry`). */
   carry: RedialCarryRecorder;

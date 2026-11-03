@@ -771,11 +771,11 @@ describe("the reserved system disposition code 'redialed'", () => {
     expect(validate({
       disposition_catalog: [
         { code: 'not_interested', label: 'Not interested' },
-        { code: AGENCY_REDIALED_DISPOSITION_CODE, label: 'Redialed' },
+        { code: AGENCY_REDIALED_DISPOSITION_CODE, label: 'Redialled' },
       ],
     })).toEqual([{
       field: 'disposition_catalog[1].code',
-      message: "Disposition code 'redialed' is reserved: the system writes it on a call the agent redialed from wrap-up. Choose another code.",
+      message: "Disposition code 'redialed' is reserved: the system writes it on a call the agent redialled from wrap-up. Choose another code.",
     }]);
     // Byte-for-byte, like every other code comparison: a code that merely
     // contains the word is an ordinary code.
@@ -786,7 +786,7 @@ describe("the reserved system disposition code 'redialed'", () => {
     const app = await makeApp();
     const res = await app.inject({
       method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
-      payload: { ...MINIMAL, disposition_catalog: [{ code: 'redialed', label: 'Redialed' }] },
+      payload: { ...MINIMAL, disposition_catalog: [{ code: 'redialed', label: 'Redialled' }] },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().details['disposition_catalog[0].code']).toContain('reserved');
@@ -797,7 +797,7 @@ describe("the reserved system disposition code 'redialed'", () => {
     const app = await makeApp();
     const res = await app.inject({
       method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
-      payload: { disposition_catalog: [{ code: 'redialed', label: 'Redialed' }] },
+      payload: { disposition_catalog: [{ code: 'redialed', label: 'Redialled' }] },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().details['disposition_catalog[0].code']).toContain('reserved');
@@ -808,7 +808,7 @@ describe("the reserved system disposition code 'redialed'", () => {
     const internal = await import('../../../src/agency/campaign-config.js');
     const pub = await import('../../../src/agency/agency-campaign-config.js');
     for (const body of [
-      { disposition_catalog: [{ code: 'redialed', label: 'Redialed' }] },
+      { disposition_catalog: [{ code: 'redialed', label: 'Redialled' }] },
       { allow_wrapup_redial: 'yes' },
       { allow_wrapup_redial: null },
     ]) {

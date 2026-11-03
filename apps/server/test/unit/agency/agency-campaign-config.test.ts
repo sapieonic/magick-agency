@@ -925,7 +925,7 @@ describe("the reserved system disposition code 'redialed'", () => {
     const body = {
       disposition_catalog: [
         { code: 'not_interested', label: 'Not interested' },
-        { code: 'redialed', label: 'Redialed' },
+        { code: 'redialed', label: 'Redialled' },
       ],
     };
     expect(fields(body)).toEqual(['disposition_catalog[1].code']);

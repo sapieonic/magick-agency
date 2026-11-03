@@ -20,7 +20,7 @@ describe('the system-written disposition `redialed`', () => {
   it('is the contract’s code, and named', () => {
     expect(AGENCY_REDIALED_DISPOSITION_CODE).toBe('redialed');
     expect(isSystemDispositionCode('redialed')).toBe(true);
-    expect(systemDispositionLabel('redialed')).toBe('Redialed');
+    expect(systemDispositionLabel('redialed')).toBe('Redialled');
     expect(systemDispositionLabel('sale')).toBeNull();
     expect(systemDispositionLabel(null)).toBeNull();
     // Not a prototype key passed off as a code.
@@ -28,13 +28,13 @@ describe('the system-written disposition `redialed`', () => {
   });
 
   it('reads as a label on the spine views, never the raw code', () => {
-    expect(dispositionLabel('redialed', catalog)).toBe('Redialed');
-    expect(dispositionLabel('redialed', undefined)).toBe('Redialed');
+    expect(dispositionLabel('redialed', catalog)).toBe('Redialled');
+    expect(dispositionLabel('redialed', undefined)).toBe('Redialled');
     expect(dispositionLabel('sale', catalog)).toBe('Sale');
   });
 
   it('reads as a label in the agent’s prior attempts, not styled as an unlabelled code', () => {
-    expect(priorDispositionLabel('redialed', undefined)).toBe('Redialed');
+    expect(priorDispositionLabel('redialed', undefined)).toBe('Redialled');
     expect(priorDispositionIsRaw('redialed', undefined)).toBe(false);
     expect(priorDispositionIsRaw('ptp', undefined)).toBe(true);
   });
@@ -42,7 +42,7 @@ describe('the system-written disposition `redialed`', () => {
   it('is refused as a catalog code by the builder, as the server refuses it', () => {
     const state = {
       ...EMPTY_CAMPAIGN_CONFIG,
-      dispositions: [...EMPTY_CAMPAIGN_CONFIG.dispositions, { code: 'redialed', label: 'Redialed' }],
+      dispositions: [...EMPTY_CAMPAIGN_CONFIG.dispositions, { code: 'redialed', label: 'Redialled' }],
     };
     const at = `disposition_catalog[${state.dispositions.length - 1}].code`;
     expect(validateConfig(state)[at]).toBe(reservedDispositionCodeMessage('redialed'));

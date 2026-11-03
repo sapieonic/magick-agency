@@ -326,7 +326,7 @@ describe('pressing Redial', () => {
     await pressRedial();
 
     expect(redialButton()!.getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('Redialing…');
+    expect(screen.getByTestId('wrapup-redial-status').textContent).toBe('Redialling…');
     expect(saveButton().disabled).toBe(true);
     expect(screen.getByText(PAD_REDIALING_COPY)).toBeTruthy();
 
@@ -632,7 +632,7 @@ describe('the press itself', () => {
     expect(analyticsMocks.trackAgencyRedialRequested).toHaveBeenCalledTimes(1);
   });
 
-  it('announces "Redialing…" in the page’s assertive region', async () => {
+  it('announces "Redialling…" in the page’s assertive region', async () => {
     await inWrapup({ redial_remaining: 2 });
     deferredRedial();
     await pressRedial();

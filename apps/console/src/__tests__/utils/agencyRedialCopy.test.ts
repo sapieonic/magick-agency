@@ -24,11 +24,11 @@ describe('wrap-up redial copy', () => {
 
   it.each([
     ['redial_limit_reached', 'No redials left for this call. Save the outcome.'],
-    ['disposition_already_submitted', 'The outcome for this call is already saved, so it can’t be redialed.'],
-    ['redial_blocked_dnc', 'This number is on a Do Not Call list, so it can’t be redialed. Save the outcome.'],
+    ['disposition_already_submitted', 'The outcome for this call is already saved, so it can’t be redialled.'],
+    ['redial_blocked_dnc', 'This number is on a Do Not Call list, so it can’t be redialled. Save the outcome.'],
     [
       'redial_blocked_calling_hours',
-      'It’s outside this contact’s calling hours, so it can’t be redialed now. Save the outcome.',
+      'It’s outside this contact’s calling hours, so it can’t be redialled now. Save the outcome.',
     ],
   ])('says what %s means, keyed off the code rather than the message', (code, copy) => {
     expect(redialRefusalCopy(apiError(409, { error: 'Conflict', code, message: 'server words' }))).toBe(copy);

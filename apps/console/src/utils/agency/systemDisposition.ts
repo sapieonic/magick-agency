@@ -12,18 +12,18 @@ import { AGENCY_REDIALED_DISPOSITION_CODE } from '../../types/agency';
  * `reservedBreakReasonLabel` first, and styles the value as the system's.
  */
 export const SYSTEM_DISPOSITION_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  [AGENCY_REDIALED_DISPOSITION_CODE]: 'Redialed',
+  [AGENCY_REDIALED_DISPOSITION_CODE]: 'Redialled',
 });
 
 /** What writes each, as the campaign builder's refusal states it. */
 const SYSTEM_DISPOSITION_OWNERS: Readonly<Record<string, string>> = Object.freeze({
-  [AGENCY_REDIALED_DISPOSITION_CODE]: 'the system writes it on a call the agent redialed from wrap-up',
+  [AGENCY_REDIALED_DISPOSITION_CODE]: 'the system writes it on a call the agent redialled from wrap-up',
 });
 
 /** What wrote it, for a tooltip or a hint beside the label. */
 export const SYSTEM_DISPOSITION_HINTS: Readonly<Record<string, string>> = Object.freeze({
   [AGENCY_REDIALED_DISPOSITION_CODE]:
-    'Closed when the agent redialed the customer from wrap-up. The outcome is on the redial.',
+    'Closed when the agent redialled the customer from wrap-up. The outcome is on the redial.',
 });
 
 export function isSystemDispositionCode(code: string | null | undefined): code is string {

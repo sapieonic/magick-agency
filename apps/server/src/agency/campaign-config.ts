@@ -236,7 +236,7 @@ function validateRetryRule(rule: Record<string, unknown>, at: string): CampaignC
  */
 export const RESERVED_DISPOSITION_CODE_OWNER: Readonly<Record<string, string>> = {
   [AGENCY_REDIALED_DISPOSITION_CODE]:
-    'the system writes it on a call the agent redialed from wrap-up',
+    'the system writes it on a call the agent redialled from wrap-up',
 };
 
 /** The refusal for a catalog entry using a reserved code, or null. Shared with the public validator. */

@@ -27,10 +27,10 @@ export type RedialRefusalCode = (typeof REDIAL_REFUSAL_CODES)[number];
 export const REDIAL_REFUSAL_COPY: Record<RedialRefusalCode, string> = {
   redial_not_allowed: 'Redial isn’t available for this call. Save the outcome instead.',
   redial_limit_reached: 'No redials left for this call. Save the outcome.',
-  disposition_already_submitted: 'The outcome for this call is already saved, so it can’t be redialed.',
-  redial_blocked_dnc: 'This number is on a Do Not Call list, so it can’t be redialed. Save the outcome.',
+  disposition_already_submitted: 'The outcome for this call is already saved, so it can’t be redialled.',
+  redial_blocked_dnc: 'This number is on a Do Not Call list, so it can’t be redialled. Save the outcome.',
   redial_blocked_calling_hours:
-    'It’s outside this contact’s calling hours, so it can’t be redialed now. Save the outcome.',
+    'It’s outside this contact’s calling hours, so it can’t be redialled now. Save the outcome.',
   redial_blocked: 'Couldn’t redial this call. Save the outcome.',
 };
 
@@ -60,7 +60,7 @@ export const PERMANENT_REDIAL_REFUSALS: ReadonlySet<string> = new Set<RedialRefu
 ]);
 
 /** Shown in place of the remaining count while the request is out, and announced on the press. */
-export const REDIAL_IN_FLIGHT_COPY = 'Redialing…';
+export const REDIAL_IN_FLIGHT_COPY = 'Redialling…';
 
 /**
  * Why a disabled Redial is disabled, in place of the remaining count. A disabled
@@ -83,7 +83,7 @@ export const REDIAL_DISABLED_COPY = {
 } as const;
 
 /** The pad's stated reason while a redial is in flight. */
-export const PAD_REDIALING_COPY = 'Redialing — the outcome opens again if the call doesn’t go through.';
+export const PAD_REDIALING_COPY = 'Redialling — the outcome opens again if the call doesn’t go through.';
 
 function isRefusalCode(code: string | null | undefined): code is RedialRefusalCode {
   return (REDIAL_REFUSAL_CODES as readonly string[]).includes(code ?? '');
