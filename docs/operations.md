@@ -418,7 +418,8 @@ ignore SIGTERM and SIGINT. HTTP closes first, then:
    and every worker is told no dial may go out.
 2. Together: the media workers drain alongside the completion-notice drain (each worker
    closes its sockets, stops the shard, ends its live calls and exits; one still running
-   after 30 s is killed and its slot reaped, so its calls' slots are released at once), and
+   after 30 s is killed and its slot reaped, so its calls' slots are released at once; one
+   that crashes during its drain, any exit but code 0, is reaped the same way), and
    the analysis children requeue their jobs and exit (15 s, then killed).
 3. Agency stops, then voice, then platform (the audit buffers flush last).
 

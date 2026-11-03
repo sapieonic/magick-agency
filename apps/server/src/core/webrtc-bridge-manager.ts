@@ -51,9 +51,12 @@ import {
 } from '../utils/ws-backpressure.js';
 import { buildCarrierUrls } from './bridge/carrier-urls.js';
 
+/** One call's telephony slots, held under its concurrency key (`WebRtcBridgeManager.heldLeases`). */
+export interface HeldLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
+
 /** A change in the telephony slots this process holds (`WebRtcBridgeManager.observeLeases`). */
 export type LeaseChange =
-  | { op: 'held'; lease: { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string } }
+  | { op: 'held'; lease: HeldLease }
   | { op: 'released'; concurrencyKey: string };
 
 export {
@@ -218,27 +221,33 @@ export class WebRtcBridgeManager {
    * the release went out. One observer; null clears it.
    */
   private leaseObserver: ((change: LeaseChange) => void) | null = null;
+  /**
+   * Every slot set this process holds, by concurrency key: added where `held` is told and
+   * removed where `released` is, in the same synchronous step. So it holds a call from its
+   * admission (before it has a row or a session) until its release went out (after its
+   * session is gone), and {@link heldLeases} always agrees with the deltas told so far.
+   */
+  private readonly leases = new Map<string, HeldLease>();
 
   observeLeases(observer: ((change: LeaseChange) => void) | null): void {
     this.leaseObserver = observer;
   }
 
   private noteLease(change: LeaseChange): void {
+    if (change.op === 'held') this.leases.set(change.lease.concurrencyKey, change.lease);
+    else this.leases.delete(change.concurrencyKey);
     if (!this.leaseObserver) return;
     try { this.leaseObserver(change); } catch { /* an observer never fails a call */ }
   }
 
   /**
-   * The telephony slots each live call holds: what the primary must release if this
-   * process dies with them (`docs/scaling.md` §6.1). Not part of the dialer's seam.
+   * The telephony slots this process holds: what the primary must release if it dies with
+   * them (`docs/scaling.md` §6.1). Exactly the `held` deltas told and not yet `released`,
+   * including a call admitted but not yet registered and one whose release is in flight.
+   * Not part of the dialer's seam.
    */
-  heldLeases(): Array<{ callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }> {
-    const out: Array<{ callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }> = [];
-    for (const s of this.sessions.values()) {
-      if (!s.slotsHeld || !s.concurrencyKey) continue;
-      out.push({ callId: s.callId, concurrencyKey: s.concurrencyKey, tenantId: s.tenantId, accountId: s.accountId, provider: s.provider });
-    }
-    return out;
+  heldLeases(): HeldLease[] {
+    return [...this.leases.values()].map((l) => ({ ...l }));
   }
 
   /**
@@ -585,6 +594,9 @@ export class WebRtcBridgeManager {
     // holds the relay until a valid `start` (correct codec/rate) arrives.
     if (session.carrier?.media.negotiatesOnStart) session.providerMediaReady = false;
     this.sessions.set(record.id, session);
+    // The lease now names its call (log correlation in a slot reap); still the same slots.
+    const lease = this.leases.get(concurrencyKey);
+    if (lease) this.leases.set(concurrencyKey, { ...lease, callId: record.id });
 
     // 4. Max-duration guard (resolved above, reused for the slot TTL).
     session.maxDurationSeconds = maxDuration;

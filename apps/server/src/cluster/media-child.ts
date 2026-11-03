@@ -139,6 +139,8 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
     handleVoicelinkStatusWebhook(bridge, callId, token ?? undefined, body));
 
   // ── What the primary's sweeps need to know ───────────────────────────────
+  // Synchronous on purpose: answered in the turn it is computed, so the primary's lease
+  // reconcile can replace its map with `leases` (`media-cluster.ts`, `ipc-channel.ts`).
   channel.handle('reaper.snapshot', () => ({
     activeAttemptIds: runtime.dialer.activeAttemptIds(),
     unrecordedEnds: runtime.dialer.unrecordedEndedAttempts(),

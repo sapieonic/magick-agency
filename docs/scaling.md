@@ -771,7 +771,7 @@ As built (`index.ts`, `cluster/shutdown-order.ts`):
 | 0 | SIGTERM. `app.close()`: no new connections or upgrades. In-flight HTTP finishes (normally ms; a request forwarded to a worker is bounded by its deadline, 15 s at most) | serving | serving |
 | ≤ 5 s | **pacing halts** before anything drains: no new tick, leases given up, `pacing.revoke {campaignId: null}` to every worker, ticks in flight waited for (`TICK_DRAIN_TIMEOUT_MS`) | revoked: no dial in preparation goes out | serving (no new job is enqueued by a dial) |
 | then, **concurrently** | completion-notice drain (≤ 30 s) | `shutdown {graceMs: 30000}`: worker `app.close()` (station and media sockets close), `stopShard()` (dialer, wrap-up, manual dialer timers), `bridge.gracefulShutdown()` (hang up live calls, release slots), guard host, PostHog and audit flush, Redis and pool close, OTel flush, `exit 0` | `shutdown {graceMs: 15000}`: stop claims, requeue in flight (generation-matched), PostHog and audit flush, `exit 0` |
-| | waits for every child's `exit` (30 s media, 15 s analysis); a media worker still running is SIGKILLed and its slot reaped (§6.1: slots released, attempts ended and requeued, agents offline) before the stop goes on | | |
+| | waits for every child's `exit` (30 s media, 15 s analysis); a media worker still running is SIGKILLed and its slot reaped (§6.1: slots released, attempts ended and requeued, agents offline) before the stop goes on. Only an `exit 0` after the request is a clean stop: a worker that dies of a signal or exits non-zero during its own shutdown (an OOM, a SIGSEGV) is reaped the same way and counted a crash (`expected="false"`, §7); nothing is restarted | | |
 | ≤ ~37 s | agency stop (reaper and runtime; pacing already halted, notices drained), voice stop (guard host; its self-heal wait is bounded at 15 s and only waits when a sweep is mid-flight), platform (audit buffers last), Redis, pool, OTel, `exit 0` | | |
 
 The bounds that add up in the normal worst case are 5 s + 30 s plus a few seconds, inside the
@@ -782,8 +782,8 @@ are not covered if both stack on a 30 s worker drain: an internal request forwar
 instant of SIGTERM (up to 15 s) and a self-heal sweep in flight (up to 15 s); one process has
 the same tail (5 + 30 + 15 s). The order inside each worker matches the order inside one
 process. Pinned by `test/unit/cluster/shutdown-order.test.ts` (halt first, drains together,
-the rest in reverse), `child-supervisor.test.ts` (a worker killed at stop is reaped before
-the stop resolves), `runtime-boot-order.test.ts` (single-process order) and
+the rest in reverse), `child-supervisor.test.ts` (a worker killed at stop, or one that crashes
+during the stop, is reaped before the stop resolves and counted unexpected), `runtime-boot-order.test.ts` (single-process order) and
 `test/integration/cluster/media-workers.test.ts` (the whole tree exits 0 inside 45 s with
 live calls on both workers).
 
@@ -856,7 +856,8 @@ which replaces the primary too.
   - `ipc_request_duration_seconds{type}`: the round trip of an answered request;
   - `ipc_messages_dropped_total{reason}`: `malformed`, `unsupported`, `late`, `backlogged`;
   - `cluster_child_exits_total{role, expected}`: child exits, `expected="false"` for a crash
-    (or a worker the stop had to kill).
+    (or a worker the stop had to kill). `expected="true"` only for a clean exit (code 0, no
+    signal) after the stop asked for it; a crash during the stop is `false`.
 
   And in `metrics/shared.ts`, beside the pool's own: `db_connections_planned` and
   `db_connections_allowed`, the host's pools against Postgres's limit (D12). A slot reap is
@@ -870,6 +871,11 @@ which replaces the primary too.
   - New rule: `agy-cluster-child-crash`, any unexpected child exit. A crash loop has no rule
     of its own: each of its exits fires that one, and the primary then exits 1 and the
     container restarts (D4); `agy-service-not-reporting` covers a host that does not come back.
+    A role's first crash fires too: the supervisor records both of its role's exit series at
+    zero when it is built (`primeChildExits`; `increase()` cannot see a series' first sample),
+    and the rule carries the new-series guard for a crash before that zero's first export. A
+    crash during the primary's own stop counts as well (§6.4); the rule is a warning (Slack),
+    so it never pages for a host that was being stopped anyway.
   - `pnpm test:grafana` checks every new rule and panel against the declarations above, so the
     metrics must be declared in the same commit that the panels reference them.
 
@@ -1060,7 +1066,7 @@ service containers.
 | Runtime role options (step 3) | In the step-3 seam refactor | `AgencyRuntimeOptions` and `startShard` / `stopShard` landed with the shards that use them (step 5) |
 | Heap per role (§8) | Entrypoint per role | `docker/` unchanged (no infrastructure change). Children get their heap through the fork's `execArgv`: `MEDIA_WORKER_HEAP_MB`, and for analysis the budget plus 512 MB. The primary keeps the entrypoint's 4 GB, so a host's RAM must cover the sum (pre-deploy checklist) |
 | `MEDIA_WORKERS` vs cores (§8) | Boot refuses `MEDIA_WORKERS > availableParallelism()` | Not refused (config parsing stays independent of the host), but logged once at boot with the cores and the counts (media + analysis + primary) |
-| Crash-time slot release (§6.1) | Release the slots from the worker's last snapshot | Exact. The bridge reports every admission and release as it happens (`observeLeases`), each worker forwards them as `call.lease` events, and the 5 s snapshot reconciles them, so the slot reap releases precisely what the dead worker held, including a call admitted a moment before the crash. Pinned by the chaos suite with the snapshots off; a mutation of the forwarding goes red |
+| Crash-time slot release (§6.1) | Release the slots from the worker's last snapshot | Exact. The bridge reports every admission and release as it happens (`observeLeases`), each worker forwards them as `call.lease` events, and the 5 s snapshot reconciles them, so the slot reap releases precisely what the dead worker held, including a call admitted a moment before the crash. The reconcile replaces the primary's set with the snapshot's, which is sound because the two cannot disagree: the snapshot is the bridge's lease set, changed in the same step that tells each delta, so it holds a call from admission (before its row and session exist) until its release went out (after its session is gone); and a synchronous request handler is answered in the turn it ran (`ipc-channel.ts`), so no delta computed after the snapshot reaches the primary before it. A stale lease could only cost a release of a key already gone, which the DEL-gated release makes a no-op (keys are per call). Pinned by the chaos suite with the snapshots off (a mutation of the forwarding goes red), `lease-snapshot-window.test.ts` (a snapshot inside either window keeps the lease, and the crash reap releases it) and `ipc-channel.test.ts` (answer ordering). Not covered: a crash inside the admission's own Redis round trip, before `held` is told, leaves that call's slots to the lock TTL |
 | Crash-time carrier hangup (§6.1) | `reapSlot` hangs the dead worker's carrier legs up through VoiceLink's REST API | Not built: **VoiceLink has no hangup endpoint**, so a closed media socket is the only lever. Whether VoiceLink ends the call when its media socket drops, and how fast, is **unverified** and needs a sandbox check (`status.md`, "Not verified"). The rest of the reap is built: slots released, call rows failed, attempts ended `orphaned` with their contacts requeued, manual calls closed, agents written offline with leases cleared |
 | Trace context across IPC (§4.1, §7) | `tp` in the envelope continues the sender's span | Not built: each process traces on its own. The envelope carries the `tp` field, unused |
 | Readiness detail (§6.6) | Per-process view | As designed, plus each process's p99 loop delay and the primary's own loop sample, each over the process's last fixed 5 s window (read without reset; review of PR #29: the first build reset the sample on every probe, so concurrent probers split the window between them). One process also answers `?detail=1` with its own loop; plain `/readyz` is unchanged. Behind `READYZ_DETAIL_TOKEN` (review of PR #29: the first build served it to anyone), and the readiness answer is cached for 1 s (D13) |

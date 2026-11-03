@@ -142,6 +142,22 @@ describe('IpcChannel', () => {
     await expect(primary.request('shutdown', { graceMs: 5 })).rejects.toMatchObject({ code: 'handler_error', message: expect.stringContaining('nope') });
   });
 
+  it('answers a synchronous handler in the turn it ran: an event emitted after it cannot overtake the answer', async () => {
+    // The lease reconcile (`media-cluster.ts`) replaces the primary's map with a snapshot's
+    // leases, which is sound only if no `call.lease` delta computed after the snapshot
+    // reaches the primary before it. A continuation already queued (an admission that just
+    // resolved) runs before an awaited answer would be written.
+    const { pair, primary, child } = channels();
+    const lease = { callId: 'k1', concurrencyKey: 'k1', tenantId: 't', accountId: 'a', provider: 'voicelink' };
+    child.handle('reaper.snapshot', () => {
+      queueMicrotask(() => child.emit('call.lease', { op: 'held', lease }));
+      return { activeAttemptIds: [], unrecordedEnds: [], manualActiveIds: [], activeCallIds: [], leases: [] };
+    });
+    await primary.request('reaper.snapshot', {});
+    await tick();
+    expect((pair.sentByB as Array<{ kind: string }>).map((m) => m.kind)).toEqual(['res', 'event']);
+  });
+
   it('refuses a malformed request body at the receiver, without running the handler', async () => {
     const { primary, child } = channels();
     const handler = vi.fn(() => ({}));

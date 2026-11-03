@@ -3,6 +3,12 @@ import type { ChildProcess } from 'node:child_process';
 import { describe, expect, it, vi } from 'vitest';
 import { ChildSupervisor } from '../../../src/cluster/child-supervisor.js';
 
+const metrics = vi.hoisted(() => ({ trackChildExit: vi.fn() }));
+vi.mock('@magick-agency/observability/metrics/voice', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@magick-agency/observability/metrics/voice')>()),
+  trackChildExit: metrics.trackChildExit,
+}));
+
 /*
  * The primary's per-role supervisor (docs/scaling.md §6.1–6.2) against fake child
  * processes: ready gating, restart after an unexpected exit (with the exit handler awaited
@@ -15,6 +21,8 @@ class FakeChild extends EventEmitter {
   readonly pid = nextPid++;
   readonly sent: unknown[] = [];
   answerShutdown = true;
+  /** How it exits once asked to shut down: cleanly by default, or as a crash mid-stop. */
+  shutdownExit: [number | null, NodeJS.Signals | null] = [0, null];
   constructor(readonly slot: number) { super(); }
   send(message: unknown, ...rest: unknown[]): boolean {
     this.sent.push(message);
@@ -22,7 +30,7 @@ class FakeChild extends EventEmitter {
     cb?.(null);
     const m = message as { kind?: string; type?: string; id?: number };
     if (m.kind === 'req' && m.type === 'shutdown' && this.answerShutdown) {
-      setImmediate(() => this.exit(0, null));
+      setImmediate(() => this.exit(...this.shutdownExit));
     }
     return true;
   }
@@ -163,6 +171,30 @@ describe('ChildSupervisor', () => {
     expect(exitHandler).toHaveBeenCalledWith(expect.objectContaining({ slot: 1, signal: 'SIGKILL', expected: false }));
     expect(reaped).toBe(true);
     expect(forks).toHaveLength(2); // nothing restarted during a stop
+  });
+
+  it('a child that crashes during the stop (a signal or a non-zero code) is a crash: counted unexpected and reaped, not restarted', async () => {
+    metrics.trackChildExit.mockClear();
+    const reaped: Array<{ slot: number; code: number | null; signal: string | null }> = [];
+    const { sup, forks } = harness({
+      count: 3,
+      onExit: async (e) => {
+        await new Promise((r) => setTimeout(r, 20));
+        reaped.push({ slot: e.slot, code: e.code, signal: e.signal });
+      },
+    });
+    await sup.start();
+    forks[0]!.shutdownExit = [null, 'SIGSEGV']; // dies of a signal after the stop began
+    forks[1]!.shutdownExit = [1, null]; // an uncaught throw / OOM abort: non-zero code
+    await sup.stop(500);
+    // Both reaps ran (their slots' leases, attempts and agents) before the stop resolved.
+    expect(reaped.sort((a, b) => a.slot - b.slot)).toEqual([
+      { slot: 0, code: null, signal: 'SIGSEGV' },
+      { slot: 1, code: 1, signal: null },
+    ]);
+    // Slot 2 finished its own shutdown (code 0): expected, no reap.
+    expect(metrics.trackChildExit.mock.calls.sort()).toEqual([['media', false], ['media', false], ['media', true]]);
+    expect(forks).toHaveLength(3); // nothing restarted during a stop
   });
 
   it('broadcast reaches only ready slots, except the one named', async () => {

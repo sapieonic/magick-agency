@@ -201,6 +201,19 @@ export function trackWsHandoff(route: 'station' | 'pstn' | 'unknown', result: 'h
   safeEmit('ws-handoff', () => wsHandoffTotal.inc({ route, result }));
 }
 
+/**
+ * Record a role's two exit series at zero, once its supervisor exists. A cumulative counter
+ * series otherwise appears with its first crash as its first sample, and `increase()` over a
+ * series with one sample is empty, so `agy-cluster-child-crash` would miss the first crash
+ * of each role for the life of the primary. Exported from the first collection on.
+ */
+export function primeChildExits(role: 'media' | 'analysis'): void {
+  safeEmit('child-exit', () => {
+    clusterChildExitsTotal.inc({ role, expected: 'false' }, 0);
+    clusterChildExitsTotal.inc({ role, expected: 'true' }, 0);
+  });
+}
+
 export function trackChildExit(role: 'media' | 'analysis', expected: boolean): void {
   safeEmit('child-exit', () => clusterChildExitsTotal.inc({ role, expected: expected ? 'true' : 'false' }));
 }

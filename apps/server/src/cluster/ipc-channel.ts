@@ -10,6 +10,8 @@
  *    acted: callers that must not double-act (a dial) treat it as "outcome unknown".
  *  - **A closed channel fails everything outstanding with `gone`**, and refuses new
  *    requests with `refused`, so nothing waits on a process that has exited.
+ *  - **A synchronous request handler is answered in the turn it ran**, so its answer
+ *    is ordered against this end's events as it was computed.
  *  - **Bounded.** At most `maxInFlight` requests may be outstanding; past it a request is
  *    refused, not queued. A type given its own bound (`maxInFlightByType`) counts only
  *    against that bound, so a burst of one kind cannot refuse the others. A `false` from the transport's `send` (Node's backlog threshold)
@@ -404,7 +406,13 @@ export class IpcChannel {
       return;
     }
     try {
-      const result = await handler(body);
+      // A synchronous handler is answered in the same turn it ran in, so its answer is
+      // ordered on the wire exactly where it was computed: an event this end emits later is
+      // sent after it, and none slips in between (an `await` here would let queued
+      // continuations emit first). The primary's lease reconcile relies on it (`reaper.snapshot`
+      // vs `call.lease`, `media-cluster.ts`).
+      const out = handler(body);
+      const result = isThenable(out) ? await out : out;
       answer({ ok: true, body: result });
     } catch (err) {
       log.warn({ err, channel: this.opts.name, type: env.type }, 'IPC request handler threw');
@@ -453,4 +461,8 @@ export class IpcChannel {
     log.warn({ channel: this.opts.name, what, why, sample: typeof raw === 'object' ? '[object]' : String(raw).slice(0, 80) },
       'Dropped an IPC message that did not decode');
   }
+}
+
+function isThenable(v: unknown): v is PromiseLike<unknown> {
+  return typeof (v as { then?: unknown } | null)?.then === 'function';
 }
