@@ -863,8 +863,8 @@ describe('seat time on the paths that never reach the settle site', () => {
   });
 
   /**
-   * A dial that fails in the bridge before the carrier is asked (an admission refusal, the
-   * call row INSERT, the carrier tokens, the carrier request's inputs). The bridge's real
+   * A dial that fails in the bridge before the carrier is asked (the call row INSERT, the
+   * carrier tokens, the carrier request's inputs). The bridge's real
    * order for it: no `ended`, only the rejection (`abortUnplacedLeg`). (A carrier refusal is
    * settled by the `ended` arm, below.) The contact went back dialable at once, so a failure
    * that repeats redialled the same contact on every pacing tick, bounded by nothing. It now
@@ -874,7 +874,7 @@ describe('seat time on the paths that never reach the settle site', () => {
    */
   it.each([
     ['the call row INSERT', () => new Error('insert into agency_calls failed')],
-    ['an admission refusal', () => new WebRtcCallError('full', 'account_concurrency_limit', 429)],
+    ['a setup error the bridge wraps', () => new WebRtcCallError('setup', 'telephony_init_failed', 502)],
   ])('holds the contact a minute, uncharged, when the dial failed in the bridge before the carrier (%s)', async (_what, makeErr) => {
     const bridge = fakeBridge();
     bridge.createBridgedCall.mockRejectedValue(makeErr());
@@ -898,6 +898,37 @@ describe('seat time on the paths that never reach the settle site', () => {
     expect(nextAt).toBeLessThanOrEqual(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS);
     expect(PRE_CARRIER_FAILURE_REDIAL_DELAY_MS).toBe(60_000);
     // Uncharged on both ledgers.
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
+    expect(repos.contact.chargeAttempt).not.toHaveBeenCalled();
+    expect(repos.contact.chargeOurFaultAttempt).not.toHaveBeenCalled();
+  });
+
+  /**
+   * An admission refusal is back-pressure, not a failure: pacing caps its dials by the account
+   * limit, and a contact held a minute stalled a floor that freed capacity within seconds
+   * (`integration/load/concurrency-cap.test.ts`).
+   */
+  it.each([
+    'global_concurrency_limit', 'account_concurrency_limit',
+    'provider_concurrency_limit', 'provider_concurrency_unavailable',
+  ] as const)('returns the contact at once, uncharged, when the bridge refused admission (%s)', async (code) => {
+    const bridge = fakeBridge();
+    bridge.createBridgedCall.mockRejectedValue(new WebRtcCallError('full', code, 429));
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = new AgentStateMachine(null, '');
+    vi.spyOn(agents, 'transition').mockResolvedValue(true);
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    await stations.attach({
+      sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
+      agentUserId: 'user-1', ws: fakeWs() as any,
+    });
+
+    await dialer.executeDial(makeCmd());
+
+    expect(persistedOutcome()).toBe('failed');
+    expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
+    expect((repos.contact.unclaim.mock.calls[0]![1] as Date).getTime()).toBeLessThanOrEqual(Date.now());
     expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
     expect(repos.contact.chargeAttempt).not.toHaveBeenCalled();
     expect(repos.contact.chargeOurFaultAttempt).not.toHaveBeenCalled();

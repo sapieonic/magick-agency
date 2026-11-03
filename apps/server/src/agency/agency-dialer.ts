@@ -80,9 +80,10 @@ export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
 
 /**
  * How long a contact waits after its dial failed in the bridge before the carrier was asked
- * (the bridge rejected with no `ended`: an admission refusal, the call row INSERT, the
- * carrier tokens, the carrier request's own inputs). Default, pending Manas
- * (`docs/decisions.md`, "Dial failed before the carrier").
+ * (the bridge rejected with no `ended`: the call row INSERT, the carrier tokens, the carrier
+ * request's own inputs). Default, pending Manas (`docs/decisions.md`, "Dial failed before the
+ * carrier"). Not an admission refusal ({@link CAPACITY_REFUSALS}): that is back-pressure, not
+ * a fault, and its contact goes back at once.
  *
  * Without it the contact went back dialable at once, uncharged, and a failure that repeats
  * (a missing webhook base, a database refusing the INSERT) redialled the same contact on
@@ -98,6 +99,20 @@ export { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS };
  * clears. A minute: well past the pacing tick, short beside every retry the policy sets.
  */
 export const PRE_CARRIER_FAILURE_REDIAL_DELAY_MS = 60_000;
+
+/**
+ * The bridge's admission refusals: a concurrency slot was not available. Nothing failed, so
+ * the contact goes back dialable at once, as before {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS}
+ * existed: pacing caps its dials by the account limit, so the refusal is bounded by the next
+ * tick's capacity, not a loop, and holding the contact a minute would only stall a floor that
+ * frees capacity within seconds (`integration/load/concurrency-cap.test.ts`).
+ */
+const CAPACITY_REFUSALS: ReadonlySet<string> = new Set([
+  'global_concurrency_limit',
+  'account_concurrency_limit',
+  'provider_concurrency_limit',
+  'provider_concurrency_unavailable',
+]);
 
 /**
  * How long a `released` the agent never saw is kept for them to collect on
@@ -550,8 +565,9 @@ export class AgencyDialer {
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
           ? 'reservation_expired'
           : 'failed';
+      const capacityRefused = err instanceof WebRtcCallError && CAPACITY_REFUSALS.has(err.code);
       log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
-      await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown);
+      await this.abandonBeforeDial(cmd, reason, panelDelivered, outcomeUnknown, capacityRefused);
       return;
     }
     live.placing = false;
@@ -602,9 +618,11 @@ export class AgencyDialer {
      * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} and charged to the our-fault ledger
      * (`holdOutcomeUnknownContact`). Otherwise it goes back uncharged: after
      * {@link PRE_CARRIER_FAILURE_REDIAL_DELAY_MS} for a dial that failed in the bridge
-     * (`failed`), at once for a dial called off before it (`reservation_expired`).
+     * (`failed`), at once for a dial called off before it (`reservation_expired`) or
+     * refused admission (`capacityRefused`).
      */
     dialOutcomeUnknown = false,
+    capacityRefused = false,
   ): Promise<void> {
     const outcome = reason === 'failed' ? 'failed' : 'orphaned';
     /**
@@ -655,8 +673,9 @@ export class AgencyDialer {
       // condition was the agent's or ours and has cleared, so `now()`. A dial the bridge
       // failed before the carrier waits PRE_CARRIER_FAILURE_REDIAL_DELAY_MS, so a failure
       // that repeats cannot redial the same contact on every tick (see the constant). Only
-      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's.
-      const notBefore = reason === 'failed'
+      // such a dial reaches here as `failed`: a carrier refusal is the `ended` arm's. An
+      // admission refusal is back-pressure, not a failure: at once (CAPACITY_REFUSALS).
+      const notBefore = reason === 'failed' && !capacityRefused
         ? new Date(Date.now() + PRE_CARRIER_FAILURE_REDIAL_DELAY_MS)
         : new Date();
       await agencyContactRepository.unclaim(cmd.contactId, notBefore)
