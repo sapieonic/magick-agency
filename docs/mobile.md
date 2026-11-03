@@ -156,6 +156,20 @@ relative to the API origin; the app resolves it against `API_ORIGIN` (`Env.resol
   - A give-up (silence, flapping, 1011) is the agent's to undo with Reconnect; returning to the app
     retries only a silence give-up.
 
+## Wrap-up redial
+
+On a campaign with `allow_wrapup_redial` (decisions WR1–WR10), the wrap-up view shows **Redial**
+beside **Save outcome** while an outcome is owed: "N redials left", disabled at "No redials left"
+(at most 2 per call). The `wrapup` frame's `redial_remaining` decides; the bootstrap's
+`allow_wrapup_redial` is decoded but not used to gate it. Pressing it sends
+`POST /proxy/agency/sessions/:id/redial` `{ attempt_id }`. The redial then runs on the station
+socket like any call (`reserved` with `attempt.redial`, shown as "Redial 1 of 2", `bridged`,
+`released`), and ends in a new wrap-up on the redial attempt, whether or not it connected. The pad
+and Save are locked from the press until the new call reaches the station; a refusal (six
+`redial_*` / `disposition_already_submitted` codes, with copy for each) unlocks them and the agent
+can still save the outcome. The notes draft follows the call onto the redial attempt.
+Telemetry: `agency_redial_requested` / `agency_redial_refused`, as on the console.
+
 ## The soft phone
 
 The console's soft phone ([`softphone.md`](softphone.md)) on the phone: dial a typed number
