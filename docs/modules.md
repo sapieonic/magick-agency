@@ -1895,7 +1895,7 @@ preferences, build-time config, the masked in-memory log, and telemetry: PostHog
 `TelemetrySink`, the log's warnings and errors forwarded masked and capped, the call events with the
 phone's own audio counts, and the gate's identity (`mobile.md`, "Telemetry"); the client-exposed feature
 flags per workspace (`flags/feature_flags.dart`), failing closed, which gate a surface, never the
-station core.
+station core (a failed read is read again on return to the app).
 
 Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_identity.dart`, `auth/app_gate.dart`, `auth/auth_copy.dart`, `auth/auth_providers.dart`, `auth/auth_service.dart`, `auth/fake_auth_service.dart`, `auth/firebase_auth_service.dart`, `auth/firebase_token_source.dart`, `flags/feature_flags.dart`, `session/account_choice.dart`, `session/local_preferences.dart`, `session/session_api.dart`, `session/session_store.dart`, `telemetry/call_telemetry.dart`, `telemetry/gate_telemetry.dart`, `telemetry/log.dart`, `telemetry/posthog_sink.dart`, `telemetry/telemetry.dart`
 
@@ -1906,7 +1906,7 @@ Files: `env.dart`, `api/api_client.dart`, `api/api_error.dart`, `api/client_iden
 | `apps/mobile/test/core/auth/auth_copy_test.dart` | ~5 |
 | `apps/mobile/test/core/auth/firebase_auth_service_test.dart` | ~4 |
 | `apps/mobile/test/core/auth/firebase_token_source_test.dart` | ~4 |
-| `apps/mobile/test/core/flags/feature_flags_test.dart` | ~4 |
+| `apps/mobile/test/core/flags/feature_flags_test.dart` | ~5 |
 | `apps/mobile/test/core/session/account_choice_test.dart` | ~8 |
 | `apps/mobile/test/core/session/local_preferences_test.dart` | ~1 |
 | `apps/mobile/test/core/session/session_api_test.dart` | ~6 |
@@ -1940,7 +1940,7 @@ Files: `station/close_softphone.dart`, `station/contact_context.dart`, `station/
 | `apps/mobile/test/core/station/contact_and_copy_test.dart` | ~31 |
 | `apps/mobile/test/core/station/station_controller_test.dart` | ~67 |
 | `apps/mobile/test/core/station/softphone_host_test.dart` | ~41 |
-| `apps/mobile/test/core/station/station_queue_test.dart` | ~10 |
+| `apps/mobile/test/core/station/station_queue_test.dart` | ~11 |
 | `apps/mobile/test/core/station/station_reducer_test.dart` | ~28 |
 | `apps/mobile/test/core/station/station_redial_test.dart` | ~27 |
 | `apps/mobile/test/core/station/station_socket_test.dart` | ~27 |
@@ -1988,7 +1988,7 @@ Files: `auth/auth_widgets.dart`, `auth/no_membership_screen.dart`, `auth/sign_in
 | `apps/mobile/test/features/join/invite_redirect_test.dart` | ~5 |
 | `apps/mobile/test/features/join/invite_screen_test.dart` | ~13 |
 | `apps/mobile/test/features/accounts/account_picker_test.dart` | ~8 |
-| `apps/mobile/test/features/campaigns/campaigns_screen_test.dart` | ~17 |
+| `apps/mobile/test/features/campaigns/campaigns_screen_test.dart` | ~20 |
 | `apps/mobile/test/features/settings/me_screen_test.dart` | ~18 |
 
 ### `apps/mobile/lib/features/` (`performance/`, `calls/`)
@@ -2022,8 +2022,8 @@ Files: `performance/agent_workspace.dart`, `performance/campaign_names.dart`, `p
 
 My contacts on one campaign (contact assignment, behind `agency_contact_assignment_enabled`): the
 agent's counts, "Retry not reached", their contacts keyset-paged with a bucket filter and a number
-search, and a Call on each contact they may call now; reachable from the campaign's card and the
-station's waiting screen. The own-contact routes (`my_contacts_api.dart`), the controller (the
+search, and a Call on each contact they may call now; reachable from the station's waiting screen
+and the on-duty campaign's card, when the join bootstrap offers it (not `pool`, or agent retry on). The own-contact routes (`my_contacts_api.dart`), the controller (the
 filters' only way in, restarting from the first page), every sentence it says with an exhaustive
 `switch` per vocabulary (`my_contacts_copy.dart`), and the screen. Test helper: `support.dart`.
 
@@ -2031,9 +2031,9 @@ Files: `my_contacts_api.dart`, `my_contacts_controller.dart`, `my_contacts_copy.
 
 | Test file | Cases |
 |---|---|
-| `apps/mobile/test/features/contacts/my_contacts_controller_test.dart` | ~26 |
+| `apps/mobile/test/features/contacts/my_contacts_controller_test.dart` | ~31 |
 | `apps/mobile/test/features/contacts/my_contacts_copy_test.dart` | ~8 |
-| `apps/mobile/test/features/contacts/my_contacts_screen_test.dart` | ~15 |
+| `apps/mobile/test/features/contacts/my_contacts_screen_test.dart` | ~16 |
 ### `apps/mobile/lib/features/` (`preflight/`, `station/`)
 
 Pre-flight (pure grading apart from the device measurements) and the station screens: one
@@ -2051,7 +2051,7 @@ Files: `preflight/device_preflight_checks.dart`, `preflight/preflight_checks.dar
 | `apps/mobile/test/features/station/station_link_test.dart` | ~11 |
 | `apps/mobile/test/features/station/station_logic_test.dart` | ~23 |
 | `apps/mobile/test/features/station/station_modals_test.dart` | ~21 |
-| `apps/mobile/test/features/station/station_nothing_due_test.dart` | ~8 |
+| `apps/mobile/test/features/station/station_nothing_due_test.dart` | ~9 |
 | `apps/mobile/test/features/station/station_phases_test.dart` | ~38 |
 | `apps/mobile/test/features/station/station_redial_test.dart` | ~12 |
 | `apps/mobile/test/features/station/station_softphone_test.dart` | ~19 |

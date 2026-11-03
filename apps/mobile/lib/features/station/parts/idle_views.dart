@@ -95,9 +95,11 @@ class WaitingView extends ConsumerWidget {
 }
 
 /// "My contacts" (contact assignment) on the waiting screen, while the
-/// surface is on for the agent's account: whom the agent holds on this
-/// campaign, and calling one of them now. Nothing otherwise. Followed by a
-/// gap, so it sits above the screen's other actions.
+/// surface is on for the agent's account and the campaign has one
+/// ([StationView.myContactsOffered]: it assigns contacts or lets agents
+/// retry): whom the agent holds on this campaign, and calling one of them
+/// now. Nothing otherwise. Followed by a gap, so it sits above the screen's
+/// other actions.
 class MyContactsButton extends ConsumerWidget {
   const MyContactsButton({super.key});
 
@@ -105,7 +107,8 @@ class MyContactsButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final enabled = ref.watch(contactAssignmentEnabledProvider);
     final campaignId = ref.watch(stationViewProvider.select((v) => v?.campaignId));
-    if (!enabled || campaignId == null) return const SizedBox.shrink();
+    final offered = ref.watch(stationViewProvider.select((v) => v?.myContactsOffered ?? false));
+    if (!enabled || !offered || campaignId == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(bottom: Space.sm),
       child: OutlinedButton.icon(

@@ -33,10 +33,14 @@ abstract final class MyContactsCopy {
   static const callPlaced = 'Calling now. The station takes over when it rings.';
   static const callNeedsStation = 'Go on duty on this campaign and be available to call a contact yourself.';
   static const callNeedsAvailable = 'Be available on the station to call a contact yourself.';
+  static const callNeedsRunning = 'The campaign isn’t running, so no call can be placed.';
   static const noteTitle = 'Call outside calling hours?';
-  static String noteBody(String disposition) =>
-      'The outcome “$disposition” lets you call this customer outside the campaign’s calling hours, once. '
-      'Say why (10 to 500 characters); your supervisor sees it.';
+
+  /// [disposition] is the grant's outcome, or null when the list has not
+  /// caught up with it (the server said the contact holds one).
+  static String noteBody(String? disposition) =>
+      '${disposition == null ? 'An earlier outcome' : 'The outcome “$disposition”'} lets you call this customer '
+      'outside the campaign’s calling hours, once. Say why (10 to 500 characters); your supervisor sees it.';
   static const noteLabel = 'Why are you calling now?';
   static const noteTooShort = 'Write at least 10 characters.';
   static const noteTooLong = 'Keep it to 500 characters.';
@@ -127,7 +131,7 @@ abstract final class MyContactsCopy {
           'This contact can’t be called now. ${retryBlock(r.blocked, availableAt: r.availableAt, now: now)}',
         AgentRetryErrorCode.contactInFlight =>
           'This customer is on a call right now. Wait for it to finish, then try again.',
-        AgentRetryErrorCode.campaignNotRunning => 'The campaign isn’t running, so no call can be placed.',
+        AgentRetryErrorCode.campaignNotRunning => callNeedsRunning,
         AgentRetryErrorCode.agentNotAvailable => callNeedsAvailable,
         AgentRetryErrorCode.outsideCallingHours => r.nextOpenAt == null
             ? 'It’s outside this campaign’s calling hours.'

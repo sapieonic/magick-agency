@@ -25,8 +25,9 @@ import 'my_contacts_copy.dart';
 /// "Retry not reached", their contacts filtered by bucket and number, and a
 /// Call on each contact they may call now.
 ///
-/// Behind the `agency_contact_assignment_enabled` flag. Reachable from the
-/// campaign's card and from the station's waiting screen; while on duty on
+/// Behind the `agency_contact_assignment_enabled` flag. Reachable, when the
+/// join bootstrap offers it ([StationView.myContactsOffered]), from the
+/// station's waiting screen and the on-duty campaign's card; while on duty on
 /// this campaign the router keeps it open (it is the station's own page) until
 /// a call takes the screen, so the call it places lands on the station.
 class MyContactsScreen extends ConsumerStatefulWidget {
@@ -176,7 +177,7 @@ class _BodyState extends ConsumerState<_Body> {
     if (result case ContactCallNeedsNote(:final grant)) {
       final note = await showDialog<String>(
         context: context,
-        builder: (context) => _OverrideNoteDialog(disposition: grant.disposition),
+        builder: (context) => _OverrideNoteDialog(disposition: grant?.disposition),
       );
       if (note == null || !mounted) return;
       result = await _controller.call(contact, overrideNote: note);
@@ -188,7 +189,7 @@ class _BodyState extends ConsumerState<_Body> {
       case ContactCallFailed(:final message):
         _say(message);
       case ContactCallNeedsNote():
-        // Asked once; a second "outside hours" with a note is a refusal, said above.
+        // Asked once: the same refusal with a note sent is a ContactCallFailed.
         break;
     }
   }
@@ -200,7 +201,8 @@ class _BodyState extends ConsumerState<_Body> {
     final now = ref.read(statsClockProvider)();
     final rows = state.rows;
     final summary = state.summary;
-    final retryAllowed = summary?.retry.allowed ?? false;
+    // Picking rows follows "Retry not reached": only once nothing is due.
+    final retryOpen = summary?.retryOpen ?? false;
 
     final List<Widget> list;
     switch (state.status) {
@@ -254,7 +256,7 @@ class _BodyState extends ConsumerState<_Body> {
               (context, i) {
                 if (i >= rows.length - MyContactsScreen.prefetchRows && state.hasMore) _maybePrefetch();
                 final c = rows[i];
-                final selectable = retryAllowed && c.retry.eligible;
+                final selectable = retryOpen && c.retry.eligible;
                 return _ContactTile(
                   key: ValueKey(c.id),
                   contact: c,
@@ -416,8 +418,10 @@ class _SummaryCard extends StatelessWidget {
       };
 }
 
-/// "Retry not reached (N)" when nothing is due and something can be retried,
-/// and "Retry selected (k)" while contacts are picked.
+/// "Retry not reached (N)" when retry is allowed, nothing is due and
+/// something can be retried, and "Retry selected (k)" while contacts are
+/// picked; nothing while anything is due (the console's rule: retry is
+/// offered once the due contacts are used up).
 class _RetryBar extends StatelessWidget {
   const _RetryBar({
     required this.summary,
@@ -438,7 +442,7 @@ class _RetryBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = summary;
-    if (s == null || !s.retry.allowed) return const SizedBox.shrink();
+    if (s == null || !s.retryOpen) return const SizedBox.shrink();
     final children = <Widget>[
       if (selected > 0) ...[
         FilledButton(
@@ -723,7 +727,7 @@ class _Footer extends StatelessWidget {
 class _OverrideNoteDialog extends StatefulWidget {
   const _OverrideNoteDialog({required this.disposition});
 
-  final String disposition;
+  final String? disposition;
 
   @override
   State<_OverrideNoteDialog> createState() => _OverrideNoteDialogState();

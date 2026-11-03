@@ -123,6 +123,27 @@ void main() {
       });
     });
 
+    test('My contacts is offered on the console’s rule: a mode that is not pool, or agent retry on', () {
+      for (final (extra, offered) in <(Map<String, Object?>, bool)>[
+        ({}, false),
+        ({'assignment_mode': 'pool'}, false),
+        ({'assignment_mode': 'pool', 'allow_agent_retry': false}, false),
+        ({'assignment_mode': 'pool', 'allow_agent_retry': true}, true),
+        ({'allow_agent_retry': true}, true),
+        ({'assignment_mode': 'strict'}, true),
+        ({'assignment_mode': 'preferred'}, true),
+        ({'assignment_mode': 'round_robin'}, true),
+      ]) {
+        fakeAsync((async) {
+          final app = App(async);
+          app.routes['POST /proxy/agency/sessions'] = (_) => json(200, {...bootstrapJson(), ...extra});
+          app.start();
+          expect(app.view!.myContactsOffered, offered, reason: '$extra');
+          app.dispose();
+        });
+      }
+    });
+
     test('a pool campaign has no queue, and the waiting screen keeps its words', () {
       fakeAsync((async) {
         final app = App(async)..start();

@@ -11,7 +11,7 @@ import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/flags/feature_flags.dart';
 
 import '../../features/performance/support.dart' show RecordingGate, testWorkspaceProvider;
-import '../station/controller_harness.dart' show FakeTokens, testEnv;
+import '../station/controller_harness.dart' show FakeLifecycle, FakeTokens, testEnv;
 
 /// The client flag map: read per workspace from `GET /feature-flags`, and
 /// fail closed while it loads or when it cannot be read.
@@ -19,11 +19,18 @@ void main() {
   late List<String> paths;
   late Map<String, String> lastHeaders;
   late FutureOr<http.Response> Function() reply;
+  late List<FakeLifecycle> lifecycles;
 
   ProviderContainer make() {
     paths = [];
+    lifecycles = [];
     final c = ProviderContainer(
       overrides: [
+        featureFlagsLifecycleProvider.overrideWithValue(() {
+          final l = FakeLifecycle();
+          lifecycles.add(l);
+          return l;
+        }),
         envProvider.overrideWithValue(testEnv),
         idTokenSourceProvider.overrideWithValue(FakeTokens()),
         requestScopeProvider.overrideWithValue(RequestScope()
@@ -68,6 +75,35 @@ void main() {
     expect(await settle(make()), isFalse);
     reply = () => http.Response('{"error":"Forbidden","message":"no"}', 403, headers: {'content-type': 'application/json'});
     expect(await settle(make()), isFalse);
+  });
+
+  test('a failed read does not stick: the next return to the app reads it again', () async {
+    reply = () => throw http.ClientException('offline');
+    final c = make();
+    expect(await settle(c), isFalse);
+    expect(paths, hasLength(1));
+    expect(lifecycles, hasLength(1));
+
+    // Leaving and coming back while it still fails: asked again, still off.
+    lifecycles.single
+      ..hide()
+      ..show();
+    expect(await settle(c), isFalse);
+    expect(paths, hasLength(2));
+
+    reply = () => ok({'agency_contact_assignment_enabled': true});
+    lifecycles.last
+      ..hide()
+      ..show();
+    expect(await settle(c), isTrue);
+    expect(paths, hasLength(3));
+
+    // A map that was read stays: returning to the app reads nothing more.
+    for (final l in lifecycles) {
+      l.show();
+    }
+    expect(await settle(c), isTrue);
+    expect(paths, hasLength(3));
   });
 
   test('nobody signed in to an account: off, and nothing is asked', () async {

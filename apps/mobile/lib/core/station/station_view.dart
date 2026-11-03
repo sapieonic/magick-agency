@@ -446,6 +446,7 @@ class StationView {
     this.actionError,
     this.fatal,
     this.queue,
+    this.myContactsOffered = false,
   });
 
   final String campaignId;
@@ -501,6 +502,12 @@ class StationView {
   /// where the waiting screen keeps its usual words.
   final QueueView? queue;
 
+  /// Whether this campaign has a My contacts for the agent (contact
+  /// assignment), as the join bootstrap says: it assigns contacts (not
+  /// `pool`) or lets agents retry the ones they did not reach. The
+  /// console's rule for its header button; the flag is checked on top.
+  final bool myContactsOffered;
+
   /// The call screen must be in front: reserved, on a call or in wrap-up.
   bool get callActive => phase == AgentPhase.reserved || phase == AgentPhase.onCall || phase == AgentPhase.wrapup;
 
@@ -536,7 +543,8 @@ class StationView {
       other.busy == busy &&
       other.actionError == actionError &&
       other.fatal == fatal &&
-      other.queue == queue;
+      other.queue == queue &&
+      other.myContactsOffered == myContactsOffered;
 
   @override
   int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue]);

@@ -191,17 +191,27 @@ minus refused is not the number placed.
 
 Behind `agency_contact_assignment_enabled` (decisions CA1–CA15), which the app reads per
 workspace from `GET /feature-flags` (`lib/core/flags/feature_flags.dart`; every flag reads off
-until that answer arrives). **My contacts** (`lib/features/contacts/`, route
-`/home/contacts/:campaignId`) opens from the campaign's card and from the station's waiting screen.
-It shows the agent's counts per bucket (`GET /proxy/agency/my-contacts/summary`), **Retry not
-reached (N)** (`POST /proxy/agency/my-contacts/retry`, offered only while the campaign allows it
-and N > 0), and their contacts in due order, filtered by bucket and by number (digits only),
-paged (`GET /proxy/agency/my-contacts`). **Call** is offered on a contact the agent may call now
-(retry-eligible, due, or holding a retry-delay override) and sends
-`POST /proxy/agency/my-contacts/:contactId/call`; the call then arrives on the station like any
-other. A calling-hours note is asked for only after an `outside_calling_hours` refusal, and only
-when the contact holds the calling-hours override. While the agent is on duty on that campaign the
-router keeps My contacts open (it is the station's own page) until a call takes the screen.
+until that answer arrives; a map that was read stays for the workspace, and a failed read is read
+again on the next return to the app or a pull to refresh of the campaign list). **My contacts**
+(`lib/features/contacts/`, route `/home/contacts/:campaignId`) is offered on the console's rule:
+the flag on, and the join bootstrap saying the campaign assigns contacts (`assignment_mode` not
+`pool`) or lets agents retry (`allow_agent_retry`) (`StationView.myContactsOffered`). So it opens
+from the station's waiting screen and from the card of the campaign the agent is on duty on; off
+duty there is no bootstrap, and no entry. It shows the agent's counts per bucket
+(`GET /proxy/agency/my-contacts/summary`), **Retry not reached (N)**
+(`POST /proxy/agency/my-contacts/retry`, offered only while the campaign allows it, nothing is due
+now and N > 0; picking rows for **Retry selected** follows the same rule), and their contacts in
+due order, filtered by bucket and by number (digits only), paged (`GET /proxy/agency/my-contacts`).
+**Call** is offered while the agent is on duty on the campaign, the campaign is dialling (the
+`campaign_state` frame; a paused campaign refuses `campaign_not_running`) and the agent is
+available, on a contact they may call now (retry-eligible, due, or holding a retry-delay override),
+and sends `POST /proxy/agency/my-contacts/:contactId/call`; the call then arrives on the station
+like any other. A calling-hours note is asked for when the call, sent without one, is refused
+`400 override_note_invalid`: the server's answer outside the window for a contact holding an
+unspent calling-hours override (without one it answers `409 outside_calling_hours`, said as a
+refusal). The same refusal with a note sent is said as an error, not asked again. While the agent
+is on duty on that campaign the router keeps My contacts open (it is the station's own page) until
+a call takes the screen.
 
 On a `strict` or `preferred` campaign the waiting screen shows why nothing is coming when the
 `queue` state says so ("No contacts are waiting for you. Your supervisor can assign more.",
@@ -210,7 +220,10 @@ comes from the bootstrap, `ready` (an absent `queue` clears it) and the `queue` 
 `agency_wire` types are in `packages/agency_wire/lib/src/assignment.dart`; a disposition's
 `override` decodes as `Disposition.overrideGrant`, and a bootstrap without `assignment_mode` reads
 `pool`. Telemetry: `agency_my_contacts_viewed`, `agency_agent_retry_requested`,
-`agency_my_contact_call_requested`, the same names as the console.
+`agency_my_contact_call_requested`, the same names and property sets as the console's
+`EventCatalog`. The console sends `code: null` (placed, reopened, or a failure with no refusal
+body); the app's telemetry layer sends no null properties, so there the property is absent, which
+PostHog reads the same way.
 
 ## The soft phone
 

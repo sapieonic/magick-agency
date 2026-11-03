@@ -74,6 +74,13 @@ void main() {
     expect(find.byKey(const Key('call-gate')), findsNothing);
   });
 
+  testWidgets('a paused campaign: no Call, and the screen says why', (tester) async {
+    await pump(tester, station: onStation(dialing: false));
+    expect(find.byKey(const Key('call-k1')), findsNothing);
+    expect(find.byKey(const Key('call-k4')), findsNothing);
+    expect(find.text(MyContactsCopy.callNeedsRunning), findsOneWidget);
+  });
+
   testWidgets('off duty: no Call, and the screen says how to get one', (tester) async {
     await pump(tester, station: onStation(phase: AgentPhase.onBreak));
     expect(find.byKey(const Key('call-k1')), findsNothing);
@@ -89,7 +96,7 @@ void main() {
   });
 
   testWidgets('outside hours with the override: the note is asked for, checked, and sent', (tester) async {
-    api.callAnswers.add(refusal('outside_calling_hours'));
+    api.callAnswers.add(noteWanted());
     await pump(tester);
     await tester.tap(find.byKey(const Key('call-k4')));
     await tester.pumpAndSettle();
@@ -130,10 +137,12 @@ void main() {
     expect(find.text('Reopened 3 contacts. They’ll be dialled in turn.'), findsOneWidget);
   });
 
-  testWidgets('no Retry not reached while something is due, or when retry is off', (tester) async {
+  testWidgets('no Retry not reached and no picking while something is due', (tester) async {
     api.summaryAnswer = summaryOf(dueNow: 2);
     await pump(tester);
     expect(find.byKey(const Key('retry-all')), findsNothing);
+    expect(find.byKey(const Key('select-k1')), findsNothing, reason: 'the console offers retry once nothing is due');
+    expect(find.text(MyContactsCopy.selectHint), findsNothing);
   });
 
   testWidgets('retry is off: no picking and no retry', (tester) async {

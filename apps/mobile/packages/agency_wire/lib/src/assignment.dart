@@ -497,9 +497,14 @@ final class MyContactsSummary {
   final int unassignedOpen;
   final MyContactsRetrySummary retry;
 
-  /// "Retry not reached (N)" is offered: retry is allowed, something is
-  /// eligible, and nothing is due now (pacing would dial that first).
-  bool get offersRetry => retry.allowed && retry.eligible > 0 && dueNow == 0;
+  /// Retry is open to the agent (picking rows, "Retry selected"): the
+  /// campaign allows it now and nothing is due (pacing would dial that
+  /// first; retry is for once the due contacts are used up).
+  bool get retryOpen => retry.allowed && dueNow == 0;
+
+  /// "Retry not reached (N)" is offered: [retryOpen] and something is
+  /// eligible. The console's `showRetryNotReached`.
+  bool get offersRetry => retryOpen && retry.eligible > 0;
 
   @override
   bool operator ==(Object other) =>

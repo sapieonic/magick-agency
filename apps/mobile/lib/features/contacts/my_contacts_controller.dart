@@ -168,8 +168,10 @@ class MyContactsState {
 }
 
 /// Whether the agent can call one of their contacts from here: on duty on
-/// this campaign's station and available (the call is dialled from that
-/// session, on the campaign's normal path). [blocked] says why not.
+/// this campaign's station, the campaign dialling, and available (the call is
+/// dialled from that session, on the campaign's normal path; the server
+/// refuses it `campaign_not_running` on a paused campaign). [blocked] says why
+/// not. The console's `contactCallGate` checks the same, in the same order.
 @immutable
 class ContactCallGate {
   const ContactCallGate.open(String this.sessionId) : blocked = null;
@@ -196,6 +198,7 @@ ContactCallGate callGateOf(StationView? view, String campaignId) {
       view.link == StationLink.superseded) {
     return const ContactCallGate.closed(MyContactsCopy.callNeedsStation);
   }
+  if (!view.campaignDialing) return const ContactCallGate.closed(MyContactsCopy.callNeedsRunning);
   if (view.phase != AgentPhase.available || view.callActive) {
     return const ContactCallGate.closed(MyContactsCopy.callNeedsAvailable);
   }
@@ -234,11 +237,14 @@ final class ContactCallPlaced extends ContactCallResult {
   final MyContactCallResponse response;
 }
 
-/// Outside the calling hours, and the contact holds a calling-hours override:
-/// ask for the note and call again with it.
+/// Outside the calling hours, and the contact holds a calling-hours override
+/// (the server refused the call without a note `override_note_invalid`): ask
+/// for the note and call again with it.
 final class ContactCallNeedsNote extends ContactCallResult {
   const ContactCallNeedsNote(this.grant);
-  final ContactOverride grant;
+
+  /// The grant as the list last read it; null when the row predates it.
+  final ContactOverride? grant;
 }
 
 final class ContactCallFailed extends ContactCallResult {
@@ -306,17 +312,18 @@ class MyContactsController extends Notifier<MyContactsState> {
     try {
       final summary = await _api.summary(campaignId);
       if (!ref.mounted || mine != _summaryGeneration) return;
-      state = state.copyWith(summary: summary, clearSummaryError: true);
+      state = state.copyWith(
+        summary: summary,
+        clearSummaryError: true,
+        // Picks only while retry is offered (see [MyContactsSummary.retryOpen]).
+        selected: summary.retryOpen ? null : const {},
+      );
       if (!_viewedSent) {
         _viewedSent = true;
+        // The console's property set exactly (`EventCatalog` in apps/console/src/analytics/events.ts).
         Telemetry.event('agency_my_contacts_viewed', {
           'campaign_id': campaignId,
           'assignment_mode': summary.assignmentModeRaw,
-          'total': summary.total,
-          'due_now': summary.dueNow,
-          'retry_eligible': summary.retry.eligible,
-          for (final b in MyContactBucket.values)
-            if (!b.isUnknown) 'count_${b.wire}': summary.counts[b],
         });
       }
     } on Exception catch (e) {
@@ -405,11 +412,12 @@ class MyContactsController extends Notifier<MyContactsState> {
   }
 
   /// Picks or unpicks [contact] for "Retry selected". Only a contact the
-  /// agent can retry now can be picked.
+  /// agent can retry now can be picked, and only while retry is offered
+  /// ([MyContactsSummary.retryOpen]: allowed, and nothing due now).
   void toggleSelected(MyContact contact) {
     final selected = {...state.selected};
     if (!selected.remove(contact.id)) {
-      if (!contact.retry.eligible) return;
+      if (!contact.retry.eligible || !(state.summary?.retryOpen ?? false)) return;
       selected.add(contact.id);
     }
     state = state.copyWith(selected: selected);
@@ -440,6 +448,7 @@ class MyContactsController extends Notifier<MyContactsState> {
         'outcome': 'reopened',
         'reopened': response.reopened,
         'skipped_total': response.skippedTotal,
+        'code': null,
       });
       if (!ref.mounted) return RetryResult(ok: true, message: MyContactsCopy.retryDone(response));
       state = state.copyWith(retrying: false, selected: const {});
@@ -451,6 +460,8 @@ class MyContactsController extends Notifier<MyContactsState> {
         'scope': selectedOnly ? 'selected' : 'all',
         'requested': requested,
         'outcome': 'refused',
+        'reopened': 0,
+        'skipped_total': 0,
         'code': _codeOf(e),
       });
       final message = MyContactsCopy.error(e, now: _now());
@@ -464,8 +475,11 @@ class MyContactsController extends Notifier<MyContactsState> {
   }
 
   /// Dials [contact] now from the agent's station session on this campaign.
-  /// Outside the calling hours, a contact holding a calling-hours override
-  /// answers [ContactCallNeedsNote]: call again with [overrideNote].
+  /// Outside the calling hours, a contact holding an unspent calling-hours
+  /// override is refused `override_note_invalid` when no note was sent (the
+  /// server's `defer` arm; without the override it is `outside_calling_hours`,
+  /// a plain refusal): that answers [ContactCallNeedsNote], so the agent can
+  /// call again with [overrideNote]. The same refusal WITH a note is an error.
   Future<ContactCallResult> call(MyContact contact, {String? overrideNote}) async {
     if (state.callingId != null) return const ContactCallFailed(MyContactsCopy.calling);
     final gate = callGateOf(ref.read(stationViewProvider), campaignId);
@@ -476,11 +490,10 @@ class MyContactsController extends Notifier<MyContactsState> {
       final problem = overrideNoteProblem(note);
       if (problem != null) return ContactCallFailed(problem);
     }
-    final grant = contact.overrideGrant;
+    // The console's property set exactly (`EventCatalog` in apps/console/src/analytics/events.ts).
     final event = <String, Object?>{
       'campaign_id': campaignId,
       'bucket': contact.bucketRaw,
-      'override_kinds': grant == null || grant.kinds.isEmpty ? 'none' : grant.kinds.map((k) => k.wire).join(','),
       'with_override_note': note != null,
     };
     state = state.copyWith(callingId: contact.id);
@@ -492,24 +505,29 @@ class MyContactsController extends Notifier<MyContactsState> {
       Telemetry.event('agency_my_contact_call_requested', {
         ...event,
         'outcome': 'placed',
-        'override_applied': response.overrideApplied.isEmpty
-            ? 'none'
-            : response.overrideAppliedRaw.join(','),
+        'code': null,
+        'override_applied_count': response.overrideAppliedRaw.length,
         'retry_round_spent': response.retryRoundSpent,
       });
       if (ref.mounted) state = state.copyWith(clearCallingId: true);
       return ContactCallPlaced(response);
     } on Exception catch (e) {
       final refusal = e is ApiHttpError ? ErrorBody.fromJson(e.body).agentRetryRefusal : null;
-      Telemetry.event('agency_my_contact_call_requested', {...event, 'outcome': 'refused', 'code': _codeOf(e)});
+      Telemetry.event('agency_my_contact_call_requested', {
+        ...event,
+        'outcome': 'refused',
+        'code': _codeOf(e),
+        'override_applied_count': 0,
+        'retry_round_spent': false,
+      });
       if (!ref.mounted) return ContactCallFailed(MyContactsCopy.error(e, now: _now()));
       reportToGate(ref, e);
       state = state.copyWith(clearCallingId: true);
-      if (refusal?.code == AgentRetryErrorCode.outsideCallingHours &&
-          note == null &&
-          grant != null &&
-          grant.callingHours) {
-        return ContactCallNeedsNote(grant);
+      // The server holds an unspent calling-hours override for this contact and
+      // wants the agent's reason for spending it. Asked for once: the same
+      // refusal with a note sent is a refusal, said below.
+      if (refusal?.code == AgentRetryErrorCode.overrideNoteInvalid && note == null) {
+        return ContactCallNeedsNote(contact.overrideGrant);
       }
       // The contact moved under us (reassigned, dialled, blocked): show it as it is now.
       if (refusal?.code == AgentRetryErrorCode.contactNotFound ||
@@ -521,14 +539,12 @@ class MyContactsController extends Notifier<MyContactsState> {
     }
   }
 
-  /// The refusal's code for telemetry (never its message), else the failure's kind.
-  static String _codeOf(Object e) => switch (e) {
-        ApiHttpError(:final code) => code ?? 'http_error',
-        ApiNetworkError() => 'network',
-        ApiUnauthorized() => 'unauthorized',
-        ApiDecodeError() => 'decode',
-        _ => 'error',
-      };
+  /// The refusal's code for telemetry (never its message), as the console's
+  /// `errorCode`: the server's `code`, else null (a failure with no refusal
+  /// body: no network, a 401, an unreadable answer). [Telemetry] drops a null
+  /// property, so such an event carries no `code` at all, which PostHog
+  /// reads as the console's `null`.
+  static String? _codeOf(Object e) => e is ApiHttpError ? e.code : null;
 }
 
 final myContactsControllerProvider =
