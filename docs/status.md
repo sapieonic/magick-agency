@@ -575,6 +575,58 @@ fails on the old code and goes red when the fix is reverted.
 - `load/pacing-skip.test.ts` failed once in a full integration run beside other worktrees' runs
   and passed alone; the cause is not found.
 
+### Contact assignment 2026-11-03
+
+A supervisor assigns roster contacts to agents, agents work their own queue, agents retry or call
+the contacts they did not reach, and an outcome can grant a contact an override (phases 1 and 2 of
+the ask; inbound routing out of scope). Behind `agency_contact_assignment_enabled` (default off);
+decisions CA1–CA15 in [`decisions.md`](decisions.md) §4, "Contact assignment". Console and agent
+app.
+
+- Migration `0009_contact_assignment.sql` (seven campaign settings, the contact's owner, retry
+  rounds and override columns, `idx_agency_contacts_assignee`, the history table
+  `agency_contact_assignment_events`, the attempt's `agent_manual` / `override_applied` /
+  `override_note`), inventoried in `packages/db/BASELINE.md` and tested down and up. Contracts:
+  `agency/assignment.ts`, `api/agency/assignment.ts` (eight routes, both refusal unions), the
+  `queue` station frame, the disposition `override`, the roster's `assigned_to` filter, the flag,
+  the permission `agency.contacts.own`, agent fixtures and Dart literals.
+- Campaign settings: `assignment_mode` (`pool` / `strict` / `preferred`, changed only while draft
+  or paused), `on_unstaff`, the callback grace and fallback, agent retry on/off, rounds and
+  cooldown; one validator for both write paths; a retry campaign can keep the owners.
+- Supervisor: preview then commit (random split, count, filter, range, rebalance, unassign), with
+  a token so the commit is exactly the preview or `409 preview_stale`; progress per agent with
+  presence and the pool; a contact's owner history; the roster's owner column, filter and CSV
+  columns. Console: assignment settings in the campaign form, the assignment dialog from the
+  roster selection or the filter, progress on the campaign page.
+- Pacing: `strict` / `preferred` pair by agent in one statement; an agent with nothing due is not
+  reserved and is told why (`queue` frame, bootstrap, `ready`, the My contacts summary: one
+  reading); due callbacks whose owner is away past the grace fall back to the pool (leader sweep).
+- Agent: My contacts on the console (a panel from the station header) and the app (a page from
+  the campaign card and the waiting screen): counts, "Retry not reached (N)", the contacts in due
+  order with bucket and number filters, and Call, which places the call on the campaign's normal
+  path with `agent_manual` on the attempt.
+- Outcomes: a catalog entry's `override` (extra attempts 1–5, retry delay, calling hours with a
+  note) is granted when it is recorded and spent at exhaustion (extra attempts) or by the agent's
+  call (the other two); a pooled callback goes to the agent who took it. DNC wins everywhere. The
+  soft phone refuses another agent's contact on a `strict` campaign (`contact_assigned_elsewhere`).
+- Unstaff on all three paths returns the agent's open contacts to the pool (or keeps them), audited.
+- Built in six parallel lanes over one foundation (migration, contracts, the shared bucket and
+  eligibility SQL), then integrated: the agent's actions moved into the assignment route family,
+  and the My contacts summary reads the pacing probe's queue so it cannot disagree with the
+  station. Every lane's guard tests were mutation-checked (owner predicate, live skip, split seed,
+  agent-dial 404, the queue reading).
+- Scale, measured once on a throwaway 1M-contact roster: a random-split preview 5.4 s, progress
+  0.8 s, an agent's summary 0.28 s and list 0.26 s; a commit moving all 1M contacts took about
+  177 s (the bare UPDATE alone is 80 s on that disk). Batching very large commits is the next step
+  if a roster that size is assigned in one operation.
+- **Left open** (none blocks the flag staying off): the pacing probe ignores the one-live-call per
+  number rule (an agent can be reserved and then get nothing that tick, and is returned); extra
+  attempts are not spent by the soft phone's settlement or the reaper's lapsed wrap-up close; in
+  `strict` mode a callback that falls back waits for a supervisor (CA5); the summary has no next
+  callback time; the roster cannot filter by bucket, so the progress links open a superset; the
+  console's per-contact history client is unused; roster replace (B15) is not built, so nothing
+  supersedes an owner (CA11). Not verified on a real carrier or phone.
+
 ## Test counts
 
 Latest run, 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
@@ -788,6 +840,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 | Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected` |
+| Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 
 ## Deployment invariants
