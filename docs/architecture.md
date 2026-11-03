@@ -290,13 +290,14 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   unknown, it is held too. The hold is one statement with an our-fault charge
   (`holdOutcomeUnknownContact` in `dialer/contact-settlement.ts`, over the reaper's
   `requeueOrphaned`), so the our-fault bound ends a run of such dials. A dial that fails in the bridge
-  before the carrier is asked (an admission refusal, the row INSERT, or the steps after the
+  before the carrier is asked (the row INSERT, or the steps after the
   session is registered: the max-duration timer, the socket attach, the carrier tokens, the
   carrier request's inputs) gets no `ended`, so the same failure path settles it: `failed`,
   uncharged, dialable again after 1 min (`PRE_CARRIER_FAILURE_REDIAL_DELAY_MS`, so a failure
   that repeats cannot redial one contact on every tick; a delay, not an our-fault charge, so a
   systemic failure retires nobody). A dial called off before the bridge (the agent's socket or
-  lease went, pacing stopped) returns its contact at once.
+  lease went, pacing stopped), or refused admission for capacity (back-pressure, not a fault:
+  pacing already bounds it by the account limit), returns its contact at once.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);
