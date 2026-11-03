@@ -39,6 +39,19 @@ void main() {
       expect(MyContactsSummary.fromJson({...json, 'retry': retry(true, 0)}).offersRetry, isFalse);
     });
 
+    test('retry is open (picking, Retry selected) only when allowed and nothing is due', () {
+      Map<String, Object?> retry(bool allowed, int eligible) => {
+        'allowed': allowed,
+        'rounds': 1,
+        'cooldown_minutes': 30,
+        'eligible': eligible,
+      };
+      expect(MyContactsSummary.fromJson(json).retryOpen, isTrue);
+      expect(MyContactsSummary.fromJson({...json, 'retry': retry(true, 0)}).retryOpen, isTrue);
+      expect(MyContactsSummary.fromJson({...json, 'due_now': 1}).retryOpen, isFalse);
+      expect(MyContactsSummary.fromJson({...json, 'retry': retry(false, 6)}).retryOpen, isFalse);
+    });
+
     test('a bucket this build does not know is still counted; an absent one is 0', () {
       final counts = {...json['counts']! as Map<String, Object?>, 'parked': 2}..remove('suppressed');
       final s = MyContactsSummary.fromJson({...json, 'counts': counts});

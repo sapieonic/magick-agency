@@ -86,8 +86,13 @@ void main() {
       expect(find.byKey(const Key('my-contacts')), findsNothing);
     });
 
-    testWidgets('shown with the flag on, and opens this campaign’s contacts', (tester) async {
+    testWidgets('hidden with the flag on when the campaign has no My contacts (pool, no agent retry)', (tester) async {
       await pumpStation(tester, station(), contactAssignment: true);
+      expect(find.byKey(const Key('my-contacts')), findsNothing);
+    });
+
+    testWidgets('shown with the flag on, and opens this campaign’s contacts', (tester) async {
+      await pumpStation(tester, station(myContactsOffered: true), contactAssignment: true);
       expect(find.byKey(const Key('my-contacts')), findsOneWidget);
       await tester.ensureVisible(find.byKey(const Key('my-contacts')));
       await tester.tap(find.byKey(const Key('my-contacts')));

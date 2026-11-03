@@ -53,19 +53,13 @@ void main() {
       expect(state().summary!.total, 30);
     });
 
-    test('opening it once says so, with counts and no phone number', () async {
+    test('opening it once says so, with the console’s properties exactly', () async {
       await loaded([contact(1)]);
       final again = controller().reload();
       api.answer(1, contactsPage([contact(1)]));
       await again;
       expect(sink.names.where((n) => n == 'agency_my_contacts_viewed'), hasLength(1));
-      final e = sink.last('agency_my_contacts_viewed');
-      expect(e['campaign_id'], 'c1');
-      expect(e['count_pending'], 12);
-      expect(e['count_suppressed'], 1);
-      expect(e['retry_eligible'], 3);
-      expect(e['assignment_mode'], 'strict');
-      expect(e.values.whereType<String>().where((v) => v.contains('98400')), isEmpty);
+      expect(sink.last('agency_my_contacts_viewed'), {'campaign_id': 'c1', 'assignment_mode': 'strict'});
     });
 
     test('more pages append with the cursor; one in flight at a time; the last page ends it', () async {
@@ -170,6 +164,26 @@ void main() {
   });
 
   group('retry not reached', () {
+    test('nothing can be picked while anything is due, and a count that turns due drops the picks', () async {
+      api.summaryAnswer = summaryOf(dueNow: 2);
+      await loaded([contact(1, eligible: true)]);
+      controller().toggleSelected(state().rows.single);
+      expect(state().selected, isEmpty, reason: 'retry is offered once the due contacts are used up');
+
+      api.summaryAnswer = summaryOf();
+      final f = controller().reload(keepRows: true);
+      api.answer(1, contactsPage([contact(1, eligible: true)]));
+      await f;
+      controller().toggleSelected(state().rows.single);
+      expect(state().selected, {'k1'});
+
+      api.summaryAnswer = summaryOf(dueNow: 1);
+      final g = controller().reload(keepRows: true);
+      api.answer(2, contactsPage([contact(1, eligible: true)]));
+      await g;
+      expect(state().selected, isEmpty);
+    });
+
     test('only an eligible contact can be picked', () async {
       await loaded([contact(1, eligible: true), contact(2, blocked: AgentRetryBlock.cooldown)]);
       controller().toggleSelected(state().rows[1]);
@@ -192,6 +206,7 @@ void main() {
       expect(api.summaries, hasLength(2), reason: 'the counts are read again');
       expect(api.queries, hasLength(2), reason: 'and the list');
       final e = sink.last('agency_agent_retry_requested');
+      // The console's set; its `code: null` is dropped by Telemetry (no null properties).
       expect(e, {'campaign_id': 'c1', 'scope': 'all', 'requested': 3, 'outcome': 'reopened', 'reopened': 3, 'skipped_total': 0});
     });
 
@@ -234,8 +249,19 @@ void main() {
         'scope': 'all',
         'requested': 3,
         'outcome': 'refused',
+        'reopened': 0,
+        'skipped_total': 0,
         'code': 'agent_retry_disabled',
       });
+    });
+
+    test('a failure with no refusal body has no code, as the console’s null', () async {
+      await loaded([contact(1, eligible: true)]);
+      api.retryAnswer = const ApiNetworkError('offline');
+      await controller().retry();
+      final e = sink.last('agency_agent_retry_requested');
+      expect(e['outcome'], 'refused');
+      expect(e.containsKey('code'), isFalse);
     });
   });
 
@@ -249,13 +275,13 @@ void main() {
       expect(request.toJson(), {'campaign_id': 'c1', 'session_id': 'sess-1'});
       expect(state().callingId, isNull);
       final e = sink.last('agency_my_contact_call_requested');
+      // The console's set exactly; its `code: null` is dropped by Telemetry.
       expect(e, {
         'campaign_id': 'c1',
         'bucket': 'not_reached',
-        'override_kinds': 'none',
         'with_override_note': false,
         'outcome': 'placed',
-        'override_applied': 'none',
+        'override_applied_count': 0,
         'retry_round_spent': false,
       });
     });
@@ -269,6 +295,7 @@ void main() {
         (onStation(phase: AgentPhase.onBreak), MyContactsCopy.callNeedsAvailable),
         (onStation(phase: AgentPhase.wrapup), MyContactsCopy.callNeedsAvailable),
         (onStation(sessionId: null), MyContactsCopy.callNeedsStation),
+        (onStation(dialing: false), MyContactsCopy.callNeedsRunning),
       ]) {
         holder.set(view);
         final result = await controller().call(state().rows.single);
@@ -282,23 +309,49 @@ void main() {
       expect(callGateOf(onStation(), 'c2').isOpen, isFalse);
       expect(callGateOf(onStation(phase: AgentPhase.offline), 'c1').blocked, MyContactsCopy.callNeedsAvailable);
       expect(callGateOf(null, 'c1').blocked, MyContactsCopy.callNeedsStation);
+      expect(callGateOf(onStation(dialing: false), 'c1').blocked, MyContactsCopy.callNeedsRunning);
     });
 
     test('outside calling hours with a calling-hours override: asks for the note, then calls with it', () async {
       final c = contact(1, state: ContactState.pending, grant: grant(hours: true));
       await loaded([c]);
-      api.callAnswers.add(refusal('outside_calling_hours', details: {'next_open_at': '2026-10-14T03:30:00.000Z'}));
+      api.callAnswers.add(noteWanted());
       final first = await controller().call(c);
-      expect(first, isA<ContactCallNeedsNote>().having((r) => r.grant.disposition, 'grant', 'promise_to_pay'));
+      expect(first, isA<ContactCallNeedsNote>().having((r) => r.grant?.disposition, 'grant', 'promise_to_pay'));
+      expect(api.calls.single.$2.toJson().containsKey('override_note'), isFalse);
+      expect(sink.last('agency_my_contact_call_requested'), {
+        'campaign_id': 'c1',
+        'bucket': 'not_reached',
+        'with_override_note': false,
+        'outcome': 'refused',
+        'code': 'override_note_invalid',
+        'override_applied_count': 0,
+        'retry_round_spent': false,
+      });
       api.callAnswers.add(placed('k1', applied: ['calling_hours']));
       final second = await controller().call(c, overrideNote: '  Customer asked to be called after 9pm.  ');
       expect(second, isA<ContactCallPlaced>());
       expect(api.calls[1].$2.toJson()['override_note'], 'Customer asked to be called after 9pm.');
       final e = sink.last('agency_my_contact_call_requested');
       expect(e['with_override_note'], isTrue);
-      expect(e['override_kinds'], 'calling_hours');
-      expect(e['override_applied'], 'calling_hours');
+      expect(e['override_applied_count'], 1);
+      expect(e.containsKey('code'), isFalse);
       expect(e.values.whereType<String>().where((v) => v.contains('9pm')), isEmpty, reason: 'the note never leaves');
+    });
+
+    test('the server’s word decides: a row that has not caught up with the grant still asks for the note', () async {
+      final c = contact(1, eligible: true);
+      await loaded([c]);
+      api.callAnswers.add(noteWanted());
+      expect(await controller().call(c), isA<ContactCallNeedsNote>().having((r) => r.grant, 'grant', isNull));
+    });
+
+    test('the same refusal with a note sent is an error, not a second prompt', () async {
+      final c = contact(1, grant: grant(hours: true));
+      await loaded([c]);
+      api.callAnswers.add(noteWanted());
+      final result = await controller().call(c, overrideNote: 'Customer asked to be called late.');
+      expect(result, isA<ContactCallFailed>().having((r) => r.message, 'message', 'The note needs 10 to 500 characters.'));
     });
 
     test('outside calling hours without the override is a plain refusal, with when it opens', () async {
@@ -328,6 +381,14 @@ void main() {
       expect((result as ContactCallFailed).message, startsWith('This contact can’t be called now.'));
       expect(api.queries, hasLength(2));
       expect(sink.last('agency_my_contact_call_requested')['code'], 'contact_not_retryable');
+    });
+
+    test('a call refused for a paused campaign is said in the gate’s words', () async {
+      final c = contact(1, eligible: true);
+      await loaded([c]);
+      api.callAnswers.add(refusal('campaign_not_running'));
+      final result = await controller().call(c);
+      expect((result as ContactCallFailed).message, MyContactsCopy.callNeedsRunning);
     });
 
     test('one call at a time', () async {

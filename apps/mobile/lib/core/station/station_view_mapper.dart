@@ -141,8 +141,15 @@ class StationViewMapper {
       actionError: actionError,
       fatal: fatal,
       queue: _queueFor(s.queue),
+      myContactsOffered: myContactsOfferedBy(bootstrap),
     );
   }
+
+  /// The console's rule (`AgentConsolePage`): a mode that is not `pool` (an
+  /// unknown one included; an absent one reads `pool`), or agent retry on.
+  static bool myContactsOfferedBy(wire.SessionBootstrap? bootstrap) =>
+      bootstrap != null &&
+      (bootstrap.assignmentModeRaw != wire.AssignmentMode.pool.wire || bootstrap.allowAgentRetry);
 
   /// The agent's own queue, its next time on this device's clock.
   QueueView? _queueFor(wire.QueueState? queue) {

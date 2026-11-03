@@ -161,8 +161,26 @@ class StationHolder extends Notifier<StationView?> {
   void set(StationView? v) => state = v;
 }
 
-StationView onStation({String campaignId = 'c1', AgentPhase phase = AgentPhase.available, String? sessionId = 'sess-1'}) =>
-    StationView(campaignId: campaignId, campaignName: 'Renewals', sessionId: sessionId, link: StationLink.open, phase: phase);
+StationView onStation({
+  String campaignId = 'c1',
+  AgentPhase phase = AgentPhase.available,
+  String? sessionId = 'sess-1',
+  bool dialing = true,
+}) =>
+    StationView(
+      campaignId: campaignId,
+      campaignName: 'Renewals',
+      sessionId: sessionId,
+      link: StationLink.open,
+      phase: phase,
+      campaignDialing: dialing,
+      myContactsOffered: true,
+    );
+
+/// The server's refusal of a call outside the calling hours to a contact
+/// holding an unspent calling-hours override, sent without a note
+/// (`my-contact-call.ts`, the `defer` arm).
+ApiHttpError noteWanted() => refusal('override_note_invalid', status: 400, details: {'min': 10, 'max': 500});
 
 final stationHolder = NotifierProvider<StationHolder, StationView?>(() => StationHolder(onStation()));
 

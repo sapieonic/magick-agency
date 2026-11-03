@@ -440,6 +440,7 @@ StationView station({
   String? fatal,
   String campaignId = 'c1',
   QueueView? queue,
+  bool myContactsOffered = false,
 }) => StationView(
   campaignId: campaignId,
   campaignName: 'Q4 Card Renewals',
@@ -466,6 +467,7 @@ StationView station({
   actionError: actionError,
   fatal: fatal,
   queue: queue,
+  myContactsOffered: myContactsOffered,
 );
 
 const hungUpRelease = ReleaseView(

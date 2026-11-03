@@ -9,6 +9,7 @@ import '../../core/api/api_error.dart';
 import '../../core/auth/app_gate.dart';
 import '../../core/flags/feature_flags.dart';
 import '../../core/station/station_signals.dart';
+import '../../core/station/station_view.dart' show stationViewProvider;
 import '../../ui/primitives.dart';
 import '../accounts/account_switcher.dart';
 // "Enter station" goes to pre-flight with the campaign's name in the query,
@@ -34,6 +35,7 @@ class CampaignsScreen extends ConsumerWidget {
 
     Future<void> refresh() async {
       if (workspace == null) return;
+      rereadFeatureFlagsIfFailed(ref, workspace);
       try {
         final _ = await ref.refresh(myAssignmentsProvider(workspace).future);
       } catch (e) {
@@ -239,9 +241,16 @@ class _CampaignCard extends ConsumerWidget {
     final entry = assignmentEntry(assignment);
     final name = campaignDisplayName(assignment);
     final isOnDutyHere = onDutyCampaign == assignment.campaignId;
-    // Contact assignment: the agent's own contacts here. Not while on duty on
-    // another campaign (its station holds the agent; this one is not callable).
-    final contacts = ref.watch(contactAssignmentEnabledProvider) && (onDutyCampaign == null || isOnDutyHere)
+    // Contact assignment: the agent's own contacts here, on the console's
+    // rule, which reads the join bootstrap: only while on duty on this
+    // campaign, and only when it assigns contacts or lets agents retry
+    // ([StationView.myContactsOffered]). Off duty there is no bootstrap to
+    // judge by, so nothing (the console offers it from the station only).
+    final offeredHere = isOnDutyHere &&
+        ref.watch(stationViewProvider.select(
+          (v) => v != null && v.campaignId == assignment.campaignId && v.myContactsOffered,
+        ));
+    final contacts = ref.watch(contactAssignmentEnabledProvider) && offeredHere
         ? TextButton.icon(
             key: Key('my-contacts-${assignment.campaignId}'),
             onPressed: () => context.go(Routes.myContacts(assignment.campaignId)),
