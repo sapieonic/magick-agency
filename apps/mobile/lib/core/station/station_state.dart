@@ -212,6 +212,28 @@ final class StationState {
   /// wrap-up's own). What notes and the disposition are keyed by.
   String? get currentAttemptId => live?.attemptId ?? retainedAttempt?.attemptId ?? wrapup?.attemptId;
 
+  /// The agent's state as everything on this phone reads it (the screen, the
+  /// shell's signals, the away rules, the notification): the call decides
+  /// ahead of [agentState], as the console's rail does.
+  ///
+  /// The server sends no `agent_state` for `reserved` or `on_call` on the dial
+  /// path: a campaign call (paced or a wrap-up redial) arrives as `reserved`,
+  /// `bridged` and `released` frames while [agentState] still says what it
+  /// said before (`available`, or `wrapup` for a redial). So:
+  /// * a live attempt: `on_call` once bridged, `reserved` until then;
+  /// * no live attempt but a call still owing its outcome (the panel retained
+  ///   by a `released` that requires a disposition) or a wrap-up anchor:
+  ///   `wrapup`, until `agent_state` (the one authority for wrap-up ending,
+  ///   which clears both) says otherwise. It covers the moment between
+  ///   `released` and the `agent_state` that follows it;
+  /// * otherwise [agentState].
+  AgentState get effectiveState {
+    final call = live;
+    if (call != null) return call.bridgedAt != null ? AgentState.onCall : AgentState.reserved;
+    if (retainedAttempt != null || wrapup != null) return AgentState.wrapup;
+    return agentState;
+  }
+
   StationState _with({
     StationConnection? connection,
     AgentState? agentState,

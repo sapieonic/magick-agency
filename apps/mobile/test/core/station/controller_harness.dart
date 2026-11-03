@@ -321,16 +321,18 @@ class App {
         },
       });
 
-  /// Available and on a bridged call for [id].
+  /// Available and on a bridged call for [id], with the frames the server
+  /// sends on the dial path: `reserved` and `bridged`, and NO `agent_state`
+  /// (the server announces neither `reserved` nor `on_call` there; the call's
+  /// own frames are what moves the station).
   void onCall(String id) {
     readyFrame('available');
     reserved(id);
-    agentStateFrame('reserved');
     bridged(id);
-    agentStateFrame('on_call');
   }
 
-  /// A call that ended and is in wrap-up.
+  /// A call that ended and is in wrap-up: `released`, then the `agent_state`
+  /// and `wrapup` frames the server's wrap-up sends.
   void inWrapup(String id) {
     onCall(id);
     releasedFrame(id);

@@ -87,9 +87,12 @@ class StationViewMapper {
     ({int? remaining})? redialOverride,
   }) {
     applyOffset(s.clockOffsetMs);
-    final phase = phaseOf(s.agentState);
+    // The call decides ahead of `agent_state` (`StationState.effectiveState`).
+    final shown = s.effectiveState;
+    final phase = phaseOf(shown);
     final link = linkOf(s.connection);
-    final phaseSince = correctedInstant(s.agentStateSince, _offset);
+    // `since` dates the state `agent_state` stated, not one the call implies.
+    final phaseSince = shown == s.agentState ? correctedInstant(s.agentStateSince, _offset) : null;
 
     BreakInfo? onBreak;
     if (phase == AgentPhase.onBreak) {
@@ -341,8 +344,9 @@ StationSignals signalsOf(StationView? view) {
 /// server ended it (4404), another device took it (4409), or it cannot open
 /// here (a fatal message); it holds nothing, as in [signalsOf].
 ///
-/// * [StationSignals.callActive]: a campaign call (reserved, on a call, wrap-up)
-///   or a soft-phone call on the line (dialing, ringing, on the call).
+/// * [StationSignals.callActive]: a campaign call (reserved, on a call, wrap-up,
+///   read off the call itself first: `StationState.effectiveState`) or a
+///   soft-phone call on the line (dialing, ringing, on the call).
 /// * [StationSignals.outcomeOwed]: the soft-phone call ended and owes its outcome.
 /// * [StationSignals.onSoftphone]: a campaign station on the `soft_phone` break.
 StationSignals hostSignalsOf({
@@ -353,10 +357,11 @@ StationSignals hostSignalsOf({
 }) {
   if (over) return const StationSignals();
   final call = state.manualCall;
-  final onBreak = state.agentState == wire.AgentState.onBreak;
+  final shown = state.effectiveState;
+  final onBreak = shown == wire.AgentState.onBreak;
   return StationSignals(
     onDuty: true,
-    callActive: isCallPhase(state.agentState) || (call?.isLive ?? false),
+    callActive: isCallPhase(shown) || (call?.isLive ?? false),
     onBreak: onBreak,
     campaignId: campaignId,
     sessionKind: kind,

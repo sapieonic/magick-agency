@@ -9,6 +9,7 @@ import 'package:magick_agency_agent/core/station/station_state.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/core/telemetry/call_telemetry.dart';
 import 'package:magick_agency_agent/core/telemetry/telemetry.dart';
+import 'package:magick_agency_agent/features/station/station_screen.dart' show StationStage, stationStageOf;
 
 import '../telemetry/fake_telemetry_sink.dart';
 
@@ -104,7 +105,6 @@ void main() {
         expect(app.requests('POST', _redialPath), hasLength(1));
 
         app.reservedRedial('att-2', of: 'att-1');
-        app.agentStateFrame('reserved');
         expect(app.view!.busy, StationBusy.none);
         expect(app.view!.phase, AgentPhase.reserved);
         expect(app.view!.call!.attemptId, 'att-2');
@@ -113,7 +113,6 @@ void main() {
         expect(app.view!.wrapup, isNull);
 
         app.bridged('att-2');
-        app.agentStateFrame('on_call');
         expect(app.view!.call!.isRedial, isTrue);
         app.releasedFrame('att-2');
         app.agentStateFrame('wrapup');
@@ -121,6 +120,41 @@ void main() {
         expect(app.controller.stationState.currentAttemptId, 'att-2');
         expect(app.view!.wrapup!.redialRemaining, 1);
         expect(app.view!.call!.redialNumber, 1, reason: 'the wrap-up still says which call this was');
+        app.dispose();
+      });
+    });
+
+    test('a redial moves the station by its own frames: ringing, on call, its own wrap-up; never the old wrap-up', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.wrapup);
+        app.routes['POST $_redialPath'] = (_) => json(200, _redialResponse());
+        app.run(app.controller.redial(attemptId: 'att-1'));
+
+        // No `agent_state` on the dial path: the wire still says `wrapup`.
+        app.reservedRedial('att-2', of: 'att-1');
+        expect(app.controller.stationState.agentState, AgentState.wrapup);
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.reserved);
+        expect(app.view!.wrapup, isNull, reason: 'no outcome pad for a call that is ringing');
+        expect(app.view!.call!.attemptId, 'att-2');
+        expect(app.signals.callActive, isTrue);
+        expect(app.engine.notification!.text, 'Connecting a call');
+
+        app.bridged('att-2');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.onCall);
+        expect(app.view!.wrapup, isNull);
+        expect(app.engine.notification!.text, 'On a call');
+        // Not the wrap-up the agent tapped for: a Redial sent now is refused here.
+        app.run(app.controller.redial(attemptId: 'att-2'));
+        expect(app.requests('POST', _redialPath), hasLength(1));
+
+        app.releasedFrame('att-2');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.wrapup);
+        app.agentStateFrame('wrapup');
+        app.frame({'event': 'wrapup', 'wrapup': _wrapup('att-2', remaining: 1)});
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.wrapup);
+        expect(app.view!.call!.attemptId, 'att-2');
         app.dispose();
       });
     });
@@ -290,9 +324,7 @@ void main() {
     /// The redial rings, connects, ends, and opens its own wrap-up.
     void redialToWrapup(App app) {
       app.reservedRedial('att-2', of: 'att-1');
-      app.agentStateFrame('reserved');
       app.bridged('att-2');
-      app.agentStateFrame('on_call');
       app.releasedFrame('att-2');
       app.agentStateFrame('wrapup');
       app.frame({'event': 'wrapup', 'wrapup': _wrapup('att-2', remaining: 1)});
@@ -342,9 +374,7 @@ void main() {
         expect(app.view!.notes.text, 'Call after 6');
         expect(app.store.entries['att-2']?.notes, 'Call after 6', reason: 'kept on the phone until the server has it');
 
-        app.agentStateFrame('reserved');
         app.bridged('att-2');
-        app.agentStateFrame('on_call');
         app.controller.updateNotes('Call after 6, prefers Marathi');
         async.elapse(const Duration(seconds: 3));
         expect(notesWrites(app).single.path, '/proxy/agency/attempts/att-2/notes');
@@ -419,9 +449,7 @@ void main() {
         app.routes['POST $_redialPath'] = (_) => json(200, _redialResponse());
         app.run(app.controller.redial(attemptId: 'att-1'));
         app.reservedRedial('att-2', of: 'att-1');
-        app.agentStateFrame('reserved');
         app.bridged('att-2');
-        app.agentStateFrame('on_call');
         app.controller.updateNotes('First, then more on the redial');
         async.elapse(const Duration(seconds: 3));
         app.readyFrame('on_call', extra: {

@@ -279,7 +279,6 @@ void main() {
         async.flushMicrotasks();
         // A call was reserved while the pause was on its way: the server queues it.
         app.reserved('att-1');
-        app.agentStateFrame('reserved');
         answer.complete(json(200, stateBody('reserved', breakReason: 'device_away', pending: 'break')));
         async.flushMicrotasks();
         expect(app.view!.queuedBreak?.code, 'device_away');
@@ -382,10 +381,15 @@ void main() {
         app.lifecycle.hide();
         async.flushMicrotasks();
         expect(app.requests('POST', _breakPath), hasLength(1));
+        // The call ended with nothing owed: no call any more, so the pause is
+        // asked for at once rather than left to the queue.
         app.releasedFrame('att-1', requiresDisposition: false);
-        app.agentStateFrame('available', since: '2026-11-01T09:05:00.000Z');
         async.flushMicrotasks();
         expect(app.requests('POST', _breakPath), hasLength(2));
+        // `available` after it: the pause did not hold, so it is asked for again.
+        app.agentStateFrame('available', since: '2026-11-01T09:05:00.000Z');
+        async.flushMicrotasks();
+        expect(app.requests('POST', _breakPath), hasLength(3));
         expect(app.notifier.calls.last, 'paused');
         app.dispose();
       });

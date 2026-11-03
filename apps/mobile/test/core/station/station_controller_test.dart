@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io' show SocketException;
 
+import 'package:agency_wire/agency_wire.dart' show AgentState;
 import 'package:agent_audio/agent_audio.dart' as audio;
 import 'package:fake_async/fake_async.dart';
 import 'package:firebase_auth/firebase_auth.dart' show FirebaseAuthException;
@@ -10,6 +11,7 @@ import 'package:magick_agency_agent/core/api/api_error.dart';
 import 'package:magick_agency_agent/core/station/station_copy.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
+import 'package:magick_agency_agent/features/station/station_screen.dart' show StationStage, stationStageOf;
 
 import 'controller_harness.dart';
 import 'fixtures.dart';
@@ -204,8 +206,9 @@ void main() {
         expect(app.view!.phase, AgentPhase.available);
         expect(app.view!.phaseSince, DateTime.utc(2026, 11, 1, 9));
 
+        // The dial path carries no `agent_state`: the call's own frames move the station.
         app.reserved('att-1');
-        app.agentStateFrame('reserved');
+        expect(app.view!.phase, AgentPhase.reserved);
         final call = app.view!.call!;
         expect(app.view!.callActive, isTrue);
         expect(call.displayName, 'Asha Rao');
@@ -216,7 +219,7 @@ void main() {
         expect(app.container.read(stationSignalsProvider).callActive, isTrue);
 
         app.bridged('att-1', at: '2026-11-01T09:01:10.000Z');
-        app.agentStateFrame('on_call');
+        expect(app.view!.phase, AgentPhase.onCall);
         expect(app.view!.call!.bridgedAt, DateTime.utc(2026, 11, 1, 9, 0, 10));
         // The contact panel was not rebuilt for the timer change.
         expect(identical(app.view!.call!.heroFields, call.heroFields), isTrue);
@@ -236,6 +239,69 @@ void main() {
         expect(app.view!.call, isNull);
         expect(app.view!.release, isNull);
         expect(app.view!.wrapup, isNull);
+        app.dispose();
+      });
+    });
+
+    test('a paced call moves the station by its own frames: the server never says reserved or on_call', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.agentStateFrame('available');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.available);
+
+        // `reserved`, `bridged`, `released`: no `agent_state` among them.
+        app.reserved('att-1');
+        expect(app.controller.stationState.agentState, AgentState.available, reason: 'the wire said nothing new');
+        expect(app.view!.phase, AgentPhase.reserved);
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.reserved);
+        expect(app.view!.phaseSince, isNull, reason: 'the last since dates `available`, not this call');
+        expect(app.signals.callActive, isTrue);
+        expect(app.engine.notification!.text, 'Connecting a call');
+
+        app.bridged('att-1');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.onCall);
+        expect(app.signals.callActive, isTrue);
+        expect(app.engine.notification!.text, 'On a call');
+        app.controller.updateNotes('Asked about EMI');
+        expect(app.view!.notes.status, isNot(NotesStatus.closed), reason: 'the notes route takes writes on a call');
+
+        // Released with an outcome owed: wrap-up at once, before its `agent_state`.
+        app.releasedFrame('att-1');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.wrapup);
+        expect(app.signals.callActive, isTrue);
+        app.agentStateFrame('wrapup');
+        app.wrapupFrame('att-1');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.wrapup);
+        app.agentStateFrame('available');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.available);
+        expect(app.signals.callActive, isFalse);
+        app.dispose();
+      });
+    });
+
+    test('a call released with nothing owed goes straight back to waiting', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.readyFrame('available');
+        app.reserved('att-1');
+        app.releasedFrame('att-1', requiresDisposition: false, reason: 'no_answer');
+        expect(stationStageOf(app.view, 'camp-1'), StationStage.available);
+        expect(app.signals.callActive, isFalse);
+        app.dispose();
+      });
+    });
+
+    test('away during a paced call: the pause is queued behind it, never sent at once, and the socket stays', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.onCall('att-1');
+        app.routes['POST /proxy/agency/sessions/sess-1/break'] =
+            (_) => json(409, {'error': 'Conflict', 'code': 'not_allowed', 'message': 'x'});
+        app.lifecycle.hide();
+        async.elapse(const Duration(seconds: 30));
+        expect(app.view!.link, StationLink.open, reason: 'closing the socket would drop the customer');
+        expect(app.engine.notification!.text, 'On a call');
         app.dispose();
       });
     });

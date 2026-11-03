@@ -370,7 +370,7 @@ class StationController extends Notifier<StationView?>
       onConnection: _onConnection,
       onMissedPings: (n) => _dispatch(MissedPingsAction(n)),
       // A soft-phone call on the line holds the socket as a campaign call does.
-      callLive: () => _station.live != null || isCallPhase(_station.agentState) || isCallLive(_station.manualCall),
+      callLive: () => isCallPhase(_station.effectiveState) || isCallLive(_station.manualCall),
       now: _now,
       decode: ref.read(stationFrameDecoderProvider),
     );
@@ -745,7 +745,7 @@ class StationController extends Notifier<StationView?>
     s.audio.sync(target);
     s.notes.attemptChanged(
       _station.currentAttemptId,
-      accepting: _station.currentAttemptId != null && isCallPhase(_station.agentState),
+      accepting: _station.currentAttemptId != null && isCallPhase(_station.effectiveState),
     );
     _applyLifecycle(s);
     _emit();
@@ -835,7 +835,7 @@ class StationController extends Notifier<StationView?>
       campaignName: s.hosted.bootstrap?.campaignName ?? s.hosted.campaignName,
       link: StationViewMapper.linkOf(_station.connection),
       everOpened: _everOpened,
-      phase: StationViewMapper.phaseOf(_station.agentState),
+      phase: StationViewMapper.phaseOf(_station.effectiveState),
       onSoftphone: _onSoftphoneBreak,
       switchQueued: _pendingBreakCode == softphoneBreakReason,
       call: call,
@@ -857,7 +857,7 @@ class StationController extends Notifier<StationView?>
   /// On the `soft_phone` break: always, for a soft-phone session once its
   /// socket says so; for a campaign station, once the switch applied.
   bool get _onSoftphoneBreak =>
-      _station.agentState == AgentState.onBreak && _station.breakReasonCode == softphoneBreakReason;
+      _station.effectiveState == AgentState.onBreak && _station.breakReasonCode == softphoneBreakReason;
 
   /// A soft-phone call is on the line and the customer has answered: the
   /// server holds it [StationIntervals.deferredHangup] for a dropped socket.
@@ -956,7 +956,7 @@ class StationController extends Notifier<StationView?>
   audio.OnDutyNotification _onDutyNotification() {
     final s = _s;
     if (s != null && (s.hosted.isSoftphone || _onSoftphoneBreak)) return _softphoneNotification(s);
-    final state = _station.agentState;
+    final state = _station.effectiveState;
     final away = state == AgentState.onBreak &&
         (_station.breakReasonCode ?? (_awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null)) ==
             ReservedBreakCode.deviceAway.wire;
@@ -1044,7 +1044,7 @@ class StationController extends Notifier<StationView?>
     _awayRetries = 0;
     if (queuedFor != null &&
         _pendingBreakCode == ReservedBreakCode.deviceAway.wire &&
-        isCallPhase(_station.agentState)) {
+        isCallPhase(_station.effectiveState)) {
       // Back before the call ended: the pause queued for after it is not wanted.
       _cancelAwayQueue(s);
     }
@@ -1060,7 +1060,7 @@ class StationController extends Notifier<StationView?>
     } else if (unconfirmed &&
         c == StationConnection.open &&
         !_terminal &&
-        _station.agentState == AgentState.available) {
+        _station.effectiveState == AgentState.available) {
       _log.info('back: the away pause never landed, so available is said again');
       unawaited(_api.available(s.id).then((r) {
         if (identical(_s, s)) _reconcile(r);
@@ -1087,7 +1087,8 @@ class StationController extends Notifier<StationView?>
   }
 
   void _applyLifecycle(_Session s) {
-    final st = _station.agentState;
+    // A campaign call reads as one from its own frames (`effectiveState`).
+    final st = _station.effectiveState;
     // A soft-phone call live or owing its outcome keeps the socket wanted in
     // the background, as a call or wrap-up does (the agent state stays `break`).
     final manual = _terminal ? null : _station.manualCall;
@@ -1136,7 +1137,8 @@ class StationController extends Notifier<StationView?>
   void _maybeSendAway() {
     final s = _s;
     if (s == null || _foreground || _awayInFlight || _terminal || _awayClosed || _awayRetry != null) return;
-    final st = _station.agentState;
+    // A call in progress queues the pause, whatever `agent_state` last said.
+    final st = _station.effectiveState;
     // A soft-phone session is never in the pool: nothing to pause.
     final action = awayActionFor(st, pendingBreakCode: _pendingBreakCode, softphoneSession: s.hosted.isSoftphone);
     if (action == AwayAction.none) return;
@@ -1182,7 +1184,7 @@ class StationController extends Notifier<StationView?>
         }
         _lastStateResponse = response;
       }
-      if (_foreground && _awayQueuedFor != null && response?.pendingState != null && isCallPhase(_station.agentState)) {
+      if (_foreground && _awayQueuedFor != null && response?.pendingState != null && isCallPhase(_station.effectiveState)) {
         // The agent came back while this was in flight: the queued pause is not wanted.
         _cancelAwayQueue(s);
       }
@@ -1231,7 +1233,8 @@ class StationController extends Notifier<StationView?>
     if (!identical(_s, s) || _foreground || _terminal || _awayLanded || _awayClosed) return;
     // Only a socket that is open still holds the agent in the pool: one that
     // already dropped (or gave up) was released by the server's close handler.
-    if (_station.agentState != AgentState.available || _station.connection != StationConnection.open) return;
+    // Never with a call on the line: closing the socket would drop the customer.
+    if (_station.effectiveState != AgentState.available || _station.connection != StationConnection.open) return;
     _awayClosed = true;
     _log.warn('device_away pause never landed: closing the station until the app is back');
     s.socket.park();
@@ -1457,8 +1460,7 @@ class StationController extends Notifier<StationView?>
     if (_s == null || _terminal) return;
     final target = _station.wrapup?.attemptId;
     if (target == null ||
-        _station.agentState != AgentState.wrapup ||
-        _station.live != null ||
+        _station.effectiveState != AgentState.wrapup ||
         (attemptId != null && attemptId != target)) {
       // Not the wrap-up the agent tapped for: never redial another call.
       _actionError = redialCallChangedCopy;
@@ -1531,7 +1533,7 @@ class StationController extends Notifier<StationView?>
         await _api.leave(s.id);
       } on ApiNetworkError catch (e) {
         if (!_live(s)) return;
-        if (_station.live != null || isCallPhase(_station.agentState)) {
+        if (isCallPhase(_station.effectiveState)) {
           // Never with a call on: closing here would drop the customer.
           _actionError = e.userMessage;
           return;

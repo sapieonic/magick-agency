@@ -1,7 +1,9 @@
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magick_agency_agent/core/station/station_view.dart';
 
+import '../../core/station/controller_harness.dart' as core;
 import 'station_harness.dart';
 
 /// Wrap-up redial on the station screen: the Redial button beside the
@@ -25,6 +27,53 @@ StationView _wrap({int? remaining, String? saved, StationBusy busy = StationBusy
   busy: busy,
   actionError: actionError,
 );
+
+/// The views the real station core derives from exactly the frames the
+/// server sends for a wrap-up redial (no `agent_state` on the dial path):
+/// the wrap-up it starts from, the redial ringing, on the call, and its own
+/// wrap-up.
+({StationView wrapup, StationView ringing, StationView onCall, StationView redialWrapup}) _serverFaithfulRedial() {
+  late ({StationView wrapup, StationView ringing, StationView onCall, StationView redialWrapup}) out;
+  fakeAsync((async) {
+    final app = core.App(async)..start();
+    Map<String, Object?> wrapup(String id, int remaining) => {
+          'attempt_id': id,
+          'ends_at': '2026-11-01T09:01:00.000Z',
+          'seconds_total': 30,
+          'auto_return': true,
+          'requires_disposition': true,
+          'disposition_submitted': false,
+          'redial_remaining': remaining,
+        };
+    app.inWrapup('a1');
+    app.frame({'event': 'wrapup', 'wrapup': wrapup('a1', 2)});
+    final inWrapup = app.view!;
+    app.routes['POST /proxy/agency/sessions/sess-1/redial'] = (_) => core.json(200, {
+          'session_id': 'sess-1',
+          'attempt_id': 'a2',
+          'redial_of_attempt_id': 'a1',
+          'redial_number': 1,
+          'redial_remaining': 1,
+        });
+    app.run(app.controller.redial(attemptId: 'a1'));
+    app.frame({
+      'event': 'reserved',
+      'attempt': {
+        ...app.attemptJson('a2'),
+        'redial': {'of_attempt_id': 'a1', 'number': 1, 'remaining': 1},
+      },
+    });
+    final ringing = app.view!;
+    app.bridged('a2');
+    final onCall = app.view!;
+    app.releasedFrame('a2');
+    app.agentStateFrame('wrapup');
+    app.frame({'event': 'wrapup', 'wrapup': wrapup('a2', 1)});
+    out = (wrapup: inWrapup, ringing: ringing, onCall: onCall, redialWrapup: app.view!);
+    app.dispose();
+  });
+  return out;
+}
 
 OutlinedButton _redial(WidgetTester tester) => tester.widget<OutlinedButton>(find.byKey(const Key('redial')));
 FilledButton _save(WidgetTester tester) => tester.widget<FilledButton>(find.byKey(const Key('save-outcome')));
@@ -127,6 +176,30 @@ void main() {
       await tester.tap(find.byKey(const Key('redial')));
       await tester.pump();
       expect(h.actions.count('redial'), 1);
+    });
+  });
+
+  group('the frames the server sends, through the real station core', () {
+    testWidgets('a live redial shows the ringing and on-call screens: no outcome pad, no Save', (tester) async {
+      final views = _serverFaithfulRedial();
+      final h = await pumpStation(tester, views.wrapup, campaignId: 'camp-1');
+      expect(find.byKey(const Key('save-outcome')), findsOneWidget);
+      expect(find.byKey(const Key('redial')), findsOneWidget);
+
+      await h.setView(views.ringing);
+      expect(find.byKey(const Key('band-ringing')), findsOneWidget);
+      expect(find.text('Redial 1 of 2'), findsOneWidget);
+      expect(find.byKey(const Key('save-outcome')), findsNothing);
+      expect(find.byKey(const Key('redial')), findsNothing);
+
+      await h.setView(views.onCall);
+      expect(find.byKey(const Key('band-on-call')), findsOneWidget);
+      expect(find.byKey(const Key('save-outcome')), findsNothing);
+      expect(find.byKey(const Key('outcome-interested')), findsNothing);
+
+      await h.setView(views.redialWrapup);
+      expect(find.byKey(const Key('save-outcome')), findsOneWidget);
+      expect(find.text('1 redial left'), findsOneWidget);
     });
   });
 

@@ -400,10 +400,11 @@ void main() {
         app.readyFrame('available');
         app.agentStateFrame('available');
         expect(app.engine.notification!.text, 'Waiting for calls');
+        // The dial path carries no `agent_state`: the notification follows the call's own frames.
         app.reserved('att-1');
-        app.agentStateFrame('reserved');
+        expect(app.engine.notification!.text, 'Connecting a call');
         app.bridged('att-1');
-        app.agentStateFrame('on_call');
+        expect(app.engine.notification!.text, 'On a call');
         expect(app.engine.notification!.call, isNotNull);
         app.releasedFrame('att-1');
         app.agentStateFrame('wrapup');
