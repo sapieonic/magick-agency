@@ -735,7 +735,8 @@ nothing new can be owned by it meanwhile.
    on every reap path, including `reapUnrecordedEnds`. The dialer's own outcome-unknown hold
    (`holdOutcomeUnknownContact`) is the same statement keyed on the dial's attempt, so a reap
    racing it moves and charges the contact once, whichever lands first.
-4. Manual calls of those sessions → the orphan path of `sweepManualCalls`.
+4. Manual calls of those sessions → the orphan path of `sweepManualCalls` (an unbridged one
+   dialled and never answered holds its contact 15 min after `dialed_at`, the same rule).
 5. Agent leases of the slot's live sessions are cleared, and rows marked `offline`, so the
    agents rehydrate into `break`. That closes today's fast-restart window in which a
    still-live `on_call` lease would rehydrate as `on_call`. Station ownership keys naming the

@@ -265,7 +265,7 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 |---|---|
 | `apps/server/test/integration/agency/chaos/softphone-restart-mid-call.test.ts` | 3 |
 | `apps/server/test/integration/agency/softphone-agent-claim.test.ts` | 8 |
-| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 16 |
+| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 17 |
 | `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 14 |
 | `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
 | `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 21 |

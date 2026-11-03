@@ -204,7 +204,8 @@ Owned by `AgencyRuntime`. One call at a time per session.
 10. **Restart.** The startup reaper ends non-terminal manual rows `orphaned` and settles their
     contact claims; the periodic sweep does the same for rows not owned by this process. A reaped row that
     never bridged is settled in the same statement and its claim settled (§5, "no outcome": a placed
-    one on the our-fault ledger, back on the roster at once, as a reaped attempt's contact is); one that bridged is ended and left
+    one on the our-fault ledger, back on the roster as a reaped attempt's contact is: at once, or,
+    for a dial sent and never answered, no earlier than 15 min after `dialed_at`); one that bridged is ended and left
     awaiting its outcome (the agent talked to the customer and can still write it up after reconnecting), so
     its claim is kept until the outcome or the lapse (`reapOrphaned`). The periodic sweep spares
     this process's live calls and any row younger than 5 minutes. Both sweeps write an
@@ -279,7 +280,7 @@ customer straight back:
 | the dial's outcome unknown, never answered (the bridge's `TELEPHONY_INIT_OUTCOME_UNKNOWN`, or an end that raced such a dial) | the campaign path's hold: `our_fault_attempts` + 1, `pending` no earlier than 15 min on (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`), `exhausted` at the our-fault bound (the tag's `canceled` / `agent_disconnected` cap applies to a raced hang-up). The reaper's sweeps, which have only the rows, read the media leg's `error_code` (`mediaLegEndedWith`) |
 | never placed (`dialed_at` NULL: refused before the carrier, or by it) | the claim released to its prior state; nothing charged |
 | placed, ended by our side before it bridged (`canceled`: the agent hung up the ring; `agent_disconnected`) | `our_fault_attempts` + 1 and `resolveOurFaultRedial`: `pending` after the our-fault delay, `exhausted` at the bound; the customer's allowance untouched |
-| placed, `orphaned` before it bridged (a restart) | the same ledger and bound, `pending` at once (the reaper's rule for an attempt) |
+| placed, `orphaned` before it bridged (a restart, a dead media worker) | the same ledger and bound, and the reaper's rule for an attempt (`dialOutcomeUnknownNotBefore`): dialled and never answered, the carrier may still place it, so `pending` no earlier than 15 min after `dialed_at`; answered, or dialled longer ago than that, `pending` at once |
 | any other placed call (`no_answer`, `busy`, `failed`, `invalid`; a lapsed bridged call) | `attempt_count` + 1 and the tag's `retry_policy` (`resolveRetryDecision`): `pending` after the outcome's delay, `exhausted` past its max, `completed` when never retried (a lapsed `connected` call under the defaults), `suppressed` for `invalid`; `last_disposition` is `no_disposition` for a lapse |
 
 A retry's `next_attempt_at` is not moved into the calling window, as a campaign retry's is not:

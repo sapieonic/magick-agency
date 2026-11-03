@@ -22,6 +22,25 @@
 export const DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS = 15 * 60_000;
 
 /**
+ * When the contact of a dial nothing saw end may be dialled again: a dial sent (`dialed_at`
+ * set) and never answered or bridged may still be placed by the carrier, so not before
+ * {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} after it was sent; any other is dialable
+ * `now`. The one rule for a campaign attempt the reaper ends (`reapedRedialNotBefore`,
+ * `agency/reaper.ts`) and a soft-phone call it ends `orphaned`
+ * (`manualNoOutcomeSettlement`, `agency/softphone/manual-disposition.ts`).
+ */
+export function dialOutcomeUnknownNotBefore(
+  dial: { dialed_at: Date | string | null; answered_at: Date | string | null; bridged_at: Date | string | null },
+  now: Date = new Date(),
+): Date {
+  if (dial.dialed_at && !dial.answered_at && !dial.bridged_at) {
+    const notBefore = new Date(dial.dialed_at).getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS;
+    if (notBefore > now.getTime()) return new Date(notBefore);
+  }
+  return now;
+}
+
+/**
  * The `errorCode` the bridge ends a call with when its dial failed with an unknown outcome
  * (`webrtc-bridge-manager.ts`, `telephony_init_failed`): how a lifecycle observer, which sees
  * the code and not the error, tells such a dial from one that plainly failed.

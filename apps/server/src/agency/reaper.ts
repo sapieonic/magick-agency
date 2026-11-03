@@ -6,7 +6,7 @@ import {
   agencyManualCallRepository,
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCallAttemptRecord, AgencyManualCallRecord } from '../db/models/agency.model.js';
-import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../telephony/carrier-errors.js';
+import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, dialOutcomeUnknownNotBefore } from '../telephony/carrier-errors.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { AUTO_DISPOSITION_CODE } from './disposition.js';
 import { requiresDisposition } from './outcome-classifier.js';
@@ -163,16 +163,14 @@ export interface SessionReapReport {
  * For the startup reap, the slot reap and the leak sweep: the rows they end are ones no
  * live owner saw end. The dialer's unrecorded ends are not (the dialer saw them end), and
  * {@link AgencyReaper.sweepOnce} applies this only to those it reports outcome-unknown.
+ * A soft-phone call the orphan sweep ends gets the same rule (`dialOutcomeUnknownNotBefore`,
+ * shared with `manualNoOutcomeSettlement`).
  */
 export function reapedRedialNotBefore(
   attempt: Pick<AgencyCallAttemptRecord, 'dialed_at' | 'answered_at' | 'bridged_at'>,
   now: Date = new Date(),
 ): Date {
-  if (attempt.dialed_at && !attempt.answered_at && !attempt.bridged_at) {
-    const notBefore = new Date(attempt.dialed_at).getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS;
-    if (notBefore > now.getTime()) return new Date(notBefore);
-  }
-  return now;
+  return dialOutcomeUnknownNotBefore(attempt, now);
 }
 
 /**
