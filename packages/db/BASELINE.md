@@ -154,7 +154,7 @@ Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snap
 
 ### Dialer
 
-**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. One running campaign per account (`uq_agency_campaign_running`).
+**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. One running campaign per account (`uq_agency_campaign_running`). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below).
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provider`, `calling_window_start`, `calling_window_end`, `calling_days`, `default_timezone`, `wrapup_seconds`, `wrapup_auto_return`, `retry_policy`, `disposition_catalog`, `record_calls`, `analysis_profile_id`, `context_display`, `status`, `contacts_total`, `created_by`, `started_at`, `completed_at`, `created_at`, `updated_at`, `break_reasons`, `abandon_announcement_id`, `abandonment_ceiling_pct`, `pause_reason`, `paused_at`, `pause_abandonment_rate_pct`, `ended_at`, `last_transition_by_user_id`, `last_transition_by_name`, `parent_campaign_id`, `root_campaign_id`, `retry_generation`, `retry_selector`, `retry_idempotency_key`.
 
@@ -170,7 +170,7 @@ Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state
 
 Columns: `id`, `session_id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `from_state`, `to_state`, `break_reason`, `at`.
 
-**`agency_call_attempts`**. One row per dial: reserved agent, state, outcome, disposition, callback, `dialed_at` / `answered_at` / `bridged_at` / `ended_at`, talk and wrap-up seconds. One live attempt per contact (`uq_agency_attempt_live`).
+**`agency_call_attempts`**. One row per dial: reserved agent, state, outcome, disposition, callback, `dialed_at` / `answered_at` / `bridged_at` / `ended_at`, talk and wrap-up seconds. One live attempt per contact (`uq_agency_attempt_live`). 0008 adds `redial_of_attempt_id` and `redial_number` (the wrap-up redial chain, one redial per attempt by `uq_agency_attempt_redial_of`) and `redialed` to `ck_agency_wrapup_resolution` (see below).
 
 Columns: `id`, `campaign_id`, `contact_id`, `tenant_id`, `account_id`, `attempt_number`, `webrtc_call_id`, `caller_id`, `reserved_agent_id`, `state`, `outcome`, `disposition_code`, `notes`, `callback_at`, `dialed_at`, `answered_at`, `bridged_at`, `ended_at`, `talk_seconds`, `wrapup_seconds`, `created_at`, `updated_at`, `dispositioned_by_user_id`, `dispositioned_at`, `dispositioned_on_behalf`, `wrapup_started_at`, `wrapup_ended_at`, `wrapup_resolution`, `abandon_reason`, `wrapup_resolution`.
 
@@ -217,6 +217,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `uq_dialer_analysis_jobs_call` | `dialer_analysis_jobs` |
 | `uq_agency_manual_call_unsettled` (0005) | `agency_manual_calls` |
 | `uq_agency_softphone_settings_account` (0005) | `agency_softphone_settings` |
+| `uq_agency_attempt_redial_of` (0008) | `agency_call_attempts` |
 
 ## Triggers and functions
 
@@ -463,11 +464,15 @@ the same customer (`POST /proxy/agency/sessions/:id/redial`, `apps/server/src/ag
 - **`ck_agency_wrapup_resolution`** re-created with `redialed`. The supervisor's average wrap-up
   does not count it.
 - A redial attempt is otherwise an ordinary row: `uq_agency_attempt_live` and
-  `uq_agency_attempt_number` apply, and every stat and the abandonment predicate count it.
+  `uq_agency_attempt_number` apply, and the abandonment predicate counts it. The campaign stats
+  count a redialled conversation once (at the attempt not closed `redialed`) and its redials as
+  `attempts_redialed`, never as retries (`apps/server/src/db/repositories/agency/sql-fragments.ts`,
+  `CONVERSATION_ATTEMPT_SQL`).
 
 **Down** maps `redialed` resolutions to `agent_left`, restores the old CHECK, and drops the index,
-the two CHECKs and the three columns. **Tests**: `test/integration/db/wrapup-redial-migration.test.ts`
-and the down → up inventory suite.
+the two CHECKs and the three columns. A `redialed` disposition code is left as it is (an ordinary
+string to the schema). **Tests**: `test/integration/db/wrapup-redial-migration.test.ts` and the
+down → up suite (`test/integration/baseline-down-up.test.ts`, including a Down over a redial chain).
 
 ## Tests
 
@@ -522,3 +527,10 @@ and the down → up inventory suite.
 5. **Imported clips.** `announcements.type` allows only `'audio'`; at launch, any imported campaign
    whose abandon announcement was text-to-speech needs the clip rendered to a file, or its
    `abandon_announcement_id` set to NULL (the campaign then hangs up silently).
+6. **A catalog that already uses the code `redialed`.** 0008 reserves `redialed` as the system
+   disposition of a redialled attempt (`AGENCY_REDIALED_DISPOSITION_CODE`), and the campaign config
+   validation refuses it from now on. A campaign created before 0008 whose `disposition_catalog`
+   already carries `redialed` is NOT migrated: its catalog keeps the entry, and a write that
+   re-validates the catalog is refused until it is renamed. Attempts such a campaign dispositioned
+   `redialed` by hand read, to the campaign stats, as redialled originals (not counted as a
+   conversation). Check imported catalogs for the code before launch.
