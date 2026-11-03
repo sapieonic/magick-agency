@@ -18,6 +18,7 @@ import { resolveDisposition, validateDispositionFields } from '../disposition.js
 import { resolveDispositionDecision, type DispositionDecision } from '../disposition-policy.js';
 import { resolveOurFaultRedial, resolveRetryDecision, type RetryDecision } from '../retry-policy.js';
 import { resolveCallingWindow, scheduleCallbackInWindow } from '../calling-hours.js';
+import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../telephony/carrier-errors.js';
 import { storedValuesInForce, submittedCallFields, validateCallFieldValues } from './call-fields.js';
 import type { SoftphoneRefusal } from './types.js';
 
@@ -142,6 +143,12 @@ export function manualDispositionDecision(input: {
  * campaign path's rules, so pacing cannot redial the customer the soft phone just
  * rang any sooner than it would have redialled them after its own call:
  *
+ * - **Dial outcome unknown** (`add_lead` timed out or answered unreadably — the bridge's
+ *   `TELEPHONY_INIT_OUTCOME_UNKNOWN` — or an end raced such a dial; never answered): the
+ *   carrier may still ring the customer, so the campaign path's hold
+ *   (`holdOutcomeUnknownContact`): the our-fault ledger and its bound, `pending` no
+ *   earlier than `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS` from now, `exhausted` at the
+ *   bound. A `canceled` / `agent_disconnected` call keeps the tag's cap for it.
  * - **Never placed** (`dialed_at` NULL: refused before the carrier, or the carrier
  *   refused it) → `release`: back to the claim's prior state, nothing charged.
  * - **Placed, ended by OUR side before it bridged** (`agent_disconnected`,
@@ -176,9 +183,23 @@ export function manualNoOutcomeSettlement(input: {
   policy: AgencyCampaignRecord['retry_policy'] | null;
   contact: Pick<AgencyContactRecord, 'attempt_count' | 'our_fault_attempts'>;
   now: Date;
+  /** The carrier may have queued the dial (`add_lead` timed out or answered unreadably). */
+  dialOutcomeUnknown?: boolean;
 }): ManualNoOutcomeSettlement {
-  if (!input.placed) return { kind: 'release' };
   const outcome = input.outcome;
+  if (input.dialOutcomeUnknown && !input.bridged) {
+    const capped = outcome !== null && OUR_FAULT_BEFORE_BRIDGE.has(outcome);
+    const decision = resolveOurFaultRedial(
+      capped ? input.policy : null, outcome, input.now, input.contact.our_fault_attempts + 1,
+    );
+    return {
+      kind: 'settle', charge: 'our_fault',
+      decision: decision.contactState === 'pending'
+        ? { ...decision, nextAttemptAt: new Date(input.now.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS) }
+        : decision,
+    };
+  }
+  if (!input.placed) return { kind: 'release' };
   if (!input.bridged && outcome === 'orphaned') {
     const decision = resolveOurFaultRedial(null, 'orphaned', input.now, input.contact.our_fault_attempts + 1);
     return {

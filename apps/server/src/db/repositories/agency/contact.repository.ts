@@ -789,6 +789,11 @@ export class AgencyContactRepository {
    *
    * Returns the state and count that landed, or null when the contact no longer belongs
    * to the reaped attempt (or does not exist) and nothing was written.
+   *
+   * The dialer uses it too, for the contact of a dial whose outcome is unknown
+   * (`holdOutcomeUnknownContact`, `agency/dialer/contact-settlement.ts`): the attempt it
+   * just ended as `reapedAttemptId`, `notBefore` the 15-minute hold. The same write, so the
+   * hold and its our-fault charge land together and the bound ends a run of such dials.
    */
   async requeueOrphaned(
     contactId: string,

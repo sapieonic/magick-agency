@@ -2,14 +2,22 @@
  * The contact's fate when an attempt ends: which ledger the attempt is charged to,
  * and what the retry policy then makes of the contact. The last durable step of
  * the dialer's `ended` arm (`AgencyDialer.recordEndedAttempt`), split out of
- * `agency-dialer.ts`; its log lines keep the dialer's component name.
+ * `agency-dialer.ts`; its log lines keep the dialer's component name. And the contact of
+ * a dial whose outcome is unknown ({@link holdOutcomeUnknownContact}), whichever of the
+ * dialer's two settle paths ends it.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyAttemptOutcome } from '@magick-agency/contracts/agency';
 import { agencyOurFaultRetirementTotal } from '@magick-agency/observability/metrics/agency';
 import { agencyContactRepository } from '../../db/repositories/agency.repository.js';
 import type { DialCommand } from '../dial-dispatcher.js';
-import { resolveOurFaultRedial, resolveRetryDecision } from '../retry-policy.js';
+import {
+  OUR_FAULT_RETIRED_STATE,
+  ourFaultRedialBound,
+  resolveOurFaultRedial,
+  resolveRetryDecision,
+} from '../retry-policy.js';
+import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../telephony/carrier-errors.js';
 
 const log = createChildLogger({ component: 'agency-dialer' });
 
@@ -216,4 +224,83 @@ export async function settleContact(
       'Contact released by the outcome retry policy',
     );
   }
+}
+
+/**
+ * The label {@link holdOutcomeUnknownContact} counts a retirement under on
+ * `agency_our_fault_retirement_total`: the cause (the carrier left the dial's outcome
+ * unknown), beside `agent_disconnected` / `canceled` (the dialer) and `orphaned` (the reaper).
+ */
+export const DIAL_OUTCOME_UNKNOWN_RETIREMENT_LABEL = 'dial_outcome_unknown';
+
+/** The our-fault outcomes a campaign's `retry_policy` may cap (`ourFaultBeforeBridge` above). */
+const OUR_FAULT_OUTCOMES: ReadonlySet<AgencyAttemptOutcome> = new Set(['agent_disconnected', 'canceled']);
+
+/**
+ * The contact of a dial whose outcome is unknown (an `add_lead` that timed out, or a 2xx
+ * whose body could not be read: the carrier may still ring the customer), whichever path
+ * settles the attempt: the dial's own failure path (`abandonBeforeDial`) or the `ended` arm
+ * when an end raced the dial (an agent hang-up, a station teardown), once the dial has said
+ * so (`LiveAttempt.dialSettled`).
+ *
+ * ONE statement (`AgencyContactRepository.requeueOrphaned`, the reaper's requeue): back to
+ * `pending` no earlier than {@link DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS} from now, and
+ * charged to the our-fault ledger (`our_fault_attempts` + 1, never `attempt_count`), so the
+ * shared our-fault bound (`ourFaultRedialBound`) retires a contact whose dials keep ending
+ * outcome-unknown (`OUR_FAULT_RETIRED_STATE`) instead of redialling it every 15 minutes for
+ * ever, each time a call the carrier may place. The hold and the charge cannot be separated.
+ * Only while the contact is still this attempt's (claimed for it, no newer attempt, no
+ * soft-phone claim); a DNC-suppressed row stays `suppressed`.
+ *
+ * The bound is the platform's (`OUR_FAULT_REDIAL_BOUND`): an outcome-unknown dial has no
+ * `retry_policy` key of its own, and the campaign's `failed` cap is the CUSTOMER's
+ * allowance. When a teardown raced the dial and the attempt is recorded `canceled` or
+ * `agent_disconnected`, the campaign's cap for that our-fault outcome applies as it would
+ * have (`ourFaultRedialBound`: it may only lower the bound).
+ *
+ * Never throws. A failed write leaves the contact `in_flight`, for the stranded-contact sweep.
+ */
+export async function holdOutcomeUnknownContact(
+  cmd: DialCommand,
+  /** The attempt's recorded outcome, written to `last_outcome`. */
+  outcome: AgencyAttemptOutcome,
+): Promise<void> {
+  const notBefore = new Date(Date.now() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+  let landed: Awaited<ReturnType<typeof agencyContactRepository.requeueOrphaned>>;
+  try {
+    landed = await agencyContactRepository.requeueOrphaned(cmd.contactId, {
+      reapedAttemptId: cmd.attemptId,
+      notBefore,
+      outcome,
+      bound: ourFaultRedialBound(OUR_FAULT_OUTCOMES.has(outcome) ? cmd.campaign.retry_policy : null, outcome),
+      retiredState: OUR_FAULT_RETIRED_STATE,
+    });
+  } catch (err) {
+    log.error({ err, contactId: cmd.contactId, attemptId: cmd.attemptId },
+      'Could not hold the contact of an outcome-unknown dial — the stranded-contact sweep requeues it');
+    return;
+  }
+  if (landed === null) {
+    log.info({ contactId: cmd.contactId, attemptId: cmd.attemptId },
+      'Contact of an outcome-unknown dial has moved on since its attempt — left as it is');
+    return;
+  }
+  // Counted only when the retirement LANDED (a DNC row stays `suppressed`).
+  if (landed.state === OUR_FAULT_RETIRED_STATE) {
+    agencyOurFaultRetirementTotal.inc({
+      tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, outcome: DIAL_OUTCOME_UNKNOWN_RETIREMENT_LABEL,
+    });
+    log.warn(
+      { contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, ourFaultUsed: landed.our_fault_attempts },
+      'Contact retired by the our-fault redial bound — its dials keep ending with their outcome unknown',
+    );
+    return;
+  }
+  log.info(
+    {
+      contactId: cmd.contactId, attemptId: cmd.attemptId, outcome, contactState: landed.state,
+      ourFaultUsed: landed.our_fault_attempts, nextAttemptAt: notBefore,
+    },
+    'Contact of an outcome-unknown dial held back — the carrier may still place that call',
+  );
 }

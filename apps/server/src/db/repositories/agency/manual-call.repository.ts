@@ -275,6 +275,24 @@ export class AgencyManualCallRepository {
   }
 
   /**
+   * Whether this call's media leg (`agency_calls`, by its `manual_call_id`: a refused dial
+   * never gets `webrtc_call_id`) was ended with `errorCode`. The no-outcome settlement asks
+   * it for the bridge's outcome-unknown end (`TELEPHONY_INIT_OUTCOME_UNKNOWN`) when it has
+   * only the row to go on (the reaper's lapse and orphan sweeps); the code is the caller's,
+   * so this file stays ignorant of the carrier's vocabulary. Served by
+   * `idx_agency_calls_manual_call` (partial on `manual_call_id IS NOT NULL`).
+   */
+  async mediaLegEndedWith(id: string, errorCode: string, deps: { client?: Db } = {}): Promise<boolean> {
+    const { rows } = await (deps.client ?? getPool()).query<{ hit: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM agency_calls WHERE manual_call_id = $1::uuid AND error_code = $2
+       ) AS hit`,
+      [id, errorCode],
+    );
+    return rows[0]?.hit === true;
+  }
+
+  /**
    * End the call (§4.1 step 6): `state = 'ended'`, `ended_at`, the classified
    * outcome, why it ended and the talk time. First end wins (`state <> 'ended'`):
    * a second terminal event writes nothing and gets null, so the caller re-reads

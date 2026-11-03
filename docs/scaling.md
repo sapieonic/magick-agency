@@ -732,7 +732,9 @@ nothing new can be owned by it meanwhile.
    The requeue is one guarded statement (`requeueOrphaned`): it moves the contact only while
    it is still that attempt's (`in_flight` or `connected`, no newer attempt, no soft-phone
    claim), so a contact re-claimed or settled since is left alone, uncharged. The same holds
-   on every reap path, including `reapUnrecordedEnds`.
+   on every reap path, including `reapUnrecordedEnds`. The dialer's own outcome-unknown hold
+   (`holdOutcomeUnknownContact`) is the same statement keyed on the dial's attempt, so a reap
+   racing it moves and charges the contact once, whichever lands first.
 4. Manual calls of those sessions → the orphan path of `sweepManualCalls`.
 5. Agent leases of the slot's live sessions are cleared, and rows marked `offline`, so the
    agents rehydrate into `break`. That closes today's fast-restart window in which a

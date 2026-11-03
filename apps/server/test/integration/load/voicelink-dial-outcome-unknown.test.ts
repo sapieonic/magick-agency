@@ -12,11 +12,19 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  *
  *  - **Outcome unknown** (a 200 whose body is not JSON, and an `add_lead` that times out:
  *    the carrier may have queued the lead). The dial's failure path settles it: the
- *    attempt `failed`, NO attempt charged to the contact, and the contact `pending` but
- *    not dialable until `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS` after `dialed_at`. The
- *    campaign's own `failed` retry delay (1 minute here) must not decide it. Before the
- *    fix the `ended` arm settled it first, through that policy (`attempt_count` 1, next
- *    attempt in a minute), and the hold's `unclaim` then found nothing `in_flight`.
+ *    attempt `failed`, the customer's allowance (`attempt_count`) untouched, ONE redial
+ *    charged to the our-fault ledger, and the contact `pending` but not dialable until
+ *    `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS` after `dialed_at`. The campaign's own `failed`
+ *    retry delay (1 minute here) must not decide it. Before the first fix the `ended` arm
+ *    settled it first, through that policy (`attempt_count` 1, next attempt in a minute),
+ *    and the hold's `unclaim` then found nothing `in_flight`.
+ *  - **The agent hangs up while `add_lead` is in flight, and it then times out.** The
+ *    teardown's `ended` reaches the dialer first (`canceled`); the contact must still get
+ *    the hold, since the carrier may ring the customer. It used to be settled at once by
+ *    the our-fault `canceled` policy (next attempt in a minute here).
+ *  - **The our-fault bound.** The hold is charged to the our-fault ledger, so a contact
+ *    whose outcome-unknown dials reach `AGENCY_OUR_FAULT_REDIAL_BOUND` is retired
+ *    `exhausted` instead of redialled every 15 minutes for ever.
  *  - **Plain refusal** (a 500). The `ended` arm settles it through the retry policy, and
  *    the dial's failure path must find nothing left to abandon. Before the fix it
  *    abandoned again: a second `released` frame and a second release of the agent.
@@ -50,6 +58,7 @@ import { startVoice } from '../../../src/bootstrap/voice.js';
 import { agencyAgentSessionRepository } from '../../../src/db/repositories/agency.repository.js';
 import { AGENT_LEASE_MS } from '../../../src/agency/agent-state-machine.js';
 import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../../src/telephony/carrier-errors.js';
+import { AGENCY_OUR_FAULT_REDIAL_BOUND } from '@magick-agency/contracts/agency';
 import { insertAgencyCampaign, insertAgencyContact } from '../agency/agency-factories.js';
 import {
   LOAD_ACCOUNT, LOAD_TENANT, assertNoLeaks, closeLoadDb, initLoadDb, startLoadRig, stopLoadRig,
@@ -60,8 +69,11 @@ import {
 const RETRY_POLICY = {
   failed: { delay_minutes: 1, max_attempts: 5 },
   ...Object.fromEntries(
-    ['no_answer', 'busy', 'abandoned', 'agent_disconnected', 'orphaned', 'canceled'].map((o) => [o, { max_attempts: 0 }]),
+    ['no_answer', 'busy', 'abandoned', 'agent_disconnected', 'orphaned'].map((o) => [o, { max_attempts: 0 }]),
   ),
+  // An our-fault redial a minute out, shorter than the hold, so a raced hang-up settled by
+  // this policy is visibly wrong.
+  canceled: { delay_minutes: 1, max_attempts: 3 },
 };
 
 interface AttemptRow {
@@ -102,7 +114,7 @@ describe('a dial the carrier refused is settled once, through the real bridge an
     await closeLoadDb();
   });
 
-  it('holds an outcome-unknown dial\'s contact for 15 min uncharged, settles a plain refusal by policy, and releases the agent once per dial', async () => {
+  it('holds an outcome-unknown dial\'s contact for 15 min on the our-fault ledger (a raced hang-up too, retired at the bound), settles a plain refusal by policy, and releases the agent once per dial', async () => {
     rig = await startLoadRig();
     const r = rig;
     const campaign = await insertAgencyCampaign({
@@ -113,16 +125,25 @@ describe('a dial the carrier refused is settled once, through the real bridge an
       disposition_catalog: JSON.stringify([]),
       retry_policy: JSON.stringify(RETRY_POLICY),
     });
-    for (let i = 0; i < 3; i++) {
+    const dialOrderBase = Date.now() - 60_000;
+    for (let i = 0; i < 5; i++) {
       await insertAgencyContact(campaign.id as string, {
         tenant_id: LOAD_TENANT, account_id: LOAD_ACCOUNT,
         phone_e164: `+9197${String(20_000_000 + i).padStart(8, '0')}`, source_row_number: i + 1,
+        // Claimed in this order.
+        next_attempt_at: new Date(dialOrderBase + i * 1_000),
+        // The last one has had two our-fault redials already: its third is the bound.
+        ...(i === 4 ? { our_fault_attempts: 2 } : {}),
       });
     }
-    // One fault per dial, in dial order: two outcome-unknown, one plain refusal.
+    // One fault per dial, in dial order: two outcome-unknown, one plain refusal, one
+    // `add_lead` the agent hangs up during and that then times out, and one outcome-unknown
+    // at the our-fault bound.
     r.carrier.injectFault('add_lead', { kind: 'malformed' });
     r.carrier.injectFault('add_lead', { kind: 'hang' });
     r.carrier.injectFault('add_lead', { kind: 'status', status: 500 });
+    r.carrier.injectFault('add_lead', { kind: 'hang' });
+    r.carrier.injectFault('add_lead', { kind: 'malformed' });
 
     const ctx: AppContext = { config, pool: getPool(), redis: getTestRedis() };
     stopVoice = await startVoice(ctx);
@@ -160,11 +181,18 @@ describe('a dial the carrier refused is settled once, through the real bridge an
       [campaign.id],
     )).rows;
 
-    // The three dials, each refused, settled and the agent back in the pool.
-    await waitFor('three refused dials settled', async () => {
+    // The fourth dial: the agent hangs up while its `add_lead` hangs (the timeout is a second).
+    await waitFor('the fourth add_lead in flight', () =>
+      r.carrier.requests.filter((q) => q.route === 'add_lead').length === 4
+        && runtime.dialer.activeAttemptIds().length === 1, 30_000);
+    const raced = runtime.dialer.activeAttemptIds()[0]!;
+    expect(await runtime.dialer.hangupAttempt(raced), 'the hang-up found no live call').toBe(true);
+
+    // The five dials, each refused, settled and the agent back in the pool.
+    await waitFor('five refused dials settled', async () => {
       const rows = await readAttempts();
-      return rows.length === 3
-        && rows.every((a) => a.state === 'ended')
+      return rows.length === 5
+        && rows.every((a) => a.state === 'ended' && a.contact_state !== 'in_flight')
         && runtime.dialer.activeAttemptIds().length === 0
         && (await runtime.agents.get(sessionId))?.state === 'available';
     }, 30_000, async () => JSON.stringify(await readAttempts()));
@@ -172,20 +200,39 @@ describe('a dial the carrier refused is settled once, through the real bridge an
     await new Promise((resolve) => setTimeout(resolve, 500));
 
     const attempts = await readAttempts();
-    expect(attempts).toHaveLength(3);
-    expect(new Set(attempts.map((a) => a.contact_id)).size, 'a contact was dialled twice').toBe(3);
+    expect(attempts).toHaveLength(5);
+    expect(new Set(attempts.map((a) => a.contact_id)).size, 'a contact was dialled twice').toBe(5);
+    expect(attempts.map((a) => a.id)[3]).toBe(raced);
     expect(attempts.map((a) => a.error_code)).toEqual([
       'TELEPHONY_INIT_OUTCOME_UNKNOWN', 'TELEPHONY_INIT_OUTCOME_UNKNOWN', 'TELEPHONY_INIT_FAILED',
+      // The hang-up's teardown ended the media leg; the timeout came after it.
+      null,
+      'TELEPHONY_INIT_OUTCOME_UNKNOWN',
     ]);
 
     for (const a of attempts.slice(0, 2)) {
       const what = `outcome-unknown attempt ${a.id}`;
       expect({ state: a.state, outcome: a.outcome }, what).toEqual({ state: 'ended', outcome: 'failed' });
       expect({ contact: a.contact_state, charged: a.attempt_count, ourFault: a.our_fault_attempts }, what)
-        .toEqual({ contact: 'pending', charged: 0, ourFault: 0 });
+        .toEqual({ contact: 'pending', charged: 0, ourFault: 1 });
       expect(a.next_attempt_at.getTime(), `${what}: dialable before the carrier rule's hold`)
         .toBeGreaterThanOrEqual(a.dialed_at.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
     }
+
+    // The agent hung up during the `add_lead` that then timed out: recorded as the
+    // teardown, held as an outcome-unknown dial, charged once.
+    const hungUp = attempts[3]!;
+    expect({ state: hungUp.state, outcome: hungUp.outcome }).toEqual({ state: 'ended', outcome: 'canceled' });
+    expect({ contact: hungUp.contact_state, charged: hungUp.attempt_count, ourFault: hungUp.our_fault_attempts })
+      .toEqual({ contact: 'pending', charged: 0, ourFault: 1 });
+    expect(hungUp.next_attempt_at.getTime(), 'a raced hang-up lost the outcome-unknown hold')
+      .toBeGreaterThanOrEqual(hungUp.dialed_at.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+
+    // At the bound: retired, not held for another redial.
+    const bounded = attempts[4]!;
+    expect({ state: bounded.state, outcome: bounded.outcome }).toEqual({ state: 'ended', outcome: 'failed' });
+    expect({ contact: bounded.contact_state, charged: bounded.attempt_count, ourFault: bounded.our_fault_attempts })
+      .toEqual({ contact: 'exhausted', charged: 0, ourFault: AGENCY_OUR_FAULT_REDIAL_BOUND });
 
     const plain = attempts[2]!;
     expect({ state: plain.state, outcome: plain.outcome }).toEqual({ state: 'ended', outcome: 'failed' });
@@ -197,7 +244,7 @@ describe('a dial the carrier refused is settled once, through the real bridge an
     const released = frames.filter((f) => f['event'] === 'released').map((f) => f['attempt_id']);
     expect(released.sort()).toEqual(attempts.map((a) => a.id).sort());
     expect(runtime.dialer.unrecordedEndedAttempts()).toEqual([]);
-    expect(r.carrier.requests.filter((q) => q.route === 'add_lead')).toHaveLength(3);
+    expect(r.carrier.requests.filter((q) => q.route === 'add_lead')).toHaveLength(5);
 
     // The agent's own station socket stays open; nothing else may.
     await assertNoLeaks(r, [], 1);
