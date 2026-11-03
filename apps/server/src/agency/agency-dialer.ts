@@ -405,11 +405,14 @@ export class AgencyDialer {
     // for. The `answered` arm is where the socket gets bound, so an event that
     // arrived before this line existed would leave a live customer with no agent
     // and no record of the attempt to abandon.
-    this.liveByAttempt.set(attemptId, {
+    // Held as a local too: the dial's failure path below asks whether the `ended` arm
+    // has settled THIS record meanwhile (`liveByAttempt` no longer holds it).
+    const live: LiveAttempt = {
       cmd, state: 'dialing', bridgedAt: null, answeredAt: null, priors,
       lateBinding, panel: attempt, panelDelivered, dialedAt,
-      abandonReason: null,
-    });
+      abandonReason: null, placing: false, outcomeUnknownEnd: false,
+    };
+    this.liveByAttempt.set(attemptId, live);
 
     /**
      * Only the DIAL is inside this try.
@@ -475,6 +478,7 @@ export class AgencyDialer {
     }
 
     let record: Awaited<ReturnType<typeof this.bridge.createBridgedCall>>;
+    live.placing = true;
     try {
       // The one line late binding changes about the dial: no socket goes to the
       // carrier leg, so `attachBrowserLeg`'s token-less fallback cannot reach this
@@ -485,17 +489,36 @@ export class AgencyDialer {
         : await this.bridge.createBridgedCall({ ...dialParams, browserSocket: socket });
 
     } catch (err) {
+      live.placing = false;
+      // The bridge wraps the adapter's error as `cause`; read through it. The `ended` arm
+      // may have seen the bridge's outcome-unknown end first (`onEnded`), which says the
+      // same thing whatever the rejection carries.
+      const outcomeUnknown = isDialOutcomeUnknown(err) || live.outcomeUnknownEnd;
+      // ── Settled exactly once ─────────────────────────────────────────────────
+      //
+      // A dial the bridge got as far as the carrier with is ended by the bridge before
+      // this rejection reaches us: its `endCall` emits `ended` and then throws. Every
+      // such end except an outcome-unknown one is the `ended` arm's to settle (the
+      // attempt row, the contact through the retry policy, the `released` frame, the
+      // agent), and it has done so by now: it forgets the record synchronously, inside
+      // the emit. Abandoning it again here wrote the row a second time, sent the agent
+      // a second `released`, and released the agent a second time, after pacing may
+      // already have reserved them for their next call. The same holds for a teardown
+      // that raced the dial (the agent hung up while `add_lead` was in flight).
+      if (this.liveByAttempt.get(attemptId) !== live) {
+        log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed after its end was settled — nothing left to abandon');
+        return;
+      }
       const reason: AgencyReleaseReason =
         err instanceof WebRtcCallError && err.code === 'station_socket_unavailable'
           ? 'reservation_expired'
           : 'failed';
-      // The bridge wraps the adapter's error as `cause`; read through it.
-      const outcomeUnknown = isDialOutcomeUnknown(err);
       log.warn({ err, attemptId, outcomeUnknown }, 'Agency dial failed');
       await this.abandonBeforeDial(cmd, reason, panelDelivered,
         outcomeUnknown ? new Date(Date.now() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS) : undefined);
       return;
     }
+    live.placing = false;
 
     // Id only — NEVER the state. By the time this runs the carrier may already
     // have answered and `onBridgeLifecycle` may already have written `bridged`
@@ -1068,6 +1091,23 @@ export class AgencyDialer {
    */
   private async onEnded(live: LiveAttempt, ev: WebRtcLifecycleEvent): Promise<void> {
     const cmd = live.cmd;
+    // ── An outcome-unknown dial is the dial's own failure path's to settle ─────
+    //
+    // The bridge ends a dial the carrier may have queued (`add_lead` timed out, or a 2xx
+    // whose body could not be read) with this end, from inside the dial call, and then
+    // the dial call rejects. `executeDial`'s catch is the path that holds the contact
+    // back for `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS` and charges no attempt to it
+    // (`abandonBeforeDial`). Settling here as well recorded it through the `failed`
+    // retry policy — charging `attempt_count` and choosing the campaign's own delay,
+    // which can be shorter than the hold — and then the hold's `unclaim` found the
+    // contact no longer `in_flight` and did nothing. So the record is left exactly as it
+    // is (registered, lease renewed) for the catch, which runs as soon as the bridge has
+    // released the call's slots.
+    if (live.placing && ev.errorCode === DIAL_OUTCOME_UNKNOWN_ERROR_CODE) {
+      live.outcomeUnknownEnd = true;
+      log.info({ attemptId: cmd.attemptId, callId: ev.callId }, 'Outcome-unknown dial ended by the bridge — the dial\'s failure path settles it');
+      return;
+    }
     this.forgetAttempt(cmd);
 
     let handedToWrapup = false;
@@ -1208,7 +1248,8 @@ export class AgencyDialer {
     } catch (err) {
       rowEnded = false;
       // The bridge saw this call end. Only a dial that failed with an unknown outcome
-      // may still be placed by the carrier.
+      // may still be placed by the carrier. (A backstop: that end, emitted while the dial
+      // is in flight, is left to the dial's failure path above and never reaches here.)
       this.noteUnrecordedEnd(cmd.attemptId, ev.errorCode === DIAL_OUTCOME_UNKNOWN_ERROR_CODE);
       log.error(
         { err, attemptId: cmd.attemptId, outcome },

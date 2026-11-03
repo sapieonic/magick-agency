@@ -102,6 +102,25 @@ export interface LiveAttempt {
    * apologised to.
    */
   abandoned?: boolean;
+  /**
+   * True while `executeDial` awaits the bridge's dial (`createBridgedCall` /
+   * `createUnboundBridgedCall`).
+   *
+   * A dial the carrier refused is ended by the bridge BEFORE the dial call rejects:
+   * the bridge's `endCall` emits `ended` (`telephony_init_failed`) and only then
+   * throws. When that end is outcome-unknown (`DIAL_OUTCOME_UNKNOWN_ERROR_CODE`) the
+   * `ended` arm leaves the attempt to the dial's own failure path, which is the one
+   * that holds the contact back for `DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`
+   * (`AgencyDialer.onEnded`). Settling it in both places charged the contact the
+   * `failed` retry policy and then made the hold a no-op.
+   */
+  placing: boolean;
+  /**
+   * Set when the `ended` arm saw an outcome-unknown end while {@link placing} and left
+   * the settlement to the dial's failure path, so that path applies the redial hold
+   * whatever error the dial call rejected with.
+   */
+  outcomeUnknownEnd: boolean;
 }
 
 /**

@@ -279,7 +279,11 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   settlement). Reserves the agent before the dial, re-asserts the lease and asks the pacing engine
   (`stillAuthorised`) right before `createBridgedCall`, registers the lifecycle listener before
   dialing, writes the agent's panel and binds the audio with no `await` between, and stamps
-  `answered_at` and `bridged_at` independently.
+  `answered_at` and `bridged_at` independently. A dial the carrier refused is settled once: the
+  bridge emits `ended` before `createBridgedCall` rejects, and the `ended` arm settles it,
+  except an outcome-unknown one (`TELEPHONY_INIT_OUTCOME_UNKNOWN`), which it leaves to the dial's
+  failure path (`abandonBeforeDial`: `failed`, uncharged, redial held 15 min); that path
+  abandons nothing the `ended` arm already settled.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);

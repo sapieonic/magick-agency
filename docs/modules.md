@@ -123,7 +123,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~7 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 27 |
+| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 33 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
@@ -956,6 +956,7 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/voicelink-media-ws-load.test.ts` | ~8 | 50 simultaneous carrier streams in order both ways; `alaw8` stations beside `pcm16` ones (A-law byte for byte both ways); token gate; `start` failures; slow carrier; every close shape settles once; mid-call reconnect |
 | `apps/server/test/integration/load/voicelink-webhook-storm.test.ts` | ~3 | 40 calls of duplicated, shuffled, concurrent webhooks settle once with recordings and carrier ids kept; 1 `it.fails` (terminal overtaking `answered`) |
 | `apps/server/test/integration/load/voicelink-full-stack.test.ts` | ~1 | Real app, real stations, pacing engine dialling through the real adapter into the mock carrier; no leaks |
+| `apps/server/test/integration/load/voicelink-dial-outcome-unknown.test.ts` | 1 | The same stack, three refused dials (unreadable 200, `add_lead` timeout, 500): each settled once; an outcome-unknown one `failed`, uncharged and not dialable before `dialed_at` + 15 min, a plain refusal by the retry policy; one `released` per dial; no leaks |
 | `apps/server/test/integration/load/station-floor.test.ts` | ~2 | 150-agent join / connect / available storm and a reconnect storm through the real routes |
 | `apps/server/test/integration/load/station-floor-soak.test.ts` | ~1 | 100 agents, about 520 calls through wrap-up and disposition; console = Redis = session row |
 | `apps/server/test/integration/load/floor-run.test.ts` | ~1 | 100 agents, 5 campaigns, 3 tenants, 2,200 contacts to exhaustion; invariants and the pacing law every round |

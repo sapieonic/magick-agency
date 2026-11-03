@@ -871,6 +871,114 @@ describe('seat time on the paths that never reach the settle site', () => {
   });
 
   /**
+   * The bridge's REAL order for a dial the carrier refused: its `endCall` emits `ended`
+   * (`telephony_init_failed`, `TELEPHONY_INIT_OUTCOME_UNKNOWN` when the carrier may have
+   * queued the lead) synchronously, awaits the slot release, and only then does
+   * `createBridgedCall` reject (`webrtc-bridge-manager.ts`, step 6). The two tests above
+   * use a bridge that rejects without ending, which is why they could not see the
+   * outcome-unknown dial settled twice: once by the `ended` arm (charged through the
+   * `failed` retry policy) and once by the dial's failure path, whose 15-minute hold then
+   * found the contact no longer `in_flight`.
+   */
+  function bridgeEndingThenRejecting(errorCode: string, cause: Error) {
+    const bridge = fakeBridge();
+    const listeners: Array<(e: any) => void> = [];
+    bridge.onLifecycle = (fn: (e: any) => void) => { listeners.push(fn); return () => { /* noop */ }; };
+    (bridge.createBridgedCall as ReturnType<typeof vi.fn>).mockImplementation(async (params: any) => {
+      for (const l of listeners) {
+        l({
+          callId: 'call-1', correlationId: params.correlation.agencyAttemptId, phase: 'ended',
+          status: 'failed', outcome: 'telephony_init_failed', errorCode, errorMessage: cause.message,
+          answered: false, talkTimeSeconds: 0,
+        });
+      }
+      // `releaseSlots` and `clearWsToken`: the `ended` handler's writes are under way.
+      await new Promise((resolve) => setImmediate(resolve));
+      const refusal = new WebRtcCallError(cause.message, 'telephony_init_failed', 502);
+      refusal.cause = cause;
+      throw refusal;
+    });
+    return bridge;
+  }
+
+  async function dialThrough(bridge: ReturnType<typeof fakeBridge>) {
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = new AgentStateMachine(null, '');
+    vi.spyOn(agents, 'transition').mockResolvedValue(true);
+    const setSpy = vi.spyOn(agents, 'set');
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    const ws = fakeWs();
+    await stations.attach({
+      sessionId: 's1', campaignId: 'camp-1', tenantId: 't1', accountId: 'a1',
+      agentUserId: 'user-1', ws: ws as any,
+    });
+    await dialer.executeDial(makeCmd());
+    // Let any settle the `ended` arm started finish before counting.
+    for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+    const endedWrites = repos.attempt.setState.mock.calls.filter(([, state]: any[]) => state === 'ended');
+    const released = ws.sent.filter((f: any) => f.event === 'released');
+    const releases = setSpy.mock.calls.filter(([sid]: any[]) => sid === 's1');
+    return { dialer, endedWrites, released, releases };
+  }
+
+  /** Mutation-checked: dropping the `ended` arm's outcome-unknown early return reds this. */
+  it('settles an outcome-unknown dial ONCE, through the redial hold, when the bridge ends it before rejecting', async () => {
+    const before = Date.now();
+    const world = await dialThrough(bridgeEndingThenRejecting(
+      'TELEPHONY_INIT_OUTCOME_UNKNOWN', new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 15_000, true),
+    ));
+
+    expect(world.endedWrites, 'the attempt row was ended more than once').toHaveLength(1);
+    expect(world.endedWrites[0]![2]).toMatchObject({ outcome: 'failed' });
+    // No attempt charged, and no retry policy: the contact goes back only after the hold.
+    expect(repos.contact.chargeAttempt).not.toHaveBeenCalled();
+    expect(repos.contact.chargeOurFaultAttempt).not.toHaveBeenCalled();
+    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
+    const nextAt = (repos.contact.unclaim.mock.calls[0]![1] as Date).getTime();
+    expect(nextAt).toBeGreaterThanOrEqual(before + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+    // The agent is told once and released once.
+    expect(world.released).toHaveLength(1);
+    expect(world.releases).toHaveLength(1);
+    expect(world.dialer.activeAttemptIds()).toEqual([]);
+    expect(world.dialer.unrecordedEndedAttempts()).toEqual([]);
+  });
+
+  /**
+   * The hold rides on the `ended` arm's sighting too, so a dial call that rejects with
+   * something other than the adapter's error (the slot release throwing inside `endCall`)
+   * still holds the contact. Mutation-checked: dropping `|| live.outcomeUnknownEnd` reds it.
+   */
+  it('holds the contact on the bridge\'s outcome-unknown end even when the rejection does not say so', async () => {
+    const before = Date.now();
+    await dialThrough(bridgeEndingThenRejecting('TELEPHONY_INIT_OUTCOME_UNKNOWN', new Error('redis down while releasing slots')));
+    expect(repos.contact.unclaim).toHaveBeenCalledTimes(1);
+    expect((repos.contact.unclaim.mock.calls[0]![1] as Date).getTime())
+      .toBeGreaterThanOrEqual(before + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
+  });
+
+  /**
+   * A plain refusal is the `ended` arm's: recorded `failed`, charged through the retry
+   * policy, the agent told and released by it. The dial's failure path must then find
+   * nothing to abandon. It used to abandon again: a second row write, a second `released`
+   * frame, and a second release of an agent pacing may already have reserved.
+   * Mutation-checked: dropping the "already settled" check in the catch reds this.
+   */
+  it('settles a plainly refused dial ONCE, in the `ended` arm, when the bridge ends it before rejecting', async () => {
+    const world = await dialThrough(bridgeEndingThenRejecting(
+      'TELEPHONY_INIT_FAILED', new Error('VoiceLink /v1/add_lead error 500: no'),
+    ));
+    expect(world.endedWrites).toHaveLength(1);
+    expect(world.endedWrites[0]![2]).toMatchObject({ outcome: 'failed' });
+    expect(repos.contact.chargeAttempt).toHaveBeenCalledTimes(1);
+    expect(repos.contact.unclaim).not.toHaveBeenCalled();
+    expect(world.released).toHaveLength(1);
+    expect(world.releases).toHaveLength(1);
+    expect(world.dialer.activeAttemptIds()).toEqual([]);
+  });
+
+  /**
    * The dial's lease renewer stops only when the lease is LOST (Redis answered: the CAS
    * missed). A renew that failed (`unknown`: a Redis error, or the client's command
    * timeout) keeps it going: the lease outlives two missed renewals, and one slow Redis
