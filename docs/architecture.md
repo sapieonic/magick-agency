@@ -282,8 +282,13 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `answered_at` and `bridged_at` independently. A dial the carrier refused is settled once: the
   bridge emits `ended` before `createBridgedCall` rejects, and the `ended` arm settles it,
   except an outcome-unknown one (`TELEPHONY_INIT_OUTCOME_UNKNOWN`), which it leaves to the dial's
-  failure path (`abandonBeforeDial`: `failed`, uncharged, redial held 15 min); that path
-  abandons nothing the `ended` arm already settled.
+  failure path (`abandonBeforeDial`: `failed`, redial held 15 min); that path abandons nothing
+  the `ended` arm already settled. Any other end while the dial is in flight and unanswered (a
+  hang-up or a station teardown racing `add_lead`) settles the row and the agent at once and
+  leaves the contact claimed until the dial returns (`LiveAttempt.dialSettled`): outcome
+  unknown, it is held too. The hold is one statement with an our-fault charge
+  (`holdOutcomeUnknownContact` in `dialer/contact-settlement.ts`, over the reaper's
+  `requeueOrphaned`), so the our-fault bound ends a run of such dials.
 - **Abandonment.** A call the customer answered and no agent reached. `abandon-clip.ts` plays the
   campaign's uploaded clip and hangs up (`playClipToCarrierThenHangUp`); the predicate is a leaf
   module shared by SQL and code (`packages/domain/src/abandonment-predicate.ts`);

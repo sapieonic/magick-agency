@@ -151,7 +151,13 @@ Owned by `AgencyRuntime`. One call at a time per session.
    counts (SP5), its contact claim is released and no attempt is charged; the carrier's refusal
    answers 201 with the row as it ended and settled. So is a dial that throws before the bridge is asked (a
    database fault on the `dialing` write): it is abandoned unplaced and the error reaches the
-   caller, so nothing is left `queued` holding the session.
+   caller, so nothing is left `queued` holding the session. A dial whose **outcome is unknown**
+   (`add_lead` timed out, or answered 200 with a body that cannot be read: the carrier may still
+   ring the customer, `TELEPHONY_INIT_OUTCOME_UNKNOWN`) is not unplaced: it ends `failed` with
+   `dialed_at` kept, answers 201 the same way (the console's "The call didn't go through."), and
+   its claimed contact is held (§5). When the call ends unanswered while the dial is still out
+   (the agent hangs up during `add_lead`), the agent gets the ended `manual_call` at once and the
+   contact waits for the dial's answer before it is settled.
    Recording: tag's `record_calls`, else settings' `record_calls` (gated by the account's
    `allow_recording` in the bridge as today). Profile: tag's `analysis_profile_id`, else
    settings', else the account default (the analysis hook's fallback).
@@ -267,6 +273,7 @@ customer straight back:
 
 | The call | The contact |
 |---|---|
+| the dial's outcome unknown, never answered (the bridge's `TELEPHONY_INIT_OUTCOME_UNKNOWN`, or an end that raced such a dial) | the campaign path's hold: `our_fault_attempts` + 1, `pending` no earlier than 15 min on (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`), `exhausted` at the our-fault bound (the tag's `canceled` / `agent_disconnected` cap applies to a raced hang-up). The reaper's sweeps, which have only the rows, read the media leg's `error_code` (`mediaLegEndedWith`) |
 | never placed (`dialed_at` NULL: refused before the carrier, or by it) | the claim released to its prior state; nothing charged |
 | placed, ended by our side before it bridged (`canceled`: the agent hung up the ring; `agent_disconnected`) | `our_fault_attempts` + 1 and `resolveOurFaultRedial`: `pending` after the our-fault delay, `exhausted` at the bound; the customer's allowance untouched |
 | placed, `orphaned` before it bridged (a restart) | the same ledger and bound, `pending` at once (the reaper's rule for an attempt) |

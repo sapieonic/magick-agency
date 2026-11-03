@@ -123,7 +123,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~7 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 33 |
+| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 39 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
@@ -251,7 +251,7 @@ Files: `grouped.ts`, `roster.ts`, `stats.ts`
 
 ### `apps/server/src/agency/dialer/`
 
-The dialer's internals, split out of `agency-dialer.ts`: `live-attempt.ts` (the `LiveAttempt` record, `isUnannounced`, the panel builder) and `contact-settlement.ts` (`settleContact`: the our-fault / retry-policy routing of an ended attempt's contact). Tested through the `AgencyDialer` suites above (`agency-dialer`, `late-binding`, `canceled-outcome-ledger`, `our-fault-redial`, the chaos suites).
+The dialer's internals, split out of `agency-dialer.ts`: `live-attempt.ts` (the `LiveAttempt` record, `isUnannounced`, the panel builder) and `contact-settlement.ts` (`settleContact`: the our-fault / retry-policy routing of an ended attempt's contact; `holdOutcomeUnknownContact`: the 15-minute hold of an outcome-unknown dial's contact, charged to the our-fault ledger). Tested through the `AgencyDialer` suites above (`agency-dialer`, `late-binding`, `canceled-outcome-ledger`, `our-fault-redial`, the chaos suites).
 
 Files: `contact-settlement.ts`, `live-attempt.ts`
 
@@ -265,10 +265,10 @@ Files: `call-fields.ts`, `manual-dialer.ts`, `manual-disposition.ts`, `manual-pr
 |---|---|
 | `apps/server/test/integration/agency/chaos/softphone-restart-mid-call.test.ts` | 3 |
 | `apps/server/test/integration/agency/softphone-agent-claim.test.ts` | 8 |
-| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 10 |
+| `apps/server/test/integration/agency/softphone-manual-dialer.test.ts` | 15 |
 | `apps/server/test/integration/agency/softphone-runtime-e2e.test.ts` | 14 |
 | `apps/server/test/unit/agency/softphone/manual-dialer-rules.test.ts` | 5 |
-| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 20 |
+| `apps/server/test/unit/agency/softphone/manual-disposition.test.ts` | 21 |
 | `apps/server/test/unit/agency/softphone/manual-predial.test.ts` | 26 |
 
 ### `apps/server/src/agency/pacing/`
@@ -956,7 +956,7 @@ a WebSocket *client*, which a stub server cannot be.
 | `apps/server/test/integration/load/voicelink-media-ws-load.test.ts` | ~8 | 50 simultaneous carrier streams in order both ways; `alaw8` stations beside `pcm16` ones (A-law byte for byte both ways); token gate; `start` failures; slow carrier; every close shape settles once; mid-call reconnect |
 | `apps/server/test/integration/load/voicelink-webhook-storm.test.ts` | ~3 | 40 calls of duplicated, shuffled, concurrent webhooks settle once with recordings and carrier ids kept; 1 `it.fails` (terminal overtaking `answered`) |
 | `apps/server/test/integration/load/voicelink-full-stack.test.ts` | ~1 | Real app, real stations, pacing engine dialling through the real adapter into the mock carrier; no leaks |
-| `apps/server/test/integration/load/voicelink-dial-outcome-unknown.test.ts` | 1 | The same stack, three refused dials (unreadable 200, `add_lead` timeout, 500): each settled once; an outcome-unknown one `failed`, uncharged and not dialable before `dialed_at` + 15 min, a plain refusal by the retry policy; one `released` per dial; no leaks |
+| `apps/server/test/integration/load/voicelink-dial-outcome-unknown.test.ts` | 1 | The same stack, five refused dials (unreadable 200, `add_lead` timeout, 500, an agent hang-up during a hung `add_lead`, an outcome-unknown dial at the our-fault bound): each settled once; an outcome-unknown one (the raced hang-up too) `pending` on the our-fault ledger, `attempt_count` untouched and not dialable before `dialed_at` + 15 min, `exhausted` at the bound; a plain refusal by the retry policy; one `released` per dial; no leaks |
 | `apps/server/test/integration/load/station-floor.test.ts` | ~2 | 150-agent join / connect / available storm and a reconnect storm through the real routes |
 | `apps/server/test/integration/load/station-floor-soak.test.ts` | ~1 | 100 agents, about 520 calls through wrap-up and disposition; console = Redis = session row |
 | `apps/server/test/integration/load/floor-run.test.ts` | ~1 | 100 agents, 5 campaigns, 3 tenants, 2,200 contacts to exhaustion; invariants and the pacing law every round |
