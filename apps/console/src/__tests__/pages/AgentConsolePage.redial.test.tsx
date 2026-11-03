@@ -851,6 +851,54 @@ describe('a redial that fails before its `reserved` reaches the console', () => 
   });
 });
 
+describe('a press with no answer, then an ordinary call whose wrap-up keeps no panel', () => {
+  it('does not take that wrap-up for the redial’s', async () => {
+    const DRAFT = 'Dropped mid-sentence — wants the gold plan.';
+    const notesField = () => document.getElementById('agency-notes') as HTMLTextAreaElement;
+    await inWrapup({ redial_remaining: 2 });
+    await act(async () => {
+      fireEvent.change(notesField(), { target: { value: DRAFT } });
+    });
+    mocks.redialFromWrapup.mockRejectedValueOnce(new Error('Failed to fetch'));
+    await pressRedial();
+    await waitFor(() => expect(screen.getByTestId('wrapup-redial-refusal')).toBeTruthy());
+
+    // Nothing was placed after all: the outcome is saved and a paced call comes in.
+    const C = { ...ATTEMPT, attempt_id: 'att-9', contact_id: 'c-9' };
+    await act(async () => {
+      latest().emit({ event: 'agent_state', state: 'available', since: '2026-08-11T10:04:00.000Z' });
+    });
+    await act(async () => {
+      latest().emit({ event: 'reserved', attempt: C });
+      latest().emit({ event: 'bridged', attempt_id: 'att-9', bridged_at: '2026-08-11T10:05:04.000Z' });
+    });
+    // It ends owing nothing, into a timed wrap-up: no panel is retained for it.
+    await act(async () => {
+      latest().emit({
+        event: 'released',
+        attempt_id: 'att-9',
+        reason: 'remote_hangup',
+        requires_disposition: false,
+        message: 'Call ended.',
+      });
+      latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:06:00.000Z' });
+      latest().emit({
+        event: 'wrapup',
+        wrapup: {
+          attempt_id: 'att-9',
+          ends_at: new Date(Date.now() + 30_000).toISOString(),
+          requires_disposition: false,
+          disposition_submitted: false,
+          auto_return: true,
+        },
+      });
+    });
+    expect(notesField().value).toBe('');
+    expect(JSON.parse(window.localStorage.getItem('agency.notes.att-1')!).notes).toBe(DRAFT);
+    expect(screen.queryByTestId('contact-redial-tag')).toBeNull();
+  });
+});
+
 describe('station join analytics', () => {
   it('reports the campaign’s allow_wrapup_redial beside its wrap-up settings', async () => {
     await mounted();
