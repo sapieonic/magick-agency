@@ -44,8 +44,10 @@ final class _Tracked {
 ///   `agency_softphone_call_ended` (the console has neither; the server
 ///   settles its calls);
 /// * a wrap-up redial: `agency_redial_requested` when Redial is pressed and
-///   the request goes out, `agency_redial_refused` when it is refused or
-///   fails (pressed minus refused is placed).
+///   the request goes out, `agency_redial_refused` when it is refused or gets
+///   no usable answer (`code` null). Pressed minus refused is NOT the redials
+///   placed: a request with no usable answer may have been placed all the
+///   same. Placed redials are the server's to count.
 ///
 /// The station controller feeds it frames and audio; the soft phone tells it
 /// which calls it placed ([manualPlaced]).
@@ -73,7 +75,8 @@ final class CallTelemetry {
   void redialRequested({required String? campaignId, required int remaining}) =>
       Telemetry.event('agency_redial_requested', {'campaign_id': campaignId, 'redial_remaining': remaining});
 
-  /// [code]: the refusal's code, null for a transport failure.
+  /// [code]: the refusal's code; null when none came back (no network, a
+  /// timeout, an unreadable answer), and the redial may have been placed.
   void redialRefused({required String? campaignId, required String? code}) =>
       Telemetry.event('agency_redial_refused', {'campaign_id': campaignId, 'code': code});
 

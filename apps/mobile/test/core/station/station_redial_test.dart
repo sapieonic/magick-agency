@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show SocketException;
 
 import 'package:agency_wire/agency_wire.dart';
 import 'package:fake_async/fake_async.dart';
@@ -235,6 +236,91 @@ void main() {
       });
     });
 
+    test('a refusal after the server reopened the wrap-up: the fresh frame\'s count stands', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        final answer = Completer<http.Response>();
+        app.routes['POST $_redialPath'] = (_) => answer.future;
+        final redial = app.controller.redial(attemptId: 'att-1');
+        async.flushMicrotasks();
+        // The server took the wrap-up, could not go on, reopened it with a fresh window, then refused.
+        app.frame({'event': 'wrapup', 'wrapup': _wrapup('att-1', remaining: 2, endsAt: '2026-11-01T09:02:00.000Z')});
+        answer.complete(json(409, {'error': 'Conflict', 'code': 'redial_not_allowed', 'message': 'x'}));
+        app.run(redial);
+        expect(app.view!.actionError, redialNotAllowedCopy);
+        expect(app.view!.wrapup!.redialRemaining, 2);
+        expect(app.view!.wrapup!.endsAt, DateTime.utc(2026, 11, 1, 9, 2));
+        app.dispose();
+      });
+    });
+
+    test('once placed, the wrap-up\'s clock is gone (the server stopped it): no digits, no hold, no save-by notice', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        expect(app.view!.wrapup!.endsAt, isNotNull);
+        app.routes['POST $_redialPath'] = (_) => json(200, _redialResponse());
+        app.run(app.controller.redial(attemptId: 'att-1'));
+        expect(app.view!.busy, StationBusy.redialing);
+        expect(app.view!.wrapup!.endsAt, isNull);
+        expect(app.view!.wrapup!.hold, WrapupHold.none);
+        app.routes['POST /proxy/agency/sessions/sess-1/break'] =
+            (_) => json(200, stateBody('wrapup', breakReason: 'device_away', pending: 'break'));
+        app.lifecycle.hide();
+        async.flushMicrotasks();
+        expect(app.notifier.calls.where((c) => c.startsWith('wrapup:')), isEmpty);
+        app.dispose();
+      });
+    });
+
+    test('no usable answer: the pad opens again, and the copy never says the redial failed', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        app.routes['POST $_redialPath'] = (_) => throw const SocketException('down');
+        app.run(app.controller.redial(attemptId: 'att-1'));
+        expect(app.view!.actionError, redialUncertainCopy);
+        expect(app.view!.busy, StationBusy.none);
+        expect(app.view!.wrapup!.redialRemaining, 2);
+
+        app.routes['POST $_redialPath'] = (_) => json(503, {'error': 'Service Unavailable', 'message': 'Try later.'});
+        app.run(app.controller.redial(attemptId: 'att-1'));
+        expect(app.view!.actionError, redialUncertainCopy);
+        app.dispose();
+      });
+    });
+
+    test('a placed redial whose call never reaches the station gives the pad back after 10 s', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        app.routes['POST $_redialPath'] = (_) => json(200, _redialResponse());
+        app.run(app.controller.redial(attemptId: 'att-1'));
+        async.elapse(const Duration(seconds: 9));
+        expect(app.view!.busy, StationBusy.redialing);
+        async.elapse(const Duration(seconds: 2));
+        expect(app.view!.busy, StationBusy.none);
+        expect(app.view!.actionError, redialNotArrivedCopy);
+        expect(app.view!.wrapup!.endsAt, isNotNull);
+        app.dispose();
+      });
+    });
+
+    test('a placed redial whose call arrives in time leaves nothing behind to fire', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        app.routes['POST $_redialPath'] = (_) => json(200, _redialResponse());
+        app.run(app.controller.redial(attemptId: 'att-1'));
+        app.reservedRedial('att-2', of: 'att-1');
+        async.elapse(const Duration(seconds: 30));
+        expect(app.view!.actionError, isNull);
+        expect(app.view!.phase, AgentPhase.reserved);
+        app.dispose();
+      });
+    });
+
     test('a tap for a wrap-up no longer on screen redials nothing', () {
       fakeAsync((async) {
         final app = App(async)..start();
@@ -358,7 +444,7 @@ void main() {
       });
     });
 
-    test('notes not yet saved move too: never written to the closed call, saved to the redial with the next keystroke', () {
+    test('notes typed inside the debounce are saved to the call before the redial is asked for, so the copy holds them', () {
       fakeAsync((async) {
         final app = App(async)..start();
         app.inRedialWrapup('att-1');
@@ -368,17 +454,76 @@ void main() {
         // Redial inside the 2 s debounce.
         app.routes['POST $_redialPath'] = (_) => json(200, _redialResponse());
         app.run(app.controller.redial(attemptId: 'att-1'));
+        expect(
+          [for (final r in app.sent) if (r.path.endsWith('/notes') || r.path == _redialPath) r.path],
+          ['/proxy/agency/attempts/att-1/notes', _redialPath],
+          reason: 'the server copies the call\'s saved notes onto the redial when it places it',
+        );
+        expect(notesWrites(app).single.body, {'notes': 'Call after 6'});
         app.reservedRedial('att-2', of: 'att-1');
         async.elapse(const Duration(seconds: 5));
-        expect(notesWrites(app), isEmpty);
+        expect(notesWrites(app), hasLength(1), reason: 'the redial already holds them: nothing is re-sent');
         expect(app.view!.notes.text, 'Call after 6');
-        expect(app.store.entries['att-2']?.notes, 'Call after 6', reason: 'kept on the phone until the server has it');
 
         app.bridged('att-2');
         app.controller.updateNotes('Call after 6, prefers Marathi');
         async.elapse(const Duration(seconds: 3));
-        expect(notesWrites(app).single.path, '/proxy/agency/attempts/att-2/notes');
-        expect(notesWrites(app).single.body, {'notes': 'Call after 6, prefers Marathi'});
+        expect(notesWrites(app).last.path, '/proxy/agency/attempts/att-2/notes');
+        expect(notesWrites(app).last.body, {'notes': 'Call after 6, prefers Marathi'});
+        app.dispose();
+      });
+    });
+
+    test('a notes save still unanswered after 2 s: the redial goes, and the text is saved to the redial too', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        final late = Completer<http.Response>();
+        app.routes['POST /proxy/agency/attempts/att-1/notes'] = (_) => late.future;
+        notesRoute(app, 'att-2');
+        app.controller.updateNotes('Call after 6');
+        app.routes['POST $_redialPath'] = (_) => json(200, _redialResponse());
+        final redial = app.controller.redial(attemptId: 'att-1');
+        async.elapse(const Duration(seconds: 1));
+        expect(app.requests('POST', _redialPath), isEmpty, reason: 'waiting for the save');
+        expect(app.view!.busy, StationBusy.redialing);
+        async.elapse(const Duration(seconds: 2));
+        app.run(redial);
+        expect(app.requests('POST', _redialPath), hasLength(1), reason: 'the wait is bounded');
+        // The save lands after the server made its copy: the copy may not hold it.
+        late.complete(json(200, {'attempt_id': 'att-1', 'notes': 'Call after 6', 'updated_at': '2026-11-01T09:00:30.000Z'}));
+        async.flushMicrotasks();
+        app.reservedRedial('att-2', of: 'att-1');
+        expect(app.view!.notes.text, 'Call after 6');
+        async.elapse(const Duration(seconds: 3));
+        expect(app.requests('POST', '/proxy/agency/attempts/att-2/notes').single.body, {'notes': 'Call after 6'});
+        app.dispose();
+      });
+    });
+
+    test('the redial\'s own wrap-up before the answer naming it (it failed before it rang): the field opens on the draft', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        notesRoute(app, 'att-1');
+        app.controller.updateNotes('Asked for a callback');
+        async.elapse(const Duration(seconds: 3));
+        final answer = Completer<http.Response>();
+        app.routes['POST $_redialPath'] = (_) => answer.future;
+        final redial = app.controller.redial(attemptId: 'att-1');
+        async.flushMicrotasks();
+        // The redial failed at once: its wrap-up reaches the station first.
+        app.releasedFrame('att-2', reason: 'failed');
+        app.frame({'event': 'wrapup', 'wrapup': _wrapup('att-2', remaining: 1)});
+        expect(app.controller.stationState.currentAttemptId, 'att-2');
+        answer.complete(json(200, _redialResponse()));
+        app.run(redial);
+        expect(app.view!.notes.text, 'Asked for a callback');
+        expect(app.view!.busy, StationBusy.none);
+        dispositionRoute(app, 'att-2');
+        app.run(app.controller.submitDisposition('interested'));
+        expect((app.requests('POST', '/proxy/agency/attempts/att-2/disposition').single.body! as Map)['notes'],
+            'Asked for a callback');
         app.dispose();
       });
     });
@@ -491,6 +636,25 @@ void main() {
         app.run(app.controller.redial(attemptId: 'att-1'));
         expect(sink.names.where((n) => n == 'agency_redial_requested'), hasLength(2));
         expect(sink.names.where((n) => n == 'agency_redial_refused'), hasLength(1));
+        app.dispose();
+      });
+    });
+
+    test('a failure with no refusal is counted too, with no code', () {
+      fakeAsync((async) {
+        final app = App(async)..start();
+        app.inRedialWrapup('att-1');
+        app.routes['POST $_redialPath'] = (_) => throw const SocketException('down');
+        app.run(app.controller.redial(attemptId: 'att-1'));
+        // No code: the key is left out (the sink drops nulls), as PostHog reads a null.
+        expect(sink.last('agency_redial_refused'), {'campaign_id': 'camp-1'});
+
+        app.routes['POST $_redialPath'] = (_) => throw StateError('unforeseen');
+        app.run(app.controller.redial(attemptId: 'att-1'));
+        expect(sink.names.where((n) => n == 'agency_redial_requested'), hasLength(2));
+        expect(sink.names.where((n) => n == 'agency_redial_refused'), hasLength(2));
+        expect(app.view!.actionError, redialUncertainCopy);
+        expect(app.view!.busy, StationBusy.none);
         app.dispose();
       });
     });

@@ -264,6 +264,15 @@ const redialBlockedHoursCopy =
     'It’s outside this customer’s calling hours, so they can’t be redialled now. Save the outcome.';
 const redialFailedCopy = 'Couldn’t redial this customer. Save the outcome, or try again.';
 
+/// No usable answer to the redial (no network, a timeout, a server error): it
+/// may have been placed all the same, so this never says it failed. The
+/// console's words.
+const redialUncertainCopy =
+    'No answer from the server, so the redial may still go through. If no call starts, try again or save the outcome.';
+
+/// The redial was placed, and its call has not reached the station in time.
+const redialNotArrivedCopy = 'The redial hasn’t reached your station yet. If no call starts, save the outcome.';
+
 /// The Redial was for a wrap-up that is no longer the one on screen.
 const redialCallChangedCopy = 'That call has moved on. Nothing was redialled.';
 

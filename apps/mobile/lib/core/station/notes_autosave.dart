@@ -84,8 +84,11 @@ final class SecureNotesStore implements NotesStore {
 ///   restore would send `''`, which clears the server's copy wholesale.
 /// * Mobile addition: a network failure is retried ([retryDelays]) before it
 ///   is reported as failed; the console has no retry.
-/// * Wrap-up redial ([carryForward]): the draft held for the call being
-///   redialled moves to the redial's attempt, without a request of its own.
+/// * Wrap-up redial ([settle], then [carryForward]): before the redial is
+///   asked for, the save the debounce holds for the call is sent and waited
+///   for, so the server copies the latest text onto the redial; then the
+///   draft held for that call moves to the redial's attempt, without a
+///   request of its own.
 class NotesAutosave {
   NotesAutosave({
     required this._save,
@@ -116,6 +119,14 @@ class NotesAutosave {
   /// A redial's attempt → the attempt it redials ([carryForward]): where a
   /// restore with nothing stored for the redial looks next.
   final Map<String, String> _carriedFrom = {};
+
+  /// Saves on their way, per attempt ([settle] waits for them).
+  final Map<String, Set<Future<void>>> _sending = {};
+
+  /// Attempts whose last save was still unanswered when [settle] gave up:
+  /// the server may have copied an older text onto a redial, so the draft
+  /// moves as unsent ([carryForward]) even if that save lands later.
+  final Set<String> _unsettled = {};
 
   String? _attemptId;
   String _text = '';
@@ -206,7 +217,16 @@ class NotesAutosave {
     // The agent's own text is the provenance that licenses even a clear.
     _hydrated = true;
     _unsent[attemptId] = value;
+    _schedule(attemptId, value);
+    _refresh();
+  }
+
+  /// The save of [value] to [attemptId], [debounce] from now. A save the
+  /// debounce held for another attempt is sent now, never dropped.
+  void _schedule(String attemptId, String value) {
     _debounceTimer?.cancel();
+    final previous = _pending;
+    if (previous != null && previous.attemptId != attemptId) unawaited(_flush(previous));
     final pending = (attemptId: attemptId, value: value);
     _pending = pending;
     _debounceTimer = Timer(debounce, () {
@@ -215,7 +235,6 @@ class NotesAutosave {
       unawaited(_persist(pending.attemptId, pending.value));
       unawaited(_flush(pending));
     });
-    _refresh();
   }
 
   /// [to] is a wrap-up redial of [from] (`attempt.redial.of_attempt_id`). The
@@ -225,16 +244,24 @@ class NotesAutosave {
   /// is what the outcome carries. Call it BEFORE [attemptChanged] moves to
   /// [to], so the field opens on the draft rather than empty.
   ///
-  /// No request is made here. Text the server already has stays confirmed on
-  /// [to] (it holds the copy); text not yet saved stays unsent on [to] and
-  /// goes with the next keystroke's save or the outcome. Its save still
-  /// waiting for [from] is dropped: that call is closed, and a write to it
-  /// never reaches the redial. Text [to] already has (a reconnect onto it) wins.
+  /// Text the server already had when it made the copy stays confirmed on
+  /// [to], with no request. Text not known to be in the copy (unsent, or sent
+  /// by a save [settle] gave up on) is unsent on [to] and saved to it after
+  /// [debounce], as if typed there. Its save still waiting for [from] is
+  /// dropped: that call is closed, and a write to it never reaches the
+  /// redial. Text [to] already has (a reconnect onto it) wins.
+  ///
+  /// [to] may already be on screen (a redial that failed before it rang opens
+  /// its wrap-up before the answer naming it arrives): the field then shows
+  /// the draft, unless the agent has typed there.
   void carryForward({required String from, required String to}) {
     if (_disposed || from == to) return;
     _carriedFrom[to] = from;
     if (_unsent.containsKey(to) || _confirmed.containsKey(to)) return;
-    final unsent = _unsent.remove(from);
+    // A save [settle] gave up on may land after the server copied the notes:
+    // what it sent is not known to be on [to].
+    final stale = _unsettled.remove(from);
+    final unsent = _unsent.remove(from) ?? (stale ? _confirmed[from] : null);
     final draft = unsent ?? _confirmed[from];
     if (draft == null) return;
     if (_pending?.attemptId == from) {
@@ -245,10 +272,44 @@ class NotesAutosave {
     _retryTimers.remove(from)?.cancel();
     if (unsent != null) {
       _unsent[to] = draft;
+      _schedule(to, draft);
     } else {
       _confirmed[to] = draft;
     }
     unawaited(_persist(to, draft));
+    if (_attemptId == to) {
+      _text = draft;
+      // A restore still reading the store finds nothing newer for a new attempt.
+      _hydrated = true;
+      _refresh();
+    }
+  }
+
+  /// A wrap-up redial of [attemptId] is about to be asked for: the server
+  /// copies the call's saved notes onto the redial when it places it. Sends
+  /// now the save the debounce is holding for [attemptId] and waits, at most
+  /// [timeout], for it and any save of [attemptId] already on its way, so the
+  /// copy holds the latest text. Never throws; a save that fails leaves the
+  /// text unsent, and one still unanswered at [timeout] marks the text to move
+  /// as unsent ([carryForward]).
+  Future<void> settle(String attemptId, {Duration timeout = const Duration(seconds: 2)}) async {
+    if (_disposed) return;
+    final pending = _pending;
+    if (pending != null && pending.attemptId == attemptId) {
+      _debounceTimer?.cancel();
+      _debounceTimer = null;
+      _pending = null;
+      unawaited(_persist(pending.attemptId, pending.value));
+      unawaited(_flush(pending));
+    }
+    final sending = _sending[attemptId];
+    if (sending == null || sending.isEmpty) return;
+    try {
+      await Future.wait(sending.toList()).timeout(timeout);
+    } catch (e) {
+      _unsettled.add(attemptId);
+      _log.warn('notes not settled before the redial', {'error': e.runtimeType.toString()});
+    }
   }
 
   /// The app is leaving the foreground: put unsent text in the store now.
@@ -325,7 +386,24 @@ class NotesAutosave {
     }
   }
 
-  Future<void> _flush(({String attemptId, String value}) pending, {int attempt = 0}) async {
+  /// Sends [pending], tracked in [_sending] until it is answered.
+  Future<void> _flush(({String attemptId, String value}) pending, {int attempt = 0}) {
+    final send = _send(pending, attempt: attempt);
+    final set = _sending.putIfAbsent(pending.attemptId, () => {});
+    set.add(send);
+    void done() {
+      set.remove(send);
+      if (set.isEmpty && identical(_sending[pending.attemptId], set)) _sending.remove(pending.attemptId);
+    }
+
+    send.then((_) => done(), onError: (Object e) {
+      done();
+      _log.warn('notes save threw', {'error': e.runtimeType.toString()});
+    });
+    return send;
+  }
+
+  Future<void> _send(({String attemptId, String value}) pending, {int attempt = 0}) async {
     if (_disposed) return;
     final attemptId = pending.attemptId;
     bool current() => _attemptId == attemptId;

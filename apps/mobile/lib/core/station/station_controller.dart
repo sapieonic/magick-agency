@@ -92,14 +92,20 @@ class StationController extends Notifier<StationView?>
   ({String attemptId, String code})? _saved;
 
   /// A wrap-up redial the server placed for the wrap-up of this attempt,
-  /// until its call reaches the station (the attempt on screen changes) or
-  /// the server states that wrap-up again. While set, the wrap-up is over in
-  /// all but name: its pad and Redial stay disabled ([StationBusy.redialing]).
+  /// until its call reaches the station (the attempt on screen changes), the
+  /// server states that wrap-up again, the socket drops, or [redialArrivalBound]
+  /// passes with none of these. While set, the wrap-up is over in all but
+  /// name: its pad and Redial stay disabled ([StationBusy.redialing]) and its
+  /// countdown is not shown (the server stopped it when it took the wrap-up).
   String? _redialPlacedFor;
 
-  /// The placed redial's own attempt, from the answer: a redial that fails
-  /// before it rings opens its wrap-up with no `reserved` to name it.
-  String? _redialNext;
+  /// The bound on [_redialPlacedFor] ([redialArrivalBound]).
+  Timer? _redialWait;
+
+  /// The notes draft of a placed redial, to move when the redial's attempt
+  /// first reaches the station: a redial that fails before it rings opens its
+  /// wrap-up with no `reserved` to name the call it redials.
+  ({String from, String to})? _redialCarry;
 
   /// What a refused redial taught us about this wrap-up's redials (used up:
   /// 0; not offered after all: null), until a frame states them again.
@@ -476,7 +482,9 @@ class StationController extends Notifier<StationView?>
     _fatal = null;
     _saved = null;
     _redialPlacedFor = null;
-    _redialNext = null;
+    _redialWait?.cancel();
+    _redialWait = null;
+    _redialCarry = null;
     _redialOverride = null;
     _countdown = null;
     _reconnectDeadline = null;
@@ -550,9 +558,10 @@ class StationController extends Notifier<StationView?>
         _dispatch(AgentStateAction(frame));
       case WrapupFrame(:final wrapup):
         // A redial that failed before it rang: its wrap-up is the first the station hears of it.
-        final placedFor = _redialPlacedFor;
-        if (placedFor != null && wrapup.attemptId == _redialNext) {
-          _s?.notes.carryForward(from: placedFor, to: wrapup.attemptId);
+        final carry = _redialCarry;
+        if (carry != null && wrapup.attemptId == carry.to) {
+          _redialCarry = null;
+          _s?.notes.carryForward(from: carry.from, to: carry.to);
         }
         _wrapupStated(wrapup.attemptId);
         // Captured once, here, on the frame: never per repaint.
@@ -608,6 +617,7 @@ class StationController extends Notifier<StationView?>
   /// [attempt] is a wrap-up redial: the notes draft of the call it redials
   /// moves to it before the station moves to it (`NotesAutosave.carryForward`).
   void _carryNotes(ReservedAttempt attempt) {
+    if (_redialCarry?.to == attempt.attemptId) _redialCarry = null;
     final redial = attempt.redial;
     if (redial != null) _s?.notes.carryForward(from: redial.ofAttemptId, to: attempt.attemptId);
   }
@@ -796,6 +806,7 @@ class StationController extends Notifier<StationView?>
       redialOverride: redial != null && redial.attemptId == _station.wrapup?.attemptId
           ? (remaining: redial.remaining)
           : null,
+      redialPlaced: _redialPlacedHere,
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -853,6 +864,10 @@ class StationController extends Notifier<StationView?>
     if (failure == null || call == null || call.id != failure.callId || !call.isLive) return null;
     return failure.text;
   }
+
+  /// A redial was placed from the wrap-up on screen and its call has not
+  /// reached the station yet: that wrap-up's clock is stopped.
+  bool get _redialPlacedHere => _redialPlacedFor != null && _redialPlacedFor == _station.wrapup?.attemptId;
 
   /// On the `soft_phone` break: always, for a soft-phone session once its
   /// socket says so; for a campaign station, once the switch applied.
@@ -1112,7 +1127,8 @@ class StationController extends Notifier<StationView?>
             breakCode: _station.breakReasonCode ??
                 (st == AgentState.onBreak && _awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null),
             pauseRequested: _awayPauseRequested,
-            wrapupDeadline: _station.wrapup?.deadline,
+            // A placed redial stopped the wrap-up's clock: no save-by time.
+            wrapupDeadline: _redialPlacedHere ? null : _station.wrapup?.deadline,
             outcomeDueAt: outcomeDue,
           );
     // Not in wrap-up, the deadline is the soft-phone call's outcome.
@@ -1476,30 +1492,84 @@ class StationController extends Notifier<StationView?>
     final shown = _redialOverride?.attemptId == target
         ? _redialOverride!.remaining
         : _station.wrapup?.redialRemaining;
+    // The wrap-up the press was for: a refusal teaches nothing about a newer one.
+    final pressedOn = _station.wrapup;
     await _run(StationBusy.redialing, (s) async {
+      // The server copies this call's saved notes onto the redial: the last
+      // seconds of typing are saved first (bounded; the pad is held meanwhile).
+      await s.notes.settle(target, timeout: notesFlushTimeout);
+      if (!_live(s)) return;
+      if (_station.wrapup?.attemptId != target || _station.effectiveState != AgentState.wrapup) {
+        _actionError = redialCallChangedCopy;
+        return;
+      }
       _calls.redialRequested(campaignId: campaignId, remaining: shown ?? 0);
       try {
         final r = await _api.redial(s.id, target);
         if (!_live(s)) return;
         _log.info('wrap-up redial placed', {'number': r?.redialNumber ?? 0, 'remaining': r?.redialRemaining ?? 0});
+        final next = r?.attemptId;
+        if (next != null && next != target) {
+          if (_station.currentAttemptId == next) {
+            // The redial reached the station before this answer: its call, or
+            // its own wrap-up when it failed before it rang (no `reserved`
+            // named the call it redials). Its notes are the draft.
+            s.notes.carryForward(from: target, to: next);
+          } else {
+            _redialCarry = (from: target, to: next);
+          }
+        }
         // Unless its `reserved` already beat this answer here, the call is on
         // its way: hold the wrap-up's pad until it arrives.
         if (_station.live == null && _station.currentAttemptId == target) {
           _redialPlacedFor = target;
-          _redialNext = r?.attemptId;
+          _redialWait?.cancel();
+          _redialWait = Timer(redialArrivalBound, () => _redialOverdue(s, target));
+          _afterChange();
         }
-      } on ApiError catch (e) {
+      } catch (e, st) {
+        // Every failure is counted, `code` null for one with no structured
+        // refusal: pressed minus refused is NOT the redials placed (a request
+        // with no usable answer may have been placed all the same).
         _calls.redialRefused(campaignId: campaignId, code: e is ApiHttpError ? e.code : null);
+        if (e is! ApiError) _log.error('wrap-up redial failed', {}, e, st);
         if (!_live(s) || _station.wrapup?.attemptId != target) return;
-        final code = errorCodeOf(e);
-        if (code == AgencyErrorCode.redialLimitReached) {
-          _redialOverride = (attemptId: target, remaining: 0);
-        } else if (code == AgencyErrorCode.redialNotAllowed) {
-          _redialOverride = (attemptId: target, remaining: null);
+        if (e is ApiHttpError && !e.isServerError) {
+          final code = errorCodeOf(e);
+          // Only while no newer frame has stated this wrap-up: the server may
+          // reopen it with a fresh window (and its own count) before it refuses.
+          if (identical(_station.wrapup, pressedOn)) {
+            if (code == AgencyErrorCode.redialLimitReached) {
+              _redialOverride = (attemptId: target, remaining: 0);
+            } else if (code == AgencyErrorCode.redialNotAllowed) {
+              _redialOverride = (attemptId: target, remaining: null);
+            }
+          }
+          _actionError = redialRefusalCopy(code, _serverSentence(e));
+        } else if (e is ApiUnauthorized) {
+          _actionError = e.userMessage;
+        } else {
+          // No usable answer (no network, a timeout, a 5xx): it may have been
+          // placed. The pad opens again; its call, if any, replaces it.
+          _actionError = redialUncertainCopy;
         }
-        _actionError = e is ApiHttpError ? redialRefusalCopy(code, _serverSentence(e)) : e.userMessage;
       }
     });
+  }
+
+  /// How long a placed redial may take to reach the station before its
+  /// wrap-up's pad is given back. The server sends the call's `reserved` (or,
+  /// for a redial that fails before it rings, its wrap-up) as it dials, which
+  /// is right after its answer; the same 10 s as [awayPauseBound].
+  static const redialArrivalBound = Duration(seconds: 10);
+
+  void _redialOverdue(_Session s, String target) {
+    _redialWait = null;
+    if (!identical(_s, s) || _redialPlacedFor != target) return;
+    _log.warn('a placed wrap-up redial never reached the station');
+    _redialPlacedFor = null;
+    _actionError = redialNotArrivedCopy;
+    _afterChange();
   }
 
   @override

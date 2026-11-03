@@ -49,6 +49,7 @@ class StationViewMapper {
   WrapupAnchor? _wrapupSource;
   bool _wrapupSaved = false;
   ({int? remaining})? _wrapupRedial;
+  bool _wrapupRedialPlaced = false;
   WrapupView? _wrapup;
 
   /// The offset the view applies now.
@@ -85,6 +86,7 @@ class StationViewMapper {
     required bool missedReleaseDismissed,
     required bool awayPauseRequested,
     ({int? remaining})? redialOverride,
+    bool redialPlaced = false,
   }) {
     applyOffset(s.clockOffsetMs);
     // The call decides ahead of `agent_state` (`StationState.effectiveState`).
@@ -120,7 +122,7 @@ class StationViewMapper {
       breakOptions: _breakOptionsFor(breakReasons),
       call: _callFor(s, bootstrap, catalog, countdown),
       release: _releaseFor(s.release),
-      wrapup: _wrapupFor(s.wrapup, dispositionSavedCode != null, redialOverride),
+      wrapup: _wrapupFor(s.wrapup, dispositionSavedCode != null, redialOverride, redialPlaced),
       dispositions: _dispositionsFor(catalog),
       dispositionSaved: dispositionSavedCode,
       notes: notes,
@@ -295,20 +297,32 @@ class StationViewMapper {
   /// [redial]: what a refused redial taught the core about this wrap-up's
   /// redials (used up, or not offered after all), until the next frame states
   /// them. Null: the anchor's own count.
-  WrapupView? _wrapupFor(WrapupAnchor? anchor, bool savedHere, ({int? remaining})? redial) {
-    if (identical(anchor, _wrapupSource) && savedHere == _wrapupSaved && redial == _wrapupRedial) return _wrapup;
+  ///
+  /// [redialPlaced]: a redial was placed from this wrap-up and its call is on
+  /// its way. The server stopped the wrap-up's clock when it took it, so none
+  /// is shown (no digits, no bar, no holding line), never one draining to 0.
+  WrapupView? _wrapupFor(WrapupAnchor? anchor, bool savedHere, ({int? remaining})? redial, bool redialPlaced) {
+    if (identical(anchor, _wrapupSource) &&
+        savedHere == _wrapupSaved &&
+        redial == _wrapupRedial &&
+        redialPlaced == _wrapupRedialPlaced) {
+      return _wrapup;
+    }
     _wrapupSource = anchor;
     _wrapupSaved = savedHere;
     _wrapupRedial = redial;
+    _wrapupRedialPlaced = redialPlaced;
     if (anchor == null) return _wrapup = null;
     return _wrapup = WrapupView(
-      endsAt: anchor.deadline,
+      endsAt: redialPlaced ? null : anchor.deadline,
       secondsTotal: anchor.secondsTotal,
-      hold: switch (anchor.heldReason) {
-        wire.WrapupHoldReason.supervisorHold => WrapupHold.supervisor,
-        wire.WrapupHoldReason.dispositionRequired => WrapupHold.dispositionRequired,
-        _ => WrapupHold.none,
-      },
+      hold: redialPlaced
+          ? WrapupHold.none
+          : switch (anchor.heldReason) {
+              wire.WrapupHoldReason.supervisorHold => WrapupHold.supervisor,
+              wire.WrapupHoldReason.dispositionRequired => WrapupHold.dispositionRequired,
+              _ => WrapupHold.none,
+            },
       dispositionSubmitted: anchor.dispositionSubmitted || savedHere,
       autoReturn: anchor.autoReturn,
       redialRemaining: redial != null ? redial.remaining : anchor.redialRemaining,
