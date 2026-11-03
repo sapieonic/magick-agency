@@ -64,7 +64,9 @@ describe('agencyContactRepository.claimDialable: one live call per number', () =
     await setState(live!.id, 'in_flight');
 
     const claimed = await agencyContactRepository.claimDialable(campaign.id, 3);
-    expect(claimed.map((c) => c.id)).toEqual([a!.id, b!.id]);
+    // Which contacts, not their order: `UPDATE … RETURNING` promises none, and the order follows
+    // heap placement (seen to flip in a combined run once 0009's index served the busy probe).
+    expect(claimed.map((c) => c.id).sort()).toEqual([a!.id, b!.id].sort());
 
     const { rows } = await getTestPool().query<{ state: string }>(
       'SELECT state FROM agency_contacts WHERE id = $1', [waiting!.id],
@@ -77,7 +79,7 @@ describe('agencyContactRepository.claimDialable: one live call per number', () =
     const [first, , , other] = await due(campaign.id, [BORROWER, BORROWER, BORROWER, '+919876500002']);
 
     const claimed = await agencyContactRepository.claimDialable(campaign.id, 2);
-    expect(claimed.map((c) => c.id)).toEqual([first!.id, other!.id]);
+    expect(claimed.map((c) => c.id).sort()).toEqual([first!.id, other!.id].sort());
   });
 
   it('matches the number by its digits, whatever formatting the row stored', async () => {
