@@ -512,7 +512,11 @@ one slow or restarting worker does not take the host out of the load balancer or
 uptime check (it would take all traffic away, not the 1/N that worker serves); watch
 `agy-cluster-child-crash` and the *Processes* row for it instead. `GET /readyz?detail=1` adds the per-process view: role, slot, pid, event-loop
 utilisation, p99 loop delay, live calls (media) or jobs (analysis), and whether it is draining.
-The primary's own loop is listed too.
+The primary's own loop is listed too. The loop numbers are each process's last completed 5 s
+window, closed by the process's own timer (`cluster/loop-sampler.ts`): reading them resets
+nothing, so two probers see the same numbers and a stall stays visible for the whole window.
+For history, the *Processes* row reads the OTel runtime gauges (`nodejs_eventloop_*`, one series
+per process, per export interval), which keep their own histogram and are not touched by probes.
 
 ## Releases and versioning
 

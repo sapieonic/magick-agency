@@ -75,7 +75,8 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   const grants = new DialGrants();
   let draining = false;
   let shuttingDown: Promise<void> | null = null;
-  const sampleLoop = createLoopSampler();
+  // Its own window timer, read (never reset) by `health.ping`; stopped when shutdown ends.
+  const loop = createLoopSampler();
 
   // ── Upgrades handed over by the primary ──────────────────────────────────
   channel.onHandoff((msg, socket) => {
@@ -158,7 +159,7 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   const health = (): HealthBody => {
     return {
       role: 'media', slot, pid: process.pid,
-      ...sampleLoop(),
+      ...loop.latest(),
       inFlight: bridge.getActiveCallIds().length,
       pausedForMs: 0,
       draining,
@@ -177,7 +178,7 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
       await bridge.gracefulShutdown().catch((err) => log.error({ err, slot }, 'webrtc-bridge shutdown failed'));
       await guardHost.gracefulShutdown().catch((err) => log.error({ err, slot }, 'guard host shutdown failed'));
       await core.close().catch(() => {});
-    })();
+    })().finally(() => loop.stop());
     return shuttingDown;
   };
 
