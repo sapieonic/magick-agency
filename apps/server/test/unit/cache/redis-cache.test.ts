@@ -4,7 +4,7 @@ vi.mock('@magick-agency/observability', () => ({
   createChildLogger: () => ({ info: vi.fn(), error: vi.fn(), warn: vi.fn(), debug: vi.fn() }),
 }));
 
-import { redisCache } from '../../../src/cache/redis-cache.js';
+import { invalidationChannelFor, redisCache } from '../../../src/cache/redis-cache.js';
 import type { Redis } from 'ioredis';
 
 function makeRedis(): Redis {
@@ -190,5 +190,18 @@ describe('RedisCache', () => {
         await expect(redisCache.delByPattern('cache:phone:t1:*')).resolves.not.toThrow();
       });
     });
+  });
+});
+
+describe('invalidationChannelFor', () => {
+  // Redis pub/sub is server-wide, not per db: the channel carries the db so deployments on
+  // one Redis told apart only by db number never hear each other (the real-Redis case is in
+  // `test/integration/cache/local-cache-invalidation.test.ts`).
+  it('scopes the configured channel (key prefix included) to the client\'s Redis db', () => {
+    const on = (db?: number) => ({ options: db === undefined ? {} : { db } }) as unknown as Redis;
+    expect(invalidationChannelFor(on(13), 'p:cache:invalidate')).toBe('p:cache:invalidate:db13');
+    expect(invalidationChannelFor(on(0), 'cache:invalidate')).toBe('cache:invalidate:db0');
+    expect(invalidationChannelFor(on(), 'cache:invalidate')).toBe('cache:invalidate:db0');
+    expect(invalidationChannelFor(on(1), 'cache:invalidate')).not.toBe(invalidationChannelFor(on(2), 'cache:invalidate'));
   });
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import Redis from 'ioredis';
 import { TEST_REDIS_URL, assertSafeTestRedisUrl } from '../../helpers/test-redis.js';
@@ -170,6 +171,57 @@ describe('local cache cross-instance invalidation (integration)', () => {
 
     await redisA.del('cache:tenant:t9');
     expect(await cacheB.get('cache:tenant:t9')).toEqual({ name: 'Acme' });
+  });
+
+  /**
+   * Redis pub/sub is server-wide: a channel is not scoped by the db a client `SELECT`ed. Two
+   * deployments on one Redis told apart only by db number (dev on 0 and the suites on 1–15,
+   * or each worktree's integration run on its own db) configured the SAME channel and
+   * dropped each other's local copies; this file flaked whenever another worktree ran it at
+   * the same time. `RedisCache.init` now scopes the channel to the client's db
+   * (`invalidationChannelFor`). Mutation-checked: returning the configured channel unscoped
+   * reds this case.
+   */
+  it('never hears, or is heard by, a deployment on another Redis db with the same channel', async () => {
+    const ownDb = Number(new URL(REDIS_URL).pathname.slice(1));
+    // Another non-zero db (never 0, dev's), different from this worktree's. Only a publish
+    // and a DEL of a key nobody else uses ever touch it.
+    const otherDb = (ownDb % 15) + 1;
+    expect(otherDb).not.toBe(ownDb);
+    const otherUrl = new URL(REDIS_URL);
+    otherUrl.pathname = `/${otherDb}`;
+    const otherRedis = new Redis(otherUrl.toString());
+    const otherSub = new Redis(otherUrl.toString());
+    const other = new RedisCache();
+    try {
+      other.init(otherRedis, localConfig);
+      await other.attachInvalidationSubscriber(otherSub);
+      const key = `cache:membership:${randomUUID()}:t1`;
+      const heardByOther: string[] = [];
+      // Only messages about this case's key: another worktree on that db may run this file too.
+      otherSub.on('message', (_channel: string, raw: string) => { if (raw.includes(key)) heardByOther.push(raw); });
+
+      // B holds a local copy; Redis no longer does, so a later hit can only be local.
+      await cacheA.set(key, [{ role: 'tenant_admin' }], 300);
+      expect(await cacheB.get(key)).toEqual([{ role: 'tenant_admin' }]);
+      await redisA.del(key);
+
+      // The other deployment revokes a key of the same name: not ours to drop.
+      await other.del(key);
+      await settle();
+      expect(await cacheB.get(key), 'another db\'s invalidation dropped this db\'s copy').toEqual([{ role: 'tenant_admin' }]);
+      // Its own broadcast did go out (the listener works)...
+      expect(heardByOther).toHaveLength(1);
+
+      // ...and ours never reaches it.
+      await cacheA.del(key);
+      await settle();
+      expect(heardByOther).toHaveLength(1);
+      expect(await cacheB.get(key)).toBeNull();
+    } finally {
+      otherSub.disconnect();
+      otherRedis.disconnect();
+    }
   });
 
   it('keeps a cached null distinguishable from a miss', async () => {

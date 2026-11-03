@@ -49,7 +49,8 @@ export const platformPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = as
 
   if (opts.ctx) {
     // The channel is namespaced by hand: ioredis applies
-    // `keyPrefix` to KEYS, not to pub/sub channel names.
+    // `keyPrefix` to KEYS, not to pub/sub channel names. `init` adds the Redis db
+    // (`invalidationChannelFor`): pub/sub is server-wide, not per db.
     redisCache.init(opts.ctx.redis, {
       ...config.localCache,
       channel: `${config.redis.keyPrefix}cache:invalidate`,
