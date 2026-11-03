@@ -582,7 +582,8 @@ export class SoftphoneService {
       } else if (callbackAt && nextAttemptAt && decision.contactState === 'pending') {
         // A replay that corrected the callback time: the call row took the new
         // `callback_at` above, and the contact this call settled moves with it, as the
-        // station's replay re-runs `markState`. Nothing else runs twice — no DNC mark,
+        // station's replay does through `releaseFromDisposition` (only while the contact
+        // is still `pending` on this code). Nothing else runs twice — no DNC mark,
         // no settlement, no attempt charged, no claim released.
         const moved = await agencyContactRepository.rescheduleFromManualReplay({
           manualCallId: row.id, dispositionCode: entry.code, nextAttemptAt,
