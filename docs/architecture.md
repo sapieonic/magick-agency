@@ -306,7 +306,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Wrap-up** (`wrapup-manager.ts`). An in-process countdown plus the attempt row
   (`wrapup_seconds`, `ended_at`), never a Redis TTL; not resumed after a restart (agents return in
   `break` and a sweep closes the attempt).
-- **Wrap-up redial** (`wrapup-redial.ts`, `POST /sessions/:id/redial`, decisions WR1–WR10). On a
+- **Wrap-up redial** (`wrapup-redial.ts`, `POST /sessions/:id/redial`, decisions WR1–WR13). On a
   campaign with `allow_wrapup_redial`, an agent in a wrap-up that owes an outcome may redial the
   same customer, at most `AGENCY_WRAPUP_REDIAL_LIMIT` (2) times per call; the `wrapup` frame's
   `redial_remaining` says how many are left. Everything that can refuse runs first, so a refusal
@@ -318,8 +318,15 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `connected → in_flight` while still parked for it, stamps it `redialed` and inserts the redial
   (`redial_of_attempt_id`, `redial_number`). The dial goes through the dispatcher to
   `executeDial`, always early-bound. Whatever the redial's outcome, the customer stays held for the
-  outcome (`parkRedialContact`, no retry charge) and the agent lands in wrap-up on the redial; a
-  failure after the take reopens the wrap-up (a fresh window), never the pool.
+  outcome (`parkRedialContact` through the guarded `parkForWriteUp`, no retry charge) and the
+  agent lands in wrap-up on the redial; a failure after the take reopens the wrap-up (a fresh
+  window). Where wrap-up cannot reopen, `releaseOwingOutcome` holds the agent on `break` (or
+  `offline` with no station), never the pool. From the take until wrap-up reopens,
+  `/available`, force-available and `/leave` refuse (`hasRedialInFlight`, WR11); a station
+  reconnect mid-wrap-up comes back `wrapup` so the first Redial works. A redial whose dial
+  outcome is unknown reopens wrap-up with no further redial offered (WR9). Stats count each
+  conversation once (`CONVERSATION_ATTEMPT_SQL`) and report redials as `attempts_redialed`
+  (WR12). In media-worker mode the redial dispatches in the worker that owns the station (WR13).
 - **Reaper** (`reaper.ts`). On startup and every 60 s, closes attempts nobody owns: liveness is
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
   dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded

@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-02.
+"is it done". As of 2026-11-03.
 
 ## Summary
 
@@ -484,9 +484,39 @@ can redial the same customer and is connected back to themselves, at most twice 
   limit, outcome, the attempt chain); the CAS on real Lua (`agency-agent-redial-cas.test.ts`);
   guards mutation-checked on every side.
 - Defaults and the open question (do redials spend `max_attempts`? built as no):
-  [`decisions.md`](decisions.md) §4, "Wrap-up redial", WR1–WR10. Not verified on a real carrier
-  or phone. A notes edit sent in the last 2 s before Redial can land on the original attempt after
-  the server copied the notes; the clients carry the draft, so the outcome's notes are complete.
+  [`decisions.md`](decisions.md) §4, "Wrap-up redial", WR1–WR13. Not verified on a real carrier
+  or phone.
+- **Review fixes** (a fresh-context review of the whole branch, five reviewers; every fix has a
+  test that went red when the fix was reverted):
+  - Server: a ringing redial is not dispositionable; the settle-time park never re-parks a
+    contact a disposition already released (`parkForWriteUp`; this also fixes paced calls saved
+    mid-call, whose contact used to stay `connected` for ever); `/available`, force-available and
+    `/leave` refuse while a redial is in flight; a station reconnect mid-wrap-up restores
+    `wrapup`, so the first Redial after a reload works; an outcome-unknown redial offers no
+    further redial; a wrap-up that cannot reopen holds the agent on `break`/`offline`, never the
+    pool; stats count each conversation once and report `attempts_redialed` (shown under the
+    campaign's dial count) and the floor's `redials`; attempt rows carry `redial_of_attempt_id` /
+    `redial_number`; another session's or tenant's attempt is the same 404 as a missing one;
+    Redis unavailable answers 503 `redial_blocked`.
+  - Agent app: **the station's phase now follows the call** (a live attempt, then an owed
+    outcome, then `agent_state`, as the console does). Before, the server's `reserved` /
+    `bridged` frames never changed the screen, because the server sends no `agent_state` for
+    them: a paced call stayed on the waiting screen, the notification said "Waiting for calls",
+    and leaving the app mid-call could close the station socket; a redial stayed on the wrap-up
+    pad. The tests had injected `agent_state` frames the server never sends; they no longer do.
+    Also: the pending notes save is sent before Redial, the wrap-up clock stops once the redial
+    is placed, a 10 s bound on waiting for it, honest copy when no answer came back.
+  - Console: a redial that fails before ringing keeps the notes draft and the contact panel
+    (`useRedialCarry`); the clock stops once the redial is placed; a disabled Redial says why;
+    Redial is off on a campaign that is not dialing and after a final refusal; the system code
+    `redialed` reads "Redialled" everywhere and is refused in the catalog editor.
+  - Proven further by `wrapup-redial-flow.test.ts` (every path after the wrap-up is taken),
+    `wrapup-redial-repository.test.ts`, `campaign-stats-redials.test.ts` and
+    `contact-park-for-write-up.test.ts` (real Postgres), and `wrapup-redial-e2e.test.ts` now
+    covering reconnect-then-redial, the refusals while a redial rings and a mid-call write-up.
+  - Left open: a redial that never reached the carrier still uses one of the two; a campaign
+    whose catalog already held the code `redialed` before 0008 keeps it (BASELINE open question
+    6); after the app's 10 s bound, Save can meet a 409 if the redial was in fact placed.
 - Run of 2026-11-03 on this branch (`pnpm lint` clean in 8 packages; `pnpm test:release` 10 and
   `pnpm test:grafana` 32 pass): server 7691 unit + 42 skipped / 1601 integration + 9 expected fail
   (the cluster `mobile-stations` file timed out once under load and passed alone twice);
@@ -751,6 +781,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 | Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected` |
+| Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 
 ## Deployment invariants
 

@@ -446,7 +446,7 @@ the internal instance and requires one:
 
 | `owner` | Routes (current table) | Resolved in P by |
 |---|---|---|
-| `session` | `POST /sessions/:id/{available, break, break/cancel, force-available, leave, softphone, softphone/return, station-token}` | the path param |
+| `session` | `POST /sessions/:id/{available, break, break/cancel, force-available, leave, redial, softphone, softphone/return, station-token}` | the path param |
 | `attempt` | `POST /attempts/:id/{disposition, dnc, hangup, notes}` | `agency_attempts.reserved_agent_id` (one PK read) |
 | `manual_call` | `PATCH /softphone/calls/:id`, `POST /softphone/calls/:id/{disposition, dnc, hangup}` | `agency_manual_calls.session_id` (one PK read) |
 | `actor_session` | `GET /softphone/bootstrap`, `POST /softphone/calls` | the caller's live session (the read the handler already makes, moved before the forward) |
