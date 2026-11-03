@@ -494,6 +494,18 @@ describe('POST /sessions — the happy path stays intact', () => {
     expect(body).not.toHaveProperty('break_reason');
   });
 
+  it('carries the campaign\'s allow_wrapup_redial, as a boolean either way', async () => {
+    for (const [stored, served] of [[true, true], [false, false], [undefined, false]] as const) {
+      repos.campaign.findById.mockResolvedValue({ ...REQUESTED, allow_wrapup_redial: stored });
+      repos.session.joinOrRehydrate.mockResolvedValue({
+        ok: true, session: liveSession({ id: 'sess-new', campaign_id: 'camp-new' }),
+      });
+      const res = await join();
+      expect(res.statusCode, res.body).toBe(201);
+      expect(res.json().allow_wrapup_redial).toBe(served);
+    }
+  });
+
   it('names the break reason the row holds when the agent is on break (the app paused while away)', async () => {
     // The mobile app is paused with `device_away` when it leaves the foreground, and is
     // often killed by the OS while paused. On relaunch the bootstrap is what it renders

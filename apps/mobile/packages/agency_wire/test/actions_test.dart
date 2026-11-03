@@ -24,6 +24,14 @@ void main() {
       expect(DispositionResponse.fromJson(json).callbackRequestedAt, isNull);
     });
 
+    test('a redial names the new attempt and the one it redials', () {
+      final r = RedialResponse.fromJson(fixture('actions.json', 'redial_response'));
+      expect(r.attemptId, '6b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8');
+      expect(r.redialOfAttemptId, 'b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d');
+      expect(r.redialNumber, 1);
+      expect(r.redialRemaining, 1);
+    });
+
     test('notes and DNC', () {
       final n = NotesResponse.fromJson(fixture('actions.json', 'notes_response'));
       expect(n.updatedAt.isUtc, isTrue);
@@ -55,6 +63,14 @@ void main() {
 
     test('notes', () {
       expect(const NotesRequest('').toJson(), {'notes': ''});
+    });
+
+    test('redial sends only the attempt on screen, never the actor', () {
+      expect(const RedialRequest(attemptId: 'a-1').toJson(), {'attempt_id': 'a-1'});
+      expect(
+        const RedialRequest(attemptId: 'b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d').toJson(),
+        fixture('actions.json', 'redial_request'),
+      );
     });
   });
 
@@ -122,6 +138,24 @@ void main() {
       final c = ErrorBody.fromJson(json).campaignConflict!;
       expect(c.accountName, isNull);
       expect(c.canLeave, isTrue);
+    });
+
+    test('the wrap-up redial refusals are known codes, with the server sentence', () {
+      final limit = ErrorBody.fromJson(fixture('actions.json', 'error_redial_limit_reached'));
+      expect(limit.code, AgencyErrorCode.redialLimitReached);
+      expect(limit.message, isNotEmpty);
+      expect(
+        ErrorBody.fromJson(fixture('actions.json', 'error_redial_blocked_dnc')).code,
+        AgencyErrorCode.redialBlockedDnc,
+      );
+      for (final (wire, code) in const [
+        ('redial_not_allowed', AgencyErrorCode.redialNotAllowed),
+        ('disposition_already_submitted', AgencyErrorCode.dispositionAlreadySubmitted),
+        ('redial_blocked_calling_hours', AgencyErrorCode.redialBlockedCallingHours),
+        ('redial_blocked', AgencyErrorCode.redialBlocked),
+      ]) {
+        expect(ErrorBody.fromJson({'error': 'Conflict', 'code': wire, 'message': 'm'}).code, code);
+      }
     });
 
     test('state_changing: the device-away pause lost to a moving state', () {

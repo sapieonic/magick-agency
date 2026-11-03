@@ -11,6 +11,7 @@ import type {
   AgencyReservedAttempt,
 } from '@magick-agency/contracts/agency';
 import type { DialCommand } from '../dial-dispatcher.js';
+import { AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
 
 /** An attempt this replica is currently driving, and what a reconnect needs to know. */
 export interface LiveAttempt {
@@ -188,5 +189,14 @@ export function buildPanel(cmd: DialCommand, priors: AgencyPriorAttempt[]): Agen
     attempt_number: cmd.attemptNumber,
     context: cmd.contact.context,
     prior_attempts: priors,
+    ...(cmd.redial
+      ? {
+          redial: {
+            of_attempt_id: cmd.redial.ofAttemptId,
+            number: cmd.redial.number,
+            remaining: Math.max(0, AGENCY_WRAPUP_REDIAL_LIMIT - cmd.redial.number),
+          },
+        }
+      : {}),
   };
 }

@@ -36,7 +36,7 @@ function attempt(patch: Partial<AgencyCallAttemptRecord> = {}): AgencyCallAttemp
     dialed_at: new Date(), answered_at: new Date(), bridged_at: new Date(),
     ended_at: new Date(), talk_seconds: 42, wrapup_seconds: 30,
     wrapup_started_at: null, wrapup_ended_at: null, wrapup_resolution: null,
-    abandon_reason: null,
+    abandon_reason: null, redial_of_attempt_id: null, redial_number: 0,
     created_at: new Date(), updated_at: new Date(),
     ...patch,
   };
@@ -136,6 +136,25 @@ describe('dispositionRefusal', () => {
     // to write up and never will.
     expect(dispositionRefusal(attempt({ bridged_at: null, outcome: 'no_answer' })))
       .toBe('attempt_not_dispositionable');
+  });
+
+  it('allows a wrap-up redial that never connected: it owes the conversation\'s outcome', () => {
+    expect(dispositionRefusal(attempt({ bridged_at: null, outcome: 'no_answer', redial_number: 1 }))).toBeNull();
+    // A redialled call whose write-up moved to the redial is refused at the write
+    // (`already_dispositioned`), not here: `redialed` is an ordinary incumbent code.
+    expect(dispositionRefusal(attempt({ disposition_code: 'redialed' }))).toBeNull();
+  });
+
+  it('refuses a wrap-up redial that is still queued or ringing (not bridged, not ended)', () => {
+    // Nothing has parked the customer for this write-up yet: the contact is `in_flight`
+    // under the live dial, so a disposition here could not release them, and the dial's
+    // end would then park them `connected` behind a write-up already taken.
+    for (const state of ['queued', 'dialing', 'answered'] as const) {
+      expect(dispositionRefusal(attempt({ bridged_at: null, outcome: null, ended_at: null, state, redial_number: 1 })))
+        .toBe('attempt_not_dispositionable');
+    }
+    // A redial that BRIDGED is dispositionable mid-call, like any conversation.
+    expect(dispositionRefusal(attempt({ state: 'bridged', outcome: null, ended_at: null, redial_number: 2 }))).toBeNull();
   });
 
   it('refuses an auto-closed attempt DISTINCTLY from an already-dispositioned one', () => {

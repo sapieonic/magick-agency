@@ -48,6 +48,8 @@ class StationViewMapper {
   MissedReleaseView? _missed;
   WrapupAnchor? _wrapupSource;
   bool _wrapupSaved = false;
+  ({int? remaining})? _wrapupRedial;
+  bool _wrapupRedialPlaced = false;
   WrapupView? _wrapup;
 
   /// The offset the view applies now.
@@ -83,11 +85,16 @@ class StationViewMapper {
     required String? dncOutcome,
     required bool missedReleaseDismissed,
     required bool awayPauseRequested,
+    ({int? remaining})? redialOverride,
+    bool redialPlaced = false,
   }) {
     applyOffset(s.clockOffsetMs);
-    final phase = phaseOf(s.agentState);
+    // The call decides ahead of `agent_state` (`StationState.effectiveState`).
+    final shown = s.effectiveState;
+    final phase = phaseOf(shown);
     final link = linkOf(s.connection);
-    final phaseSince = correctedInstant(s.agentStateSince, _offset);
+    // `since` dates the state `agent_state` stated, not one the call implies.
+    final phaseSince = shown == s.agentState ? correctedInstant(s.agentStateSince, _offset) : null;
 
     BreakInfo? onBreak;
     if (phase == AgentPhase.onBreak) {
@@ -115,7 +122,7 @@ class StationViewMapper {
       breakOptions: _breakOptionsFor(breakReasons),
       call: _callFor(s, bootstrap, catalog, countdown),
       release: _releaseFor(s.release),
-      wrapup: _wrapupFor(s.wrapup, dispositionSavedCode != null),
+      wrapup: _wrapupFor(s.wrapup, dispositionSavedCode != null, redialOverride, redialPlaced),
       dispositions: _dispositionsFor(catalog),
       dispositionSaved: dispositionSavedCode,
       notes: notes,
@@ -234,6 +241,8 @@ class StationViewMapper {
         countdownSeconds: seconds,
         bridgedAt: correctedInstant(bridgedAt, _offset),
         recording: recording,
+        redialNumber: previous.redialNumber,
+        redialLimit: previous.redialLimit,
       );
     }
     _callOffset = _offset;
@@ -259,6 +268,8 @@ class StationViewMapper {
       countdownSeconds: seconds,
       bridgedAt: correctedInstant(bridgedAt, _offset),
       recording: recording,
+      redialNumber: attempt.redial?.number,
+      redialLimit: attempt.redial?.limit,
     );
   }
 
@@ -283,21 +294,38 @@ class StationViewMapper {
     return _missed = MissedReleaseView(headline: '$missedReleasePrefix: ${copy.headline}', detail: copy.subtext);
   }
 
-  WrapupView? _wrapupFor(WrapupAnchor? anchor, bool savedHere) {
-    if (identical(anchor, _wrapupSource) && savedHere == _wrapupSaved) return _wrapup;
+  /// [redial]: what a refused redial taught the core about this wrap-up's
+  /// redials (used up, or not offered after all), until the next frame states
+  /// them. Null: the anchor's own count.
+  ///
+  /// [redialPlaced]: a redial was placed from this wrap-up and its call is on
+  /// its way. The server stopped the wrap-up's clock when it took it, so none
+  /// is shown (no digits, no bar, no holding line), never one draining to 0.
+  WrapupView? _wrapupFor(WrapupAnchor? anchor, bool savedHere, ({int? remaining})? redial, bool redialPlaced) {
+    if (identical(anchor, _wrapupSource) &&
+        savedHere == _wrapupSaved &&
+        redial == _wrapupRedial &&
+        redialPlaced == _wrapupRedialPlaced) {
+      return _wrapup;
+    }
     _wrapupSource = anchor;
     _wrapupSaved = savedHere;
+    _wrapupRedial = redial;
+    _wrapupRedialPlaced = redialPlaced;
     if (anchor == null) return _wrapup = null;
     return _wrapup = WrapupView(
-      endsAt: anchor.deadline,
+      endsAt: redialPlaced ? null : anchor.deadline,
       secondsTotal: anchor.secondsTotal,
-      hold: switch (anchor.heldReason) {
-        wire.WrapupHoldReason.supervisorHold => WrapupHold.supervisor,
-        wire.WrapupHoldReason.dispositionRequired => WrapupHold.dispositionRequired,
-        _ => WrapupHold.none,
-      },
+      hold: redialPlaced
+          ? WrapupHold.none
+          : switch (anchor.heldReason) {
+              wire.WrapupHoldReason.supervisorHold => WrapupHold.supervisor,
+              wire.WrapupHoldReason.dispositionRequired => WrapupHold.dispositionRequired,
+              _ => WrapupHold.none,
+            },
       dispositionSubmitted: anchor.dispositionSubmitted || savedHere,
       autoReturn: anchor.autoReturn,
+      redialRemaining: redial != null ? redial.remaining : anchor.redialRemaining,
     );
   }
 }
@@ -330,8 +358,9 @@ StationSignals signalsOf(StationView? view) {
 /// server ended it (4404), another device took it (4409), or it cannot open
 /// here (a fatal message); it holds nothing, as in [signalsOf].
 ///
-/// * [StationSignals.callActive]: a campaign call (reserved, on a call, wrap-up)
-///   or a soft-phone call on the line (dialing, ringing, on the call).
+/// * [StationSignals.callActive]: a campaign call (reserved, on a call, wrap-up,
+///   read off the call itself first: `StationState.effectiveState`) or a
+///   soft-phone call on the line (dialing, ringing, on the call).
 /// * [StationSignals.outcomeOwed]: the soft-phone call ended and owes its outcome.
 /// * [StationSignals.onSoftphone]: a campaign station on the `soft_phone` break.
 StationSignals hostSignalsOf({
@@ -342,10 +371,11 @@ StationSignals hostSignalsOf({
 }) {
   if (over) return const StationSignals();
   final call = state.manualCall;
-  final onBreak = state.agentState == wire.AgentState.onBreak;
+  final shown = state.effectiveState;
+  final onBreak = shown == wire.AgentState.onBreak;
   return StationSignals(
     onDuty: true,
-    callActive: isCallPhase(state.agentState) || (call?.isLive ?? false),
+    callActive: isCallPhase(shown) || (call?.isLive ?? false),
     onBreak: onBreak,
     campaignId: campaignId,
     sessionKind: kind,

@@ -254,6 +254,41 @@ const dispositionFailedCopy = 'That disposition could not be saved.';
 const dispositionLostCopy = "The last call's disposition wasn't saved.";
 const noCallForDispositionCopy = 'There is no call to save an outcome for.';
 
+// ─── Wrap-up redial ─────────────────────────────────────────────────────────
+
+const redialNotAllowedCopy = 'Redial isn’t available for this call. Save the outcome.';
+const redialLimitReachedCopy = 'You’ve used all the redials for this call. Save the outcome.';
+const redialAlreadySavedCopy = 'This call’s outcome is already saved, so it can’t be redialled.';
+const redialBlockedDncCopy = 'This number is on a Do Not Call list, so it can’t be redialled. Save the outcome.';
+const redialBlockedHoursCopy =
+    'It’s outside this customer’s calling hours, so they can’t be redialled now. Save the outcome.';
+const redialFailedCopy = 'Couldn’t redial this customer. Save the outcome, or try again.';
+
+/// No usable answer to the redial (no network, a timeout, a server error): it
+/// may have been placed all the same, so this never says it failed. The
+/// console's words.
+const redialUncertainCopy =
+    'No answer from the server, so the redial may still go through. If no call starts, try again or save the outcome.';
+
+/// The redial was placed, and its call has not reached the station in time.
+const redialNotArrivedCopy = 'The redial hasn’t reached your station yet. If no call starts, save the outcome.';
+
+/// The Redial was for a wrap-up that is no longer the one on screen.
+const redialCallChangedCopy = 'That call has moved on. Nothing was redialled.';
+
+/// Why a redial was refused (`POST /sessions/:id/redial`). Ours for the codes
+/// whose meaning is fixed; the server's sentence for `redial_blocked` (it says
+/// which check failed) and anything else; a plain line when it sent none.
+String redialRefusalCopy(AgencyErrorCode? code, String? serverSentence) => switch (code) {
+      AgencyErrorCode.redialNotAllowed => redialNotAllowedCopy,
+      AgencyErrorCode.redialLimitReached => redialLimitReachedCopy,
+      AgencyErrorCode.dispositionAlreadySubmitted || AgencyErrorCode.alreadyDispositioned => redialAlreadySavedCopy,
+      AgencyErrorCode.redialBlockedDnc => redialBlockedDncCopy,
+      AgencyErrorCode.redialBlockedCallingHours => redialBlockedHoursCopy,
+      AgencyErrorCode.redialBlocked => serverSentence ?? redialFailedCopy,
+      _ => serverSentence ?? redialFailedCopy,
+    };
+
 String alreadyRecordedCopy(String? label) =>
     label != null ? 'This call is already recorded as $label.' : 'This call already has a different outcome recorded.';
 

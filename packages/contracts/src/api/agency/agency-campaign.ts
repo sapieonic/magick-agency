@@ -431,6 +431,12 @@ export interface AgencyCampaign {
    * decides whether an agent's shift is paced by a timer or by them.
    */
   wrapup_auto_return?: boolean | null;
+  /**
+   * Wrap-up redial: whether the agent may redial the same customer from the wrap-up
+   * screen while the outcome is still owed (at most `AGENCY_WRAPUP_REDIAL_LIMIT` redials
+   * per call). Off by default; the column is `NOT NULL DEFAULT false`.
+   */
+  allow_wrapup_redial?: boolean;
   record_calls?: boolean;
   /**
    * Which of a contact's uploaded CSV columns are rendered, and in what order

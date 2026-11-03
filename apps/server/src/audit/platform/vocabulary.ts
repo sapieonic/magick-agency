@@ -152,6 +152,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_attempts.exported', label: 'Call attempts exported', group: 'Calls', product: 'agency' },
   { value: 'agency_contacts.exported', label: 'Contact roster exported', group: 'Calls', product: 'agency' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls', product: 'agency' },
+  { value: 'agency_attempt.redialed', label: 'Customer redialled from wrap-up', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.created', label: 'Number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.deleted', label: 'Do-not-call entry removed', group: 'Calls', product: 'agency' },
   // The soft phone (docs/softphone.md §6). "Soft-phone call" in every label: on this

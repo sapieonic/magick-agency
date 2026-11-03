@@ -1,4 +1,8 @@
 import { AGENCY_DEFAULT_DISPOSITION_CATALOG } from '@magick-agency/contracts/agency';
+// The reserved disposition codes and their refusal: ONE definition, the internal
+// handler's, so this layer and the enforcement cannot disagree about which codes a
+// catalog may use.
+import { reservedDispositionCodeMessage } from './campaign-config.js';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG VALIDATION (public API layer) ───────────────────
@@ -399,6 +403,11 @@ function validateDispositionCatalog(catalog: unknown): ConfigIssue[] {
       issues.push({ field: `${at}.code`, message: `Duplicate disposition code '${code}'.` });
     } else {
       seen.add(code);
+      // A code the system writes itself (`redialed`, wrap-up redial) is refused
+      // here as well as by the internal handler, so the wizard gets the message on
+      // the field.
+      const reserved = reservedDispositionCodeMessage(code);
+      if (reserved) issues.push({ field: `${at}.code`, message: reserved });
     }
 
     const label = entry['label'];
@@ -637,6 +646,12 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   }
   if (record['retry_policy'] !== undefined) {
     issues.push(...validateRetryPolicy(record['retry_policy']));
+  }
+  // Wrap-up redial (0008): a `BOOLEAN NOT NULL` column, so anything but a JSON
+  // boolean is refused here as the internal handler refuses it, with its message.
+  const allowRedial = record['allow_wrapup_redial'];
+  if (allowRedial !== undefined && typeof allowRedial !== 'boolean') {
+    issues.push({ field: 'allow_wrapup_redial', message: 'allow_wrapup_redial must be a boolean.' });
   }
   issues.push(...validateCallingWindow(record));
   return issues;

@@ -62,6 +62,7 @@ import {
   AGENCY_ATTEMPT_METRICS_SQL,
   AGENCY_RESOLVED_ZONE_JOIN_SQL,
   AGENCY_RESOLVED_ZONE_SQL,
+  CONVERSATION_ATTEMPT_SQL,
   WRAPUP_MEASURED_RESOLUTIONS_SQL,
   readAttemptMetrics,
 } from './sql-fragments.js';
@@ -181,7 +182,13 @@ export async function campaignStats(
          -- it replaces did.
          SELECT COUNT(*) FILTER (WHERE state <> 'ended') AS attempts_live,
                 COUNT(*) AS attempts_total,
-                COUNT(*) FILTER (WHERE outcome = 'connected') AS attempts_connected,
+                -- A wrap-up redial continues a conversation the original already
+                -- counted here (the original is always connected): not again.
+                COUNT(*) FILTER (WHERE outcome = 'connected' AND redial_number = 0) AS attempts_connected,
+                -- Wrap-up redials PLACED (dialed_at, as attempts_retried), and the
+                -- dials that were not one (the connect rate's denominator).
+                COUNT(*) FILTER (WHERE redial_number > 0 AND dialed_at IS NOT NULL) AS attempts_redialed,
+                COUNT(*) FILTER (WHERE redial_number = 0) AS attempts_not_redial,
                 -- Dials that were NOT a contact's first.
                 --
                 -- A different question from retries_pending, and the pair
@@ -209,7 +216,11 @@ export async function campaignStats(
                 -- having redialled nobody. Same gate the series aggregate uses on the same
                 -- table, and for the same reason it gives (see statsSeries): a dial that
                 -- never happened is not a dial.
-                COUNT(*) FILTER (WHERE attempt_number > 1 AND dialed_at IS NOT NULL) AS attempts_retried,
+                --
+                -- A wrap-up redial is not a retry: it continues the conversation it
+                -- redials (attempts_redialed counts it). It does push attempt_number,
+                -- so a later paced retry of the contact is still counted here.
+                COUNT(*) FILTER (WHERE attempt_number > 1 AND dialed_at IS NOT NULL AND redial_number = 0) AS attempts_retried,
                 COUNT(*) FILTER (
                   WHERE state = 'ended'
                     AND answered_at IS NOT NULL
@@ -234,16 +245,22 @@ export async function campaignStats(
                 -- voicemails an agent walked away from rather than classify. The split
                 -- exists so voicemail time cannot inflate the human numbers; a two-way
                 -- version would have moved only the ones an agent bothered to label.
+                --
+                -- Over CONVERSATIONS (CONVERSATION_ATTEMPT_SQL), not bridged attempts:
+                -- a conversation redialled from wrap-up is counted once, at the attempt
+                -- that carries its outcome. The redialled attempts carry the system
+                -- code redialed, which would otherwise book every one of them a human
+                -- connect whatever the conversation turned out to be.
                 COUNT(*) FILTER (
-                  WHERE bridged_at IS NOT NULL
+                  WHERE ${CONVERSATION_ATTEMPT_SQL}
                     AND disposition_code IS NOT NULL
                     AND disposition_code <> $3
                     AND disposition_code <> $4) AS human_connects,
                 COUNT(*) FILTER (
-                  WHERE bridged_at IS NOT NULL
+                  WHERE ${CONVERSATION_ATTEMPT_SQL}
                     AND (disposition_code IS NULL OR disposition_code = $4)) AS unclassified_connects,
                 COUNT(*) FILTER (
-                  WHERE bridged_at IS NOT NULL
+                  WHERE ${CONVERSATION_ATTEMPT_SQL}
                     AND disposition_code = $3) AS machine_connects,
 
                 -- Conversions -- the is_success flag. It is on every catalog entry,
@@ -262,7 +279,7 @@ export async function campaignStats(
                 -- here: outcome = 'connected' is a classification that can be absent,
                 -- late, or say connected about a call no agent ever heard.
                 COUNT(*) FILTER (
-                  WHERE a.bridged_at IS NOT NULL
+                  WHERE ${CONVERSATION_ATTEMPT_SQL}
                     AND ${successDispositionSql({
                     attempt: 'a',
                     catalog: '(SELECT cam.disposition_catalog FROM agency_campaigns cam WHERE cam.id = $1)',
@@ -310,6 +327,8 @@ export async function campaignStats(
               att.attempts_total::text AS attempts_total,
               att.attempts_connected::text AS attempts_connected,
               att.attempts_retried::text AS attempts_retried,
+              att.attempts_redialed::text AS attempts_redialed,
+              att.attempts_not_redial::text AS attempts_not_redial,
               (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL)::text AS agents_live,
               att.answered_24h::text AS answered_24h,
               att.abandoned_24h::text AS abandoned_24h,
@@ -359,7 +378,8 @@ export async function campaignStats(
   const attemptsTotal = num('attempts_total');
   const attemptsSuccess = num('attempts_success');
   /**
-   * The conversion rate's denominator: every BRIDGED attempt.
+   * The conversion rate's denominator: every CONVERSATION (a bridged paced attempt,
+   * or the last attempt of a wrap-up redial chain: `CONVERSATION_ATTEMPT_SQL`).
    *
    * Summed from the three connect buckets rather than read as a fourth
    * `COUNT(*) … WHERE bridged_at IS NOT NULL`. The three are disjoint and
@@ -396,6 +416,8 @@ export async function campaignStats(
     // asserts the produced key set against the field roster, so a conditional
     // spread here would red that suite rather than shipping quietly.
     attempts_retried: num('attempts_retried'),
+    // Always emitted, as `attempts_retried` is.
+    attempts_redialed: num('attempts_redialed'),
     agents_live: num('agents_live'),
     abandoned_24h: abandoned24h,
     answered_24h: answered24h,
@@ -433,7 +455,9 @@ export async function campaignStats(
     machine_connects: machineConnects,
     unclassified_connects: unclassifiedConnects,
     machine_connects_available: row['machine_connects_available'] === 'true',
-    connect_rate_pct: ratePct(humanConnects, attemptsTotal),
+    // Over the dials that were not wrap-up redials: a redial continues a conversation
+    // already counted, it is not another try at reaching someone.
+    connect_rate_pct: ratePct(humanConnects, num('attempts_not_redial')),
     attempts_success: attemptsSuccess,
     // `null`, never `0`, when nothing has bridged — the same imported helper
     // `abandonment_rate_24h_pct` uses, and the same distinction: "nothing has
@@ -476,6 +500,7 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     state_since: Date | string;
     break_reason: string | null;
     calls_handled: string;
+    redials: string;
     client_kind: AgencyClientKind;
   }>(
     // `calls_handled` counts by `reserved_agent_id`, which is a SESSION id,
@@ -494,12 +519,14 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
               -- reason after they return, and a stale "Lunch" beside an available
               -- agent reads as a live fact.
               CASE WHEN s.state = 'break' THEN s.break_reason END AS break_reason,
-              COUNT(a.id)::text AS calls_handled,
+              -- Conversations, once each (a redialled one at its last attempt), and the
+              -- session's placed wrap-up redials.
+              COUNT(a.id) FILTER (WHERE ${CONVERSATION_ATTEMPT_SQL})::text AS calls_handled,
+              COUNT(a.id) FILTER (WHERE a.redial_number > 0 AND a.dialed_at IS NOT NULL)::text AS redials,
               s.client_kind
          FROM agency_agent_sessions s
          LEFT JOIN agency_call_attempts a
                 ON a.reserved_agent_id = s.id
-               AND a.bridged_at IS NOT NULL
         WHERE s.campaign_id = $1
           AND s.left_at IS NULL
         GROUP BY s.id, s.agent_user_id, s.state, s.state_since, s.break_reason, s.client_kind`,
@@ -516,6 +543,7 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
     state_since: isoOrEpoch(r.state_since),
     break_reason: r.break_reason ?? null,
     calls_handled: Number(r.calls_handled ?? 0),
+    redials: Number(r.redials ?? 0),
     // The app the station last attached from (0006); the floor's phone marker.
     client_kind: r.client_kind === 'mobile' ? 'mobile' : 'web',
   }));
@@ -618,7 +646,10 @@ async function supervisorAgents(campaignId: string): Promise<AgencySupervisorAge
  *     those are in no bucket, deliberately — a dial that never happened is not a
  *     dial.
  *   * `connected` sums to `human_connects + machine_connects +
- *     unclassified_connects` — every BRIDGED attempt — and **not** to
+ *     unclassified_connects` — every CONVERSATION (`CONVERSATION_ATTEMPT_SQL`: a
+ *     redialled one once, at its last attempt; restricted, like `attempts`, to a
+ *     `dialed_at` in the window, so a conversation whose last redial never reached
+ *     the carrier is in no bucket) — and **not** to
  *     `attempts_connected`, which is `outcome = 'connected'`, a classification
  *     that can be absent, late, or say connected about a call no agent ever
  *     heard. `bridged_at IS NOT NULL` is the gate every flow metric on that

@@ -39,6 +39,7 @@ import {
   type AgencyAttempt,
 } from '../../types/agency-spine';
 import type { AgencyCampaign, AgencyDispositionEntry } from '../../types/agency-campaign';
+import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
 import styles from './AgencyAttemptCallPage.module.css';
 
 /**
@@ -215,12 +216,17 @@ function agencyDispositionCard(
   */
   const label = dispositionLabel(attempt.disposition_code, catalog);
   const resolved = label !== null && label !== attempt.disposition_code;
+  // A code the system wrote (a wrap-up redial closed this call): muted like the
+  // absent value, with what wrote it as the hint — the outcome is on the redial.
+  const system = isSystemDispositionCode(attempt.disposition_code);
   const facts: CallFact[] = [
     {
       label: resolved ? 'Written up as' : 'Code',
       value: label ?? 'Not written up',
-      muted: attempt.disposition_code === null,
-      ...(resolved ? { hint: `Filed as “${attempt.disposition_code}”` } : {}),
+      muted: attempt.disposition_code === null || system,
+      ...(system
+        ? { hint: SYSTEM_DISPOSITION_HINTS[attempt.disposition_code!] }
+        : resolved ? { hint: `Filed as “${attempt.disposition_code}”` } : {}),
     },
     {
       label: 'Filed',

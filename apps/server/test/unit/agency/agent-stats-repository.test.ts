@@ -217,7 +217,8 @@ describe('the attempt buckets are cut in each campaign\'s own timezone', () => {
   it('counts connects on bridged_at and successes through the shared predicate', async () => {
     await read();
     const sql = executable(attemptsSql());
-    expect(sql).toContain('COUNT(*) FILTER (WHERE a.bridged_at IS NOT NULL)');
+    // Per CONVERSATION (a wrap-up redial chain once, at its last attempt).
+    expect(sql).toContain('COUNT(*) FILTER (WHERE ((a.bridged_at IS NOT NULL AND a.redial_number = 0) OR a.redial_number > 0)');
     expect(sql).toContain("e->'is_success' = 'true'::jsonb");
     expect(sql).toContain('jsonb_array_elements(c.disposition_catalog)');
     // A malformed catalog must not throw: object guard, and no boolean cast.

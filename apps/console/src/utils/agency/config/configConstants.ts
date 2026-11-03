@@ -342,6 +342,11 @@ export interface CampaignConfigState {
   window: CallingWindowState;
   wrapupSeconds: number;
   autoReturn: boolean;
+  /**
+   * Wrap-up redial (`allow_wrapup_redial`): the agent may redial the customer from
+   * the wrap-up screen before saving the outcome. Off by default.
+   */
+  allowWrapupRedial: boolean;
 }
 
 /**

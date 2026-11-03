@@ -5,6 +5,7 @@ import { formatDuration } from '../../utils/agencyClock';
 import { useRepaintTick } from '../../hooks/useRepaintTick';
 import { resolveReleaseCopy } from '../../utils/agencyReleaseCopy';
 import { hasWrapup, type WrapupAnchor } from '../../utils/agencyWrapup';
+import { redialTag } from '../../utils/agencyRedialCopy';
 import { VISUAL_CUE_SPECS } from '../../utils/agencyCues';
 import type { ServerClock } from '../../hooks/useServerClock';
 import type { CueFlash } from '../../hooks/useAgencyCues';
@@ -68,6 +69,12 @@ export interface StateRailProps {
    * a transition the frames never delivered.
    */
   waitingForDialer?: string | null;
+  /**
+   * A wrap-up redial is placed: the server stopped this wrap-up's timer, so its
+   * countdown is withheld rather than left draining towards a deadline that no
+   * longer ends anything (until the redial's own frames replace the wrap-up).
+   */
+  wrapupCountdownStopped?: boolean;
   /**
    * The cue to show on the rail, for an agent who cannot hear the audible one
    * `null` — so nothing rendered — for a hearing agent with working
@@ -210,11 +217,25 @@ export function describeRail(input: {
     };
   }
 
+  /**
+   * A wrap-up redial is the same customer on the same screen, so it reads as the
+   * same kind of call with its tag: "Redial 1 of 2 — calling…" while it rings, and
+   * the tag beside the number once connected.
+   */
+  const redial = live?.attempt.redial;
   if (live?.bridgedAt) {
-    return { tone: 'success', label: 'On call', detail: live.attempt.phone_e164 };
+    return {
+      tone: 'success',
+      label: 'On call',
+      detail: redial ? `${redialTag(redial)} · ${live.attempt.phone_e164}` : live.attempt.phone_e164,
+    };
   }
   if (live) {
-    return { tone: 'warning', label: 'Ringing — get ready', detail: live.attempt.phone_e164 };
+    return {
+      tone: 'warning',
+      label: redial ? `${redialTag(redial)} — calling…` : 'Ringing — get ready',
+      detail: live.attempt.phone_e164,
+    };
   }
 
   /**
@@ -311,6 +332,7 @@ export function StateRail({
   onGoAvailable,
   onEndBreak,
   waitingForDialer = null,
+  wrapupCountdownStopped = false,
   cueFlash = null,
   onReconnect,
   deferredHangupMs = null,
@@ -424,7 +446,7 @@ export function StateRail({
       {talkAnchor !== null ? <TalkTimer bridgedAt={talkAnchor} clock={clock} /> : null}
 
       {/* Only when a frame actually arrived. No frame ⇒ no clock, and no spinner. */}
-      {hasWrapup(wrapup) ? (
+      {hasWrapup(wrapup) && !wrapupCountdownStopped ? (
         <WrapupTimer anchor={wrapup} now={clock.now} dispositionSubmitted={dispositionSubmitted} />
       ) : null}
 

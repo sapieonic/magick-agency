@@ -236,6 +236,39 @@ describe('campaign settings — saving', () => {
     );
   });
 
+  it('round-trips “Allow redial from wrap-up” through load, save and re-seed', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ allow_wrapup_redial: true }));
+    renderPage();
+
+    const box = (await screen.findByRole('checkbox', {
+      name: /allow redial from wrap-up/i,
+    })) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(screen.getByTestId('allow-wrapup-redial-hint').textContent).toBe(
+      'If a connected call drops, the agent can redial the customer up to 2 times from wrap-up before saving the outcome.',
+    );
+
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].allow_wrapup_redial).toBe(false);
+
+    // Re-seeded off the response, which said off.
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('checkbox', { name: /allow redial from wrap-up/i }) as HTMLInputElement).checked,
+      ).toBe(false),
+    );
+  });
+
+  it('shows the redial setting off for a campaign that does not carry it', async () => {
+    renderPage();
+    const box = (await screen.findByRole('checkbox', {
+      name: /allow redial from wrap-up/i,
+    })) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+  });
+
   it('refuses to save a campaign with no name, without calling the API', async () => {
     renderPage();
 

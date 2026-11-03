@@ -69,6 +69,17 @@ void main() {
       expect(c.intervals.deferredHangup, isNull);
     });
 
+    test('wrap-up redial: stated by the campaign, false when absent (an older server)', () {
+      expect(SessionBootstrap.fromJson(json).allowWrapupRedial, isTrue);
+      expect(SessionBootstrap.fromJson(without(json, 'allow_wrapup_redial')).allowWrapupRedial, isFalse);
+      expect(SessionBootstrap.fromJson({...json, 'allow_wrapup_redial': null}).allowWrapupRedial, isFalse);
+      expect(
+        SessionBootstrap.fromJson(fixture('session.json', 'bootstrap_retry_rehydrated')).allowWrapupRedial,
+        isFalse,
+      );
+      expect(SessionBootstrap.fromJson(json), isNot(SessionBootstrap.fromJson(without(json, 'allow_wrapup_redial'))));
+    });
+
     test('the heartbeat grace is read, not assumed', () {
       final intervals = {...json['intervals']! as Map<String, Object?>, 'heartbeat_grace_ms': 30000};
       expect(

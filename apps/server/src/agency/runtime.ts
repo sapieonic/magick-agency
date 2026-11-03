@@ -109,6 +109,11 @@ export class AgencyRuntime {
    * `AgencySoftphoneErrorCode`. See `softphone/softphone-service.ts`.
    */
   readonly softphone: SoftphoneService;
+  /**
+   * The one dial dispatcher: the pacing engine's, and the wrap-up redial's
+   * (`wrapup-redial.ts`), so a redial passes the same clearance and ownership checks.
+   */
+  readonly dispatcher: DialDispatcher;
 
   constructor(bridge: WebRtcBridgeManager, redis: Redis | null, keyPrefix: string, options: AgencyRuntimeOptions = {}) {
     // Stable for the life of the process. There is one replica in v1, but the
@@ -165,6 +170,7 @@ export class AgencyRuntime {
     });
     const dispatcher = options.dispatcher
       ?? new LocalDialDispatcher(this.replicaId, (cmd, opts) => this.dialer.executeDial(cmd, opts));
+    this.dispatcher = dispatcher;
     this.pacing = new PacingEngine(
       redis, keyPrefix, this.replicaId, options.pacingStations ?? this.stations, this.agents, dispatcher, this.dnc,
     );
@@ -211,6 +217,9 @@ export class AgencyRuntime {
    * `on_call` lease and a row still reading `available` — so rehydration
    * overwrote the lease with `available`, and the next pacing tick reserved an
    * agent who was already talking to a customer.
+   *
+   * The one exception is a wrap-up this replica still holds (`WrapupManager.stateFor`):
+   * the agent comes back in `wrapup`, over an `offline` or a lapsed lease (see below).
    *
    * A **lapsed** lease means either a genuine absence or a process restart, and
    * both must land in `break`: after a restart the reaper has written
@@ -273,6 +282,23 @@ export class AgencyRuntime {
       // toward `break`.
     }
     const live = await this.agents.get(sessionId);
+    // ── A wrap-up this replica still holds comes back as `wrapup` ───────────────
+    //
+    // The countdown is in-process and survives a socket drop, but the close wrote the
+    // agent `offline` (`releaseStationOnClose`: no live attempt), and a lease that then
+    // lapsed would land them in `break` below. Either way Redis no longer said `wrapup`
+    // while the wrap-up (and its outcome pad, and its Redial) was still on screen: the
+    // first Redial after a reconnect lost its `wrapup → reserved` CAS and was refused,
+    // and the agent was announced `offline`/`break` mid write-up. Restored only over
+    // `offline` or nothing, never over a state something else wrote (pacing never
+    // reserves from either, so no call can have been placed on this agent meanwhile).
+    const wrapup = this.wrapup.stateFor(sessionId);
+    if (wrapup && (!live || live.state === 'offline')) {
+      await this.agents.set(sessionId, 'wrapup', { attemptId: wrapup.attempt_id, leaseMs: AGENT_LEASE_MS.wrapup });
+      await agencyAgentSessionRepository.setState(sessionId, 'wrapup')
+        .catch((err) => log.warn({ err, sessionId }, 'Could not mirror rehydrated agent state'));
+      return 'wrapup';
+    }
     if (live) return live.state;
 
     await this.agents.set(sessionId, 'break', { leaseMs: AGENT_LEASE_MS.break });

@@ -240,6 +240,36 @@ describe('agency session and attempt audits', () => {
     await app.close();
   });
 
+  it('a wrap-up redial audits the redialled attempt, with the session and the new attempt', async () => {
+    const REDIAL = '77777777-7777-4777-8777-777777777777';
+    mocks.proxyToCore.mockResolvedValue({
+      status: 200,
+      body: { session_id: SESSION, attempt_id: REDIAL, redial_of_attempt_id: ATTEMPT, redial_number: 1, redial_remaining: 1 },
+    });
+    const app = await buildApp();
+    await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/redial`, payload: { attempt_id: ATTEMPT } });
+    expect(mocks.auditLog).toHaveBeenCalledTimes(1);
+    expect(mocks.auditLog).toHaveBeenCalledWith({
+      tenant_id: TENANT,
+      account_id: ACCOUNT,
+      actor_type: 'human',
+      user_id: AGENT,
+      action: 'agency_attempt.redialed',
+      resource_type: 'agency_attempt',
+      resource_id: ATTEMPT,
+      details: { session_id: SESSION, redial_attempt_id: REDIAL },
+    });
+    await app.close();
+  });
+
+  it('does not audit a refused wrap-up redial', async () => {
+    mocks.proxyToCore.mockResolvedValue({ status: 409, body: { code: 'redial_limit_reached' } });
+    const app = await buildApp();
+    await app.inject({ method: 'POST', url: `${PREFIX}/sessions/${SESSION}/redial`, payload: { attempt_id: ATTEMPT } });
+    expect(mocks.auditLog).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('does not audit a failed hang-up', async () => {
     mocks.proxyToCore.mockResolvedValue({ status: 409, body: { code: 'attempt_not_live' } });
     const app = await buildApp();

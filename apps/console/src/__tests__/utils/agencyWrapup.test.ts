@@ -17,6 +17,18 @@ function frame(overrides: Partial<AgencyWrapupState> = {}): AgencyWrapupState {
 
 const OPENED_AT = Date.parse('2026-08-11T12:00:00.000Z');
 
+describe('openWrapup — wrap-up redial', () => {
+  it('reads absent and null redial_remaining as not offered', () => {
+    expect(openWrapup(frame(), 0, OPENED_AT).redialRemaining).toBeNull();
+    expect(openWrapup(frame({ redial_remaining: null }), 0, OPENED_AT).redialRemaining).toBeNull();
+  });
+
+  it('keeps 0 (limit used up) apart from not offered, and carries a count', () => {
+    expect(openWrapup(frame({ redial_remaining: 0 }), 0, OPENED_AT).redialRemaining).toBe(0);
+    expect(openWrapup(frame({ redial_remaining: 2 }), 0, OPENED_AT).redialRemaining).toBe(2);
+  });
+});
+
 describe('openWrapup — the anchor is captured once', () => {
   it('reads the absolute ends_at rather than reconstructing it', () => {
     const anchor = openWrapup(frame(), 0, OPENED_AT);

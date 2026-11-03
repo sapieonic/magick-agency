@@ -986,6 +986,60 @@ export class AgencyContactRepository {
   }
 
   /**
+   * Park the contact of an ended conversation (or of a wrap-up redial) in `connected`,
+   * held for the agent's write-up, **only while the call still holds it**: the contact is
+   * `in_flight` (claimed for this dial) or `connected` (parked at the bridge), and the
+   * attempt has no disposition yet. Anything else means the write-up already decided the
+   * contact's fate, and re-parking it would hold the customer behind a write-up that is
+   * already taken: `connected` with a dispositioned attempt is released by nothing (the
+   * lapsed-wrap-up sweep reads `disposition_code IS NULL`).
+   *
+   * The case it exists for: the agent saves the outcome while the call is still live
+   * (bridged), the disposition route releases the contact (`releaseFromDisposition`:
+   * `completed`, a retry, a callback), and the call's end then arrives here. An
+   * unconditional `markState('connected')` put that contact back in `connected` for good.
+   *
+   * `bumpAttempt` (a paced call) is charged whether or not the park lands: the dial
+   * happened, and the disposition route never charges (the attempt is counted when it
+   * ends). `last_outcome` is written only with the park. The DNC rule is
+   * {@link markState}'s: a row carrying `suppressed_reason = 'dnc'` stays `suppressed`.
+   *
+   * Returns whether the contact was parked (false also when either row is missing).
+   */
+  async parkForWriteUp(opts: {
+    contactId: string;
+    attemptId: string;
+    lastOutcome: string | null;
+    bumpAttempt?: boolean;
+  }): Promise<boolean> {
+    const { rows } = await getPool().query<{ parked: boolean }>(
+      `WITH held AS (
+         SELECT c.id,
+                (c.state IN ('in_flight', 'connected') AND r.disposition_code IS NULL) AS hold
+           FROM agency_contacts c
+           JOIN agency_call_attempts r ON r.id = $2 AND r.contact_id = c.id
+          WHERE c.id = $1
+       )
+       UPDATE agency_contacts c
+          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed'
+                           WHEN held.hold THEN 'connected'
+                           ELSE c.state END,
+              attempt_count = c.attempt_count + $4::int,
+              last_outcome = CASE WHEN held.hold THEN COALESCE($3::varchar, c.last_outcome)
+                                  ELSE c.last_outcome END,
+              updated_at = now()
+         FROM held
+        WHERE c.id = held.id
+          -- Nothing to write when the call no longer holds the contact and nothing is
+          -- charged: the row is left exactly as the write-up left it.
+          AND (held.hold OR $4::int > 0)
+      RETURNING held.hold AND c.state = 'connected' AS parked`,
+      [opts.contactId, opts.attemptId, opts.lastOutcome, opts.bumpAttempt ? 1 : 0],
+    );
+    return rows[0]?.parked ?? false;
+  }
+
+  /**
    * Write a contact's state, with **one transition the database refuses**: a row
    * carrying `suppressed_reason = 'dnc'` stays `suppressed`, whatever was asked.
    *

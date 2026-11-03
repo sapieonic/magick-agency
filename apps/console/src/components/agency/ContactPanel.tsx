@@ -1,6 +1,7 @@
 import { heroesWereConfigured, type ResolvedContext } from '../../utils/agencyContext';
 import { resolveReleaseCopy, releaseShape, releaseAccount } from '../../utils/agencyReleaseCopy';
 import { IDLE_PAUSED_HINT, IDLE_WAITING_HINT } from '../../utils/agencyStationIdle';
+import { redialTag } from '../../utils/agencyRedialCopy';
 import type {
   AgencyMissedRelease,
   AgencyReservedAttempt,
@@ -37,7 +38,13 @@ export function ContactPanel({
       {attempt && resolved ? (
         <>
           <p className={styles.dialled}>{attempt.phone_e164}</p>
-          <p className={styles.attemptMeta}>Attempt {attempt.attempt_number}</p>
+          <p className={styles.attemptMeta}>
+            Attempt {attempt.attempt_number}
+            {/* A wrap-up redial keeps its tag through the call and its own wrap-up. */}
+            {attempt.redial ? (
+              <span data-testid="contact-redial-tag"> · {redialTag(attempt.redial)}</span>
+            ) : null}
+          </p>
           {resolved.hero.length > 0 ? (
             <dl className={styles.heroList}>
               {resolved.hero.map((field) => (

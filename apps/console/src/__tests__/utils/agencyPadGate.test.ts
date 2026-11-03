@@ -34,6 +34,7 @@ const ANCHOR: WrapupAnchor = {
   requiresDisposition: true,
   heldReason: 'disposition_required',
   autoReturn: true,
+  redialRemaining: null,
 };
 
 const idle: PadGateInput = {

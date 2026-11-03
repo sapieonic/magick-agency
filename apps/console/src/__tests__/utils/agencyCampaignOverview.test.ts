@@ -998,6 +998,16 @@ describe('the retries sub-line under the dial count', () => {
     expect(pulseFigures(null).dials.sub).toBeNull();
   });
 
+  it('names the wrap-up redials the dial count includes, apart from the retries', () => {
+    expect(pulseFigures(stats({ attempts_total: 50, attempts_retried: 3, attempts_redialed: 2 })).dials.sub)
+      .toBe('including 3 retries and 2 wrap-up redials');
+    expect(pulseFigures(stats({ attempts_total: 50, attempts_retried: 0, attempts_redialed: 1 })).dials.sub)
+      .toBe('including 1 wrap-up redial');
+    // More retries and redials together than dials: says nothing, as for retries alone.
+    expect(pulseFigures(stats({ attempts_total: 4, attempts_retried: 3, attempts_redialed: 2 })).dials.sub)
+      .toBeNull();
+  });
+
   it('says nothing rather than more retries than dials', () => {
     // Not a number the API can produce, but one a mid-deploy pairing of two
     // versions can: "including 8,000 retries" under "6,742 dials" is a screen

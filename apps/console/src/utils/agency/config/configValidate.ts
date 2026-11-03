@@ -1,6 +1,7 @@
 import type { AgencyRetryRule } from '../../../types/agency-campaign';
 import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
 import type { CampaignConfigState } from './configConstants';
+import { reservedDispositionCodeMessage } from '../systemDisposition';
 
 /*
   The campaign builder's validation: the client half of the rules the API
@@ -26,6 +27,11 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
     if (!CODE_RE.test(entry.code)) {
       errors[`${at}.code`] =
         'Use 1–50 characters: lowercase letters, digits or underscores. The code is compared exactly, so a capital letter is a different code.';
+    } else if (reservedDispositionCodeMessage(entry.code) !== null) {
+      // A code the system writes (`redialed`): the server refuses it on save too,
+      // because an agent filing it by hand would be indistinguishable from the
+      // system's record of a redial.
+      errors[`${at}.code`] = reservedDispositionCodeMessage(entry.code)!;
     } else if (seen.has(entry.code)) {
       // First-wins is what `find()` does, silently — the operator's second entry
       // and its flags simply never apply.

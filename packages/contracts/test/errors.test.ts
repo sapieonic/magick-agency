@@ -41,6 +41,12 @@ const CORE_FIXTURE_ACTION_ERROR_CODES = [
   'feature_disabled',
   'not_staffed',
   'state_changing',
+  'redial_not_allowed',
+  'redial_limit_reached',
+  'disposition_already_submitted',
+  'redial_blocked_dnc',
+  'redial_blocked_calling_hours',
+  'redial_blocked',
 ];
 
 // ── Type-level: the lists are exactly their unions (the runtime twin of the
@@ -72,8 +78,8 @@ describe('action error codes', () => {
     expect([...AGENCY_ACTION_ERROR_CODES]).toEqual(CORE_FIXTURE_ACTION_ERROR_CODES);
   });
 
-  it('has 20 members, all distinct', () => {
-    expect(AGENCY_ACTION_ERROR_CODES).toHaveLength(20);
+  it('has 26 members, all distinct', () => {
+    expect(AGENCY_ACTION_ERROR_CODES).toHaveLength(26);
     expectUnique(AGENCY_ACTION_ERROR_CODES);
   });
 

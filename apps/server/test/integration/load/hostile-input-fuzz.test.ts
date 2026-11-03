@@ -239,7 +239,12 @@ describe('hostile input at volume, every route from onRoute (integration, load)'
 
   it('3. an oversize body is a 413 and a non-JSON body on a JSON route a 415, on a sample of write routes', async () => {
     const writes = routes.filter((r) => !r.websocket && ['POST', 'PUT', 'PATCH'].includes(r.method)
-      && !r.url.includes('/ingest/upload') && !r.url.startsWith('/api/v1/webhooks'));
+      && !r.url.includes('/ingest/upload') && !r.url.startsWith('/api/v1/webhooks')
+      // Its per-USER bucket (6/min) is spent by the sweep above, so a fresh address
+      // still meets a 429 before the body limit; its 413 is pinned in its own suite
+      // (`client-config.routes.test.ts`). The seeded sample reached it once a route was
+      // added (wrap-up redial).
+      && r.url !== '/client-config/uplink-probe');
     const sample = rng.shuffle(writes).slice(0, Math.min(writes.length, scaled(6)));
     const huge = JSON.stringify({ notes: 'x'.repeat(10 * 1024 * 1024 + 10) });
     // A fresh client address per request: the sweep above has spent the per-route buckets

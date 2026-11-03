@@ -367,6 +367,27 @@ export function trackAgencyDncFailed(props: EventCatalog['agency_dnc_failed']): 
   track('agency_dnc_failed', props);
 }
 
+/**
+ * Wrap-up redial: the agent pressed Redial on the wrap-up screen and the request
+ * went out. `redial_remaining` is the count the screen showed when they pressed it.
+ * Paired with {@link trackAgencyRedialRefused}. Pressed minus refused is NOT a count
+ * of placed redials: a refusal with `code: null` is a request that got no usable
+ * answer, and the server may have placed that redial all the same. Placed redials
+ * are the server's to count (the attempts linked by `redial_of_attempt_id`).
+ */
+export function trackAgencyRedialRequested(props: EventCatalog['agency_redial_requested']): void {
+  track('agency_redial_requested', props);
+}
+
+/**
+ * Wrap-up redial refused, or the request got no usable answer. `code` is the
+ * structured refusal; null when no code came back (a transport failure or a 5xx),
+ * in which case the redial may still have been placed.
+ */
+export function trackAgencyRedialRefused(props: EventCatalog['agency_redial_refused']): void {
+  track('agency_redial_refused', props);
+}
+
 export function trackAgencyStationExit(props: EventCatalog['agency_station_exit']): void {
   track('agency_station_exit', props);
 }
@@ -826,6 +847,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     break_reason_count: number;
     wrapup_seconds: number;
     wrapup_auto_return: boolean;
+    /** The campaign's `allow_wrapup_redial` at join; false when the bootstrap omits it. */
+    allow_wrapup_redial: boolean;
     record_calls: boolean;
     /** Count of contact-context fields configured — never their names. */
     context_field_count: number;
@@ -999,6 +1022,17 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     scope: 'campaign' | 'tenant';
     code: AgencyActionErrorCode | null;
   };
+  /** {@link trackAgencyRedialRequested} */
+  agency_redial_requested: {
+    campaign_id: string;
+    /** Redials left as the wrap-up showed them when the button was pressed. */
+    redial_remaining: number;
+  };
+  /** {@link trackAgencyRedialRefused} */
+  agency_redial_refused: {
+    campaign_id: string;
+    code: AgencyActionErrorCode | null;
+  };
   /** {@link trackAgencyStationExit} */
   agency_station_exit: {
     campaign_id: string;
@@ -1153,6 +1187,8 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     retry_policy_outcome_count: number;
     wrapup_seconds: number;
     auto_return: boolean;
+    /** `allow_wrapup_redial` as saved. */
+    wrapup_redial: boolean;
     recording_enabled: boolean;
     analysis_profile_set: boolean;
     /** The disposition order was changed via the row arrows. */

@@ -179,5 +179,7 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   // the contract, and it is also why this map is the only thing standing between
   // "the server sends it" and "nobody notices it stopped arriving".
   attempts_retried: { consumedIn: PULSE },
+  // Beside the retries under the dial count: the wrap-up redials the dials include.
+  attempts_redialed: { consumedIn: PULSE },
   agents_peak: { consumedIn: LIFECYCLE },
 };

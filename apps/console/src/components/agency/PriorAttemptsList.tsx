@@ -5,6 +5,7 @@ import {
   priorDispositionLabel,
 } from '../../utils/agencyPriorAttempts';
 import type { AgencyDisposition, AgencyReservedAttempt } from '../../types/agency';
+import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
 import styles from './AgentStation.module.css';
 
 /*
@@ -139,6 +140,16 @@ export function PriorAttemptsList({
                           prior.disposition_code,
                           priorCatalog(group.isCurrent),
                         ) || undefined
+                      }
+                      /*
+                        A code the system wrote (`redialed`): named, and styled as
+                        the system's record rather than an outcome the agent chose.
+                      */
+                      data-system={isSystemDispositionCode(prior.disposition_code) || undefined}
+                      title={
+                        isSystemDispositionCode(prior.disposition_code)
+                          ? SYSTEM_DISPOSITION_HINTS[prior.disposition_code]
+                          : undefined
                       }
                     >
                       {priorDispositionLabel(

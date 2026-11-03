@@ -40,6 +40,8 @@ import type {
   AgencyStationTokenResponse,
   AgencyStationManualCallFrame,
   AgencyWrapupHoldReason,
+  AgencyRedialInfo,
+  AgencyRedialResponse,
 } from '../../agency';
 import type * as Core from '../../agency';
 import type { AgencyActionErrorCode, AgencyStationErrorCode } from '../../errors';
@@ -74,7 +76,13 @@ export type {
   AgencyStationTokenResponse,
   AgencyActionErrorCode,
   AgencyStationErrorCode,
+  // Wrap-up redial (`POST /sessions/:id/redial`): the same shapes on both sides. The
+  // request is not re-exported: the console's body is `{ attempt_id }`, and the public
+  // API layer adds the actor (`AgencyRedialRequest.agent_user_id`), as for every action.
+  AgencyRedialInfo,
+  AgencyRedialResponse,
 };
+export { AGENCY_WRAPUP_REDIAL_LIMIT, AGENCY_REDIALED_DISPOSITION_CODE } from '../../agency/actions';
 /** The runtime list of {@link AgencyActionErrorCode}; the console keys its copy off it. */
 export { AGENCY_ACTION_ERROR_CODES } from '../../errors';
 

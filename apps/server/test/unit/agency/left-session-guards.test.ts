@@ -189,6 +189,8 @@ async function harness(): Promise<Harness> {
       // Early binding by default, so every pre-existing case keeps asserting the
       // "finish or hang up your current call" wording it was written for.
       hasUnannouncedAttempt: vi.fn(() => false),
+      // A wrap-up redial being set up or live: refuses `/available`, force-available, `/leave`.
+      hasRedialInFlight: vi.fn(() => false),
       hangupAttempt: vi.fn(),
       releaseAgent: vi.fn().mockResolvedValue({ state: 'available', result: 'ok' }),
     },
@@ -753,11 +755,18 @@ describe('Q8: a session route acts only for the session\'s own agent', () => {
   });
 
   it("a supervisor (on_behalf) may NOT drive an agent's own presence routes", async () => {
-    for (const suffix of ['/station-token', '/available', '/break', '/break/cancel', '/leave']) {
+    // `/redial` too: it puts a customer's voice in the agent's headset, which no one but
+    // the agent wearing it may decide.
+    for (const suffix of ['/station-token', '/available', '/break', '/break/cancel', '/leave', '/redial']) {
       const res = await as(suffix, { agent_user_id: 'u-supervisor', on_behalf: true });
       expect(res.statusCode, `POST /sessions/:id${suffix} let a supervisor act for the agent`).toBe(404);
     }
     expect(h.runtime.tokens.mint).not.toHaveBeenCalled();
+  });
+
+  it("a colleague may not redial another agent's customer: the same 404 as a missing session", async () => {
+    const res = await as('/redial', { agent_user_id: 'u-colleague', attempt_id: '00000000-0000-4000-8000-000000000001' });
+    expect(res.statusCode).toBe(404);
   });
 
   it('a supervisor (on_behalf) MAY force-available another agent; without on_behalf they may not', async () => {
@@ -766,6 +775,45 @@ describe('Q8: a session route acts only for the session\'s own agent', () => {
     const withIt = await as('/force-available', { agent_user_id: 'u-supervisor', on_behalf: true });
     expect(withIt.statusCode).toBe(200);
     expect(h.runtime.wrapup.force).toHaveBeenCalledWith('sess-1');
+  });
+});
+
+// ─── A wrap-up redial in flight owes the conversation's outcome ───────────────
+
+describe('a wrap-up redial in flight keeps the agent out of the pool', () => {
+  const as = (path: string, actor: Record<string, unknown>) =>
+    h.app.inject({ method: 'POST', url: `/api/v1/agency/sessions/sess-1${path}`, headers: HEADERS, payload: actor });
+
+  it('refuses /available with agent_on_live_call, writing nothing', async () => {
+    h.runtime.dialer.hasRedialInFlight.mockReturnValue(true);
+    const res = await as('/available', { agent_user_id: LIVE.agent_user_id });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('agent_on_live_call');
+    expect(h.runtime.agents.set).not.toHaveBeenCalled();
+    expect(repos.session.setState).not.toHaveBeenCalled();
+  });
+
+  it("refuses a supervisor's force-available, releasing nobody", async () => {
+    h.runtime.dialer.hasRedialInFlight.mockReturnValue(true);
+    const res = await as('/force-available', { agent_user_id: 'u-supervisor', on_behalf: true });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('agent_on_live_call');
+    expect(h.runtime.wrapup.force).not.toHaveBeenCalled();
+    expect(h.runtime.dialer.releaseAgent).not.toHaveBeenCalled();
+  });
+
+  it('refuses /leave while the redial is being set up (no live attempt yet), detaching nothing', async () => {
+    h.runtime.dialer.hasRedialInFlight.mockReturnValue(true);
+    const res = await as('/leave', { agent_user_id: LIVE.agent_user_id });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().code).toBe('agent_on_live_call');
+    expect(h.runtime.agents.clear).not.toHaveBeenCalled();
+    expect(h.runtime.stations.detach).not.toHaveBeenCalled();
+  });
+
+  it('lets all three through once the redial is over', async () => {
+    h.runtime.dialer.hasRedialInFlight.mockReturnValue(false);
+    expect((await as('/available', { agent_user_id: LIVE.agent_user_id })).statusCode).toBe(200);
   });
 });
 

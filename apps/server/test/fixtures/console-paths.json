@@ -24,6 +24,13 @@
     },
     {
       "method": "POST",
+      "path": "/proxy/agency/sessions/:id/redial",
+      "source": "apps/console/src/api/agency.ts",
+      "status": "served",
+      "reason": "agency route, served by the public API layer at the console path (decision B16); wrap-up redial"
+    },
+    {
+      "method": "POST",
       "path": "/proxy/agency/sessions/:id/leave",
       "source": "apps/console/src/api/agency.ts",
       "status": "served",

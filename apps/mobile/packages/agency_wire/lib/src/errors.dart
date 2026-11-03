@@ -60,6 +60,27 @@ enum AgencyErrorCode implements WireEnum {
   /// the request. Nothing changed; ask again (the app retries for 10 s, then
   /// closes its station socket so the server takes the agent out of the pool).
   stateChanging('state_changing'),
+
+  // ── Wrap-up redial (`POST /sessions/:id/redial`, all 409). Nothing changed:
+  // the agent stays in wrap-up and can still save the outcome.
+
+  /// Redial is off on this campaign, or this wrap-up does not offer it.
+  redialNotAllowed('redial_not_allowed'),
+
+  /// The call's redials are used up.
+  redialLimitReached('redial_limit_reached'),
+
+  /// An outcome is already saved for this call.
+  dispositionAlreadySubmitted('disposition_already_submitted'),
+
+  /// The number is on a do-not-call list.
+  redialBlockedDnc('redial_blocked_dnc'),
+
+  /// The contact's calling window is closed.
+  redialBlockedCallingHours('redial_blocked_calling_hours'),
+
+  /// Any other reason the dial could not be placed; `message` says which.
+  redialBlocked('redial_blocked'),
   unknown('');
 
   const AgencyErrorCode(this.wire);
@@ -123,7 +144,10 @@ final class ErrorBody {
           ? [
               for (final d in details)
                 if (d is Map<String, Object?> && d['path'] is String)
-                  FieldIssue(path: d['path']! as String, message: d['message'] is String ? d['message']! as String : ''),
+                  FieldIssue(
+                    path: d['path']! as String,
+                    message: d['message'] is String ? d['message']! as String : '',
+                  ),
             ]
           : null,
       raw: j,

@@ -42,7 +42,7 @@ const PARENT = {
   caller_ids: ['+14155550100'], telephony_provider: 'vobiz',
   calling_window_start: '09:00:00', calling_window_end: '20:00:00',
   calling_days: [1, 2, 3, 4, 5], default_timezone: 'UTC',
-  wrapup_seconds: 30, wrapup_auto_return: true,
+  wrapup_seconds: 30, wrapup_auto_return: true, allow_wrapup_redial: true,
   retry_policy: {}, disposition_catalog: [], context_display: {}, break_reasons: [],
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
   abandonment_ceiling_pct: 3,
@@ -55,6 +55,7 @@ const CONFIG: AgencyCampaignConfigColumns = {
   calling_window_start: PARENT.calling_window_start, calling_window_end: PARENT.calling_window_end,
   calling_days: PARENT.calling_days, default_timezone: PARENT.default_timezone,
   wrapup_seconds: PARENT.wrapup_seconds, wrapup_auto_return: PARENT.wrapup_auto_return,
+  allow_wrapup_redial: PARENT.allow_wrapup_redial,
   retry_policy: PARENT.retry_policy, disposition_catalog: PARENT.disposition_catalog,
   context_display: PARENT.context_display, break_reasons: PARENT.break_reasons,
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
@@ -334,6 +335,22 @@ describe('the child campaign row', () => {
     });
 
     expect(JSON.parse(String(campaignInsert()['retry_selector']))).toEqual(selector);
+  });
+
+  it('copies allow_wrapup_redial from the config, both ways', async () => {
+    // A config column like `wrapup_auto_return`: in the shared INSERT column list
+    // and bound from `config`, so an override of either value reaches the row. An
+    // optional field missing from the explicit list would be dropped silently.
+    for (const value of [true, false]) {
+      vi.clearAllMocks();
+      pool.connect.mockResolvedValue(client);
+      stubTransaction();
+      await new AgencyCampaignRepository().retryFromCampaign({
+        parent: PARENT, name: 'r1', selector: { never_attempted: true },
+        config: { ...CONFIG, allow_wrapup_redial: value }, createdBy: null, idempotencyKey: null,
+      });
+      expect(campaignInsert()['allow_wrapup_redial']).toBe(value);
+    }
   });
 
   it('copies no column that describes the PARENT\'s run', async () => {

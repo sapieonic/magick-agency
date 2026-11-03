@@ -137,6 +137,14 @@ relative to the API origin; the app resolves it against `API_ORIGIN` (`Env.resol
   spare). An OS network change reconnects at once. Mid-call, the server ends the call if the
   socket is not back within `deferred_hangup_ms` (8 s); the station shows that deadline. A
   soft-phone call shows it only once answered: a ringing one is ended by the server at once.
+- **The phase follows the call**, not `agent_state` alone. The server sends no `agent_state` for
+  `reserved` or `on_call` on the dial path, so a paced call or a wrap-up redial arrives as
+  `reserved`, `bridged` and `released` frames. A live attempt decides the phase (bridged: on call,
+  else ringing), then a call still owing its outcome or a wrap-up anchor (wrap-up), then
+  `agent_state`, as the console's rail does (`StationState.effectiveState`). The screen, the
+  shell's signals (`callActive`), the away rules (a call queues `device_away` and never closes the
+  socket; a call that ends with nothing owed asks for the pause at once), the notification, the
+  notes route and the soft phone's host view all read it.
 - **Close codes**:
   - 4401 / 4408, or a drop: re-mint and retry.
   - 4404: the session is gone. The station closes on this phone at once (socket, on-duty service,
@@ -155,6 +163,29 @@ relative to the API origin; the app resolves it against `API_ORIGIN` (`Env.resol
     `pong` between give up like a flapping socket (held while a call is live).
   - A give-up (silence, flapping, 1011) is the agent's to undo with Reconnect; returning to the app
     retries only a silence give-up.
+
+## Wrap-up redial
+
+On a campaign with `allow_wrapup_redial` (decisions WR1–WR13), the wrap-up view shows **Redial**
+beside **Save outcome** while an outcome is owed: "N redials left", disabled at "No redials left"
+(at most 2 per call). The `wrapup` frame's `redial_remaining` decides; the bootstrap's
+`allow_wrapup_redial` is decoded but not used to gate it. Pressing it sends
+`POST /proxy/agency/sessions/:id/redial` `{ attempt_id }`. The redial then runs on the station
+socket like any call (`reserved` with `attempt.redial`, shown as "Redial 1 of 2", `bridged`,
+`released`), and ends in a new wrap-up on the redial attempt, whether or not it connected. The
+pad, Save and Redial are locked from the press. Notes typed in the last 2 s are saved to the call
+first (bounded at 2 s), because the server copies the call's saved notes onto the redial. Once
+the server answers that it placed the redial, the wrap-up's clock and its save-by notice are
+hidden (the server stopped it). The lock lasts until the new call reaches the station, or 10 s,
+after which the pad comes back with "The redial hasn't reached your station yet." A refusal
+(six `redial_*` / `disposition_already_submitted` codes, with copy for each) unlocks them and the
+agent can still save the outcome; a wrap-up frame that arrived meanwhile keeps its own redial
+count. No usable answer (no network, a timeout, a 5xx) says the redial may still go through. The
+notes draft follows the call onto the redial attempt, even when the redial's own wrap-up arrives
+before the answer naming it, and text not yet on the server is saved to the redial.
+Telemetry: `agency_redial_requested` / `agency_redial_refused`, as on the console;
+`agency_redial_refused` is sent for every failure, with no `code` when none came back, so pressed
+minus refused is not the number placed.
 
 ## The soft phone
 
@@ -303,7 +334,8 @@ packages/
   in the keystore until the server has it; the last saved text is kept too (until the 24 h
   sweep), so a call that comes back on screen (a `released` with no disposition owed, then its
   `wrapup`; or a restart rejoined into `active_wrapup`) shows what the server holds, never an
-  empty field whose next keystroke would wipe it.
+  empty field whose next keystroke would wipe it. Before a wrap-up redial the pending save is
+  sent and waited for (2 s bound).
 - **Routing** (`lib/app/router.dart`): one redirect, the gate's first and then, once ready, the
   station's (`stationRedirect`, the tab rule above). It sends the agent to the session's screen
   (`StationSignals.home`: the campaign's station, or `/phone` for a soft-phone session) while a

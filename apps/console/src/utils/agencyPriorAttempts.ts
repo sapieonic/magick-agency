@@ -1,4 +1,5 @@
 import type { AgencyDisposition, AgencyPriorAttempt } from '../types/agency';
+import { systemDispositionLabel } from './agency/systemDisposition';
 
 /**
  * The agent's prior-attempt history, once it spans a retry lineage.
@@ -133,7 +134,7 @@ export function priorDispositionLabel(
   catalog: readonly AgencyDisposition[] | undefined,
 ): string {
   if (!code) return 'No disposition';
-  return catalog?.find((entry) => entry.code === code)?.label ?? code;
+  return systemDispositionLabel(code) ?? catalog?.find((entry) => entry.code === code)?.label ?? code;
 }
 
 /**
@@ -144,6 +145,6 @@ export function priorDispositionIsRaw(
   code: string | null,
   catalog: readonly AgencyDisposition[] | undefined,
 ): boolean {
-  if (!code) return false;
+  if (!code || systemDispositionLabel(code) !== null) return false;
   return !catalog?.some((entry) => entry.code === code);
 }

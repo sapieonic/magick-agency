@@ -5,6 +5,7 @@ import { getPool } from '@magick-agency/db';
 // header) so the catch arms below can ask the question without dragging config
 // into the graph of every test that exercises them.
 import { isUniqueViolation } from '@magick-agency/db/pg-errors';
+import { withTransaction } from '@magick-agency/db/utils/transaction';
 import { createChildLogger } from '@magick-agency/observability';
 import {
   AGENCY_ATTEMPT_LIVE_STATES,
@@ -61,7 +62,7 @@ const ATTEMPT_ROW_SELECT_SQL = `a.id, a.campaign_id, a.contact_id, a.attempt_num
              a.disposition_code, a.notes, a.callback_at,
              a.dispositioned_by_user_id, a.dispositioned_at, a.dispositioned_on_behalf,
              a.webrtc_call_id, a.dialed_at, a.answered_at, a.bridged_at, a.ended_at,
-             a.talk_seconds, a.wrapup_seconds, a.created_at`;
+             a.talk_seconds, a.wrapup_seconds, a.redial_of_attempt_id, a.redial_number, a.created_at`;
 
 /**
  * The contact join of every attempt read. `c.campaign_id = a.campaign_id` is
@@ -155,6 +156,111 @@ export class AgencyAttemptRepository {
         }
         return null;
       }
+      throw err;
+    }
+  }
+
+  /**
+   * Start a wrap-up redial (`agency/wrapup-redial.ts`): in ONE transaction,
+   *
+   *  1. lock the attempt being redialled (`FOR UPDATE`) and require it still owes its
+   *     write-up (`disposition_code IS NULL`);
+   *  2. take the customer back: `connected → in_flight`, only while the contact is still
+   *     parked for THIS attempt (no newer attempt on it, no soft-phone call holding it) —
+   *     the same "still this attempt's" rule `closeLapsedWrapup` and
+   *     `releaseFromDisposition` apply;
+   *  3. close the redialled attempt's write-up with the reserved system code
+   *     `redialed` (`AGENCY_REDIALED_DISPOSITION_CODE`), attributed to the agent. Its
+   *     outcome is left as it is (`connected`): the call happened, and stats keep it;
+   *  4. insert the redial attempt, linked back (`redial_of_attempt_id`) and numbered
+   *     (`redial_number` = the redialled attempt's + 1), with `attempt_number` derived as
+   *     {@link create} derives it, carrying the agent's notes so far.
+   *
+   * A disposition racing the redial meets the lock: whichever commits first wins, and
+   * the other is refused (`disposition_already_submitted` here, `already_dispositioned`
+   * on the disposition route). A double-clicked redial waits on the same lock and finds
+   * the code stamped; `uq_agency_attempt_redial_of` is the backstop.
+   *
+   * Nothing is written on a refusal. The contact's `attempt_count` is not charged (a
+   * redial continues one conversation; the retry budget is for new dials).
+   */
+  async beginWrapupRedial(input: {
+    redialOfAttemptId: string;
+    sessionId: string;
+    actorUserId: string;
+    callerId: string;
+    disposition: string;
+  }): Promise<
+    | { ok: true; attempt: AgencyCallAttemptRecord }
+    | { ok: false; reason: 'attempt_not_found' | 'disposition_already_submitted' | 'contact_not_held' | 'already_redialed' }
+  > {
+    try {
+      return await withTransaction(async (client) => {
+        const { rows: [original] } = await client.query<AgencyCallAttemptRecord>(
+          'SELECT * FROM agency_call_attempts WHERE id = $1 FOR UPDATE',
+          [input.redialOfAttemptId],
+        );
+        if (!original) return { ok: false, reason: 'attempt_not_found' } as const;
+        if (original.disposition_code !== null) return { ok: false, reason: 'disposition_already_submitted' } as const;
+
+        const claimed = await client.query(
+          `UPDATE agency_contacts ct
+              SET state = 'in_flight', updated_at = now()
+            WHERE ct.id = $1
+              AND ct.state = 'connected'
+              AND NOT EXISTS (
+                    SELECT 1 FROM agency_call_attempts n
+                     WHERE n.contact_id = ct.id AND n.attempt_number > $2)
+              AND NOT EXISTS (
+                    SELECT 1 FROM agency_manual_calls m
+                     WHERE m.contact_id = ct.id AND m.settled_at IS NULL AND m.contact_claimed)
+          RETURNING ct.id`,
+          [original.contact_id, original.attempt_number],
+        );
+        if (claimed.rowCount !== 1) {
+          // Nothing written yet; `withTransaction` commits an empty transaction.
+          return { ok: false, reason: 'contact_not_held' } as const;
+        }
+
+        await client.query(
+          `UPDATE agency_call_attempts
+              SET disposition_code = $2,
+                  dispositioned_by_user_id = $3,
+                  dispositioned_on_behalf = false,
+                  dispositioned_at = now(),
+                  updated_at = now()
+            WHERE id = $1`,
+          [original.id, input.disposition, input.actorUserId],
+        );
+
+        const { rows: [attempt] } = await client.query<AgencyCallAttemptRecord>(
+          `INSERT INTO agency_call_attempts
+             (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id,
+              reserved_agent_id, state, redial_of_attempt_id, redial_number, notes)
+           SELECT $1, $2, $3, $4,
+                  COALESCE(MAX(attempt_number), 0) + 1,
+                  $5, $6, 'queued', $7, $8, $9
+             FROM agency_call_attempts
+            WHERE contact_id = $2
+           RETURNING *`,
+          [
+            original.campaign_id, original.contact_id, original.tenant_id, original.account_id,
+            input.callerId, input.sessionId, original.id, original.redial_number + 1,
+            // The notes typed on the conversation so far travel with it: the outcome is
+            // now written up on the redial, so that is where the agent's notes belong.
+            // The redialled attempt keeps its copy (what was known when it ended).
+            original.notes,
+          ],
+        );
+        return { ok: true, attempt: attempt! } as const;
+      }, { pool: getPool() });
+    } catch (err) {
+      // The transaction rolled back. The redial index: a second redial of one attempt
+      // (unreachable past the lock above, kept as the backstop). Any other unique index
+      // (a live attempt on the contact, an attempt-number race) means the contact was
+      // not ours to redial after all.
+      if (isUniqueViolation(err, 'uq_agency_attempt_redial_of')) return { ok: false, reason: 'already_redialed' };
+      if (isUniqueViolation(err)) return { ok: false, reason: 'contact_not_held' };
       throw err;
     }
   }
@@ -834,8 +940,9 @@ export class AgencyAttemptRepository {
          JOIN agency_contacts  ct ON ct.id = a.contact_id
          JOIN agency_campaigns  c ON c.id  = a.campaign_id
         WHERE a.state = 'ended'
-          AND a.outcome = 'connected'
-          AND a.bridged_at IS NOT NULL
+          -- A conversation, or a wrap-up redial of one (which owes its outcome
+          -- whatever its own; the sweep routes it as \`connected\`).
+          AND ((a.outcome = 'connected' AND a.bridged_at IS NOT NULL) OR a.redial_number > 0)
           AND a.disposition_code IS NULL
           AND a.ended_at IS NOT NULL
           AND ct.state = 'connected'

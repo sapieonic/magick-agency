@@ -46,6 +46,7 @@ class _CallSummary extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final recording = ref.watch(stationViewProvider.select((v) => v?.call?.recording ?? false));
+    final redial = ref.watch(stationViewProvider.select((v) => (n: v?.call?.redialNumber, of: v?.call?.redialLimit)));
     // Selected as one string so a new-but-equal list from the core is not a rebuild.
     final summary = ref.watch(
       stationViewProvider.select(
@@ -58,11 +59,13 @@ class _CallSummary extends ConsumerWidget {
     );
     final t = context.tokens;
     final facts = summary.isEmpty ? const <String>[] : summary.split('\n');
-    if (!recording && facts.isEmpty) return const SizedBox.shrink();
+    final redialNumber = redial.n;
+    if (!recording && facts.isEmpty && redialNumber == null) return const SizedBox.shrink();
     return Wrap(
       spacing: Space.sm,
       runSpacing: Space.sm,
       children: [
+        if (redialNumber != null) RedialTag(number: redialNumber, limit: redial.of),
         if (recording)
           StatusPill(
             StationCopy.recording,

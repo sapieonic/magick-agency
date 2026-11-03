@@ -283,7 +283,10 @@ describe('the counters are the SHARED metric expressions, not a re-derivation', 
     // say connected about a call no agent ever heard — so `connected` here sums to
     // `human_connects + machine_connects + unclassified_connects` (every bridged
     // attempt) and deliberately NOT to `attempts_connected`.
-    expect(sql).toContain('COUNT(*) FILTER (WHERE a.bridged_at IS NOT NULL)');
+    // Per CONVERSATION: a bridged paced attempt, or the last attempt of a wrap-up redial
+    // chain (the redialled legs carry `redialed`), so one conversation is one connect.
+    expect(sql).toContain('COUNT(*) FILTER (WHERE ((a.bridged_at IS NOT NULL AND a.redial_number = 0) OR a.redial_number > 0)');
+    expect(sql).toContain("a.disposition_code IS DISTINCT FROM 'redialed'");
     expect(sql).not.toContain("a.outcome = 'connected'");
     // Conversions go through `successDispositionSql`, so this route and the campaign
     // roll-up count the same conversion.

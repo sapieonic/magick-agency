@@ -364,9 +364,9 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
                    $6,$7,$8,$9,
                    $10,$11,$12::jsonb,$13::jsonb,
                    $14::jsonb,$15::jsonb,$16,$17,$18,
-                   $19,$20,
-                   $21,$22,$23,$24::jsonb,
-                   $25)
+                   $19,$20,$21,
+                   $22,$23,$24,$25::jsonb,
+                   $26)
            RETURNING *`,
         [
           input.parent.tenant_id, input.parent.account_id, input.name,
@@ -380,6 +380,7 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
           JSON.stringify(input.config.break_reasons ?? []),
           input.config.record_calls, input.config.analysis_profile_id, input.createdBy,
           input.config.abandon_announcement_id, input.config.abandonment_ceiling_pct,
+          input.config.allow_wrapup_redial,
           input.parent.id,
           // The chain head. A generation-0 parent carries NULL here (it
           // deliberately does not stamp itself), so the child of a first retry gets

@@ -753,6 +753,7 @@ class ReservedAttempt {
     required this.attemptNumber,
     required Map<String, Object?> context,
     required List<PriorAttempt> priorAttempts,
+    this.redial,
   }) : context = frozenMap(context),
        priorAttempts = List.unmodifiable(priorAttempts);
 
@@ -766,6 +767,7 @@ class ReservedAttempt {
     attemptNumber: j.integer('attempt_number'),
     context: j.obj('context'),
     priorAttempts: j.list('prior_attempts', PriorAttempt.fromJson),
+    redial: RedialInfo.tryFromJson(j['redial']),
   );
 
   final String attemptId;
@@ -789,6 +791,10 @@ class ReservedAttempt {
   /// Earlier dials of this person across the retry lineage, newest first.
   final List<PriorAttempt> priorAttempts;
 
+  /// Set when this call is a wrap-up redial (`POST /sessions/:id/redial`);
+  /// null on a call the pacing engine placed.
+  final RedialInfo? redial;
+
   @override
   bool operator ==(Object other) =>
       other is ReservedAttempt &&
@@ -801,7 +807,8 @@ class ReservedAttempt {
       other.callerId == callerId &&
       other.attemptNumber == attemptNumber &&
       jsonEquals(other.context, context) &&
-      listEquals(other.priorAttempts, priorAttempts);
+      listEquals(other.priorAttempts, priorAttempts) &&
+      other.redial == redial;
 
   @override
   int get hashCode => Object.hash(
@@ -814,7 +821,55 @@ class ReservedAttempt {
     attemptNumber,
     jsonHash(context),
     listHash(priorAttempts),
+    redial,
   );
+}
+
+/// A wrap-up redial, as the reserved (or active) attempt carries it: the
+/// attempt it redials, which redial this is, and how many are left after it.
+///
+/// Contract: `AgencyRedialInfo`.
+@immutable
+final class RedialInfo {
+  const RedialInfo({required this.ofAttemptId, required this.number, required this.remaining});
+
+  factory RedialInfo.fromJson(Map<String, Object?> j) =>
+      RedialInfo(ofAttemptId: j.str('of_attempt_id'), number: j.integer('number'), remaining: j.integer('remaining'));
+
+  /// [value] as a redial, or null when absent or unreadable. An optional
+  /// add-on to the attempt: one this build cannot read must never cost the
+  /// agent the call it rides on (the frame would be an [UnknownFrame]).
+  static RedialInfo? tryFromJson(Object? value) {
+    if (value is! Map<String, Object?>) return null;
+    try {
+      return RedialInfo.fromJson(value);
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// The attempt this call redials (closed with the system code `redialed`).
+  final String ofAttemptId;
+
+  /// 1 for the first redial of a call, 2 for the second.
+  final int number;
+
+  /// Redials left after this one.
+  final int remaining;
+
+  /// How many redials the call allows in all: this one, those before it and
+  /// those left ("Redial 1 of 2").
+  int get limit => number + remaining;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RedialInfo && other.ofAttemptId == ofAttemptId && other.number == number && other.remaining == remaining;
+
+  @override
+  int get hashCode => Object.hash(ofAttemptId, number, remaining);
+
+  @override
+  String toString() => 'RedialInfo($number of ${number + remaining}, of: $ofAttemptId)';
 }
 
 /// An attempt a reconnecting socket found still live.
@@ -831,6 +886,7 @@ final class ActiveAttempt extends ReservedAttempt {
     required super.attemptNumber,
     required super.context,
     required super.priorAttempts,
+    super.redial,
     required this.bridgedAt,
     required this.state,
     String? stateRaw,
@@ -849,6 +905,7 @@ final class ActiveAttempt extends ReservedAttempt {
       attemptNumber: base.attemptNumber,
       context: base.context,
       priorAttempts: base.priorAttempts,
+      redial: base.redial,
       bridgedAt: j.timeOrNull('bridged_at'),
       state: AttemptState.fromWire(state),
       stateRaw: state,
@@ -992,6 +1049,7 @@ final class WrapupState {
     required this.dispositionSubmitted,
     this.heldReason,
     String? heldReasonRaw,
+    this.redialRemaining,
   }) : heldReasonRaw = heldReasonRaw ?? heldReason?.wire;
 
   factory WrapupState.fromJson(Map<String, Object?> j) {
@@ -1005,6 +1063,7 @@ final class WrapupState {
       dispositionSubmitted: j.boolean('disposition_submitted'),
       heldReason: held == null ? null : WrapupHoldReason.fromWire(held),
       heldReasonRaw: held,
+      redialRemaining: _redialRemaining(j),
     );
   }
 
@@ -1025,6 +1084,22 @@ final class WrapupState {
   final WrapupHoldReason? heldReason;
   final String? heldReasonRaw;
 
+  /// Lenient, as [RedialInfo.tryFromJson]: an unreadable count reads as "not
+  /// offered" rather than costing the agent the wrap-up frame.
+  static int? _redialRemaining(Map<String, Object?> j) {
+    try {
+      final n = j.integerOrNull('redial_remaining');
+      return n == null || n < 0 ? null : n;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// Wrap-up redial: how many more times the agent may redial this customer
+  /// from this wrap-up. **Null: redial is not offered** (hide it); `0`: the
+  /// limit is used up (show it disabled); more: offer it.
+  final int? redialRemaining;
+
   @override
   bool operator ==(Object other) =>
       other is WrapupState &&
@@ -1034,7 +1109,8 @@ final class WrapupState {
       other.autoReturn == autoReturn &&
       other.requiresDisposition == requiresDisposition &&
       other.dispositionSubmitted == dispositionSubmitted &&
-      other.heldReasonRaw == heldReasonRaw;
+      other.heldReasonRaw == heldReasonRaw &&
+      other.redialRemaining == redialRemaining;
 
   @override
   int get hashCode => Object.hash(
@@ -1045,6 +1121,7 @@ final class WrapupState {
     requiresDisposition,
     dispositionSubmitted,
     heldReasonRaw,
+    redialRemaining,
   );
 }
 

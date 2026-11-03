@@ -120,6 +120,18 @@ export interface AgencyAttemptRow {
   ended_at: string | null;
   talk_seconds: number | null;
   wrapup_seconds: number | null;
+  /**
+   * Wrap-up redial (0008): the attempt this one redialled from wrap-up, or null for a
+   * paced dial. A redialled attempt carries the system code `redialed`
+   * (`AGENCY_REDIALED_DISPOSITION_CODE`); the conversation's outcome is on the last
+   * attempt of the chain.
+   *
+   * Optional on the wire for the same reason as `AgencyCampaignStats.attempts_retried`:
+   * the dialer runtime always produces it; a client may be talking to one that predates it.
+   */
+  redial_of_attempt_id?: string | null;
+  /** Wrap-up redial (0008): 0 for a paced dial; 1, 2 for the redials of one conversation. */
+  redial_number?: number;
   created_at: string;
 }
 

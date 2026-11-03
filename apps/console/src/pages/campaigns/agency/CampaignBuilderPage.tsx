@@ -237,6 +237,7 @@ export default function CampaignBuilderPage() {
           retry_policy_outcome_count: Object.keys(config.retryPolicy).length,
           wrapup_seconds: config.wrapupSeconds,
           auto_return: config.autoReturn,
+          wrapup_redial: config.allowWrapupRedial,
           recording_enabled: recordCalls,
           // The builder has no call-summary picker; only the settings page sets one.
           analysis_profile_set: false,
@@ -642,7 +643,7 @@ export default function CampaignBuilderPage() {
                   />
                   <ReviewRow
                     label="Wrap-up"
-                    value={
+                    value={`${
                       config.wrapupSeconds === 0
                         ? 'None — agents go straight back to available.'
                         : `${config.wrapupSeconds}s${
@@ -650,7 +651,7 @@ export default function CampaignBuilderPage() {
                               ? ', then agents return on their own'
                               : ', then agents mark themselves ready'
                           }`
-                    }
+                    }${config.allowWrapupRedial ? ' · Redial from wrap-up allowed' : ''}`}
                     onEdit={() => goTo('behaviour')}
                   />
                   <ReviewRow

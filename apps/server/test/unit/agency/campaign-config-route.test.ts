@@ -696,3 +696,124 @@ describe('break_reasons at the write', () => {
     expect(campaigns.update).not.toHaveBeenCalled();
   });
 });
+
+describe('allow_wrapup_redial (wrap-up redial, 0008)', () => {
+  it('accepts a boolean either way and refuses anything else, null included', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    expect(validate({ allow_wrapup_redial: true })).toEqual([]);
+    expect(validate({ allow_wrapup_redial: false })).toEqual([]);
+    expect(validate({})).toEqual([]);
+    // `null` would reach the NOT NULL column as a 23502; a string or a number would
+    // be coerced by Postgres into a setting nobody chose.
+    for (const bad of ['yes', 'true', 1, 0, null, {}, []]) {
+      expect(validate({ allow_wrapup_redial: bad }), String(bad)).toEqual([
+        { field: 'allow_wrapup_redial', message: 'allow_wrapup_redial must be a boolean.' },
+      ]);
+    }
+  });
+
+  it('POST passes it to the repository, and leaves it unset when omitted (the column default is false)', async () => {
+    const app = await makeApp();
+    const on = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, allow_wrapup_redial: true },
+    });
+    expect(on.statusCode, on.body).toBe(201);
+    expect(campaigns.create.mock.calls[0]![0].allow_wrapup_redial).toBe(true);
+
+    const omitted = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS, payload: MINIMAL,
+    });
+    expect(omitted.statusCode, omitted.body).toBe(201);
+    expect(campaigns.create.mock.calls[1]![0].allow_wrapup_redial).toBeUndefined();
+  });
+
+  it('POST refuses a non-boolean and creates nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, allow_wrapup_redial: 'yes' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details).toEqual({ allow_wrapup_redial: 'allow_wrapup_redial must be a boolean.' });
+    expect(campaigns.create).not.toHaveBeenCalled();
+  });
+
+  it('PATCH writes it on a RUNNING campaign, like wrapup_auto_return: no status gate', async () => {
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status: 'running' });
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { allow_wrapup_redial: true },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(campaigns.update).toHaveBeenCalledWith('camp-1', { allow_wrapup_redial: true });
+    expect(res.json().allow_wrapup_redial).toBe(true);
+  });
+
+  it('PATCH refuses null and writes nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { allow_wrapup_redial: null },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details).toHaveProperty('allow_wrapup_redial');
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("the reserved system disposition code 'redialed'", () => {
+  it('refuses a catalog entry using it, on the entry\'s code field, and nothing else about the catalog', async () => {
+    const { AGENCY_REDIALED_DISPOSITION_CODE } = await import('@magick-agency/contracts/agency');
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    expect(AGENCY_REDIALED_DISPOSITION_CODE).toBe('redialed');
+    expect(validate({
+      disposition_catalog: [
+        { code: 'not_interested', label: 'Not interested' },
+        { code: AGENCY_REDIALED_DISPOSITION_CODE, label: 'Redialled' },
+      ],
+    })).toEqual([{
+      field: 'disposition_catalog[1].code',
+      message: "Disposition code 'redialed' is reserved: the system writes it on a call the agent redialled from wrap-up. Choose another code.",
+    }]);
+    // Byte-for-byte, like every other code comparison: a code that merely
+    // contains the word is an ordinary code.
+    expect(validate({ disposition_catalog: [{ code: 'redialed_later', label: 'Later' }] })).toEqual([]);
+  });
+
+  it('a POST carrying it is a 400 and creates nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, disposition_catalog: [{ code: 'redialed', label: 'Redialled' }] },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details['disposition_catalog[0].code']).toContain('reserved');
+    expect(campaigns.create).not.toHaveBeenCalled();
+  });
+
+  it('a PATCH carrying it is a 400 and writes nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { disposition_catalog: [{ code: 'redialed', label: 'Redialled' }] },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details['disposition_catalog[0].code']).toContain('reserved');
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
+
+  it('the public API layer\'s validator refuses the same code and the same boolean, with the same messages', async () => {
+    const internal = await import('../../../src/agency/campaign-config.js');
+    const pub = await import('../../../src/agency/agency-campaign-config.js');
+    for (const body of [
+      { disposition_catalog: [{ code: 'redialed', label: 'Redialled' }] },
+      { allow_wrapup_redial: 'yes' },
+      { allow_wrapup_redial: null },
+    ]) {
+      expect(pub.validateAgencyCampaignConfig(body)).toEqual(internal.validateAgencyCampaignConfig(body));
+      expect(pub.validateAgencyCampaignConfig(body)).toHaveLength(1);
+    }
+  });
+});

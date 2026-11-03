@@ -38,6 +38,9 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'break_reasons',
+  // Wrap-up redial (0008). An operator setting like `wrapup_auto_return`, so it is
+  // patchable at any status; a session reads it at join (the bootstrap).
+  'allow_wrapup_redial',
   'context_display', 'record_calls', 'analysis_profile_id',
   // The abandonment ceiling is an operator setting, so it is
   // patchable on a live campaign. NOT nullable — the column is NOT NULL with
@@ -79,7 +82,7 @@ export class AgencyCampaignRepository {
     telephony_provider?: string;
     calling_window_start?: string; calling_window_end?: string;
     calling_days?: number[]; default_timezone?: string;
-    wrapup_seconds?: number; wrapup_auto_return?: boolean;
+    wrapup_seconds?: number; wrapup_auto_return?: boolean; allow_wrapup_redial?: boolean;
     retry_policy?: unknown; disposition_catalog?: unknown; context_display?: unknown;
     break_reasons?: unknown;
     record_calls?: boolean; analysis_profile_id?: string | null; created_by?: string | null;
@@ -105,7 +108,8 @@ export class AgencyCampaignRepository {
     // target VARCHAR (text→varchar is assignment-castable), `$11`/`$12`/`$17` sit
     // beside `30`/`true`/`false` which are already-typed literals that pull the
     // placeholder to integer/boolean, and `$13`–`$16` carry an explicit `::jsonb`
-    // on the whole expression. `update()` is unaffected throughout: it writes
+    // on the whole expression. `$21` (`allow_wrapup_redial`) sits beside `false`
+    // for the same reason. `update()` is unaffected throughout: it writes
     // `col = $n`, so the column supplies the type.
     //
     // NOTE (drift): the defaults below duplicate the schema's column defaults,
@@ -121,7 +125,7 @@ export class AgencyCampaignRepository {
                COALESCE($6::time,'09:00'),COALESCE($7::time,'20:00'),COALESCE($8::smallint[],'{1,2,3,4,5}'),COALESCE($9,'UTC'),
                COALESCE($10,30),COALESCE($11,true),COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
                COALESCE($14,'{}')::jsonb,COALESCE($15,'[]')::jsonb,COALESCE($16,false),$17,$18,
-               $19, $20)
+               $19, $20, COALESCE($21,false))
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -141,6 +145,8 @@ export class AgencyCampaignRepository {
         // a third copy in SQL. `?? `, not `||`, so an explicit 0 would still
         // reach the CHECK and be refused rather than silently become 3.
         input.abandonment_ceiling_pct ?? DEFAULT_ABANDONMENT_CEILING_PCT,
+        // The column's DEFAULT (`false`, 0008), applied in SQL beside its neighbours.
+        input.allow_wrapup_redial ?? null,
       ],
     );
     return rows[0]!;

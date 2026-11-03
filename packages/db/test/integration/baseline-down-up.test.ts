@@ -3,7 +3,7 @@ import { runner } from 'node-pg-migrate';
 import { afterAll, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../../src/migrations-dir.js';
 import { TEST_DB_URL, closeTestPool, getTestPool, truncateAll } from '../helpers/test-db.js';
-import { insertCall, insertCampaign, insertManualCall, insertSession, insertSoftphoneSession } from './fixtures.js';
+import { insertAttempt, insertCall, insertCampaign, insertContact, insertManualCall, insertSession, insertSoftphoneSession } from './fixtures.js';
 
 /**
  * Every migration's Down section drops everything its Up section creates, and the
@@ -60,6 +60,7 @@ async function inventory(): Promise<string[]> {
 const ALL_MIGRATIONS = [
   '0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index',
   '0005_softphone', '0006_agent_session_client_kind', '0007_ingest_dedupe_column',
+  '0008_wrapup_redial',
 ];
 
 describe('migrations down → up', () => {
@@ -120,6 +121,42 @@ describe('migrations down → up', () => {
     } finally {
       await restore();
     }
+    await truncateAll();
+  });
+
+  it('0008 down runs with a redial chain present: `redialed` wrap-ups become agent_left, the rows survive', async () => {
+    // A redialled call (wrap-up resolution and system code `redialed`) and its redial.
+    // The resolution CHECK loses `redialed`, so the Down rewrites it first; the redial
+    // row keeps everything but its link and number; the `redialed` disposition code is
+    // an ordinary string the Down leaves alone. Then Up re-applies over the same rows.
+    await truncateAll();
+    const campaign = await insertCampaign({ allow_wrapup_redial: true });
+    const contact = await insertContact(campaign.id);
+    const original = await insertAttempt(campaign.id, contact.id, {
+      state: 'ended', attempt_number: 1, outcome: 'connected', disposition_code: 'redialed', wrapup_resolution: 'redialed',
+    });
+    const redial = await insertAttempt(campaign.id, contact.id, {
+      state: 'ended', attempt_number: 2, outcome: 'no_answer', redial_of_attempt_id: original.id, redial_number: 1,
+    });
+    await migrate('down', 1);
+    try {
+      const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
+      expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS.slice(0, -1));
+      const { rows } = await getTestPool().query<Record<string, unknown>>(
+        'SELECT * FROM agency_call_attempts WHERE id = ANY($1::uuid[]) ORDER BY attempt_number', [[original.id, redial.id]]);
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ wrapup_resolution: 'agent_left', disposition_code: 'redialed' });
+      expect(rows[0]).not.toHaveProperty('redial_number');
+      expect(rows[1]).not.toHaveProperty('redial_of_attempt_id');
+      const camp = await getTestPool().query('SELECT * FROM agency_campaigns WHERE id = $1', [campaign.id]);
+      expect(camp.rows[0]).not.toHaveProperty('allow_wrapup_redial');
+    } finally {
+      await migrate('up');
+    }
+    const back = await getTestPool().query<{ redial_number: number; redial_of_attempt_id: string | null }>(
+      'SELECT redial_number, redial_of_attempt_id FROM agency_call_attempts WHERE id = $1', [redial.id]);
+    // Re-applied with the column defaults: the link is not restored (it was dropped).
+    expect(back.rows[0]).toEqual({ redial_number: 0, redial_of_attempt_id: null });
     await truncateAll();
   });
 

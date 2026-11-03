@@ -19,6 +19,7 @@ import {
 } from '../../components/agency/DispositionPad';
 import type { DncControlHandle } from '../../components/agency/DncControl';
 import { NotesField } from '../../components/agency/NotesField';
+import { WrapupRedial } from '../../components/agency/WrapupRedial';
 import type { BreakMenuHandle } from '../../components/agency/BreakMenu';
 import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { JoinConflictScreen } from '../../components/agency/JoinConflictScreen';
@@ -115,7 +116,7 @@ export default function AgentConsolePage() {
 
   const cons = useAgencyConsole(bootstrap, tenantId ?? undefined, accountId ?? undefined);
   const { station, clock, audio } = cons;
-  const { connection, agentState, live, retainedAttempt, release, dialing, missedPings } = station;
+  const { connection, agentState, live, release, dialing, missedPings } = station;
   const micNotice = agencyAudioNotice(audio.error);
 
   useLiveSessionTouch({ tenantId, bootstrap, agentState, connection });
@@ -135,8 +136,11 @@ export default function AgentConsolePage() {
     if (ringingAttemptId !== null) consoleRef.current?.focus();
   }, [ringingAttemptId]);
 
-  /** The attempt whose details stay on screen — live, or retained through wrap-up. */
-  const panelAttempt = live?.attempt ?? retainedAttempt;
+  /**
+   * The attempt whose details stay on screen — live, retained through wrap-up, or
+   * carried onto a redial whose `reserved` never arrived (`cons.panelAttempt`).
+   */
+  const { panelAttempt } = cons;
 
   const resolved = useMemo(
     () => (panelAttempt ? resolveContextFields(panelAttempt.context, bootstrap?.context_display) : null),
@@ -386,6 +390,7 @@ export default function AgentConsolePage() {
         onGoAvailable={cons.goAvailable}
         onEndBreak={cons.endBreak}
         waitingForDialer={cons.waitingForDialer}
+        wrapupCountdownStopped={cons.redial.countdownStopped}
         cueFlash={cons.cueFlash}
         // The API's reconnect window.
         deferredHangupMs={bootstrap?.intervals.deferred_hangup_ms ?? null}
@@ -512,6 +517,9 @@ export default function AgentConsolePage() {
             onNeedsNote={() => notesRef.current?.focus()}
             handleRef={padRef}
           />
+          {/* Wrap-up redial: shown only while the wrap-up offers it, after the
+              call has ended — see `WrapupRedial`. */}
+          <WrapupRedial redial={cons.redial} />
           <NotesField
             ref={notesRef}
             value={cons.notes}

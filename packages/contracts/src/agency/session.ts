@@ -222,6 +222,14 @@ export interface AgencySessionBootstrap {
   wrapup_seconds: number;
   /** Whether wrap-up auto-returns the agent to `available` on expiry. Phase 2. */
   wrapup_auto_return: boolean;
+  /**
+   * Whether the agent may redial the same customer from the wrap-up screen while the
+   * outcome is still owed (`POST /sessions/:id/redial`, at most
+   * {@link AGENCY_WRAPUP_REDIAL_LIMIT} redials per call). The campaign's setting at join;
+   * the wrap-up frame's `redial_remaining` is the live answer for one wrap-up. Optional
+   * so a client built against an older server reads its absence as `false`.
+   */
+  allow_wrapup_redial?: boolean;
   /** Whether calls on this campaign are recorded — the console must disclose it. */
   record_calls: boolean;
   break_reasons: AgencyBreakReason[];

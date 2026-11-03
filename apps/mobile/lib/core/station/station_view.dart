@@ -125,6 +125,8 @@ class CallView {
     this.countdownSeconds,
     this.bridgedAt,
     this.recording = false,
+    this.redialNumber,
+    this.redialLimit,
   });
 
   final String attemptId;
@@ -154,7 +156,13 @@ class CallView {
   final DateTime? bridgedAt;
   final bool recording;
 
+  /// Set when this call is a wrap-up redial: which one ([redialNumber], 1 or
+  /// 2) out of how many the call allows ([redialLimit]): "Redial 1 of 2".
+  final int? redialNumber;
+  final int? redialLimit;
+
   bool get isBridged => bridgedAt != null;
+  bool get isRedial => redialNumber != null;
 
   static const _eq = ListEquality<Object>();
 
@@ -173,10 +181,13 @@ class CallView {
       _eq.equals(other.priorAttempts, priorAttempts) &&
       other.countdownSeconds == countdownSeconds &&
       other.bridgedAt == bridgedAt &&
-      other.recording == recording;
+      other.recording == recording &&
+      other.redialNumber == redialNumber &&
+      other.redialLimit == redialLimit;
 
   @override
-  int get hashCode => Object.hash(attemptId, countdownSeconds, bridgedAt, recording, heroFields.length, otherFields.length);
+  int get hashCode =>
+      Object.hash(attemptId, countdownSeconds, bridgedAt, recording, heroFields.length, otherFields.length, redialNumber);
 }
 
 /// Why the last call ended, in the console's words (`agencyReleaseCopy.ts`).
@@ -205,6 +216,7 @@ class WrapupView {
     required this.hold,
     required this.dispositionSubmitted,
     required this.autoReturn,
+    this.redialRemaining,
   });
 
   /// When wrap-up ends on its own; null when it has no timer (held).
@@ -214,6 +226,13 @@ class WrapupView {
   final bool dispositionSubmitted;
   final bool autoReturn;
 
+  /// Wrap-up redial: null when it is not offered (no Redial button); 0 when
+  /// the call's redials are used up (shown, disabled); more: that many left.
+  final int? redialRemaining;
+
+  /// The Redial button belongs beside the outcome pad.
+  bool get offersRedial => redialRemaining != null;
+
   @override
   bool operator ==(Object other) =>
       other is WrapupView &&
@@ -221,9 +240,10 @@ class WrapupView {
       other.secondsTotal == secondsTotal &&
       other.hold == hold &&
       other.dispositionSubmitted == dispositionSubmitted &&
-      other.autoReturn == autoReturn;
+      other.autoReturn == autoReturn &&
+      other.redialRemaining == redialRemaining;
   @override
-  int get hashCode => Object.hash(endsAt, secondsTotal, hold, dispositionSubmitted, autoReturn);
+  int get hashCode => Object.hash(endsAt, secondsTotal, hold, dispositionSubmitted, autoReturn, redialRemaining);
 }
 
 /// One outcome on the disposition grid.
@@ -350,7 +370,22 @@ class MissedReleaseView {
 }
 
 /// An action in flight, so its button shows progress and cannot double-fire.
-enum StationBusy { none, goingAvailable, takingBreak, cancellingBreak, endingBreak, hangingUp, savingDisposition, markingDnc, leaving }
+///
+/// [redialing] lasts from the tap until the redial's call reaches the
+/// station (or is refused), not only while the request is open: the wrap-up
+/// on screen is over once the server placed the call.
+enum StationBusy {
+  none,
+  goingAvailable,
+  takingBreak,
+  cancellingBreak,
+  endingBreak,
+  hangingUp,
+  savingDisposition,
+  markingDnc,
+  redialing,
+  leaving,
+}
 
 @immutable
 class StationView {
@@ -487,6 +522,13 @@ abstract interface class StationActions {
   /// Debounced and saved by the core; call on every keystroke.
   void updateNotes(String text);
   Future<void> submitDisposition(String code, {String? notes, DateTime? callbackAt});
+
+  /// Redials the customer of the wrap-up on screen, before its outcome is
+  /// saved ([WrapupView.redialRemaining]). [attemptId] is the call the agent
+  /// is looking at: when the wrap-up is another call's by then, nothing is
+  /// dialled and [StationView.actionError] says so. A refusal leaves the
+  /// agent in wrap-up with the outcome pad usable.
+  Future<void> redial({String? attemptId});
   /// Marks the live call Do Not Call. [attemptId] is the call the agent
   /// confirmed for: when the live call is another one by then, nothing is
   /// marked and [StationView.actionError] says so.

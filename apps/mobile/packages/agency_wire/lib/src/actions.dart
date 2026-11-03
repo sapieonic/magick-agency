@@ -1,9 +1,11 @@
-/// The agent's attempt actions: hang up, disposition, notes, mark DNC.
+/// The agent's attempt actions: hang up, disposition, notes, mark DNC, and
+/// the wrap-up redial.
 ///
 /// Contract: `packages/contracts/src/agency/actions.ts`. Routes are
-/// `POST /proxy/agency/attempts/:id/{hangup,disposition,notes,dnc}`. The
-/// server attributes every action to the signed-in user, so no request here
-/// carries `agent_user_id` or `on_behalf`.
+/// `POST /proxy/agency/attempts/:id/{hangup,disposition,notes,dnc}` and
+/// `POST /proxy/agency/sessions/:id/redial`. The server attributes every
+/// action to the signed-in user, so no request here carries `agent_user_id`
+/// or `on_behalf`.
 library;
 
 import 'package:meta/meta.dart';
@@ -299,4 +301,75 @@ final class DncResponse {
 
   @override
   int get hashCode => Object.hash(campaignId, attemptId, contactId, phoneE164, contactStateRaw, dncRecorded);
+}
+
+/// `POST /proxy/agency/sessions/:id/redial`: redial the customer of the
+/// wrap-up on screen, before its outcome is saved.
+///
+/// Contract: `AgencyRedialRequest` (minus the server-injected actor).
+@immutable
+final class RedialRequest {
+  const RedialRequest({required this.attemptId});
+
+  /// The attempt whose wrap-up the agent is looking at, so a tap on a stale
+  /// screen never redials a different call than the one shown.
+  final String attemptId;
+
+  Map<String, Object?> toJson() => <String, Object?>{'attempt_id': attemptId};
+
+  @override
+  bool operator ==(Object other) => other is RedialRequest && other.attemptId == attemptId;
+
+  @override
+  int get hashCode => attemptId.hashCode;
+}
+
+/// The redial was placed. Its progress arrives on the station socket like any
+/// call (`reserved` with `attempt.redial`, `bridged`, `released`, a wrap-up on
+/// the NEW attempt); this only says it started.
+///
+/// Contract: `AgencyRedialResponse`.
+@immutable
+final class RedialResponse {
+  const RedialResponse({
+    required this.sessionId,
+    required this.attemptId,
+    required this.redialOfAttemptId,
+    required this.redialNumber,
+    required this.redialRemaining,
+  });
+
+  factory RedialResponse.fromJson(Map<String, Object?> j) => RedialResponse(
+    sessionId: j.str('session_id'),
+    attemptId: j.str('attempt_id'),
+    redialOfAttemptId: j.str('redial_of_attempt_id'),
+    redialNumber: j.integer('redial_number'),
+    redialRemaining: j.integer('redial_remaining'),
+  );
+
+  final String sessionId;
+
+  /// The new attempt (the redial).
+  final String attemptId;
+
+  /// The attempt it redials, now closed with the system code `redialed`.
+  final String redialOfAttemptId;
+
+  /// 1 for the first redial of a call, 2 for the second.
+  final int redialNumber;
+
+  /// Redials left after this one.
+  final int redialRemaining;
+
+  @override
+  bool operator ==(Object other) =>
+      other is RedialResponse &&
+      other.sessionId == sessionId &&
+      other.attemptId == attemptId &&
+      other.redialOfAttemptId == redialOfAttemptId &&
+      other.redialNumber == redialNumber &&
+      other.redialRemaining == redialRemaining;
+
+  @override
+  int get hashCode => Object.hash(sessionId, attemptId, redialOfAttemptId, redialNumber, redialRemaining);
 }

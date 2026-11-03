@@ -79,6 +79,8 @@ export interface AgencyCampaignRecord {
    */
   abandon_announcement_id: string | null;
   wrapup_auto_return: boolean;
+  /** Wrap-up redial (0008): the agent may redial the customer from wrap-up while the outcome is owed. */
+  allow_wrapup_redial: boolean;
   retry_policy: AgencyRetryPolicy;
   disposition_catalog: AgencyDisposition[];
   /** Operator-configured break codes. Empty ⇒ `DEFAULT_BREAK_REASONS`. */
@@ -250,6 +252,7 @@ export type AgencyCampaignConfigColumns = Pick<
   | 'default_timezone'
   | 'wrapup_seconds'
   | 'wrapup_auto_return'
+  | 'allow_wrapup_redial'
   | 'retry_policy'
   | 'disposition_catalog'
   | 'context_display'
@@ -427,6 +430,10 @@ export interface AgencyCallAttemptRecord {
    * ratified definition and deliberately catches attempts nobody labelled.
    */
   abandon_reason: AgencyAbandonReason | null;
+  /** Wrap-up redial (0008): the attempt this one redials, or null for a paced dial. */
+  redial_of_attempt_id: string | null;
+  /** Wrap-up redial (0008): 0 for a paced dial; 1, 2 for the redials of one call. */
+  redial_number: number;
   created_at: Date;
   updated_at: Date;
 }

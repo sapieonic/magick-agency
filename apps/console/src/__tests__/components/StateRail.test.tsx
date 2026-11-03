@@ -69,6 +69,7 @@ const TIMED_WRAPUP: WrapupAnchor = {
   requiresDisposition: true,
   heldReason: null,
   autoReturn: true,
+  redialRemaining: null,
 };
 
 const WAITING = 'Saved — waiting for the dialer to move you on';

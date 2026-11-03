@@ -285,6 +285,26 @@ describe('wrap-up', () => {
     expect(mocks.updateAgencyCampaign.mock.calls[0]![1].wrapup_auto_return).toBe(false);
   });
 
+  it('offers “Allow redial from wrap-up”, off by default, and sends it on save', async () => {
+    await openBehaviour();
+    const box = screen.getByRole('checkbox', { name: /allow redial from wrap-up/i }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(screen.getByTestId('allow-wrapup-redial-hint').textContent).toContain('up to 2 times');
+
+    fireEvent.click(box);
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].allow_wrapup_redial).toBe(true);
+  });
+
+  it('sends the redial setting as false when it is left off', async () => {
+    await openBehaviour();
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].allow_wrapup_redial).toBe(false);
+  });
+
   it('says what each setting means for an agent, not just that it is on', async () => {
     await openBehaviour();
     // A checkbox labelled "auto return" with no consequence stated is a setting

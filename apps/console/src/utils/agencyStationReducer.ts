@@ -210,8 +210,19 @@ export function stationReducer(state: StationState, action: StationAction): Stat
       return { ...state, ...next };
     }
 
-    case 'wrapup':
-      return patch(state, { wrapup: action.anchor });
+    case 'wrapup': {
+      // The same consistency rule `ready` applies: a panel retained for a different
+      // attempt than the one this wrap-up is for belongs to a finished call. It is
+      // reachable with wrap-up redial — a redial that fails before connecting opens
+      // a wrap-up on the NEW attempt, and without this the pad would submit the
+      // outcome against the redialed (already closed) one, which `currentAttemptId`
+      // prefers over the anchor.
+      const prev = state.retainedAttempt;
+      return patch(state, {
+        wrapup: action.anchor,
+        retainedAttempt: prev && prev.attempt_id !== action.anchor.attemptId ? null : prev,
+      });
+    }
 
     case 'reserved':
       // A new reservation always wins: whatever was on screen — a wrap-up, a

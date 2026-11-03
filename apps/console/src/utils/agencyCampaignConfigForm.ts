@@ -141,6 +141,7 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   window: { start: '09:00', end: '20:00', days: [1, 2, 3, 4, 5], timezone: 'Asia/Kolkata' },
   wrapupSeconds: 30,
   autoReturn: true,
+  allowWrapupRedial: false,
 };
 
 /**
@@ -309,6 +310,8 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     // silently re-seed a hold-until-clicked campaign as auto-return on every
     // load — then the next save would write the operator's choice away.
     autoReturn: campaign.wrapup_auto_return ?? EMPTY_CAMPAIGN_CONFIG.autoReturn,
+    // Absent on a campaign read from a server that predates the setting: off.
+    allowWrapupRedial: campaign.allow_wrapup_redial ?? EMPTY_CAMPAIGN_CONFIG.allowWrapupRedial,
   };
 }
 
@@ -404,5 +407,8 @@ export function buildConfigPayload(state: CampaignConfigState): Partial<AgencyCa
     // absent from every PATCH, an operator who turned auto-return off could
     // never turn it back on.
     wrapup_auto_return: state.autoReturn,
+    // Sent unconditionally for the same reason: `false` must be sendable to turn
+    // it back off.
+    allow_wrapup_redial: state.allowWrapupRedial,
   };
 }

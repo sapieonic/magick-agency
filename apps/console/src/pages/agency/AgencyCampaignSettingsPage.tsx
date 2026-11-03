@@ -234,6 +234,7 @@ export function AgencyCampaignSettingsPage() {
         retry_policy_outcome_count: Object.keys(config.retryPolicy).length,
         wrapup_seconds: config.wrapupSeconds,
         auto_return: config.autoReturn,
+        wrapup_redial: config.allowWrapupRedial,
         recording_enabled: recording.record,
         analysis_profile_set: resolveProfileId(recording.profileId) !== null,
         reordered,

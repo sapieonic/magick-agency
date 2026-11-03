@@ -293,6 +293,34 @@ describe('wrap-up auto-return', () => {
   });
 });
 
+describe('wrap-up redial', () => {
+  it('starts off on a new campaign', () => {
+    expect(EMPTY_CAMPAIGN_CONFIG.allowWrapupRedial).toBe(false);
+    expect(buildConfigPayload(config()).allow_wrapup_redial).toBe(false);
+  });
+
+  it('sends the flag on every save, including false, so it can be turned back off', () => {
+    expect(buildConfigPayload(config({ allowWrapupRedial: true })).allow_wrapup_redial).toBe(true);
+    expect(buildConfigPayload(config({ allowWrapupRedial: false })).allow_wrapup_redial).toBe(false);
+  });
+
+  it('round-trips a campaign that allows it through load and save', () => {
+    const state = configFromCampaign({
+      id: 'camp-1',
+      name: 'Collections',
+      status: 'running',
+      allow_wrapup_redial: true,
+    });
+    expect(state.allowWrapupRedial).toBe(true);
+    expect(buildConfigPayload(state).allow_wrapup_redial).toBe(true);
+  });
+
+  it('reads a campaign without the field as off', () => {
+    const state = configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft' });
+    expect(state.allowWrapupRedial).toBe(false);
+  });
+});
+
 describe('validation, keyed exactly as the API keys its details', () => {
   it('accepts the default configuration', () => {
     expect(validateConfig(config())).toEqual({});

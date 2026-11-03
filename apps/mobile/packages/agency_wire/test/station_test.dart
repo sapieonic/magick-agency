@@ -95,6 +95,59 @@ void main() {
       expect(a.priorAttempts[1].campaignName, 'Q3 Winback');
     });
 
+    test('a wrap-up redial names the call it redials and how many are left', () {
+      final a = sample<ReservedFrame>('reserved_redial').attempt;
+      expect(a.redial, const RedialInfo(ofAttemptId: 'b8f4d3c2-6e5a-4f7b-9c0d-1e2f3a4b5c6d', number: 1, remaining: 1));
+      expect(a.redial!.limit, 2);
+      // A call the pacing engine placed carries none.
+      expect(sample<ReservedFrame>('reserved').attempt.redial, isNull);
+    });
+
+    test('a redial that does not read never costs the call', () {
+      final json = fixture('station.json', 'reserved_redial');
+      final attempt = {
+        ...json['attempt']! as Map<String, Object?>,
+        'redial': {'number': 'one'},
+      };
+      final f = decodeAs<ReservedFrame>(jsonEncode({...json, 'attempt': attempt}));
+      expect(f.attempt.attemptId, '6b1c2d3e-4f50-4a61-8b72-93a4b5c6d7e8');
+      expect(f.attempt.redial, isNull);
+    });
+
+    test('ready onto a live redial restores it with the active attempt', () {
+      final json = fixture('station.json', 'ready_reconnect_live');
+      final redial = (fixture('station.json', 'reserved_redial')['attempt']! as Map<String, Object?>)['redial'];
+      final active = {...json['active_attempt']! as Map<String, Object?>, 'redial': redial};
+      final f = decodeAs<ReadyFrame>(jsonEncode({...json, 'active_attempt': active}));
+      expect(f.activeAttempt!.redial?.number, 1);
+      expect(f.activeAttempt!.redial?.remaining, 1);
+      expect(sample<ReadyFrame>('ready_reconnect_live').activeAttempt!.redial, isNull);
+    });
+
+    test('wrap-up redial: offered with a count, used up at zero, absent when not offered', () {
+      expect(sample<WrapupFrame>('wrapup_redial_offered').wrapup.redialRemaining, 2);
+      final used = sample<WrapupFrame>('wrapup_redial_used_up').wrapup;
+      expect(used.redialRemaining, 0);
+      expect(used.heldReason, WrapupHoldReason.dispositionRequired);
+      expect(sample<WrapupFrame>('wrapup_timed').wrapup.redialRemaining, isNull);
+      final json = fixture('station.json', 'wrapup_redial_offered');
+      final nulled = {...json['wrapup']! as Map<String, Object?>, 'redial_remaining': null};
+      expect(decodeAs<WrapupFrame>(jsonEncode({...json, 'wrapup': nulled})).wrapup.redialRemaining, isNull);
+      // Unreadable reads as not offered, and the wrap-up itself still lands.
+      final bad = {...json['wrapup']! as Map<String, Object?>, 'redial_remaining': 'two'};
+      expect(decodeAs<WrapupFrame>(jsonEncode({...json, 'wrapup': bad})).wrapup.redialRemaining, isNull);
+      expect(
+        sample<WrapupFrame>('wrapup_redial_offered').wrapup,
+        isNot(WrapupState.fromJson({...json['wrapup']! as Map<String, Object?>, 'redial_remaining': 1})),
+      );
+    });
+
+    test('ready mid-wrap-up carries the redial count', () {
+      final json = fixture('station.json', 'ready_reconnect_wrapup');
+      final wrapup = {...json['active_wrapup']! as Map<String, Object?>, 'redial_remaining': 1};
+      expect(decodeAs<ReadyFrame>(jsonEncode({...json, 'active_wrapup': wrapup})).activeWrapup!.redialRemaining, 1);
+    });
+
     test('countdown, bridged, released', () {
       expect(sample<CountdownFrame>('countdown').secondsRemaining, 2);
       expect(sample<BridgedFrame>('bridged').bridgedAt, DateTime.utc(2026, 11, 1, 6, 41, 15, 250));
@@ -161,10 +214,10 @@ void main() {
       final call = f.manualCall!;
       expect(call.id, f.id);
       expect(call.state, AttemptState.ringing);
-      expect(call.tag, const ManualCallTag(
-        campaignId: 'c0ffee00-1111-4222-8333-444455556666',
-        campaignName: 'Q4 Renewals — Pune',
-      ));
+      expect(
+        call.tag,
+        const ManualCallTag(campaignId: 'c0ffee00-1111-4222-8333-444455556666', campaignName: 'Q4 Renewals — Pune'),
+      );
       expect(call.isLive, isTrue);
       expect(call.isUnsettled, isTrue);
       expect(identical(f.manualCall, f.manualCall), isTrue, reason: 'decoded at construction, not per read');

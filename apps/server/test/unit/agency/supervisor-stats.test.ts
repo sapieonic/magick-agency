@@ -82,6 +82,10 @@ const ROW: Record<string, string> = {
   retries_pending: '16',
   attempts_live: '17',
   attempts_total: '80',
+  // The connect rate's denominator: the dials that were not wrap-up redials (a
+  // distinct value, so reading `attempts_total` for it fails).
+  attempts_not_redial: '62',
+  attempts_redialed: '18',
   attempts_connected: '19',
   agents_live: '20',
   answered_24h: '200',
@@ -104,6 +108,7 @@ const ROSTER = [
     state_since: new Date('2026-08-14T10:00:00.000Z'),
     break_reason: null,
     calls_handled: '7',
+    redials: '2',
   },
   {
     session_id: 'sess-2',
@@ -112,6 +117,7 @@ const ROSTER = [
     state_since: new Date('2026-08-14T10:05:00.000Z'),
     break_reason: null,
     calls_handled: '3',
+    redials: '1',
   },
   {
     session_id: 'sess-3',
@@ -120,6 +126,7 @@ const ROSTER = [
     state_since: new Date('2026-08-14T09:30:00.000Z'),
     break_reason: 'lunch',
     calls_handled: '0',
+    redials: '0',
   },
   {
     session_id: 'sess-4',
@@ -128,6 +135,7 @@ const ROSTER = [
     state_since: new Date('2026-08-14T10:07:00.000Z'),
     break_reason: null,
     calls_handled: '12',
+    redials: '4',
     client_kind: 'mobile',
   },
 ];
@@ -326,8 +334,9 @@ describe('every field is read off its OWN column', () => {
       aht_seconds_including_machine: 34.5,
       avg_wrapup_seconds: 35.5,
     });
-    // 31 human connects over 80 attempts.
-    expect(s.connect_rate_pct).toBeCloseTo(38.75);
+    // 31 human connects over the 62 dials that were not wrap-up redials (80 in all).
+    expect(s.connect_rate_pct).toBeCloseTo(50);
+    expect(s.attempts_redialed).toBe(18);
   });
 
 
@@ -372,12 +381,15 @@ describe('the floor, and the breakdown drawn from it', () => {
       state_since: '2026-08-14T10:00:00.000Z',
       break_reason: null,
       calls_handled: 7,
+      // 0008: the session's wrap-up redials.
+      redials: 2,
       // 0006: the app the station last attached from; a row without one reads `web`.
       client_kind: 'web',
     });
     expect(s.agents[2]).toMatchObject({ state: 'break', break_reason: 'lunch', calls_handled: 0 });
     // Distinct per agent, so a mapper reading one agent's count onto another fails.
     expect(s.agents.map((a) => a.calls_handled)).toEqual([7, 3, 0, 12]);
+    expect(s.agents.map((a) => a.redials)).toEqual([2, 1, 0, 4]);
     expect(s.agents.map((a) => a.client_kind)).toEqual(['web', 'web', 'web', 'mobile']);
   });
 
@@ -440,7 +452,7 @@ describe('no evidence reports null, not a reassuring zero', () => {
   });
 
   it('reports a null connect rate before the first attempt', async () => {
-    serve({ ...ROW, attempts_total: '0', human_connects: '0' });
+    serve({ ...ROW, attempts_total: '0', attempts_not_redial: '0', human_connects: '0' });
 
     const s = await stats();
 

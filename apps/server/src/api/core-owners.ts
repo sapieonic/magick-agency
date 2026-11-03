@@ -50,6 +50,7 @@ export const AGENCY_CORE_ROUTE_OWNERS: Readonly<Record<string, CoreOwnerKind>> =
   'POST /sessions/:id/leave': 'session_param',
   'POST /sessions/:id/softphone': 'session_param',
   'POST /sessions/:id/softphone/return': 'session_param',
+  'POST /sessions/:id/redial': 'session_param',
   'POST /attempts/:id/hangup': 'attempt_param',
   'POST /attempts/:id/disposition': 'attempt_param',
   'POST /attempts/:id/dnc': 'attempt_param',

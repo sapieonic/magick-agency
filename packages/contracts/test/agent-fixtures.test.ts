@@ -107,12 +107,15 @@ const STATION = {
   ready_missed_release: fits<Core.AgencyStationReadyFrame>()(station.ready_missed_release),
   ready_device_away: fits<Core.AgencyStationReadyFrame>()(station.ready_device_away),
   reserved: fits<Core.AgencyStationReservedFrame>()(station.reserved),
+  reserved_redial: fits<Core.AgencyStationReservedFrame>()(station.reserved_redial),
   countdown: fits<Core.AgencyStationCountdownFrame>()(station.countdown),
   bridged: fits<Core.AgencyStationBridgedFrame>()(station.bridged),
   released_completed: fits<Core.AgencyStationReleasedFrame>()(station.released_completed),
   released_no_answer: fits<Core.AgencyStationReleasedFrame>()(station.released_no_answer),
   wrapup_timed: fits<Core.AgencyStationWrapupFrame>()(station.wrapup_timed),
   wrapup_held_timerless: fits<Core.AgencyStationWrapupFrame>()(station.wrapup_held_timerless),
+  wrapup_redial_offered: fits<Core.AgencyStationWrapupFrame>()(station.wrapup_redial_offered),
+  wrapup_redial_used_up: fits<Core.AgencyStationWrapupFrame>()(station.wrapup_redial_used_up),
   agent_state_available: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_available),
   agent_state_break: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_break),
   agent_state_break_queued: fits<Core.AgencyStationAgentStateFrame>()(station.agent_state_break_queued),
@@ -166,6 +169,10 @@ const ACTIONS = {
   error_unknown_disposition_code: fits<Core.AgencyActionErrorResponse>()(actions.error_unknown_disposition_code),
   error_break_already_applied: fits<Core.AgencyActionErrorResponse>()(actions.error_break_already_applied),
   error_session_ended: fits<Core.AgencyActionErrorResponse>()(actions.error_session_ended),
+  redial_request: fits<AppBody<Core.AgencyRedialRequest>>()(actions.redial_request),
+  redial_response: fits<Core.AgencyRedialResponse>()(actions.redial_response),
+  error_redial_limit_reached: fits<Core.AgencyActionErrorResponse>()(actions.error_redial_limit_reached),
+  error_redial_blocked_dnc: fits<Core.AgencyActionErrorResponse>()(actions.error_redial_blocked_dnc),
 };
 
 // The soft phone's routes (`/proxy/agency/softphone/*` and the SP7 switch). Bodies the

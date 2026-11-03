@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-02.
+"is it done". As of 2026-11-03.
 
 ## Summary
 
@@ -459,6 +459,79 @@ phone number (the default, unchanged), any kept column, or none.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
   duplicate column".
 
+### Wrap-up redial 2026-11-03
+
+A connected call can drop for reasons on any side. With the campaign setting "Allow redial from
+wrap-up" (`allow_wrapup_redial`, off by default), an agent in wrap-up, before saving the outcome,
+can redial the same customer and is connected back to themselves, at most twice per call
+(`AGENCY_WRAPUP_REDIAL_LIMIT`). Console and agent app.
+
+- Migration `0008_wrapup_redial.sql` (the setting, `redial_of_attempt_id`, `redial_number`, one
+  redial per attempt, wrap-up resolution `redialed`); contracts: the limit, the reserved
+  `redialed` disposition, `redial_remaining` on the wrap-up state, `redial` on the call panel,
+  six refusal codes, the agent fixtures.
+- Server: `POST /proxy/agency/sessions/:id/redial` (`agency/wrapup-redial.ts`). The checks and
+  the pre-dial gates run before anything is written, so a refusal (DNC, calling hours, ...) leaves
+  the agent in wrap-up; the countdown stops when the redial starts; `wrapup → reserved` CAS; one
+  transaction closes the original `redialed` (its outcome stays `connected`), takes the customer
+  back and inserts the linked redial; the dial goes through the normal dispatcher. A redial that
+  does not connect keeps the customer held and puts the agent back in wrap-up on the redial.
+- Console and app: the Redial button beside the outcome pad with the redials left, the
+  "Redial 1 of 2" label on the call, refusal copy, the setting toggle, the notes draft carried onto
+  the redial, telemetry `agency_redial_requested` / `agency_redial_refused`.
+- Proven end to end over HTTP on real Postgres and Redis with a fake carrier
+  (`wrapup-redial-e2e.test.ts`: connect, redial that rings out, DNC refusal, redial that connects,
+  limit, outcome, the attempt chain); the CAS on real Lua (`agency-agent-redial-cas.test.ts`);
+  guards mutation-checked on every side.
+- Defaults and the open question (do redials spend `max_attempts`? built as no):
+  [`decisions.md`](decisions.md) §4, "Wrap-up redial", WR1–WR13. Not verified on a real carrier
+  or phone.
+- **Review fixes** (a fresh-context review of the whole branch, five reviewers; every fix has a
+  test that went red when the fix was reverted):
+  - Server: a ringing redial is not dispositionable; the settle-time park never re-parks a
+    contact a disposition already released (`parkForWriteUp`; this also fixes paced calls saved
+    mid-call, whose contact used to stay `connected` for ever); `/available`, force-available and
+    `/leave` refuse while a redial is in flight; a station reconnect mid-wrap-up restores
+    `wrapup`, so the first Redial after a reload works; an outcome-unknown redial offers no
+    further redial; a wrap-up that cannot reopen holds the agent on `break`/`offline`, never the
+    pool; stats count each conversation once and report `attempts_redialed` (shown under the
+    campaign's dial count) and the floor's `redials`; attempt rows carry `redial_of_attempt_id` /
+    `redial_number`; another session's or tenant's attempt is the same 404 as a missing one;
+    Redis unavailable answers 503 `redial_blocked`.
+  - Agent app: **the station's phase now follows the call** (a live attempt, then an owed
+    outcome, then `agent_state`, as the console does). Before, the server's `reserved` /
+    `bridged` frames never changed the screen, because the server sends no `agent_state` for
+    them: a paced call stayed on the waiting screen, the notification said "Waiting for calls",
+    and leaving the app mid-call could close the station socket; a redial stayed on the wrap-up
+    pad. The tests had injected `agent_state` frames the server never sends; they no longer do.
+    Also: the pending notes save is sent before Redial, the wrap-up clock stops once the redial
+    is placed, a 10 s bound on waiting for it, honest copy when no answer came back.
+  - Console: a redial that fails before ringing keeps the notes draft and the contact panel
+    (`useRedialCarry`); the clock stops once the redial is placed; a disabled Redial says why;
+    Redial is off on a campaign that is not dialing and after a final refusal; the system code
+    `redialed` reads "Redialled" everywhere and is refused in the catalog editor.
+  - Proven further by `wrapup-redial-flow.test.ts` (every path after the wrap-up is taken),
+    `wrapup-redial-repository.test.ts`, `campaign-stats-redials.test.ts` and
+    `contact-park-for-write-up.test.ts` (real Postgres), and `wrapup-redial-e2e.test.ts` now
+    covering reconnect-then-redial, the refusals while a redial rings and a mid-call write-up.
+  - Left open: a redial that never reached the carrier still uses one of the two; a campaign
+    whose catalog already held the code `redialed` before 0008 keeps it (BASELINE open question
+    6); after the app's 10 s bound, Save can meet a 409 if the redial was in fact placed.
+- Run of 2026-11-03 after the review fixes, on `028b2ab`, one suite at a time from inside each
+  package (`pnpm lint` clean in 8 packages; `pnpm test:release` 10 and `pnpm test:grafana` 32
+  pass): server 7720 unit + 42 skipped; server integration, all files in one run, 1613 passed +
+  9 expected fail + 4 failed, the 4 being every case of `cluster/mobile-stations.test.ts`; that
+  file passes 4/4 alone and in its CI lane (`INTEGRATION_LANE=wall-clock`, 3 files, 15 passed),
+  so the rest lane is 1602 + 9 expected fail. It had also timed out once in the run before the
+  fixes; the cause of the failure when it runs after the whole rest lane is not found.
+  `packages/db` 427 / 519; console 5015; contracts 252; super-admin 436; web-ui 235; domain 61;
+  observability 14; app `flutter test` 1316, `agency_wire` 341, `flutter analyze` clean,
+  `contracts-literals --check` up to date. The new route shifted the seeded sample of
+  `hostile-input-fuzz.test.ts` case 3 onto the uplink probe, whose per-user bucket the sweep had
+  spent (429, not 413); it is excluded there, its 413 being pinned in its own suite. (The
+  earlier run's server unit figure, 7691, was a run with 2 failures under load; the suite was
+  green alone.)
+
 ### Review fixes on the scaling branch 2026-11-03
 
 PR #29's review (8 comments) and the defects found while fixing it. Each fix has a test that
@@ -504,22 +577,23 @@ fails on the old code and goes red when the fix is reverted.
 
 ## Test counts
 
-Latest run, 2026-11-03, after PR #29's review fixes, on `f97a281`, from inside each package
-(`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 32 and `pnpm test:release` 10
-pass):
+Latest run, 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
+each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and `pnpm test:release` 10
+pass; details and the one file that fails only in the combined run: "Wrap-up redial 2026-11-03"):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7650 passed + 42 skipped (383 files) | 1584 passed + 9 expected fail (171 files) |
-| `packages/db` | 427 | 512 (47 files) |
-| `apps/console` | 4944 (252 files) | — |
+| `apps/server` | 7720 passed + 42 skipped (386 files) | rest lane 1602 passed + 9 expected fail; wall-clock lane 15 (177 files) |
+| `packages/db` | 427 | 519 (48 files) |
+| `apps/console` | 5015 (256 files) | — |
 | `apps/super-admin` | 436 | — |
-| `packages/contracts` | 249 | — |
+| `packages/contracts` | 252 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
+| `apps/mobile` | `flutter test` 1316, `agency_wire` 341 | — |
 
-One expected fail fewer: `disposition-storm.test.ts` case 5 is fixed and is now an `it`.
+Since PR #29's run: one expected fail fewer there (`disposition-storm.test.ts` case 5 is now an `it`).
 
 Run of 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
 package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
@@ -714,6 +788,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 | Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected` |
+| Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 
 ## Deployment invariants
 

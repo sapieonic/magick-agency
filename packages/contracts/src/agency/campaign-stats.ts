@@ -126,8 +126,16 @@ export interface AgencySupervisorAgent {
   connected: boolean | null;
   /** Present only while `state === 'break'`. */
   break_reason: string | null;
-  /** Attempts this agent has handled on this campaign this session. */
+  /**
+   * Conversations this agent has handled on this campaign this session. A conversation
+   * the agent redialled from wrap-up counts once (at its last attempt), not once per leg.
+   */
   calls_handled: number;
+  /**
+   * Wrap-up redials this agent has placed this session (`redial_number > 0` and
+   * dialled). Optional on the wire like `AgencyCampaignStats.attempts_redialed`.
+   */
+  redials?: number;
   /**
    * The app the session's station last attached from (`agency_agent_sessions.client_kind`,
    * written by every station attach, so a "continue on this phone" moves it). `web`
@@ -336,6 +344,20 @@ export interface AgencyCampaignStats {
    * the dialer runtime that predates it. Absent means "this dialer runtime does not report it", never zero.
    */
   attempts_retried?: number;
+  /**
+   * Wrap-up redials PLACED: attempts the agent dialled again from wrap-up
+   * (`redial_number > 0 AND dialed_at IS NOT NULL`).
+   *
+   * A redial continues one conversation, so it is counted HERE and nowhere it would
+   * count that conversation twice: not in `attempts_retried` (a retry is a new dial of a
+   * contact), not in `attempts_connected`, and the connect buckets count each
+   * conversation once, at its last attempt (whose disposition is the conversation's
+   * outcome; the redialled ones carry the system code `redialed`, which no breakdown or
+   * conversion counts). It is in `attempts_total` (every dial row).
+   *
+   * Optional on the wire, as `attempts_retried`: the dialer runtime always produces it.
+   */
+  attempts_redialed?: number;
   agents_live: number;
   /**
    * **P2.** Attempts that answered with no agent to bridge to, over a rolling 24
@@ -377,6 +399,9 @@ export interface AgencyCampaignStats {
    */
   human_connects: number;
   machine_connects: number;
+  // The three connect buckets count CONVERSATIONS: a bridged paced attempt, or the last
+  // attempt of a wrap-up redial chain (the redialled attempts, code `redialed`, are not
+  // counted; the last one is, bridged or not, since it carries the outcome).
   /**
    * Bridged calls nobody classified — no disposition, or the reaper's
    * `no_disposition` auto-stamp on a lapsed wrap-up.
@@ -404,7 +429,11 @@ export interface AgencyCampaignStats {
    * and "zero" are different facts, and only one of them is reassuring.
    */
   machine_connects_available: boolean;
-  /** Human connects over attempts, as a percentage. `null` before any attempt. */
+  /**
+   * Human connects over attempts, as a percentage. `null` before any attempt. The
+   * denominator leaves wrap-up redials out (`attempts_total - ` redial rows): a redial
+   * continues a conversation already counted, it is not a new try at reaching someone.
+   */
   connect_rate_pct: number | null;
 
   /**
@@ -462,8 +491,9 @@ export interface AgencyCampaignStats {
    * Average wrap-up, in seconds — the supervisor's tuning input for
    * `wrapup_seconds`.
    *
-   * Averages `disposition_submitted`, `auto_return` and `agent_returned`; `forced`, `agent_left` and
-   * `campaign_stopped` are excluded. `null` until enough wrap-ups have concluded to say anything.
+   * Averages `disposition_submitted`, `auto_return` and `agent_returned`; `forced`, `agent_left`,
+   * `campaign_stopped` and `redialed` (the wrap-up the agent left by redialling: the
+   * conversation's write-up time is measured on its last attempt's wrap-up) are excluded. `null` until enough wrap-ups have concluded to say anything.
    */
   avg_wrapup_seconds: number | null;
 
@@ -591,6 +621,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   attempts_total: true,
   attempts_connected: true,
   attempts_retried: true,
+  attempts_redialed: true,
   agents_live: true,
   abandoned_24h: true,
   answered_24h: true,

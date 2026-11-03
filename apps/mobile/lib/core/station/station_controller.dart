@@ -90,6 +90,26 @@ class StationController extends Notifier<StationView?>
   String? _actionError;
   String? _fatal;
   ({String attemptId, String code})? _saved;
+
+  /// A wrap-up redial the server placed for the wrap-up of this attempt,
+  /// until its call reaches the station (the attempt on screen changes), the
+  /// server states that wrap-up again, the socket drops, or [redialArrivalBound]
+  /// passes with none of these. While set, the wrap-up is over in all but
+  /// name: its pad and Redial stay disabled ([StationBusy.redialing]) and its
+  /// countdown is not shown (the server stopped it when it took the wrap-up).
+  String? _redialPlacedFor;
+
+  /// The bound on [_redialPlacedFor] ([redialArrivalBound]).
+  Timer? _redialWait;
+
+  /// The notes draft of a placed redial, to move when the redial's attempt
+  /// first reaches the station: a redial that fails before it rings opens its
+  /// wrap-up with no `reserved` to name the call it redials.
+  ({String from, String to})? _redialCarry;
+
+  /// What a refused redial taught us about this wrap-up's redials (used up:
+  /// 0; not offered after all: null), until a frame states them again.
+  ({String attemptId, int? remaining})? _redialOverride;
   ({String attemptId, int seconds})? _countdown;
   DateTime? _reconnectDeadline;
   Duration? _reconnectWindow;
@@ -356,7 +376,7 @@ class StationController extends Notifier<StationView?>
       onConnection: _onConnection,
       onMissedPings: (n) => _dispatch(MissedPingsAction(n)),
       // A soft-phone call on the line holds the socket as a campaign call does.
-      callLive: () => _station.live != null || isCallPhase(_station.agentState) || isCallLive(_station.manualCall),
+      callLive: () => isCallPhase(_station.effectiveState) || isCallLive(_station.manualCall),
       now: _now,
       decode: ref.read(stationFrameDecoderProvider),
     );
@@ -461,6 +481,11 @@ class StationController extends Notifier<StationView?>
     _actionError = null;
     _fatal = null;
     _saved = null;
+    _redialPlacedFor = null;
+    _redialWait?.cancel();
+    _redialWait = null;
+    _redialCarry = null;
+    _redialOverride = null;
     _countdown = null;
     _reconnectDeadline = null;
     _reconnectWindow = null;
@@ -502,6 +527,13 @@ class StationController extends Notifier<StationView?>
       case ReadyFrame(:final activeWrapup):
         _reconnectDeadline = null;
         _reconnectWindow = null;
+        // The server's own statement of the wrap-up: a redial it placed for
+        // this one is over, and its redial count is the frame's again.
+        if (activeWrapup != null) _wrapupStated(activeWrapup.attemptId);
+        // Back onto a redial: the draft the call it redials held (in the
+        // store, after a restart) is the redial's.
+        final active = frame.activeAttempt;
+        if (active != null) _carryNotes(active);
         final first = !_readySeen;
         _readySeen = true;
         final hosted = _s?.hosted;
@@ -525,10 +557,18 @@ class StationController extends Notifier<StationView?>
         if (frame.state == AgentState.available) _awayPauseRequested = false;
         _dispatch(AgentStateAction(frame));
       case WrapupFrame(:final wrapup):
+        // A redial that failed before it rang: its wrap-up is the first the station hears of it.
+        final carry = _redialCarry;
+        if (carry != null && wrapup.attemptId == carry.to) {
+          _redialCarry = null;
+          _s?.notes.carryForward(from: carry.from, to: carry.to);
+        }
+        _wrapupStated(wrapup.attemptId);
         // Captured once, here, on the frame: never per repaint.
         _dispatch(WrapupAction(openWrapup(wrapup, _station.clockOffsetMs, _now())));
       case ReservedFrame(:final attempt):
         _countdown = null;
+        _carryNotes(attempt);
         _calls.campaignReserved(attempt);
         _dispatch(ReservedAction(attempt));
       case CountdownFrame(:final attemptId, :final secondsRemaining):
@@ -574,6 +614,20 @@ class StationController extends Notifier<StationView?>
     }
   }
 
+  /// [attempt] is a wrap-up redial: the notes draft of the call it redials
+  /// moves to it before the station moves to it (`NotesAutosave.carryForward`).
+  void _carryNotes(ReservedAttempt attempt) {
+    if (_redialCarry?.to == attempt.attemptId) _redialCarry = null;
+    final redial = attempt.redial;
+    if (redial != null) _s?.notes.carryForward(from: redial.ofAttemptId, to: attempt.attemptId);
+  }
+
+  /// A frame stated the wrap-up of [attemptId].
+  void _wrapupStated(String attemptId) {
+    if (_redialPlacedFor == attemptId) _redialPlacedFor = null;
+    if (_redialOverride?.attemptId == attemptId) _redialOverride = null;
+  }
+
   void _onPong(PongFrame frame, int receivedAtMs) {
     int? offset;
     final ts = frame.ts;
@@ -602,6 +656,9 @@ class StationController extends Notifier<StationView?>
     }
     final wasOpen = _station.connection == StationConnection.open;
     if (connection == StationConnection.open) _everOpened = true;
+    // A redial waiting for its call: the `ready` after the drop states what
+    // happened, and Reconnect must not wait behind it.
+    if (connection != StationConnection.open) _redialPlacedFor = null;
     if (connection == StationConnection.reconnecting && wasOpen && (_station.live != null || _manualAnswered)) {
       // The server holds a live call this long for the same session to come
       // back. A soft-phone call only once answered: one still ringing is
@@ -683,6 +740,8 @@ class StationController extends Notifier<StationView?>
       _station = stationReducer(_station, SessionStateAction(held));
     }
     if (_saved != null && _saved!.attemptId != _station.currentAttemptId) _saved = null;
+    if (_redialPlacedFor != null && _redialPlacedFor != _station.currentAttemptId) _redialPlacedFor = null;
+    if (_redialOverride != null && _redialOverride!.attemptId != _station.wrapup?.attemptId) _redialOverride = null;
     if (_dncOutcome != null && _dncOutcome!.attemptId != _station.currentAttemptId) _dncOutcome = null;
     // The ring's mute belongs to one call: the next one rings again.
     final callId = _station.manualCall?.id;
@@ -696,7 +755,7 @@ class StationController extends Notifier<StationView?>
     s.audio.sync(target);
     s.notes.attemptChanged(
       _station.currentAttemptId,
-      accepting: _station.currentAttemptId != null && isCallPhase(_station.agentState),
+      accepting: _station.currentAttemptId != null && isCallPhase(_station.effectiveState),
     );
     _applyLifecycle(s);
     _emit();
@@ -720,6 +779,7 @@ class StationController extends Notifier<StationView?>
       return;
     }
     final missed = _station.missedRelease;
+    final redial = _redialOverride;
     final view = _mapper.map(
       campaignId: s.hosted.campaignId!,
       campaignName: s.hosted.campaignName ?? '',
@@ -731,7 +791,9 @@ class StationController extends Notifier<StationView?>
       pendingBreakCode: _pendingBreakCode,
       audio: s.audio.view,
       notes: s.notes.view,
-      busy: _inFlight.isEmpty ? StationBusy.none : _inFlight.last,
+      busy: _inFlight.isNotEmpty
+          ? _inFlight.last
+          : (_redialPlacedFor != null ? StationBusy.redialing : StationBusy.none),
       actionError: _actionError,
       fatal: _fatal,
       dispositionSavedCode: _saved != null && _saved!.attemptId == _station.currentAttemptId ? _saved!.code : null,
@@ -741,6 +803,10 @@ class StationController extends Notifier<StationView?>
       dncOutcome: _dncOutcome != null && _dncOutcome!.attemptId == _station.currentAttemptId ? _dncOutcome!.text : null,
       missedReleaseDismissed: missed != null && identical(missed, _dismissedMissed),
       awayPauseRequested: _awayPauseRequested,
+      redialOverride: redial != null && redial.attemptId == _station.wrapup?.attemptId
+          ? (remaining: redial.remaining)
+          : null,
+      redialPlaced: _redialPlacedHere,
     );
     // After the mapper, so the notification's call timer uses the offset the
     // view settled on (with its hysteresis), not every pong's raw estimate.
@@ -780,7 +846,7 @@ class StationController extends Notifier<StationView?>
       campaignName: s.hosted.bootstrap?.campaignName ?? s.hosted.campaignName,
       link: StationViewMapper.linkOf(_station.connection),
       everOpened: _everOpened,
-      phase: StationViewMapper.phaseOf(_station.agentState),
+      phase: StationViewMapper.phaseOf(_station.effectiveState),
       onSoftphone: _onSoftphoneBreak,
       switchQueued: _pendingBreakCode == softphoneBreakReason,
       call: call,
@@ -799,10 +865,14 @@ class StationController extends Notifier<StationView?>
     return failure.text;
   }
 
+  /// A redial was placed from the wrap-up on screen and its call has not
+  /// reached the station yet: that wrap-up's clock is stopped.
+  bool get _redialPlacedHere => _redialPlacedFor != null && _redialPlacedFor == _station.wrapup?.attemptId;
+
   /// On the `soft_phone` break: always, for a soft-phone session once its
   /// socket says so; for a campaign station, once the switch applied.
   bool get _onSoftphoneBreak =>
-      _station.agentState == AgentState.onBreak && _station.breakReasonCode == softphoneBreakReason;
+      _station.effectiveState == AgentState.onBreak && _station.breakReasonCode == softphoneBreakReason;
 
   /// A soft-phone call is on the line and the customer has answered: the
   /// server holds it [StationIntervals.deferredHangup] for a dropped socket.
@@ -901,7 +971,7 @@ class StationController extends Notifier<StationView?>
   audio.OnDutyNotification _onDutyNotification() {
     final s = _s;
     if (s != null && (s.hosted.isSoftphone || _onSoftphoneBreak)) return _softphoneNotification(s);
-    final state = _station.agentState;
+    final state = _station.effectiveState;
     final away = state == AgentState.onBreak &&
         (_station.breakReasonCode ?? (_awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null)) ==
             ReservedBreakCode.deviceAway.wire;
@@ -989,7 +1059,7 @@ class StationController extends Notifier<StationView?>
     _awayRetries = 0;
     if (queuedFor != null &&
         _pendingBreakCode == ReservedBreakCode.deviceAway.wire &&
-        isCallPhase(_station.agentState)) {
+        isCallPhase(_station.effectiveState)) {
       // Back before the call ended: the pause queued for after it is not wanted.
       _cancelAwayQueue(s);
     }
@@ -1005,7 +1075,7 @@ class StationController extends Notifier<StationView?>
     } else if (unconfirmed &&
         c == StationConnection.open &&
         !_terminal &&
-        _station.agentState == AgentState.available) {
+        _station.effectiveState == AgentState.available) {
       _log.info('back: the away pause never landed, so available is said again');
       unawaited(_api.available(s.id).then((r) {
         if (identical(_s, s)) _reconcile(r);
@@ -1032,7 +1102,8 @@ class StationController extends Notifier<StationView?>
   }
 
   void _applyLifecycle(_Session s) {
-    final st = _station.agentState;
+    // A campaign call reads as one from its own frames (`effectiveState`).
+    final st = _station.effectiveState;
     // A soft-phone call live or owing its outcome keeps the socket wanted in
     // the background, as a call or wrap-up does (the agent state stays `break`).
     final manual = _terminal ? null : _station.manualCall;
@@ -1056,7 +1127,8 @@ class StationController extends Notifier<StationView?>
             breakCode: _station.breakReasonCode ??
                 (st == AgentState.onBreak && _awayPauseRequested ? ReservedBreakCode.deviceAway.wire : null),
             pauseRequested: _awayPauseRequested,
-            wrapupDeadline: _station.wrapup?.deadline,
+            // A placed redial stopped the wrap-up's clock: no save-by time.
+            wrapupDeadline: _redialPlacedHere ? null : _station.wrapup?.deadline,
             outcomeDueAt: outcomeDue,
           );
     // Not in wrap-up, the deadline is the soft-phone call's outcome.
@@ -1081,7 +1153,8 @@ class StationController extends Notifier<StationView?>
   void _maybeSendAway() {
     final s = _s;
     if (s == null || _foreground || _awayInFlight || _terminal || _awayClosed || _awayRetry != null) return;
-    final st = _station.agentState;
+    // A call in progress queues the pause, whatever `agent_state` last said.
+    final st = _station.effectiveState;
     // A soft-phone session is never in the pool: nothing to pause.
     final action = awayActionFor(st, pendingBreakCode: _pendingBreakCode, softphoneSession: s.hosted.isSoftphone);
     if (action == AwayAction.none) return;
@@ -1127,7 +1200,7 @@ class StationController extends Notifier<StationView?>
         }
         _lastStateResponse = response;
       }
-      if (_foreground && _awayQueuedFor != null && response?.pendingState != null && isCallPhase(_station.agentState)) {
+      if (_foreground && _awayQueuedFor != null && response?.pendingState != null && isCallPhase(_station.effectiveState)) {
         // The agent came back while this was in flight: the queued pause is not wanted.
         _cancelAwayQueue(s);
       }
@@ -1176,7 +1249,8 @@ class StationController extends Notifier<StationView?>
     if (!identical(_s, s) || _foreground || _terminal || _awayLanded || _awayClosed) return;
     // Only a socket that is open still holds the agent in the pool: one that
     // already dropped (or gave up) was released by the server's close handler.
-    if (_station.agentState != AgentState.available || _station.connection != StationConnection.open) return;
+    // Never with a call on the line: closing the socket would drop the customer.
+    if (_station.effectiveState != AgentState.available || _station.connection != StationConnection.open) return;
     _awayClosed = true;
     _log.warn('device_away pause never landed: closing the station until the app is back');
     s.socket.park();
@@ -1347,6 +1421,8 @@ class StationController extends Notifier<StationView?>
       return;
     }
     if (_saved?.attemptId == attemptId) return;
+    // A redial in flight or placed: this wrap-up's outcome moves to the redial.
+    if (_inFlight.contains(StationBusy.redialing) || _redialPlacedFor == attemptId) return;
     final text = notes ?? s.notes.text;
     final now = _now();
     final block = dispositionBlock(_catalog, code: code, notes: text, callbackAt: callbackAt, now: now);
@@ -1396,6 +1472,107 @@ class StationController extends Notifier<StationView?>
   }
 
   @override
+  Future<void> redial({String? attemptId}) async {
+    if (_s == null || _terminal) return;
+    final target = _station.wrapup?.attemptId;
+    if (target == null ||
+        _station.effectiveState != AgentState.wrapup ||
+        (attemptId != null && attemptId != target)) {
+      // Not the wrap-up the agent tapped for: never redial another call.
+      _actionError = redialCallChangedCopy;
+      _emit();
+      return;
+    }
+    if (_redialPlacedFor == target ||
+        _saved?.attemptId == target ||
+        _inFlight.contains(StationBusy.savingDisposition)) {
+      return;
+    }
+    final campaignId = _s?.hosted.campaignId;
+    final shown = _redialOverride?.attemptId == target
+        ? _redialOverride!.remaining
+        : _station.wrapup?.redialRemaining;
+    // The wrap-up the press was for: a refusal teaches nothing about a newer one.
+    final pressedOn = _station.wrapup;
+    await _run(StationBusy.redialing, (s) async {
+      // The server copies this call's saved notes onto the redial: the last
+      // seconds of typing are saved first (bounded; the pad is held meanwhile).
+      await s.notes.settle(target, timeout: notesFlushTimeout);
+      if (!_live(s)) return;
+      if (_station.wrapup?.attemptId != target || _station.effectiveState != AgentState.wrapup) {
+        _actionError = redialCallChangedCopy;
+        return;
+      }
+      _calls.redialRequested(campaignId: campaignId, remaining: shown ?? 0);
+      try {
+        final r = await _api.redial(s.id, target);
+        if (!_live(s)) return;
+        _log.info('wrap-up redial placed', {'number': r?.redialNumber ?? 0, 'remaining': r?.redialRemaining ?? 0});
+        final next = r?.attemptId;
+        if (next != null && next != target) {
+          if (_station.currentAttemptId == next) {
+            // The redial reached the station before this answer: its call, or
+            // its own wrap-up when it failed before it rang (no `reserved`
+            // named the call it redials). Its notes are the draft.
+            s.notes.carryForward(from: target, to: next);
+          } else {
+            _redialCarry = (from: target, to: next);
+          }
+        }
+        // Unless its `reserved` already beat this answer here, the call is on
+        // its way: hold the wrap-up's pad until it arrives.
+        if (_station.live == null && _station.currentAttemptId == target) {
+          _redialPlacedFor = target;
+          _redialWait?.cancel();
+          _redialWait = Timer(redialArrivalBound, () => _redialOverdue(s, target));
+          _afterChange();
+        }
+      } catch (e, st) {
+        // Every failure is counted, `code` null for one with no structured
+        // refusal: pressed minus refused is NOT the redials placed (a request
+        // with no usable answer may have been placed all the same).
+        _calls.redialRefused(campaignId: campaignId, code: e is ApiHttpError ? e.code : null);
+        if (e is! ApiError) _log.error('wrap-up redial failed', {}, e, st);
+        if (!_live(s) || _station.wrapup?.attemptId != target) return;
+        if (e is ApiHttpError && !e.isServerError) {
+          final code = errorCodeOf(e);
+          // Only while no newer frame has stated this wrap-up: the server may
+          // reopen it with a fresh window (and its own count) before it refuses.
+          if (identical(_station.wrapup, pressedOn)) {
+            if (code == AgencyErrorCode.redialLimitReached) {
+              _redialOverride = (attemptId: target, remaining: 0);
+            } else if (code == AgencyErrorCode.redialNotAllowed) {
+              _redialOverride = (attemptId: target, remaining: null);
+            }
+          }
+          _actionError = redialRefusalCopy(code, _serverSentence(e));
+        } else if (e is ApiUnauthorized) {
+          _actionError = e.userMessage;
+        } else {
+          // No usable answer (no network, a timeout, a 5xx): it may have been
+          // placed. The pad opens again; its call, if any, replaces it.
+          _actionError = redialUncertainCopy;
+        }
+      }
+    });
+  }
+
+  /// How long a placed redial may take to reach the station before its
+  /// wrap-up's pad is given back. The server sends the call's `reserved` (or,
+  /// for a redial that fails before it rings, its wrap-up) as it dials, which
+  /// is right after its answer; the same 10 s as [awayPauseBound].
+  static const redialArrivalBound = Duration(seconds: 10);
+
+  void _redialOverdue(_Session s, String target) {
+    _redialWait = null;
+    if (!identical(_s, s) || _redialPlacedFor != target) return;
+    _log.warn('a placed wrap-up redial never reached the station');
+    _redialPlacedFor = null;
+    _actionError = redialNotArrivedCopy;
+    _afterChange();
+  }
+
+  @override
   Future<void> markDnc({String? reason, String? attemptId}) async {
     if (_s == null) return;
     final live = _terminal ? null : _station.live?.attemptId;
@@ -1426,7 +1603,7 @@ class StationController extends Notifier<StationView?>
         await _api.leave(s.id);
       } on ApiNetworkError catch (e) {
         if (!_live(s)) return;
-        if (_station.live != null || isCallPhase(_station.agentState)) {
+        if (isCallPhase(_station.effectiveState)) {
           // Never with a call on: closing here would drop the customer.
           _actionError = e.userMessage;
           return;

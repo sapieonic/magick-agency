@@ -114,8 +114,8 @@ describe('POST / no longer hands sip_connection_id to the repository', () => {
     expect(input).not.toHaveProperty('sip_connection_id');
     // The create input, key for key, minus `sip_connection_id`.
     expect(Object.keys(input).sort()).toEqual([
-      'abandon_announcement_id', 'abandonment_ceiling_pct', 'account_id', 'analysis_profile_id',
-      'caller_ids', 'calling_days', 'calling_window_end', 'calling_window_start', 'context_display',
+      'abandon_announcement_id', 'abandonment_ceiling_pct', 'account_id', 'allow_wrapup_redial',
+      'analysis_profile_id', 'caller_ids', 'calling_days', 'calling_window_end', 'calling_window_start', 'context_display',
       'created_by', 'default_timezone', 'disposition_catalog', 'name', 'record_calls', 'retry_policy',
       'telephony_provider', 'tenant_id', 'wrapup_auto_return', 'wrapup_seconds',
     ]);

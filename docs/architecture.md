@@ -306,6 +306,27 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Wrap-up** (`wrapup-manager.ts`). An in-process countdown plus the attempt row
   (`wrapup_seconds`, `ended_at`), never a Redis TTL; not resumed after a restart (agents return in
   `break` and a sweep closes the attempt).
+- **Wrap-up redial** (`wrapup-redial.ts`, `POST /sessions/:id/redial`, decisions WR1–WR13). On a
+  campaign with `allow_wrapup_redial`, an agent in a wrap-up that owes an outcome may redial the
+  same customer, at most `AGENCY_WRAPUP_REDIAL_LIMIT` (2) times per call; the `wrapup` frame's
+  `redial_remaining` says how many are left. Everything that can refuse runs first, so a refusal
+  leaves the wrap-up and its countdown as they were: the rows, the station, a caller ID and the
+  pre-dial gates (which mint the clearance the dispatcher checks, as for a paced dial). Then the
+  wrap-up is taken synchronously (`takeForRedial`: the countdown stops, so auto-return cannot fire
+  during the redial), the agent moves `wrapup → reserved` by CAS (`reserveFromWrapup`), and one
+  transaction (`beginWrapupRedial`) locks the redialled attempt, takes the customer back
+  `connected → in_flight` while still parked for it, stamps it `redialed` and inserts the redial
+  (`redial_of_attempt_id`, `redial_number`). The dial goes through the dispatcher to
+  `executeDial`, always early-bound. Whatever the redial's outcome, the customer stays held for the
+  outcome (`parkRedialContact` through the guarded `parkForWriteUp`, no retry charge) and the
+  agent lands in wrap-up on the redial; a failure after the take reopens the wrap-up (a fresh
+  window). Where wrap-up cannot reopen, `releaseOwingOutcome` holds the agent on `break` (or
+  `offline` with no station), never the pool. From the take until wrap-up reopens,
+  `/available`, force-available and `/leave` refuse (`hasRedialInFlight`, WR11); a station
+  reconnect mid-wrap-up comes back `wrapup` so the first Redial works. A redial whose dial
+  outcome is unknown reopens wrap-up with no further redial offered (WR9). Stats count each
+  conversation once (`CONVERSATION_ATTEMPT_SQL`) and report redials as `attempts_redialed`
+  (WR12). In media-worker mode the redial dispatches in the worker that owns the station (WR13).
 - **Reaper** (`reaper.ts`). On startup and every 60 s, closes attempts nobody owns: liveness is
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
   dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded
@@ -317,7 +338,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `no_disposition` when one was owed and releases the contact through the outcome policy, in one
   statement that locks both rows and writes only while the attempt has no disposition and the
   contact is still parked `connected` for it (no newer attempt, no soft-phone claim); it counts
-  only the closes that landed.
+  only the closes that landed. An un-dispositioned wrap-up redial is swept like a connected call.
 - **Disposition** (`api/routes/agency/attempts.ts`). `recordDisposition` is one guarded UPDATE:
   the same code again is a successful replay, a different code a 409. The contact write after it
   (`AgencyContactRepository.releaseFromDisposition`) is one statement that lands only while the
@@ -517,7 +538,8 @@ a rate-limit key and never an auth input.
   and the numbered migrations after it (0002: the two telephony-credential tables; 0003: the
   dialer's attempt and contact indexes; 0004: the in-flight contacts index the reaper's
   stranded-contact sweep reads; 0005: the soft phone; 0006: `agency_agent_sessions.client_kind`;
-  0007: `agency_ingest_jobs.dedupe_column`),
+  0007: `agency_ingest_jobs.dedupe_column`; 0008: wrap-up redial, `agency_campaigns.allow_wrapup_redial`
+  and the attempt's `redial_of_attempt_id` / `redial_number`),
   all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`: `agency.repository.ts`, a barrel over `agency/`). Repository

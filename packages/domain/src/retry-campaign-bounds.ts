@@ -93,7 +93,7 @@ export const PRIOR_ATTEMPT_LIMIT = 20;
  * ── Why it lives in this leaf and not in the route that uses it ────────────
  * It was a `const` inside the route-registration closure, which made the one
  * list the contract pins unreachable by any test and by the repository it
- * feeds — an integration test then has to hand-copy seventeen column names to
+ * feeds — an integration test then has to hand-copy eighteen column names to
  * build the object the route builds, which is the very drift the `satisfies`
  * below exists to prevent, reintroduced in the fixture. Importing the ROUTE
  * module to reach it is not an option either: that pulls in `src/config`, whose
@@ -115,7 +115,7 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
   'calling_window_start', 'calling_window_end', 'calling_days', 'default_timezone',
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'context_display', 'break_reasons', 'record_calls', 'analysis_profile_id',
-  'abandon_announcement_id', 'abandonment_ceiling_pct',
+  'abandon_announcement_id', 'abandonment_ceiling_pct', 'allow_wrapup_redial',
 ] as const;
 
 /**

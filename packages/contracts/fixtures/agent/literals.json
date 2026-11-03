@@ -194,7 +194,13 @@
       "campaign_not_running",
       "feature_disabled",
       "not_staffed",
-      "state_changing"
+      "state_changing",
+      "redial_not_allowed",
+      "redial_limit_reached",
+      "disposition_already_submitted",
+      "redial_blocked_dnc",
+      "redial_blocked_calling_hours",
+      "redial_blocked"
     ]
   },
   "roles": {

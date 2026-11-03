@@ -228,6 +228,22 @@ void main() {
           wrapup: wrapup(),
           actionError: 'That outcome is no longer available.',
         ),
+        // Wrap-up redial: Redial beside Save, and the redial's own call.
+        station(
+          phase: AgentPhase.wrapup,
+          call: call(bridgedAt: t0),
+          release: hungUpRelease,
+          wrapup: WrapupView(
+            endsAt: t0.add(const Duration(seconds: 30)),
+            secondsTotal: 30,
+            hold: WrapupHold.none,
+            dispositionSubmitted: false,
+            autoReturn: true,
+            redialRemaining: 2,
+          ),
+          actionError: 'This number is on a Do Not Call list, so it can’t be redialled. Save the outcome.',
+        ),
+        station(phase: AgentPhase.reserved, call: call(countdown: 3, redialNumber: 1, redialLimit: 2)),
         station(link: StationLink.superseded),
       ];
       final h = await pumpStation(tester, views.first, textScale: 2, size: const Size(360, 640));
@@ -278,6 +294,29 @@ void main() {
       expect(mute.label, 'Mute');
       expect(mute.flagsCollection.isToggled, Tristate.isTrue);
       expect(tester.getSemantics(find.byKey(const Key('control-dnc'))).label, 'Mark DNC');
+      semantics.dispose();
+    });
+
+    testWidgets('Redial says what it leaves to a screen reader, and when it is spent', (tester) async {
+      final semantics = tester.ensureSemantics();
+      WrapupView w(int remaining) => WrapupView(
+        endsAt: t0.add(const Duration(seconds: 30)),
+        secondsTotal: 30,
+        hold: WrapupHold.none,
+        dispositionSubmitted: false,
+        autoReturn: true,
+        redialRemaining: remaining,
+      );
+      StationView v(int remaining) =>
+          station(phase: AgentPhase.wrapup, call: call(bridgedAt: t0), release: hungUpRelease, wrapup: w(remaining));
+      final h = await pumpStation(tester, v(2));
+      final node = tester.getSemantics(find.byKey(const Key('redial')));
+      expect(node.label, 'Redial this customer, 2 redials left');
+      expect(node.flagsCollection.isEnabled, Tristate.isTrue);
+      await h.setView(v(0));
+      final spent = tester.getSemantics(find.byKey(const Key('redial')));
+      expect(spent.label, 'Redial, no redials left for this call');
+      expect(spent.flagsCollection.isEnabled, Tristate.isFalse);
       semantics.dispose();
     });
   });

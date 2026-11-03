@@ -42,6 +42,9 @@ const { repos } = vi.hoisted(() => ({
     contact: {
       unclaim: vi.fn().mockResolvedValue(undefined),
       markState: vi.fn().mockResolvedValue(undefined),
+      // The settle-time park of a conversation owed a write-up (guarded: only while the
+      // call still holds the contact). True: parked.
+      parkForWriteUp: vi.fn().mockResolvedValue(true),
       // Returns the POST-bump budget (the our-fault ledger). A number, not undefined: the
       // dial path decides the retry from whatever this returns.
       chargeAttempt: vi.fn().mockResolvedValue(1),
@@ -92,6 +95,10 @@ function fakeWrapup(opts: { entered?: boolean } = {}) {
     noteDisposition: vi.fn(async () => false),
     stop: vi.fn(),
     active: vi.fn(() => 0),
+    // The wrap-up redial's hooks (`wrapup-redial.ts`).
+    endRedialSetup: vi.fn(),
+    redialBeingSetUp: vi.fn(() => false),
+    setRedialRemaining: vi.fn(),
   };
 }
 
@@ -427,8 +434,11 @@ describe('AgencyDialer release contract', () => {
     const released = ws.sent.find((f) => f.event === 'released');
     expect(released.reason).toBe('completed');
     expect(released.requires_disposition).toBe(true);
-    // The contact waits for that disposition rather than being marked done.
-    expect(repos.contact.markState).toHaveBeenCalledWith('contact-1', 'connected', expect.anything());
+    // The contact waits for that disposition rather than being marked done: parked at
+    // the settle through the guarded write (only while the call still holds it), charged.
+    expect(repos.contact.parkForWriteUp).toHaveBeenCalledWith({
+      contactId: 'contact-1', attemptId: 'att-1', lastOutcome: 'connected', bumpAttempt: true,
+    });
   });
 
   it('does NOT park a connected contact when no disposition is owed', async () => {
@@ -602,10 +612,14 @@ describe('AgencyDialer release contract', () => {
     // catalog was never the broken case: whichever of the two the slow bridge write
     // lets go last, the contact is still held in `connected`. Asserted without
     // fixing their order for exactly that reason.
-    expect(states).toEqual(['connected', 'connected']);
-    // Exactly one of them is the settle-time re-affirm, and it still charges the
-    // attempt through `bump_attempt` rather than `chargeAttempt`.
-    expect(patches.filter(Boolean)).toEqual([{ last_outcome: 'connected', bump_attempt: true }]);
+    // The bridge's park is a `markState`; the settle-time re-affirm is the guarded
+    // `parkForWriteUp`, which still charges the attempt (`bumpAttempt`) rather than
+    // `chargeAttempt`.
+    expect(states).toEqual(['connected']);
+    expect(patches.filter(Boolean)).toEqual([]);
+    expect(repos.contact.parkForWriteUp).toHaveBeenCalledWith(
+      expect.objectContaining({ contactId: 'contact-1', lastOutcome: 'connected', bumpAttempt: true }));
+    expect(repos.contact.chargeAttempt).not.toHaveBeenCalled();
     expect(released.requires_disposition).toBe(true);
   });
 
@@ -1298,5 +1312,110 @@ describe('AgencyDialer · a failed `ended` settle still releases the agent', () 
     });
     await vi.waitFor(() => expect(wrapup.enter).toHaveBeenCalled());
     await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything()));
+  });
+});
+
+// ─── Wrap-up redial: the dialer's half ─────────────────────────────────────────
+//
+// A redial owes the CONVERSATION's outcome whatever its own, so its end puts the agent
+// back in wrap-up (never the pool), and a redial whose own dial outcome is unknown (the
+// carrier may have queued it and may still ring the customer) reopens wrap-up with NO
+// further redial offered.
+describe('AgencyDialer — wrap-up redial', () => {
+  const REDIAL_CAMPAIGN = {
+    ...CAMPAIGN, allow_wrapup_redial: true, wrapup_seconds: 30, wrapup_auto_return: true,
+    disposition_catalog: [{ code: 'sale', label: 'Sale' }],
+  };
+  const redialCmd = (): DialCommand => ({
+    ...makeCmd('s1', REDIAL_CAMPAIGN), redial: { ofAttemptId: 'att-0', number: 1 },
+  });
+  const carrierRefusal = (queued: boolean) => {
+    const cause = queued
+      ? new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 15_000, true)
+      : new Error('VoiceLink /v1/add_lead error 500: no');
+    const err = new WebRtcCallError(cause.message, 'telephony_init_failed', 502);
+    err.cause = cause;
+    return err;
+  };
+
+  async function failedRedial(queued: boolean, wrapup = fakeWrapup({ entered: true })) {
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    const setSpy = vi.spyOn(agents, 'set');
+    const bridge = fakeBridge();
+    bridge.createBridgedCall.mockRejectedValueOnce(carrierRefusal(queued));
+    const dialer = new AgencyDialer(bridge as any, stations, agents, wrapup as any, fakeBreaks() as any);
+    dialer.start();
+    await attachStation(stations, 's1', fakeWs());
+    await dialer.executeDial(redialCmd());
+    return { wrapup, setSpy };
+  }
+
+  it('a redial that failed with a KNOWN outcome reopens wrap-up offering the redials left, the customer held', async () => {
+    const { wrapup, setSpy } = await failedRedial(false);
+    expect(wrapup.endRedialSetup).toHaveBeenCalledWith('s1');
+    expect(wrapup.enter).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: 'att-1', requiresDisposition: true, redialRemaining: 1,
+    }));
+    expect(repos.contact.parkForWriteUp).toHaveBeenCalledWith(expect.objectContaining({ contactId: 'contact-1', attemptId: 'att-1' }));
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
+    expect(setSpy).not.toHaveBeenCalledWith('s1', 'available', expect.anything());
+  });
+
+  it('a redial whose dial outcome is UNKNOWN reopens wrap-up with no further redial offered', async () => {
+    const { wrapup, setSpy } = await failedRedial(true);
+    expect(wrapup.enter).toHaveBeenCalledWith(expect.objectContaining({
+      attemptId: 'att-1', requiresDisposition: true, redialRemaining: null,
+    }));
+    expect(setSpy).not.toHaveBeenCalledWith('s1', 'available', expect.anything());
+  });
+
+  it('a redial whose wrap-up cannot be reopened holds the agent on break, never available', async () => {
+    const wrapup = fakeWrapup({ entered: true });
+    wrapup.enter.mockRejectedValueOnce(new Error('redis down'));
+    const { setSpy } = await failedRedial(false, wrapup);
+    expect(setSpy).toHaveBeenCalledWith('s1', 'break', expect.anything());
+    expect(setSpy).not.toHaveBeenCalledWith('s1', 'available', expect.anything());
+  });
+
+  it('a redial that rang out and whose wrap-up cannot be opened is held on break, never released to available', async () => {
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    const setSpy = vi.spyOn(agents, 'set');
+    const bridge = fakeBridge();
+    const wrapup = fakeWrapup({ entered: true });
+    wrapup.enter.mockRejectedValueOnce(new Error('redis down'));
+    const dialer = new AgencyDialer(bridge as any, stations, agents, wrapup as any, fakeBreaks() as any);
+    dialer.start();
+    await attachStation(stations, 's1', fakeWs());
+    await dialer.executeDial(redialCmd());
+    bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'completed', outcome: 'no_answer', answered: false });
+    await vi.waitFor(() => expect(wrapup.enter).toHaveBeenCalled());
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'break', expect.anything()));
+    expect(setSpy).not.toHaveBeenCalledWith('s1', 'available', expect.anything());
+  });
+
+  it('an end that raced an in-flight redial dial withholds the redial offer until the dial answers', async () => {
+    for (const queued of [true, false]) {
+      vi.clearAllMocks();
+      const stations = new StationRegistry(null, '', 'r1');
+      const bridge = fakeBridge();
+      // The call ends (the agent hung up) while the dial is still in flight, and the
+      // dial then fails: outcome-unknown when the carrier may have queued it.
+      bridge.createBridgedCall.mockImplementationOnce(async () => {
+        bridge.emit({ callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'completed', outcome: 'ended_by_user', answered: false });
+        await new Promise((r) => setTimeout(r, 20));
+        throw carrierRefusal(queued);
+      });
+      const wrapup = fakeWrapup({ entered: true });
+      const dialer = new AgencyDialer(bridge as any, stations, reservedAgents(), wrapup as any, fakeBreaks() as any);
+      dialer.start();
+      await attachStation(stations, 's1', fakeWs());
+      await dialer.executeDial(redialCmd());
+      await vi.waitFor(() => expect(repos.contact.parkForWriteUp).toHaveBeenCalled());
+      expect(wrapup.enter).toHaveBeenCalledWith(expect.objectContaining({ attemptId: 'att-1', redialRemaining: null }));
+      if (queued) expect(wrapup.setRedialRemaining, 'outcome unknown keeps the offer withdrawn').not.toHaveBeenCalled();
+      else expect(wrapup.setRedialRemaining).toHaveBeenCalledWith('s1', 'att-1', 1);
+    }
   });
 });

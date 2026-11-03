@@ -14,11 +14,19 @@ import { reservedBreakReasonLabel } from '../../utils/agency/reservedBreakReason
 import { useAgencyNotes } from '../../hooks/useAgencyNotes';
 import { useBreakQueue } from '../../hooks/useBreakQueue';
 import { useDispositionSubmit } from '../../hooks/useDispositionSubmit';
+import { useWrapupRedial, type RedialPadBlock, type WrapupRedialState } from '../../hooks/useWrapupRedial';
+import { useRedialCarry } from '../../hooks/useRedialCarry';
+import { PAD_REDIALING_COPY } from '../../utils/agencyRedialCopy';
 import { NOTES_DISABLED_COPY, PAD_DISABLED_COPY, padGate } from '../../utils/agencyPadGate';
 import type { DispositionFormState, DispositionBlockReason } from '../../utils/agencyDispositionForm';
 import type { NotesStatus } from '../../utils/agencyNotes';
 import { trackAgencyPresenceChanged, trackAgencyPresenceRefused } from '../../analytics/events';
-import type { AgencyBreakReason, AgencyDisposition, AgencySessionBootstrap } from '../../types/agency';
+import type {
+  AgencyBreakReason,
+  AgencyDisposition,
+  AgencyReservedAttempt,
+  AgencySessionBootstrap,
+} from '../../types/agency';
 
 /**
  * The Agent Console's wiring, extracted from the page so the state machine is
@@ -130,6 +138,18 @@ export interface AgencyConsoleState {
   /** Switch this campaign session to the soft phone (`POST /sessions/:id/softphone`). */
   requestSoftphone: () => void;
   softphoneRejection: string | null;
+
+  /**
+   * Wrap-up redial: the Redial button beside the pad. While a redial is in flight
+   * the pad and its submit are locked (`padEnabled` false, `submit` refused).
+   */
+  redial: WrapupRedialState;
+  /**
+   * The attempt whose details stay on screen: live, retained through wrap-up, or —
+   * for a redial whose `reserved` never reached this console — the panel the agent
+   * pressed Redial on, restated for the redial (`useRedialCarry`).
+   */
+  panelAttempt: AgencyReservedAttempt | null;
 
   /** Non-blocking line in the idle slot after the next call completes. */
   lostDispositionNotice: string | null;
@@ -262,12 +282,32 @@ export function useAgencyConsole(
     setPresenceRefusal(null);
   }, [agentState, agentStateSince]);
 
+  /**
+   * Wrap-up redial: the attempt on screen redials an earlier one, read off the
+   * same attempt `currentAttemptId` names (live from `reserved` or
+   * `ready.active_attempt`, or retained through its wrap-up). The notes draft for
+   * that earlier attempt moves to this one.
+   *
+   * A redial that failed before its `reserved` reached this console has no panel of
+   * its own: its wrap-up arrives on an attempt the console never saw. `useRedialCarry`
+   * knows it from the press (and the 200), and supplies both the link and the panel.
+   */
+  const stationPanel = live?.attempt ?? retainedAttempt;
+  const redialCarry = useRedialCarry({ wrapup, live, panel: stationPanel });
+  const carried = redialCarry.carry && redialCarry.carry.toAttemptId === currentAttemptId ? redialCarry.carry : null;
+  const panelAttempt = stationPanel ?? carried?.panel ?? null;
+  const notesCarryFrom =
+    panelAttempt && panelAttempt.attempt_id === currentAttemptId
+      ? (panelAttempt.redial?.of_attempt_id ?? null)
+      : (carried?.fromAttemptId ?? null);
+
   const notes = useAgencyNotes({
     bootstrap,
     tenantId,
     accountId,
     currentAttemptId,
     acceptingWrites: notesEnabled,
+    carryFrom: notesCarryFrom,
   });
 
   /**
@@ -305,7 +345,39 @@ export function useAgencyConsole(
   });
   keysRemappedSink.current = disposition.noteKeysRemapped;
 
-  const padEnabled = gate.padUnlocked && disposition.waitingForDialer === null;
+  const padBlock: RedialPadBlock | null = !gate.padUnlocked
+    ? 'locked'
+    : disposition.submitting
+      ? 'saving'
+      : disposition.dispositionSubmitted || disposition.waitingForDialer !== null
+        ? 'saved'
+        : null;
+  const redial = useWrapupRedial({
+    bootstrap,
+    tenantId,
+    accountId,
+    wrapup,
+    live,
+    connection,
+    dialing: station.dialing,
+    padBlock,
+    announce: setAnnouncement,
+    carry: redialCarry.recorder,
+  });
+
+  /**
+   * A redial in flight locks the pad: an outcome saved now would land on the call
+   * being redialed, which the server has already closed. A refused redial frees it.
+   */
+  const padEnabled = gate.padUnlocked && disposition.waitingForDialer === null && !redial.inFlight;
+  const { submit: submitDisposition } = disposition;
+  const { isInFlight: redialInFlight } = redial;
+  const submit = useCallback(() => {
+    // Read synchronously: the notes field's `Ctrl+Enter` reaches here without
+    // going near the disabled Save button.
+    if (redialInFlight()) return;
+    submitDisposition();
+  }, [redialInFlight, submitDisposition]);
 
   // ── Presence ──────────────────────────────────────────────────────────────
   const goAvailable = useCallback(
@@ -407,12 +479,14 @@ export function useAgencyConsole(
     // A disabled control always carries a *true* stated reason. "available when
     // connected" is a lie once the pad is locked because the save landed and the
     // dialer has gone quiet.
-    padDisabledReason: padEnabled ? null : (disposition.waitingForDialer ?? PAD_DISABLED_COPY),
+    padDisabledReason: padEnabled
+      ? null
+      : (disposition.waitingForDialer ?? (redial.inFlight ? PAD_REDIALING_COPY : PAD_DISABLED_COPY)),
     padRejection: disposition.padRejection,
     keysRemapped: disposition.keysRemapped,
     submitting: disposition.submitting,
     dispositionSubmitted: disposition.dispositionSubmitted,
-    submit: disposition.submit,
+    submit,
     noteCodeSelectionMethod: disposition.noteCodeSelectionMethod,
     waitingForDialer: disposition.waitingForDialer,
     notes: notes.notes,
@@ -436,6 +510,8 @@ export function useAgencyConsole(
     pendingSoftphone: breaks.pendingBreakCode === SOFTPHONE_BREAK_REASON,
     requestSoftphone: breaks.requestSoftphone,
     softphoneRejection: breaks.softphoneRejection,
+    redial,
+    panelAttempt,
     lostDispositionNotice: disposition.lostDispositionNotice,
     announcement,
   };
