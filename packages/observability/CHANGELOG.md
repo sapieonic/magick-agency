@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.2.0...observability-v0.3.0) (2026-11-03)
+
+
+### Features
+
+* **server,console:** carry 400–500 simultaneous calls on one host ([#29](https://github.com/sapieonic/magick-agency/issues/29)) ([16ebb23](https://github.com/sapieonic/magick-agency/commit/16ebb233721a8bd6aedb05f795005fdb95fd845c))
+
 ## [0.2.0](https://github.com/sapieonic/magick-agency/compare/observability-v0.1.0...observability-v0.2.0) (2026-11-01)
 
 
