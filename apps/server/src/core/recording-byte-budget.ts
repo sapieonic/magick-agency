@@ -19,6 +19,12 @@
  * so a large reservation is not starved by a stream of small ones. A single
  * reservation is clamped to the total, so it can always be granted eventually.
  *
+ * A wait that nobody wants any more leaves the line at once: releasing a lease whose grow
+ * is waiting removes that grow from the line (its `growTo` resolves holding nothing), and
+ * an `acquire` whose `signal` aborts does the same and rejects. Either way the waiters
+ * behind it are served at once if they now fit, and no stale place in line can later
+ * take bytes for a lease nobody holds.
+ *
  * This is accounting, not a hard RSS cap: a released `Buffer` is freed when the GC
  * runs, not when the lease drops. It bounds what the worker asks for, which is what
  * concurrency × recording size would otherwise leave unbounded.
@@ -35,7 +41,10 @@ export interface RecordingLease {
    * its turn. A no-op shrink when `bytes` is not more than it holds.
    */
   growTo(bytes: number): Promise<void>;
-  /** Give everything back. Idempotent; a grow still waiting is cancelled. */
+  /**
+   * Give everything back. Idempotent. A grow still waiting is taken out of the line and
+   * resolves holding nothing, and the waiters behind it are served at once if they fit.
+   */
   release(): void;
 }
 
@@ -56,8 +65,12 @@ export interface RecordingByteBudgetHooks {
 
 interface Waiter {
   bytes: number;
+  /** Called when the bytes are added to the reserved total on the waiter's behalf. */
   grant: () => void;
 }
+
+/** @internal Leave the line; a no-op once granted (the bytes are then the caller's to give back). */
+export type CancelWait = () => void;
 
 export class RecordingByteBudget {
   private reserved = 0;
@@ -90,29 +103,62 @@ export class RecordingByteBudget {
     return new Lease(this, n);
   }
 
-  /** A lease for `bytes`, waiting in line when the budget is spent. */
-  async acquire(bytes: number): Promise<RecordingLease> {
+  /**
+   * A lease for `bytes`, waiting in line when the budget is spent. When `signal` aborts
+   * before the lease is granted, the wait leaves the line, anything already granted is
+   * given back, and the promise rejects with the signal's reason: an abandoned wait never
+   * takes bytes later.
+   */
+  async acquire(bytes: number, opts: { signal?: AbortSignal } = {}): Promise<RecordingLease> {
+    const { signal } = opts;
+    signal?.throwIfAborted();
     const lease = new Lease(this, 0);
-    await lease.growTo(bytes);
+    const abandon = (): void => lease.release();
+    signal?.addEventListener('abort', abandon, { once: true });
+    try {
+      await lease.growTo(bytes);
+    } finally {
+      signal?.removeEventListener('abort', abandon);
+    }
+    if (signal?.aborted) {
+      lease.release();
+      throw signal.reason;
+    }
     return lease;
   }
 
-  /** @internal Lease → budget: wait for `n` bytes. */
-  take(n: number): Promise<void> {
+  /**
+   * @internal Lease → budget: `n` bytes for `grant`. Granted at once (`grant` runs before
+   * this returns, and the result is null) when nobody waits and they fit; otherwise the
+   * caller joins the line and gets back the way to leave it.
+   */
+  take(n: number, grant: () => void): CancelWait | null {
     if (this.waiters.length === 0 && this.reserved + n <= this.totalBytes) {
       this.add(n);
-      return Promise.resolve();
+      grant();
+      return null;
     }
     this.hooks.onWait?.();
-    return new Promise<void>((grant) => {
-      this.waiters.push({ bytes: n, grant });
-    });
+    const waiter: Waiter = { bytes: n, grant };
+    this.waiters.push(waiter);
+    return () => {
+      const at = this.waiters.indexOf(waiter);
+      if (at < 0) return;
+      this.waiters.splice(at, 1);
+      // The waiter that left may have been the head holding everyone behind it.
+      this.serve();
+    };
   }
 
   /** @internal Lease → budget: give `n` bytes back and serve the line. */
   give(n: number): void {
     if (n <= 0) return;
     this.add(-n);
+    this.serve();
+  }
+
+  /** Grant from the head of the line while the head fits. */
+  private serve(): void {
     while (this.waiters.length > 0 && this.reserved + this.waiters[0]!.bytes <= this.totalBytes) {
       const next = this.waiters.shift()!;
       this.add(next.bytes);
@@ -135,6 +181,8 @@ export class RecordingByteBudget {
 class Lease implements RecordingLease {
   private held: number;
   private released = false;
+  /** Leaves the line and settles the waiting grow, while a grow waits. */
+  private pending: (() => void) | null = null;
 
   constructor(private readonly budget: RecordingByteBudget, bytes: number) {
     this.held = bytes;
@@ -152,30 +200,43 @@ class Lease implements RecordingLease {
     this.budget.give(surplus);
   }
 
-  async growTo(bytes: number): Promise<void> {
-    if (this.released) return;
+  growTo(bytes: number): Promise<void> {
+    if (this.released) return Promise.resolve();
+    // A newer grow replaces one still waiting, so the lease never has two places in line.
+    this.pending?.();
     const target = this.budget.clamp(bytes);
     if (target <= this.held) {
       this.shrinkTo(target);
-      return;
+      return Promise.resolve();
     }
     // Hold nothing while waiting: two leases each holding a little and each waiting
     // for more than is left would otherwise wait for each other forever.
     const had = this.held;
     this.held = 0;
     this.budget.give(had);
-    await this.budget.take(target);
-    if (this.released) {
-      // Released while it waited: the grant is nobody's, hand it straight back.
-      this.budget.give(target);
-      return;
-    }
-    this.held = target;
+    return new Promise<void>((resolve) => {
+      // The bytes become the lease's in the same turn they leave the budget, so a
+      // release at any moment after the grant gives back exactly what was granted.
+      const leave = this.budget.take(target, () => {
+        this.pending = null;
+        this.held = target;
+        resolve();
+      });
+      if (leave) {
+        this.pending = () => {
+          this.pending = null;
+          leave();
+          resolve();
+        };
+      }
+    });
   }
 
   release(): void {
     if (this.released) return;
     this.released = true;
+    // Out of the line first: a dead waiter at its head would hold up every live one.
+    this.pending?.();
     const had = this.held;
     this.held = 0;
     this.budget.give(had);

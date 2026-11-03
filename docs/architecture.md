@@ -374,7 +374,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `FOR UPDATE SKIP LOCKED`, so several processes can share the queue. Before claiming, a slot
   reserves a worst-case recording on the recording byte budget
   (`core/recording-byte-budget.ts`, `DIALER_ANALYSIS_MEMORY_BUDGET_BYTES`); the runner shrinks
-  it to the real size. A vendor rate limit opens a process-wide pause with one probe after it
+  it to the real size. A wait nobody wants leaves the line at once (a released lease's grow, a
+  slot's budget wait at shutdown), so it never holds up the waiters behind it. A vendor rate limit opens a process-wide pause with one probe after it
   (`core/vendor-rate-limit-breaker.ts`). Shutdown stops new claims, then requeues the jobs in
   flight, generation-matched.
 - **Runner** (`core/dialer-analysis-runner.ts`): load the call, take config from the job's profile

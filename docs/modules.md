@@ -623,12 +623,12 @@ Files: `account-concurrency-guard.ts`, `concurrency-guard.ts`, `dialer-analysis-
 | `apps/server/test/unit/core/dialer-analysis-race.test.ts` | 4 |
 | `apps/server/test/unit/core/dialer-analysis-runner.test.ts` | 39 |
 | `apps/server/test/unit/core/dialer-analysis-worker-handle.test.ts` | 3 |
-| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 21 |
+| `apps/server/test/unit/core/dialer-analysis-worker.test.ts` | 22 |
 | `apps/server/test/unit/core/group-lease-hooks.test.ts` | 1 |
 | `apps/server/test/unit/core/pace-schedule.test.ts` | 15 |
 | `apps/server/test/unit/core/paced-audio-streamer.test.ts` | 15 |
 | `apps/server/test/unit/core/provider-concurrency-guard.test.ts` | 19 |
-| `apps/server/test/unit/core/recording-byte-budget.test.ts` | 6 |
+| `apps/server/test/unit/core/recording-byte-budget.test.ts` | 10 |
 | `apps/server/test/unit/core/telephony-concurrency-group.test.ts` | 1 |
 | `apps/server/test/unit/core/telephony-guard-host.test.ts` | 31 |
 | `apps/server/test/unit/core/telephony-release-wiring.test.ts` | 2 |

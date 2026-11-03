@@ -2,7 +2,8 @@
  * RecordingByteBudget: the analysis worker's bound on recording bytes held in memory.
  * Pins: the total is never exceeded, waiters are served first in first out, a growing
  * lease holds nothing while it waits (so two growers cannot deadlock), a lease released
- * while it waits hands its grant straight back, and one reservation is clamped to the total.
+ * while it waits leaves the line (so it never holds up a live waiter and never takes bytes
+ * later), an aborted acquire does the same, and one reservation is clamped to the total.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { RecordingByteBudget, UNBUDGETED_LEASE } from '../../../src/core/recording-byte-budget.js';
@@ -69,6 +70,96 @@ describe('RecordingByteBudget', () => {
     a.release();
     await grown;
     expect(waiting.bytes).toBe(0);
+    expect(b.reservedBytes).toBe(0);
+  });
+
+  /**
+   * A released lease's waiting grow leaves the line. Strict FIFO otherwise serves the dead
+   * waiter first: it takes its bytes only to hand them back, and every live waiter behind it
+   * waits until enough frees for the dead request. Mutation-checked: dropping the cancel in
+   * `release()` leaves `live` waiting and reds this.
+   */
+  it('a released lease\'s waiting grow does not hold up the live waiter behind it', async () => {
+    const onReservedChange = vi.fn();
+    const b = new RecordingByteBudget(100, { onReservedChange });
+    const a = b.tryAcquire(90)!;
+    const dead = b.tryAcquire(0)!;
+    const deadGrow = dead.growTo(80); // 10 free: waits
+    let liveLease: Awaited<ReturnType<typeof b.acquire>> | null = null;
+    const live = b.acquire(10).then((l) => { liveLease = l; return l; }); // fits, but FIFO: behind the dead grow
+    await tick();
+    expect(liveLease).toBeNull();
+    expect(b.waiting).toBe(2);
+
+    dead.release();
+    await deadGrow; // settles at once, holding nothing
+    await tick();
+    expect(dead.bytes).toBe(0);
+    expect(b.waiting).toBe(0);
+    expect(liveLease).not.toBeNull();
+    expect(b.reservedBytes).toBe(100);
+
+    // Freeing everything later grants nothing to the dead lease, and nothing is lost or
+    // double-freed: the total walks back to zero exactly.
+    a.release();
+    (await live).release();
+    expect(dead.bytes).toBe(0);
+    expect(b.reservedBytes).toBe(0);
+    const totals = onReservedChange.mock.calls.map((c) => c[0] as number);
+    expect(Math.min(...totals)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...totals)).toBeLessThanOrEqual(100);
+    expect(onReservedChange).not.toHaveBeenCalledWith(80); // the dead grow was never granted
+  });
+
+  it('a grow granted and then released at once gives back exactly what it was granted', async () => {
+    const b = new RecordingByteBudget(100);
+    const a = b.tryAcquire(100)!;
+    const l = b.tryAcquire(0)!;
+    const grown = l.growTo(60);
+    a.release(); // grants l's 60 synchronously
+    expect(l.bytes).toBe(60);
+    l.release(); // before the grow's continuation has run
+    await grown;
+    expect(l.bytes).toBe(0);
+    expect(b.reservedBytes).toBe(0);
+  });
+
+  it('a second grow while one waits replaces it: one place in line, exact accounting', async () => {
+    const b = new RecordingByteBudget(100);
+    const a = b.tryAcquire(100)!;
+    const l = b.tryAcquire(0)!;
+    const first = l.growTo(70);
+    const second = l.growTo(40);
+    await first; // replaced: settled holding nothing
+    expect(b.waiting).toBe(1);
+    a.release();
+    await second;
+    expect(l.bytes).toBe(40);
+    expect(b.reservedBytes).toBe(40);
+    l.release();
+    expect(b.reservedBytes).toBe(0);
+  });
+
+  it('an acquire whose signal aborts leaves the line, rejects, and never takes bytes later', async () => {
+    const b = new RecordingByteBudget(100);
+    const a = b.tryAcquire(95)!;
+    const ctrl = new AbortController();
+    const abandoned = b.acquire(50, { signal: ctrl.signal });
+    const live = b.acquire(5);
+    expect(b.waiting).toBe(2);
+
+    ctrl.abort(new Error('worker stopping'));
+    await expect(abandoned).rejects.toThrow('worker stopping');
+    const liveLease = await live; // served at once: the head of the line was the abandoned wait
+    expect(b.waiting).toBe(0);
+    expect(b.reservedBytes).toBe(100);
+
+    a.release();
+    liveLease.release();
+    expect(b.reservedBytes).toBe(0);
+    // Already aborted: refused without joining the line.
+    await expect(b.acquire(1, { signal: ctrl.signal })).rejects.toThrow('worker stopping');
+    expect(b.waiting).toBe(0);
     expect(b.reservedBytes).toBe(0);
   });
 
