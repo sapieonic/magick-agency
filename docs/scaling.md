@@ -522,7 +522,7 @@ runs. The worker trusts a command only from its parent channel.
 | `agent.return_reserved` | req | `{sessionId}` | 5 s, then `offline` write in P |
 | `station.broadcast` | event | `{campaignId, frame}` | — |
 | `concurrency.invalidate` | event | `{tenantId, accountId}`: drop the provider guard's 5 s `limitCache` and the degraded-mode local cache, as the seam does in P | — |
-| `reaper.snapshot` | req | `{}` → `{activeAttemptIds, unrecordedEnds, manualActiveIds, activeCallIds}` | 5 s, then **skip the sweep** (fail closed) |
+| `reaper.snapshot` | req | `{}` → `{activeAttemptIds, unrecordedEnds: [{attemptId, dialOutcomeUnknown}], manualActiveIds, activeCallIds}` | 5 s, then **skip the sweep** (fail closed) |
 | `reaper.forget_unrecorded` | event | `{attemptIds}` | — |
 | `softphone.closed_by_sweep` | req | `{rows}` (sent to each row's session slot) | 10 s |
 | `health.ping` | req | `{}` → `{elu, stations, liveCalls, draining}` | 1 s |
@@ -659,7 +659,7 @@ election is needed.
 | `reapOnStartup` (all non-terminal attempts dead, `markAllOffline`, manual startup sweep) | P, **before any media worker is forked**, so its "dead by definition" premise still holds | — |
 | `reapSlot(k)` (new, §6.1): the startup rule narrowed to one dead worker | P, on worker exit, **before** re-forking slot *k* | the dead slot's sessions by `slotFor` |
 | `sweepOnce` (leaked attempts) | P | `owned` = union of every worker's `reaper.snapshot` `activeAttemptIds`; `isAgentHeldSomewhere` per §5.2; a snapshot timeout skips this cycle |
-| `reapUnrecordedEnds` | P | snapshots' `unrecordedEnds`; `reaper.forget_unrecorded` back to each worker |
+| `reapUnrecordedEnds` | P | snapshots' `unrecordedEnds`; `reaper.forget_unrecorded` back to each worker. The dialer saw these end, so a contact is dialable at once; only one whose dial it reported `dialOutcomeUnknown` waits 15 min after `dialed_at` |
 | `sweepLapsedWrapups`, `sweepStrandedContacts` | P | none (database) |
 | `sweepManualCalls` | P | `manualActiveIds` union; `softphone.closed_by_sweep` to each row's slot |
 | Guard self-heal reconcile (counters vs lock keys, Redis-global) | P | woken by `voice.wake_self_heal` |

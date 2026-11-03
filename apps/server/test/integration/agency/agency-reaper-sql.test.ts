@@ -827,4 +827,55 @@ describe('a reaped dial with an unknown outcome is not redialled before the carr
     expect(await reaper().sweepOnce()).toBe(4);
     await expectRule(ids);
   });
+
+  /**
+   * The sweep of the dialer's unrecorded ends is different: the dialer saw these end, so the
+   * row's shape (dialled, never answered) does not mean the outcome is unknown. A no-answer
+   * whose `ended` write failed is over at the carrier, and holding its contact 15 minutes
+   * after a transient write failure stalls a campaign near the end of its list. Only a dial
+   * the dialer itself reported outcome-unknown keeps the rule.
+   * Mutation-checked: passing `reapedRedialNotBefore(attempt)` for every unrecorded end
+   * (the code before the fix) reds the first contact here.
+   */
+  it('the sweep of the dialer\'s unrecorded ends defers only a dial it reported outcome-unknown', async () => {
+    const campaignId = (await insertAgencyCampaign({ status: 'running' })).id as string;
+    const session = (await insertAgentSession(campaignId)).id as string;
+    const ringing = async (row: number) => {
+      const c = await insertAgencyContact(campaignId, { state: 'in_flight', source_row_number: row });
+      const a = await insertAgencyAttempt(campaignId, c.id as string, { reserved_agent_id: session, state: 'dialing' });
+      await getTestPool().query(
+        `UPDATE agency_call_attempts SET dialed_at = now() - make_interval(secs => 10) WHERE id = $1`, [a.id]);
+      return { contactId: c.id as string, attemptId: a.id as string };
+    };
+    const noAnswer = await ringing(1);
+    const unknown = await ringing(2);
+    const forget = vi.fn();
+
+    const reaped = await reaper({
+      // The agent is back in the pool with their station connected: only this arm can end them.
+      ownerOf: async () => 'replica-A',
+      unrecordedEnds: {
+        entries: () => [
+          { attemptId: noAnswer.attemptId, dialOutcomeUnknown: false },
+          { attemptId: unknown.attemptId, dialOutcomeUnknown: true },
+        ],
+        forget,
+      },
+    }).sweepOnce();
+
+    expect(reaped).toBe(2);
+    expect(forget).toHaveBeenCalledWith([noAnswer.attemptId, unknown.attemptId]);
+    const over = await redial(noAnswer.contactId);
+    expect(over.state).toBe('pending');
+    expect(over.from_now).toBeLessThanOrEqual(1);
+    expect(over.from_now).toBeGreaterThan(-60);
+    const held = await redial(unknown.contactId);
+    expect(held.state).toBe('pending');
+    expect(held.after_dial).toBeCloseTo(DELAY_SECONDS, 0);
+    const { rows } = await getTestPool().query<{ state: string; outcome: string }>(
+      'SELECT state, outcome FROM agency_call_attempts WHERE id = ANY($1::uuid[]) ORDER BY id',
+      [[noAnswer.attemptId, unknown.attemptId]],
+    );
+    expect(rows.map((r) => `${r.state}/${r.outcome}`)).toEqual(['ended/orphaned', 'ended/orphaned']);
+  });
 });

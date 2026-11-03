@@ -18,6 +18,7 @@ import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 import { parsePacingInvalidationEvent, type PacingInvalidationEvent } from '../agency/pacing/invalidation-bus.js';
 import type { DialCommand } from '../agency/dial-dispatcher.js';
 import type { AgencyManualCallRecord } from '../db/models/agency.model.js';
+import type { UnrecordedEnd } from '../agency/reaper.js';
 import { CHILD_ROLES, type ChildRole } from './roles.js';
 import { decodeDialCommand, decodeManualCallRecord } from './record-codecs.js';
 
@@ -233,7 +234,8 @@ export interface SessionBody { sessionId: string }
 export interface CallLease { callId: string; concurrencyKey: string; tenantId: string; accountId: string; provider: string }
 export interface ReaperSnapshotBody {
   activeAttemptIds: string[];
-  unrecordedEnds: string[];
+  /** Attempts the worker's dialer could not write `ended`, each saying whether its dial's outcome is unknown. */
+  unrecordedEnds: UnrecordedEnd[];
   manualActiveIds: string[];
   activeCallIds: string[];
   leases: CallLease[];
@@ -309,10 +311,20 @@ export function parseCarrierWebhookAnswer(raw: unknown): CarrierWebhookAnswer | 
 export function parseSessionBody(raw: unknown): SessionBody | null {
   return isRecord(raw) && isId(raw['sessionId']) ? { sessionId: raw['sessionId'] } : null;
 }
+function parseUnrecordedEnds(raw: unknown): UnrecordedEnd[] | null {
+  if (!Array.isArray(raw) || raw.length > 100_000) return null;
+  const out: UnrecordedEnd[] = [];
+  for (const e of raw) {
+    if (!isRecord(e) || !isId(e['attemptId']) || typeof e['dialOutcomeUnknown'] !== 'boolean') return null;
+    out.push({ attemptId: e['attemptId'], dialOutcomeUnknown: e['dialOutcomeUnknown'] });
+  }
+  return out;
+}
 export function parseReaperSnapshot(raw: unknown): ReaperSnapshotBody | null {
   if (!isRecord(raw)) return null;
-  const { activeAttemptIds, unrecordedEnds, manualActiveIds, activeCallIds, leases } = raw;
-  if (!isIdList(activeAttemptIds) || !isIdList(unrecordedEnds) || !isIdList(manualActiveIds) || !isIdList(activeCallIds)) return null;
+  const { activeAttemptIds, manualActiveIds, activeCallIds, leases } = raw;
+  const unrecordedEnds = parseUnrecordedEnds(raw['unrecordedEnds']);
+  if (!isIdList(activeAttemptIds) || !unrecordedEnds || !isIdList(manualActiveIds) || !isIdList(activeCallIds)) return null;
   if (!Array.isArray(leases)) return null;
   const out: CallLease[] = [];
   for (const l of leases) {

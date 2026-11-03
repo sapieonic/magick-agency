@@ -21,6 +21,13 @@
  */
 export const DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS = 15 * 60_000;
 
+/**
+ * The `errorCode` the bridge ends a call with when its dial failed with an unknown outcome
+ * (`webrtc-bridge-manager.ts`, `telephony_init_failed`): how a lifecycle observer, which sees
+ * the code and not the error, tells such a dial from one that plainly failed.
+ */
+export const DIAL_OUTCOME_UNKNOWN_ERROR_CODE = 'TELEPHONY_INIT_OUTCOME_UNKNOWN';
+
 /** A carrier REST request abandoned after its timeout. */
 export class CarrierRequestTimeoutError extends Error {
   constructor(

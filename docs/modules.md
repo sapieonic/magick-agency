@@ -81,7 +81,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-migration.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | ~17 |
+| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | 18 |
 | `apps/server/test/integration/agency/agency-retry-idempotency.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
@@ -139,7 +139,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/agency-csv-ingest.streaming.test.ts` | 2 |
 | `apps/server/test/unit/agency/agency-csv-ingest.test.ts` | 65 |
 | `apps/server/test/unit/agency/agency-dialer-lineage.test.ts` | 5 |
-| `apps/server/test/unit/agency/agency-dialer.test.ts` | 37 |
+| `apps/server/test/unit/agency/agency-dialer.test.ts` | 41 |
 | `apps/server/test/unit/agency/agency-ingest-job.repository.test.ts` | 35 |
 | `apps/server/test/unit/agency/agency-ingest-keys.test.ts` | 10 |
 | `apps/server/test/unit/agency/agency-ingest-restart-contract.test.ts` | 9 |
@@ -223,7 +223,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 22 |
-| `apps/server/test/unit/agency/reaper.test.ts` | 43 |
+| `apps/server/test/unit/agency/reaper.test.ts` | 44 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
@@ -563,7 +563,7 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
 | `apps/server/test/unit/cluster/ipc-channel.test.ts` | 15 |
-| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 10 |
+| `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 11 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 14 |
 | `apps/server/test/unit/cluster/media-cluster.test.ts` | 6 |
 | `apps/server/test/unit/cluster/primary.test.ts` | 3 |

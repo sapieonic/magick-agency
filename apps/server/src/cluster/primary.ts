@@ -94,7 +94,7 @@ export async function prepareMediaPrimary(ctx: AppContext, opts: PrepareMediaPri
       },
       activeAttemptIds: () => latest.activeAttemptIds,
       ownerOf: (sessionId) => cluster.directory.ownerOf(sessionId),
-      unrecordedEnds: { ids: () => latest.unrecordedEnds, forget: (ids) => cluster.forgetUnrecorded(ids) },
+      unrecordedEnds: { entries: () => latest.unrecordedEnds, forget: (ids) => cluster.forgetUnrecorded(ids) },
       manual: { activeIds: () => latest.manualActiveIds, onClosed: (rows) => cluster.manualCallsClosed(rows) },
     },
   });

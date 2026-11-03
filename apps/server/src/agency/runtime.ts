@@ -144,7 +144,7 @@ export class AgencyRuntime {
       },
       ownerOf: (sessionId) => this.stations.ownerOf(sessionId),
       unrecordedEnds: {
-        ids: () => this.dialer.unrecordedEndedAttemptIds(),
+        entries: () => this.dialer.unrecordedEndedAttempts(),
         forget: (attemptIds) => this.dialer.forgetUnrecordedEnds(attemptIds),
       },
       clearAgent: (sessionId) => this.agents.clear(sessionId),

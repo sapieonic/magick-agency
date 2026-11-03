@@ -56,6 +56,8 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 }));
 
 import { AgencyDialer } from '../../../src/agency/agency-dialer.js';
+import { WebRtcCallError } from '../../../src/core/webrtc-bridge-manager.js';
+import { CarrierRequestTimeoutError } from '../../../src/telephony/carrier-errors.js';
 import { AgentStateMachine } from '../../../src/agency/agent-state-machine.js';
 import { StationRegistry } from '../../../src/agency/station-registry.js';
 import { WrapupManager } from '../../../src/agency/wrapup-manager.js';
@@ -1201,9 +1203,68 @@ describe('AgencyDialer · a failed `ended` settle still releases the agent', () 
       'contact-1', expect.anything(), expect.anything(),
     );
     expect(ws.sent.find((f) => f.event === 'released')?.requires_disposition).toBe(false);
-    expect(dialer.unrecordedEndedAttemptIds()).toEqual(['att-1']);
+    expect(dialer.unrecordedEndedAttempts()).toEqual([{ attemptId: 'att-1', dialOutcomeUnknown: false }]);
     dialer.forgetUnrecordedEnds(['att-1']);
-    expect(dialer.unrecordedEndedAttemptIds()).toEqual([]);
+    expect(dialer.unrecordedEndedAttempts()).toEqual([]);
+  });
+
+  /**
+   * What the reaper is told about an unrecorded end decides whether the contact waits out
+   * the carrier rule (15 min). A no-answer the bridge saw end is over; only a dial that
+   * failed with an unknown outcome (the bridge's `TELEPHONY_INIT_OUTCOME_UNKNOWN`, or the
+   * dial's own outcome-unknown rejection) may still be placed by the carrier.
+   * Mutation-checked: reporting every unrecorded end as known reds the second and third.
+   */
+  it('hands a no-answer whose row write failed to the reaper as a known end', async () => {
+    const { setSpy, dialer } = await dialedAndEnded(() => {
+      repos.attempt.setState.mockImplementationOnce(async () => { throw new Error('pg down'); });
+    });
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything()));
+    expect(dialer.unrecordedEndedAttempts()).toEqual([{ attemptId: 'att-1', dialOutcomeUnknown: false }]);
+  });
+
+  it('hands a dial the bridge ended outcome-unknown to the reaper as outcome-unknown', async () => {
+    const stations = new StationRegistry(null, '', 'r1');
+    const agents = reservedAgents();
+    const setSpy = vi.spyOn(agents, 'set');
+    const bridge = fakeBridge();
+    const dialer = new AgencyDialer(bridge as any, stations, agents, fakeWrapup() as any, fakeBreaks() as any);
+    dialer.start();
+    await attachStation(stations, 's1', fakeWs());
+    await dialer.executeDial(makeCmd('s1'));
+    repos.attempt.setState.mockImplementationOnce(async () => { throw new Error('pg down'); });
+    bridge.emit({
+      callId: 'call-1', correlationId: 'att-1', phase: 'ended', status: 'failed',
+      outcome: 'telephony_init_failed', errorCode: 'TELEPHONY_INIT_OUTCOME_UNKNOWN', answered: false,
+    });
+    await vi.waitFor(() => expect(setSpy).toHaveBeenCalledWith('s1', 'available', expect.anything()));
+    expect(dialer.unrecordedEndedAttempts()).toEqual([{ attemptId: 'att-1', dialOutcomeUnknown: true }]);
+  });
+
+  it('hands an abandoned dial to the reaper as outcome-unknown only when the carrier may have queued it', async () => {
+    for (const [cause, unknown] of [
+      [new CarrierRequestTimeoutError('VoiceLink /v1/add_lead', 15_000, true), true],
+      [new Error('VoiceLink /v1/add_lead error 500: no'), false],
+    ] as const) {
+      const stations = new StationRegistry(null, '', 'r1');
+      const bridge = fakeBridge();
+      const refusal = new WebRtcCallError(cause.message, 'telephony_init_failed', 502);
+      refusal.cause = cause;
+      bridge.createBridgedCall.mockRejectedValueOnce(refusal);
+      const dialer = new AgencyDialer(bridge as any, stations, reservedAgents(), fakeWrapup() as any, fakeBreaks() as any);
+      dialer.start();
+      await attachStation(stations, 's1', fakeWs());
+      repos.attempt.setState.mockImplementation(async (_id: string, state: string) => {
+        if (state === 'ended') throw new Error('pg down');
+        return null;
+      });
+      try {
+        await dialer.executeDial(makeCmd('s1'));
+      } finally {
+        repos.attempt.setState.mockReset().mockResolvedValue(null);
+      }
+      expect(dialer.unrecordedEndedAttempts(), cause.message).toEqual([{ attemptId: 'att-1', dialOutcomeUnknown: unknown }]);
+    }
   });
 
   it('releases the agent when the contact settlement rejects', async () => {

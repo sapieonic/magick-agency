@@ -150,6 +150,7 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 }));
 
 import { AgencyReaper, type AgencyReaperDeps } from '../../../src/agency/reaper.js';
+import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../../src/telephony/carrier-errors.js';
 // The real meter provider, installed before `metrics.ts` creates its instruments:
 // the claim is about the value an export (or the `:9090` scrape) would read.
 const { reader } = await vi.hoisted(async () => {
@@ -279,8 +280,11 @@ describe('AgencyReaper startup', () => {
 });
 
 describe('AgencyReaper leak sweep — attempts the dialer could not end', () => {
-  function unrecorded(ids: string[]) {
-    return { ids: vi.fn(() => ids), forget: vi.fn() };
+  function unrecorded(ids: string[], outcomeUnknown: readonly string[] = []) {
+    return {
+      entries: vi.fn(() => ids.map((attemptId) => ({ attemptId, dialOutcomeUnknown: outcomeUnknown.includes(attemptId) }))),
+      forget: vi.fn(),
+    };
   }
 
   it('reaps them whatever their age and whoever holds the agent, then forgets them', async () => {
@@ -296,6 +300,32 @@ describe('AgencyReaper leak sweep — attempts the dialer could not end', () => 
     expect(ownerOf).not.toHaveBeenCalled();
     expect(repos.contact.markState).toHaveBeenCalledWith('c-u', 'pending', expect.objectContaining({ last_outcome: 'orphaned' }));
     expect(ends.forget).toHaveBeenCalledWith(['att-u']);
+  });
+
+  /**
+   * The dialer saw these end, so the outcome-unknown rule the other reaps read off the row
+   * (dialled, never answered) does not apply: a no-answer is over, and its contact is
+   * dialable at once. Only a dial the dialer reported outcome-unknown keeps the carrier
+   * rule. The SQL tier pins the same with real rows (`agency-reaper-sql.test.ts`).
+   */
+  it('requeues a known end at once even when its row reads dialled-and-never-answered', async () => {
+    const dialedAt = new Date(Date.now() - 10_000);
+    const row = { contact_id: 'c', tenant_id: 't1', campaign_id: 'camp-1', dialed_at: dialedAt, answered_at: null, bridged_at: null };
+    repos.attempt.reapByIds.mockResolvedValueOnce([
+      { ...row, id: 'att-known', contact_id: 'c-known' },
+      { ...row, id: 'att-unknown', contact_id: 'c-unknown' },
+    ]);
+    const before = Date.now();
+
+    await new AgencyReaper(noDeps({ unrecordedEnds: unrecorded(['att-known', 'att-unknown'], ['att-unknown']) })).sweepOnce();
+
+    const nextAt = (contactId: string) => {
+      const call = repos.contact.markState.mock.calls.find((c: unknown[]) => c[0] === contactId)!;
+      return (call[2] as { next_attempt_at: Date }).next_attempt_at.getTime();
+    };
+    expect(nextAt('c-known')).toBeGreaterThanOrEqual(before);
+    expect(nextAt('c-known')).toBeLessThanOrEqual(Date.now());
+    expect(nextAt('c-unknown')).toBe(dialedAt.getTime() + DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS);
   });
 
   it('keeps them for the next sweep when the reap itself fails', async () => {

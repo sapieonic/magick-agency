@@ -140,7 +140,7 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   // ── What the primary's sweeps need to know ───────────────────────────────
   channel.handle('reaper.snapshot', () => ({
     activeAttemptIds: runtime.dialer.activeAttemptIds(),
-    unrecordedEnds: runtime.dialer.unrecordedEndedAttemptIds(),
+    unrecordedEnds: runtime.dialer.unrecordedEndedAttempts(),
     manualActiveIds: runtime.manualDialer.activeManualCallIds(),
     activeCallIds: bridge.getActiveCallIds(),
     leases: bridge.heldLeases(),
