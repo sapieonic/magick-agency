@@ -16,7 +16,7 @@ import {
 import { validateAgencyCampaignConfig, issuesToDetails } from '../../../agency/agency-campaign-config.js';
 import { assertAssignmentSettingsAllowed } from '../../../agency/campaign-assignment-gate.js';
 import type { ConfigIssue } from '../../../agency/agency-campaign-config.js';
-import { fetchOwnedCoreCampaign, stringField } from '../helpers/core-campaign.js';
+import { fetchOwnedCoreCampaign, storedCampaignLoader, stringField } from '../helpers/core-campaign.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { AUDIT_FILTER_VALUE_MAX_CHARS } from './spine.js';
 import { resolveActorDisplayName } from './lifecycle.js';
@@ -364,7 +364,7 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
     if (!(await assertAssignmentSettingsAllowed(reply, parsed.data.config_overrides, {
       tenantId: request.tenantId!,
       accountId: request.accountId,
-    }))) return;
+    }, storedCampaignLoader(request, request.params.id)))) return;
 
     /*
      * The actor — this layer's fact, from the session.

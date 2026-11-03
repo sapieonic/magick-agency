@@ -11,7 +11,7 @@ import { assertBehavioralCapabilitiesForConfig } from '../../../agency/campaign-
 import { assertAssignmentSettingsAllowed } from '../../../agency/campaign-assignment-gate.js';
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
-import { fetchOwnedCoreCampaign, stringField } from '../helpers/core-campaign.js';
+import { fetchOwnedCoreCampaign, stringField, type OwnedCoreCampaign } from '../helpers/core-campaign.js';
 import {
   validateAgencyCampaignConfig,
   withCampaignConfigDefaults,
@@ -179,10 +179,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       accountId: request.accountId,
     }))) return;
     // Contact assignment (CA9), on the same object, for the same reason as above.
+    // The stored campaign, read at most once and only when asked: the assignment gate judges
+    // the body against it, and an `assignment_mode` change is audited with its `from`.
+    let storedRead: Promise<OwnedCoreCampaign> | null = null;
+    const stored = (): Promise<OwnedCoreCampaign> => (storedRead ??= fetchOwnedCoreCampaign(request, request.params.id));
+    // What the campaign already holds asks for nothing (a save after the flag was turned off).
     if (!(await assertAssignmentSettingsAllowed(reply, patchBody, {
       tenantId: request.tenantId!,
       accountId: request.accountId,
-    }))) return;
+    }, async () => { const probe = await stored(); return probe.ok ? probe.body : null; }))) return;
 
     // ── `assignment_mode`: the status rule is the handler's, the audit row is ours ──
     //
@@ -198,7 +203,7 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       && Object.hasOwn(patchBody, 'assignment_mode');
     let modeBefore: string | null = null;
     if (namesMode) {
-      const current = await fetchOwnedCoreCampaign(request, request.params.id);
+      const current = await stored();
       if (!current.ok) return reply.code(current.status).send(current.body);
       modeBefore = stringField(current.body, 'assignment_mode');
     }

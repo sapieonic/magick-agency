@@ -99,6 +99,9 @@ beforeEach(() => {
   core({});
 });
 
+/** The write calls that reached the internal handler (the stored-campaign read is a GET). */
+const writes = () => mocks.proxyToCore.mock.calls.map(([req]) => req.method as string).filter((m) => m !== 'GET');
+
 const surfaces = [
   { name: 'POST /campaigns', method: 'POST' as const, url: `${PREFIX}/campaigns` },
   { name: 'PATCH /campaigns/:id', method: 'PATCH' as const, url: `${PREFIX}/campaigns/c1` },
@@ -121,7 +124,7 @@ describe.each(surfaces)('$name — the contact-assignment flag gates the setting
     expect(res.json()).toMatchObject({ error: 'Feature Not Enabled', code: 'feature_disabled', details: { [field]: expect.any(String) } });
     expect(Object.keys(res.json().details)).toEqual([field]);
     expect(mocks.flagEnabled).toHaveBeenCalledWith(FLAGS.agency_contact_assignment_enabled, { tenantId: TENANT, accountId: ACCOUNT });
-    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
     await app.close();
   });
 
@@ -153,6 +156,85 @@ describe.each(surfaces)('$name — the contact-assignment flag gates the setting
     expect(res.json().details).toEqual({ assignment_mode: 'assignment_mode must be one of: pool, strict, preferred.' });
     expect(mocks.flagEnabled).not.toHaveBeenCalled();
     expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
+describe('flag off: what the campaign already holds asks for nothing (a save after the flag was turned off)', () => {
+  const STORED = {
+    id: 'c1', assignment_mode: 'strict', allow_agent_retry: true, agent_retry_rounds: 3,
+    disposition_catalog: [
+      { code: 'interested', label: 'Interested' },
+      { code: 'promise_to_pay', label: 'Promise to pay', override: { extra_attempts: 2, retry_delay: true } },
+    ],
+  };
+
+  it('PATCH re-sending the stored settings and override (keys in another order) is forwarded, the flag never read', async () => {
+    core({ GET: { status: 200, body: STORED } });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'PATCH', url: `${PREFIX}/campaigns/c1`,
+      payload: {
+        name: 'Renamed', assignment_mode: 'strict', allow_agent_retry: true, agent_retry_rounds: 3,
+        disposition_catalog: [
+          { code: 'promise_to_pay', label: 'Promise to pay', override: { retry_delay: true, extra_attempts: 2 } },
+          { code: 'interested', label: 'Interested' },
+        ],
+      },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(mocks.flagEnabled).not.toHaveBeenCalled();
+    expect(mocks.proxyToCore.mock.calls.map(([req]) => req.method)).toEqual(['GET', 'PATCH']);
+    await app.close();
+  });
+
+  it('PATCH changing a stored value, or an override, or adding one to another outcome, is still 403', async () => {
+    core({ GET: { status: 200, body: STORED } });
+    const app = await buildApp();
+    for (const [payload, field] of [
+      [{ agent_retry_rounds: 4 }, 'agent_retry_rounds'],
+      [{ disposition_catalog: [{ code: 'promise_to_pay', label: 'P', override: { extra_attempts: 3, retry_delay: true } }] }, 'disposition_catalog[0].override'],
+      [{ disposition_catalog: [{ code: 'interested', label: 'I', override: { retry_delay: true } }] }, 'disposition_catalog[0].override'],
+    ] as const) {
+      const res = await app.inject({ method: 'PATCH', url: `${PREFIX}/campaigns/c1`, payload });
+      expect(res.statusCode, res.body).toBe(403);
+      expect(Object.keys(res.json().details)).toEqual([field]);
+    }
+    expect(writes()).toEqual([]);
+    await app.close();
+  });
+
+  it('PATCH putting everything back to its defaults and dropping the override is forwarded (the way out)', async () => {
+    core({ GET: { status: 200, body: STORED } });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'PATCH', url: `${PREFIX}/campaigns/c1`,
+      payload: { ...DEFAULTS, disposition_catalog: [{ code: 'promise_to_pay', label: 'Promise to pay' }] },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(mocks.flagEnabled).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('create has nothing stored: a non-default value is 403 whatever', async () => {
+    core({ GET: { status: 200, body: STORED } });
+    const app = await buildApp();
+    const res = await app.inject({ method: 'POST', url: `${PREFIX}/campaigns`, payload: { name: 'C', assignment_mode: 'strict' } });
+    expect(res.statusCode).toBe(403);
+    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('retry: overrides equal to the parent\'s stored values are not refused', async () => {
+    core({ GET: { status: 200, body: { ...STORED, tenant_id: TENANT, account_id: ACCOUNT, record_calls: false, analysis_profile_id: null } },
+      POST: { status: 201, body: { campaign: { id: 'c2' }, idempotent_replay: false, contacts_seeded: 1 } } });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'POST', url: `${PREFIX}/campaigns/c1/retry`,
+      payload: { selector: { state: ['pending'] }, config_overrides: { assignment_mode: 'strict' } },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(mocks.flagEnabled).not.toHaveBeenCalled();
     await app.close();
   });
 });
@@ -198,9 +280,9 @@ describe('PATCH /campaigns/:id — an assignment_mode change is audited, on succ
     await app.close();
   });
 
-  it('a PATCH that does not name the mode makes no extra read and files no row', async () => {
+  it('a PATCH that does not name the mode, at the defaults, makes no extra read and files no row', async () => {
     const app = await buildApp();
-    const res = await app.inject({ method: 'PATCH', url: `${PREFIX}/campaigns/c1`, payload: { allow_agent_retry: true } });
+    const res = await app.inject({ method: 'PATCH', url: `${PREFIX}/campaigns/c1`, payload: { name: 'Renamed', allow_agent_retry: false } });
     expect(res.statusCode).toBe(200);
     expect(mocks.proxyToCore).toHaveBeenCalledTimes(1);
     expect(mocks.proxyToCore.mock.calls[0]![0].method).toBe('PATCH');
@@ -259,7 +341,7 @@ describe('POST /campaigns/:id/retry — keep_assignments and the flag on the ove
     });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ code: 'feature_disabled', details: { assignment_mode: expect.any(String) } });
-    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
     await app.close();
   });
 
