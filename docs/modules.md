@@ -33,6 +33,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 | `apps/server/test/integration/app/concurrency-seam-wiring.test.ts` | ~2 |
 | `apps/server/test/integration/app/error-mask-app-wide.test.ts` | ~3 |
 | `apps/server/test/integration/app/feature-flag-boot-wiring.test.ts` | ~2 |
+| `apps/server/test/integration/app/readyz.test.ts` | 5 |
 | `apps/server/test/integration/app/trust-proxy.test.ts` | ~4 |
 | `apps/server/test/unit/app/max-param-length.test.ts` | 2 |
 | `apps/server/test/unit/app/request-id.test.ts` | 2 |
@@ -546,7 +547,7 @@ Composition for running as several processes on one host (`docs/scaling.md`; off
 - The media workers: the child (`media-child.ts`, `media-child-main.ts`), and the primary's side (`media-cluster.ts`, `station-directory.ts`, `ipc-dial-dispatcher.ts`, `primary.ts` with the slot reap).
 - The analysis workers (`analysis-child.ts`, `analysis-child-main.ts`, `analysis-children.ts`).
 - Per-process loop sampling over a fixed 5 s window, read without reset (`loop-sampler.ts`).
-- The primary's `/readyz` verdict with workers (`readiness.ts`, D5), the shutdown order (`shutdown-order.ts`: pacing halts, then the drains together, then the rest) and the host's Postgres connection budget (`db-connection-budget.ts`, D12).
+- The primary's `/readyz` verdict with workers (`readiness.ts`, D5; also the 1 s probe cache and the `READYZ_DETAIL_TOKEN` check, D13), the shutdown order (`shutdown-order.ts`: pacing halts, then the drains together, then the rest) and the host's Postgres connection budget (`db-connection-budget.ts`, D12).
 
 Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `child-supervisor.ts`, `db-connection-budget.ts`, `fork.ts`, `ipc-channel.ts`, `ipc-dial-dispatcher.ts`, `ipc-protocol.ts`, `loop-sampler.ts`, `media-child-main.ts`, `media-child.ts`, `media-cluster.ts`, `primary.ts`, `readiness.ts`, `record-codecs.ts`, `roles.ts`, `shutdown-order.ts`, `socket-pause.ts`, `station-directory.ts`, `worker-app.ts`, `ws-adopt.ts`, `ws-handoff.plugin.ts`
 
@@ -569,7 +570,7 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/media-cluster.test.ts` | 6 |
 | `apps/server/test/unit/cluster/primary.test.ts` | 3 |
 | `apps/server/test/unit/cluster/process-observability.test.ts` | 4 |
-| `apps/server/test/unit/cluster/readiness.test.ts` | 4 |
+| `apps/server/test/unit/cluster/readiness.test.ts` | 17 |
 | `apps/server/test/unit/cluster/roles.test.ts` | 8 |
 | `apps/server/test/unit/cluster/shutdown-order.test.ts` | 3 |
 | `apps/server/test/unit/cluster/socket-pause.test.ts` | 6 |
@@ -585,7 +586,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 3 |
+| `apps/server/test/unit/config/config.test.ts` | 4 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |

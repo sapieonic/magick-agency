@@ -14,7 +14,7 @@ export interface ClusterServer {
   origin: string;
   /** Everything the tree wrote to stdout and stderr, as lines. */
   output: string[];
-  /** `/readyz?detail=1`: the per-process view. */
+  /** `/readyz?detail=1` with {@link CLUSTER_READYZ_DETAIL_TOKEN}: the per-process view. */
   detail(): Promise<{ status: string; processes?: Array<ProcessHealth | null> }>;
   /** SIGTERM the primary and wait for it to exit (bounded); returns how it went. */
   stop(timeoutMs?: number): Promise<{ code: number | null; signal: NodeJS.Signals | null; ms: number }>;
@@ -31,6 +31,9 @@ export interface ProcessHealth {
 }
 
 const SERVER_DIR = resolve(__dirname, '../..');
+
+/** The `READYZ_DETAIL_TOKEN` every tree started here runs with (an env override wins). */
+export const CLUSTER_READYZ_DETAIL_TOKEN = 'cluster-test-readyz-detail-token-0123456789';
 
 export async function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
@@ -51,7 +54,10 @@ export async function startClusterServer(env: Record<string, string>, opts: { re
     cwd: SERVER_DIR,
     // Partition maintenance creates and DROPS audit partitions at boot: on the shared test
     // database that would change the schema under the suites that run after this one.
-    env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', AUDIT_PARTITION_MAINTENANCE_ENABLED: 'false', ...env },
+    env: {
+      ...process.env, PORT: String(port), HOST: '127.0.0.1', AUDIT_PARTITION_MAINTENANCE_ENABLED: 'false',
+      READYZ_DETAIL_TOKEN: CLUSTER_READYZ_DETAIL_TOKEN, ...env,
+    },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const collect = (chunk: Buffer): void => {
@@ -80,7 +86,9 @@ export async function startClusterServer(env: Record<string, string>, opts: { re
     port,
     origin,
     output,
-    detail: async () => (await fetch(`${origin}/readyz?detail=1`)).json() as Promise<{ status: string; processes?: Array<ProcessHealth | null> }>,
+    detail: async () => (await fetch(`${origin}/readyz?detail=1`, {
+      headers: { authorization: `Bearer ${env['READYZ_DETAIL_TOKEN'] ?? CLUSTER_READYZ_DETAIL_TOKEN}` },
+    })).json() as Promise<{ status: string; processes?: Array<ProcessHealth | null> }>,
     stop: async (timeoutMs = 60_000) => {
       const started = Date.now();
       if (child.exitCode === null) child.kill('SIGTERM');

@@ -807,9 +807,20 @@ which replaces the primary too.
   traffic away, so one slow worker (a missed 1 s ping at high ELU) or one in restart backoff
   (up to 30 s) would take down the whole floor instead of its 1/N. A dead slot is visible in
   the body, `agy-cluster-child-crash` and the *Processes* panels rather than in the probe.
+- The `/readyz` answer (as built, review of PR #29) is computed at most once a second and
+  shared by every probe in that second, and by every probe while one is in flight
+  (`cachedProbe`, `READINESS_CACHE_MS`): `/readyz` is unauthenticated and exempt from the rate
+  limiter, and each answer sends `health.ping` to every worker, so without it a request loop
+  would load the loops that carry live audio. A not-ready verdict is at most a second old; the
+  verdict itself (D5) is unchanged.
 - `GET /readyz?detail=1` returns the per-process view (role, slot, `ready`, `elu`,
   `stations`, `liveCalls`). It must stay exempt from the rate limiter like `/readyz` (the
-  exemption has to match the path, not the URL with its query). Its body holds no secret.
+  exemption has to match the path, not the URL with its query). As built it names pids, loop
+  numbers and the host's Postgres budget, so it needs `Authorization: Bearer
+  <READYZ_DETAIL_TOKEN>` (constant-time compare; unset, the detail is off) and answers 401 before
+  probing anything otherwise. Not IP-gated: behind the proxy `request.ip` is what
+  `TRUST_PROXY_HOPS` makes of `X-Forwarded-For`. The plain body keeps the verdict and each
+  worker's state name (D5), no pids or numbers.
   As built, `elu` and `loopDelayP99Ms` are the process's last completed 5 s window
   (`LOOP_SAMPLE_WINDOW_MS`, `cluster/loop-sampler.ts`), closed by the process's own unref'd
   timer and stopped at shutdown. `health.ping` and the primary's own entry read that window and
@@ -1052,7 +1063,7 @@ service containers.
 | Crash-time slot release (§6.1) | Release the slots from the worker's last snapshot | Exact. The bridge reports every admission and release as it happens (`observeLeases`), each worker forwards them as `call.lease` events, and the 5 s snapshot reconciles them, so the slot reap releases precisely what the dead worker held, including a call admitted a moment before the crash. Pinned by the chaos suite with the snapshots off; a mutation of the forwarding goes red |
 | Crash-time carrier hangup (§6.1) | `reapSlot` hangs the dead worker's carrier legs up through VoiceLink's REST API | Not built: **VoiceLink has no hangup endpoint**, so a closed media socket is the only lever. Whether VoiceLink ends the call when its media socket drops, and how fast, is **unverified** and needs a sandbox check (`status.md`, "Not verified"). The rest of the reap is built: slots released, call rows failed, attempts ended `orphaned` with their contacts requeued, manual calls closed, agents written offline with leases cleared |
 | Trace context across IPC (§4.1, §7) | `tp` in the envelope continues the sender's span | Not built: each process traces on its own. The envelope carries the `tp` field, unused |
-| Readiness detail (§6.6) | Per-process view | As designed, plus each process's p99 loop delay and the primary's own loop sample, each over the process's last fixed 5 s window (read without reset; review of PR #29: the first build reset the sample on every probe, so concurrent probers split the window between them). One process also answers `?detail=1` with its own loop; plain `/readyz` is unchanged |
+| Readiness detail (§6.6) | Per-process view | As designed, plus each process's p99 loop delay and the primary's own loop sample, each over the process's last fixed 5 s window (read without reset; review of PR #29: the first build reset the sample on every probe, so concurrent probers split the window between them). One process also answers `?detail=1` with its own loop; plain `/readyz` is unchanged. Behind `READYZ_DETAIL_TOKEN` (review of PR #29: the first build served it to anyone), and the readiness answer is cached for 1 s (D13) |
 | Analysis crash loop | Same as media | Analysis children are re-forked with backoff and never make the primary exit: analysis does not serve calls |
 | Remote rate-limit pause (D10) | Each process half-opens when the pause ends | Also: a job here that slipped into a pause relayed from another process (its claim already on its way) cannot close that pause early. Found by a flaky multi-process run |
 | D9 (station token mint) | Answer 503 on a failed `SET` | Built (decided): `503 station_token_unavailable` on every minting route, let through the error mask. The console retries it on its own (re-mint, campaign join, soft-phone open); the app retries a re-mint on its own and offers its join screen's retry on a join |

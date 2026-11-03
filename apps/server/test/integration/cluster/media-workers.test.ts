@@ -133,6 +133,9 @@ describe('media workers: the real server as a primary and two workers', () => {
       status: 'ready',
       mediaWorkers: { answering: 2, total: 2, workers: [{ slot: 0, state: 'ok' }, { slot: 1, state: 'ok' }] },
     });
+    // The detail needs READYZ_DETAIL_TOKEN: without it, or with another, 401.
+    expect((await fetch(`${r.server.origin}/readyz?detail=1`)).status).toBe(401);
+    expect((await fetch(`${r.server.origin}/readyz?detail=1`, { headers: { authorization: 'Bearer not-the-token' } })).status).toBe(401);
 
     // Each station is held by the worker its session hashes to.
     for (const a of r.floor.agents) {
