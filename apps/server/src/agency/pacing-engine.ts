@@ -8,7 +8,8 @@ import {
   agencyContactRepository,
 } from '../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord, AgencyContactRecord } from '../db/models/agency.model.js';
-import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
+import type { AgencyOwnerClaimMode } from '../db/repositories/agency.repository.js';
+import type { AgencyStationQueueFrame, AgencyStationServerFrame } from '@magick-agency/contracts/agency';
 
 /**
  * What pacing needs from wherever the agents' station sockets are held: whether a
@@ -17,12 +18,17 @@ import type { AgencyStationServerFrame } from '@magick-agency/contracts/agency';
  * satisfies it in a single process. With media workers (`docs/scaling.md` §3.1) the
  * primary's directory of the workers' stations does: "locally owned" then means "attached
  * to a live worker", and the broadcast goes to every worker.
+ *
+ * `send` is one frame to one agent's station (the contact-assignment `queue` frame): true when
+ * it was handed to a station that is there. With media workers it is forwarded to the worker
+ * holding the station, and true means "a live worker holds it".
  */
 export interface PacingStations {
   isLocallyOwned(sessionId: string): boolean;
   ownerOf(sessionId: string): Promise<string | null>;
   get(sessionId: string): { campaignId: string | null } | undefined;
   broadcast(campaignId: string, frame: AgencyStationServerFrame): number;
+  send(sessionId: string, frame: AgencyStationServerFrame): boolean;
 }
 
 /**
@@ -60,6 +66,7 @@ import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
 import { CampaignAnnouncer } from './pacing/campaign-announcer.js';
 import {
   getPacingInvalidationBus,
+  publishPacingInvalidation,
   type PacingInvalidationBus,
   type PacingInvalidationEvent,
 } from './pacing/invalidation-bus.js';
@@ -67,6 +74,8 @@ import { GenerationTtlCache } from './pacing/read-cache.js';
 import { PacingRound, accountKeyOf } from './pacing/round.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
+import { ownerModeOf, queueStateKey, readAgentQueues, type AgentQueueReading } from './pacing/agent-queue.js';
+import { CALLBACK_FALLBACK_SWEEP_MS, sweepCallbackFallback } from './pacing/callback-fallback.js';
 
 const log = createChildLogger({ component: 'agency-pacing-engine' });
 
@@ -121,8 +130,19 @@ const RESERVING_MARKER = 'reserving';
 /** An available agent and how long they have been waiting. */
 interface AgentCandidate {
   sessionId: string;
+  /**
+   * The session's agent (user id), from the live session row. Contact assignment pairs a
+   * contact with its owner by this; `pool` mode never reads it.
+   */
+  agentUserId: string;
   /** Epoch ms of their transition into `available` — the idle clock. */
   availableSince: number;
+}
+
+/** One reserved agent and the contact claimed for them. */
+interface TickPair {
+  sessionId: string;
+  contact: AgencyContactRecord;
 }
 
 /**
@@ -160,8 +180,12 @@ interface TickPlan {
  * in. `no_caller_ids` is **not** benign: it is a misconfiguration that cannot clear
  * without a human, and it is here rather than in a log-only path precisely because
  * "why is this campaign placing no calls" is the question this label answers.
+ *
+ * `nothing_due` is contact assignment's (`strict` / `preferred`): agents are available but
+ * none has a contact due (own, or in `preferred` mode the pool), so none was reserved. Benign,
+ * and NOT quiescent: time passing makes contacts due, and no event announces that.
  */
-type TickIdleReason = 'no_agents' | 'no_slots' | 'no_contacts' | 'no_reservations' | 'no_caller_ids';
+type TickIdleReason = 'no_agents' | 'no_slots' | 'no_contacts' | 'no_reservations' | 'no_caller_ids' | 'nothing_due';
 
 /** Why a scheduled tick ran in full (a metric label, see `agencyPacingTicksTotal`). */
 export type PacingWakeCause = 'first' | 'event' | 'active' | 'safety' | 'forced';
@@ -695,6 +719,8 @@ export class PacingEngine {
     for (const id of this.flagGated) if (!known.has(id)) this.flagGated.delete(id);
     for (const id of this.reportedStuck) if (!known.has(id)) this.reportedStuck.delete(id);
     for (const id of this.drainOnly) if (!known.has(id)) this.drainOnly.delete(id);
+    for (const id of this.queueSent.keys()) if (!known.has(id)) this.queueSent.delete(id);
+    for (const id of this.fallbackSweptAt.keys()) if (!known.has(id)) this.fallbackSweptAt.delete(id);
     // `revoked` too, which `beginLeading` alone used to clear — except under a tick
     // still in flight, whose dial sites are what the mark exists to stop. A campaign
     // absent from `findActive` is neither running nor stopping, so no later tick of
@@ -803,6 +829,8 @@ export class PacingEngine {
     }
     this.pacingState.delete(campaignId);
     this.campaignCache.invalidate(campaignId);
+    this.queueSent.delete(campaignId);
+    this.fallbackSweptAt.delete(campaignId);
     if (this.led.size === 0) this.disarmRounds();
     if (!opts.alreadyLost) await this.lease.release(campaignId);
   }
@@ -1055,6 +1083,9 @@ export class PacingEngine {
       // — for the drain — a call on its account ending.
       let willBeQuiescent = true;
       if (campaign.status === 'running' && !this.drainOnly.has(campaignId)) {
+        // Owner-mode campaigns: hand overdue callbacks of absent owners to the pool first, so
+        // a `preferred` agent can be given one on this very tick (throttled, never throws).
+        await this.maybeSweepCallbackFallback(campaign);
         const plan = await this.planTick(campaign, round);
         planned = plan;
         if (plan.idle) this.recordIdle(campaign.id, plan.idle);
@@ -1066,6 +1097,11 @@ export class PacingEngine {
           if (!this.mayDial(campaignId)) return;
           const dialed = await this.dialUpTo(campaign, plan);
           if (dialed > 0) return; // did work; completion is only checked on an idle tick
+        } else if (plan.idle === 'nothing_due') {
+          // Agents are available and nothing is due for them: time passing makes contacts
+          // due and nothing publishes that, so this tick is not quiescent (like a claim
+          // that came back empty).
+          willBeQuiescent = false;
         } else {
           // `no_agents` or `no_slots`: only an agent entering `available`, a call
           // ending or the limit rising can change it, and each publishes.
@@ -1113,6 +1149,7 @@ export class PacingEngine {
     const now = Date.now();
     const candidates: AgentCandidate[] = [];
     const local: string[] = [];
+    const userOf = new Map<string, string>();
     for (const s of sessions) {
       // ── `isLocallyOwned` is CORRECT here, and is ONE of the things holding the
       //    single-replica constraint ──────────────────────────────────────────────
@@ -1139,15 +1176,20 @@ export class PacingEngine {
       // three pieces of state moved out of process. Separate work, not a comment.
       if (!this.stations.isLocallyOwned(s.id)) continue;
       local.push(s.id);
+      userOf.set(s.id, s.agent_user_id);
     }
     // One pipelined round trip for every local agent, not one per agent.
     const states = await this.agents.getMany(local);
     local.forEach((sessionId, i) => {
       const live = states[i];
       if (live?.state === 'available') {
-        candidates.push({ sessionId, availableSince: live.since ?? now });
+        candidates.push({ sessionId, agentUserId: userOf.get(sessionId)!, availableSince: live.since ?? now });
       }
     });
+    // Contact assignment: forget the queue frames of sessions that left (before the early
+    // return below, so a campaign whose agents all went away still drops them).
+    const mode = ownerModeOf(campaign);
+    this.pruneQueueSent(campaign.id, mode ? sessions.map((s) => s.id) : null);
     if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };
 
     // ── Fairness: longest-idle first. ───────────────────────────────────────
@@ -1164,6 +1206,18 @@ export class PacingEngine {
     // Ties broken on session id, so the order is total and a tick is reproducible.
     candidates.sort((a, b) =>
       a.availableSince - b.availableSince || a.sessionId.localeCompare(b.sessionId));
+
+    // ── Contact assignment: an agent with nothing due is not reserved (D3). ──────
+    // `strict` / `preferred`: one probe of every available agent's own queue (and the pool's,
+    // in `preferred`), which also sends each agent their `queue` frame when it changed. Only
+    // the agents with something due go on, in the same fairness order; reserving the others
+    // would only hand them back at the claim, every tick. Before the account reads, so the
+    // round's headroom is taken for the agents that can actually be dialled.
+    let pickable = candidates;
+    if (mode) {
+      pickable = await this.agentsWithWorkDue(campaign, mode, candidates);
+      if (pickable.length === 0) return { toDial: 0, candidates: [], idle: 'nothing_due' };
+    }
 
     // Both account reads are per ROUND, not per tick (`pacing/round.ts`): the limit
     // through the engine's invalidated cache, the live calls read once per account
@@ -1209,8 +1263,105 @@ export class PacingEngine {
      */
     // `MAX(0, MIN(limit − occupied, idle))`, less whatever the account's other
     // campaigns planned this round — none, with one campaign per account.
-    const toDial = round.takeHeadroom(accountKey, accountLimit, occupied, candidates.length);
-    return { toDial, candidates, accountLimit, occupied, ...(toDial === 0 ? { idle: 'no_slots' as const } : {}) };
+    const toDial = round.takeHeadroom(accountKey, accountLimit, occupied, pickable.length);
+    return {
+      toDial, candidates: pickable, accountLimit, occupied, ...(toDial === 0 ? { idle: 'no_slots' as const } : {}),
+    };
+  }
+
+  /**
+   * The available agents worth reserving on an owner-mode campaign, in fairness order: those
+   * with an own contact due, and (`preferred`) as many of the rest as the pool has due
+   * contacts. Sends each candidate's `queue` frame on a change, from the same read.
+   */
+  private async agentsWithWorkDue(
+    campaign: AgencyCampaignRecord,
+    mode: AgencyOwnerClaimMode,
+    candidates: AgentCandidate[],
+  ): Promise<AgentCandidate[]> {
+    // One live session per agent per tenant (`uq` on the session table) makes this a 1:1 map;
+    // a repeat, or a row with no agent, is dropped rather than paired by guesswork.
+    const seen = new Set<string>();
+    const agents = candidates.filter((c) => {
+      if (!c.agentUserId || seen.has(c.agentUserId)) return false;
+      seen.add(c.agentUserId);
+      return true;
+    });
+    if (agents.length === 0) return [];
+    const { agents: readings, poolDue } = await readAgentQueues(
+      campaign, mode, agents.map((c) => c.agentUserId), new Date(), agents.length,
+    );
+    this.sendQueueFrames(campaign.id, agents, readings);
+    let poolLeft = mode === 'preferred' ? poolDue : 0;
+    const out: AgentCandidate[] = [];
+    for (const c of agents) {
+      if (readings.get(c.agentUserId)?.ownDue) {
+        out.push(c);
+      } else if (poolLeft > 0) {
+        out.push(c);
+        poolLeft--;
+      }
+    }
+    return out;
+  }
+
+  /** Send each agent's `queue` frame when it differs from the last one they were sent. */
+  private sendQueueFrames(
+    campaignId: string,
+    agents: readonly AgentCandidate[],
+    readings: ReadonlyMap<string, AgentQueueReading>,
+  ): void {
+    let sent = this.queueSent.get(campaignId);
+    if (!sent) {
+      sent = new Map();
+      this.queueSent.set(campaignId, sent);
+    }
+    for (const agent of agents) {
+      const reading = readings.get(agent.agentUserId);
+      if (!reading) continue;
+      const key = queueStateKey(reading.state);
+      if (sent.get(agent.sessionId) === key) continue;
+      const frame: AgencyStationQueueFrame = { event: 'queue', campaign_id: campaignId, ...reading.state };
+      let delivered = false;
+      try {
+        delivered = this.stations.send(agent.sessionId, frame);
+      } catch (err) {
+        log.warn({ err, campaignId, sessionId: agent.sessionId }, 'Could not send a queue frame');
+      }
+      // Not remembered when it did not reach a station, so the next tick tries again.
+      if (delivered) sent.set(agent.sessionId, key);
+    }
+  }
+
+  /** Drop the `queue` frame memory of sessions no longer live; `live` null drops the campaign's. */
+  private pruneQueueSent(campaignId: string, live: readonly string[] | null): void {
+    const sent = this.queueSent.get(campaignId);
+    if (!sent) return;
+    if (live === null) {
+      this.queueSent.delete(campaignId);
+      return;
+    }
+    const keep = new Set(live);
+    for (const sessionId of sent.keys()) if (!keep.has(sessionId)) sent.delete(sessionId);
+  }
+
+  /**
+   * The callback grace/fallback sweep (`pacing/callback-fallback.ts`), at most every
+   * {@link CALLBACK_FALLBACK_SWEEP_MS} per campaign. A move wakes the campaign (and any other
+   * replica's view of it) as new contacts would. A failure is logged and costs the tick nothing.
+   */
+  private async maybeSweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<void> {
+    if (!ownerModeOf(campaign) || campaign.callback_fallback !== 'pool') return;
+    const now = this.now();
+    const last = this.fallbackSweptAt.get(campaign.id);
+    if (last !== undefined && now - last < CALLBACK_FALLBACK_SWEEP_MS) return;
+    this.fallbackSweptAt.set(campaign.id, now);
+    try {
+      const moved = await sweepCallbackFallback(campaign);
+      if (moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
+    } catch (err) {
+      log.error({ err, campaignId: campaign.id }, 'Callback fallback sweep failed — retried on a later tick');
+    }
   }
 
   /** `max_concurrent_calls`: cached between scheduled rounds, read through on a forced one. */
@@ -1239,14 +1390,14 @@ export class PacingEngine {
     //       strictly before the claim. The agent is committed before the carrier
     //       is contacted, which is what makes an answered call with no agent
     //       unreachable under strict power dialing.
-    const reserved: string[] = [];
+    const reserved: AgentCandidate[] = [];
     for (const candidate of plan.candidates) {
       if (reserved.length >= plan.toDial) break;
       // A placeholder, not a fake attempt id: there is no attempt yet, and
       // `executeDial` overwrites this with the real one. Marked so a human reading
       // the Redis hash mid-dial can tell "reserving" from a lost attempt id.
       const res = await this.agents.reserve(candidate.sessionId, RESERVING_MARKER);
-      if (res === 'reserved') reserved.push(candidate.sessionId);
+      if (res === 'reserved') reserved.push(candidate);
       // `reserved` is deliberately NOT mirrored to `agency_agent_sessions`
       // and the reason is worth keeping: a mirror here is
       // write-only. Every release path below — surplus, suppress, defer, no
@@ -1275,23 +1426,30 @@ export class PacingEngine {
     }
 
     // ── 2. Claim exactly as many contacts as we hold agents for. ────────────
-    const contacts = await agencyContactRepository.claimDialable(campaign.id, reserved.length);
+    //       `pool`: the shared queue, paired by index. `strict` / `preferred`: each agent's
+    //       own (or, preferred, the pool's) contact, paired by the agent it was claimed for.
+    const mode = ownerModeOf(campaign);
+    const pairs = mode
+      ? await this.claimForOwners(campaign, mode, reserved)
+      : await this.claimPool(campaign, reserved);
 
     // Any agent we reserved and cannot pair with a contact goes straight back to
     // the pool — the roster ran out, which is not their fault and must not cost
     // them their place in the idle queue any longer than this tick.
-    for (const surplus of reserved.slice(contacts.length)) {
-      await this.returnReserved(surplus);
+    const paired = new Set(pairs.map((p) => p.sessionId));
+    for (const surplus of reserved) {
+      if (!paired.has(surplus.sessionId)) await this.returnReserved(surplus.sessionId);
     }
-    if (contacts.length === 0) {
+    if (pairs.length === 0) {
       this.recordIdle(campaign.id, 'no_contacts');
       return 0;
     }
+    const contacts = pairs.map((p) => p.contact);
+    const sessions = pairs.map((p) => p.sessionId);
 
     let dialed = 0;
 
-    for (const [index, contact] of contacts.entries()) {
-      const sessionId = reserved[index]!;
+    for (const [index, { sessionId, contact }] of pairs.entries()) {
 
       // ── 3. The compliance gates, in the tick: after the claim
       //       and BEFORE the attempt exists. Suppressing here costs no attempt row
@@ -1307,7 +1465,7 @@ export class PacingEngine {
         // too: whatever stopped us answering for this number cannot answer for
         // them either, and dialing the rest of the batch is precisely the
         // "fail-open at volume" this gate exists to prevent.
-        await this.abortRemainder(contacts.slice(index), reserved.slice(index));
+        await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         log.error(
           { campaignId: campaign.id, tenantId: campaign.tenant_id, gate: gate.gate, abandoned: contacts.length - index },
           'Agency pre-dial gate halted the tick — refusing to dial unchecked numbers',
@@ -1347,7 +1505,7 @@ export class PacingEngine {
       // rather than once, because a 5-contact batch spans several round trips and
       // each dial is a real call to a real person.
       if (!this.mayDial(campaign.id)) {
-        await this.abortRemainder(contacts.slice(index), reserved.slice(index));
+        await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         log.warn(
           { campaignId: campaign.id, abandoned: contacts.length - index },
           'Agency campaign leadership was given up mid-tick — returning the remainder undialed',
@@ -1361,7 +1519,7 @@ export class PacingEngine {
       // half of it being carried out by a throw.
       const callerId = pickCallerId(usableCallerIds(campaign), dialed);
       if (!callerId) {
-        await this.abortRemainder(contacts.slice(index), reserved.slice(index));
+        await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         // Latched, like the top-of-tick guard: this branch is only reachable if the
         // pool emptied between `findById` and here (a concurrent PATCH), and the
         // next tick's guard will catch it — so an unlatched log here would still
@@ -1395,7 +1553,7 @@ export class PacingEngine {
         await agencyAttemptRepository.setState(attempt.id, 'ended', {
           outcome: 'orphaned', ended_at: new Date(),
         }).catch((err) => log.error({ err, attemptId: attempt.id }, 'Failed to end an undialed attempt'));
-        await this.abortRemainder(contacts.slice(index), reserved.slice(index));
+        await this.abortRemainder(contacts.slice(index), sessions.slice(index));
         log.warn(
           { campaignId: campaign.id, attemptId: attempt.id, abandoned: contacts.length - index },
           'Agency campaign stopped or lost its lease after the attempt insert — returning the remainder undialed',
@@ -1432,6 +1590,63 @@ export class PacingEngine {
       }
     }
     return dialed;
+  }
+
+  /**
+   * `pool` mode: `claimDialable` for as many contacts as agents are reserved, paired by index
+   * (the claim returns them in due order and never more than asked; a longer answer would be
+   * a claim bug, and its tail is handed back rather than dialled without an agent).
+   */
+  private async claimPool(campaign: AgencyCampaignRecord, reserved: readonly AgentCandidate[]): Promise<TickPair[]> {
+    const contacts = await agencyContactRepository.claimDialable(campaign.id, reserved.length);
+    if (contacts.length > reserved.length) {
+      const extra = contacts.slice(reserved.length);
+      log.error({ campaignId: campaign.id, asked: reserved.length, claimed: contacts.length },
+        'Contact claim returned more rows than agents reserved — returning the extra undialled');
+      await agencyContactRepository.unclaimMany(extra.map((c) => c.id), new Date());
+    }
+    return contacts.slice(0, reserved.length).map((contact, index) => ({ sessionId: reserved[index]!.sessionId, contact }));
+  }
+
+  /**
+   * `strict` / `preferred`: one claim for every reserved agent (`claimForAgents`), each row
+   * paired with the agent it was claimed FOR, never by position. The pairing is checked
+   * again here, as defence in depth on the rule that matters most (a customer is never put
+   * through to another agent's queue): a row whose owner is not the agent it names (strict:
+   * owner = agent; preferred: owner = agent or nobody), names an agent not reserved, or names
+   * one twice is handed back undialled and logged as the claim bug it would be. Pairs come
+   * back in reservation order, so a tick's dial order is reproducible.
+   */
+  private async claimForOwners(
+    campaign: AgencyCampaignRecord,
+    mode: AgencyOwnerClaimMode,
+    reserved: readonly AgentCandidate[],
+  ): Promise<TickPair[]> {
+    const claims = await agencyContactRepository.claimForAgents(
+      campaign.id, reserved.map((r) => r.agentUserId), mode,
+    );
+    const byUser = new Map(reserved.map((r, order) => [r.agentUserId, { sessionId: r.sessionId, order }]));
+    const taken = new Set<string>();
+    const pairs: Array<TickPair & { order: number }> = [];
+    const stray: string[] = [];
+    for (const { agentUserId, contact } of claims) {
+      const agent = byUser.get(agentUserId);
+      const owner = contact.assigned_user_id ?? null;
+      const ownerOk = owner === agentUserId || (mode === 'preferred' && owner === null);
+      if (!agent || !ownerOk || taken.has(agent.sessionId)) {
+        stray.push(contact.id);
+        continue;
+      }
+      taken.add(agent.sessionId);
+      pairs.push({ sessionId: agent.sessionId, contact, order: agent.order });
+    }
+    if (stray.length > 0) {
+      log.error({ campaignId: campaign.id, mode, stray: stray.length },
+        'Owner claim returned contacts it could not pair with their owner — returning them undialled');
+      await agencyContactRepository.unclaimMany(stray, new Date());
+    }
+    pairs.sort((a, b) => a.order - b.order);
+    return pairs.map(({ sessionId, contact }) => ({ sessionId, contact }));
   }
 
   /**
@@ -1657,6 +1872,18 @@ export class PacingEngine {
 
   /** Last status we told agents about, per led campaign. */
   private readonly lastStatus = new Map<string, AgencyCampaignStatus>();
+
+  /**
+   * The last `queue` frame each agent was sent, per campaign (`queueStateKey`), so a frame
+   * goes out only on a change (contact assignment, D3). An entry is dropped when its session
+   * is no longer live on the campaign (left), and the campaign's map when the campaign is
+   * `pool` or its leadership is given up. A `ready` frame or the bootstrap carries the state
+   * at (re)connect, so a reconnect needs no resend.
+   */
+  private readonly queueSent = new Map<string, Map<string, string>>();
+
+  /** When each led campaign was last swept for overdue callbacks (engine clock). */
+  private readonly fallbackSweptAt = new Map<string, number>();
 
   /** Campaign ids this replica currently leads (observability + tests). */
   leading(): string[] {

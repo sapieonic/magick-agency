@@ -165,6 +165,7 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'agency_softphone_settings.updated', label: 'Soft-phone settings changed', group: 'Calls', product: 'agency' },
 
+  { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned from campaign', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.joined', label: 'Agent joined session', group: 'Staffing', product: 'agency' },

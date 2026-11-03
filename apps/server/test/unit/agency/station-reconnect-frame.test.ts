@@ -61,7 +61,7 @@ const { repos } = vi.hoisted(() => ({
   repos: {
     attempt: { findById: vi.fn(), setState: vi.fn().mockResolvedValue(null) },
     campaign: { findById: vi.fn() },
-    contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn() },
+    contact: { findById: vi.fn(), markState: vi.fn(), unclaim: vi.fn(), probeAgentQueues: vi.fn() },
     session: {
       findById: vi.fn(), setState: vi.fn().mockResolvedValue(undefined), leave: vi.fn(),
       // The station attach's session read (it also records `client_kind`): the row `findById` gives.
@@ -293,5 +293,45 @@ describe('a reconnect onto a break is told the break\'s reason', () => {
     const frame = await ready(h);
     expect(frame.state).toBe('available');
     expect('break_reason' in frame).toBe(false);
+  });
+});
+
+// Contact assignment (D3): a reconnect on a strict / preferred campaign is told the agent's
+// queue at once, because pacing sends the `queue` frame only when it changes.
+// FALSIFIED: with `queue` dropped from the frame the first case reds.
+describe("a reconnect on an owner-mode campaign is told the agent's queue", () => {
+  const ALL_DAY = {
+    calling_window_start: '00:00:00', calling_window_end: '24:00:00', calling_days: [1, 2, 3, 4, 5, 6, 7], default_timezone: 'UTC',
+  };
+
+  it('carries `queue` on a strict campaign, read for this agent', async () => {
+    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'strict', disposition_catalog: [], ...ALL_DAY });
+    const later = new Date(Date.now() + 600_000);
+    repos.contact.probeAgentQueues.mockResolvedValue({
+      agents: [{ agentUserId: 'u-agent', ownDue: false, ownNextAt: later, ownHasNonCallback: false }], pool: null,
+    });
+
+    const frame = await ready(h);
+
+    expect(frame.queue).toEqual({ due: false, reason: 'callbacks_later', next_due_at: later.toISOString() });
+    expect(repos.campaign.findById).toHaveBeenCalledWith('camp-1');
+    expect(repos.contact.probeAgentQueues).toHaveBeenCalledWith('camp-1', ['u-agent'], expect.anything());
+  });
+
+  it('omits it on a pool campaign, on a soft-phone session, and when the read fails', async () => {
+    repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', ...ALL_DAY });
+    expect('queue' in (await ready(h))).toBe(false);
+    expect(repos.contact.probeAgentQueues).not.toHaveBeenCalled();
+
+    h.sent.length = 0;
+    repos.session.findById.mockResolvedValue({ ...SESSION, kind: 'softphone', campaign_id: null, state: 'break', break_reason: null });
+    expect('queue' in (await ready(h))).toBe(false);
+
+    h.sent.length = 0;
+    repos.session.findById.mockResolvedValue(SESSION);
+    repos.campaign.findById.mockRejectedValue(new Error('db down'));
+    const frame = await ready(h);
+    expect(frame.event).toBe('ready');
+    expect('queue' in frame).toBe(false);
   });
 });

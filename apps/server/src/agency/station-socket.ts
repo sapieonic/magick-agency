@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type WebSocket from 'ws';
 import { createChildLogger } from '@magick-agency/observability';
-import { agencyAgentSessionRepository } from '../db/repositories/agency.repository.js';
+import { agencyAgentSessionRepository, agencyCampaignRepository } from '../db/repositories/agency.repository.js';
 import type { AgencyRuntime } from './runtime.js';
 import { AGENT_LEASE_MS } from './agent-state-machine.js';
 import type {
@@ -14,6 +14,7 @@ import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/con
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
 import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
+import { readAgentQueueState } from './pacing/agent-queue.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -489,6 +490,22 @@ export async function handleStationSocket(
   // the reason live on the runtime; this is transport.
   const resumedState = await runtime.rehydrateAgent(sessionId, session);
 
+  // Contact assignment (D3): the agent's own queue on a `strict` / `preferred` campaign, so a
+  // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
+  // change, so a reconnecting station cannot wait for one). Read here, before the fence
+  // below, so no await sits between the fence and the side effects. Best effort: a failed
+  // read omits the field and the station keeps the reconnect.
+  const campaignId = session.campaign_id;
+  const queue = campaignId
+    ? await Promise.resolve()
+      .then(() => agencyCampaignRepository.findById(campaignId))
+      .then((campaign) => (campaign ? readAgentQueueState(campaign, session.agent_user_id) : undefined))
+      .catch((err: unknown) => {
+        log.warn({ err, sessionId }, 'Could not read the agent queue for ready');
+        return undefined;
+      })
+    : undefined;
+
   // Re-adopt a call the previous socket dropped out of, if the window has not
   // lapsed. This is what makes a wifi blip survivable: the bridge disarms its
   // deferred hangup and media resumes onto this socket.
@@ -532,6 +549,7 @@ export async function handleStationSocket(
     ...(breakReason ? { break_reason: breakReason } : {}),
     ...(activeAttempt ? { active_attempt: activeAttempt } : {}),
     ...(activeWrapup ? { active_wrapup: activeWrapup } : {}),
+    ...(queue ? { queue } : {}),
     // Only meaningful when nothing was resumed: an attempt that ended while the
     // socket was away, so the agent is told what happened to the call they were on
     // rather than finding an empty console.
