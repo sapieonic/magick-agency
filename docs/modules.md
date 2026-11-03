@@ -46,7 +46,7 @@ Files: `app-context.ts`, `app.ts`, `db-tls.ts`, `index.ts`, `instrumentation.ts`
 
 ### `apps/server/src/agency/`
 
-The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket, tokens and upgrade query (`station-upgrade.ts`: `client=` / `media=`; the registry probes a mobile station with protocol pings and holds each station to its client kind's heartbeat grace), wrap-up (and wrap-up redial: `wrapup-redial.ts` places a redial of the customer from wrap-up through the normal dial path, `wrapup-redial-rules.ts` holds its pure rules; the rest of it is the dialer's `hasRedialInFlight` / `releaseOwingOutcome`, the WrapupManager's redial set-up mark and the stats' `CONVERSATION_ATTEMPT_SQL` in `db/repositories/agency/sql-fragments.ts`), breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; and the campaign-management layer: CSV ingest and its jobs, staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment; and for contact assignment (decisions CA1–CA12, the operations in `assignment/`): `campaign-assignment-gate.ts` (CA9: a campaign create, PATCH or retry asking for a non-default assignment setting or an outcome override is refused while `agency_contact_assignment_enabled` is off; it never gates the runtime), `contact-overrides.ts` (the pure rules of outcome-granted overrides and of why an agent may dial one of their contacts now, CA7, CA8; DNC is never overridable) and `my-contact-call.ts` (the agent's dial of one of their own contacts on the campaign's normal path, CA7).
+The dialer runtime and campaign management: `AgencyRuntime` (`runtime.ts`), the agent state machine and leases, pacing engine and leader lease, dial dispatcher and dialer, pre-dial gates, station registry, socket, tokens and upgrade query (`station-upgrade.ts`: `client=` / `media=`; the registry probes a mobile station with protocol pings and holds each station to its client kind's heartbeat grace), wrap-up (and wrap-up redial: `wrapup-redial.ts` places a redial of the customer from wrap-up through the normal dial path, `wrapup-redial-rules.ts` holds its pure rules; the rest of it is the dialer's `hasRedialInFlight` / `releaseOwingOutcome`, the WrapupManager's redial set-up mark and the stats' `CONVERSATION_ATTEMPT_SQL` in `db/repositories/agency/sql-fragments.ts`), breaks, reaper, abandonment clip, guardrail and metrics, live-concurrency metrics, DNC registry and mark, outcome classification, dispositions, retry policy, calling hours, campaign config, health, series and completion notice; and the campaign-management layer: CSV ingest and its jobs, staffing, activity trail, agent identity, the spine, campaign wire shapes, stats enrichment; and for contact assignment (decisions CA1–CA15, the operations in `assignment/`): `campaign-assignment-gate.ts` (CA9: a campaign create, PATCH or retry asking for an assignment setting or an outcome override other than its default and other than what the campaign already stores is refused while `agency_contact_assignment_enabled` is off; it never gates the runtime), `contact-overrides.ts` (the pure rules of outcome-granted overrides and of why an agent may dial one of their contacts now, CA7, CA8; DNC is never overridable) and `my-contact-call.ts` (the agent's dial of one of their own contacts on the campaign's normal path, CA7).
 
 Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, `agency-activity-actions.ts`, `agency-activity.service.ts`, `agency-activity.ts`, `agency-actor.ts`, `agency-agent-identity.ts`, `agency-campaign-config.ts`, `agency-campaign-wire.ts`, `agency-column-analysis.ts`, `agency-csv-ingest.ts`, `agency-csv.ts`, `agency-dialer.ts`, `agency-ingest-job.repository.ts`, `agency-ingest-keys.ts`, `agency-ingest.service.ts`, `agency-rejected-csv.ts`, `agency-roster.client.ts`, `agency-spine.ts`, `agency-stats-enrichment.ts`, `agent-record.ts`, `agent-state-machine.ts`, `calling-hours.ts`, `campaign-assignment-gate.ts`, `campaign-behavioral-settings.ts`, `campaign-completion-notice.ts`, `campaign-config.ts`, `campaign-health.ts`, `campaign-series.ts`, `campaign-thresholds.ts`, `contact-overrides.ts`, `dial-dispatcher.ts`, `disposition-policy.ts`, `disposition.ts`, `dnc-availability.ts`, `dnc-mark.ts`, `dnc-registry.ts`, `live-concurrency-metrics.ts`, `my-contact-call.ts`, `outcome-classifier.ts`, `pacing-engine.ts`, `pre-dial-gates.ts`, `reaper.ts`, `retry-policy.ts`, `runtime.ts`, `spine-filters.ts`, `station-registry.ts`, `station-socket.ts`, `station-token.ts`, `station-upgrade.ts`, `wrapup-manager.ts`, `wrapup-redial-rules.ts`, `wrapup-redial.ts`
 
@@ -61,7 +61,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-agent-state-cycle.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-agent-state-get-many.test.ts` | ~1 |
 | `apps/server/test/integration/agency/agency-analysis-profile-reference-check.test.ts` | ~8 |
-| `apps/server/test/integration/agency/agency-callback-fallback.test.ts` | 7 |
+| `apps/server/test/integration/agency/agency-callback-fallback.test.ts` | 10 |
 | `apps/server/test/integration/agency/agency-campaign-create.test.ts` | ~3 |
 | `apps/server/test/integration/agency/agency-campaign-stats.routes.test.ts` | ~10 |
 | `apps/server/test/integration/agency/agency-campaign-stats.test.ts` | ~18 |
@@ -108,9 +108,9 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agent-stats-timezone-buckets.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agent-transition-ordering.test.ts` | ~11 |
 | `apps/server/test/integration/agency/agent-window-boundaries.test.ts` | ~11 |
-| `apps/server/test/integration/agency/assignment-repository.test.ts` | 15 |
-| `apps/server/test/integration/agency/assignment-sql.test.ts` | 17 |
-| `apps/server/test/integration/agency/campaign-assignment-settings.test.ts` | 17 |
+| `apps/server/test/integration/agency/assignment-repository.test.ts` | 18 |
+| `apps/server/test/integration/agency/assignment-sql.test.ts` | 19 |
+| `apps/server/test/integration/agency/campaign-assignment-settings.test.ts` | 18 |
 | `apps/server/test/integration/agency/campaign-behavioral-settings.test.ts` | ~4 |
 | `apps/server/test/integration/agency/campaign-stats-equivalence.test.ts` | 4 |
 | `apps/server/test/integration/agency/campaign-stats-redials.test.ts` | 4 |
@@ -222,7 +222,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/occupancy-ctes.test.ts` | 4 |
 | `apps/server/test/unit/agency/our-fault-redial.test.ts` | 20 |
 | `apps/server/test/unit/agency/outcome-classifier.test.ts` | 45 |
-| `apps/server/test/unit/agency/pacing-engine-assignment.test.ts` | 13 |
+| `apps/server/test/unit/agency/pacing-engine-assignment.test.ts` | 14 |
 | `apps/server/test/unit/agency/pacing-engine-gates.test.ts` | 22 |
 | `apps/server/test/unit/agency/pacing-engine.test.ts` | 81 |
 | `apps/server/test/unit/agency/pacing-skip.test.ts` | 25 |
@@ -234,7 +234,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-agent-audit.test.ts` | 12 |
 | `apps/server/test/unit/agency/proxy-agency-calls.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-activity.routes.test.ts` | 41 |
-| `apps/server/test/unit/agency/proxy-agency-campaign-assignment-settings.routes.test.ts` | 31 |
+| `apps/server/test/unit/agency/proxy-agency-campaign-assignment-settings.routes.test.ts` | 36 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-behavioral-capabilities.routes.test.ts` | 32 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-lifecycle-rbac.routes.test.ts` | 10 |
 | `apps/server/test/unit/agency/proxy-agency-campaign-retry-rbac.routes.test.ts` | 11 |
@@ -309,13 +309,13 @@ Files: `agent-queue.ts`, `callback-fallback.ts`, `caller-id-pool.ts`, `campaign-
 
 ### `apps/server/src/agency/assignment/`
 
-Contact assignment's operations (decisions CA1–CA12): `operation.ts` (a leaf: the operation validator, its canonical form, the preview token and the rebalance arithmetic; `db/repositories/agency/assignment.repository.ts` plans, previews and commits from it) and `unstaff.ts` (CA6 on every unstaff path: an unstaffed agent's `pending` contacts go back to the pool on a `return_to_pool` campaign, one audit row per campaign where they held contacts; it never throws). `unstaff.ts` is tested through `agency-contact-assignment.test.ts` (`apps/server/src/api/`).
+Contact assignment's operations (decisions CA1–CA15): `operation.ts` (a leaf: the operation validator, its canonical form, the preview token and the rebalance arithmetic; `db/repositories/agency/assignment.repository.ts` plans, previews and commits from it) and `unstaff.ts` (CA6 on every unstaff path: an unstaffed agent's `pending` contacts go back to the pool on a `return_to_pool` campaign, one audit row per campaign where they held contacts; it never throws; contacts live at that moment are returned later by the pacing leader's owner sweep, `pacing/callback-fallback.ts` `sweepUnstaffedOwners`). `unstaff.ts` is tested through `agency-contact-assignment.test.ts` (`apps/server/test/integration/api/`).
 
 Files: `operation.ts`, `unstaff.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/agency/assignment-operation.test.ts` | 25 |
+| `apps/server/test/unit/agency/assignment-operation.test.ts` | 26 |
 ### `apps/server/src/ai/`
 
 The AI client layer every AI request goes through: `createAiClient` (a builder per provider, typed over `AiProvider`) and the clients for `openai_compatible` and `azure_openai` (one Chat Completions mapping, `openai-chat.ts`) and `gemini` (native SDK, Files API, per-family thinking and sampling).
@@ -370,7 +370,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/agency-contact-assignment.test.ts` | 13 |
 | `apps/server/test/integration/api/agency-ingest-job-owner.test.ts` | ~3 |
 | `apps/server/test/integration/api/agency-my-campaigns.routes.test.ts` | ~27 |
-| `apps/server/test/integration/api/agency-my-contact-actions.test.ts` | 5 |
+| `apps/server/test/integration/api/agency-my-contact-actions.test.ts` | 8 |
 | `apps/server/test/integration/api/agency-offboarding-staffing.test.ts` | ~17 |
 | `apps/server/test/integration/api/agency-performance-access.test.ts` | ~16 |
 | `apps/server/test/integration/api/agency-performance-forwarding.test.ts` | ~23 |
@@ -1446,7 +1446,7 @@ Files: `agency/AgencyAssignmentDialog.module.css`, `agency/AgencyAssignmentDialo
 | `apps/console/src/__tests__/components/CallDetailView.test.tsx` | 21 |
 | `apps/console/src/__tests__/components/CallFieldsForm.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | 2 |
-| `apps/console/src/__tests__/components/CampaignAssignmentProgress.test.tsx` | 4 |
+| `apps/console/src/__tests__/components/CampaignAssignmentProgress.test.tsx` | 5 |
 | `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 14 |
@@ -1464,7 +1464,7 @@ Files: `agency/AgencyAssignmentDialog.module.css`, `agency/AgencyAssignmentDialo
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 43 |
 | `apps/console/src/__tests__/components/HomeRedirect.test.tsx` | 8 |
-| `apps/console/src/__tests__/components/MyContactsPanel.test.tsx` | 13 |
+| `apps/console/src/__tests__/components/MyContactsPanel.test.tsx` | 16 |
 | `apps/console/src/__tests__/components/NotesField.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/PageDescription.test.tsx` | 3 |
 | `apps/console/src/__tests__/components/PhoneFilterInput.test.tsx` | 8 |
@@ -1564,9 +1564,9 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyCampaignAttemptsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyCampaignContactsPage.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/AgencyCampaignDetailPage.test.tsx` | 97 |
-| `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 11 |
+| `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 13 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 22 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 6 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 11 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 29 |
@@ -1575,7 +1575,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyLoginPage.test.tsx` | 38 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.softphone.test.tsx` | 3 |
 | `apps/console/src/__tests__/pages/AgentAttemptsPage.test.tsx` | 46 |
-| `apps/console/src/__tests__/pages/AgentConsolePage.assignment.test.tsx` | 7 |
+| `apps/console/src/__tests__/pages/AgentConsolePage.assignment.test.tsx` | 8 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.audio.test.tsx` | 53 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.callbackDnc.test.tsx` | 31 |
 | `apps/console/src/__tests__/pages/AgentConsolePage.cueVisual.test.tsx` | 22 |
@@ -1646,8 +1646,8 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyAgentFloor.test.ts` | 69 |
 | `apps/console/src/__tests__/utils/agencyAgentPerformance.test.ts` | 73 |
 | `apps/console/src/__tests__/utils/agencyAssignmentCopy.test.ts` | 23 |
-| `apps/console/src/__tests__/utils/agencyAssignmentOps.test.ts` | 19 |
-| `apps/console/src/__tests__/utils/agencyCampaignConfigAssignment.test.ts` | 16 |
+| `apps/console/src/__tests__/utils/agencyAssignmentOps.test.ts` | 21 |
+| `apps/console/src/__tests__/utils/agencyCampaignConfigAssignment.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyReservedBreakReason.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/agencyAgentRoster.test.ts` | 82 |
 | `apps/console/src/__tests__/utils/agencyAgentSurfaces.test.ts` | 7 |
@@ -1700,7 +1700,7 @@ Files: `agency/agentReadouts.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`,
 | `apps/console/src/__tests__/utils/agencyStationExit.test.ts` | 19 |
 | `apps/console/src/__tests__/utils/agencyStationIdle.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/agencyStationLiveness.test.ts` | 8 |
-| `apps/console/src/__tests__/utils/agencyStationQueue.test.ts` | 7 |
+| `apps/console/src/__tests__/utils/agencyStationQueue.test.ts` | 8 |
 | `apps/console/src/__tests__/utils/agencyStationReducer.test.ts` | 24 |
 | `apps/console/src/__tests__/utils/agencyStatsConsumers.test.ts` | 37 |
 | `apps/console/src/__tests__/utils/agencyWrapup.test.ts` | 35 |

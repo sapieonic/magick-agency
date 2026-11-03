@@ -338,7 +338,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   a `LATERAL ... LIMIT 1` per agent), never reserves an agent with nothing due, and tells the
   station why with a `queue` frame on a change (`pacing/agent-queue.ts`, the one reading shared
   with the join bootstrap, `ready` and the My contacts summary); the leader sweeps due callbacks
-  whose owner is away past the grace back to the pool (`pacing/callback-fallback.ts`). *Agent*:
+  whose owner is away past the grace back to the pool, and the open contacts of owners no longer
+  staffed on the campaign (`pacing/callback-fallback.ts`). *Agent*:
   the My contacts reads, the set-based reopen of not-reached contacts
   (`agent-retry.repository.ts`) and the per-contact call, which runs in the process holding the
   station (`agency/my-contact-call.ts`, `session_param`) on the campaign's normal dial path with

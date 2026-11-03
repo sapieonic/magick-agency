@@ -593,8 +593,9 @@ app.
 - Campaign settings: `assignment_mode` (`pool` / `strict` / `preferred`, changed only while draft
   or paused), `on_unstaff`, the callback grace and fallback, agent retry on/off, rounds and
   cooldown; one validator for both write paths; a retry campaign can keep the owners.
-- Supervisor: preview then commit (random split, count, filter, range, rebalance, unassign), with
-  a token so the commit is exactly the preview or `409 preview_stale`; progress per agent with
+- Supervisor: preview then commit (random split, count, filter, range, reassign, rebalance,
+  unassign), with a token so the commit is exactly the preview (or, for 100+ moves, within 2% of
+  its counts) or `409 preview_stale`; progress per agent with
   presence and the pool; a contact's owner history; the roster's owner column, filter and CSV
   columns. Console: assignment settings in the campaign form, the assignment dialog from the
   roster selection or the filter, progress on the campaign page.
@@ -609,7 +610,18 @@ app.
   note) is granted when it is recorded and spent at exhaustion (extra attempts) or by the agent's
   call (the other two); a pooled callback goes to the agent who took it. DNC wins everywhere. The
   soft phone refuses another agent's contact on a `strict` campaign (`contact_assigned_elsewhere`).
-- Unstaff on all three paths returns the agent's open contacts to the pool (or keeps them), audited.
+- Unstaff on all three paths returns the agent's open contacts to the pool (or keeps them), audited;
+  the pacing leader's owner sweep returns what was on a call then, once it settles.
+- A fresh-context review in three parts (data and pacing, routes and wire, clients and docs) found
+  and this branch fixed: the agent's per-contact call ignored the `agency_dialer_enabled` kill
+  switch; agent retry reopened contacts on a completed campaign; contacts on a call at an unstaff
+  were stranded with the former agent; `count` handed out closed contacts and `range` moved them;
+  preview then commit almost never succeeded on a running campaign (now a bounded 2% drift for
+  100+ moves); an unanswered callback stayed a callback; a retry campaign copied owners nobody
+  staffed; a campaign that used the feature could not be saved, or set back, once the flag was
+  turned off; the calling-hours note prompt never appeared on either client (it waited for a
+  refusal the server does not send); and smaller client parity, focus and copy issues. Each fix
+  has a test that was mutation-checked.
 - Built in six parallel lanes over one foundation (migration, contracts, the shared bucket and
   eligibility SQL), then integrated: the agent's actions moved into the assignment route family,
   and the My contacts summary reads the pacing probe's queue so it cannot disagree with the
@@ -619,7 +631,9 @@ app.
   0.8 s, an agent's summary 0.28 s and list 0.26 s; a commit moving all 1M contacts took about
   177 s (the bare UPDATE alone is 80 s on that disk). Batching very large commits is the next step
   if a roster that size is assigned in one operation.
-- **Left open** (none blocks the flag staying off): the pacing probe ignores the one-live-call per
+- **Left open** (none blocks the flag staying off): unstaffing does not end the agent's open
+  session (in `preferred` mode they can still take pool contacts until they leave; the owner
+  sweep returns anything they are left holding); the pacing probe ignores the one-live-call per
   number rule (an agent can be reserved and then get nothing that tick, and is returned); extra
   attempts are not spent by the soft phone's settlement or the reaper's lapsed wrap-up close; in
   `strict` mode a callback that falls back waits for a supervisor (CA5); the summary has no next

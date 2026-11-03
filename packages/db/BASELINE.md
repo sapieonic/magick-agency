@@ -469,6 +469,11 @@ the same customer (`POST /proxy/agency/sessions/:id/redial`, `apps/server/src/ag
   `attempts_redialed`, never as retries (`apps/server/src/db/repositories/agency/sql-fragments.ts`,
   `CONVERSATION_ATTEMPT_SQL`).
 
+**Down** maps `redialed` resolutions to `agent_left`, restores the old CHECK, and drops the index,
+the two CHECKs and the three columns. A `redialed` disposition code is left as it is (an ordinary
+string to the schema). **Tests**: `test/integration/db/wrapup-redial-migration.test.ts` and the
+down → up suite (`test/integration/baseline-down-up.test.ts`, including a Down over a redial chain).
+
 ### 0009 — `migrations/0009_contact_assignment.sql`
 
 Contact assignment (supervisors assign roster contacts to agents), agent-led retry and
@@ -501,10 +506,12 @@ outcome-granted overrides.
 - The bucket and retry-eligibility rules every read uses are SQL fragments in
   `apps/server/src/db/repositories/agency/assignment-sql.ts`.
 
-**Down** maps `redialed` resolutions to `agent_left`, restores the old CHECK, and drops the index,
-the two CHECKs and the three columns. A `redialed` disposition code is left as it is (an ordinary
-string to the schema). **Tests**: `test/integration/db/wrapup-redial-migration.test.ts` and the
-down → up suite (`test/integration/baseline-down-up.test.ts`, including a Down over a redial chain).
+**Down** drops the three attempt columns and their CHECKs, the history table, the assignee index,
+the contact columns and the campaign settings with their CHECKs; contacts and their attempts
+survive, unowned. **Tests**: `test/integration/db/contact-assignment-migration.test.ts` and the
+down → up suite (`test/integration/baseline-down-up.test.ts`, including a Down with assigned
+contacts and their history present).
+
 
 ## Tests
 
