@@ -659,7 +659,7 @@ election is needed.
 | `reapOnStartup` (all non-terminal attempts dead, `markAllOffline`, manual startup sweep) | P, **before any media worker is forked**, so its "dead by definition" premise still holds | — |
 | `reapSlot(k)` (new, §6.1): the startup rule narrowed to one dead worker | P, on worker exit, **before** re-forking slot *k* | the dead slot's sessions by `slotFor` |
 | `sweepOnce` (leaked attempts) | P | `owned` = union of every worker's `reaper.snapshot` `activeAttemptIds`; `isAgentHeldSomewhere` per §5.2; a snapshot timeout skips this cycle |
-| `reapUnrecordedEnds` | P | snapshots' `unrecordedEnds`; `reaper.forget_unrecorded` back to each worker. The dialer saw these end, so a contact is dialable at once; only one whose dial it reported `dialOutcomeUnknown` waits 15 min after `dialed_at` |
+| `reapUnrecordedEnds` | P | snapshots' `unrecordedEnds`; `reaper.forget_unrecorded` back to each worker. The dialer saw these end, so a contact is dialable at once; only one whose dial it reported `dialOutcomeUnknown` waits 15 min after `dialed_at`. A contact that is no longer that attempt's (the abandon's unclaim landed, then pacing or a soft-phone call took it) is left alone |
 | `sweepLapsedWrapups`, `sweepStrandedContacts` | P | none (database) |
 | `sweepManualCalls` | P | `manualActiveIds` union; `softphone.closed_by_sweep` to each row's slot |
 | Guard self-heal reconcile (counters vs lock keys, Redis-global) | P | woken by `voice.wake_self_heal` |
@@ -729,6 +729,10 @@ nothing new can be owned by it meanwhile.
    in flight or the phone ringing) may still be placed by the carrier, so its contact is
    dialable only 15 min after `dialed_at` (`DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS`, the dial
    path's rule; `reapedRedialNotBefore` in `agency/reaper.ts`, the same in the startup reap).
+   The requeue is one guarded statement (`requeueOrphaned`): it moves the contact only while
+   it is still that attempt's (`in_flight` or `connected`, no newer attempt, no soft-phone
+   claim), so a contact re-claimed or settled since is left alone, uncharged. The same holds
+   on every reap path, including `reapUnrecordedEnds`.
 4. Manual calls of those sessions → the orphan path of `sweepManualCalls`.
 5. Agent leases of the slot's live sessions are cleared, and rows marked `offline`, so the
    agents rehydrate into `break`. That closes today's fast-restart window in which a

@@ -66,11 +66,12 @@ const { repos } = vi.hoisted(() => ({
       // retirement counter below.
       markState: vi.fn().mockResolvedValue(true),
       unclaim: vi.fn().mockResolvedValue(undefined),
-      // The OUR-FAULT ledger, separate from `attempt_count`.
-      // Returns the post-bump count, which is what the bound is evaluated on —
-      // `1` means "this is the first our-fault redial", so every existing case
-      // below stays well inside the bound and keeps asserting the requeue.
-      chargeOurFaultAttempt: vi.fn().mockResolvedValue(1),
+      // The reaper's requeue: one guarded statement that charges the OUR-FAULT
+      // ledger (separate from `attempt_count`) and writes the state. Resolves what
+      // landed — `pending` after the first our-fault redial, so every existing case
+      // below stays well inside the bound and keeps asserting the requeue — or null
+      // when the contact no longer belonged to the reaped attempt.
+      requeueOrphaned: vi.fn().mockResolvedValue({ state: 'pending', our_fault_attempts: 1 }),
       // Stranded-contact sweep.
       findStrandedInFlight: vi.fn().mockResolvedValue([]),
     },
@@ -151,6 +152,7 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 
 import { AgencyReaper, type AgencyReaperDeps } from '../../../src/agency/reaper.js';
 import { DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS } from '../../../src/telephony/carrier-errors.js';
+import { OUR_FAULT_REDIAL_BOUND } from '../../../src/agency/retry-policy.js';
 // The real meter provider, installed before `metrics.ts` creates its instruments:
 // the claim is about the value an export (or the `:9090` scrape) would read.
 const { reader } = await vi.hoisted(async () => {
@@ -201,6 +203,7 @@ beforeEach(() => {
   repos.attempt.recordAutoDisposition.mockImplementation(async (id: string, code: string) =>
     ({ id, disposition_code: code }));
   repos.session.markAllOffline.mockResolvedValue(0);
+  repos.contact.requeueOrphaned.mockResolvedValue({ state: 'pending', our_fault_attempts: 1 });
 });
 
 // ═══ PART A — startup, and the leak sweep's decision ════════════════════════
@@ -243,9 +246,10 @@ describe('AgencyReaper startup', () => {
 
     // A contact left `in_flight` is invisible to the tick forever, so the campaign
     // silently loses it and can never complete.
-    expect(repos.contact.markState).toHaveBeenCalledWith('c1', 'pending', expect.objectContaining({
-      last_outcome: 'orphaned',
-      next_attempt_at: expect.any(Date),
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledWith('c1', expect.objectContaining({
+      reapedAttemptId: 'a1',
+      outcome: 'orphaned',
+      notBefore: expect.any(Date),
     }));
   });
 
@@ -263,19 +267,19 @@ describe('AgencyReaper startup', () => {
     repos.attempt.reapNonTerminal.mockResolvedValue([
       { id: 'a1', contact_id: 'c1' }, { id: 'a2', contact_id: 'c2' },
     ]);
-    repos.contact.markState.mockRejectedValueOnce(new Error('db blip'));
+    repos.contact.requeueOrphaned.mockRejectedValueOnce(new Error('db blip'));
 
     // One bad row must not abort recovery and leave the rest stranded — and it
     // must not prevent agents being marked offline.
     await expect(new AgencyReaper(noDeps()).reapOnStartup()).resolves.toMatchObject({ attempts: 2 });
-    expect(repos.contact.markState).toHaveBeenCalledTimes(2);
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledTimes(2);
     expect(repos.session.markAllOffline).toHaveBeenCalled();
   });
 
   it('is a quiet no-op on a clean boot', async () => {
     const result = await new AgencyReaper(noDeps()).reapOnStartup();
     expect(result).toEqual({ attempts: 0, agents: 0 });
-    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
   });
 });
 
@@ -298,7 +302,7 @@ describe('AgencyReaper leak sweep — attempts the dialer could not end', () => 
 
     expect(repos.attempt.reapByIds).toHaveBeenCalledWith(['att-u']);
     expect(ownerOf).not.toHaveBeenCalled();
-    expect(repos.contact.markState).toHaveBeenCalledWith('c-u', 'pending', expect.objectContaining({ last_outcome: 'orphaned' }));
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledWith('c-u', expect.objectContaining({ reapedAttemptId: 'att-u', outcome: 'orphaned' }));
     expect(ends.forget).toHaveBeenCalledWith(['att-u']);
   });
 
@@ -320,8 +324,8 @@ describe('AgencyReaper leak sweep — attempts the dialer could not end', () => 
     await new AgencyReaper(noDeps({ unrecordedEnds: unrecorded(['att-known', 'att-unknown'], ['att-unknown']) })).sweepOnce();
 
     const nextAt = (contactId: string) => {
-      const call = repos.contact.markState.mock.calls.find((c: unknown[]) => c[0] === contactId)!;
-      return (call[2] as { next_attempt_at: Date }).next_attempt_at.getTime();
+      const call = repos.contact.requeueOrphaned.mock.calls.find((c: unknown[]) => c[0] === contactId)!;
+      return (call[1] as { notBefore: Date }).notBefore.getTime();
     };
     expect(nextAt('c-known')).toBeGreaterThanOrEqual(before);
     expect(nextAt('c-known')).toBeLessThanOrEqual(Date.now());
@@ -387,8 +391,8 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
 
     expect(repos.attempt.reapByIds).toHaveBeenCalledWith(['leak-1']);
     expect(reaped).toBe(1);
-    expect(repos.contact.markState).toHaveBeenCalledTimes(1);
-    expect(repos.contact.markState).toHaveBeenCalledWith('c-leak', 'pending', expect.anything());
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledTimes(1);
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledWith('c-leak', expect.objectContaining({ reapedAttemptId: 'leak-1' }));
   });
 
   it('skips an attempt whose agent is held by ANOTHER replica (arm 2)', async () => {
@@ -406,7 +410,7 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
     expect(ownerOf).toHaveBeenCalledWith('sess-remote');
     expect(repos.attempt.reapByIds).not.toHaveBeenCalled();
     expect(reaped).toBe(0);
-    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
   });
 
   it('reaps when the agent is held by NOBODY — the actual rule', async () => {
@@ -446,7 +450,7 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
     repos.attempt.reapByIds.mockResolvedValue([]); // the row was already terminal
 
     expect(await new AgencyReaper(noDeps()).sweepOnce()).toBe(0);
-    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
   });
 
   it('reads the live set BEFORE querying, so a settling attempt survives a cycle', async () => {
@@ -482,7 +486,7 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
     expect(await reaper.sweepOnce()).toBe(0);
     expect(await reaper.sweepOnce()).toBe(0);
     expect(repos.attempt.reapByIds).not.toHaveBeenCalled();
-    expect(repos.contact.markState).not.toHaveBeenCalled();
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalled();
   });
 
   it('picks the 3 leaked out of 33 without disturbing the other 30', async () => {
@@ -509,12 +513,13 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
     ]);
     await new AgencyReaper(noDeps()).reapOnStartup();
 
-    expect(repos.contact.markState).toHaveBeenCalledTimes(2);
-    for (const call of repos.contact.markState.mock.calls) {
-      expect(call[1]).toBe('pending');
-      expect(call[2]).not.toHaveProperty('bump_attempt');
-      expect(call[2]).toMatchObject({ last_outcome: 'orphaned' });
+    // The requeue's one statement charges `our_fault_attempts` only (the SQL tier pins
+    // that `attempt_count` is untouched), and nothing else writes the contact.
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledTimes(2);
+    for (const call of repos.contact.requeueOrphaned.mock.calls) {
+      expect(call[1]).toMatchObject({ outcome: 'orphaned', bound: OUR_FAULT_REDIAL_BOUND, retiredState: 'exhausted' });
     }
+    expect(repos.contact.markState).not.toHaveBeenCalled();
   });
 
   it('applies the same accounting on the periodic sweep, not just at boot', async () => {
@@ -526,8 +531,9 @@ describe('AgencyReaper leak sweep — what it decides on', () => {
 
     await new AgencyReaper(noDeps()).sweepOnce();
 
-    expect(repos.contact.markState).toHaveBeenCalledTimes(1);
-    expect(repos.contact.markState.mock.calls[0]![2]).not.toHaveProperty('bump_attempt');
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledTimes(1);
+    expect(repos.contact.requeueOrphaned.mock.calls[0]![1]).toMatchObject({ reapedAttemptId: 'att-9', outcome: 'orphaned' });
+    expect(repos.contact.markState).not.toHaveBeenCalled();
   });
 
   it('start/stop is idempotent and holds no handle open', () => {
@@ -733,9 +739,7 @@ describe('AgencyReaper vs the deferred-hangup window', () => {
     expect(repos.attempt.reapByIds).not.toHaveBeenCalled();
     // And the customer is still on a live call: nothing hung up the carrier leg
     // and nothing returned their contact to the roster to be dialed again.
-    expect(repos.contact.markState).not.toHaveBeenCalledWith(
-      'contact-1', 'pending', expect.anything(),
-    );
+    expect(repos.contact.requeueOrphaned).not.toHaveBeenCalledWith('contact-1', expect.anything());
   });
 
   it('reaps the same attempt once the window has actually lapsed', async () => {
@@ -974,7 +978,7 @@ describe('the reaper as a producer of our-fault retirements', () => {
 
   /** A leaked attempt whose contact is already at the our-fault bound. */
   function boundedLeak() {
-    repos.contact.chargeOurFaultAttempt.mockResolvedValue(3);
+    repos.contact.requeueOrphaned.mockResolvedValue({ state: 'exhausted', our_fault_attempts: 3 });
     repos.attempt.findNonTerminalOlderThan.mockResolvedValue([
       attemptRow({ id: 'leak-1', contact_id: 'c-leak', tenant_id: 'ten-1', campaign_id: 'camp-1' }),
     ]);
@@ -989,9 +993,9 @@ describe('the reaper as a producer of our-fault retirements', () => {
 
     await new AgencyReaper(noDeps()).sweepOnce();
 
-    // The contact really was retired — not requeued `pending`.
-    expect(repos.contact.markState).toHaveBeenCalledWith(
-      'c-leak', 'exhausted', expect.anything(),
+    // Retired by the statement, at the one bound the dial path also obeys.
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledWith(
+      'c-leak', expect.objectContaining({ bound: OUR_FAULT_REDIAL_BOUND, retiredState: 'exhausted' }),
     );
     expect(
       await retirementCount('orphaned') - before,
@@ -1013,23 +1017,24 @@ describe('the reaper as a producer of our-fault retirements', () => {
     expect(await retirementCount('canceled') - beforeCanceled).toBe(0);
   });
 
-  it('counts NOTHING when `markState` resolved but REFUSED the transition', async () => {
+  it('counts NOTHING when the statement kept a DNC row `suppressed`', async () => {
     /**
      * The hole `.then(() => true)` left, and the reason that idiom was wrong.
      *
-     * `markState` does not throw when its DNC guard refuses: the row stays
-     * `suppressed`, the statement succeeds, and only a WARN line records it. This
-     * method's own comment already notes a DNC'd contact can be sitting here — so
-     * crash recovery colliding with a mid-call DNC was reporting a retirement
-     * this ledger never made, against a series the dashboard says to page on.
+     * The DNC guard does not throw: the row stays `suppressed`, the statement
+     * succeeds, and only a WARN line records it. A DNC'd contact can be sitting
+     * here — so crash recovery colliding with a mid-call DNC was reporting a
+     * retirement this ledger never made, against a series the dashboard says to
+     * page on. The statement returns the state that landed, and only `exhausted`
+     * counts.
      */
     const before = await retirementCount('orphaned');
     boundedLeak();
-    repos.contact.markState.mockResolvedValueOnce(false);
+    repos.contact.requeueOrphaned.mockResolvedValueOnce({ state: 'suppressed', our_fault_attempts: 3 });
 
     await new AgencyReaper(noDeps()).sweepOnce();
 
-    expect(repos.contact.markState).toHaveBeenCalled();
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalled();
     expect(
       await retirementCount('orphaned') - before,
       'a refused transition was counted as a permanent retirement',
@@ -1039,10 +1044,21 @@ describe('the reaper as a producer of our-fault retirements', () => {
   it('counts nothing when the retirement write REJECTED', async () => {
     const before = await retirementCount('orphaned');
     boundedLeak();
-    repos.contact.markState.mockRejectedValueOnce(new Error('pool exhausted'));
+    repos.contact.requeueOrphaned.mockRejectedValueOnce(new Error('pool exhausted'));
 
     await new AgencyReaper(noDeps()).sweepOnce();
 
+    expect(await retirementCount('orphaned') - before).toBe(0);
+  });
+
+  it('counts nothing when the contact had moved on and nothing was written', async () => {
+    const before = await retirementCount('orphaned');
+    boundedLeak();
+    repos.contact.requeueOrphaned.mockResolvedValueOnce(null);
+
+    await new AgencyReaper(noDeps()).sweepOnce();
+
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledTimes(1);
     expect(await retirementCount('orphaned') - before).toBe(0);
   });
 
@@ -1051,7 +1067,7 @@ describe('the reaper as a producer of our-fault retirements', () => {
     // counter firing here would make every crash-recovery requeue look like a
     // permanent loss of a customer.
     const before = await retirementCount('orphaned');
-    repos.contact.chargeOurFaultAttempt.mockResolvedValue(1);
+    repos.contact.requeueOrphaned.mockResolvedValue({ state: 'pending', our_fault_attempts: 1 });
     repos.attempt.findNonTerminalOlderThan.mockResolvedValue([
       attemptRow({ id: 'leak-1', contact_id: 'c-leak', tenant_id: 'ten-1', campaign_id: 'camp-1' }),
     ]);
@@ -1061,9 +1077,7 @@ describe('the reaper as a producer of our-fault retirements', () => {
 
     await new AgencyReaper(noDeps()).sweepOnce();
 
-    expect(repos.contact.markState).toHaveBeenCalledWith(
-      'c-leak', 'pending', expect.anything(),
-    );
+    expect(repos.contact.requeueOrphaned).toHaveBeenCalledWith('c-leak', expect.anything());
     expect(await retirementCount('orphaned') - before).toBe(0);
   });
 });

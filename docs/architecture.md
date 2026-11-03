@@ -294,7 +294,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   `break` and a sweep closes the attempt).
 - **Reaper** (`reaper.ts`). On startup and every 60 s, closes attempts nobody owns: liveness is
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
-  dispatching it.
+  dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded
+  statement, and only while it is still that attempt's (no newer attempt, no soft-phone claim).
 - **Soft phone** (`softphone/`, [`softphone.md`](softphone.md)). Manual calls outside pacing:
   `ManualDialer` dials agent-first through the bridge with a `manual` correlation and owns the
   call until it ends; `SoftphoneService` (`runtime.softphone`) is the API layer's surface. The

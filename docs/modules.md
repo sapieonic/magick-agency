@@ -82,7 +82,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-join-rehydrate-db.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agency-lease-ring-duration.test.ts` | ~4 |
 | `apps/server/test/integration/agency/agency-migration.test.ts` | ~13 |
-| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | 18 |
+| `apps/server/test/integration/agency/agency-reaper-sql.test.ts` | 22 |
 | `apps/server/test/integration/agency/agency-retry-idempotency.test.ts` | ~9 |
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
@@ -224,7 +224,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/proxy-agency-spine.routes.test.ts` | 40 |
 | `apps/server/test/unit/agency/proxy-agency-staffing.routes.test.ts` | 81 |
 | `apps/server/test/unit/agency/proxy-agency-station.routes.test.ts` | 22 |
-| `apps/server/test/unit/agency/reaper.test.ts` | 44 |
+| `apps/server/test/unit/agency/reaper.test.ts` | 45 |
 | `apps/server/test/unit/agency/retry-policy.test.ts` | 23 |
 | `apps/server/test/unit/agency/retry-selector-parse.test.ts` | 34 |
 | `apps/server/test/unit/agency/roster-row-identity.test.ts` | 3 |
