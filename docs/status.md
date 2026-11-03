@@ -517,14 +517,20 @@ can redial the same customer and is connected back to themselves, at most twice 
   - Left open: a redial that never reached the carrier still uses one of the two; a campaign
     whose catalog already held the code `redialed` before 0008 keeps it (BASELINE open question
     6); after the app's 10 s bound, Save can meet a 409 if the redial was in fact placed.
-- Run of 2026-11-03 on this branch (`pnpm lint` clean in 8 packages; `pnpm test:release` 10 and
-  `pnpm test:grafana` 32 pass): server 7691 unit + 42 skipped / 1601 integration + 9 expected fail
-  (the cluster `mobile-stations` file timed out once under load and passed alone twice);
-  `packages/db` 427 / 518; console 4992; contracts 252; super-admin 436; web-ui 235; domain 61;
-  observability 14; app `flutter test` 1303, `agency_wire` 341, `flutter analyze` clean. The new
-  route shifted the seeded sample of `hostile-input-fuzz.test.ts` case 3 onto the uplink probe,
-  whose per-user bucket the sweep had spent (429, not 413); it is excluded there, its 413 being
-  pinned in its own suite.
+- Run of 2026-11-03 after the review fixes, on `028b2ab`, one suite at a time from inside each
+  package (`pnpm lint` clean in 8 packages; `pnpm test:release` 10 and `pnpm test:grafana` 32
+  pass): server 7720 unit + 42 skipped; server integration, all files in one run, 1613 passed +
+  9 expected fail + 4 failed, the 4 being every case of `cluster/mobile-stations.test.ts`; that
+  file passes 4/4 alone and in its CI lane (`INTEGRATION_LANE=wall-clock`, 3 files, 15 passed),
+  so the rest lane is 1602 + 9 expected fail. It had also timed out once in the run before the
+  fixes; the cause of the failure when it runs after the whole rest lane is not found.
+  `packages/db` 427 / 519; console 5015; contracts 252; super-admin 436; web-ui 235; domain 61;
+  observability 14; app `flutter test` 1316, `agency_wire` 341, `flutter analyze` clean,
+  `contracts-literals --check` up to date. The new route shifted the seeded sample of
+  `hostile-input-fuzz.test.ts` case 3 onto the uplink probe, whose per-user bucket the sweep had
+  spent (429, not 413); it is excluded there, its 413 being pinned in its own suite. (The
+  earlier run's server unit figure, 7691, was a run with 2 failures under load; the suite was
+  green alone.)
 
 ### Review fixes on the scaling branch 2026-11-03
 
@@ -571,22 +577,23 @@ fails on the old code and goes red when the fix is reverted.
 
 ## Test counts
 
-Latest run, 2026-11-03, after PR #29's review fixes, on `f97a281`, from inside each package
-(`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 32 and `pnpm test:release` 10
-pass):
+Latest run, 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
+each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and `pnpm test:release` 10
+pass; details and the one file that fails only in the combined run: "Wrap-up redial 2026-11-03"):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7650 passed + 42 skipped (383 files) | 1584 passed + 9 expected fail (171 files) |
-| `packages/db` | 427 | 512 (47 files) |
-| `apps/console` | 4944 (252 files) | — |
+| `apps/server` | 7720 passed + 42 skipped (386 files) | rest lane 1602 passed + 9 expected fail; wall-clock lane 15 (177 files) |
+| `packages/db` | 427 | 519 (48 files) |
+| `apps/console` | 5015 (256 files) | — |
 | `apps/super-admin` | 436 | — |
-| `packages/contracts` | 249 | — |
+| `packages/contracts` | 252 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
+| `apps/mobile` | `flutter test` 1316, `agency_wire` 341 | — |
 
-One expected fail fewer: `disposition-storm.test.ts` case 5 is fixed and is now an `it`.
+Since PR #29's run: one expected fail fewer there (`disposition-storm.test.ts` case 5 is now an `it`).
 
 Run of 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
 package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
