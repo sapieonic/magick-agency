@@ -506,18 +506,18 @@ export function trackAgencyAssignmentRefused(props: EventCatalog['agency_assignm
 }
 
 /** An agent opened My contacts at the station. */
-export function trackAgencyMyContactsOpened(props: EventCatalog['agency_my_contacts_opened']): void {
-  track('agency_my_contacts_opened', props);
+export function trackAgencyMyContactsOpened(props: EventCatalog['agency_my_contacts_viewed']): void {
+  track('agency_my_contacts_viewed', props);
 }
 
 /** An agent reopened not-reached contacts into their queue (or was refused). */
-export function trackAgencyAgentRetry(props: EventCatalog['agency_agent_retry']): void {
-  track('agency_agent_retry', props);
+export function trackAgencyAgentRetry(props: EventCatalog['agency_agent_retry_requested']): void {
+  track('agency_agent_retry_requested', props);
 }
 
 /** An agent pressed Call on one of their contacts (placed or refused). */
-export function trackAgencyMyContactCall(props: EventCatalog['agency_my_contact_call']): void {
-  track('agency_my_contact_call', props);
+export function trackAgencyMyContactCall(props: EventCatalog['agency_my_contact_call_requested']): void {
+  track('agency_my_contact_call_requested', props);
 }
 
 /** The station said "Nothing due now" (once per reason it started saying). */
@@ -1291,12 +1291,12 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     code: string | null;
   };
   /** {@link trackAgencyMyContactsOpened} */
-  agency_my_contacts_opened: {
+  agency_my_contacts_viewed: {
     campaign_id: string;
     assignment_mode: AgencyAssignmentMode | null;
   };
   /** {@link trackAgencyAgentRetry} */
-  agency_agent_retry: {
+  agency_agent_retry_requested: {
     campaign_id: string;
     /** "Retry not reached (N)" for all, or the ticked rows. */
     scope: 'all' | 'selected';
@@ -1307,7 +1307,7 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     code: AgencyAgentRetryErrorCode | null;
   };
   /** {@link trackAgencyMyContactCall} */
-  agency_my_contact_call: {
+  agency_my_contact_call_requested: {
     campaign_id: string;
     bucket: AgencyMyContactBucket;
     /** A calling-hours note was sent (its text never is). */

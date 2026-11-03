@@ -253,7 +253,7 @@ void main() {
         'campaign_id': 'c1',
         'bucket': 'not_reached',
         'override_kinds': 'none',
-        'with_note': false,
+        'with_override_note': false,
         'outcome': 'placed',
         'override_applied': 'none',
         'retry_round_spent': false,
@@ -295,7 +295,7 @@ void main() {
       expect(second, isA<ContactCallPlaced>());
       expect(api.calls[1].$2.toJson()['override_note'], 'Customer asked to be called after 9pm.');
       final e = sink.last('agency_my_contact_call_requested');
-      expect(e['with_note'], isTrue);
+      expect(e['with_override_note'], isTrue);
       expect(e['override_kinds'], 'calling_hours');
       expect(e['override_applied'], 'calling_hours');
       expect(e.values.whereType<String>().where((v) => v.contains('9pm')), isEmpty, reason: 'the note never leaves');

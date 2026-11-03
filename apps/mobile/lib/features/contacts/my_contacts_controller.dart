@@ -481,7 +481,7 @@ class MyContactsController extends Notifier<MyContactsState> {
       'campaign_id': campaignId,
       'bucket': contact.bucketRaw,
       'override_kinds': grant == null || grant.kinds.isEmpty ? 'none' : grant.kinds.map((k) => k.wire).join(','),
-      'with_note': note != null,
+      'with_override_note': note != null,
     };
     state = state.copyWith(callingId: contact.id);
     try {

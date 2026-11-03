@@ -283,9 +283,9 @@ describe('analytics/events catalog', () => {
       'agency_assignment_previewed',
       'agency_assignment_committed',
       'agency_assignment_refused',
-      'agency_my_contacts_opened',
-      'agency_agent_retry',
-      'agency_my_contact_call',
+      'agency_my_contacts_viewed',
+      'agency_agent_retry_requested',
+      'agency_my_contact_call_requested',
       'agency_station_nothing_due',
     ]);
     expect(capture).toHaveBeenNthCalledWith(7, 'agency_station_nothing_due', {
