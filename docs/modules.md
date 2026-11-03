@@ -124,7 +124,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/softphone-settings-repository.test.ts` | ~7 |
 | `apps/server/test/unit/agency/abandon-clip-cache-roundtrip.test.ts` | 5 |
 | `apps/server/test/unit/agency/abandon-clip.test.ts` | 11 |
-| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 41 |
+| `apps/server/test/unit/agency/abandon-reason-telemetry.test.ts` | 45 |
 | `apps/server/test/unit/agency/abandoned-call-path.test.ts` | 16 |
 | `apps/server/test/unit/agency/abandonment-guardrail.test.ts` | 27 |
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |

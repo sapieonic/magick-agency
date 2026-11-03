@@ -504,7 +504,24 @@ fails on the old code and goes red when the fix is reverted.
 
 ## Test counts
 
-Latest run, 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
+Latest run, 2026-11-03, after PR #29's review fixes, on `f97a281`, from inside each package
+(`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 32 and `pnpm test:release` 10
+pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7650 passed + 42 skipped (383 files) | 1584 passed + 9 expected fail (171 files) |
+| `packages/db` | 427 | 512 (47 files) |
+| `apps/console` | 4944 (252 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 249 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+
+One expected fail fewer: `disposition-storm.test.ts` case 5 is fixed and is now an `it`.
+
+Run of 2026-11-03, after merging `main` (#27, #28) into the scaling branch, from inside each
 package (`pnpm lint` clean in 8 packages; `pnpm build`, `pnpm test:grafana` 31 and
 `pnpm test:release` 10 pass):
 
