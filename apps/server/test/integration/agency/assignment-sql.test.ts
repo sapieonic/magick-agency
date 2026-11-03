@@ -82,8 +82,16 @@ describe('assignment-sql (real Postgres)', () => {
   it('an exhausted contact, or one not reached, is retryable once its cooldown has passed', async () => {
     const exhausted = await contact({ state: 'exhausted', attempt_count: 3, last_outcome: 'no_answer' });
     expect((await retryOf(exhausted.id)).blocked).toBeNull();
-    const notReached = await contact({ state: 'pending', attempt_count: 1, last_outcome: 'busy' });
+    const notReached = await contact({
+      state: 'pending', attempt_count: 1, last_outcome: 'busy', next_attempt_at: new Date(Date.now() + 3_600_000),
+    });
     expect((await retryOf(notReached.id)).blocked).toBeNull();
+  });
+
+  it('an open not-reached contact already due now is not retryable: it is in the queue as it is', async () => {
+    const due = await contact({ state: 'pending', attempt_count: 1, last_outcome: 'busy', next_attempt_at: new Date(Date.now() - 1000) });
+    expect((await retryOf(due.id)).blocked).toBe('not_retryable');
+    expect(await bucketOf(due.id)).toBe('not_reached');
   });
 
   it('the campaign switch, suppression and not-reached come first', async () => {

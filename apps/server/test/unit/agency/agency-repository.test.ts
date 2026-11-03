@@ -79,7 +79,8 @@ describe('AgencyAttemptRepository.create — the duplicate-dial backstop', () =>
     // And critically: nothing derived from `agency_contacts.attempt_count`, which
     // is the retry budget and must never double as a number generator again.
     expect(String(sql)).not.toContain('attempt_count');
-    expect(params).toEqual(['camp-1', 'c1', 't1', 'a1', '+1', 's1']);
+    // A paced dial: not an agent's own dial, nothing spent, no note (the column defaults).
+    expect(params).toEqual(['camp-1', 'c1', 't1', 'a1', '+1', 's1', false, [], null]);
   });
 
   it('distinguishes an attempt-number collision from the live-attempt backstop', async () => {

@@ -86,7 +86,7 @@ describe('the disposition route\'s contact write lands only while the contact is
 
   it('(a) the first submit releases the contact parked for this write-up', async () => {
     const w = await conversationAwaitingWriteUp();
-    expect(await release(w, 'callback', 'pending', CALLBACK_1)).toEqual({ state: 'pending', suppressed_reason: null });
+    expect(await release(w, 'callback', 'pending', CALLBACK_1)).toMatchObject({ state: 'pending', suppressed_reason: null, extraAttemptSpent: false, overrideGranted: false, assignedTo: null });
     expect(await contactRow(w.contactId)).toMatchObject({
       state: 'pending', last_disposition: 'callback', last_outcome: 'connected',
       next_attempt_at: CALLBACK_1, attempt_count: 1,
@@ -123,7 +123,7 @@ describe('the disposition route\'s contact write lands only while the contact is
     expect((await contactRow(w.contactId)).state).toBe('connected');
     // ...call 2's own write-up does...
     expect(await release({ contactId: w.contactId, attemptId: second!.id }, 'sale', 'completed'))
-      .toEqual({ state: 'completed', suppressed_reason: null });
+      .toMatchObject({ state: 'completed', suppressed_reason: null, extraAttemptSpent: false, overrideGranted: false, assignedTo: null });
     // ...and call 1's late replay after it does not reopen the sale.
     expect(await release(w, 'voicemail', 'pending', new Date(Date.now() + 240 * 60_000))).toBeNull();
     expect(await contactRow(w.contactId)).toMatchObject({ state: 'completed', last_disposition: 'sale' });
@@ -179,7 +179,7 @@ describe('the disposition route\'s contact write lands only while the contact is
   it('(g) a replay that corrects the callback time moves the contact it released, while it is still pending on that code', async () => {
     const w = await conversationAwaitingWriteUp();
     await release(w, 'callback', 'pending', CALLBACK_1);
-    expect(await release(w, 'callback', 'pending', CALLBACK_2)).toEqual({ state: 'pending', suppressed_reason: null });
+    expect(await release(w, 'callback', 'pending', CALLBACK_2)).toMatchObject({ state: 'pending', suppressed_reason: null, extraAttemptSpent: false, overrideGranted: false, assignedTo: null });
     expect(await contactRow(w.contactId)).toMatchObject({
       state: 'pending', next_attempt_at: CALLBACK_2, last_disposition: 'callback', attempt_count: 1,
     });
@@ -192,7 +192,7 @@ describe('the disposition route\'s contact write lands only while the contact is
     await agencyContactRepository.suppressByPhone(w.campaignId, c!.phone_e164, 'dnc', { alwaysContactId: w.contactId });
     const before = await contactRow(w.contactId);
 
-    expect(await release(w, 'callback', 'pending', CALLBACK_1)).toEqual({ state: 'suppressed', suppressed_reason: 'dnc' });
+    expect(await release(w, 'callback', 'pending', CALLBACK_1)).toMatchObject({ state: 'suppressed', suppressed_reason: 'dnc', extraAttemptSpent: false, overrideGranted: false, assignedTo: null });
     // The retry instant is frozen with the state: no "suppressed, next call Wednesday".
     expect(await contactRow(w.contactId)).toMatchObject({
       state: 'suppressed', suppressed_reason: 'dnc', last_disposition: 'callback', next_attempt_at: before.next_attempt_at,

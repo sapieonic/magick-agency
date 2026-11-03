@@ -51,6 +51,12 @@ export const PLATFORM_AUDIT_ACTIONS = [
   'agency_contacts.exported',
   'agency_campaign_agent.assigned',
   'agency_campaign_agent.unassigned',
+  // ── Contact assignment: the agent's own contacts (decision D12) ─────────────────────
+  // An agent reopened their not-reached contacts into their queue (one row per request that
+  // reopened any; `details`: campaign, counts). And an agent dialled one of their contacts
+  // themselves (one row per dial; `details`: the attempt, the session, what it spent).
+  'agency_contacts.agent_retry_reopened',
+  'agency_contact.agent_dialed',
   // ── The soft phone (docs/softphone.md §6) ─────────────────────────────────
   // One row per soft-phone dial and per act on it. The two overrides are rows of
   // their own beside `placed` (SP1, SP2): a dial placed THROUGH a DNC hit or a closed
@@ -96,6 +102,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   'agency_attempt',
   'agency_disposition',
   'agency_campaign_agent',
+  // One roster contact (`agency_contacts.id`): an agent's dial of one of their own contacts.
+  'agency_contact',
   // One soft-phone dial (`agency_manual_calls.id`), and the account's soft-phone
   // settings row (`resource_id` is absent: one row per account, named by it).
   'agency_manual_call',

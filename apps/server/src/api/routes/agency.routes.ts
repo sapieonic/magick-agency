@@ -5,6 +5,7 @@ import { registerSessionRoutes } from './agency/sessions.js';
 import { registerAttemptRoutes } from './agency/attempts.js';
 import { registerSoftphoneRoutes } from './agency/softphone.js';
 import { registerRedialRoutes } from './agency/redial.js';
+import { registerMyContactCallRoutes } from './agency/my-contact-call.js';
 
 export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
   // This module is the session and attempt handlers only, registered on the
@@ -23,6 +24,8 @@ export async function agencyRoutes(app: FastifyInstance, runtime: AgencyRuntime)
     await registerAttemptRoutes(sub, runtime);
     // Wrap-up redial: the agent redials the customer from the wrap-up screen.
     await registerRedialRoutes(sub, runtime);
+    // The agent dials one of their own contacts (contact assignment, agent retry).
+    await registerMyContactCallRoutes(sub, runtime);
     // The soft phone (docs/softphone.md §6), and the switch of a campaign session to it.
     await registerSoftphoneRoutes(sub, runtime);
   });

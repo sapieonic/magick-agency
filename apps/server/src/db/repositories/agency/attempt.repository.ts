@@ -27,6 +27,7 @@ import type {
   AgencyAttemptRow,
   AgencyContactState,
   AgencyKeysetPage,
+  AgencyOverrideKind,
 } from '@magick-agency/contracts/agency';
 import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from './query-builders.js';
 import { projectAttemptRow } from './projections.js';
@@ -116,20 +117,30 @@ export class AgencyAttemptRepository {
     accountId: string;
     callerId: string;
     reservedAgentId: string;
+    /**
+     * The agent's own dial of one of their contacts (`my-contact-call.ts`): `agent_manual`,
+     * the overrides it spent and the calling-hours note. Absent on a paced dial (the column
+     * defaults: `false`, `{}`, NULL).
+     */
+    agentManual?: { overrideApplied: readonly AgencyOverrideKind[]; overrideNote: string | null };
   }): Promise<AgencyCallAttemptRecord | null> {
     try {
       const { rows } = await getPool().query<AgencyCallAttemptRecord>(
         `INSERT INTO agency_call_attempts
-           (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, reserved_agent_id, state)
+           (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, reserved_agent_id, state,
+            agent_manual, override_applied, override_note)
          SELECT $1, $2, $3, $4,
                 COALESCE(MAX(attempt_number), 0) + 1,
-                $5, $6, 'queued'
+                $5, $6, 'queued',
+                $7::boolean, $8::text[], $9::text
            FROM agency_call_attempts
           WHERE contact_id = $2
          RETURNING *`,
         [
           input.campaignId, input.contactId, input.tenantId, input.accountId,
           input.callerId, input.reservedAgentId,
+          input.agentManual !== undefined, [...(input.agentManual?.overrideApplied ?? [])],
+          input.agentManual?.overrideNote ?? null,
         ],
       );
       return rows[0] ?? null;

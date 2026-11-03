@@ -34,8 +34,26 @@ import {
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
+import {
+  applyExtraAttemptOverride,
+  type OverrideGrant,
+  type SpendableDecision,
+} from '../../../agency/contact-overrides.js';
 
 const log = createChildLogger({ component: 'agency-repository' });
+
+/** What {@link AgencyContactRepository.releaseFromDisposition} wrote. */
+export interface DispositionRelease {
+  state: AgencyContactState;
+  suppressed_reason: string | null;
+  next_attempt_at: Date;
+  /** An `extra_attempts` override kept the contact `pending` (D8 spend). */
+  extraAttemptSpent: boolean;
+  /** The entry's override replaced the contact's (D8 grant). */
+  overrideGranted: boolean;
+  /** The callback's new owner (D4), or null when the owner did not change. */
+  assignedTo: string | null;
+}
 
 /** Result of applying one roster-ingest chunk. */
 interface AgencyIngestResult {
@@ -934,55 +952,240 @@ export class AgencyContactRepository {
     lastOutcome: string | null;
     nextAttemptAt: Date | null;
     suppressedReason: string | null;
-  }): Promise<{ state: AgencyContactState; suppressed_reason: string | null } | null> {
-    const { rows } = await getPool().query<{ state: AgencyContactState; suppressed_reason: string | null }>(
-      `UPDATE agency_contacts c
-          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $4::varchar END,
-              last_outcome = COALESCE($5::varchar, c.last_outcome),
-              last_disposition = $3::varchar,
-              next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at
-                                     ELSE COALESCE($6::timestamptz, c.next_attempt_at) END,
-              suppressed_reason = CASE WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason
-                                       ELSE COALESCE($7::varchar, c.suppressed_reason) END,
-              updated_at = now()
-         FROM agency_call_attempts r
-        WHERE c.id = $1
-          AND r.id = $2
-          AND r.contact_id = c.id
-          AND (c.state = 'connected'
-               OR (c.state = 'pending' AND c.last_disposition = $3::varchar)
-               OR c.suppressed_reason = 'dnc')
-          AND NOT EXISTS (
-                SELECT 1 FROM agency_call_attempts n
-                 WHERE n.contact_id = c.id AND n.attempt_number > r.attempt_number)
-          AND NOT EXISTS (
-                SELECT 1 FROM agency_manual_calls m
-                 WHERE m.contact_id = c.id AND m.contact_claimed
-                   AND (m.settled_at IS NULL OR m.created_at > r.created_at))
-      RETURNING c.state, c.suppressed_reason`,
-      [
-        opts.contactId,
-        opts.attemptId,
-        opts.dispositionCode,
-        opts.state,
-        opts.lastOutcome,
-        opts.nextAttemptAt,
-        opts.suppressedReason,
-      ],
-    );
-    const landed = rows[0] ?? null;
-    if (landed && landed.state !== opts.state) {
-      log.warn(
-        {
-          contactId: opts.contactId,
-          requestedState: opts.state,
-          state: landed.state,
-          suppressedReason: landed.suppressed_reason,
-        },
-        'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+    /**
+     * D8 grant: the recorded entry's `override` (`overrideGrantOf`). The contact's
+     * `override_*` columns are REPLACED with it, `override_disposition` = this code. Absent or
+     * null: an existing grant is left alone.
+     */
+    grant?: OverrideGrant | null;
+    /**
+     * D8 spend: the decision is the disposition `retry`'s max-attempts exhaustion
+     * (`disposition_attempts_reached`); `delayMinutes` is that rule's delay. An unspent
+     * `extra_attempts` then keeps the contact `pending` instead.
+     */
+    extraAttempt?: { reason: string; delayMinutes: number; now: Date } | null;
+    /**
+     * D4: the decision booked a callback on a strict / preferred campaign; the agent who took
+     * the call (the attempt's reserved agent). A contact in the pool is assigned to them.
+     */
+    callbackOwner?: { userId: string } | null;
+  }): Promise<DispositionRelease | null> {
+    return withTransaction(async (client) => {
+      // ── The row, locked: everything decided below reads it as it is now ────────
+      // The grant, the spend and the owner are decided on the locked row and written by the
+      // ONE guarded statement below, so they land exactly when the release lands.
+      const { rows: [locked] } = await client.query<Pick<AgencyContactRecord,
+        'state' | 'suppressed_reason' | 'last_disposition' | 'assigned_user_id' | 'override_extra_attempts'
+        | 'tenant_id' | 'campaign_id'>>(
+        `SELECT state, suppressed_reason, last_disposition, assigned_user_id, override_extra_attempts,
+                tenant_id, campaign_id
+           FROM agency_contacts WHERE id = $1 FOR UPDATE`,
+        [opts.contactId],
       );
-    }
-    return landed;
+      if (!locked) return null;
+      const dnc = locked.suppressed_reason === 'dnc';
+      // The FIRST write of this attempt's disposition: the contact is parked for it. The only
+      // write that grants, spends or assigns. A same-code replay (`pending` on this code)
+      // re-lands the record but never grants again (a replay must not top a spent grant back
+      // up), never spends again, and keeps the state the first write chose.
+      const firstWrite = locked.state === 'connected' && !dnc;
+      const replay = !dnc && locked.state === 'pending' && locked.last_disposition === opts.dispositionCode;
+
+      const grant = firstWrite ? (opts.grant ?? null) : null;
+      let state: AgencyContactState = opts.state;
+      let nextAttemptAt = opts.nextAttemptAt;
+      let extraAttempts: number | null = grant ? grant.extraAttempts : null;
+      let extraAttemptSpent = false;
+      if (opts.extraAttempt && firstWrite) {
+        const remaining = grant ? grant.extraAttempts : locked.override_extra_attempts;
+        const applied = applyExtraAttemptOverride(
+          { contactState: opts.state, nextAttemptAt: opts.nextAttemptAt, reason: opts.extraAttempt.reason },
+          remaining,
+          { delayMinutes: opts.extraAttempt.delayMinutes },
+          opts.extraAttempt.now,
+        );
+        if (applied.spent) {
+          state = applied.decision.contactState;
+          nextAttemptAt = applied.decision.nextAttemptAt;
+          extraAttempts = remaining - 1;
+          extraAttemptSpent = true;
+        }
+      } else if (replay && state !== 'pending') {
+        // A replay whose decision closes the contact, finding it `pending` on this code: the
+        // first write left it open (it spent an extra attempt), or the agent reopened it since
+        // (agent retry). Either way the replay keeps it `pending` at its time and spends
+        // nothing: re-closing it would undo what happened after the first write.
+        state = 'pending';
+        nextAttemptAt = null;
+      }
+      const assignTo = firstWrite && opts.callbackOwner && locked.assigned_user_id === null
+        ? opts.callbackOwner.userId
+        : null;
+
+      const { rows } = await client.query<{ state: AgencyContactState; suppressed_reason: string | null; next_attempt_at: Date }>(
+        `UPDATE agency_contacts c
+            SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $4::varchar END,
+                last_outcome = COALESCE($5::varchar, c.last_outcome),
+                last_disposition = $3::varchar,
+                next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at
+                                       ELSE COALESCE($6::timestamptz, c.next_attempt_at) END,
+                suppressed_reason = CASE WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason
+                                         ELSE COALESCE($7::varchar, c.suppressed_reason) END,
+                -- D8: a grant replaces every part; a spend decrements (never below 0, the CHECK).
+                override_disposition = CASE WHEN $8::boolean THEN $3::varchar ELSE c.override_disposition END,
+                override_granted_at = CASE WHEN $8::boolean THEN now() ELSE c.override_granted_at END,
+                override_retry_delay = CASE WHEN $8::boolean THEN $9::boolean ELSE c.override_retry_delay END,
+                override_calling_hours = CASE WHEN $8::boolean THEN $10::boolean ELSE c.override_calling_hours END,
+                -- Not COALESCE(GREATEST(0, $11), col): GREATEST ignores a NULL argument,
+                -- so that would write 0 over every grant on every non-granting outcome.
+                override_extra_attempts = CASE WHEN $11::int IS NULL THEN c.override_extra_attempts
+                                               ELSE GREATEST(0, $11::int) END,
+                -- D4: a callback in the pool goes to the agent who took the call.
+                assigned_user_id = COALESCE(c.assigned_user_id, $12::uuid),
+                assigned_at = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN now() ELSE c.assigned_at END,
+                assigned_by_user_id = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN $12::uuid
+                                           ELSE c.assigned_by_user_id END,
+                updated_at = now()
+           FROM agency_call_attempts r
+          WHERE c.id = $1
+            AND r.id = $2
+            AND r.contact_id = c.id
+            AND (c.state = 'connected'
+                 OR (c.state = 'pending' AND c.last_disposition = $3::varchar)
+                 OR c.suppressed_reason = 'dnc')
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_call_attempts n
+                   WHERE n.contact_id = c.id AND n.attempt_number > r.attempt_number)
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_manual_calls m
+                   WHERE m.contact_id = c.id AND m.contact_claimed
+                     AND (m.settled_at IS NULL OR m.created_at > r.created_at))
+        RETURNING c.state, c.suppressed_reason, c.next_attempt_at`,
+        [
+          opts.contactId,
+          opts.attemptId,
+          opts.dispositionCode,
+          state,
+          opts.lastOutcome,
+          nextAttemptAt,
+          opts.suppressedReason,
+          grant !== null,
+          grant?.retryDelay ?? false,
+          grant?.callingHours ?? false,
+          extraAttempts,
+          assignTo,
+        ],
+      );
+      const landed = rows[0] ?? null;
+      if (!landed) return null;
+      if (landed.state !== state) {
+        log.warn(
+          {
+            contactId: opts.contactId,
+            requestedState: state,
+            state: landed.state,
+            suppressedReason: landed.suppressed_reason,
+          },
+          'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+        );
+      }
+      if (extraAttemptSpent) {
+        await client.query(
+          `UPDATE agency_call_attempts
+              SET override_applied = array_append(override_applied, 'extra_attempts')
+            WHERE id = $1 AND NOT ('extra_attempts' = ANY(override_applied))`,
+          [opts.attemptId],
+        );
+      }
+      if (assignTo) {
+        await client.query(
+          `INSERT INTO agency_contact_assignment_events
+             (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
+           VALUES ($1, $2, $3, NULL, $4, $4, 'callback', gen_random_uuid())`,
+          [locked.tenant_id, locked.campaign_id, opts.contactId, assignTo],
+        );
+      }
+      return {
+        state: landed.state,
+        suppressed_reason: landed.suppressed_reason,
+        next_attempt_at: landed.next_attempt_at,
+        extraAttemptSpent,
+        overrideGranted: grant !== null,
+        assignedTo: assignTo,
+      };
+    }, { pool: getPool() });
+  }
+
+  /**
+   * The settlement's write for an attempt whose outcome-policy decision EXHAUSTS the contact
+   * because the rule's `max_attempts` is spent (`max_attempts_reached`), with the D8 spend:
+   * when the contact holds an unspent `extra_attempts` override it stays `pending`, due after
+   * the rule's delay, one extra attempt is spent and the attempt being settled records
+   * `override_applied += 'extra_attempts'`. Otherwise it is exactly {@link markState}'s write
+   * of the decision.
+   *
+   * One transaction, contact row first then the attempt's (the order the disposition's write
+   * takes them in, so the two can never deadlock). Spent at most once per attempt: an attempt
+   * that already records the spend (a replayed settlement) writes nothing and spends nothing,
+   * and the decrement never goes below 0. The DNC freeze is {@link markState}'s: a row carrying
+   * `suppressed_reason = 'dnc'` stays `suppressed` and spends nothing.
+   *
+   * @returns the state that landed and whether an extra attempt was spent; null when the
+   *   contact or the attempt does not exist (nothing written).
+   */
+  async markExhaustedOrSpendExtraAttempt(opts: {
+    contactId: string;
+    attemptId: string;
+    decision: SpendableDecision;
+    delayMinutes: number;
+    now: Date;
+  }): Promise<{ state: AgencyContactState; extraAttemptSpent: boolean; nextAttemptAt: Date | null } | null> {
+    return withTransaction(async (client) => {
+      const { rows: [contact] } = await client.query<Pick<AgencyContactRecord, 'override_extra_attempts' | 'suppressed_reason'>>(
+        'SELECT override_extra_attempts, suppressed_reason FROM agency_contacts WHERE id = $1 FOR UPDATE',
+        [opts.contactId],
+      );
+      const { rows: [attempt] } = await client.query<{ override_applied: string[] }>(
+        'SELECT override_applied FROM agency_call_attempts WHERE id = $1 AND contact_id = $2 FOR UPDATE',
+        [opts.attemptId, opts.contactId],
+      );
+      if (!contact || !attempt) return null;
+      if (attempt.override_applied.includes('extra_attempts')) {
+        // This attempt's settlement already spent one: nothing is decided twice.
+        return { state: 'pending', extraAttemptSpent: false, nextAttemptAt: null };
+      }
+      const remaining = contact.suppressed_reason === 'dnc' ? 0 : contact.override_extra_attempts;
+      const applied = applyExtraAttemptOverride(opts.decision, remaining, { delayMinutes: opts.delayMinutes }, opts.now);
+      const { rows: [landed] } = await client.query<{ state: AgencyContactState; suppressed_reason: string | null }>(
+        `UPDATE agency_contacts
+            SET state = CASE WHEN suppressed_reason = 'dnc' THEN 'suppressed' ELSE $2 END,
+                next_attempt_at = CASE WHEN suppressed_reason = 'dnc' THEN next_attempt_at ELSE COALESCE($3, next_attempt_at) END,
+                override_extra_attempts = GREATEST(0, override_extra_attempts - $4::int),
+                updated_at = now()
+          WHERE id = $1
+        RETURNING state, suppressed_reason`,
+        [opts.contactId, applied.decision.contactState, applied.decision.nextAttemptAt, applied.spent ? 1 : 0],
+      );
+      if (applied.spent) {
+        await client.query(
+          `UPDATE agency_call_attempts
+              SET override_applied = array_append(override_applied, 'extra_attempts')
+            WHERE id = $1`,
+          [opts.attemptId],
+        );
+      }
+      if (landed && landed.state !== applied.decision.contactState) {
+        log.warn(
+          { contactId: opts.contactId, requestedState: applied.decision.contactState, state: landed.state },
+          'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+        );
+      }
+      return {
+        state: landed?.state ?? applied.decision.contactState,
+        extraAttemptSpent: applied.spent,
+        nextAttemptAt: applied.decision.nextAttemptAt,
+      };
+    }, { pool: getPool() });
   }
 
   /**

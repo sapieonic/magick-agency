@@ -153,6 +153,8 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_contacts.exported', label: 'Contact roster exported', group: 'Calls', product: 'agency' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls', product: 'agency' },
   { value: 'agency_attempt.redialed', label: 'Customer redialled from wrap-up', group: 'Calls', product: 'agency' },
+  { value: 'agency_contacts.agent_retry_reopened', label: 'Agent reopened their not-reached contacts', group: 'Calls', product: 'agency' },
+  { value: 'agency_contact.agent_dialed', label: 'Agent called one of their contacts', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.created', label: 'Number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.deleted', label: 'Do-not-call entry removed', group: 'Calls', product: 'agency' },
   // The soft phone (docs/softphone.md §6). "Soft-phone call" in every label: on this
@@ -202,6 +204,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_attempt', label: 'Call attempt' },
   { value: 'agency_disposition', label: 'Call disposition' },
   { value: 'agency_campaign_agent', label: 'Campaign agent assignment' },
+  { value: 'agency_contact', label: 'Contact' },
   { value: 'agency_manual_call', label: 'Soft-phone call' },
   { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
   { value: 'dnc_entry', label: 'Do-not-call entry' },
