@@ -527,6 +527,8 @@ final class AttemptRow {
     this.endedAt,
     this.talkSeconds,
     this.wrapupSeconds,
+    this.redialOfAttemptId,
+    this.redialNumber,
     required this.createdAt,
     this.agentName,
   }) : stateRaw = stateRaw ?? state.wire,
@@ -561,6 +563,8 @@ final class AttemptRow {
       endedAt: j.timeOrNull('ended_at'),
       talkSeconds: j.numberOrNull('talk_seconds'),
       wrapupSeconds: j.numberOrNull('wrapup_seconds'),
+      redialOfAttemptId: j.strOrNull('redial_of_attempt_id'),
+      redialNumber: j.integerOrNull('redial_number'),
       createdAt: j.time('created_at'),
       agentName: j.strOrNull('agent_name'),
     );
@@ -595,6 +599,14 @@ final class AttemptRow {
   final DateTime? endedAt;
   final double? talkSeconds;
   final double? wrapupSeconds;
+
+  /// Wrap-up redial (0008): the attempt this one redialled from wrap-up; null for a
+  /// paced dial (and from a server that predates the field).
+  final String? redialOfAttemptId;
+
+  /// Wrap-up redial (0008): 0 for a paced dial, 1 and 2 for the redials of one
+  /// conversation. Null from a server that predates the field.
+  final int? redialNumber;
   final DateTime createdAt;
 
   /// Not sent on `/my-attempts` (every row is the caller's own).
@@ -626,6 +638,8 @@ final class AttemptRow {
       other.endedAt == endedAt &&
       other.talkSeconds == talkSeconds &&
       other.wrapupSeconds == wrapupSeconds &&
+      other.redialOfAttemptId == redialOfAttemptId &&
+      other.redialNumber == redialNumber &&
       other.createdAt == createdAt &&
       other.agentName == agentName;
 
@@ -654,6 +668,8 @@ final class AttemptRow {
     endedAt,
     talkSeconds,
     wrapupSeconds,
+    redialOfAttemptId,
+    redialNumber,
     createdAt,
     agentName,
   ]);

@@ -82,6 +82,11 @@ void main() {
       expect(r.agentName, isNull);
       expect(p.rows[1].bridgedAt, isNull);
       expect(p.rows[1].webrtcCallId, isNull);
+      // Wrap-up redial (0008): the chain link, absent from a row an older server sent.
+      expect(r.redialOfAttemptId, 'd3c2b1a0-9e8f-4d7c-8b6a-5f4e3d2c1b0a');
+      expect(r.redialNumber, 1);
+      expect(p.rows[1].redialOfAttemptId, isNull);
+      expect(p.rows[1].redialNumber, isNull);
     });
 
     test('the last page has no cursor', () {

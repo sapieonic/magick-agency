@@ -197,11 +197,20 @@ export function pulseFigures(stats: AgencyCampaignStats | null): PulseFigures {
  * nothing instead.
  */
 function retriesPlacedSub(stats: AgencyCampaignStats | null): string | null {
-  const retried = stats?.attempts_retried;
-  if (typeof retried !== 'number' || retried <= 0) return null;
+  const count = (n: number | undefined): number => (typeof n === 'number' && n > 0 ? n : 0);
+  const retried = count(stats?.attempts_retried);
+  // Wrap-up redials are in the dial count too (an agent called the same customer back
+  // from wrap-up), and they are not retries: the server counts them apart, so the
+  // sub-line names them apart. Absent from an older server, like `attempts_retried`.
+  const redialed = count(stats?.attempts_redialed);
+  if (retried + redialed === 0) return null;
   const total = stats?.attempts_total;
-  if (typeof total === 'number' && retried > total) return null;
-  return `including ${plural(retried, 'retry', 'retries')}`;
+  if (typeof total === 'number' && retried + redialed > total) return null;
+  const parts = [
+    ...(retried > 0 ? [plural(retried, 'retry', 'retries')] : []),
+    ...(redialed > 0 ? [plural(redialed, 'wrap-up redial', 'wrap-up redials')] : []),
+  ];
+  return `including ${parts.join(' and ')}`;
 }
 
 // ── The live floor, as the rail reads it ────────────────────────────────────
