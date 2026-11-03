@@ -459,6 +459,35 @@ phone number (the default, unchanged), any kept column, or none.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
   duplicate column".
 
+### Wrap-up redial 2026-11-03
+
+A connected call can drop for reasons on any side. With the campaign setting "Allow redial from
+wrap-up" (`allow_wrapup_redial`, off by default), an agent in wrap-up, before saving the outcome,
+can redial the same customer and is connected back to themselves, at most twice per call
+(`AGENCY_WRAPUP_REDIAL_LIMIT`). Console and agent app.
+
+- Migration `0008_wrapup_redial.sql` (the setting, `redial_of_attempt_id`, `redial_number`, one
+  redial per attempt, wrap-up resolution `redialed`); contracts: the limit, the reserved
+  `redialed` disposition, `redial_remaining` on the wrap-up state, `redial` on the call panel,
+  six refusal codes, the agent fixtures.
+- Server: `POST /proxy/agency/sessions/:id/redial` (`agency/wrapup-redial.ts`). The checks and
+  the pre-dial gates run before anything is written, so a refusal (DNC, calling hours, ...) leaves
+  the agent in wrap-up; the countdown stops when the redial starts; `wrapup → reserved` CAS; one
+  transaction closes the original `redialed` (its outcome stays `connected`), takes the customer
+  back and inserts the linked redial; the dial goes through the normal dispatcher. A redial that
+  does not connect keeps the customer held and puts the agent back in wrap-up on the redial.
+- Console and app: the Redial button beside the outcome pad with the redials left, the
+  "Redial 1 of 2" label on the call, refusal copy, the setting toggle, the notes draft carried onto
+  the redial, telemetry `agency_redial_requested` / `agency_redial_refused`.
+- Proven end to end over HTTP on real Postgres and Redis with a fake carrier
+  (`wrapup-redial-e2e.test.ts`: connect, redial that rings out, DNC refusal, redial that connects,
+  limit, outcome, the attempt chain); the CAS on real Lua (`agency-agent-redial-cas.test.ts`);
+  guards mutation-checked on every side.
+- Defaults and the open question (do redials spend `max_attempts`? built as no):
+  [`decisions.md`](decisions.md) §4, "Wrap-up redial", WR1–WR10. Not verified on a real carrier
+  or phone. A notes edit sent in the last 2 s before Redial can land on the original attempt after
+  the server copied the notes; the clients carry the draft, so the outcome's notes are complete.
+
 ### Review fixes on the scaling branch 2026-11-03
 
 PR #29's review (8 comments) and the defects found while fixing it. Each fix has a test that
