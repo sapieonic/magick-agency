@@ -100,6 +100,20 @@ describe('contacts by agent', () => {
     expect(screen.getByTestId('progress-row-gone').textContent).toContain('not on this campaign');
   });
 
+  it('groups counts the way every analytics surface does (formatCount, en-IN), not the browser’s locale', async () => {
+    mocks.getAssignmentProgress.mockResolvedValue({
+      ...PROGRESS,
+      agents: [{ ...PROGRESS.agents[0]!, assigned: 123456, counts: counts({ not_reached: 234567 }), attempted: 345678 }],
+      pool: { total: 1234567, counts: counts({ pending: 1234567 }), due_now: 0 },
+    });
+    renderPanel();
+    const row = await screen.findByTestId('progress-row-agent-a');
+    expect(within(row).getByRole('link', { name: '1,23,456' })).toBeTruthy();
+    expect(within(row).getByRole('link', { name: '2,34,567 Not reached' }).textContent).toBe('2,34,567');
+    expect(within(row).getByText('3,45,678')).toBeTruthy();
+    expect(within(screen.getByTestId('progress-pool')).getAllByText('12,34,567').length).toBeGreaterThan(0);
+  });
+
   it('shows the pool, linked to the unassigned filter', async () => {
     renderPanel();
     const pool = await screen.findByTestId('progress-pool');

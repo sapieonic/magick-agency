@@ -6,6 +6,7 @@ import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignContacts } from '../../api/agencySpine';
 import { listCampaignAgents } from '../../api/agency';
+import { getAssignmentProgress } from '../../api/agencyAssignment';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { AgencyAssignmentDialog, type AssignmentAgentOption } from '../../components/agency/AgencyAssignmentDialog';
 import {
@@ -26,6 +27,7 @@ import {
 import {
   AGENCY_ASSIGNMENT_RANGE_MAX,
   type AgencyAssignmentKind,
+  type AgencyAssignmentProgressRow,
 } from '@magick-agency/contracts/api/agency/assignment';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
@@ -189,6 +191,12 @@ export function AgencyCampaignRosterPage() {
   */
   const canAssign = canExport && assignmentEnabled;
   const [agents, setAgents] = useState<AgencyAssignedAgent[]>([]);
+  /**
+   * Everyone holding contacts on the campaign, staffed or not (the progress read's
+   * per-agent rows): an agent taken off it with `on_unstaff = keep`, or a former
+   * member, still owns contacts a supervisor must be able to find and move.
+   */
+  const [holders, setHolders] = useState<AgencyAssignmentProgressRow[]>([]);
   const [selection, setSelection] = useState<RowSelection>(EMPTY_SELECTION);
   const [assignKind, setAssignKind] = useState<AgencyAssignmentKind | null>(null);
   const [reloadAgents, setReloadAgents] = useState(0);
@@ -242,6 +250,10 @@ export function AgencyCampaignRosterPage() {
     listCampaignAgents(id, tenantId, accountId)
       .then((result) => { if (live) setAgents(result.agents); })
       .catch(() => { if (live) setAgents([]); });
+    // A failure leaves only the staffed agents as owners, as before.
+    getAssignmentProgress(id, {}, tenantId, accountId)
+      .then((result) => { if (live) setHolders(result.agents); })
+      .catch(() => { if (live) setHolders([]); });
     return () => { live = false; };
   }, [canAssign, id, tenantId, accountId, reloadAgents]);
 
@@ -249,23 +261,38 @@ export function AgencyCampaignRosterPage() {
     user_id: agent.user_id,
     name: agent.name ?? agent.email ?? 'Unnamed agent',
   })), [agents]);
-  const agentNames = useMemo(
-    () => new Map(agentOptions.map((agent) => [agent.user_id, agent.name])),
-    [agentOptions],
-  );
+  /**
+   * Sources of a reassign / unassign: the staffed agents, then every other holder
+   * (named by the progress read, or "Former member" for a user who is gone).
+   */
+  const ownerOptions = useMemo((): AssignmentAgentOption[] => {
+    const staffed = new Set(agentOptions.map((agent) => agent.user_id));
+    return [
+      ...agentOptions,
+      ...holders
+        .filter((row) => !staffed.has(row.agent_user_id))
+        .map((row) => ({ user_id: row.agent_user_id, name: row.agent_name ?? FORMER_MEMBER_LABEL })),
+    ];
+  }, [agentOptions, holders]);
+  // Names for the "Assigned to" column and preview lines: an id with none is a
+  // former member (`agentName` / `assigneeLabel` say so).
+  const agentNames = useMemo(() => new Map<string, string>([
+    ...holders.flatMap((row) => (row.agent_name ? [[row.agent_user_id, row.agent_name] as [string, string]] : [])),
+    ...agentOptions.map((agent) => [agent.user_id, agent.name] as [string, string]),
+  ]), [holders, agentOptions]);
   const agentName = useCallback(
     (userId: string) => agentNames.get(userId) ?? FORMER_MEMBER_LABEL,
     [agentNames],
   );
   /*
-    The owner chips: every staffed agent and the pool, plus any id already in the
-    applied filter that is not staffed (a link to a former member's contacts must
-    still show, and clear, its own filter).
+    The owner chips: the pool, every staffed agent and every other holder of
+    contacts, plus any id already in the applied filter that is none of these (a
+    link to a former member's contacts must still show, and clear, its own filter).
   */
   const assigneeOptions = useMemo(() => {
     const options: Array<{ value: string; label: string }> = [
       { value: AGENCY_UNASSIGNED_FILTER, label: UNASSIGNED_LABEL },
-      ...agentOptions.map((agent) => ({ value: agent.user_id, label: agent.name })),
+      ...ownerOptions.map((owner) => ({ value: owner.user_id, label: owner.name })),
     ];
     for (const value of filters.assigned_to ?? []) {
       if (!options.some((option) => option.value === value)) {
@@ -273,7 +300,7 @@ export function AgencyCampaignRosterPage() {
       }
     }
     return options;
-  }, [agentOptions, filters.assigned_to]);
+  }, [ownerOptions, filters.assigned_to]);
 
   const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
   const selectedIds = useMemo(() => selectedInOrder(selection, rowIds), [selection, rowIds]);
@@ -857,6 +884,7 @@ export function AgencyCampaignRosterPage() {
           campaignId={id}
           kind={assignKind}
           agents={agentOptions}
+          owners={ownerOptions}
           agentName={agentName}
           selectedIds={selectedIds}
           dispositionOptions={dispositionOptions}

@@ -17,6 +17,7 @@ import {
 } from '../../utils/agencyAssignmentCopy';
 import { rosterLinkFor } from '../../utils/agencyAssignmentOps';
 import { formatSpineTimestamp } from '../../utils/agencySpineCopy';
+import { formatCount } from '../../utils/format/number';
 import { AgencyAssignmentDialog, type AssignmentAgentOption } from './AgencyAssignmentDialog';
 import {
   AGENCY_UNASSIGNED_FILTER,
@@ -106,9 +107,9 @@ export function CampaignAssignmentProgress({ campaignId }: { campaignId: string 
         {count > 0 ? (
           <Link
             to={rosterLinkFor(campaignId, owner, BUCKET_ROSTER_STATES[bucket])}
-            aria-label={`${count.toLocaleString()} ${CONTACT_BUCKET_LABELS[bucket]}`}
+            aria-label={`${formatCount(count)} ${CONTACT_BUCKET_LABELS[bucket]}`}
           >
-            {count.toLocaleString()}
+            {formatCount(count)}
           </Link>
         ) : (
           <span className={styles.zero}>0</span>
@@ -204,12 +205,12 @@ export function CampaignAssignmentProgress({ campaignId }: { campaignId: string 
                   </th>
                   <td className={styles.numeric}>
                     {row.assigned > 0 ? (
-                      <Link to={rosterLinkFor(campaignId, row.agent_user_id)}>{row.assigned.toLocaleString()}</Link>
+                      <Link to={rosterLinkFor(campaignId, row.agent_user_id)}>{formatCount(row.assigned)}</Link>
                     ) : <span className={styles.zero}>0</span>}
                   </td>
                   {BUCKET_COLUMNS.map((column) => countCell(row.agent_user_id, row.counts, column.bucket))}
-                  <td className={styles.numeric}>{row.attempted.toLocaleString()}</td>
-                  <td className={styles.numeric}>{row.due_now.toLocaleString()}</td>
+                  <td className={styles.numeric}>{formatCount(row.attempted)}</td>
+                  <td className={styles.numeric}>{formatCount(row.due_now)}</td>
                   <td className={styles.when}>{formatSpineTimestamp(row.last_activity_at)}</td>
                 </tr>
               ))}
@@ -218,13 +219,13 @@ export function CampaignAssignmentProgress({ campaignId }: { campaignId: string 
                 <td className={styles.numeric}>
                   {progress.pool.total > 0 ? (
                     <Link to={rosterLinkFor(campaignId, AGENCY_UNASSIGNED_FILTER)}>
-                      {progress.pool.total.toLocaleString()}
+                      {formatCount(progress.pool.total)}
                     </Link>
                   ) : <span className={styles.zero}>0</span>}
                 </td>
                 {BUCKET_COLUMNS.map((column) => countCell(AGENCY_UNASSIGNED_FILTER, progress.pool.counts, column.bucket))}
                 <td className={styles.numeric}>—</td>
-                <td className={styles.numeric}>{progress.pool.due_now.toLocaleString()}</td>
+                <td className={styles.numeric}>{formatCount(progress.pool.due_now)}</td>
                 <td className={styles.when}>—</td>
               </tr>
             </tbody>

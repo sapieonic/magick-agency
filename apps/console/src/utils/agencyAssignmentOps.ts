@@ -8,6 +8,7 @@ import {
 import type { AgencyContactState } from '@magick-agency/contracts/agency';
 import { errorCode } from './agencyErrors';
 import { rosterFiltersToParams } from './agencyRosterFilters';
+import { formatCount } from './format/number';
 
 /**
  * The roster's assignment tools, as pure functions: the form a supervisor fills
@@ -67,13 +68,29 @@ export type BuiltOperation =
   | { ok: true; operation: AgencyAssignmentOperation }
   | { ok: false; reason: string };
 
-/** A whole number ≥ 1 typed in a box, or null. */
+/*
+ * The server's bounds on an operation (`apps/server/src/agency/assignment/operation.ts`,
+ * its zod schema), mirrored so the form says so before a round trip. The contract
+ * exports only the range bound; these are not on the wire, so they live here.
+ */
+/** `count` on `count` / `reassign` / `unassign`: 1 to this (`ASSIGNMENT_MAX_COUNT`). */
+export const ASSIGNMENT_COUNT_MAX = 1_000_000;
+/** A `filter` operation's column name, after trimming. */
+export const ASSIGNMENT_COLUMN_NAME_MAX = 200;
+/** A `filter` operation's column values: at most this many. */
+export const ASSIGNMENT_COLUMN_VALUES_MAX = 100;
+/** ...each at most this many characters. */
+export const ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX = 500;
+
+/** A whole number from 1 to {@link ASSIGNMENT_COUNT_MAX} typed in a box, or null. */
 function positiveCount(raw: string): number | null {
   const trimmed = raw.trim();
   if (!/^\d+$/.test(trimmed)) return null;
   const n = Number(trimmed);
-  return Number.isSafeInteger(n) && n >= 1 ? n : null;
+  return Number.isSafeInteger(n) && n >= 1 && n <= ASSIGNMENT_COUNT_MAX ? n : null;
 }
+
+const COUNT_RANGE = `a whole number from 1 to ${formatCount(ASSIGNMENT_COUNT_MAX)}`;
 
 /** `North, East` or one per line → `['North', 'East']`, trimmed, blanks and repeats dropped. */
 export function splitValues(raw: string): string[] {
@@ -107,7 +124,7 @@ export function buildOperation(draft: AssignmentDraft, selectedIds: readonly str
     case 'count': {
       if (!draft.agentId) return { ok: false, reason: 'Pick the agent.' };
       const count = positiveCount(draft.count);
-      if (count === null) return { ok: false, reason: 'Enter how many contacts, a whole number from 1.' };
+      if (count === null) return { ok: false, reason: `Enter how many contacts, ${COUNT_RANGE}.` };
       return { ok: true, operation: { kind: 'count', agent_user_id: draft.agentId, count, ...group } };
     }
     case 'filter': {
@@ -120,6 +137,18 @@ export function buildOperation(draft: AssignmentDraft, selectedIds: readonly str
       if (columnName || columnValues.length > 0) {
         if (!columnName) return { ok: false, reason: 'Name the column the values are in.' };
         if (columnValues.length === 0) return { ok: false, reason: `Enter at least one value for ${columnName}.` };
+        if (columnName.length > ASSIGNMENT_COLUMN_NAME_MAX) {
+          return { ok: false, reason: `A column name is at most ${ASSIGNMENT_COLUMN_NAME_MAX} characters.` };
+        }
+        if (columnValues.length > ASSIGNMENT_COLUMN_VALUES_MAX) {
+          return {
+            ok: false,
+            reason: `Enter at most ${ASSIGNMENT_COLUMN_VALUES_MAX} values at a time (you have ${columnValues.length}).`,
+          };
+        }
+        if (columnValues.some((value) => value.length > ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX)) {
+          return { ok: false, reason: `Each value is at most ${ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX} characters.` };
+        }
         filter.column = { name: columnName, values: columnValues };
       }
       if (Object.keys(filter).length === 0) {
@@ -151,7 +180,7 @@ export function buildOperation(draft: AssignmentDraft, selectedIds: readonly str
       if (!draft.agentId) return { ok: false, reason: 'Pick who receives them.' };
       if (draft.fromId === draft.agentId) return { ok: false, reason: 'Pick two different agents.' };
       const count = draft.count.trim() ? positiveCount(draft.count) : undefined;
-      if (count === null) return { ok: false, reason: 'Enter a whole number from 1, or leave it blank for all.' };
+      if (count === null) return { ok: false, reason: `Enter ${COUNT_RANGE}, or leave it blank for all.` };
       return {
         ok: true,
         operation: {
@@ -173,7 +202,7 @@ export function buildOperation(draft: AssignmentDraft, selectedIds: readonly str
       }
       if (!draft.fromId) return { ok: false, reason: 'Pick whose contacts go back to the pool.' };
       const count = draft.count.trim() ? positiveCount(draft.count) : undefined;
-      if (count === null) return { ok: false, reason: 'Enter a whole number from 1, or leave it blank for all.' };
+      if (count === null) return { ok: false, reason: `Enter ${COUNT_RANGE}, or leave it blank for all.` };
       return {
         ok: true,
         operation: {
