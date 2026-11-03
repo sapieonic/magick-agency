@@ -67,6 +67,9 @@ describe('assignment-sql (real Postgres)', () => {
     [{ state: 'pending', attempt_count: 1, last_outcome: 'no_answer' }, 'not_reached'],
     [{ state: 'pending', attempt_count: 1, last_outcome: 'connected', last_disposition: 'callback' }, 'callback'],
     [{ state: 'pending', attempt_count: 1, last_outcome: 'connected', last_disposition: 'promise_to_pay' }, 'callback'],
+    // The callback was dialled and not answered: the disposition column still says callback
+    // (it keeps its last value), the latest outcome does not. Not reached, like any other.
+    [{ state: 'pending', attempt_count: 2, last_outcome: 'no_answer', last_disposition: 'callback' }, 'not_reached'],
     [{ state: 'in_flight' }, 'in_progress'],
     [{ state: 'connected', attempt_count: 1 }, 'in_progress'],
     [{ state: 'completed', attempt_count: 1 }, 'reached'],
@@ -88,6 +91,14 @@ describe('assignment-sql (real Postgres)', () => {
     expect((await retryOf(notReached.id)).blocked).toBeNull();
   });
 
+  it('an unanswered callback scheduled for later is retryable like any not-reached contact', async () => {
+    const c = await contact({
+      state: 'pending', attempt_count: 2, last_outcome: 'no_answer', last_disposition: 'callback',
+      next_attempt_at: new Date(Date.now() + 3_600_000),
+    });
+    expect((await retryOf(c.id)).blocked).toBeNull();
+  });
+
   it('an open not-reached contact already due now is not retryable: it is in the queue as it is', async () => {
     const due = await contact({ state: 'pending', attempt_count: 1, last_outcome: 'busy', next_attempt_at: new Date(Date.now() - 1000) });
     expect((await retryOf(due.id)).blocked).toBe('not_retryable');
@@ -106,7 +117,9 @@ describe('assignment-sql (real Postgres)', () => {
       { state: 'completed', attempt_count: 1 },
       { state: 'in_flight', attempt_count: 1 },
       { state: 'pending', attempt_count: 1, last_outcome: 'connected', last_disposition: 'interested' },
-      { state: 'pending', attempt_count: 1, last_outcome: 'no_answer', last_disposition: 'callback' },
+      // A callback booked on the last call waits for its time; it is not the agent's to retry.
+      { state: 'pending', attempt_count: 1, last_outcome: 'connected', last_disposition: 'callback',
+        next_attempt_at: new Date(Date.now() + 3_600_000) },
     ]) {
       const c = await contact(row);
       expect((await retryOf(c.id)).blocked, JSON.stringify(row)).toBe('not_retryable');

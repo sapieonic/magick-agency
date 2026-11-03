@@ -23,11 +23,23 @@ export function callbackCodes(catalog: readonly AgencyDisposition[] | null | und
 }
 
 /**
+ * Whether contact `c` is waiting on a callback: its last disposition booked one AND that call is
+ * still its latest outcome (`last_outcome = 'connected'`). The disposition column keeps its last
+ * value across later settlements that carry none (`COALESCE(new, old)`), so without the second
+ * half a callback that was dialled and NOT answered would read as a callback for ever: kept from
+ * the agent's retry, swept by the callback fallback, and told to the station as
+ * `callbacks_later`. Once a later call settles not-connected, it is not reached like any other.
+ */
+export function isCallbackSql(alias: string, callbackCodesParam: string): string {
+  return `(${alias}.last_disposition = ANY(${callbackCodesParam}::text[]) AND ${alias}.last_outcome IS NOT DISTINCT FROM 'connected')`;
+}
+
+/**
  * The bucket of contact `c` (contract: `AgencyMyContactBucket`), as a SQL `CASE` yielding text.
  *
  *  - `in_progress`: `in_flight` / `connected`;
  *  - `reached` / `exhausted` / `suppressed`: the terminal states;
- *  - `callback`: open (`pending`) and its last disposition booked a callback;
+ *  - `callback`: open (`pending`) and waiting on a callback ({@link isCallbackSql});
  *  - `not_reached`: open, attempted, and its last call did not connect;
  *  - `pending`: open otherwise (never attempted, or rescheduled after a conversation).
  *
@@ -42,7 +54,7 @@ export function contactBucketSql(alias: string, callbackCodesParam: string): str
     WHEN ${c}.state = 'completed' THEN 'reached'
     WHEN ${c}.state = 'exhausted' THEN 'exhausted'
     WHEN ${c}.state = 'suppressed' OR ${c}.suppressed_reason = 'dnc' THEN 'suppressed'
-    WHEN ${c}.last_disposition = ANY(${callbackCodesParam}::text[]) THEN 'callback'
+    WHEN ${isCallbackSql(c, callbackCodesParam)} THEN 'callback'
     WHEN ${c}.attempt_count > 0 AND ${c}.last_outcome IS DISTINCT FROM 'connected' THEN 'not_reached'
     ELSE 'pending'
   END)`;
@@ -89,7 +101,7 @@ export function agentRetryBlockSql(alias: string, p: AgentRetrySettingsParams): 
       ${c}.state = 'exhausted'
       OR (${c}.state = 'pending' AND ${c}.attempt_count > 0
           AND ${c}.last_outcome IS DISTINCT FROM 'connected'
-          AND NOT COALESCE(${c}.last_disposition = ANY(${p.callbackCodes}::text[]), false)
+          AND NOT COALESCE(${isCallbackSql(c, p.callbackCodes)}, false)
           -- statement_timestamp(), not now(): now() is the TRANSACTION's start, and a reopen
           -- that began before a concurrent one committed (its next_attempt_at = that one's
           -- now()) would read the freshly reopened contact as scheduled for later.
