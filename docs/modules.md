@@ -563,8 +563,9 @@ Files: `analysis-child-main.ts`, `analysis-child.ts`, `analysis-children.ts`, `c
 | `apps/server/test/unit/cluster/child-supervisor.test.ts` | 7 |
 | `apps/server/test/unit/cluster/db-connection-budget.test.ts` | 8 |
 | `apps/server/test/unit/cluster/fork.test.ts` | 3 |
-| `apps/server/test/unit/cluster/ipc-channel.test.ts` | 15 |
+| `apps/server/test/unit/cluster/ipc-channel.test.ts` | 16 |
 | `apps/server/test/unit/cluster/ipc-protocol.test.ts` | 10 |
+| `apps/server/test/unit/cluster/lease-snapshot-window.test.ts` | 2 |
 | `apps/server/test/unit/cluster/media-adapters.test.ts` | 14 |
 | `apps/server/test/unit/cluster/media-cluster.test.ts` | 6 |
 | `apps/server/test/unit/cluster/primary.test.ts` | 3 |

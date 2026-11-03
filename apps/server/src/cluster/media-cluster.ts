@@ -314,8 +314,11 @@ export class MediaCluster implements WsHandoffTarget {
       try {
         const s = await channel.request('reaper.snapshot', {}, { deadlineMs: SNAPSHOT_DEADLINE_MS });
         this.snapshots.set(slot, s);
-        // Reconcile: the channel is FIFO, so a delta sent before the worker took the
-        // snapshot arrived before this answer and is in it; one sent after arrives after.
+        // Reconcile by replacing. Sound because the worker's snapshot is exactly the deltas it
+        // has told (the bridge adds and removes a lease where it emits `held` / `released`,
+        // from admission to release, registered call or not), and its synchronous handler
+        // answers in the turn it computed the snapshot, so on this FIFO channel every delta
+        // before the answer is in it, and every delta after arrives after it.
         this.leases.set(slot, new Map(s.leases.map((l) => [l.concurrencyKey, l])));
         return s;
       } catch {
