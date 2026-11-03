@@ -104,6 +104,21 @@ interface AgencyIngestResult {
  */
 const MAX_REPORTED_DUPLICATE_ROWS = 20;
 
+/**
+ * How many due rows {@link AgencyContactRepository.claimDialable} reads per
+ * claimed slot before keeping one contact per number. Bounds the read; a tick
+ * that meets a longer run of one number claims fewer and the next tick moves on.
+ */
+const CLAIM_CANDIDATE_FACTOR = 4;
+
+/**
+ * `CONTACT_PHONE_DIGITS_SQL` for a table alias. Spelled the same so Postgres
+ * matches `idx_agency_contacts_campaign_phone_digits` structurally.
+ */
+function contactDigits(alias: string): string {
+  return CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
+}
+
 export class AgencyContactRepository {
   /**
    * Claim up to `limit` dialable contacts for this tick.
@@ -159,23 +174,81 @@ export class AgencyContactRepository {
    * plan from table statistics (rows deleted, then analysed), so it came and went.
    * A MATERIALIZED CTE runs the pick exactly once. Pinned on a real database by
    * `agency-contact-claim-limit.test.ts`.
+   *
+   * ── One live call per number ─────────────────────────────────────────────
+   *
+   * A campaign can hold the same number on several contacts: the schema refuses
+   * `UNIQUE (campaign_id, phone_e164)` on purpose, an append upload can repeat a
+   * number, and an upload deduped on another column (one borrower, two loan
+   * numbers) keeps both rows. The claim must never put two calls on one number at
+   * once, so it:
+   *
+   *  - skips a contact whose number is already live on this campaign: another
+   *    contact on it is `in_flight` (claimed, dialing, or a soft-phone claim) or
+   *    `connected` (bridged, or parked for the agent's write-up; a bridged call
+   *    writes `connected` while the call is still up);
+   *  - takes at most one contact per number in one claim (the earliest due).
+   *
+   * "The same number" is the digits projection the soft phone's match and
+   * `suppressByPhone` prefilter on (`CONTACT_PHONE_DIGITS_SQL`), so the busy
+   * probe is one `idx_agency_contacts_campaign_phone_digits` lookup per candidate.
+   * Ingest stores E.164, so digits and number agree for every roster row.
+   *
+   * The one-per-number pass needs `DISTINCT ON`, which cannot take `FOR UPDATE`, so
+   * the locking pick (`SKIP LOCKED`, past rows other transactions hold, as before)
+   * takes up to `limit * CLAIM_CANDIDATE_FACTOR` due rows, and one contact per
+   * number, at most `limit`, is claimed from those. The extra rows are locked only
+   * until the statement ends (a few ms); a soft-phone {@link claimForManual} that
+   * meets one of them in that window answers `busy`, as it does for a row a tick is
+   * claiming. Locking in the FIRST scan matters: a pick over an unlocked candidate
+   * list could find its whole window held by another transaction and claim nothing
+   * while dialable rows sat further down (`contact-claim-contention.test.ts`). When
+   * the head of the queue is a run of rows on one number, a tick can claim fewer
+   * than `limit`; the next tick sees that number busy and moves past it.
+   *
+   * **What the guard does not cover.** The busy probe is a read, not a lock.
+   * Against other pacing ticks that is enough: ticks for one campaign never overlap
+   * (`PacingEngine.ticking`) on this single-replica deployment. It is not enough
+   * against the soft phone, which claims contacts in its own transaction: a manual
+   * claim of one row and a tick's claim of another row on the same number, in the
+   * same few milliseconds, can each miss the other's uncommitted write. And the
+   * soft phone's own pre-dial rule (`pickRosterContact`, docs/softphone.md §5)
+   * refuses only an `in_flight` match, so a tagged manual call to a number whose
+   * contact is `connected` goes ahead. Closing either needs a per-number lock or a
+   * soft-phone ruling, not this statement. Pinned on a real database by
+   * `agency-contact-claim-one-per-number.test.ts`.
    */
   async claimDialable(campaignId: string, limit: number): Promise<AgencyContactRecord[]> {
     if (limit <= 0) return [];
     const { rows } = await getPool().query<AgencyContactRecord>(
-      `WITH picked AS MATERIALIZED (
-         SELECT id FROM agency_contacts
-          WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at <= now()
-            AND suppressed_reason IS DISTINCT FROM 'dnc'
-          ORDER BY next_attempt_at
-            FOR UPDATE SKIP LOCKED
+      `WITH locked AS MATERIALIZED (
+         SELECT c.id, c.next_attempt_at, ${contactDigits('c')} AS digits
+           FROM agency_contacts c
+          WHERE c.campaign_id = $1 AND c.state = 'pending' AND c.next_attempt_at <= now()
+            AND c.suppressed_reason IS DISTINCT FROM 'dnc'
+            AND NOT EXISTS (
+              SELECT 1 FROM agency_contacts live
+               WHERE live.campaign_id = $1
+                 AND ${contactDigits('live')} = ${contactDigits('c')}
+                 AND live.state IN ('in_flight', 'connected'))
+          ORDER BY c.next_attempt_at
+            FOR UPDATE OF c SKIP LOCKED
+          LIMIT $3
+       ),
+       picked AS MATERIALIZED (
+         SELECT id FROM (
+           SELECT DISTINCT ON (digits) id, next_attempt_at
+             FROM locked
+            ORDER BY digits, next_attempt_at, id
+         ) one_per_number
+          ORDER BY next_attempt_at, id
           LIMIT $2
        )
        UPDATE agency_contacts c SET state = 'in_flight', updated_at = now()
          FROM picked
         WHERE c.id = picked.id
        RETURNING c.*`,
-      [campaignId, limit],
+      [campaignId, limit, limit * CLAIM_CANDIDATE_FACTOR],
     );
     return rows;
   }

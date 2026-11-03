@@ -441,6 +441,23 @@ runs unchanged.
   suites are not part of these runs.
 - The Grafana panels and `agy-cluster-child-crash` are written and validated, not applied.
 
+### Roster upload: choosing the duplicate column 2026-11-02
+
+A loan book can carry one borrower twice: the same number on two rows with different loan numbers.
+Deduping on the phone dropped the second loan. The mapping step now has "Check duplicates on":
+phone number (the default, unchanged), any kept column, or none.
+
+- Migration `0007_ingest_dedupe_column.sql` (`agency_ingest_jobs.dedupe_column`); contract
+  `dedupe_column` on the ingest request and job, reason `duplicate_key`, failure
+  `dedupe_column_missing`, and `distinct` / `distinct_phones` per analysed column, shown as
+  "x% unique" under the control. Requests without `dedupe_column` behave as before.
+- `claimDialable` keeps one live call per number in a campaign (skips a number `in_flight` or
+  `connected` on another contact; one contact per number per tick). Proven on real Postgres
+  (`agency-contact-claim-one-per-number.test.ts`) and end to end through the roster insert
+  (`agency-ingest-roundtrip.test.ts`); guards mutation-checked.
+- Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
+  duplicate column".
+
 ## Test counts
 
 Latest run, 2026-11-02, after the second review's fixes, from inside each package (`pnpm lint`
@@ -632,6 +649,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
+| Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected` |
 
 ## Deployment invariants
 

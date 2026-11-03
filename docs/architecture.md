@@ -252,6 +252,9 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   the campaigns it leads. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
   `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency/contact.repository.ts`)
   plus the `uq_agency_attempt_live` unique index, so two leaders cannot dial one contact.
+  The claim also keeps one live call per number in a campaign: it skips a contact whose number
+  is already `in_flight` or `connected` on another contact, and takes at most one contact per
+  number in a tick (a roster deduped on a loan number can hold one borrower twice).
   `pre-dial-gates.ts` checks phone validity, then calling hours, then DNC (fail closed).
   `stop()` waits up to 5 s (`TICK_DRAIN_TIMEOUT_MS`) for ticks in flight, and every dial site
   re-checks `mayDial`, so no tick dials after shutdown begins.
@@ -471,7 +474,8 @@ a rate-limit key and never an auth input.
   (node-pg-migrate, one transaction; 33 tables plus default partitions for the two audit tables),
   and the numbered migrations after it (0002: the two telephony-credential tables; 0003: the
   dialer's attempt and contact indexes; 0004: the in-flight contacts index the reaper's
-  stranded-contact sweep reads; 0005: the soft phone; 0006: `agency_agent_sessions.client_kind`),
+  stranded-contact sweep reads; 0005: the soft phone; 0006: `agency_agent_sessions.client_kind`;
+  0007: `agency_ingest_jobs.dedupe_column`),
   all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`: `agency.repository.ts`, a barrel over `agency/`). Repository

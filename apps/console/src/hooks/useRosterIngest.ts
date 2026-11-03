@@ -29,7 +29,7 @@ import type {
 } from '../types/agency-campaign';
 
 /**
- * The seven codes {@link AgencyIngestFailureCode} declares — mirrored here only
+ * The eight codes {@link AgencyIngestFailureCode} declares — mirrored here only
  * so `trackAgencyRosterIngestFailed` can tell a recognised whole-file failure
  * from `AgencyIngestJob.error_code`'s wider `| string` (a code this build does
  * not know about yet). An unrecognised code is not sent — the event's `code`
@@ -39,6 +39,7 @@ const INGEST_FAILURE_CODES: readonly AgencyIngestFailureCode[] = [
   'malformed_csv',
   'phone_column_missing',
   'timezone_column_missing',
+  'dedupe_column_missing',
   'too_many_columns',
   'too_many_rows',
   'unsupported_encoding',

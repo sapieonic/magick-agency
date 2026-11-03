@@ -25,6 +25,9 @@ import type { AgencyContextDisplay } from '../types/agency';
  *  - **The country code is a mapping decision too.** A bare 10-digit number in
  *    the file has no country in it; the API supplies one, and until now nothing
  *    let the operator say which. See {@link countryCodeError}.
+ *  - **So is what counts as a duplicate.** One borrower with two loans is two
+ *    rows on one number; deduping on the phone drops a loan nobody then calls.
+ *    See {@link DedupeChoice}.
  */
 
 export type ColumnRole = 'phone' | 'timezone' | 'hero' | 'detail' | 'ignore';
@@ -62,7 +65,18 @@ export interface MappingState {
    * differs. Empty is the only value that is provably a no-op.
    */
   defaultCountryCode: string;
+  /** Which rows the ingest drops as duplicates. Starts at `phone`, the old behaviour. */
+  dedupe: DedupeChoice;
 }
+
+/**
+ * "Check duplicates on": the phone number (the default, and what every upload did
+ * before this existed), another column such as a loan number, or nothing.
+ */
+export type DedupeChoice =
+  | { mode: 'phone' }
+  | { mode: 'column'; column: string }
+  | { mode: 'none' };
 
 /**
  * Seed a mapping from the API's analysis.
@@ -83,7 +97,7 @@ export function initialMapping(analysis: AgencyColumnAnalysis): MappingState {
   if (suggested !== null && suggested in roles) {
     roles[suggested] = 'phone';
   }
-  return { roles, heroOrder: [], defaultCountryCode: '' };
+  return { roles, heroOrder: [], defaultCountryCode: '', dedupe: { mode: 'phone' } };
 }
 
 /**
@@ -115,7 +129,83 @@ export function setRole(state: MappingState, column: string, role: ColumnRole): 
   }
 
   roles[column] = role;
-  return { ...state, roles, heroOrder };
+  // The duplicate column made the phone column is the phone dedupe; saying so
+  // keeps the control and the request in step.
+  const dedupe: DedupeChoice =
+    state.dedupe.mode === 'column' && roles[state.dedupe.column] === 'phone' ? { mode: 'phone' } : state.dedupe;
+  return { ...state, roles, heroOrder, dedupe };
+}
+
+/** Set what the ingest treats as a duplicate row. An unknown column is ignored. */
+export function setDedupe(state: MappingState, choice: DedupeChoice): MappingState {
+  if (choice.mode === 'column') {
+    if (!(choice.column in state.roles)) return state;
+    if (state.roles[choice.column] === 'phone') return { ...state, dedupe: { mode: 'phone' } };
+  }
+  return { ...state, dedupe: choice };
+}
+
+/**
+ * The columns offered under "Check duplicates on", besides the phone number and
+ * "don't": every column that is neither the phone nor ignored, in file order.
+ *
+ * Not an ignored one: the roster refuses an exact repeat at insert by a row
+ * fingerprint built from the phone and the kept columns, so two rows that differ
+ * only in an ignored loan number would pass the duplicate check and still collapse
+ * into one contact. The current choice stays listed if its column is later set to
+ * Ignore, so the select still shows it; {@link mappingBlockReason} then blocks.
+ */
+export function dedupeColumnOptions(analysis: AgencyColumnAnalysis, state: MappingState): string[] {
+  const chosen = state.dedupe.mode === 'column' ? state.dedupe.column : null;
+  return analysis.columns
+    .map((c) => c.name)
+    .filter((name) => state.roles[name] !== 'phone' && (state.roles[name] !== 'ignore' || name === chosen));
+}
+
+function scopeOf(analysis: AgencyColumnAnalysis): string {
+  return analysis.truncated ? 'in the rows we sampled' : 'in this file';
+}
+
+function percentUnique(distinct: number, total: number): number {
+  return Math.floor((distinct / total) * 100);
+}
+
+/**
+ * How unique a column is in the sampled rows, as the duplicate check compares
+ * values (trimmed, case-insensitive): "Loan No: 100% unique in this file". Helps
+ * the operator pick the right key before the import rather than learn it from the
+ * rejected count. `null` when there is nothing to say (no column, no values, or an
+ * analysis served without the count).
+ */
+export function uniquenessLine(analysis: AgencyColumnAnalysis, column: string | null): string | null {
+  if (column === null) return null;
+  const stat = analysis.columns.find((c) => c.name === column);
+  if (!stat || stat.non_empty === 0 || typeof stat.distinct !== 'number') return null;
+  const repeats = stat.non_empty - stat.distinct;
+  const blank = stat.non_empty < analysis.rows_sampled
+    ? ` ${(analysis.rows_sampled - stat.non_empty).toLocaleString()} blank, and a blank value is never a duplicate.`
+    : '';
+  return repeats === 0
+    ? `${column}: 100% unique ${scopeOf(analysis)}.${blank}`
+    : `${column}: ${percentUnique(stat.distinct, stat.non_empty)}% unique ${scopeOf(analysis)}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier value and will be dropped.${blank}`;
+}
+
+/**
+ * {@link uniquenessLine} for the phone dedupe, which compares normalised numbers
+ * (`distinct_phones`), so `9876543210` and `+91 98765 43210` count once. Counted
+ * over the values that are valid numbers: a blank or invalid one is rejected for
+ * that reason, never as a duplicate.
+ */
+export function phoneUniquenessLine(analysis: AgencyColumnAnalysis, column: string | null): string | null {
+  if (column === null) return null;
+  const stat = analysis.columns.find((c) => c.name === column);
+  if (!stat || typeof stat.distinct_phones !== 'number') return null;
+  const valid = Math.round(stat.phone_score * stat.non_empty);
+  if (valid === 0) return null;
+  const repeats = valid - stat.distinct_phones;
+  return repeats <= 0
+    ? `${column}: every valid number is unique ${scopeOf(analysis)}.`
+    : `${column}: ${percentUnique(stat.distinct_phones, valid)}% of valid numbers are unique ${scopeOf(analysis)}; ${repeats.toLocaleString()} ${repeats === 1 ? 'row repeats' : 'rows repeat'} an earlier number and will be dropped.`;
 }
 
 /**
@@ -152,11 +242,13 @@ export function heroLimitReached(state: MappingState): boolean {
 }
 
 /** Why the mapping cannot be submitted. `null` ⇒ ready. */
-export type MappingBlockReason = 'no_phone_column' | 'no_columns' | 'bad_country_code';
+export type MappingBlockReason = 'no_phone_column' | 'no_columns' | 'dedupe_column_ignored' | 'bad_country_code';
 
 export const MAPPING_BLOCK_COPY: Record<MappingBlockReason, string> = {
   no_phone_column: 'Pick which column holds the phone number.',
   no_columns: 'This file has no columns we can read.',
+  dedupe_column_ignored:
+    'The column used to find duplicates cannot be set to Ignore. Set it to Detail, or check duplicates on another column.',
   bad_country_code: 'Fix the country code before importing.',
 };
 
@@ -164,6 +256,9 @@ export function mappingBlockReason(state: MappingState): MappingBlockReason | nu
   const names = Object.keys(state.roles);
   if (names.length === 0) return 'no_columns';
   if (!names.some((name) => state.roles[name] === 'phone')) return 'no_phone_column';
+  // The server refuses it too (an ignored key cannot keep two loans apart at the
+  // roster insert); caught here so the operator fixes it on this screen.
+  if (state.dedupe.mode === 'column' && state.roles[state.dedupe.column] === 'ignore') return 'dedupe_column_ignored';
   // Last, because it is the only one an operator has to have typed something to
   // hit — reporting it ahead of a missing phone column would name the field they
   // touched rather than the one that is actually unset.
@@ -213,7 +308,6 @@ export interface BuildIngestOptions {
   fileName: string;
   campaignId?: string;
   dryRun?: boolean;
-  dedupePhones?: boolean;
 }
 
 /**
@@ -247,7 +341,10 @@ export function buildIngestRequest(
   // The key is OMITTED when empty, so an untouched control produces a request
   // byte-for-byte identical to the one before this control existed.
   if (state.defaultCountryCode) request.default_country_code = state.defaultCountryCode;
-  if (options.dedupePhones !== undefined) request.dedupe_phones = options.dedupePhones;
+  // The same rule for the duplicate check: `phone` sends nothing, which is the
+  // request every upload made before the control existed.
+  if (state.dedupe.mode === 'none') request.dedupe_phones = false;
+  if (state.dedupe.mode === 'column' && state.dedupe.column !== phone) request.dedupe_column = state.dedupe.column;
   if (options.campaignId) request.campaign_id = options.campaignId;
   if (options.dryRun) request.dry_run = true;
 

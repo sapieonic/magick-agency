@@ -12,6 +12,11 @@ import {
   phoneColumn,
   timezoneColumn,
   ignoredColumns,
+  setDedupe,
+  dedupeColumnOptions,
+  uniquenessLine,
+  phoneUniquenessLine,
+  MAPPING_BLOCK_COPY,
   MAX_HERO_FIELDS,
 } from '../../utils/agencyColumnMapping';
 import type { AgencyColumnAnalysis, AgencyColumnStat } from '../../types/agency-campaign';
@@ -24,7 +29,7 @@ import type { AgencyColumnAnalysis, AgencyColumnStat } from '../../types/agency-
  */
 
 function column(name: string, over: Partial<AgencyColumnStat> = {}): AgencyColumnStat {
-  return { name, index: 0, samples: [], non_empty: 100, phone_score: 0, ...over };
+  return { name, index: 0, samples: [], non_empty: 100, phone_score: 0, distinct: 100, distinct_phones: 0, ...over };
 }
 
 function analysis(over: Partial<AgencyColumnAnalysis> = {}): AgencyColumnAnalysis {
@@ -186,6 +191,133 @@ describe('the ingest request', () => {
   it('reports an empty file as having no columns', () => {
     const state = initialMapping(analysis({ columns: [], headers: [] }));
     expect(mappingBlockReason(state)).toBe('no_columns');
+  });
+});
+
+/**
+ * "Check duplicates on". One borrower with two loans is two rows on one number,
+ * so a loan book dedupes on the loan number, not the phone.
+ */
+describe('the duplicate check', () => {
+  const build = (state: ReturnType<typeof initialMapping>) =>
+    buildIngestRequest(state, { s3Key: 'k', fileName: 'f.csv', campaignId: 'camp-1' })!;
+
+  it('starts on the phone and sends exactly the request it sent before the control existed', () => {
+    const state = initialMapping(analysis());
+    expect(state.dedupe).toEqual({ mode: 'phone' });
+    expect(build(state)).toEqual({ s3_key: 'k', file_name: 'f.csv', phone_column: 'Cust Mobile', campaign_id: 'camp-1' });
+  });
+
+  it('sends dedupe_column for a chosen column, and dedupe_phones: false for none', () => {
+    const base = initialMapping(analysis());
+    const byLoan = build(setDedupe(base, { mode: 'column', column: 'Full Name' }));
+    expect(byLoan.dedupe_column).toBe('Full Name');
+    expect(byLoan).not.toHaveProperty('dedupe_phones');
+
+    const none = build(setDedupe(base, { mode: 'none' }));
+    expect(none.dedupe_phones).toBe(false);
+    expect(none).not.toHaveProperty('dedupe_column');
+  });
+
+  it('treats the phone column chosen as a column as the phone dedupe', () => {
+    const state = setDedupe(initialMapping(analysis()), { mode: 'column', column: 'Cust Mobile' });
+    expect(state.dedupe).toEqual({ mode: 'phone' });
+  });
+
+  it('ignores a column the file does not have', () => {
+    const state = initialMapping(analysis());
+    expect(setDedupe(state, { mode: 'column', column: 'Loan No' })).toBe(state);
+  });
+
+  it('falls back to the phone when the duplicate column is made the phone column', () => {
+    let state = setDedupe(initialMapping(analysis()), { mode: 'column', column: 'Internal Score' });
+    state = setRole(state, 'Internal Score', 'phone');
+    expect(state.dedupe).toEqual({ mode: 'phone' });
+    expect(build(state)).not.toHaveProperty('dedupe_column');
+  });
+
+  it('blocks the import when the duplicate column is set to Ignore', () => {
+    // An ignored column is not in the roster's row fingerprint, so two loans that
+    // differ only there would still collapse into one contact at the insert.
+    let state = setDedupe(initialMapping(analysis()), { mode: 'column', column: 'Internal Score' });
+    state = setRole(state, 'Internal Score', 'ignore');
+    expect(mappingBlockReason(state)).toBe('dedupe_column_ignored');
+    expect(MAPPING_BLOCK_COPY.dedupe_column_ignored).toContain('cannot be set to Ignore');
+    expect(buildIngestRequest(state, { s3Key: 'k', fileName: 'f.csv' })).toBeNull();
+
+    // Setting it back to Detail unblocks it.
+    expect(build(setRole(state, 'Internal Score', 'detail')).dedupe_column).toBe('Internal Score');
+  });
+
+  it('offers every column except the phone one and ignored ones, in file order', () => {
+    const state = setRole(initialMapping(analysis()), 'Internal Score', 'ignore');
+    expect(dedupeColumnOptions(analysis(), state)).toEqual(['Full Name', 'TZ']);
+  });
+
+  it('still lists the chosen column after it is ignored, so the select can show what is blocking', () => {
+    let state = setDedupe(initialMapping(analysis()), { mode: 'column', column: 'Internal Score' });
+    state = setRole(state, 'Internal Score', 'ignore');
+    expect(dedupeColumnOptions(analysis(), state)).toEqual(['Full Name', 'TZ', 'Internal Score']);
+  });
+
+  describe('the uniqueness line', () => {
+    const loans = analysis({
+      rows_sampled: 100,
+      columns: [
+        column('Cust Mobile', { non_empty: 100, distinct: 82 }),
+        column('Loan No', { non_empty: 100, distinct: 100 }),
+        column('Ref', { non_empty: 90, distinct: 89 }),
+      ],
+    });
+
+    it('says a column is fully unique', () => {
+      expect(uniquenessLine(loans, 'Loan No')).toBe('Loan No: 100% unique in this file.');
+    });
+
+    it('says how many rows would be dropped', () => {
+      expect(uniquenessLine(loans, 'Cust Mobile')).toBe(
+        'Cust Mobile: 82% unique in this file; 18 rows repeat an earlier value and will be dropped.',
+      );
+    });
+
+    it('counts blanks, which are never duplicates, and scopes a truncated sample', () => {
+      expect(uniquenessLine({ ...loans, truncated: true }, 'Ref')).toBe(
+        'Ref: 98% unique in the rows we sampled; 1 row repeats an earlier value and will be dropped. 10 blank, and a blank value is never a duplicate.',
+      );
+    });
+
+    it('is null for no column or an empty one', () => {
+      expect(uniquenessLine(loans, null)).toBeNull();
+      expect(uniquenessLine(analysis({ columns: [column('X', { non_empty: 0, distinct: 0 })] }), 'X')).toBeNull();
+    });
+
+    it('is null, not NaN, for an analysis served without the count', () => {
+      const old = analysis({ columns: [{ name: 'X', index: 0, samples: [], non_empty: 5, phone_score: 1 } as never] });
+      expect(uniquenessLine(old, 'X')).toBeNull();
+      expect(phoneUniquenessLine(old, 'X')).toBeNull();
+    });
+  });
+
+  describe('the phone uniqueness line', () => {
+    it('counts normalised numbers over the valid ones, never blanks', () => {
+      // 100 sampled, 90 non-empty, 80 valid numbers, 76 distinct numbers.
+      const file = analysis({
+        rows_sampled: 100,
+        columns: [column('Mobile', { non_empty: 90, phone_score: 80 / 90, distinct: 90, distinct_phones: 76 })],
+      });
+      expect(phoneUniquenessLine(file, 'Mobile')).toBe(
+        'Mobile: 95% of valid numbers are unique in this file; 4 rows repeat an earlier number and will be dropped.',
+      );
+    });
+
+    it('says every valid number is unique when none repeat', () => {
+      const file = analysis({ columns: [column('Mobile', { non_empty: 10, phone_score: 1, distinct_phones: 10 })] });
+      expect(phoneUniquenessLine(file, 'Mobile')).toBe('Mobile: every valid number is unique in this file.');
+    });
+
+    it('is null when no value is a valid number', () => {
+      expect(phoneUniquenessLine(analysis({ columns: [column('Mobile', { phone_score: 0 })] }), 'Mobile')).toBeNull();
+    });
   });
 });
 

@@ -260,6 +260,97 @@ describe('C9 — duplicates across E.164, local and spaced forms', () => {
   });
 });
 
+// ─── Duplicates on a column the operator picks ──────────────────────────────
+
+describe('dedupeColumn — duplicates decided by a column the operator picks', () => {
+  // One borrower, two loans: the same number on two rows with different loan numbers.
+  const twoLoans = 'Mobile,Loan No,Name\n+919876543210,LN-001,Asha\n9876543210,LN-002,Asha\n';
+
+  it('keeps both loans on one number when deduped on the loan number', async () => {
+    const { summary, contacts } = await run(twoLoans, { phoneColumn: 'Mobile', dedupeColumn: 'Loan No' });
+
+    expect(summary).toMatchObject({ rows_read: 2, accepted: 2, rejected: 0, duplicates: 0 });
+    expect(contacts.map((c) => [c.phone_e164, c.context['Loan No']])).toEqual([
+      ['+919876543210', 'LN-001'],
+      ['+919876543210', 'LN-002'],
+    ]);
+  });
+
+  it('the same file deduped on the phone keeps one, as before', async () => {
+    const { summary, rejections } = await run(twoLoans, { phoneColumn: 'Mobile' });
+
+    expect(summary).toMatchObject({ accepted: 1, rejected: 1, duplicates: 1 });
+    expect(summary.rejected_by_reason).toEqual({ duplicate_phone: 1 });
+    expect(rejections[0]!.reason_code).toBe('duplicate_phone');
+  });
+
+  it('rejects a repeated loan number as duplicate_key, naming the column', async () => {
+    const csv = 'Mobile,Loan No\n+919876543210,LN-001\n+919800000002,LN-001\n';
+    const { summary, rejections } = await run(csv, { phoneColumn: 'Mobile', dedupeColumn: 'Loan No' });
+
+    expect(summary).toMatchObject({ accepted: 1, rejected: 1, duplicates: 1 });
+    expect(summary.rejected_by_reason).toEqual({ duplicate_key: 1 });
+    expect(rejections[0]).toMatchObject({
+      row_number: 3,
+      column: 'Loan No',
+      // The phone cell, as for every rejection: the export writes it in the phone column.
+      raw_value: '+919800000002',
+      reason_code: 'duplicate_key',
+      reason: 'Duplicate Loan No of an earlier row in this file.',
+    });
+  });
+
+  it('compares keys trimmed and case-insensitive', async () => {
+    const csv = 'Mobile,Loan No\n+919800000001,LN-001\n+919800000002,ln-001\n+919800000003,"  LN-001 "\n';
+    const { summary } = await run(csv, { phoneColumn: 'Mobile', dedupeColumn: 'Loan No' });
+    expect(summary).toMatchObject({ accepted: 1, duplicates: 2 });
+  });
+
+  it('keeps a row with a blank key, unchecked', async () => {
+    const csv = 'Mobile,Loan No\n+919800000001,\n+919800000002,\n+919800000003,LN-1\n';
+    const { summary } = await run(csv, { phoneColumn: 'Mobile', dedupeColumn: 'Loan No' });
+    expect(summary).toMatchObject({ accepted: 3, duplicates: 0 });
+  });
+
+  it('only an accepted row claims its key: a first row with a bad number does not block the next', async () => {
+    const csv = 'Mobile,Loan No\nnotaphone,LN-001\n+919800000002,LN-001\n';
+    const { summary } = await run(csv, { phoneColumn: 'Mobile', dedupeColumn: 'Loan No' });
+    expect(summary).toMatchObject({ accepted: 1, rejected: 1, duplicates: 0 });
+    expect(summary.rejected_by_reason).toEqual({ invalid_phone: 1 });
+  });
+
+  it('matches the header case-insensitively, and the reason names the column, never the value', async () => {
+    const csv = 'Mobile,Loan No\n+919800000001,LN-SECRET\n+919800000002,LN-SECRET\n';
+    const { summary, rejections } = await run(csv, { phoneColumn: 'Mobile', dedupeColumn: 'loan no' });
+    expect(summary).toMatchObject({ accepted: 1, duplicates: 1 });
+    expect(rejections[0]!.reason).toBe('Duplicate Loan No of an earlier row in this file.');
+    expect(rejections[0]!.reason).not.toContain('LN-SECRET');
+  });
+
+  it('naming the phone column is the phone dedupe, on the normalised number', async () => {
+    const { summary } = await run(twoLoans, { phoneColumn: 'Mobile', dedupeColumn: 'Mobile' });
+    expect(summary.rejected_by_reason).toEqual({ duplicate_phone: 1 });
+  });
+
+  it('wins over dedupePhones', async () => {
+    const { summary } = await run(twoLoans, { phoneColumn: 'Mobile', dedupeColumn: 'Loan No', dedupePhones: true });
+    expect(summary).toMatchObject({ accepted: 2, duplicates: 0 });
+  });
+
+  it('fails the file dedupe_column_missing when the column is not in it', async () => {
+    await expect(run(twoLoans, { phoneColumn: 'Mobile', dedupeColumn: 'Policy No' })).rejects.toMatchObject({
+      name: 'AgencyIngestError',
+      code: 'dedupe_column_missing',
+    });
+  });
+
+  it('resolves a repeated header by its suffixed name, as dedupeHeaders writes it', async () => {
+    const csv = 'Mobile,Ref,Ref\n+919800000001,A,X1\n+919800000002,A,X2\n';
+    const { summary } = await run(csv, { phoneColumn: 'Mobile', dedupeColumn: 'Ref (2)' });
+    expect(summary).toMatchObject({ accepted: 2, duplicates: 0 });
+  });
+});
+
 // ─── C10 — invalid numbers ──────────────────────────────────────────────────
 
 describe('C10 — invalid numbers', () => {
