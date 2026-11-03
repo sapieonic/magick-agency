@@ -70,6 +70,14 @@ describe('nothingDueCopy', () => {
     );
   });
 
+  it('says nothing is due, neutrally, for a reason it has no words for — never "a call will reach you"', () => {
+    const unknown = { due: false, reason: 'agent_paused_by_policy', next_due_at: null } as unknown as AgencyQueueState;
+    expect(nothingDueCopy(unknown, at)).toBe('Nothing is due for you right now.');
+    expect(nothingDueCopy({ ...unknown, next_due_at: '2026-11-03T12:00:00.000Z' }, at))
+      .toBe('Nothing is due for you right now. Your next contact is due at 12:00.');
+    expect(nothingDueCopy({ due: false, reason: null, next_due_at: null }, at)).toBe('Nothing is due for you right now.');
+  });
+
   it('has a sentence for every reason, never a wire token', () => {
     const reasons: AgencyQueueIdleReason[] = ['queue_empty', 'waiting_for_retry', 'callbacks_later', 'outside_calling_hours'];
     expect(Object.keys(QUEUE_IDLE_COPY).sort()).toEqual([...reasons].sort());

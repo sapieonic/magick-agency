@@ -160,11 +160,12 @@ describe('Retry not reached', () => {
     ));
   });
 
-  it('is not offered while something is due', async () => {
+  it('is not offered while something is due, and neither are the row checkboxes', async () => {
     mocks.getMyContactsSummary.mockResolvedValue({ ...SUMMARY, due_now: 2 });
     renderPanel();
     await screen.findByTestId('my-row-c-due');
     expect(screen.queryByTestId('my-retry')).toBeNull();
+    expect(screen.queryByLabelText('Include +919800000002 in the retry')).toBeNull();
   });
 
   it('words a refusal', async () => {
@@ -210,14 +211,64 @@ describe('Call', () => {
     }, 'tenant-1', 'account-1'));
   });
 
-  it('turns an outside-hours refusal into the note prompt for a contact holding the override', async () => {
+  // What the server sends (`my-contact-call.ts`, the `defer` arm): a contact holding an
+  // unspent calling-hours override, called with no note, is `400 override_note_invalid`.
+  const NOTE_NEEDED = () => new ApiError(400, {
+    code: 'override_note_invalid', message: 'Add a note', details: { min: 10, max: 500 },
+  });
+
+  it('turns a no-note override_note_invalid refusal into the note prompt, then calls with the note', async () => {
+    mocks.callMyContact.mockRejectedValueOnce(NOTE_NEEDED());
+    renderPanel({ queue: null });
+    fireEvent.click(await screen.findByTestId('my-call-c-hours'));
+    const prompt = await screen.findByTestId('my-note-prompt');
+    expect(prompt.textContent).toContain('The campaign is outside its calling hours. You may still call this contact');
+    expect(prompt.textContent).toContain('Why call +919800000003 now?');
+    expect(screen.getByTestId('my-notice').textContent).toBe('');
+    fireEvent.change(within(prompt).getByTestId('my-note'), { target: { value: 'Customer asked for an evening call' } });
+    fireEvent.click(within(prompt).getByTestId('my-note-call'));
+    await waitFor(() => expect(mocks.callMyContact).toHaveBeenLastCalledWith('c-hours', {
+      campaign_id: 'camp-1', session_id: 'sess-1', override_note: 'Customer asked for an evening call',
+    }, 'tenant-1', 'account-1'));
+    await waitFor(() => expect(onCalled).toHaveBeenCalledWith(LATE_HOURS));
+  });
+
+  it('keeps a refusal of a call made WITH a note inside the prompt, as its inline error', async () => {
+    mocks.callMyContact.mockRejectedValueOnce(NOTE_NEEDED()).mockRejectedValueOnce(NOTE_NEEDED());
+    renderPanel({ queue: null });
+    fireEvent.click(await screen.findByTestId('my-call-c-hours'));
+    const prompt = await screen.findByTestId('my-note-prompt');
+    fireEvent.change(within(prompt).getByTestId('my-note'), { target: { value: 'Customer asked for an evening call' } });
+    fireEvent.click(within(prompt).getByTestId('my-note-call'));
+    await waitFor(() => expect(screen.getByTestId('my-note-prompt').textContent)
+      .toContain('The note needs 10 to 500 characters.'));
+    expect(screen.getByTestId('my-notice').textContent).toBe('');
+  });
+
+  it('says outside_calling_hours (no override held) as a refusal, without a note prompt', async () => {
     mocks.callMyContact.mockRejectedValueOnce(new ApiError(409, {
       code: 'outside_calling_hours', message: 'closed', details: { next_open_at: '2026-11-04T03:30:00.000Z' },
     }));
     renderPanel({ queue: null });
+    fireEvent.click(await screen.findByTestId('my-call-c-due'));
+    expect((await screen.findByTestId('my-notice')).textContent)
+      .toContain('The campaign is outside its calling hours. It opens again');
+    expect(screen.queryByTestId('my-note-prompt')).toBeNull();
+  });
+
+  it('while the note prompt is open, every other row’s Call is disabled with the reason', async () => {
+    mocks.callMyContact.mockRejectedValueOnce(NOTE_NEEDED());
+    renderPanel({ queue: null });
     fireEvent.click(await screen.findByTestId('my-call-c-hours'));
-    const prompt = await screen.findByTestId('my-note-prompt');
-    expect(prompt.textContent).toContain('The campaign is outside its calling hours. It opens again');
+    await screen.findByTestId('my-note-prompt');
+    const other = screen.getByTestId('my-call-c-due') as HTMLButtonElement;
+    expect(other.disabled).toBe(true);
+    expect(document.getElementById(other.getAttribute('aria-describedby')!)?.textContent)
+      .toBe('Finish or cancel the note above first.');
+    // The prompt still names the first contact, and its call dials that one.
+    expect(screen.getByTestId('my-note-prompt').textContent).toContain('+919800000003');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect((screen.getByTestId('my-call-c-due') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('says every other refusal in words', async () => {
