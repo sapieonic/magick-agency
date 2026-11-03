@@ -28,6 +28,9 @@ import '../softphone/call_state.dart' show newerCall;
 ///   connects can open a wrap-up on the redial's attempt without a `reserved`
 ///   first; the panel held for the call it redialled must not keep the notes
 ///   and the outcome keyed to that closed call.
+/// * `queue` (contact assignment): the agent's own queue on a `strict` or
+///   `preferred` campaign, from the bootstrap, the `ready` snapshot and the
+///   `queue` frame. Nothing else moves it, and it moves nothing else.
 
 /// The socket, as the reducer tracks it. Mirrors the console's `StationConnection`.
 enum StationConnection { idle, connecting, open, reconnecting, sessionGone, superseded, disconnected }
@@ -174,6 +177,7 @@ final class StationState {
     this.campaignMessage,
     this.missedPings = 0,
     this.manualCall,
+    this.queue,
   });
 
   static const initial = StationState();
@@ -207,6 +211,10 @@ final class StationState {
   /// winning a tie). Kept once settled until the next dial replaces it, so the
   /// soft phone sees it settle. Cleared only with the session.
   final ManualCall? manualCall;
+
+  /// The agent's own queue (contact assignment): due, or nothing due and why.
+  /// Null on a `pool` campaign (and from a server older than the feature).
+  final QueueState? queue;
 
   /// The attempt the station holds now (live, retained for wrap-up, or the
   /// wrap-up's own). What notes and the disposition are keyed by.
@@ -253,6 +261,7 @@ final class StationState {
     Object? campaignMessage = _keep,
     int? missedPings,
     Object? manualCall = _keep,
+    Object? queue = _keep,
   }) =>
       StationState(
         connection: connection ?? this.connection,
@@ -273,12 +282,13 @@ final class StationState {
         campaignMessage: identical(campaignMessage, _keep) ? this.campaignMessage : campaignMessage as String?,
         missedPings: missedPings ?? this.missedPings,
         manualCall: identical(manualCall, _keep) ? this.manualCall : manualCall as ManualCall?,
+        queue: identical(queue, _keep) ? this.queue : queue as QueueState?,
       );
 
   @override
   String toString() => 'StationState($connection, $agentState, live: ${live?.attemptId}, '
       'retained: ${retainedAttempt?.attemptId}, wrapup: ${wrapup?.attemptId}, release: ${release?.reasonRaw}, '
-      'pendingBreak: $pendingBreakCode, missedPings: $missedPings, manual: $manualCall)';
+      'pendingBreak: $pendingBreakCode, missedPings: $missedPings, manual: $manualCall, queue: $queue)';
 }
 
 // ─── Actions ────────────────────────────────────────────────────────────────
@@ -391,6 +401,13 @@ final class SessionStateAction extends StationAction {
   final SessionStateResponse response;
 }
 
+/// The agent's own queue as the bootstrap or a `queue` frame states it
+/// (contact assignment). The `ready` snapshot states it through [ReadyAction].
+final class QueueAction extends StationAction {
+  const QueueAction(this.queue);
+  final QueueState queue;
+}
+
 // ─── The reducer ────────────────────────────────────────────────────────────
 
 /// One authoritative statement of the break queue, from either frame that
@@ -421,6 +438,9 @@ StationState stationReducer(StationState state, StationAction action) {
         missedRelease: frame.missedRelease,
         pendingBreakCode: queue.code,
         pendingBreakStatements: queue.statements,
+        // The agent's own queue, replaced like every other field: absent on a
+        // `pool` campaign, so a snapshot without it clears it.
+        queue: frame.queue,
       );
       if (frame.state != previous) {
         // Mobile addition: these described the state that was left.
@@ -532,6 +552,9 @@ StationState stationReducer(StationState state, StationAction action) {
     case ManualCallRetireAction(:final versionKey):
       final held = state.manualCall;
       return held == null || held.versionKey != versionKey ? state : state._with(manualCall: null);
+
+    case QueueAction(:final queue):
+      return queue == state.queue ? state : state._with(queue: queue);
 
     case SessionStateAction(:final response):
       if (response.state != state.agentState || state.agentStateSince != null) return state;

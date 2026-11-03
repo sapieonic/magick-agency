@@ -71,6 +71,30 @@ void main() {
     expect(find.text('at /preflight/c1?campaignName=Q4+Card+Renewals'), findsOneWidget);
   });
 
+  group('My contacts (contact assignment)', () {
+    testWidgets('with the flag on, each campaign links to the agent’s own contacts there', (tester) async {
+      h.server.json('GET', '/feature-flags', {'agency_contact_assignment_enabled': true});
+      assignments([assignment('c1', 'Q4 Card Renewals', 'running'), assignment('c2', 'Diwali Offers', 'completed')]);
+      final c = await started(tester);
+      await pumpScreen(tester, c, const CampaignsScreen(), extraRoutes: const ['/home', '/home/contacts/:campaignId']);
+      expect(find.byKey(const Key('my-contacts-c1')), findsOneWidget);
+      expect(find.byKey(const Key('my-contacts-c2')), findsOneWidget);
+      expect(find.bySemanticsLabel('My contacts in Q4 Card Renewals'), findsOneWidget);
+      await tapVisible(tester, find.byKey(const Key('my-contacts-c1')));
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/contacts/c1'), findsOneWidget);
+    });
+
+    testWidgets('with the flag off (or its map unread), nothing', (tester) async {
+      h.server.json('GET', '/feature-flags', {'agency_dialer_enabled': true});
+      assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+      final c = await started(tester);
+      await pumpScreen(tester, c, const CampaignsScreen());
+      expect(find.byKey(const Key('my-contacts-c1')), findsNothing);
+      expect(find.text('Enter station'), findsOneWidget);
+    });
+  });
+
   testWidgets('empty: not assigned yet', (tester) async {
     assignments([]);
     final c = await started(tester);

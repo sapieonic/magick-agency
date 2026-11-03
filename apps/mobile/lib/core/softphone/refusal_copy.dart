@@ -47,6 +47,8 @@ const Map<SoftphoneErrorCode, String> softphoneRefusalCopy = {
       'That outcome can’t be saved. Check the outcome, its note and its callback time.',
   SoftphoneErrorCode.fieldsInvalid: 'Some call details need fixing. The fields are marked in Call details.',
   SoftphoneErrorCode.settingsInvalid: 'Some settings need fixing.',
+  // Contact assignment: a strict campaign's contact that is another agent's.
+  SoftphoneErrorCode.contactAssignedElsewhere: 'This number belongs to another agent on this campaign.',
 };
 
 /// What the refused request was doing, where one code means different things.

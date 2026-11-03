@@ -26,8 +26,10 @@ apps/mobile/
       audio/            AudioEngine facade over packages/agent_audio
       lifecycle/        foreground/background rules (the device_away pause), wake lock
       telemetry/        PII-masking log
+      flags/            the client flag map (`GET /feature-flags`), per workspace, fail-closed
     features/           one folder per screen family: auth, join, accounts, campaigns, preflight,
-                        station, softphone (the Phone tab), performance, calls, settings
+                        station, softphone (the Phone tab), performance, calls, contacts
+                        (My contacts: contact assignment), settings
     ui/                 shared primitives (pills, cards, the live dot)
   packages/
     agency_wire/        wire types for the API and the station socket, hand-written against

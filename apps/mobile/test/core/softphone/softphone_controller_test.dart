@@ -435,6 +435,15 @@ void main() {
       );
     });
 
+    softphoneTest('contact_assigned_elsewhere (a strict campaign’s contact of another agent) says so, and offers no override', (h) {
+      h.openWith();
+      h.actions.setTag('camp-1');
+      h.refuse('POST $callsPath', 'contact_assigned_elsewhere');
+      h.run(h.actions.dial());
+      expect(h.view.dialError, 'This number belongs to another agent on this campaign.');
+      expect(h.view.overridePrompt, isNull);
+    });
+
     softphoneTest('fields_invalid marks the fields it names', (h) {
       h.openWith();
       h.actions.setFieldValue('customer_name', 'Asha');

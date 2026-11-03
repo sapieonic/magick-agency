@@ -52,6 +52,11 @@ class StationViewMapper {
   bool _wrapupRedialPlaced = false;
   WrapupView? _wrapup;
 
+  // queue
+  wire.QueueState? _queueSource;
+  int _queueOffset = 0;
+  QueueView? _queue;
+
   /// The offset the view applies now.
   int get appliedOffsetMs => _offset;
 
@@ -135,8 +140,32 @@ class StationViewMapper {
       busy: busy,
       actionError: actionError,
       fatal: fatal,
+      queue: _queueFor(s.queue),
     );
   }
+
+  /// The agent's own queue, its next time on this device's clock.
+  QueueView? _queueFor(wire.QueueState? queue) {
+    if (identical(queue, _queueSource) && _offset == _queueOffset) return _queue;
+    _queueSource = queue;
+    _queueOffset = _offset;
+    if (queue == null) return _queue = null;
+    return _queue = QueueView(
+      due: queue.due,
+      reason: queue.due ? null : queueIdleOf(queue.reason),
+      nextDueAt: correctedInstant(queue.nextDueAt, _offset),
+    );
+  }
+
+  /// The view's words for a wire reason; a reason this build does not know
+  /// (or none, while nothing is due) is [QueueIdle.other].
+  static QueueIdle queueIdleOf(wire.QueueIdleReason? reason) => switch (reason) {
+        wire.QueueIdleReason.queueEmpty => QueueIdle.queueEmpty,
+        wire.QueueIdleReason.waitingForRetry => QueueIdle.waitingForRetry,
+        wire.QueueIdleReason.callbacksLater => QueueIdle.callbacksLater,
+        wire.QueueIdleReason.outsideCallingHours => QueueIdle.outsideCallingHours,
+        wire.QueueIdleReason.unknown || null => QueueIdle.other,
+      };
 
   static AgentPhase phaseOf(wire.AgentState state) => switch (state) {
         wire.AgentState.available => AgentPhase.available,

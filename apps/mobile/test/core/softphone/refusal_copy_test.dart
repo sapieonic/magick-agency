@@ -21,6 +21,10 @@ void main() {
     expect(softphoneRefusalCopy[SoftphoneErrorCode.fieldsInvalid], contains('marked in Call details'));
   });
 
+  test('contact assignment: a strict campaign’s contact of another agent, in the console’s words', () {
+    expect(refusalCopy(body('contact_assigned_elsewhere')), 'This number belongs to another agent on this campaign.');
+  });
+
   test('never sends an agent to a page the app does not have', () {
     for (final text in softphoneRefusalCopy.values) {
       expect(text, isNot(contains('Reload the page')));

@@ -338,6 +338,9 @@ class StationController extends Notifier<StationView?>
     _station = bootstrap == null || bootstrap.campaignStatus == CampaignStatus.running
         ? StationState.initial
         : stationReducer(StationState.initial, const CampaignStateAction(dialing: false));
+    // The agent's own queue at join (strict / preferred), until `ready` states it again.
+    final queue = bootstrap?.queue;
+    if (queue != null) _station = stationReducer(_station, QueueAction(queue));
     _catalog = hosted.catalog;
     _breakReasons = hosted.breakReasons;
 
@@ -600,6 +603,13 @@ class StationController extends Notifier<StationView?>
         // The server's own word on the call: nothing left to check.
         _cancelHeldCallCheck();
         _dispatch(ManualCallAction(manualCall));
+      case QueueFrame(:final campaignId, :final queue):
+        // Only this station's campaign: the agent works one at a time.
+        if (campaignId != _s?.hosted.campaignId) {
+          _log.debug('queue frame for another campaign', {'campaign_id': campaignId});
+          break;
+        }
+        _dispatch(QueueAction(queue));
       case PongFrame():
         // The socket hands pongs to [_onPong] itself; none arrive here.
         break;
