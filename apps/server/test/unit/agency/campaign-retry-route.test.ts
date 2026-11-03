@@ -368,6 +368,49 @@ describe('config is inherited from the parent, then patched', () => {
     expect(campaigns.retryFromCampaign).not.toHaveBeenCalled();
   });
 
+  it('keep_assignments: absent keeps (the default), false pools, and the actor reaches the history only as a UUID', async () => {
+    const actor = '11111111-2222-4333-8444-555555555555';
+    await postRetry({ selector: { state: ['pending'] }, agent_user_id: actor });
+    expect(campaigns.retryFromCampaign.mock.calls[0]![0]).toMatchObject({ keepAssignments: true, actorUserId: actor });
+
+    vi.clearAllMocks();
+    await postRetry({ selector: { state: ['pending'] }, keep_assignments: false });
+    expect(campaigns.retryFromCampaign.mock.calls[0]![0]).toMatchObject({ keepAssignments: false, actorUserId: null });
+
+    // Not a UUID: the creation is still attributed on the audit row, but the history's
+    // `uuid` column gets the system (NULL) rather than a 22P02.
+    vi.clearAllMocks();
+    await postRetry({ selector: { state: ['pending'] }, agent_user_id: 'system:api' });
+    expect(campaigns.retryFromCampaign.mock.calls[0]![0].actorUserId).toBeNull();
+  });
+
+  it('refuses a non-boolean keep_assignments and creates nothing', async () => {
+    for (const bad of ['false', 0, null]) {
+      vi.clearAllMocks();
+      const res = await postRetry({ selector: { state: ['pending'] }, keep_assignments: bad });
+      expect(res.statusCode, String(bad)).toBe(400);
+      expect(res.json().details).toEqual({ keep_assignments: 'keep_assignments must be a boolean.' });
+      expect(campaigns.retryFromCampaign).not.toHaveBeenCalled();
+    }
+  });
+
+  it('inherits the contact-assignment settings and takes an override of them', async () => {
+    campaigns.findById.mockResolvedValue({ ...PARENT, assignment_mode: 'strict', allow_agent_retry: true, agent_retry_rounds: 3 });
+    await postRetry({ selector: { state: ['pending'] } });
+    expect(campaigns.retryFromCampaign.mock.calls[0]![0].config)
+      .toMatchObject({ assignment_mode: 'strict', allow_agent_retry: true, agent_retry_rounds: 3 });
+
+    vi.clearAllMocks();
+    const res = await postRetry({ selector: { state: ['pending'] }, config_overrides: { assignment_mode: 'pool', agent_retry_rounds: 11 } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details).toEqual({ agent_retry_rounds: 'agent_retry_rounds must be an integer between 1 and 10.' });
+
+    vi.clearAllMocks();
+    const ok = await postRetry({ selector: { state: ['pending'] }, config_overrides: { assignment_mode: 'pool' } });
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect(campaigns.retryFromCampaign.mock.calls[0]![0].config.assignment_mode).toBe('pool');
+  });
+
   it('refuses an override the create route would refuse — a bad retry policy', async () => {
     const res = await postRetry({
       selector: { state: ['pending'] },

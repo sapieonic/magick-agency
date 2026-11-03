@@ -45,6 +45,7 @@ export type SoftphoneRefusal =
   | { code: 'override_note_invalid'; details: CallFieldIssue[] }
   | { code: 'fields_invalid'; details: CallFieldIssue[] }
   | { code: 'contact_in_flight'; campaign_id: string; contact_id: string }
+  | { code: 'contact_assigned_elsewhere' }
   | {
     code: 'outside_calling_hours';
     window: AgencyCallingWindow;
@@ -90,6 +91,7 @@ export function softphoneRefusalMessage(refusal: SoftphoneRefusal): string {
     case 'override_note_invalid': return 'An override note must be 10 to 500 characters.';
     case 'fields_invalid': return 'Some call details are invalid.';
     case 'contact_in_flight': return 'A campaign call to this contact is in progress.';
+    case 'contact_assigned_elsewhere': return 'This number belongs to another agent on this campaign.';
     case 'outside_calling_hours': return 'The campaign\'s calling hours are closed for this number.';
     case 'dnc_listed': return 'This number is on the Do Not Call list.';
     case 'dnc_unavailable': return 'The Do Not Call list could not be checked. Try again shortly.';

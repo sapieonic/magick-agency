@@ -1,8 +1,13 @@
 import { AGENCY_DEFAULT_DISPOSITION_CATALOG } from '@magick-agency/contracts/agency';
 // The reserved disposition codes and their refusal: ONE definition, the internal
 // handler's, so this layer and the enforcement cannot disagree about which codes a
-// catalog may use.
-import { reservedDispositionCodeMessage } from './campaign-config.js';
+// catalog may use. The contact-assignment settings and an outcome's `override` are
+// shared the same way: same rules, same messages.
+import {
+  dispositionOverrideIssues,
+  reservedDispositionCodeMessage,
+  validateAssignmentSettings,
+} from './campaign-config.js';
 
 /**
  * ─── AGENCY CAMPAIGN CONFIG VALIDATION (public API layer) ───────────────────
@@ -432,6 +437,9 @@ function validateDispositionCatalog(catalog: unknown): ConfigIssue[] {
       }
     }
 
+    // An outcome's override grant (contact assignment): the internal handler's rule.
+    issues.push(...dispositionOverrideIssues(entry, at));
+
     // Built-in semantic mismatch — only for a code that IS one
     // of the three built-ins, matched byte-for-byte like every other code
     // comparison in this file (see the `.code` validation above).
@@ -653,6 +661,8 @@ export function validateAgencyCampaignConfig(body: unknown): ConfigIssue[] {
   if (allowRedial !== undefined && typeof allowRedial !== 'boolean') {
     issues.push({ field: 'allow_wrapup_redial', message: 'allow_wrapup_redial must be a boolean.' });
   }
+  // Contact assignment and agent retry (0009): the internal handler's rules, imported.
+  issues.push(...validateAssignmentSettings(record));
   issues.push(...validateCallingWindow(record));
   return issues;
 }

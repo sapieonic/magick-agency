@@ -127,7 +127,10 @@ export function validateSoftphoneSettings(body: unknown): SoftphoneSettingsIssue
   if (!Array.isArray(catalog)) {
     issues.push({ path: 'disposition_catalog', message: 'disposition_catalog must be an array.' });
   } else {
-    for (const issue of validateAgencyCampaignConfig({ disposition_catalog: catalog })) {
+    // The campaign catalog's rules, minus `override`: a soft-phone call has no roster
+    // contact to carry a grant (overrides are a campaign feature).
+    const noOverride = { allowDispositionOverride: false };
+    for (const issue of validateAgencyCampaignConfig({ disposition_catalog: catalog }, {}, noOverride)) {
       issues.push({ path: issue.field, message: issue.message });
     }
   }

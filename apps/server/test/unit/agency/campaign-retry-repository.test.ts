@@ -359,6 +359,38 @@ describe('the child campaign row', () => {
     }
   });
 
+  it('copies the seven contact-assignment settings from the config', async () => {
+    const settings = {
+      assignment_mode: 'preferred', on_unstaff: 'return_to_pool', callback_owner_grace_minutes: 0,
+      callback_fallback: 'pool', allow_agent_retry: false, agent_retry_rounds: 10, agent_retry_cooldown_minutes: 10080,
+    } as const;
+    stubTransaction();
+    await new AgencyCampaignRepository().retryFromCampaign({
+      parent: PARENT, name: 'r1', selector: { never_attempted: true },
+      config: { ...CONFIG, ...settings }, createdBy: null, idempotencyKey: null,
+    });
+    expect(campaignInsert()).toMatchObject(settings);
+  });
+
+  it('keep_assignments: the seed binds the choice, and only a keeping create writes the inherited history', async () => {
+    for (const keep of [true, false, undefined]) {
+      vi.clearAllMocks();
+      pool.connect.mockResolvedValue(client);
+      stubTransaction();
+      await new AgencyCampaignRepository().retryFromCampaign({
+        parent: PARENT, name: 'r1', selector: { never_attempted: true }, config: CONFIG, createdBy: null,
+        idempotencyKey: null, ...(keep === undefined ? {} : { keepAssignments: keep }), actorUserId: null,
+      });
+      const seed = statement('INSERT INTO agency_contacts');
+      expect(seed.sql).toContain('assigned_user_id, assigned_at, assigned_by_user_id');
+      // Omitted reads as the contract's default: keep.
+      expect(seed.values, String(keep)).toContain(keep ?? true);
+      const history = client.query.mock.calls.filter((c: unknown[]) => String(c[0]).includes('agency_contact_assignment_events'));
+      expect(history, String(keep)).toHaveLength(keep === false ? 0 : 1);
+      if (keep !== false) expect(String(history[0]![0])).toContain("'inherited'");
+    }
+  });
+
   it('copies no column that describes the PARENT\'s run', async () => {
     // "Copy the config columns" applied naively carries a stale auto-pause record,
     // a start time and a terminal status onto a campaign that has never dialled.

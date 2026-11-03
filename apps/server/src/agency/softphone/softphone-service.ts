@@ -287,6 +287,7 @@ export class SoftphoneService {
       settings,
       overrides: req.overrides ?? null,
       now: new Date(),
+      actor: { userId: actor.userId, supervise: actor.supervise },
     }, {
       dnc: this.deps.dnc,
       findRosterMatches: (campaignId, phone) => agencyContactRepository.findForManualMatch(campaignId, phone),

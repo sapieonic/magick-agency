@@ -5,9 +5,13 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
-import { forwardCore } from '../../core-dispatch.js';
+import { callCore, forwardCore } from '../../core-dispatch.js';
 import { ACCOUNT_HEADER } from '../../middleware/headers.js';
 import { assertBehavioralCapabilitiesForConfig } from '../../../agency/campaign-behavioral-settings.js';
+import { assertAssignmentSettingsAllowed } from '../../../agency/campaign-assignment-gate.js';
+import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
+import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
+import { fetchOwnedCoreCampaign, stringField } from '../helpers/core-campaign.js';
 import {
   validateAgencyCampaignConfig,
   withCampaignConfigDefaults,
@@ -63,6 +67,12 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       tenantId: request.tenantId,
       accountId: request.accountId,
     }))) return;
+    // Contact assignment (D9): a non-default assignment setting or an outcome
+    // `override` needs `agency_contact_assignment_enabled`; defaults pass unread.
+    if (!(await assertAssignmentSettingsAllowed(reply, body, {
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    }))) return;
 
     return forwardCore(request, reply, {
       method: 'POST',
@@ -114,7 +124,9 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     // that can change between the two calls. The internal handler is where a status
     // rule belongs, and it deliberately has none on PATCH (only `status` itself is
     // unpatchable, so lifecycle stays with /start, /pause, /resume, /stop and a
-    // config edit can never race the pacing leader's own writes).
+    // config edit can never race the pacing leader's own writes) — with ONE exception,
+    // `assignment_mode`, which changes only while draft or paused (decision D10; see
+    // below and `assignmentModeChangeRefused`).
     //
     // **When the edit takes effect, stated precisely — "applies to future attempts
     // only" is close but not exact.** The pacing loop re-reads the campaign every
@@ -166,14 +178,55 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       tenantId: request.tenantId,
       accountId: request.accountId,
     }))) return;
+    // Contact assignment (D9), on the same object, for the same reason as above.
+    if (!(await assertAssignmentSettingsAllowed(reply, patchBody, {
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    }))) return;
 
-    return forwardCore(request, reply, {
+    // ── `assignment_mode`: the status rule is the handler's, the audit row is ours ──
+    //
+    // The internal handler refuses a mode CHANGE outside draft/paused (409
+    // `mode_change_requires_pause`), forwarded unchanged below, so this layer still
+    // adds no status gate of its own. A real change is audited here, and only on
+    // success: `agency_campaign.assignment_mode_changed` with `{ from, to }`. `from` is
+    // read first, through the ownership probe, only when the body names a mode; sending
+    // the stored mode again is not a change and files nothing. Two PATCHes racing a mode
+    // change could each read the same `from`; the row then names the earlier value, and
+    // the handler's status rule, not this read, is what decides whether a change lands.
+    const namesMode = patchBody !== null && typeof patchBody === 'object'
+      && Object.hasOwn(patchBody, 'assignment_mode');
+    let modeBefore: string | null = null;
+    if (namesMode) {
+      const current = await fetchOwnedCoreCampaign(request, request.params.id);
+      if (!current.ok) return reply.code(current.status).send(current.body);
+      modeBefore = stringField(current.body, 'assignment_mode');
+    }
+
+    const result = await callCore({
       // PATCH, and the body must travel with it: a PATCH sent with NO body is a
       // write that does nothing and still reads as a success.
       method: 'PATCH',
       path: `/agency-campaigns/${request.params.id}`,
       body: patchBody,
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
     });
+
+    const modeAfter = result.status < 400 ? stringField(result.body, 'assignment_mode') : null;
+    if (namesMode && modeBefore && modeAfter && modeAfter !== modeBefore) {
+      platformAuditLogger.log({
+        tenant_id: request.tenantId!,
+        ...(request.accountId ? { account_id: request.accountId } : {}),
+        ...requestAuditActor(request),
+        action: 'agency_campaign.assignment_mode_changed',
+        resource_type: 'agency_campaign',
+        resource_id: request.params.id,
+        campaign_id: request.params.id,
+        details: { campaign_id: request.params.id, from: modeBefore, to: modeAfter },
+      });
+    }
+    return reply.code(result.status).send(result.body);
   });
 }
 

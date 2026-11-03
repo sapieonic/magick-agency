@@ -93,7 +93,7 @@ export const PRIOR_ATTEMPT_LIMIT = 20;
  * ── Why it lives in this leaf and not in the route that uses it ────────────
  * It was a `const` inside the route-registration closure, which made the one
  * list the contract pins unreachable by any test and by the repository it
- * feeds — an integration test then has to hand-copy eighteen column names to
+ * feeds — an integration test then has to hand-copy every column name to
  * build the object the route builds, which is the very drift the `satisfies`
  * below exists to prevent, reintroduced in the fixture. Importing the ROUTE
  * module to reach it is not an option either: that pulls in `src/config`, whose
@@ -116,6 +116,11 @@ export const RETRY_INHERITED_CONFIG_KEYS = [
   'wrapup_seconds', 'wrapup_auto_return', 'retry_policy', 'disposition_catalog',
   'context_display', 'break_reasons', 'record_calls', 'analysis_profile_id',
   'abandon_announcement_id', 'abandonment_ceiling_pct', 'allow_wrapup_redial',
+  // Contact assignment and agent-led retry (0009): how the child's pacing reads the
+  // owners its contacts keep (`keep_assignments` on the retry create), and the agents'
+  // retry allowance. Inherited like every other way the parent dials.
+  'assignment_mode', 'on_unstaff', 'callback_owner_grace_minutes', 'callback_fallback',
+  'allow_agent_retry', 'agent_retry_rounds', 'agent_retry_cooldown_minutes',
 ] as const;
 
 /**

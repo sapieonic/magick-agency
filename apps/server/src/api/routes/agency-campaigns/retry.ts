@@ -29,6 +29,7 @@ import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.re
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 import { abandonAnnouncementRejected, analysisProfileRejected, callerIdsIssue, campaignOf, configRejected, ownedCampaign } from './guards.js';
 import { ACTOR_NAME_MAX, ACTOR_USER_ID_MAX } from './lifecycle.js';
+import { UUID_RE } from '../../../utils/uuid.js';
 
 const log = createChildLogger({ component: 'agency-campaign-routes' });
 
@@ -257,6 +258,15 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       return replyValidationFailed(reply, { idempotency_key: idempotency.message });
     }
 
+    // Contact assignment: each copied contact keeps its parent contact's owner (the
+    // default) or lands in the pool. A JSON boolean or absent; anything else is a 400
+    // rather than a guess about which of the two the caller meant.
+    const rawKeep = body['keep_assignments'];
+    if (rawKeep !== undefined && typeof rawKeep !== 'boolean') {
+      return replyValidationFailed(reply, { keep_assignments: 'keep_assignments must be a boolean.' });
+    }
+    const keepAssignments = rawKeep ?? true;
+
     const rawSelector = body['selector'];
     if (rawSelector !== undefined
       && (rawSelector === null || typeof rawSelector !== 'object' || Array.isArray(rawSelector))) {
@@ -359,6 +369,10 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       // campaign in the table.
       createdBy: getOriginator(request) ?? null,
       idempotencyKey: idempotency.key,
+      keepAssignments,
+      // The `inherited` history rows' actor. Only a UUID can reach that column's
+      // `uuid` cast; anything else is recorded as the system rather than a 22P02.
+      actorUserId: retryActor && UUID_RE.test(retryActor.user_id) ? retryActor.user_id : null,
     });
 
     // Nothing was created in either refusal — the transaction rolled back before
@@ -433,6 +447,11 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
         // read by eye; a non-zero one explains a roster smaller than the preview.
         ...(result.duplicates_collapsed > 0
           ? { duplicates_collapsed: result.duplicates_collapsed }
+          : {}),
+        // The kept owners and the batch their `inherited` history rows carry, so the
+        // creation row names the batch the way an assignment operation's row does.
+        ...(result.assignments_kept > 0
+          ? { assignments_kept: result.assignments_kept, assignment_batch_id: result.assignment_batch_id }
           : {}),
         ...(retryActor ? { actor_user_id: retryActor.user_id, actor_name: retryActor.name } : {}),
       },

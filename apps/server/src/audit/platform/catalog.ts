@@ -27,6 +27,10 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // parent it came from, and which selector the supervisor chose. Without this row the parent's trail
   // says nothing happened on the day someone re-dialled 812 of its contacts.
   'agency_campaign.retry_created',
+  // Contact assignment (D10): the campaign's `assignment_mode` changed (only while draft
+  // or paused). Written by the public PATCH route on success only; `details` carry
+  // `{ campaign_id, from, to }`. Sending the stored mode again is not a change.
+  'agency_campaign.assignment_mode_changed',
   'agency_session.joined',
   'agency_session.left',
   'agency_session.break_started',
