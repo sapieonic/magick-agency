@@ -41,8 +41,22 @@ export function useAgencyNotes(options: {
   currentAttemptId: string | null;
   /** Whether the notes route will accept a write — the pad gate's `notesEnabled`. */
   acceptingWrites: boolean;
+  /**
+   * Wrap-up redial: the attempt `currentAttemptId` redials (`attempt.redial
+   * .of_attempt_id`), or null. When the draft this hook holds belongs to that
+   * attempt, it moves to the new one (see the hydration effect).
+   */
+  carryFrom?: string | null;
 }): AgencyNotesState {
   const { bootstrap, tenantId, accountId, currentAttemptId, acceptingWrites } = options;
+  /** Read at hydration time, from the same render that moved `currentAttemptId`. */
+  const carryFromRef = useLatestRef(options.carryFrom ?? null);
+  /**
+   * The draft as of the last hydration or edit, and the attempt it belongs to.
+   * Not `notesRef`: by the time the hydration effect runs, that already names the
+   * NEW attempt beside the OLD text.
+   */
+  const heldDraft = useRef<{ attemptId: string | null; notes: string }>({ attemptId: null, notes: '' });
 
   const [notes, setNotes] = useState('');
   const [hydrated, setHydrated] = useState(false);
@@ -90,16 +104,49 @@ export function useAgencyNotes(options: {
       return;
     }
 
-    let restored = '';
-    try {
-      const raw = window.localStorage.getItem(notesStorageKey(currentAttemptId));
-      if (raw) restored = (JSON.parse(raw) as { notes?: string }).notes ?? '';
-    } catch {
-      restored = '';
+    const readLocal = (attemptId: string): string | null => {
+      try {
+        const raw = window.localStorage.getItem(notesStorageKey(attemptId));
+        return raw ? ((JSON.parse(raw) as { notes?: string }).notes ?? '') : null;
+      } catch {
+        return null;
+      }
+    };
+
+    let restored = readLocal(currentAttemptId);
+    /**
+     * ── Wrap-up redial: the draft follows the customer ──────────────────────────
+     * A redial is a new attempt, so by default it would open on an empty field —
+     * and the notes and disposition writes REPLACE `notes`, so whatever the agent
+     * typed next would overwrite what they wrote about the dropped call. The server
+     * has already copied the saved notes onto the redial; this carries the local
+     * draft the same way a restored panel would get it: the draft is written under
+     * the new attempt's key and hydrated from there. No request is made.
+     *
+     * Only when the redial names the attempt whose draft this console holds (in
+     * memory, or in its local buffer after a reload), and only when the new attempt
+     * has no draft of its own — one that does is newer (a reload after the move).
+     */
+    const carryFrom = carryFromRef.current;
+    if (restored === null && carryFrom !== null && carryFrom !== currentAttemptId) {
+      const carried = heldDraft.current.attemptId === carryFrom ? heldDraft.current.notes : readLocal(carryFrom);
+      if (carried) {
+        restored = carried;
+        try {
+          window.localStorage.setItem(
+            notesStorageKey(currentAttemptId),
+            JSON.stringify({ notes: carried, at: Date.now() }),
+          );
+          window.localStorage.removeItem(notesStorageKey(carryFrom));
+        } catch {
+          // Quota or blocked storage: the field still shows the draft in memory.
+        }
+      }
     }
-    setNotes(restored);
+    heldDraft.current = { attemptId: currentAttemptId, notes: restored ?? '' };
+    setNotes(restored ?? '');
     setHydrated(true);
-  }, [currentAttemptId]);
+  }, [currentAttemptId, carryFromRef]);
 
   /**
    * The debounced save, keyed on the attempt that was on screen **when the agent
@@ -166,6 +213,7 @@ export function useAgencyNotes(options: {
       // The local buffer is the failure buffer, not the durability story: invisible
       // when things work, and what makes the two failure rows honest.
       const attemptId = notesRef.current.attemptId;
+      heldDraft.current = { attemptId, notes: value };
       if (attemptId !== null) {
         try {
           window.localStorage.setItem(

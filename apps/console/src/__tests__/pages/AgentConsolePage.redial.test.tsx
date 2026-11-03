@@ -449,3 +449,114 @@ describe('a refreshed console brings redial back from `ready`', () => {
     expect(screen.getByTestId('rail-label').textContent).toBe('Redial 1 of 2 — calling…');
   });
 });
+
+describe('the notes draft follows the customer onto the redial', () => {
+  const notesField = () => document.getElementById('agency-notes') as HTMLTextAreaElement;
+  const DRAFT = 'Dropped mid-sentence — wants the gold plan.';
+
+  async function typeNotes(text: string) {
+    await act(async () => {
+      fireEvent.change(notesField(), { target: { value: text } });
+    });
+  }
+
+  it('shows the first wrap-up’s text on the redial’s call and wrap-up, and submits it with the outcome', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    await pressRedial();
+
+    await act(async () => {
+      latest().emit({ event: 'reserved', attempt: REDIAL_ATTEMPT });
+      latest().emit({ event: 'agent_state', state: 'reserved', since: '2026-08-11T10:01:00.000Z' });
+      latest().emit({ event: 'bridged', attempt_id: 'att-2', bridged_at: '2026-08-11T10:01:04.000Z' });
+      latest().emit({ event: 'agent_state', state: 'on_call', since: '2026-08-11T10:01:04.000Z' });
+    });
+    expect(notesField().value).toBe(DRAFT);
+
+    await act(async () => {
+      latest().emit({
+        event: 'released',
+        attempt_id: 'att-2',
+        reason: 'remote_hangup',
+        requires_disposition: true,
+        message: 'Call ended.',
+      });
+      latest().emit({ event: 'agent_state', state: 'wrapup', since: '2026-08-11T10:02:00.000Z' });
+      latest().emit(wrapupFrame('att-2', { redial_remaining: 1 }));
+    });
+    expect(notesField().value).toBe(DRAFT);
+
+    // Moved, the way a restored panel finds it: under the redial's key, and no
+    // longer under the redialed attempt's.
+    expect(JSON.parse(window.localStorage.getItem('agency.notes.att-2')!).notes).toBe(DRAFT);
+    expect(window.localStorage.getItem('agency.notes.att-1')).toBeNull();
+    // No request carried it: the server already holds the saved copy.
+    expect(mocks.saveAttemptNotes.mock.calls.some(([req]) => req.attemptId === 'att-2')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: /Sale/ }));
+    await act(async () => {
+      fireEvent.click(saveButton());
+    });
+    expect(mocks.submitDisposition).toHaveBeenCalledWith(
+      'att-2',
+      expect.objectContaining({ disposition_code: 'sale', notes: DRAFT }),
+      'tenant-1',
+      'account-1',
+    );
+  });
+
+  it('carries an edit made on the redial into the second redial too', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    await pressRedial();
+    await callEndsInto(REDIAL_ATTEMPT, { redial_remaining: 1 }, '10:01');
+    await typeNotes(`${DRAFT} Second drop.`);
+
+    await pressRedial();
+    await act(async () => {
+      latest().emit({
+        event: 'reserved',
+        attempt: { ...ATTEMPT, attempt_id: 'att-3', redial: { of_attempt_id: 'att-2', number: 2, remaining: 0 } },
+      });
+    });
+    expect(notesField().value).toBe(`${DRAFT} Second drop.`);
+  });
+
+  it('starts a call that is not a redial with an empty field', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+
+    await act(async () => {
+      latest().emit({ event: 'reserved', attempt: { ...ATTEMPT, attempt_id: 'att-9', contact_id: 'c-9' } });
+    });
+    expect(notesField().value).toBe('');
+    // The first call's draft is left where it was.
+    expect(JSON.parse(window.localStorage.getItem('agency.notes.att-1')!).notes).toBe(DRAFT);
+  });
+
+  it('does not carry into a redial of some other attempt', async () => {
+    await inWrapup({ redial_remaining: 2 });
+    await typeNotes(DRAFT);
+    await act(async () => {
+      latest().emit({
+        event: 'reserved',
+        attempt: { ...REDIAL_ATTEMPT, redial: { of_attempt_id: 'att-other', number: 1, remaining: 1 } },
+      });
+    });
+    expect(notesField().value).toBe('');
+  });
+
+  it('carries the draft from the local buffer when a reloaded console meets the redial in `ready`', async () => {
+    window.localStorage.setItem('agency.notes.att-1', JSON.stringify({ notes: DRAFT, at: Date.now() }));
+    await mounted();
+    await act(async () => {
+      latest().emit({
+        event: 'ready',
+        session_id: 'sess-1',
+        state: 'on_call',
+        active_attempt: { ...REDIAL_ATTEMPT, state: 'bridged', bridged_at: '2026-08-11T10:01:04.000Z' },
+      });
+    });
+    expect(notesField().value).toBe(DRAFT);
+  });
+});

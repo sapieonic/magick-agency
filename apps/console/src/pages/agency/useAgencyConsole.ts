@@ -270,12 +270,25 @@ export function useAgencyConsole(
     setPresenceRefusal(null);
   }, [agentState, agentStateSince]);
 
+  /**
+   * Wrap-up redial: the attempt on screen redials an earlier one, read off the
+   * same attempt `currentAttemptId` names (live from `reserved` or
+   * `ready.active_attempt`, or retained through its wrap-up). The notes draft for
+   * that earlier attempt moves to this one.
+   */
+  const panelAttempt = live?.attempt ?? retainedAttempt;
+  const notesCarryFrom =
+    panelAttempt && panelAttempt.attempt_id === currentAttemptId
+      ? (panelAttempt.redial?.of_attempt_id ?? null)
+      : null;
+
   const notes = useAgencyNotes({
     bootstrap,
     tenantId,
     accountId,
     currentAttemptId,
     acceptingWrites: notesEnabled,
+    carryFrom: notesCarryFrom,
   });
 
   /**
