@@ -22,7 +22,7 @@ the SQL is the authority. As of 2026-11-01.
 
 ## Tables
 
-33 tables in the baseline (35 with 0002, 37 with 0005), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
+33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
 
 | Group | Tables |
 |---|---|
@@ -35,6 +35,7 @@ the SQL is the authority. As of 2026-11-01.
 | Clips | `audio_files`, `announcements` |
 | Analysis | `call_analysis_profiles`, `dialer_analysis_jobs` |
 | Dialer | `agency_campaigns`, `agency_contacts`, `agency_agent_sessions`, `agency_agent_session_events`, `agency_call_attempts`, `agency_ingest_chunks`, `agency_dnc_outbox`, `agency_calls` |
+| Insights rollup (0012) | `agency_insights_rollup_dirty`, `agency_insights_rollup_buckets`, `agency_insights_rollup_agents`, `agency_insights_rollup_codes`, `agency_insights_rollup_facets` |
 
 ### Identity
 
@@ -250,6 +251,13 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_agency_softphone_settings_updated_at` (0005) | BEFORE UPDATE | `agency_softphone_settings` | `update_updated_at()` |
 | `trg_agency_attempts_dial_placed_insert` (0011) | AFTER INSERT, WHEN `NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
 | `trg_agency_attempts_dial_placed_update` (0011) | AFTER UPDATE OF `dialed_at`, WHEN `OLD.dialed_at IS NULL AND NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
+| `trg_agency_attempts_insights_insert` (0012) | AFTER INSERT, FOR EACH STATEMENT, `NEW TABLE AS new_rows` | `agency_call_attempts` | `agency_insights_mark_attempt_buckets()` |
+| `trg_agency_attempts_insights_update` (0012) | AFTER UPDATE, FOR EACH STATEMENT, `OLD TABLE AS old_rows NEW TABLE AS new_rows` | `agency_call_attempts` | `agency_insights_mark_attempt_buckets()` |
+| `trg_agency_attempts_insights_delete` (0012) | AFTER DELETE, FOR EACH STATEMENT, `OLD TABLE AS old_rows` | `agency_call_attempts` | `agency_insights_mark_attempt_buckets()` |
+| `trg_agency_calls_insights_recording_insert` (0012) | AFTER INSERT, WHEN `NEW.recording_url IS NOT NULL` | `agency_calls` | `agency_insights_mark_call_recording()` |
+| `trg_agency_calls_insights_recording_update` (0012) | AFTER UPDATE OF `recording_url`, WHEN it changed | `agency_calls` | `agency_insights_mark_call_recording()` |
+| `trg_agency_contacts_insights_zone` (0012) | AFTER UPDATE OF `timezone`, WHEN it changed | `agency_contacts` | `agency_insights_mark_contact_zone()` |
+| `trg_agency_campaigns_insights_zone` (0012) | AFTER UPDATE OF `default_timezone`, WHEN it changed | `agency_campaigns` | `agency_insights_mark_campaign_zone()` |
 
 Functions:
 
@@ -260,6 +268,12 @@ Functions:
   a roster row. It is a function only; no trigger calls it.
 - `agency_attempt_count_placed_dial()` (0011): adds one to the attempt's contact's `dials_placed`.
   The two `trg_agency_attempts_dial_placed_*` triggers' WHEN clauses decide that a dial was placed.
+- `agency_insights_bucket(TIMESTAMPTZ)` (0012): the insights rollup bucket of an instant, its
+  15-minute UTC boundary (`date_bin` from `2000-01-01T00:00:00Z`). `IMMUTABLE`; the rollup CHECKs,
+  the triggers and the server's recompute all bin with it.
+- `agency_insights_mark_attempt_buckets()`, `agency_insights_mark_call_recording()`,
+  `agency_insights_mark_contact_zone()`, `agency_insights_mark_campaign_zone()` (0012): append a
+  dirty mark per insights bucket the write touched (see 0012 below).
 
 `super_admins` and `account_settings` have `updated_at` columns but no trigger.
 
@@ -603,10 +617,70 @@ increment per placed dial including a wrap-up redial, counting leaving `updated_
 roster count as an Index Only Scan, the range plans, the backfill keeping `updated_at`, down then
 up), the trigger list in `baseline.test.ts`, and the down → up suite.
 
+### 0012 — `migrations/0012_insights_rollup.sql`
+
+The campaign insights rollup (`docs/insights.md` "The rollup"): the range sections read it, never
+the attempt table. A pure function of `agency_call_attempts` (plus each attempt's session agent,
+contact zone and call recording), rebuilt per 15-minute UTC bucket of `dialed_at` by the server's
+job, never incremented. The recompute SQL is the server's (`insights-rollup-sql.ts`), because it
+is spelled from the domain's TypeScript definitions.
+
+- **`agency_insights_bucket(TIMESTAMPTZ)`**: `date_bin('15 minutes', ts, '2000-01-01T00:00:00Z')`,
+  `IMMUTABLE`, SQL-standard body. The one definition of a bucket.
+- **`agency_insights_rollup_dirty`** (`id` identity PK, `campaign_id`, `bucket_start`, `marked_at`;
+  CHECK `ck_agency_insights_dirty_bucket` that the bucket is aligned; index
+  `idx_agency_insights_rollup_dirty_bucket (campaign_id, bucket_start)`): append-only marks. No FK
+  (a campaign DELETE cascades to its attempts, whose DELETE trigger marks after the campaign row is
+  gone; the job drops marks of a campaign that no longer exists). **Never upserted**: an `ON
+  CONFLICT DO NOTHING` mark loses a write whose transaction commits after the job's recompute
+  snapshot, and `ON CONFLICT DO UPDATE` makes every attempt write in one campaign's quarter hour
+  queue on one row lock. The job deletes exactly the marks its claim saw, in the transaction that
+  recomputes from a later snapshot.
+- **`agency_insights_rollup_buckets`** (PK `(campaign_id, bucket_start)`, FK to `agency_campaigns`
+  ON DELETE CASCADE, CHECK `ck_agency_insights_rollup_bucket`): the bucket's totals (19 BIGINT
+  measures, durations in microseconds), `source_updated_at` (newest attempt `updated_at` folded
+  in) and `computed_at`. Also the job's lock: two recomputes of one bucket serialize on this row.
+- **`agency_insights_rollup_agents`** (`uq_… (campaign_id, bucket_start, agent_user_id) NULLS NOT
+  DISTINCT`), **`agency_insights_rollup_codes`** (`uq_… (campaign_id, bucket_start, agent_user_id,
+  disposition_code) NULLS NOT DISTINCT`), **`agency_insights_rollup_facets`** (`facet` CHECK
+  `ck_agency_insights_rollup_facet` in `outcome`, `caller_id`, `local_hour`, `no_outcome`,
+  `override`; `uq_… (campaign_id, facet, bucket_start, key, agent_user_id) NULLS NOT DISTINCT`):
+  the breakdowns, each with an FK `(campaign_id, bucket_start)` to the header ON DELETE CASCADE.
+  No primary keys: the unique indexes carry the invariant (one row per key) and serve the reads
+  (campaign and bucket range, the facets' by facet first).
+- **Triggers** (all AFTER, all appending marks): `trg_agency_attempts_insights_insert` /
+  `_update` / `_delete` on `agency_call_attempts`, FOR EACH STATEMENT with transition tables (a
+  trigger with transition tables takes one event and no column list), one function
+  `agency_insights_mark_attempt_buckets()`: the DISTINCT old and new buckets of the statement's
+  placed attempts, so moving `dialed_at` marks both and a bulk sweep writes one mark per bucket.
+  `trg_agency_calls_insights_recording_insert` / `_update` (WHEN `recording_url` is set / changed;
+  the attempt by `idx_agency_attempts_webrtc`), `trg_agency_contacts_insights_zone` (WHEN
+  `timezone` changed; the contact's attempts by `uq_agency_attempt_number`),
+  `trg_agency_campaigns_insights_zone` (WHEN `default_timezone` changed; every rolled-up bucket of
+  the campaign). Sessions need none: `agent_user_id` never changes.
+- **Backfill**: one mark per distinct bucket with a placed attempt, oldest first.
+- **Cost**, shared dev host: the attempt triggers add ~85 µs per single-row attempt UPDATE (5,000
+  updates run server-side, median of five: 0.84 s without, 1.27 s with); a 5,000-row UPDATE in one
+  statement writes one mark per bucket. The backfill marked 2,880 buckets of a 1M-attempt campaign
+  in 0.8–1.0 s, and the job drained them in 62 s.
+- **Locking.** One transaction; CREATE TRIGGER takes SHARE ROW EXCLUSIVE on `agency_call_attempts`,
+  `agency_calls`, `agency_contacts` and `agency_campaigns` until commit, with the backfill read
+  under it. Production has no data yet (`docs/status.md`).
+- **Tests rely on**: `test/helpers/test-db.ts`'s `truncateAll` deletes the marks its attempt
+  DELETE leaves (a second statement, after the attempts DELETE trigger fires).
+
+**Down** drops the triggers, functions, the five tables and the bucket function. **Tests**:
+`test/integration/db/insights-rollup-migration.test.ts` (the bucket function, the keys and CHECKs,
+each trigger marking exactly the buckets its write touched and the writes that mark nothing, a
+campaign delete cascading, down then up with the backfill), the table and trigger lists in
+`baseline.test.ts`, and the down → up suite. The recompute and the reads are pinned on Postgres
+in `apps/server/test/integration/agency/insights-rollup-{oracle,job}.test.ts`, and at scale in
+`apps/server/test/integration/load/insights-rollup-scale.test.ts`.
+
 ### 0013 — `migrations/0013_insights_pacing_history.sql`
 
-Pacing history (IN2, `docs/insights.md`) and the reopen marker. 0012 is the rollup's (another
-workstream); this file does not depend on it.
+Pacing history (IN2, `docs/insights.md`) and the reopen marker. It does not depend on 0012 (the
+rollup).
 
 - **`agency_campaign_pacing_minutes`**, primary key `(campaign_id, minute_start)`, `tenant_id`
   `UUID NOT NULL`, FK `campaign_id → agency_campaigns(id) ON DELETE CASCADE`. Fifteen additive

@@ -66,7 +66,7 @@ const ALL_MIGRATIONS = [
   '0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index',
   '0005_softphone', '0006_agent_session_client_kind', '0007_ingest_dedupe_column',
   '0008_wrapup_redial', '0009_contact_assignment', '0010_contact_assignment_index_and_checks',
-  '0011_insights_foundation', '0013_insights_pacing_history',
+  '0011_insights_foundation', '0012_insights_rollup', '0013_insights_pacing_history',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */
@@ -265,6 +265,8 @@ describe('migrations down → up', () => {
     expect(before).toContain('rel:r:telephony_credential_secrets');
     expect(before).toContain('rel:r:agency_manual_calls');
     expect(before).toContain('rel:r:agency_softphone_settings');
+    expect(before).toContain('rel:r:agency_insights_rollup_buckets');
+    expect(before).toContain('fn:agency_insights_bucket');
 
     await migrate('down');
     expect(await inventory()).toEqual([]);

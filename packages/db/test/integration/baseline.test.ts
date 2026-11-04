@@ -65,6 +65,9 @@ const EXPECTED_TABLES = [
   'agency_manual_calls', 'agency_softphone_settings',
   // contact assignment's owner history (0009)
   'agency_contact_assignment_events',
+  // the insights rollup and its dirty marks (0012, docs/insights.md)
+  'agency_insights_rollup_dirty', 'agency_insights_rollup_buckets', 'agency_insights_rollup_agents',
+  'agency_insights_rollup_codes', 'agency_insights_rollup_facets',
   // pacing history per campaign per minute (0013, IN2)
   'agency_campaign_pacing_minutes',
 ].sort();
@@ -101,6 +104,14 @@ const ALL_TRIGGERS: Array<[trigger: string, table: string]> = [
   // dials_placed (0011)
   ['trg_agency_attempts_dial_placed_insert', 'agency_call_attempts'],
   ['trg_agency_attempts_dial_placed_update', 'agency_call_attempts'],
+  // insights rollup dirty marks (0012)
+  ['trg_agency_attempts_insights_insert', 'agency_call_attempts'],
+  ['trg_agency_attempts_insights_update', 'agency_call_attempts'],
+  ['trg_agency_attempts_insights_delete', 'agency_call_attempts'],
+  ['trg_agency_calls_insights_recording_insert', 'agency_calls'],
+  ['trg_agency_calls_insights_recording_update', 'agency_calls'],
+  ['trg_agency_contacts_insights_zone', 'agency_contacts'],
+  ['trg_agency_campaigns_insights_zone', 'agency_campaigns'],
 ];
 
 async function indexDef(name: string): Promise<string | undefined> {
