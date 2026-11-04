@@ -93,8 +93,10 @@ async function seed() {
     state: 'pending', next_attempt_at: FUTURE(), last_disposition: 'call_back', last_outcome: 'connected',
     attempt_count: 1, assigned_user_id: U1, assigned_at: new Date(),
   });
-  // waiting=retry (3): a callback dialled and NOT reached (no longer a callback, isCallbackSql),
-  // a retry never written up (last_disposition NULL: the NOT-COALESCE case), and a ptp.
+  // waiting=retry (4): a callback dialled and NOT reached (no longer a callback, isCallbackSql),
+  // a retry never written up, a ptp, and a connected call closed without a write-up and
+  // rescheduled: last_disposition NULL with last_outcome 'connected' makes isCallbackSql
+  // NULL, not false, and under NOT a NULL would drop it (the COALESCE in waitingContactSql).
   const callbackNotReached = await contact({
     state: 'pending', next_attempt_at: FUTURE(), last_disposition: 'call_back', last_outcome: 'no_answer',
     attempt_count: 2,
@@ -105,6 +107,9 @@ async function seed() {
   const retryPtp = await contact({
     state: 'pending', next_attempt_at: FUTURE(), last_disposition: 'ptp', last_outcome: 'connected',
     attempt_count: 1,
+  });
+  const retryConnectedNoWriteUp = await contact({
+    state: 'pending', next_attempt_at: FUTURE(), last_outcome: 'connected', attempt_count: 1,
   });
   // Not waiting: on a call, finished, suppressed (a past next_attempt_at must not make them due).
   const onCall = await contact({ state: 'in_flight', next_attempt_at: PAST() });
@@ -154,7 +159,10 @@ async function seed() {
 
   return {
     campaign, s1, s2,
-    contacts: { due, dueCallback, callback, callbackNotReached, retryNull, retryPtp, onCall, completed, dnc },
+    contacts: {
+      due, dueCallback, callback, callbackNotReached, retryNull, retryPtp, retryConnectedNoWriteUp,
+      onCall, completed, dnc,
+    },
     attempts: { aFrom, aNoAnswer, aRedial, aManual, aReopened, aAtTo, aNeverPlaced },
   };
 }
@@ -250,11 +258,12 @@ describe('contacts: waiting and attempted, total = direct SQL = rows listed', ()
     );
     const total = await contactTotal(s.campaign.id, { waiting: 'retry' });
     const listed = await walkContacts(s.campaign.id, { waiting: 'retry' });
-    expect(expected).toBe(3);
+    expect(expected).toBe(4);
     expect(total).toBe(expected);
-    expect(listed.sort()).toEqual(
-      [s.contacts.callbackNotReached.id, s.contacts.retryNull.id, s.contacts.retryPtp.id].sort(),
-    );
+    expect(listed.sort()).toEqual([
+      s.contacts.callbackNotReached.id, s.contacts.retryNull.id, s.contacts.retryPtp.id,
+      s.contacts.retryConnectedNoWriteUp.id,
+    ].sort());
   });
 
   it('due now includes a contact due at exactly now(): `<=`, not `<`', async () => {
@@ -288,7 +297,7 @@ describe('contacts: waiting and attempted, total = direct SQL = rows listed', ()
       + (await contactTotal(s.campaign.id, { waiting: 'retry' }))
       + (await contactTotal(s.campaign.id, { waiting: 'callback' }));
     expect(sum).toBe(pending);
-    expect(pending).toBe(6);
+    expect(pending).toBe(7);
   });
 
   it('attempted=1|0 is dials_placed > 0 | = 0, kept by the 0011 trigger from placed dials', async () => {
@@ -322,7 +331,7 @@ describe('contacts: waiting and attempted, total = direct SQL = rows listed', ()
       ),
     );
     // No filter: the whole roster, this campaign only.
-    expect(await contactTotal(s.campaign.id, {})).toBe(9);
+    expect(await contactTotal(s.campaign.id, {})).toBe(10);
   });
 });
 
