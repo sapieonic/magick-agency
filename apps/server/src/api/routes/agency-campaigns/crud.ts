@@ -143,6 +143,8 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       // Omitted ⇒ the repository applies
       // `DEFAULT_ABANDONMENT_CEILING_PCT`, which is also the column's DEFAULT.
       abandonment_ceiling_pct: body?.abandonment_ceiling_pct as number | undefined,
+      // The originator: the signed-in creator's user id when the public layer
+      // creates it (IN8), any other caller's label verbatim, NULL with none.
       created_by: getOriginator(request) ?? null,
     });
 

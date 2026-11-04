@@ -4,6 +4,7 @@ import { userRepository } from '@magick-agency/db/repositories/user.repository';
 import { createChildLogger } from '@magick-agency/observability';
 import { getAuditRetentionHorizon } from '../audit/audit-retention.js';
 import {
+  coreActorUserId,
   mergeActivityPage,
   normalizeCoreRow,
   normalizeMasterRow,
@@ -101,12 +102,17 @@ export async function fetchActivityPage(query: ActivityQuery): Promise<ActivityP
     readCore(query, fetchSize),
   ]);
 
-  // One query for the page's identities — never one per row.
-  const displayNames = await resolveDisplayNames(master.logs, query.tenantId);
+  // One query for the page's identities — never one per row. A dialer-side row whose
+  // actor is a user id (the public layer's originator on create and retry, IN8) is
+  // resolved in the same query.
+  const displayNames = await resolveDisplayNames(
+    [...master.logs, ...core.rows.map((row) => ({ user_id: coreActorUserId(row.actor) }))],
+    query.tenantId,
+  );
 
   const merged = mergeActivityPage({
     masterRows: master.logs.map((row) => normalizeMasterRow(row, displayNames)),
-    coreRows: core.rows.map(normalizeCoreRow),
+    coreRows: core.rows.map((row) => normalizeCoreRow(row, displayNames)),
     limit: query.limit,
     cursor: query.cursor,
   });

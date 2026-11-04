@@ -78,6 +78,13 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       method: 'POST',
       path: '/agency-campaigns',
       body,
+      // Who created it (IN8). The handler stores the originator in `created_by` and
+      // stamps it as the `audit_logs` actor; with no originator both read as the
+      // system (`NULL` / `system:api`), which is how every campaign was recorded
+      // before this was sent. `request.user` is always the signed-in person here
+      // (`sessionMiddleware` has no API-key path); the bare user id, as
+      // `agency_ingest_jobs.created_by` and `last_transition_by.user_id` hold it.
+      ...(request.user?.id ? { originator: request.user.id } : {}),
     });
   });
 

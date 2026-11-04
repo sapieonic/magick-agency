@@ -363,10 +363,10 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       name,
       selector: parsed.filters,
       config: { ...inherited, ...overrides } as AgencyCampaignConfigColumns,
-      // The originator header, exactly as `POST /` records it. The ACTOR — a
-      // user id — goes on the audit row below rather than into `created_by`, which
-      // holds an origination LABEL (a client hint) and not a user id on every other
-      // campaign in the table.
+      // The originator header, exactly as `POST /` records it: the public layer
+      // sends the signed-in creator's user id (IN8), and any other caller's
+      // originator is stored verbatim as a label. The body's actor is NOT read
+      // into it, so `created_by` has one writer rule for every campaign.
       createdBy: getOriginator(request) ?? null,
       idempotencyKey: idempotency.key,
       keepAssignments,
@@ -430,9 +430,9 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
     // Same shape as `agency_campaign.created`'s, because that is what happened: a
     // retry is an ordinary campaign in every respect and belongs in the
     // trail as a creation rather than under a second event type nothing reads.
-    // The lineage facts ride in `event_data`, alongside the actor the caller sent —
-    // which has nowhere else to go, since `created_by` holds the originator label
-    // for every other campaign and would change meaning if it held a user id here.
+    // The lineage facts ride in `event_data`, alongside the actor the caller sent
+    // in the body. The row's `actor` is the originator, as on `POST /`: the
+    // creator's user id from the public layer, `system:api` with none.
     auditLogger.log({
       tenantId: result.campaign.tenant_id, accountId: result.campaign.account_id,
       eventType: 'agency_campaign.created', eventCategory: 'call', severity: 'info',
