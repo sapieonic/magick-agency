@@ -11,10 +11,10 @@ import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact } from '
  * contacts on DNC across the three scopes, the upload history, and the plans of the statements a
  * 1M-contact campaign makes (EXPLAIN on seeded tables).
  *
- * Plans: no ANALYZE or VACUUM (either leaves statistics behind for later files' plan tests, the
- * 0011 migration test's rule). The plan cases price sequential and bitmap scans out with SET LOCAL
- * inside a rolled-back transaction (the two coverage cases plain index scans too), so what they
- * show is which index serves the statement and
+ * Plans: no ANALYZE (it leaves statistics behind for later files' plan tests, the 0011 migration
+ * test's rule); the two coverage cases VACUUM `agency_contacts` (see `vacuumContacts`). The plan
+ * cases price sequential and bitmap scans out with SET LOCAL inside a rolled-back transaction, so
+ * what they show is which index serves the statement and
  * whether it covers it (Index Only Scan). Mutation-checked: dropping `waitingRetrySql`'s callback
  * exclusion reds the partition case (the buckets overlap and no longer sum to the total), and
  * reading a column outside the index (`phone_e164`) in the roster statement reds its plan case.
@@ -142,25 +142,34 @@ describe('the roster partition (insights-sql.ts)', () => {
     expect(none.callbacks_due_before_window_end).toBe(0);
   });
 
-  // Plain index scans are priced out too: what is left is an Index Only Scan, possible only on an
-  // index holding every column the statement reads, so the plan proves the statement is covered
-  // by idx_agency_contacts_insights whatever the table's statistics say (another file's inserts
-  // can leave an all-visible fraction behind that makes a plain scan of a smaller index cheaper).
-  const COVERED = ['enable_seqscan = off', 'enable_bitmapscan = off', 'enable_indexscan = off'];
+  /**
+   * The coverage cases VACUUM the table first (no ANALYZE), so every page is all-visible and an
+   * Index Only Scan costs what it would on a settled production table. Without it the result
+   * depended on what earlier files left behind: other suites ANALYZE `agency_contacts`, and with
+   * an all-visible fraction of 0 a plain scan of the smaller `idx_agency_contacts_assignee` prices
+   * below the covering index. (`enable_indexscan = off` cannot isolate the Index Only Scan instead:
+   * on Postgres 16 it disables both.) An Index Only Scan remains possible only on an index holding
+   * every column the statement reads, which is what these cases prove.
+   */
+  async function vacuumContacts(): Promise<void> {
+    await getTestPool().query('VACUUM agency_contacts');
+  }
 
   it('the roster statement is one Index Only Scan of idx_agency_contacts_insights', async () => {
+    await vacuumContacts();
     const { text, values } = repo.rosterStatement(rosterInput(randomUUID(), { pausedAt: new Date(), windowEndAt: new Date() }));
-    const p = await plan(text, values, COVERED);
+    const p = await plan(text, values);
     expect(p).toMatch(/Index Only Scan using idx_agency_contacts_insights on agency_contacts c/);
     expect(p).toMatch(/Index Cond: \(campaign_id = /);
     expect(p).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
   });
 
   it('the allocation statement is one Index Only Scan of idx_agency_contacts_insights too', async () => {
+    await vacuumContacts();
     const { text, values } = repo.allocationStatement({
       campaignId: randomUUID(), callbackCodes: CALLBACK, successCodes: SUCCESS, dayEndAt: new Date(),
     });
-    const p = await plan(text, values, COVERED);
+    const p = await plan(text, values);
     expect(p).toMatch(/Index Only Scan using idx_agency_contacts_insights on agency_contacts c/);
     expect(p).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
   });
@@ -247,7 +256,7 @@ describe('the running headline\'s pace', () => {
     expect(await repo.agencyInsightsReadRepository.liveAttempts(id)).toBe(1);
   });
 
-  it('the pace reads idx_agency_attempts_campaign_dialed, not the campaign\'s whole attempt history', async () => {
+  it('the pace reads the last hour by index, not the campaign\'s whole attempt history', async () => {
     // A campaign with a long history: 5,000 dials over the last month, so the one-hour range is
     // what selects (an empty table makes every index the same price).
     const id = await campaign();
@@ -262,8 +271,12 @@ describe('the running headline\'s pace', () => {
         [id, DEFAULTS.tenantId, DEFAULTS.accountId]);
       const { text, values } = repo.dialPaceStatement(id);
       const p = await plan(text, values);
-      expect(p).toMatch(/Index (Only )?Scan using idx_agency_attempts_campaign_dialed on agency_call_attempts a/);
-      expect(p).toMatch(/Index Cond: \(\(campaign_id = .*\) AND \(dialed_at > /);
+      // The hour is the index condition, beside the campaign: idx_agency_attempts_campaign_dialed
+      // (campaign, dialed_at), or idx_agency_attempts_billing (dialed_at, campaign) when this
+      // test DB's few campaigns make the cross-campaign range as cheap; never a scan of the
+      // campaign's history filtered afterwards.
+      expect(p).toMatch(/Index (Only )?Scan using idx_agency_attempts_(campaign_dialed|billing) on agency_call_attempts a/);
+      expect(p).toMatch(/Index Cond: \(.*dialed_at > \(now\(\) - .*campaign_id = |Index Cond: \(\(campaign_id = .*\) AND \(dialed_at > /);
     } finally {
       await dropLargeSeed();
     }
