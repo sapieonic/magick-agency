@@ -33,8 +33,10 @@ closes HTTP first, halts pacing, runs the drains together (media workers, analys
 rest in reverse (`src/cluster/shutdown-order.ts`). Voice starts before agency so the bridge's startup
 self-heal finishes before any pacing tick.
 
-**`src/app.ts`** (`buildApp`) registers the app-wide pieces once (rate limiter, error handler and
-5xx mask, `@fastify/websocket`, health probes) before the four plugins. `buildApp({ ctx: null })`
+**`src/app.ts`** (`buildApp`) registers the app-wide pieces once (CORS when `CORS_ALLOWED_ORIGINS`
+is set, rate limiter, error handler and 5xx mask, `@fastify/websocket`, health probes) before the
+four plugins. CORS stays ahead of the rate limiter, or its `OPTIONS *` preflight route would be
+charged to a bucket (`src/api/middleware/cors.ts`). `buildApp({ ctx: null })`
 builds a routing-only app for tests.
 
 **Public API layer → internal handlers (B16).** Public route handlers (auth, tenancy, RBAC,

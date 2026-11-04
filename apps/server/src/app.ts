@@ -12,6 +12,7 @@ import { registerRateLimit, registerUserRateLimit } from './api/middleware/rate-
 import { agencyErrorHandler } from './api/middleware/agency-error-handler.js';
 import { errorMaskHook } from './api/middleware/error-mask.middleware.js';
 import { clientLogContextHook } from './api/middleware/client-log-context.js';
+import { registerCors } from './api/middleware/cors.js';
 import { websocketPluginOptions, WS_MAX_PAYLOAD_DEFAULT_BYTES } from './utils/ws-limits.js';
 import { registerWsHandoff, type WsHandoffTarget } from './cluster/ws-handoff.plugin.js';
 import { cachedProbe, READINESS_CACHE_MS, readinessDetailAuthorized } from './cluster/readiness.js';
@@ -36,6 +37,12 @@ export interface BuildAppOptions {
    * `READYZ_DETAIL_TOKEN` only. Called at most once a second whatever the probe rate.
    */
   readiness?: () => Promise<{ ready: boolean; detail: unknown; summary?: Record<string, unknown> }>;
+  /**
+   * The CORS allow-list. Unset = `ctx.config.server.corsAllowedOrigins` (`CORS_ALLOWED_ORIGINS`),
+   * which is what production uses; given, it wins, so a routing-only app (`ctx: null`) can be
+   * tested with CORS on.
+   */
+  corsAllowedOrigins?: readonly string[];
 }
 
 /**
@@ -96,6 +103,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // Which app sent the request (`X-Client`), on every log line it produces as `client`.
   // First, so even the rate limiter's and the auth layer's lines carry it. Logging only.
   app.addHook('onRequest', clientLogContextHook);
+
+  // CORS, only when `CORS_ALLOWED_ORIGINS` lists the console's origin (the console on its own
+  // host calling the API on another). Its app-level `onRequest` hook answers a preflight before
+  // the rate limiter's and the auth layer's route-level hooks; unset registers nothing
+  // (`api/middleware/cors.ts`).
+  await registerCors(app, opts.corsAllowedOrigins ?? opts.ctx?.config.server.corsAllowedOrigins ?? []);
 
   // The rate limiter, at APP scope, so every route below — including `POST /auth/session`,
   // the agency API and the super-admin tree — is charged to a bucket, not only the carrier

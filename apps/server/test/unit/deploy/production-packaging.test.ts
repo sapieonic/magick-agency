@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RouteOptions } from 'fastify';
 
@@ -175,5 +178,81 @@ describe('docker/Dockerfile and docker/entrypoint.sh', () => {
     const start = entrypoint.indexOf('exec node');
     expect(migrate).toBeGreaterThan(-1);
     expect(start).toBeGreaterThan(migrate);
+  });
+});
+
+describe('docker/web.Dockerfile', () => {
+  const web = read('web.Dockerfile');
+  // Dockerfile instructions with their `\` line continuations joined, as Docker hands RUN to sh.
+  const instructions = web.replace(/\\\n/g, '').split('\n').filter((l) => /^[A-Z]+ /.test(l));
+  const build = instructions.find((l) => l.startsWith('RUN ') && l.includes('@magick-agency/super-admin build')) ?? '';
+
+  /**
+   * Runs the UI build step exactly as the image's sh would, with `pnpm` replaced by a stub that
+   * records each call and the `VITE_API_BASE_URL` it saw, and fails the build named in `fail`.
+   */
+  function runBuild(value: string, fail: 'console' | 'super-admin' | null = null): { status: number | null; calls: string[] } {
+    const dir = mkdtempSync(join(tmpdir(), 'web-build-'));
+    try {
+      const log = join(dir, 'calls.log');
+      writeFileSync(join(dir, 'pnpm'), [
+        '#!/bin/sh',
+        'echo "$* VITE_API_BASE_URL=${VITE_API_BASE_URL-<unset>}" >> "$PNPM_LOG"',
+        'case "$*" in *"$PNPM_FAIL build"*) exit 1 ;; esac',
+        '',
+      ].join('\n'));
+      chmodSync(join(dir, 'pnpm'), 0o755);
+      const res = spawnSync('sh', ['-c', build.slice('RUN '.length)], {
+        env: {
+          PATH: `${dir}:${process.env['PATH'] ?? ''}`,
+          CONSOLE_API_BASE_URL: value,
+          PNPM_LOG: log,
+          PNPM_FAIL: fail ? `@magick-agency/${fail}` : '<none>',
+        },
+      });
+      const calls = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).sort() : [];
+      return { status: res.status, calls };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // The super-admin API is reachable only through nginx's :8081 block (the console block does
+  // not proxy /super-admin), so the super-admin must keep calling its own origin even when the
+  // console is built to call a separate API host.
+  it("gives the API base to the console's build only, never the super-admin's", () => {
+    expect(build).not.toBe('');
+    // An ARG or ENV of it would reach every RUN, the super-admin's build included.
+    expect(instructions.filter((l) => /^(ARG|ENV) +VITE_API_BASE_URL\b/.test(l))).toEqual([]);
+    expect(runBuild('https://api.example.com')).toEqual({
+      status: 0,
+      calls: [
+        '--filter @magick-agency/console build VITE_API_BASE_URL=https://api.example.com',
+        '--filter @magick-agency/super-admin build VITE_API_BASE_URL=<unset>',
+      ],
+    });
+    expect(runBuild('').calls).toEqual([
+      '--filter @magick-agency/console build VITE_API_BASE_URL=',
+      '--filter @magick-agency/super-admin build VITE_API_BASE_URL=<unset>',
+    ]);
+    expect(service('web')).toMatch(/^ +CONSOLE_API_BASE_URL: \$\{CONSOLE_API_BASE_URL:-\}$/m);
+  });
+
+  it('fails the step when either build fails (the console one runs in the background)', () => {
+    expect(runBuild('', 'console').status).not.toBe(0);
+    expect(runBuild('', 'super-admin').status).not.toBe(0);
+  });
+
+  // The console joins the base as `${API_BASE}/auth/...`, so anything but a bare origin 404s every
+  // REST call, and an http API from the https console is blocked as mixed content.
+  it('refuses to build with a CONSOLE_API_BASE_URL that is not a bare https origin', () => {
+    for (const ok of ['', 'https://staging.api.example.com', 'https://api.example.com:8443', 'http://localhost:3021', 'http://127.0.0.1']) {
+      expect(runBuild(ok).status, ok).toBe(0);
+    }
+    for (const bad of ['https://api.example.com/', 'https://api.example.com/v1', 'api.example.com', 'https://', 'http://api.example.com', 'http://localhost.evil.com', 'wss://api.example.com', 'https://api.example.com?x=1']) {
+      const res = runBuild(bad);
+      expect(res.status, bad).not.toBe(0);
+      expect(res.calls, bad).toEqual([]);
+    }
   });
 });

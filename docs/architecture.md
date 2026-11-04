@@ -43,7 +43,7 @@ cycle (B12). Boundaries are described in [`seams.md`](seams.md).
           │ Firebase ID token, X-Tenant-Id / X-Account-Id   │ super-admin JWT
           ▼                                                 ▼
  ┌──────────────────────── apps/server (one process, :3021) ───────────────────────┐
- │ app-wide: rate limiter · error handler + 5xx mask · @fastify/websocket · probes │
+ │ app-wide: CORS* · rate limiter · error handler + 5xx mask · websocket · probes │
  │                                                                                │
  │ platformPlugin   /auth /tenants /accounts /users /invites /notifications       │
  │                  /feature-flags /client-config /super-admin/*                  │
@@ -63,6 +63,8 @@ cycle (B12). Boundaries are described in [`seams.md`](seams.md).
    (5436 dev)    (6383 dev)      media WS, webhooks,           S3, Gemini / OpenAI /
                                  recording host)               Sarvam, PostHog
 ```
+
+\* CORS only with the API on its own host (`CORS_ALLOWED_ORIGINS`, decision B25).
 
 ## Server composition
 
@@ -84,7 +86,9 @@ their key env var is set, and the subsystem behind them is then registered or sk
 **`AppContext`** (`app-context.ts`) is what every plugin and bootstrap receives: `config`, the pg
 `pool`, the ioredis client. `buildApp({ ctx: null })` builds a routing-only app for tests.
 
-**`buildApp`** (`app.ts`) registers, in order: the rate limiter (app scope, so every route is in a
+**`buildApp`** (`app.ts`) registers, in order: CORS, only when `CORS_ALLOWED_ORIGINS` is set (B25;
+`api/middleware/cors.ts`), and it must stay before the rate limiter, because its `OPTIONS *` route
+registered after the limiter would be charged to a bucket; the rate limiter (app scope, so every route is in a
 bucket) and the per-user bucket the session middleware charges; the error handler with the `22P02 → 400` backstop and the 5xx error mask (no driver text
 or SQL reaches a client); `/healthz` and `/readyz` (Postgres `SELECT 1` and Redis `PING`); the
 feature-flag service; one `@fastify/websocket`; then the four plugins: platform, agency, voice,

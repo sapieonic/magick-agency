@@ -3,8 +3,8 @@
 #
 #   docker build -f docker/web.Dockerfile -t magick-agency-web .
 #
-# Both Vite builds call the API on their own origin (`API_BASE` is ''
-# unless VITE_API_BASE_URL is set), and both own the root path, so each gets its
+# Both Vite builds call the API on their own origin (`API_BASE` is ''), except the
+# console when CONSOLE_API_BASE_URL is set (below), and both own the root path, so each gets its
 # own nginx server block (docker/nginx.conf): the console on :8080, the
 # super-admin on :8081. nginx 1.27.3+ is required for `server ... resolve` in
 # the upstream (re-resolving the server container's address at run time).
@@ -38,7 +38,26 @@ ARG VITE_FIREBASE_APP_ID=
 ARG VITE_POSTHOG_KEY=
 ARG VITE_POSTHOG_HOST=
 ARG VITE_POSTHOG_ENVIRONMENT=production
-RUN pnpm --filter @magick-agency/console --filter @magick-agency/super-admin build
+# The console's API origin, when the API is on its own host (https://api.example.com): the
+# console calls it cross-origin, and the server must list the console's origin in
+# CORS_ALLOWED_ORIGINS. Unset = the console calls its own origin, as before. The CONSOLE ONLY:
+# the super-admin keeps calling its own origin, whose nginx block (:8081) is the only path to
+# the /super-admin API. Checked before the build: the console joins it as `${API_BASE}/auth/...`,
+# so a trailing slash or a path would 404 every REST call while the station socket (which takes
+# only the origin) still connects; and it must be https (http only for localhost), or the
+# browser blocks every call from the https console as mixed content. The two builds run in
+# parallel, as one `pnpm --filter a --filter b build` did; `wait` fails the step if the
+# console's build fails.
+ARG CONSOLE_API_BASE_URL=
+RUN case "$CONSOLE_API_BASE_URL" in \
+      ""|https://?*|http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*) ;; \
+      *) echo "CONSOLE_API_BASE_URL must be an https origin (http only for localhost), got: $CONSOLE_API_BASE_URL" >&2; exit 1 ;; \
+    esac \
+ && case "$CONSOLE_API_BASE_URL" in \
+      *://*/*|*\?*|*\#*) echo "CONSOLE_API_BASE_URL must be a bare origin (no path, no trailing slash), got: $CONSOLE_API_BASE_URL" >&2; exit 1 ;; \
+    esac \
+ && { (VITE_API_BASE_URL="$CONSOLE_API_BASE_URL" pnpm --filter @magick-agency/console build) & c=$!; \
+      pnpm --filter @magick-agency/super-admin build && wait $c; }
 
 FROM nginx:1.27-alpine
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf

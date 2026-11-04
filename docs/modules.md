@@ -405,12 +405,13 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 ### `apps/server/src/api/middleware/`
 
-App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, and the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request).
+App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request), and CORS for the API on its own host (`cors.ts`, registered only when `CORS_ALLOWED_ORIGINS` is set; B25).
 
-Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit-defaults.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
+Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `cors.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit-defaults.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 
 | Test file | Cases |
 |---|---|
+| `apps/server/test/unit/api/middleware/cors.test.ts` | 5 |
 | `apps/server/test/unit/api/middleware/error-handler.middleware.test.ts` | 11 |
 | `apps/server/test/unit/api/middleware/error-mask.integration.test.ts` | 5 |
 | `apps/server/test/unit/api/middleware/error-mask.middleware.test.ts` | 21 |
@@ -631,7 +632,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 4 |
+| `apps/server/test/unit/config/config.test.ts` | 8 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
@@ -956,7 +957,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/server/test/integration/scripts/create-super-admin.test.ts` | ~5 |
 | `apps/server/test/unit/branding/no-parent-brand.test.ts` | 5 |
 | `apps/server/test/unit/deploy/mobile-app-links.test.ts` | 17 |
-| `apps/server/test/unit/deploy/production-packaging.test.ts` | 15 |
+| `apps/server/test/unit/deploy/production-packaging.test.ts` | 18 |
 | `apps/server/test/unit/scenarios/feature-flag-rollout-scenarios.test.ts` | 3 |
 | `apps/server/test/unit/scenarios/stale-call-sweep-lifecycle-scenarios.test.ts` | 4 |
 | `apps/server/test/unit/scenarios/voicelink-config-factory-scenarios.test.ts` | 5 |
