@@ -1,6 +1,7 @@
 import 'package:agency_wire/agency_wire.dart';
 
 import '../../core/api/api_error.dart';
+import '../../core/station/station_copy.dart' show humaniseCode;
 import '../station/logic/format.dart' show formatDueAt;
 
 /// Every sentence My contacts says (contact assignment), in one place.
@@ -77,7 +78,7 @@ abstract final class MyContactsCopy {
         MyContactBucket.reached => 'Reached',
         MyContactBucket.exhausted => 'Exhausted',
         MyContactBucket.suppressed => 'DNC',
-        MyContactBucket.unknown => _humanise(raw) ?? 'Other',
+        MyContactBucket.unknown => raw == null || raw.isEmpty ? 'Other' : humaniseCode(raw),
       };
 
   /// What a row says about when the contact is next due.
@@ -162,10 +163,4 @@ abstract final class MyContactsCopy {
   }
 
   static const _fallback = 'That didn’t work. Try again.';
-
-  static String? _humanise(String? raw) {
-    if (raw == null || raw.isEmpty) return null;
-    final words = raw.replaceAll('_', ' ');
-    return words[0].toUpperCase() + words.substring(1);
-  }
 }
