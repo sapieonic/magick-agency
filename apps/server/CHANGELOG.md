@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/sapieonic/magick-agency/compare/server-v0.7.0...server-v0.7.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **server:** stop the flaky server integration failures ([#37](https://github.com/sapieonic/magick-agency/issues/37)) ([848705e](https://github.com/sapieonic/magick-agency/commit/848705e5e8e40f7ce87586dc42986095d3900139))
+
 ## [0.7.0](https://github.com/sapieonic/magick-agency/compare/server-v0.6.0...server-v0.7.0) (2026-11-04)
 
 
