@@ -84,7 +84,6 @@ export type SupervisorSource = (typeof SUPERVISOR_SOURCES)[number];
 */
 const FUNNEL = 'src/utils/agency/overview/funnel.ts';
 const PULSE = 'src/utils/agency/overview/pulse.ts';
-const LIFECYCLE = 'src/utils/agency/overview/lifecycle.ts';
 const STRIP = 'src/components/agency/CampaignHealthStrip.tsx';
 const PERFORMANCE = 'src/utils/agencyCampaignPerformance.ts';
 const FLOOR = 'src/components/agency/AgentFloor.tsx';
@@ -181,5 +180,10 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   attempts_retried: { consumedIn: PULSE },
   // Beside the retries under the dial count: the wrap-up redials the dials include.
   attempts_redialed: { consumedIn: PULSE },
-  agents_peak: { consumedIn: LIFECYCLE },
+  agents_peak: {
+    unconsumed:
+      'No producer on `/stats` (the contract declares it optional and the server never '
+      + 'sends it). The Insights tab shows the agents online per trend bucket instead '
+      + '(`trends.agents_online_peak`).',
+  },
 };

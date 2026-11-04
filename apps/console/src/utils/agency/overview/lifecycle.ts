@@ -1,10 +1,10 @@
-import type { AgencyCampaign, AgencyCampaignStats } from '../../../types/agency-campaign';
+import type { AgencyCampaign } from '../../../types/agency-campaign';
 import {
   campaignTense,
   type CampaignEnding,
   type CampaignTense,
 } from '../../agencyCampaignControls';
-import { formatCount, plural } from '../../format/number';
+import { plural } from '../../format/number';
 import { dateFormatter, formatClockTime } from '../../format/date';
 import { DASH } from './figure';
 
@@ -302,62 +302,4 @@ export function campaignTimeline(
     ended: endedStamp && terminal ? `${verb} ${endedStamp}` : null,
     neverStarted: false,
   };
-}
-
-/**
- * The terminal rail's "How it ended" block.
- *
- * Only ever rendered on a campaign that has stopped, and it is the block that
- * gives that campaign a right-hand column at all — the rail used to be removed
- * entirely once a campaign was terminal, which is what left the page one narrow
- * column with a screen of white beside it.
- *
- * Returns `[]` when there is nothing to say, so the caller can skip the whole
- * block rather than render a heading over an empty list.
- */
-export function howItEndedLines(
-  campaign: AgencyCampaign | null,
-  stats: AgencyCampaignStats | null,
-  ending: CampaignEnding,
-  now: Date,
-): HowItRanLine[] {
-  const timeline = campaignTimeline(campaign, ending, now);
-  const lines: HowItRanLine[] = [];
-
-  if (timeline.neverStarted) {
-    // "Ran for — Never started" is not a sentence. The label carries the subject
-    // so the value can be the answer.
-    lines.push({ label: 'Dialing', value: 'Never started' });
-  } else if (timeline.duration) {
-    lines.push({ label: 'Ran for', value: timeline.duration });
-  }
-
-  if (timeline.endedStamp) {
-    lines.push({ label: ending === 'completed' ? 'Finished' : 'Stopped', value: timeline.endedStamp });
-  }
-  // Only ever present on a `stopped` campaign — see `campaignTimeline`.
-  if (timeline.actor) lines.push({ label: 'Stopped by', value: timeline.actor });
-
-  /*
-    ── `agents_peak` ─────────────────────────────────────────────────────────
-    Read exactly once, here. A stopped campaign's live floor is always empty, so
-    `agents_live` can never answer "was anyone ever on this" — and that is the
-    question behind every stopped campaign whose contacts are still pending.
-
-    `null` means NOT MEASURED (an older the server, or a campaign predating the agent
-    event log) and is dropped, never rendered as `0`. A `0` the server actually
-    measured is kept: "nobody was ever at a station" is the finding, and it is
-    the one this line exists for.
-  */
-  const peak = stats?.agents_peak;
-  if (typeof peak === 'number') {
-    lines.push({
-      label: 'Agents who worked it',
-      // "None", not "Nobody": it reads as a count in a column of counts, which
-      // is what keeps a measured zero visibly different from an absent field.
-      value: peak === 0 ? 'None' : formatCount(peak),
-    });
-  }
-
-  return lines;
 }

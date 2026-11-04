@@ -7,7 +7,6 @@ import {
   contactFunnel,
   floorSummary,
   funnelBarWithheldNote,
-  howItEndedLines,
   howItRanLines,
   listWorkedRing,
   onCallNote,
@@ -897,79 +896,6 @@ describe('campaignTimeline', () => {
   });
 });
 
-describe('howItEndedLines', () => {
-  const NOW = new Date('2026-08-14T18:30:00.000Z');
-
-  function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
-    return { id: 'c1', name: 'Collections', status: 'stopped', ...over };
-  }
-
-  const stopped = campaign({
-    started_at: new Date(NOW.getTime() - (3 * DAY + 4 * HOUR)).toISOString(),
-    ended_at: NOW.toISOString(),
-    last_transition_by: { user_id: 'usr-1', name: 'Priya Sharma' },
-  });
-
-  it('reads how long, then when, then who, then the floor', () => {
-    const lines = howItEndedLines(stopped, stats({ agents_peak: 4 }), 'stopped', NOW);
-
-    expect(lines.map((line) => line.label)).toEqual([
-      'Ran for',
-      'Stopped',
-      'Stopped by',
-      'Agents who worked it',
-    ]);
-    expect(lines[0]!.value).toBe('3 days 4 hours');
-    expect(lines[2]!.value).toBe('Priya Sharma');
-    expect(lines[3]!.value).toBe('4');
-  });
-
-  it('says “Automatically” when the dialer stopped it', () => {
-    const lines = howItEndedLines(campaign({ ...stopped, last_transition_by: null }), null, 'stopped', NOW);
-
-    expect(lines.find((line) => line.label === 'Stopped by')!.value).toBe('Automatically');
-  });
-
-  it('says the campaign never started, rather than that it ran for no time', () => {
-    const lines = howItEndedLines(
-      campaign({ status: 'stopped', started_at: null, ended_at: NOW.toISOString() }),
-      null,
-      'stopped',
-      NOW,
-    );
-
-    // The LABEL carries the subject, so the value can be the answer: "Ran for —
-    // Never started" is not a sentence.
-    expect(lines[0]).toEqual({ label: 'Dialing', value: 'Never started' });
-  });
-
-  it('drops the peak when the API did not measure it, and keeps a measured zero', () => {
-    const peak = (value: number | null | undefined) =>
-      howItEndedLines(stopped, stats({ agents_peak: value }), 'stopped', NOW)
-        .find((line) => line.label === 'Agents who worked it');
-
-    /*
-      A stopped campaign's live floor is always empty, so `agents_live` can
-      never answer "was anyone ever on this". `null` is the API saying it did not
-      measure — an older API, or a campaign predating the agent event log —
-      and rendering that as `0` would assert nobody worked the campaign.
-    */
-    expect(peak(null)).toBeUndefined();
-    expect(peak(undefined)).toBeUndefined();
-    // A measured zero is the finding this line exists for, so it is said in
-    // words rather than shown as a digit that reads like a missing value.
-    expect(peak(0)!.value).toBe('None');
-    expect(peak(1)!.value).toBe('1');
-  });
-
-  it('returns nothing at all when nothing is known, so the block is skipped', () => {
-    expect(howItEndedLines(campaign(), null, 'stopped', NOW)).toEqual([]);
-    expect(howItEndedLines(null, null, 'stopped', NOW)).toEqual([]);
-    // A stats payload with no peak on it adds no line of its own either.
-    expect(howItEndedLines(campaign(), stats({ agents_peak: undefined }), 'stopped', NOW)).toEqual([]);
-  });
-});
-
 /*
   ── "including 1,922 retries" ───────────────────────────────────────────────
 
@@ -1071,11 +997,9 @@ describe('a completed campaign is not a stopped one', () => {
       auto-pause). On a completed one it is a fabrication: it ran out of list.
       "Automatically" is the specific fabrication that reads as a fault.
     */
-    expect(campaignTimeline(finished, 'completed', NOW).actor).toBeNull();
-    const lines = howItEndedLines(finished, null, 'completed', NOW);
-    expect(lines.map((line) => line.label)).not.toContain('Stopped by');
-    expect(lines.map((line) => line.label)).toContain('Finished');
-    expect(JSON.stringify(lines)).not.toContain('Automatically');
+    const timeline = campaignTimeline(finished, 'completed', NOW);
+    expect(timeline.actor).toBeNull();
+    expect(JSON.stringify(timeline)).not.toContain('Automatically');
   });
 
   it('still names the ender on a campaign somebody really did stop', () => {
@@ -1086,8 +1010,7 @@ describe('a completed campaign is not a stopped one', () => {
       ended_at: iso(-HOUR),
       last_transition_by: null,
     });
-    const lines = howItEndedLines(stopped, null, 'stopped', NOW);
-    expect(lines.find((line) => line.label === 'Stopped by')?.value).toBe('Automatically');
+    expect(campaignTimeline(stopped, 'stopped', NOW).actor).toBe('Automatically');
   });
 });
 
