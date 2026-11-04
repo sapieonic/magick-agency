@@ -35,9 +35,9 @@ export function HealthSection({
   const abandonment = abandonmentRate(health.abandonment.rolling_24h);
   const ceiling = health.abandonment.ceiling_pct;
   const over = abandonment.kind === 'value' && abandonment.pct >= ceiling;
-  // The campaign's connect rate over the same rows (connected over first dials, connectRate).
+  // The campaign's connect rate over the same rows (human connects over first dials, connectRate).
   const average = rateFigure(connectRate({
-    connected: health.caller_ids.reduce((s, c) => s + c.connected, 0),
+    human_connects: health.caller_ids.reduce((s, c) => s + c.human_connects, 0),
     first_dials: health.caller_ids.reduce((s, c) => s + c.first_dials, 0),
   }));
 
@@ -53,6 +53,7 @@ export function HealthSection({
     },
     { key: 'first_dials', header: 'First dials', numeric: true, render: (r) => formatCount(r.first_dials), csv: (r) => r.first_dials },
     { key: 'connected', header: 'Connected', numeric: true, render: (r) => formatCount(r.connected), csv: (r) => r.connected },
+    { key: 'human_connects', header: 'Reached a person', numeric: true, render: (r) => formatCount(r.human_connects), csv: (r) => r.human_connects },
     { key: 'rate', header: 'Connect rate', numeric: true, render: (r) => rateText(connectRate(r)), csv: (r) => rateValue(connectRate(r)) },
   ];
   const reasonRows = STALL_REASONS.map((reason) => ({ reason, minutes: health.stalls.minutes_by_reason[reason] ?? 0 })).filter((r) => r.minutes > 0);

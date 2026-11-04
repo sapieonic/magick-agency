@@ -43,6 +43,7 @@ export async function computeTrends(
       bucket_start: b.bucket_start,
       dials: b.dials,
       first_dials: b.first_dials,
+      human_connects: b.human_connects,
       connected: b.connected,
       conversations: b.conversations,
       successes: b.successes,

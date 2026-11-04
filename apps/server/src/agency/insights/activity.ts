@@ -90,7 +90,7 @@ export async function computeActivity(
       ...dials,
     };
   };
-  const zero = { dials: 0, connected: 0, conversations: 0, successes: 0, talk_seconds: 0, wrapup_seconds: 0, wrapup_measured: 0, redials: 0, retries: 0, overrides: 0 };
+  const zero = { dials: 0, connected: 0, conversations: 0, human_connects: 0, successes: 0, talk_seconds: 0, wrapup_seconds: 0, wrapup_measured: 0, redials: 0, retries: 0, overrides: 0 };
   const agents: AgencyInsightsAgentActivityRow[] = [
     ...rollup.agents.map(({ agent_user_id, ...dials }) => agentRow(agent_user_id, dials)),
     ...stateOnly.map((s) => agentRow(s.agent_user_id, zero)),
@@ -105,6 +105,7 @@ export async function computeActivity(
       dials: c.dials,
       connected: c.connected,
       conversations: c.conversations,
+      human_connects: c.human_connects,
       successes: c.successes,
       by_outcome: c.by_outcome,
       redials: { ...c.redials, refused_at_limit: pacing.redials_refused_at_limit },

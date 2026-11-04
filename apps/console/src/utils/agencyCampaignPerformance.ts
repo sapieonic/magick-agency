@@ -16,8 +16,10 @@ import { AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
  * **The human connect rate is the headline, and the split is its drill-down.**
  *
  * The choice is not this console's to make and is not being made here — the server
- * made it on the wire. `connect_rate_pct` is `human_connects / attempts_total`,
- * with voicemails and never-written-up calls both outside the numerator. This
+ * made it on the wire. `connect_rate_pct` is the product's one connect rate,
+ * `human_connects` over PLACED FIRST dials (wrap-up redials and never-placed queued
+ * rows out of the denominator), with voicemails and never-written-up calls both
+ * outside the numerator. This
  * module renders that number as the headline and puts all three buckets
  * underneath it, so the figure a supervisor quotes is the one the server computed and
  * the buckets explain what it excluded. Re-deriving a blended rate here — even
@@ -255,8 +257,9 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
   const unclassified = stats?.unclassified_connects;
   /*
     ── The numerator of THIS rate, and it is not `attempts_connected` ─────────
-    `connect_rate_pct` is `human_connects / attempts_total` — the type says so in
-    as many words. The denominator line below used to lead with
+    `connect_rate_pct` is `human_connects` over the PLACED FIRST dials (the server's
+    one definition; wrap-up redials and never-placed queued rows are in no
+    denominator). The denominator line below used to lead with
     `attempts_connected`, a wider population (human + machine + unclassified), so
     the card rendered a fraction that does not equal its own headline:
 
@@ -274,7 +277,6 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     was breaking it.
   */
   const humans = stats?.human_connects;
-  const total = stats?.attempts_total;
 
   if (rate === undefined) {
     return {
@@ -325,17 +327,15 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
 
   return {
     value: pct(rate),
-    detail: 'Calls where a person answered, out of every call placed — including the ones nobody picked up.',
+    detail: 'Calls where a person answered, out of every first dial placed — including the ones nobody picked up. Wrap-up redials are not counted again.',
     caveat,
+    // The numerator alone. Its denominator, the placed first dials, is not on
+    // `/stats` (only `attempts_total`, which counts redials and never-placed queued
+    // rows), and "N of `attempts_total`" would be a fraction that is not this rate:
+    // the defect the note above describes, by the other half of the fraction.
     denominator:
-      typeof humans === 'number' && typeof total === 'number'
-        ? {
-          lead: formatCount(humans),
-          // Names what the number IS, not just what it is out of: "2,104 of
-          // 6,742" beside a split card counting 1,509 people is two numbers for
-          // one concept with nothing saying which is which.
-          rest: `people answered, of ${formatCount(total)} dials placed`,
-        }
+      typeof humans === 'number'
+        ? { lead: formatCount(humans), rest: 'people answered' }
         : null,
     scale: { kind: 'fill', percent: clampPercent(rate), tone: 'accent' },
     known: true,

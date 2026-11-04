@@ -173,7 +173,7 @@ export const CONTRIBUTION_COLUMNS: readonly ContributionColumn[] = [
   { label: 'Connects', numeric: true, hint: 'answered', sort: 'connected' },
   { label: 'Conversions', numeric: true, hint: 'booked', sort: 'successes' },
   { label: 'Share', numeric: true, hint: 'of the campaign’s conversions' },
-  { label: 'Connect rate', numeric: true, hint: 'of dials', sort: 'connect_rate_pct' },
+  { label: 'Connect rate', numeric: true, hint: 'of first dials', sort: 'connect_rate_pct' },
   { label: 'Conversion rate', numeric: true, hint: 'of connects', sort: 'success_rate_pct' },
   { label: 'AHT', numeric: true, hint: 'talk + wrap-up per connect', sort: 'aht_seconds' },
 ];

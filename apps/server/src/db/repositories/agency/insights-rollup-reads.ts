@@ -3,12 +3,13 @@
  * activity, trends, caller IDs, recording, carrier failures and the rollup's freshness. Bodies of
  * `AgencyInsightsRollupRepository`'s read methods.
  *
- * ── First dials ─────────────────────────────────────────────────────────────
- * The page's connect rate is `/stats`' `connect_rate_pct` definition: connected over FIRST dials,
- * wrap-up redials out of both (`connected` already excludes them). Every read that serves a
- * `connected` serves its denominator beside it: the activity totals and agent rows as `dials` and
- * the redials placed (first dials = dials − redials, both over the same placed dials), the trend
- * buckets, best hours and caller IDs as `first_dials`.
+ * ── The connect rate ────────────────────────────────────────────────────────
+ * The product's one connect rate, `/stats`' `connect_rate_pct`: HUMAN CONNECTS over PLACED FIRST
+ * DIALS (`sql-fragments.ts` HUMAN_CONNECT_ATTEMPT_SQL). Every read that serves one serves both
+ * counts: `human_connects` everywhere; the first dials as `dials` and the redials placed on the
+ * activity totals and agent rows (first dials = dials − redials, both over the same placed
+ * dials), as `first_dials` on the trend buckets, best hours and caller IDs. `connected`
+ * (`/stats` `attempts_connected`) stays served for the Connected figure and its list.
  *
  * ── The range ───────────────────────────────────────────────────────────────
  * Every read takes a half-open `[from, to)` and sums the 15-minute buckets whose START is in
@@ -70,6 +71,8 @@ export interface InsightsMeasures {
   overrides_used: number;
   recorded_connected: number;
   callbacks_booked: number;
+  /** The connect rate's numerator (0014): conversations coded neither voicemail nor no_disposition. */
+  human_connects: number;
 }
 
 export interface InsightsActivityAgentRow {
@@ -79,6 +82,8 @@ export interface InsightsActivityAgentRow {
   connected: number;
   /** Conversations (the success rate's denominator). */
   conversations: number;
+  /** The connect rate's numerator (over `dials - redials`). */
+  human_connects: number;
   successes: number;
   talk_seconds: number;
   wrapup_seconds: number;
@@ -94,6 +99,8 @@ export interface InsightsActivityRollup {
     dials: number;
     connected: number;
     conversations: number;
+    /** The connect rate's numerator (over `dials - redials.placed`). */
+    human_connects: number;
     successes: number;
     by_outcome: Record<AgencyAttemptOutcome, number> & { null_outcome: number };
     redials: { placed: number; connected: number; chains_at_limit: number };
@@ -128,6 +135,8 @@ export interface InsightsTrendRow {
   dials: number;
   /** Dials that were not a wrap-up redial: the connect rate's denominator. */
   first_dials: number;
+  /** The connect rate's numerator. */
+  human_connects: number;
   connected: number;
   conversations: number;
   successes: number;
@@ -141,7 +150,7 @@ export interface InsightsTrends {
   timezone: string;
   buckets: InsightsTrendRow[];
   /** By the contact's local hour at dial time, 0–23, every hour present. */
-  best_hours: Array<{ hour: number; dials: number; first_dials: number; connected: number }>;
+  best_hours: Array<{ hour: number; dials: number; first_dials: number; human_connects: number; connected: number }>;
   as_of: string | null;
 }
 
@@ -156,8 +165,8 @@ const SECONDS_NAME: Record<string, string> = { talk_us: 'talk_seconds', wrapup_u
 const sumOf = (columns: readonly string[]) => columns.map((c) => `COALESCE(SUM(r.${c}), 0) AS ${c}`).join(',\n                ');
 const SUM_MEASURES = sumOf(INSIGHTS_MEASURE_COLUMNS);
 /** The measures the per-agent rows read (the agents table is the largest the activity read sums). */
-const AGENT_MEASURES = sumOf(['dials', 'connected', 'conversations', 'talk_us', 'wrapup_us', 'wrapup_measured', 'redials_placed',
-  'reopened_dials', 'manual_dials', 'overrides_used']);
+const AGENT_MEASURES = sumOf(['dials', 'connected', 'conversations', 'human_connects', 'talk_us', 'wrapup_us', 'wrapup_measured',
+  'redials_placed', 'reopened_dials', 'manual_dials', 'overrides_used']);
 
 function readMeasures(row: Record<string, unknown> | null | undefined): InsightsMeasures {
   const out: Record<string, number> = {};
@@ -302,6 +311,7 @@ export async function insightsActivity(
       dials: m.dials,
       connected: m.connected,
       conversations: m.conversations,
+      human_connects: m.human_connects,
       successes: successesByAgent.get(agentUserId) ?? 0,
       talk_seconds: m.talk_seconds,
       wrapup_seconds: m.wrapup_seconds,
@@ -330,6 +340,7 @@ export async function insightsActivity(
       dials: totals.dials,
       connected: totals.connected,
       conversations: totals.conversations,
+      human_connects: totals.human_connects,
       successes,
       by_outcome: { ...byOutcome, null_outcome: nullOutcome },
       redials: {
@@ -421,12 +432,12 @@ export async function insightsTrends(
   const label = trendLabelSql(q.bucket, 'r.bucket_start', 'tz.zone');
   const { rows } = await getPool().query<{
     found: boolean; zone: string; series: Array<Record<string, unknown>> | null;
-    hours: Array<{ hour: string; dials: number; first_dials: number; connected: number }> | null; as_of: string | null;
+    hours: Array<{ hour: string; dials: number; first_dials: number; human_connects: number; connected: number }> | null; as_of: string | null;
   }>(
     `WITH ${CAMP_CTE}, ${resolvedZoneCte('$5::text')},
        agg AS (
          SELECT ${label} AS label,
-                SUM(r.dials) AS dials, SUM(r.dials - r.redials_placed) AS first_dials,
+                SUM(r.dials) AS dials, SUM(r.dials - r.redials_placed) AS first_dials, SUM(r.human_connects) AS human_connects,
                 SUM(r.connected) AS connected, SUM(r.conversations) AS conversations,
                 SUM(r.abandoned) AS abandoned, SUM(r.answered) AS answered
            FROM agency_insights_rollup_buckets r JOIN camp ON r.campaign_id = camp.id, tz
@@ -444,6 +455,7 @@ export async function insightsTrends(
        ), series AS (
          SELECT l.label AS bucket_start,
                 COALESCE(agg.dials, 0) AS dials, COALESCE(agg.first_dials, 0) AS first_dials,
+                COALESCE(agg.human_connects, 0) AS human_connects,
                 COALESCE(agg.connected, 0) AS connected,
                 COALESCE(agg.conversations, 0) AS conversations, COALESCE(suc.successes, 0) AS successes,
                 COALESCE(agg.abandoned, 0) AS abandoned, COALESCE(agg.answered, 0) AS answered
@@ -452,7 +464,8 @@ export async function insightsTrends(
            LEFT JOIN suc ON suc.label = l.label
           ORDER BY l.label
        ), hours AS (
-         SELECT r.key AS hour, SUM(r.n) AS dials, SUM(r.first_dials) AS first_dials, SUM(r.connected) AS connected
+         SELECT r.key AS hour, SUM(r.n) AS dials, SUM(r.first_dials) AS first_dials, SUM(r.human_connects) AS human_connects,
+                SUM(r.connected) AS connected
            FROM agency_insights_rollup_facets r JOIN camp ON r.campaign_id = camp.id
           WHERE r.facet = 'local_hour' AND ${IN_RANGE}
           GROUP BY r.key
@@ -474,6 +487,7 @@ export async function insightsTrends(
       bucket_start: String(s['bucket_start']),
       dials: num(s['dials']),
       first_dials: num(s['first_dials']),
+      human_connects: num(s['human_connects']),
       connected: num(s['connected']),
       conversations: num(s['conversations']),
       successes: num(s['successes']),
@@ -481,20 +495,24 @@ export async function insightsTrends(
       answered: num(s['answered']),
     })),
     best_hours: Array.from({ length: 24 }, (_, hour) => ({
-      hour, dials: num(byHour.get(hour)?.dials), first_dials: num(byHour.get(hour)?.first_dials), connected: num(byHour.get(hour)?.connected),
+      hour, dials: num(byHour.get(hour)?.dials), first_dials: num(byHour.get(hour)?.first_dials),
+      human_connects: num(byHour.get(hour)?.human_connects), connected: num(byHour.get(hour)?.connected),
     })),
     as_of: iso(row.as_of),
   };
 }
 
-/** Dials, first dials (the connect rate's denominator) and connected per caller ID, most dials first. */
+type CallerIdRow = { caller_id: string; dials: number; first_dials: number; human_connects: number; connected: number };
+
+/** Dials, the connect rate's two counts (human connects over first dials) and connected per caller ID, most dials first. */
 export async function insightsCallerIds(
   q: InsightsRangeQuery,
-): Promise<Array<{ caller_id: string; dials: number; first_dials: number; connected: number }> | null> {
-  const { rows } = await getPool().query<{ found: boolean; ids: Array<{ caller_id: string; dials: number; first_dials: number; connected: number }> | null }>(
+): Promise<CallerIdRow[] | null> {
+  const { rows } = await getPool().query<{ found: boolean; ids: CallerIdRow[] | null }>(
     `WITH ${CAMP_CTE},
        ids AS (
-         SELECT r.key AS caller_id, SUM(r.n) AS dials, SUM(r.first_dials) AS first_dials, SUM(r.connected) AS connected
+         SELECT r.key AS caller_id, SUM(r.n) AS dials, SUM(r.first_dials) AS first_dials,
+                SUM(r.human_connects) AS human_connects, SUM(r.connected) AS connected
            FROM agency_insights_rollup_facets r JOIN camp ON r.campaign_id = camp.id
           WHERE r.facet = 'caller_id' AND ${IN_RANGE}
           GROUP BY r.key
@@ -504,7 +522,10 @@ export async function insightsCallerIds(
     [q.campaignId, q.tenantId, q.from, q.to],
   );
   if (!rows[0]?.found) return null;
-  return (rows[0].ids ?? []).map((i) => ({ caller_id: i.caller_id, dials: num(i.dials), first_dials: num(i.first_dials), connected: num(i.connected) }));
+  return (rows[0].ids ?? []).map((i) => ({
+    caller_id: i.caller_id, dials: num(i.dials), first_dials: num(i.first_dials),
+    human_connects: num(i.human_connects), connected: num(i.connected),
+  }));
 }
 
 /** Connected calls (as `connected`) and those whose call carries a recording. */

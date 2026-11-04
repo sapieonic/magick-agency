@@ -36,13 +36,15 @@
  *   15-minute buckets of this campaign are marked changed and not yet recomputed (0 = caught up;
  *   above 0 the page says "updating").
  * - **"Connected" has two counts**, the dashboard's own: `connected` is `/stats`'
- *   `attempts_connected` (outcome `connected`, wrap-up redials excluded), the CONNECT rate's
- *   numerator; `conversations` counts each conversation once (a redial chain is one), the
+ *   `attempts_connected` (outcome `connected`, wrap-up redials excluded), the Connected figure
+ *   and its list; `conversations` counts each conversation once (a redial chain is one), the
  *   SUCCESS rate's denominator under `successes`.
- * - **The connect rate is `/stats`' definition**: connected over FIRST dials (the dials that were
- *   not a wrap-up redial), redials out of both. Every block with a `connected` carries its
- *   denominator: `calls` and `agents[]` as `dials` minus their redials (`redials.placed`,
- *   `redials`), trend buckets, best hours and caller IDs as `first_dials`.
+ * - **The connect rate is the product's one definition, `/stats`' `connect_rate_pct`**: HUMAN
+ *   CONNECTS (conversations coded neither voicemail nor no_disposition) over PLACED FIRST DIALS
+ *   (placed, and not a wrap-up redial). Every block that shows one carries both counts:
+ *   `human_connects`, and the first dials as `dials` minus their redials on `calls`
+ *   (`redials.placed`) and `agents[]` (`redials`), as `first_dials` on trend buckets, best hours
+ *   and caller IDs.
  * - Access: `agency.supervise` on every read (account admin and up; tenant owners pass;
  *   agents never). Account scoping and the ownership probe as on every campaign route.
  * - Wire codes stay as the dialer spells them (`canceled`); console copy is British English.
@@ -348,11 +350,10 @@ export interface AgencyInsightsRange {
 export interface AgencyInsightsCalls {
   /** Every placed dial (`dialed_at` in range), wrap-up redials included. */
   dials: number;
-  /**
-   * `/stats` `attempts_connected`: outcome `connected`, not a wrap-up redial. Connect rate =
-   * connected / (dials − redials.placed), the first dials (`/stats` `connect_rate_pct`).
-   */
+  /** `/stats` `attempts_connected`: outcome `connected`, not a wrap-up redial (the Connected figure). */
   connected: number;
+  /** The connect rate's numerator: connect rate = human_connects / (dials − redials.placed) (`/stats` `connect_rate_pct`). */
+  human_connects: number;
   /** One per conversation (a redial chain once). Success rate = successes / conversations. */
   conversations: number;
   /** Conversations whose disposition is a success code of the campaign's CURRENT catalog. */
@@ -429,6 +430,8 @@ export interface AgencyInsightsAgentActivityRow {
   dials: number;
   connected: number;
   conversations: number;
+  /** The connect rate's numerator: connect rate = human_connects / (dials − redials). */
+  human_connects: number;
   successes: number;
   talk_seconds: number;
   wrapup_seconds: number;
@@ -470,9 +473,11 @@ export interface AgencyInsightsTrendBucket {
   /** Instant (ISO-8601) for sub-day buckets; `YYYY-MM-DD` in the campaign zone for `day`. */
   bucket_start: string;
   dials: number;
-  /** Dials that were not a wrap-up redial: the connect rate's denominator. */
+  /** Placed dials that were not a wrap-up redial: the connect rate's denominator. */
   first_dials: number;
-  /** `/stats` `attempts_connected` (connect rate over `first_dials`). */
+  /** The connect rate's numerator (human_connects / first_dials). */
+  human_connects: number;
+  /** `/stats` `attempts_connected`. */
   connected: number;
   /** Conversations (the success rate's denominator). */
   conversations: number;
@@ -489,8 +494,8 @@ export interface AgencyInsightsTrends {
   bucket: AgencyInsightsBucket;
   /** Every bucket in range, zeros included. */
   buckets: AgencyInsightsTrendBucket[];
-  /** Connect counts by hour of day in each CONTACT's time zone (campaign zone when unset), 0–23; connect rate = connected / first_dials. */
-  best_hours: Array<{ hour: number; dials: number; first_dials: number; connected: number }>;
+  /** Connect counts by hour of day in each CONTACT's time zone (campaign zone when unset), 0–23; connect rate = human_connects / first_dials. */
+  best_hours: Array<{ hour: number; dials: number; first_dials: number; human_connects: number; connected: number }>;
   as_of: string | null;
   pending_buckets: number;
   generated_at: string;
@@ -537,8 +542,8 @@ export interface AgencyInsightsHealth {
   };
   /** From the pacing history: contacts suppressed at the pre-dial gate, and dials held for calling hours. */
   predial_blocks: { dnc: number; invalid: number; outside_calling_hours_deferrals: number };
-  /** Per caller ID: every dial, the first dials (the connect rate's denominator) and connected. */
-  caller_ids: Array<{ caller_id: string; dials: number; first_dials: number; connected: number }>;
+  /** Per caller ID: every dial, the connect rate's two counts (human_connects / first_dials) and connected. */
+  caller_ids: Array<{ caller_id: string; dials: number; first_dials: number; human_connects: number; connected: number }>;
   concurrency_limit_minutes: number;
   /** Placed dials whose outcome is `failed`. */
   carrier_failures: number;

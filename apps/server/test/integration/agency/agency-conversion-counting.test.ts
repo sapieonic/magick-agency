@@ -373,8 +373,12 @@ describe('conversion counting against a real disposition_catalog (integration)',
     expect(agent.totals.connected).toBe(3);
     expect(agent.totals.success_rate_pct).toBeCloseTo((1 / 3) * 100, 6);
     // The connect rate uses the other denominator, and the two must not have been
-    // swapped.
-    expect(agent.totals.connect_rate_pct).toBeCloseTo((3 / 12) * 100, 6);
+    // swapped. It is the product's one connect rate, human connects over placed first
+    // dials: the two conversations written up with a code (the unwritten one reached
+    // nobody we can name) over the twelve dials. It was connected / attempts (3 / 12),
+    // which booked an unwritten conversation as a person reached.
+    expect(agent.totals.connect_rate_pct).toBeCloseTo((2 / 12) * 100, 6);
+    expect(campaign.connect_rate_pct).toBeCloseTo((2 / 12) * 100, 6);
   });
 
   it('is NULL — never 0 — when nothing has bridged', async () => {

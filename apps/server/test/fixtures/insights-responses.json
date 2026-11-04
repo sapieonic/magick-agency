@@ -3,8 +3,8 @@
   "placeholders": {
     "campaign": "00000000-0000-4000-8000-0000000000c1",
     "agent": "00000000-0000-4000-8000-0000000000a0",
-    "from": "2026-11-04T12:30:00.000Z",
-    "to": "2026-11-04T16:45:00.000Z"
+    "from": "2026-11-04T14:30:00.000Z",
+    "to": "2026-11-04T18:45:00.000Z"
   },
   "summary": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
@@ -14,14 +14,14 @@
       "id": "00000000-0000-4000-8000-000000000005",
       "name": "Load Account 0"
     },
-    "created_at": "2026-11-04T10:30:00.000Z",
+    "created_at": "2026-11-04T12:30:00.000Z",
     "created_by": null,
-    "started_at": "2026-11-04T11:30:00.000Z",
+    "started_at": "2026-11-04T13:30:00.000Z",
     "ended_at": null,
     "transitions": [
       {
         "to_status": "paused",
-        "at": "2026-11-04T13:40:00.000Z",
+        "at": "2026-11-04T15:40:00.000Z",
         "reason": "abandonment_ceiling",
         "actor": null
       }
@@ -129,43 +129,18 @@
         }
       ]
     },
-    "generated_at": "2026-11-04T16:43:56.009Z"
+    "generated_at": "2026-11-04T18:30:24.385Z"
   },
   "allocation": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "assignment_mode": "strict",
     "agents": [
       {
-        "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
-        "agent_name": "agent 0.1",
-        "staffed": true,
-        "state": "offline",
-        "last_seen_at": "2026-11-04T16:43:55.759Z",
-        "allocated": 24,
-        "attempted": 16,
-        "not_attempted": 8,
-        "due_now": 4,
-        "waiting_retry": 2,
-        "callbacks_due_today": 0,
-        "callbacks_overdue": 0,
-        "reached": 2,
-        "successes": 2,
-        "not_reached": 0,
-        "exhausted": 2,
-        "dnc": 2,
-        "redials": 4,
-        "retries_reopened": 6,
-        "retries_manual": 8,
-        "overrides_used": 3,
-        "last_activity_at": "2026-11-04T15:28:18.000Z",
-        "due_while_absent": 0
-      },
-      {
         "agent_user_id": "00000000-0000-4000-8000-0000000000a2",
         "agent_name": "agent 0.2",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T16:43:55.771Z",
+        "last_seen_at": "2026-11-04T18:30:24.232Z",
         "allocated": 0,
         "attempted": 0,
         "not_attempted": 0,
@@ -182,7 +157,7 @@
         "retries_reopened": 3,
         "retries_manual": 1,
         "overrides_used": 1,
-        "last_activity_at": "2026-11-04T14:14:34.000Z",
+        "last_activity_at": "2026-11-04T16:14:34.000Z",
         "due_while_absent": 0
       },
       {
@@ -190,13 +165,13 @@
         "agent_name": "agent 0.0",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T15:50:00.000Z",
+        "last_seen_at": "2026-11-04T17:50:00.000Z",
         "allocated": 26,
         "attempted": 16,
         "not_attempted": 10,
         "due_now": 5,
         "waiting_retry": 2,
-        "callbacks_due_today": 0,
+        "callbacks_due_today": 2,
         "callbacks_overdue": 0,
         "reached": 2,
         "successes": 2,
@@ -207,8 +182,33 @@
         "retries_reopened": 6,
         "retries_manual": 9,
         "overrides_used": 3,
-        "last_activity_at": "2026-11-04T14:50:46.000Z",
+        "last_activity_at": "2026-11-04T16:50:46.000Z",
         "due_while_absent": 5
+      },
+      {
+        "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+        "agent_name": "agent 0.1",
+        "staffed": true,
+        "state": "offline",
+        "last_seen_at": "2026-11-04T18:30:24.225Z",
+        "allocated": 24,
+        "attempted": 16,
+        "not_attempted": 8,
+        "due_now": 4,
+        "waiting_retry": 2,
+        "callbacks_due_today": 2,
+        "callbacks_overdue": 0,
+        "reached": 2,
+        "successes": 2,
+        "not_reached": 0,
+        "exhausted": 2,
+        "dnc": 2,
+        "redials": 4,
+        "retries_reopened": 6,
+        "retries_manual": 8,
+        "overrides_used": 3,
+        "last_activity_at": "2026-11-04T17:28:18.000Z",
+        "due_while_absent": 0
       }
     ],
     "unassigned": {
@@ -217,7 +217,7 @@
       "not_attempted": 4,
       "due_now": 2,
       "waiting_retry": 1,
-      "callbacks_due_today": 0,
+      "callbacks_due_today": 1,
       "callbacks_overdue": 0,
       "reached": 1,
       "successes": 1,
@@ -228,7 +228,7 @@
       "retries_reopened": 0,
       "retries_manual": 3,
       "overrides_used": 1,
-      "last_activity_at": "2026-11-04T14:05:31.000Z"
+      "last_activity_at": "2026-11-04T16:05:31.000Z"
     },
     "totals": {
       "allocated": 62,
@@ -236,7 +236,7 @@
       "not_attempted": 22,
       "due_now": 11,
       "waiting_retry": 5,
-      "callbacks_due_today": 0,
+      "callbacks_due_today": 5,
       "callbacks_overdue": 0,
       "reached": 5,
       "successes": 5,
@@ -247,7 +247,7 @@
       "retries_reopened": 15,
       "retries_manual": 21,
       "overrides_used": 8,
-      "last_activity_at": "2026-11-04T15:28:18.000Z"
+      "last_activity_at": "2026-11-04T17:28:18.000Z"
     },
     "imbalance": {
       "high": [
@@ -265,7 +265,7 @@
         {
           "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
           "due": 5,
-          "away_since": "2026-11-04T15:50:00.000Z",
+          "away_since": "2026-11-04T17:50:00.000Z",
           "staffed": true
         }
       ],
@@ -287,13 +287,13 @@
         "ok": true
       }
     ],
-    "generated_at": "2026-11-04T16:43:56.099Z"
+    "generated_at": "2026-11-04T18:30:24.456Z"
   },
   "activity": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T12:30:00.000Z",
-      "to": "2026-11-04T16:45:00.000Z",
+      "from": "2026-11-04T14:30:00.000Z",
+      "to": "2026-11-04T18:45:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -302,6 +302,7 @@
       "dials": 82,
       "connected": 22,
       "conversations": 22,
+      "human_connects": 22,
       "successes": 12,
       "by_outcome": {
         "connected": 28,
@@ -355,7 +356,7 @@
     ],
     "callbacks": {
       "booked": 4,
-      "open_due_today": 0,
+      "open_due_today": 5,
       "open_overdue": 0,
       "kept_on_time": 0,
       "kept_late": 0,
@@ -364,12 +365,12 @@
       "pending_due": 3,
       "by_owner": [
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
           "open": 1,
           "overdue": 1
         },
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
           "open": 1,
           "overdue": 1
         },
@@ -410,6 +411,7 @@
         "dials": 35,
         "connected": 10,
         "conversations": 10,
+        "human_connects": 10,
         "successes": 7,
         "talk_seconds": 1121.2,
         "wrapup_seconds": 220,
@@ -433,6 +435,7 @@
         "dials": 31,
         "connected": 8,
         "conversations": 8,
+        "human_connects": 8,
         "successes": 3,
         "talk_seconds": 774.2,
         "wrapup_seconds": 220,
@@ -456,6 +459,7 @@
         "dials": 8,
         "connected": 2,
         "conversations": 2,
+        "human_connects": 2,
         "successes": 1,
         "talk_seconds": 179.6,
         "wrapup_seconds": 60,
@@ -477,6 +481,7 @@
         "dials": 8,
         "connected": 2,
         "conversations": 2,
+        "human_connects": 2,
         "successes": 1,
         "talk_seconds": 235.4,
         "wrapup_seconds": 40,
@@ -525,15 +530,15 @@
         "ok": true
       }
     ],
-    "as_of": "2026-11-04T16:43:55.794Z",
+    "as_of": "2026-11-04T18:30:24.245Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:43:56.137Z"
+    "generated_at": "2026-11-04T18:30:24.477Z"
   },
   "trends": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T12:30:00.000Z",
-      "to": "2026-11-04T16:45:00.000Z",
+      "from": "2026-11-04T14:30:00.000Z",
+      "to": "2026-11-04T18:45:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -541,9 +546,10 @@
     "bucket": "hour",
     "buckets": [
       {
-        "bucket_start": "2026-11-04T12:30:00.000Z",
+        "bucket_start": "2026-11-04T14:30:00.000Z",
         "dials": 30,
         "first_dials": 29,
+        "human_connects": 9,
         "connected": 10,
         "conversations": 9,
         "successes": 4,
@@ -552,9 +558,10 @@
         "agents_online_peak": 3
       },
       {
-        "bucket_start": "2026-11-04T13:30:00.000Z",
+        "bucket_start": "2026-11-04T15:30:00.000Z",
         "dials": 26,
         "first_dials": 23,
+        "human_connects": 7,
         "connected": 6,
         "conversations": 7,
         "successes": 3,
@@ -563,9 +570,10 @@
         "agents_online_peak": 3
       },
       {
-        "bucket_start": "2026-11-04T14:30:00.000Z",
+        "bucket_start": "2026-11-04T16:30:00.000Z",
         "dials": 26,
         "first_dials": 24,
+        "human_connects": 6,
         "connected": 6,
         "conversations": 6,
         "successes": 5,
@@ -574,9 +582,10 @@
         "agents_online_peak": 3
       },
       {
-        "bucket_start": "2026-11-04T15:30:00.000Z",
+        "bucket_start": "2026-11-04T17:30:00.000Z",
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0,
         "conversations": 0,
         "successes": 0,
@@ -585,9 +594,10 @@
         "agents_online_peak": 3
       },
       {
-        "bucket_start": "2026-11-04T16:30:00.000Z",
+        "bucket_start": "2026-11-04T18:30:00.000Z",
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0,
         "conversations": 0,
         "successes": 0,
@@ -601,156 +611,180 @@
         "hour": 0,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 1,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 2,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 3,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 4,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 5,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 6,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 7,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 8,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 9,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 10,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 11,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 12,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 13,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 14,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 15,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 16,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 17,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       },
       {
         "hour": 18,
-        "dials": 30,
-        "first_dials": 29,
-        "connected": 10
+        "dials": 0,
+        "first_dials": 0,
+        "human_connects": 0,
+        "connected": 0
       },
       {
         "hour": 19,
-        "dials": 26,
-        "first_dials": 23,
-        "connected": 6
+        "dials": 0,
+        "first_dials": 0,
+        "human_connects": 0,
+        "connected": 0
       },
       {
         "hour": 20,
-        "dials": 26,
-        "first_dials": 24,
-        "connected": 6
+        "dials": 30,
+        "first_dials": 29,
+        "human_connects": 9,
+        "connected": 10
       },
       {
         "hour": 21,
-        "dials": 0,
-        "first_dials": 0,
-        "connected": 0
+        "dials": 26,
+        "first_dials": 23,
+        "human_connects": 7,
+        "connected": 6
       },
       {
         "hour": 22,
-        "dials": 0,
-        "first_dials": 0,
-        "connected": 0
+        "dials": 26,
+        "first_dials": 24,
+        "human_connects": 6,
+        "connected": 6
       },
       {
         "hour": 23,
         "dials": 0,
         "first_dials": 0,
+        "human_connects": 0,
         "connected": 0
       }
     ],
-    "as_of": "2026-11-04T16:43:55.794Z",
+    "as_of": "2026-11-04T18:30:24.245Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:43:56.164Z"
+    "generated_at": "2026-11-04T18:30:24.498Z"
   },
   "health": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T12:30:00.000Z",
-      "to": "2026-11-04T16:45:00.000Z",
+      "from": "2026-11-04T14:30:00.000Z",
+      "to": "2026-11-04T18:45:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -763,7 +797,7 @@
       "ceiling_pct": 3,
       "auto_pauses": [
         {
-          "at": "2026-11-04T13:40:00.000Z",
+          "at": "2026-11-04T15:40:00.000Z",
           "measured_pct": 3.4,
           "ceiling_pct": 3
         }
@@ -779,12 +813,14 @@
         "caller_id": "+919000000002",
         "dials": 42,
         "first_dials": 40,
+        "human_connects": 11,
         "connected": 11
       },
       {
         "caller_id": "+919000000001",
         "dials": 40,
         "first_dials": 36,
+        "human_connects": 11,
         "connected": 11
       }
     ],
@@ -810,8 +846,8 @@
       "episodes": [
         {
           "reason": "no_agents",
-          "started_at": "2026-11-04T14:10:00.000Z",
-          "ended_at": "2026-11-04T14:13:00.000Z",
+          "started_at": "2026-11-04T16:10:00.000Z",
+          "ended_at": "2026-11-04T16:13:00.000Z",
           "minutes": 3
         }
       ],
@@ -822,9 +858,9 @@
       "recorded": 0
     },
     "analysis": null,
-    "pacing_history_since": "2026-11-04T13:20:00.000Z",
-    "as_of": "2026-11-04T16:43:55.794Z",
+    "pacing_history_since": "2026-11-04T15:20:00.000Z",
+    "as_of": "2026-11-04T18:30:24.245Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:43:56.201Z"
+    "generated_at": "2026-11-04T18:30:24.532Z"
   }
 }

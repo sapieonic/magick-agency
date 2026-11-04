@@ -27,7 +27,7 @@ export function hourSpan(hour: number): string {
   return `${pad(hour)}–${pad(hour + 1)}`;
 }
 
-/** The hour with the best connect rate (connected over first dials) among those with enough first dials, or null. */
+/** The hour with the best connect rate (human connects over first dials) among those with enough first dials, or null. */
 export function bestHour(rows: AgencyInsightsTrends['best_hours']): { hour: number; rate: number } | null {
   let best: { hour: number; rate: number } | null = null;
   for (const row of rows) {
@@ -88,6 +88,7 @@ export function TrendsSection({
     { key: 'dials', header: 'Dials', numeric: true, render: (b) => formatCount(b.dials), csv: (b) => b.dials },
     { key: 'first_dials', header: 'First dials', numeric: true, render: (b) => formatCount(b.first_dials), csv: (b) => b.first_dials },
     { key: 'connected', header: 'Connected', numeric: true, render: (b) => formatCount(b.connected), csv: (b) => b.connected },
+    { key: 'human_connects', header: 'Reached a person', numeric: true, render: (b) => formatCount(b.human_connects), csv: (b) => b.human_connects },
     { key: 'connect_rate', header: 'Connect rate', numeric: true, render: (b) => rateText(connectRate(b)), csv: (b) => rateValue(connectRate(b)) },
     { key: 'successes', header: 'Successes', numeric: true, render: (b) => formatCount(b.successes), csv: (b) => b.successes },
     { key: 'abandoned', header: 'Abandoned', numeric: true, render: (b) => formatCount(b.abandoned), csv: (b) => b.abandoned },
@@ -101,6 +102,7 @@ export function TrendsSection({
     { key: 'dials', header: 'Dials', numeric: true, render: (h) => formatCount(h.dials), csv: (h) => h.dials },
     { key: 'first_dials', header: 'First dials', numeric: true, render: (h) => formatCount(h.first_dials), csv: (h) => h.first_dials },
     { key: 'connected', header: 'Connected', numeric: true, render: (h) => formatCount(h.connected), csv: (h) => h.connected },
+    { key: 'human_connects', header: 'Reached a person', numeric: true, render: (h) => formatCount(h.human_connects), csv: (h) => h.human_connects },
     { key: 'rate', header: 'Connect rate', numeric: true, render: (h) => rateText(connectRate(h)), csv: (h) => rateValue(connectRate(h)) },
   ];
 

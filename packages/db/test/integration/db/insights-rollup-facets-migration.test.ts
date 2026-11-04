@@ -1,8 +1,9 @@
 // Real Postgres: migrations/0014_insights_rollup_first_dials_carrier_errors.sql. globalSetup has
-// applied every migration. Pins the facets' first_dials column and the carrier_error facet in the
-// CHECK, that a carrier error code arriving on a call row marks its attempt's bucket (and that
-// other call writes mark nothing), the backfill re-marking every rolled-up bucket, and down then
-// up. The recompute that fills both is the server's (insights-rollup-oracle.test.ts).
+// applied every migration. Pins the connect rate's columns (human_connects on the headers, agents
+// and facets; first_dials on the facets), the carrier_error facet in the CHECK, that a carrier
+// error code arriving on a call row marks its attempt's bucket (and that other call writes mark
+// nothing), the backfill re-marking every rolled-up bucket, and down then up. The recompute that
+// fills them is the server's (insights-rollup-oracle.test.ts).
 import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -38,11 +39,17 @@ async function header(campaignId: string, bucket: string): Promise<void> {
 }
 
 describe('0014 — insights rollup first dials and carrier errors', () => {
-  it('facets carry first_dials (NOT NULL DEFAULT 0) and accept the carrier_error facet', async () => {
-    const { rows } = await pool().query<{ data_type: string; is_nullable: string; column_default: string }>(
-      `SELECT data_type, is_nullable, column_default FROM information_schema.columns
-        WHERE table_name = 'agency_insights_rollup_facets' AND column_name = 'first_dials'`);
-    expect(rows).toEqual([{ data_type: 'bigint', is_nullable: 'NO', column_default: '0' }]);
+  it('the connect rate\'s counts (NOT NULL DEFAULT 0): human_connects on headers, agents and facets, first_dials on facets; the carrier_error facet', async () => {
+    const { rows } = await pool().query<{ table_name: string; column_name: string; data_type: string; is_nullable: string; column_default: string }>(
+      `SELECT table_name, column_name, data_type, is_nullable, column_default FROM information_schema.columns
+        WHERE table_name LIKE 'agency_insights_rollup_%' AND column_name IN ('first_dials', 'human_connects')
+        ORDER BY table_name, column_name`);
+    expect(rows).toEqual([
+      { table_name: 'agency_insights_rollup_agents', column_name: 'human_connects', data_type: 'bigint', is_nullable: 'NO', column_default: '0' },
+      { table_name: 'agency_insights_rollup_buckets', column_name: 'human_connects', data_type: 'bigint', is_nullable: 'NO', column_default: '0' },
+      { table_name: 'agency_insights_rollup_facets', column_name: 'first_dials', data_type: 'bigint', is_nullable: 'NO', column_default: '0' },
+      { table_name: 'agency_insights_rollup_facets', column_name: 'human_connects', data_type: 'bigint', is_nullable: 'NO', column_default: '0' },
+    ]);
     expect(await facetCheck()).toContain("'carrier_error'");
 
     const campaign = await insertCampaign();
@@ -102,7 +109,8 @@ describe('0014 — insights rollup first dials and carrier errors', () => {
       expect(await facetCheck()).not.toContain('carrier_error');
       const facets = await pool().query<{ facet: string }>('SELECT facet FROM agency_insights_rollup_facets');
       expect(facets.rows.map((r) => r.facet)).toEqual(['caller_id']);
-      const col = await pool().query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'agency_insights_rollup_facets' AND column_name = 'first_dials'`);
+      const col = await pool().query(`SELECT 1 FROM information_schema.columns
+        WHERE table_name LIKE 'agency_insights_rollup_%' AND column_name IN ('first_dials', 'human_connects')`);
       expect(col.rowCount).toBe(0);
       const triggers = await pool().query(`SELECT tgname FROM pg_trigger WHERE tgname LIKE 'trg_agency_calls_insights_error%'`);
       expect(triggers.rowCount).toBe(0);

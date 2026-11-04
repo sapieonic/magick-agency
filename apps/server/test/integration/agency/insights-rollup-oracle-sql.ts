@@ -20,12 +20,19 @@ const RANGE = 'a.campaign_id = $1::uuid AND a.dialed_at >= $2::timestamptz AND a
 const MEASURED = `a.wrapup_started_at IS NOT NULL AND a.wrapup_ended_at IS NOT NULL
                   AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL.replace('wrapup_resolution', 'a.wrapup_resolution')}`;
 const round6 = (n: number): number => Math.round(n * 1e6) / 1e6;
+/**
+ * `/stats` `human_connects`, spelled here on its own (not the shared HUMAN_CONNECT_ATTEMPT_SQL the
+ * rollup and `/stats` interpolate), so a drift in that fragment is a disagreement with this file.
+ */
+const HUMAN = `(${CONVERSATION_ATTEMPT_SQL} AND a.disposition_code IS NOT NULL
+                 AND a.disposition_code NOT IN ('voicemail', 'no_disposition'))`;
 
 /** Totals: the activity section's calls block, plus the trend-only measures. */
 export async function oracleTotals(pool: pg.Pool, r: OracleRange, overrideCodes: string[]) {
   const { rows } = await pool.query<Record<string, string>>(
     `SELECT ${AGENCY_ATTEMPT_METRICS_SQL},
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected_stats,
+            COUNT(*) FILTER (WHERE ${HUMAN})::text AS human_stats,
             COUNT(*) FILTER (WHERE ${ABANDONED_ATTEMPT_PREDICATE_SQL})::text AS abandoned,
             COUNT(*) FILTER (WHERE a.state = 'ended' AND a.answered_at IS NOT NULL)::text AS answered,
             COUNT(*) FILTER (WHERE ${MEASURED})::text AS wrapup_measured,
@@ -70,6 +77,7 @@ export async function oracleTotals(pool: pg.Pool, r: OracleRange, overrideCodes:
       dials: n('attempts'),
       connected: n('connected_stats'),
       conversations: n('connected'),
+      human_connects: n('human_stats'),
       successes: n('successes'),
       talk_seconds: round6(n('talk_seconds')),
       wrapup_seconds: round6(n('wrapup_seconds')),
@@ -100,6 +108,7 @@ export async function oracleAgents(pool: pg.Pool, r: OracleRange) {
   const { rows } = await pool.query<Record<string, string | null>>(
     `SELECT s.agent_user_id, ${AGENCY_ATTEMPT_METRICS_SQL},
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected_stats,
+            COUNT(*) FILTER (WHERE ${HUMAN})::text AS human_stats,
             COUNT(*) FILTER (WHERE ${MEASURED})::text AS wrapup_measured,
             COUNT(*) FILTER (WHERE a.redial_number > 0)::text AS redials,
             COUNT(*) FILTER (WHERE a.agent_reopened OR a.agent_manual)::text AS retries_any,
@@ -114,7 +123,8 @@ export async function oracleAgents(pool: pg.Pool, r: OracleRange) {
   );
   return Object.fromEntries(rows.map((x) => [String(x['agent_user_id']), {
     // AGENCY_ATTEMPT_METRICS_SQL's `connected` is one per conversation (the totals' `conversations`).
-    dials: Number(x['attempts']), connected: Number(x['connected_stats']), conversations: Number(x['connected']), successes: Number(x['successes']),
+    dials: Number(x['attempts']), connected: Number(x['connected_stats']), conversations: Number(x['connected']),
+    human_connects: Number(x['human_stats']), successes: Number(x['successes']),
     talk_seconds: round6(Number(x['talk_seconds'])), wrapup_seconds: round6(Number(x['wrapup_seconds'])),
     wrapup_measured: Number(x['wrapup_measured']), redials: Number(x['redials']), retries: Number(x['retries']),
     overrides: Number(x['overrides']),
@@ -154,18 +164,20 @@ async function oracleOverrides(pool: pg.Pool, r: OracleRange, overrideCodes: str
 
 /** Caller IDs, best hours (each contact's zone, else the campaign's, else UTC). */
 export async function oracleFacets(pool: pg.Pool, r: OracleRange) {
-  const ids = await pool.query<{ k: string; dials: string; first_dials: string; connected: string }>(
+  const ids = await pool.query<{ k: string; dials: string; first_dials: string; human: string; connected: string }>(
     `SELECT a.caller_id AS k, COUNT(*)::text AS dials,
             COUNT(*) FILTER (WHERE a.redial_number = 0)::text AS first_dials,
+            COUNT(*) FILTER (WHERE ${HUMAN})::text AS human,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected
        FROM agency_call_attempts a WHERE ${RANGE} GROUP BY 1`, [r.campaignId, r.from, r.to]);
-  const hours = await pool.query<{ k: number; dials: string; first_dials: string; connected: string }>(
+  const hours = await pool.query<{ k: number; dials: string; first_dials: string; human: string; connected: string }>(
     `SELECT EXTRACT(HOUR FROM a.dialed_at AT TIME ZONE COALESCE(
                (SELECT z.name FROM pg_timezone_names z WHERE lower(z.name) = lower(ct.timezone) LIMIT 1),
                (SELECT z.name FROM pg_timezone_names z WHERE lower(z.name) = lower(c.default_timezone) LIMIT 1),
                'UTC'))::int AS k,
             COUNT(*)::text AS dials,
             COUNT(*) FILTER (WHERE a.redial_number = 0)::text AS first_dials,
+            COUNT(*) FILTER (WHERE ${HUMAN})::text AS human,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected
        FROM agency_call_attempts a
        JOIN agency_contacts ct ON ct.id = a.contact_id
@@ -173,9 +185,10 @@ export async function oracleFacets(pool: pg.Pool, r: OracleRange) {
       WHERE ${RANGE} GROUP BY 1`, [r.campaignId, r.from, r.to]);
   const byHour = new Map(hours.rows.map((h) => [Number(h.k), h]));
   return {
-    caller_ids: Object.fromEntries(ids.rows.map((i) => [i.k, { dials: Number(i.dials), first_dials: Number(i.first_dials), connected: Number(i.connected) }])),
+    caller_ids: Object.fromEntries(ids.rows.map((i) => [i.k, { dials: Number(i.dials), first_dials: Number(i.first_dials), human_connects: Number(i.human), connected: Number(i.connected) }])),
     best_hours: Array.from({ length: 24 }, (_, hour) => ({
       hour, dials: Number(byHour.get(hour)?.dials ?? 0), first_dials: Number(byHour.get(hour)?.first_dials ?? 0),
+      human_connects: Number(byHour.get(hour)?.human ?? 0),
       connected: Number(byHour.get(hour)?.connected ?? 0),
     })),
   };
@@ -198,6 +211,7 @@ export async function oracleTrend(pool: pg.Pool, r: OracleRange, bucket: 'quarte
   const { rows } = await pool.query<Record<string, string>>(
     `SELECT ${label} AS label, ${AGENCY_ATTEMPT_METRICS_SQL},
             COUNT(*) FILTER (WHERE a.redial_number = 0)::text AS first_dials,
+            COUNT(*) FILTER (WHERE ${HUMAN})::text AS human_stats,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected_stats,
             COUNT(*) FILTER (WHERE ${ABANDONED_ATTEMPT_PREDICATE_SQL})::text AS abandoned,
             COUNT(*) FILTER (WHERE a.state = 'ended' AND a.answered_at IS NOT NULL)::text AS answered
@@ -206,7 +220,8 @@ export async function oracleTrend(pool: pg.Pool, r: OracleRange, bucket: 'quarte
     [r.campaignId, r.from, r.to, zone],
   );
   return Object.fromEntries(rows.map((x) => [x['label']!, {
-    dials: Number(x['attempts']), first_dials: Number(x['first_dials']), connected: Number(x['connected_stats']), conversations: Number(x['connected']),
+    dials: Number(x['attempts']), first_dials: Number(x['first_dials']), human_connects: Number(x['human_stats']),
+    connected: Number(x['connected_stats']), conversations: Number(x['connected']),
     successes: Number(x['successes']), abandoned: Number(x['abandoned']), answered: Number(x['answered']),
   }]));
 }

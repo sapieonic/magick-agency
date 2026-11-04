@@ -1,4 +1,3 @@
-import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../../types/agency-stats';
 import { describe, expect, it } from 'vitest';
 import {
   BUCKET_TIMEZONE_NOTE,
@@ -20,7 +19,6 @@ import {
   periodRange,
   ratePct,
   windowRange,
-  rowConnectRate,
   staffingSummary,
   agentWrapupReadout,
 } from '../../utils/agencyAgentPerformance';
@@ -601,28 +599,6 @@ describe('BUCKET_TIMEZONE_NOTE', () => {
     expect(BUCKET_TIMEZONE_NOTE).toContain('own campaign’s local time');
     expect(BUCKET_TIMEZONE_NOTE).toContain('totals are still exact');
     expect(BUCKET_TIMEZONE_NOTE).not.toMatch(/bucket|timezone|UTC|tz\b/i);
-  });
-});
-
-describe('rowConnectRate', () => {
-  it('returns an em dash for a campaign with no dials, never 0%', () => {
-    // The same lie by arithmetic that a null rate would be by wire.
-    expect(rowConnectRate({ attempts: 0, connected: 0 })).toBe('—');
-  });
-
-  it('divides connected by attempts, one decimal, trailing zero trimmed', () => {
-    expect(rowConnectRate({ attempts: 40, connected: 10 })).toBe('25%');
-    expect(rowConnectRate({ attempts: 60, connected: 20 })).toBe('33.3%');
-  });
-
-  it('withholds the rate under the roster’s floor, as the roster does — 1 of 1 is not 100%', () => {
-    // The roster withholds a connect rate below AGENCY_ROSTER_MIN_RATE_DENOMINATOR
-    // dials (`rates_reportable`); this table derived its own and printed 100% for
-    // one dial and one connect, beside the same agent's withheld roster cell.
-    expect(rowConnectRate({ attempts: 1, connected: 1 })).toBe('Not enough calls');
-    expect(rowConnectRate({ attempts: AGENCY_ROSTER_MIN_RATE_DENOMINATOR - 1, connected: 5 }))
-      .toBe('Not enough calls');
-    expect(rowConnectRate({ attempts: AGENCY_ROSTER_MIN_RATE_DENOMINATOR, connected: 5 })).toBe('25%');
   });
 });
 

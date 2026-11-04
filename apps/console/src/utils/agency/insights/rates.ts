@@ -74,21 +74,22 @@ export function average(total: number, count: number): number | null {
 // ── Named rates, so a panel never divides inline ────────────────────────────
 
 /**
- * The connect rate, one definition for the whole page and the same as `/stats`'
- * `connect_rate_pct`: CONNECTED over FIRST DIALS, wrap-up redials out of both.
+ * The connect rate: the product's ONE definition, `/stats`' `connect_rate_pct` and the agent
+ * record's, HUMAN CONNECTS over PLACED FIRST DIALS (the server's `HUMAN_CONNECT_ATTEMPT_SQL` and
+ * `PLACED_FIRST_DIAL_SQL`).
  *
- *  - numerator `connected`: `/stats`' `attempts_connected`, outcome connected and not a wrap-up
- *    redial (a redial continues a call already counted);
+ *  - numerator `human_connects`: conversations (a redial chain once) written up with a code that
+ *    is neither voicemail nor the reaper's auto-stamp; a machine or an unclassified connect is
+ *    not a person reached. Not `connected` (`attempts_connected`), which is the Connected figure;
  *  - denominator `first_dials`: the placed dials that were not a wrap-up redial. A redial is not
- *    another try at reaching someone, so counting it below a numerator that leaves it out would
- *    pull the rate down for every conversation an agent redialled.
+ *    another try at reaching someone, and a queued attempt never placed is not a dial.
  *
  * Trend buckets, best hours and caller IDs carry `first_dials`; the calls block and the agent
  * rows carry the dials and the redials they placed ({@link callsConnectRate},
  * {@link agentConnectRate}).
  */
-export function connectRate(sample: { connected: number; first_dials: number }): InsightsRate {
-  return insightsRate(sample.connected, sample.first_dials);
+export function connectRate(sample: { human_connects: number; first_dials: number }): InsightsRate {
+  return insightsRate(sample.human_connects, sample.first_dials);
 }
 
 /**
@@ -101,13 +102,13 @@ export function firstDials(calls: Pick<AgencyInsightsCalls, 'dials' | 'redials'>
 }
 
 /** {@link connectRate} over the calls block. */
-export function callsConnectRate(calls: Pick<AgencyInsightsCalls, 'dials' | 'connected' | 'redials'>): InsightsRate {
-  return connectRate({ connected: calls.connected, first_dials: firstDials(calls) });
+export function callsConnectRate(calls: Pick<AgencyInsightsCalls, 'dials' | 'human_connects' | 'redials'>): InsightsRate {
+  return connectRate({ human_connects: calls.human_connects, first_dials: firstDials(calls) });
 }
 
 /** {@link connectRate} over an agent row: its dials minus the redials it placed. */
-export function agentConnectRate(row: Pick<AgencyInsightsAgentActivityRow, 'dials' | 'connected' | 'redials'>): InsightsRate {
-  return connectRate({ connected: row.connected, first_dials: row.dials - row.redials });
+export function agentConnectRate(row: Pick<AgencyInsightsAgentActivityRow, 'dials' | 'human_connects' | 'redials'>): InsightsRate {
+  return connectRate({ human_connects: row.human_connects, first_dials: row.dials - row.redials });
 }
 
 /**

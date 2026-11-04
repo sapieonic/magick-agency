@@ -29,7 +29,7 @@ import {
   zeroOccupancy,
   type AgentRosterParams,
 } from '../../../agency/agent-record.js';
-import { AGENCY_ATTEMPT_METRICS_SQL, occupancyIntervalsCtes, readAttemptMetrics } from './sql-fragments.js';
+import { AGENCY_ATTEMPT_METRICS_SQL, occupancyIntervalsCtes, readAttemptMetrics, readConnectCounts } from './sql-fragments.js';
 import { params } from './query-builders.js';
 import { hasRateDenominator } from './projections.js';
 
@@ -178,10 +178,10 @@ export async function agentRoster(
       successes: row.successes,
       talk_seconds: row.talk_seconds,
       wrapup_seconds: row.wrapup_seconds,
-      // `null`, never `0`, on a zero denominator — the imported rule, and the
-      // same helper every other rate on this surface uses. Nothing dialled is
-      // not a 0% connect rate.
-      connect_rate_pct: ratePct(row.connected, row.attempts),
+      // The product's one connect rate: human connects over placed first dials
+      // (`HUMAN_CONNECT_ATTEMPT_SQL`, `/stats`' own). `null`, never `0`, on a zero
+      // denominator — the imported rule. Nothing dialled is not a 0% connect rate.
+      connect_rate_pct: ratePct(row.human_connects, row.first_dials),
       // The denominator is CONNECTED, not attempts: a call that never bridged
       // had no conversation to convert, so charging it here would make an
       // agent's conversion a function of the list's answer rate.
@@ -223,10 +223,10 @@ export async function agentRoster(
         ? ratePct(handled, occupancy.shift_seconds)
         : null,
       last_dialed_at: row.last_dialed_at,
-      // The row's HEADLINE denominator. A row that fails this contributes to no
-      // percentile pool, which is what makes the flag usable as the single gate
-      // its contract doc promises. The rates are still served either way.
-      rates_reportable: row.attempts >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+      // The connect rate's denominator (placed first dials). A row that fails this
+      // contributes to no percentile pool, which is what makes the flag usable as the
+      // single gate its contract doc promises. The rates are still served either way.
+      rates_reportable: row.first_dials >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
       // The CONNECTED floor, from the same predicate the `success_rate` and `aht`
       // pools are admitted by — so a console gating on this flag withholds
       // exactly the rows the benchmark refused to rank, rather than a set that
@@ -251,7 +251,10 @@ export async function agentRoster(
     // would move when the caller changed `limit` — a different number under the
     // same name, which is the failure its own doc comment names about
     // `include_inactive`.
-    benchmark: rosterBenchmark(rows),
+    benchmark: rosterBenchmark(rows, attemptRows.reduce(
+      (acc, row) => ({ human: acc.human + row.human_connects, first: acc.first + row.first_dials }),
+      { human: 0, first: 0 },
+    )),
   };
 }
 
@@ -289,6 +292,7 @@ async function rosterAttemptTotals(
   agent_user_id: string;
   attempts: number; connected: number; successes: number;
   talk_seconds: number; wrapup_seconds: number;
+  human_connects: number; first_dials: number;
   campaigns: number; last_dialed_at: string | null;
 }[]> {
   const bind = params();
@@ -301,6 +305,7 @@ async function rosterAttemptTotals(
     agent_user_id: string;
     attempts: string; connected: string; successes: string;
     talk_seconds: string; wrapup_seconds: string;
+    human_connects: string; first_dials: string;
     campaigns: string; last_dialed_at: string | null;
   }>(
     `SELECT s.agent_user_id,
@@ -331,6 +336,7 @@ async function rosterAttemptTotals(
   return rows.map((r) => ({
     agent_user_id: r.agent_user_id,
     ...readAttemptMetrics(r),
+    ...readConnectCounts(r),
     campaigns: Number(r.campaigns),
     last_dialed_at: r.last_dialed_at,
   }));
@@ -465,7 +471,8 @@ async function rosterOccupancyTotals(
  * otherwise sit at the bottom of the distribution as a hard 0% and drag p25 down
  * with them, which is the exact false reading the null exists to prevent.
  */
-function rosterBenchmark(rows: readonly AgencyRosterAgentRow[]): AgencyRosterBenchmark {
+/** `connect`: the cohort's human connects and placed first dials, the pooled connect rate's two counts (not on the rows). */
+function rosterBenchmark(rows: readonly AgencyRosterAgentRow[], connect: { human: number; first: number }): AgencyRosterBenchmark {
   const pooled = rows.reduce(
     (acc, row) => {
       acc.attempts += row.attempts;
@@ -502,10 +509,10 @@ function rosterBenchmark(rows: readonly AgencyRosterAgentRow[]): AgencyRosterBen
     successes: pooled.successes,
     talk_seconds: pooled.talk,
     wrapup_seconds: pooled.wrapup,
-    connect_rate_pct: ratePct(pooled.connected, pooled.attempts),
+    connect_rate_pct: ratePct(connect.human, connect.first),
     success_rate_pct: ratePct(pooled.successes, pooled.connected),
     aht_seconds: ratio(pooled.talk + pooled.wrapup, pooled.connected),
-    // `rates_reportable` IS `attempts >= threshold`, so the pool needs no further
+    // `rates_reportable` IS `first_dials >= threshold`, so the pool needs no further
     // predicate: connect_rate's denominator is exactly the one the flag gates.
     connect_rate: rosterPercentiles(pool(() => true, (row) => row.connect_rate_pct)),
     // `hasRateDenominator`, the SAME function object both of these are handed and

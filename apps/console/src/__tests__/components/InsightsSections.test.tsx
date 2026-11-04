@@ -171,8 +171,8 @@ describe('allocation', () => {
 describe('calls and outcomes', () => {
   it('reads dials, connect rate, redials and handle time', () => {
     show(<CallsSection ctx={ctx} activity={activity()} />);
-    // Connected over first dials (/stats connect_rate_pct): 400 / (1,240 dials - 41 redials).
-    expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 33.4%');
+    // Human connects over first dials (/stats connect_rate_pct): 360 / (1,240 dials - 41 redials).
+    expect(screen.getByTestId('kpi-connected').textContent).toContain('Connect rate 30%');
     expect(screen.getByTestId('kpi-redials').textContent).toContain('29 connected · 3 hit the limit · 1 refused at the limit');
     expect(screen.getByTestId('kpi-aht').textContent).toContain('3m 41s');
     expect(screen.getByTestId('kpi-softphone').textContent).toContain('7');
@@ -200,12 +200,12 @@ describe('calls and outcomes', () => {
 
   it('withholds the connect rate below 25 FIRST dials, whatever the redials add', () => {
     const a = activity();
-    a.calls = { ...a.calls, dials: 20, connected: 5, redials: { ...a.calls.redials, placed: 0 } };
+    a.calls = { ...a.calls, dials: 20, connected: 5, human_connects: 5, redials: { ...a.calls.redials, placed: 0 } };
     show(<CallsSection ctx={ctx} activity={a} />);
     expect(screen.getByTestId('kpi-connected').textContent).toContain('Not enough calls yet');
     cleanup();
     // 30 dials, 10 of them redials: 20 first dials, still below the floor.
-    a.calls = { ...a.calls, dials: 30, connected: 5, redials: { ...a.calls.redials, placed: 10 } };
+    a.calls = { ...a.calls, dials: 30, connected: 5, human_connects: 5, redials: { ...a.calls.redials, placed: 10 } };
     show(<CallsSection ctx={ctx} activity={a} />);
     expect(screen.getByTestId('kpi-connected').textContent).toContain('Not enough calls yet');
   });
@@ -251,7 +251,7 @@ describe('agents', () => {
     expect(priya.getAttribute('href')).toBe('/agency/campaigns/camp-1/agents');
     const row = priya.closest('tr') as HTMLElement;
     expect(row.textContent).toContain('60%'); // occupancy (10,000 + 2,000) / 20,000
-    expect(row.textContent).toContain('35.3%'); // connect rate 240 / (700 dials - 20 redials)
+    expect(row.textContent).toContain('32.4%'); // connect rate 220 human connects / (700 dials - 20 redials)
     expect(hrefOf(row, '700 dials')).toBe(`/agency/campaigns/camp-1/attempts?agent_user_id=usr_priya&${RANGE_QS}`);
     expect(screen.getByTestId('never-joined').textContent).toContain('Meera Iyer');
   });
@@ -302,20 +302,20 @@ describe('trends', () => {
   });
 
   it('names the best hour among those with enough calls', () => {
-    // 38 of 95 first dials; 21:00 has 10, below the floor.
-    expect(bestHour(trends().best_hours)).toEqual({ hour: 18, rate: 40 });
+    // 36 human connects of 95 first dials; 21:00 has 10, below the floor.
+    expect(bestHour(trends().best_hours)).toEqual({ hour: 18, rate: (36 / 95) * 100 });
     renderTrends();
-    expect(screen.getByText(/Best hour: 18:00–19:00, 40% connect rate/)).toBeTruthy();
+    expect(screen.getByText(/Best hour: 18:00–19:00, 37\.9% connect rate/)).toBeTruthy();
   });
 
   it('exports every bucket with raw rates', () => {
     renderTrends();
     const lines = csvOf('Trends CSV').trim().split('\r\n');
     expect(lines).toHaveLength(6);
-    // Dials, first dials, connected, connect rate (connected over first dials), ...
-    expect(lines[1]).toBe('2026-10-31,300,290,90,31.03448275862069,40,2,120,1.6666666666666667,4');
+    // Dials, first dials, connected, human connects, connect rate (human connects over first dials), ...
+    expect(lines[1]).toBe(`2026-10-31,300,290,90,80,${(80 / 290) * 100},40,2,120,1.6666666666666667,4`);
     // 1 Nov: 10 first dials, so the rate cell is empty, not 30.
-    expect(lines[2]).toBe('2026-11-01,10,10,3,,1,0,4,,1');
+    expect(lines[2]).toBe('2026-11-01,10,10,3,3,,1,0,4,,1');
   });
 });
 
@@ -332,9 +332,9 @@ describe('health and compliance', () => {
     show(<HealthSection ctx={ctx} health={health()} timezone={ZONE} />);
     const table = screen.getByTestId('caller-ids-table');
     const row = within(table).getByText('+912067124411').closest('tr') as HTMLElement;
-    expect(row.textContent).toContain('26%'); // 60 / 231 first dials (25% over all 240 dials)
-    // The campaign's rate across caller IDs, the same definition: 400 / 1,199.
-    expect(screen.getByText('Campaign connect rate across caller IDs: 33.4%')).toBeTruthy();
+    expect(row.textContent).toContain('23.8%'); // 55 human connects / 231 first dials
+    // The campaign's rate across caller IDs, the same definition: 360 / 1,199.
+    expect(screen.getByText('Campaign connect rate across caller IDs: 30%')).toBeTruthy();
     // Carrier failures by the call's error code.
     expect(screen.getByTestId('kpi-carrier-failures').textContent).toContain('TELEPHONY_ERROR 48 · no code 12');
     expect(hrefOf(row, /dials from/)).toBe(`/agency/campaigns/camp-1/attempts?caller_id=%2B912067124411&${RANGE_QS}`);

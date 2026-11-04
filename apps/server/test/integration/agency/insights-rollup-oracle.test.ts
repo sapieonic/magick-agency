@@ -85,7 +85,9 @@ async function assertMatchesOracle(): Promise<void> {
 
       const facets = await oracleFacets(pool(), r);
       const ids = (await repo.callerIds(scope))!;
-      expect(Object.fromEntries(ids.map((i) => [i.caller_id, { dials: i.dials, first_dials: i.first_dials, connected: i.connected }])), tag).toEqual(facets.caller_ids);
+      expect(Object.fromEntries(ids.map((i) => [i.caller_id, {
+        dials: i.dials, first_dials: i.first_dials, human_connects: i.human_connects, connected: i.connected,
+      }])), tag).toEqual(facets.caller_ids);
       const failures = (await repo.carrierFailures(scope))!;
       expect(failures.failed, tag).toBe(oracle.failed);
       expect(Object.fromEntries(failures.by_code.map((c) => [String(c.error_code), c.count])), tag).toEqual(oracle.failed_by_code);

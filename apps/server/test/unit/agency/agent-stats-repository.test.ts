@@ -32,7 +32,31 @@ vi.mock('@magick-agency/observability', () => ({
 }));
 
 const { pool } = vi.hoisted(() => ({ pool: { query: vi.fn(), connect: vi.fn() } }));
-vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
+/**
+ * The connect rate's two columns (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL): a fixture row that
+ * does not name them reads them as its `connected` and `attempts`, so a fixture written for the
+ * counters keeps its rate; the cases about the connect rate set them apart explicitly.
+ */
+function withConnectCounts(result: unknown): unknown {
+  const r = result as { rows?: unknown[] } | undefined;
+  if (!r || !Array.isArray(r.rows)) return result;
+  return {
+    ...r,
+    rows: r.rows.map((row) => {
+      const o = row as Record<string, unknown>;
+      if (!o || typeof o !== 'object' || !('attempts' in o)) return row;
+      return { human_connects: o['connected'], first_dials: o['attempts'], ...o };
+    }),
+  };
+}
+
+vi.mock('@magick-agency/db', () => ({
+  getPool: () => new Proxy(pool, {
+    get: (target, key) => (key === 'query'
+      ? (...args: unknown[]) => Promise.resolve((target.query as (...a: unknown[]) => unknown)(...args)).then(withConnectCounts)
+      : Reflect.get(target, key)),
+  }),
+}));
 
 const { AgencyAgentStatsRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
@@ -122,6 +146,21 @@ beforeEach(() => {
 const read = () => new AgencyAgentStatsRepository().stats(SCOPE, WINDOW);
 
 // ─── the attempts aggregate ─────────────────────────────────────────────────
+
+describe('the scorecard\'s connect rate (human connects over placed first dials)', () => {
+  it('sums the two counts over every attempt row, never connected / attempts', async () => {
+    serve([
+      { bucket_start: '2026-08-17', campaign_id: 'c1', attempts: '30', connected: '12', successes: '2',
+        talk_seconds: '1200', wrapup_seconds: '120', human_connects: '6', first_dials: '25' },
+      { bucket_start: '2026-08-18', campaign_id: 'c2', attempts: '20', connected: '8', successes: '1',
+        talk_seconds: '800', wrapup_seconds: '80', human_connects: '4', first_dials: '15' },
+    ], []);
+    const s = await new AgencyAgentStatsRepository().stats(SCOPE, WINDOW);
+    expect(s.totals.connect_rate_pct).toBeCloseTo((10 / 40) * 100);
+    expect(s.totals.attempts).toBe(50);
+    expect(s.totals.connected).toBe(20);
+  });
+});
 
 describe('the attempt buckets are cut in each campaign\'s own timezone', () => {
   it('derives the zone from the CAMPAIGN row, per attempt', async () => {

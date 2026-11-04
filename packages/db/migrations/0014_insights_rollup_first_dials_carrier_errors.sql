@@ -1,12 +1,17 @@
--- 0014_insights_rollup_first_dials_carrier_errors.sql — two facts the insights rollup's facets
--- (0012) did not carry (docs/insights.md "The rollup").
+-- 0014_insights_rollup_first_dials_carrier_errors.sql — the facts the insights rollup (0012)
+-- did not carry for the product's one connect rate, and carrier failures by code
+-- (docs/insights.md "The rollup").
 --
---  1. FIRST DIALS per facet key. The page's connect rate is `/stats`' definition: connected over
---     the dials that were not a wrap-up redial, redials out of both (`campaign-stats.ts`
---     `connect_rate_pct`). The `caller_id` and `local_hour` facets held every dial (`n`) and the
---     connected among the first dials, so a caller ID's or an hour's rate could only be read
---     with the redials in its denominator. `first_dials` is the denominator: the facet's dials
---     with `redial_number = 0` (0 on every other facet).
+--  1. THE CONNECT RATE: human connects over placed first dials, everywhere in the product
+--     (`sql-fragments.ts` HUMAN_CONNECT_ATTEMPT_SQL / PLACED_FIRST_DIAL_SQL, which `/stats`
+--     `connect_rate_pct` and the agent record divide too).
+--     - `human_connects` (numerator) on the bucket headers, the per-agent rows and the
+--       `caller_id` / `local_hour` facets: conversations written up with a code that is
+--       neither voicemail nor the reaper's auto-stamp.
+--     - `first_dials` (denominator) on those two facets: the key's dials with
+--       `redial_number = 0` (every rollup row is placed). The headers and agent rows already
+--       hold it as `dials - redials_placed`.
+--     Both are 0 on the facets that do not read them.
 --
 --  2. CARRIER FAILURES BY CODE. The `carrier_error` facet: placed dials whose outcome is
 --     `failed`, keyed by the call row's `agency_calls.error_code` (NULL: no call row, or none
@@ -22,7 +27,7 @@
 -- marked already.
 --
 -- ── Locking ─────────────────────────────────────────────────────────────────
--- One transaction. ADD COLUMN with a constant default is a catalog change; replacing the facet
+-- One transaction. Each ADD COLUMN with a constant default is a catalog change; replacing the facet
 -- CHECK takes ACCESS EXCLUSIVE on agency_insights_rollup_facets and validates its rows (the job
 -- is its only writer and waits). CREATE TRIGGER takes SHARE ROW EXCLUSIVE on agency_calls until
 -- commit. The backfill reads the rollup headers (2,880 rows for a 1M-attempt month).
@@ -32,11 +37,22 @@
 
 -- Up Migration
 
+ALTER TABLE agency_insights_rollup_buckets
+  ADD COLUMN human_connects BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE agency_insights_rollup_agents
+  ADD COLUMN human_connects BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE agency_insights_rollup_facets
-  ADD COLUMN first_dials BIGINT NOT NULL DEFAULT 0;
+  ADD COLUMN first_dials BIGINT NOT NULL DEFAULT 0,
+  ADD COLUMN human_connects BIGINT NOT NULL DEFAULT 0;
 
+COMMENT ON COLUMN agency_insights_rollup_buckets.human_connects IS
+  'The connect rate''s numerator: conversations coded neither voicemail nor no_disposition (HUMAN_CONNECT_ATTEMPT_SQL, /stats human_connects).';
+COMMENT ON COLUMN agency_insights_rollup_agents.human_connects IS
+  'As agency_insights_rollup_buckets.human_connects, per agent.';
 COMMENT ON COLUMN agency_insights_rollup_facets.first_dials IS
   'caller_id and local_hour: the key''s dials that were not a wrap-up redial (redial_number = 0), the connect rate''s denominator. 0 on every other facet.';
+COMMENT ON COLUMN agency_insights_rollup_facets.human_connects IS
+  'caller_id and local_hour: the key''s human connects, the connect rate''s numerator. 0 on every other facet.';
 
 ALTER TABLE agency_insights_rollup_facets
   DROP CONSTRAINT ck_agency_insights_rollup_facet,
@@ -89,4 +105,7 @@ ALTER TABLE agency_insights_rollup_facets
 COMMENT ON TABLE agency_insights_rollup_facets IS
   'Insights rollup: one-dimensional breakdowns (outcome, caller ID, contact-local hour, no-outcome resolution, override by granting code and agent).';
 
+ALTER TABLE agency_insights_rollup_facets DROP COLUMN IF EXISTS human_connects;
 ALTER TABLE agency_insights_rollup_facets DROP COLUMN IF EXISTS first_dials;
+ALTER TABLE agency_insights_rollup_agents DROP COLUMN IF EXISTS human_connects;
+ALTER TABLE agency_insights_rollup_buckets DROP COLUMN IF EXISTS human_connects;

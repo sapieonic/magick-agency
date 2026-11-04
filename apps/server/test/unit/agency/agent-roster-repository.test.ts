@@ -53,7 +53,31 @@ vi.mock('@magick-agency/observability', () => ({
 }));
 
 const { pool } = vi.hoisted(() => ({ pool: { query: vi.fn(), connect: vi.fn() } }));
-vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
+/**
+ * The connect rate's two columns (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL): a fixture row that
+ * does not name them reads them as its `connected` and `attempts`, so a fixture written for the
+ * counters keeps its rate; the cases about the connect rate set them apart explicitly.
+ */
+function withConnectCounts(result: unknown): unknown {
+  const r = result as { rows?: unknown[] } | undefined;
+  if (!r || !Array.isArray(r.rows)) return result;
+  return {
+    ...r,
+    rows: r.rows.map((row) => {
+      const o = row as Record<string, unknown>;
+      if (!o || typeof o !== 'object' || !('attempts' in o)) return row;
+      return { human_connects: o['connected'], first_dials: o['attempts'], ...o };
+    }),
+  };
+}
+
+vi.mock('@magick-agency/db', () => ({
+  getPool: () => new Proxy(pool, {
+    get: (target, key) => (key === 'query'
+      ? (...args: unknown[]) => Promise.resolve((target.query as (...a: unknown[]) => unknown)(...args)).then(withConnectCounts)
+      : Reflect.get(target, key)),
+  }),
+}));
 
 const { AgencyAgentStatsRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } = await import('@magick-agency/contracts/agency');
@@ -530,7 +554,29 @@ describe('a thin row is served in full, flagged, and excluded from the cohort', 
     expect(dev.shift_seconds).toBe(5000);
   });
 
-  it('flags the reportable rows on `attempts`, the row\'s headline denominator', async () => {
+  it('serves human connects over placed first dials, per row and pooled, and gates on the first dials', async () => {
+    // u-hana: 100 dials, 81 of them wrap-up redials; 60 conversations, 12 reached a person.
+    // u-ivo: 40 first dials, 20 human connects.
+    serve([
+      { agent_user_id: 'u-hana', attempts: '100', connected: '60', successes: '6', human_connects: '12', first_dials: '19',
+        talk_seconds: '6000', wrapup_seconds: '600', campaigns: '1', last_dialed_at: null },
+      { agent_user_id: 'u-ivo', attempts: '40', connected: '25', successes: '5', human_connects: '20', first_dials: '40',
+        talk_seconds: '2500', wrapup_seconds: '250', campaigns: '1', last_dialed_at: null },
+    ], []);
+    const page = await read();
+    const hana = page.rows.find((r) => r.agent_user_id === 'u-hana')!;
+    const ivo = page.rows.find((r) => r.agent_user_id === 'u-ivo')!;
+    expect(hana.connect_rate_pct).toBeCloseTo((12 / 19) * 100);
+    expect(hana.rates_reportable).toBe(false);
+    expect(ivo.connect_rate_pct).toBeCloseTo(50);
+    expect(ivo.rates_reportable).toBe(true);
+    // Pooled over the cohort's own counts, not over the rows' rates nor connected / attempts.
+    expect(page.benchmark.connect_rate_pct).toBeCloseTo((32 / 59) * 100);
+    // Only u-ivo is in the connect-rate pool.
+    expect(page.benchmark.agents_rated).toBe(1);
+  });
+
+  it('flags the reportable rows on the placed first dials, the connect rate\'s denominator', async () => {
     const page = await read();
     expect(page.rows.filter((r) => r.rates_reportable).map((r) => r.agent_user_id).sort())
       .toEqual(['u-anita', 'u-bala', 'u-chen', 'u-esi']);

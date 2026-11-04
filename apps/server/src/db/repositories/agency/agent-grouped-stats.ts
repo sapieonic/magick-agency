@@ -27,6 +27,7 @@ import {
 } from '../../../agency/agent-record.js';
 import {
   AGENCY_ATTEMPT_METRICS_SQL,
+  readConnectCounts,
   AGENCY_RESOLVED_ZONE_JOIN_SQL,
   AGENCY_RESOLVED_ZONE_SQL,
   readAttemptMetrics,
@@ -152,7 +153,7 @@ const GROUP_SORT_ORDER_SQL: Record<Exclude<AgencyGroupSort, 'key'>, string> = {
   attempts: 'g.attempts::numeric',
   connected: 'g.connected::numeric',
   successes: 'g.successes::numeric',
-  connect_rate_pct: 'g.connected::numeric / NULLIF(g.attempts::numeric, 0)',
+  connect_rate_pct: 'g.human_connects::numeric / NULLIF(g.first_dials::numeric, 0)',
   success_rate_pct: 'g.successes::numeric / NULLIF(g.connected::numeric, 0)',
   aht_seconds:
     '(g.talk_seconds::numeric + g.wrapup_seconds::numeric) / NULLIF(g.connected::numeric, 0)',
@@ -177,6 +178,8 @@ interface AgencyGroupRawRow {
   attempts: string;
   connected: string;
   successes: string;
+  human_connects: string;
+  first_dials: string;
   talk_seconds: string;
   wrapup_seconds: string;
   total_groups: string;
@@ -244,6 +247,7 @@ function groupRowFromSql(row: AgencyGroupRawRow, groupBy: readonly AgencyGroupDi
   const {
     attempts, connected, successes, talk_seconds: talkSeconds, wrapup_seconds: wrapupSeconds,
   } = readAttemptMetrics(row);
+  const { human_connects: humanConnects, first_dials: firstDials } = readConnectCounts(row);
 
   return {
     key,
@@ -260,7 +264,10 @@ function groupRowFromSql(row: AgencyGroupRawRow, groupBy: readonly AgencyGroupDi
     // here. It goes through the helper anyway: the rule belongs to one function
     // rather than to a reachability argument that a later `LEFT JOIN` would quietly
     // invalidate.
-    connect_rate_pct: ratePct(connected, attempts),
+    // The product's one connect rate: human connects over placed first dials
+    // (`HUMAN_CONNECT_ATTEMPT_SQL`, `/stats`' own). Reachably null: a cell of nothing but
+    // wrap-up redials has no first dial.
+    connect_rate_pct: ratePct(humanConnects, firstDials),
     // The denominator is CONNECTED, not attempts: a call that never bridged had no
     // conversation to convert. This one IS reachably null — a group that connected
     // nobody is an ordinary row.
@@ -275,7 +282,10 @@ function groupRowFromSql(row: AgencyGroupRawRow, groupBy: readonly AgencyGroupDi
     // built on it, and the reading holds whatever was grouped: enough dials behind
     // this cell to quote a connect rate for it, whether the cell is a person, a
     // campaign, a disposition or one weekday-hour of a heatmap.
-    rates_reportable: attempts >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+    //
+    // The connect rate's denominator is the placed FIRST dials (sql-fragments.ts), so the
+    // flag gates on those, as the roster row's does.
+    rates_reportable: firstDials >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
     // The SECOND flag, and it is not a nicety: `attempts >= 20` says nothing about
     // `connected`, so a row of 20 dials with ONE connect and one conversion is
     // `rates_reportable` and carries `success_rate_pct: 100` — which is the exact
@@ -571,6 +581,7 @@ export async function agentGroupedStats(
      )
      SELECT ${outerSelect},
             g.attempts, g.connected, g.successes, g.talk_seconds, g.wrapup_seconds,
+            g.human_connects, g.first_dials,
             -- PRE-limit by construction: a window function is evaluated before
             -- LIMIT, so this counts the groups the CTE produced rather than the
             -- rows that survived the slice. A second COUNT(*) statement would be a

@@ -105,7 +105,7 @@ describe('connectRateReadout', () => {
     expect(readout.caveat).not.toMatch(/has no voicemail code/);
   });
 
-  it('states the denominator in counts, and only when both counts are there', () => {
+  it('states its numerator in people, and only when that count is there', () => {
     /*
       `human_connects` and `attempts_connected` are DELIBERATELY different here.
       The previous fixture set only `attempts_connected: 2104` against
@@ -114,9 +114,12 @@ describe('connectRateReadout', () => {
       It could not have failed if the card read the wrong field, which is
       precisely what the card was doing.
 
-      `connect_rate_pct` is `human_connects / attempts_total`: 1509/6742 = 22.4%.
-      A card that reads `attempts_connected` here renders "2,104" beside "22.4%"
-      — a fraction that does not equal its own percentage — and this now fails.
+      `connect_rate_pct` is `human_connects` over the PLACED FIRST dials (the
+      product's one connect rate). A card that reads `attempts_connected` here
+      renders "2,104" beside "22.4%" — a number that is not its numerator — and
+      this fails. The card no longer prints "of `attempts_total`" either: that count
+      holds the wrap-up redials and the queued rows never placed, so 1,509 / 6,742
+      would be a fraction that is not the rate beside it.
     */
     const readout = connectRateReadout(
       stats({
@@ -126,15 +129,12 @@ describe('connectRateReadout', () => {
         attempts_total: 6742,
       }),
     );
-    expect(readout.denominator).toEqual({
-      lead: '1,509',
-      rest: 'people answered, of 6,742 dials placed',
-    });
+    expect(readout.denominator).toEqual({ lead: '1,509', rest: 'people answered' });
+    expect(JSON.stringify(readout.denominator)).not.toContain('6,742');
     // The wider population must not appear on this card at all.
     expect(readout.denominator?.lead).not.toBe('2,104');
-    // Half a denominator is not a denominator: "of 6,742" with no numerator, or
-    // a numerator with nothing to be out of, both invite the reader to supply
-    // the missing half from the card next door.
+    // No numerator, no line: "people answered" with no count invites the reader to
+    // supply it from the card next door.
     expect(
       connectRateReadout(stats({ connect_rate_pct: 31.2, attempts_total: 6742 })).denominator,
     ).toBeNull();

@@ -10,6 +10,7 @@
 // two screens come to disagree about how many sales there were.
 import { successDispositionSql } from '@magick-agency/domain/success-disposition';
 import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
+import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 
 /**
  * "This roster row's number, digits only" — the PREFILTER for
@@ -387,6 +388,32 @@ export const CONVERSATION_ATTEMPT_SQL = `((a.bridged_at IS NOT NULL AND a.redial
                 AND a.disposition_code IS DISTINCT FROM '${AGENCY_REDIALED_DISPOSITION_CODE}'`;
 
 /**
+ * ── The connect rate: ONE definition for the whole product ──────────────────
+ *
+ * HUMAN CONNECTS over PLACED FIRST DIALS. `/stats` `connect_rate_pct`, the agent record
+ * (scorecard, roster, grouped cells, best hours) and the Insights page all divide these two,
+ * spelled here once:
+ *
+ *  - {@link HUMAN_CONNECT_ATTEMPT_SQL}, the numerator: a conversation
+ *    ({@link CONVERSATION_ATTEMPT_SQL}, a redial chain once) written up with a code that is
+ *    neither voicemail nor the reaper's auto-stamp. A machine or an unclassified connect is not
+ *    a person reached.
+ *  - {@link PLACED_FIRST_DIAL_SQL}, the denominator: a dial that was PLACED (`dialed_at` set:
+ *    a queued row that never left the building is not a dial, IN6's `dials_placed` and the
+ *    drill-downs' `placed=1`) and was not a wrap-up redial (a redial continues a conversation
+ *    already counted; it is not another try at reaching someone).
+ *
+ * Both name the attempt as `a`, like every fragment here.
+ */
+export const HUMAN_CONNECT_ATTEMPT_SQL = `${CONVERSATION_ATTEMPT_SQL}
+                AND a.disposition_code IS NOT NULL
+                AND a.disposition_code <> '${VOICEMAIL_DISPOSITION_CODE}'
+                AND a.disposition_code <> '${AUTO_DISPOSITION_CODE}'`;
+
+/** The connect rate's denominator: placed, and not a wrap-up redial. See {@link HUMAN_CONNECT_ATTEMPT_SQL}. */
+export const PLACED_FIRST_DIAL_SQL = `(a.dialed_at IS NOT NULL AND a.redial_number = 0)`;
+
+/**
  * The FIVE metric expressions every agency attempts aggregate selects, in ONE
  * spelling.
  *
@@ -446,12 +473,25 @@ export const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
                 WHERE a.wrapup_started_at IS NOT NULL
                   AND a.wrapup_ended_at IS NOT NULL
                   AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL.replace('wrapup_resolution', 'a.wrapup_resolution')}), 0)::text
-                AS wrapup_seconds`;
+                AS wrapup_seconds,
+              -- The connect rate's two counts (HUMAN_CONNECT_ATTEMPT_SQL): every
+              -- connect_rate_pct the agent record serves is human_connects / first_dials.
+              COUNT(*) FILTER (WHERE ${HUMAN_CONNECT_ATTEMPT_SQL})::text AS human_connects,
+              COUNT(*) FILTER (WHERE ${PLACED_FIRST_DIAL_SQL})::text AS first_dials`;
 
-/** The five {@link AGENCY_ATTEMPT_METRICS_SQL} columns, as numbers. */
+/** The five {@link AGENCY_ATTEMPT_METRICS_SQL} counters, as numbers. */
 export interface AgencyAttemptMetrics {
   attempts: number; connected: number; successes: number;
   talk_seconds: number; wrapup_seconds: number;
+}
+
+/**
+ * The connect rate's two {@link AGENCY_ATTEMPT_METRICS_SQL} columns
+ * ({@link HUMAN_CONNECT_ATTEMPT_SQL}, {@link PLACED_FIRST_DIAL_SQL}), read apart from the five so
+ * a payload that spreads those (the campaign series' buckets) does not grow two fields.
+ */
+export function readConnectCounts(row: { human_connects: string; first_dials: string }): { human_connects: number; first_dials: number } {
+  return { human_connects: Number(row.human_connects), first_dials: Number(row.first_dials) };
 }
 
 /**
