@@ -39,3 +39,29 @@ describe('parseConfig', () => {
     expect(token({ READYZ_DETAIL_TOKEN: 'x'.repeat(32) })).toEqual({ ok: true, token: 'x'.repeat(32) });
   });
 });
+
+describe('CORS_ALLOWED_ORIGINS', () => {
+  const origins = (value: string | undefined) => {
+    const result = parseConfig({ ...valid, ...(value === undefined ? {} : { CORS_ALLOWED_ORIGINS: value }) });
+    return result.ok ? { ok: true, origins: result.config.server.corsAllowedOrigins } : { ok: false };
+  };
+
+  it('unset, blank or only commas is an empty list (no CORS)', () => {
+    expect(origins(undefined)).toEqual({ ok: true, origins: [] });
+    expect(origins('')).toEqual({ ok: true, origins: [] });
+    expect(origins(' , ,')).toEqual({ ok: true, origins: [] });
+  });
+
+  it('splits on commas and trims each entry', () => {
+    expect(origins(' https://app.example.com , https://staging.app.example.com,http://localhost:5175 ')).toEqual({
+      ok: true,
+      origins: ['https://app.example.com', 'https://staging.app.example.com', 'http://localhost:5175'],
+    });
+  });
+
+  it('refuses anything that is not a bare http(s) origin', () => {
+    for (const bad of ['*', 'https://app.example.com/', 'https://app.example.com/console', 'app.example.com', 'wss://app.example.com', 'https://app.example.com?x=1', 'not a url']) {
+      expect(origins(bad), bad).toEqual({ ok: false });
+    }
+  });
+});

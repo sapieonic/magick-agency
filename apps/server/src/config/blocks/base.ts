@@ -31,6 +31,27 @@ export function findUrlTlsParams(url: string): string[] {
   return [...present];
 }
 
+/**
+ * True for exactly `scheme://host[:port]` over http or https: what a browser sends as `Origin`.
+ * Guarded, because a value that is not a URL at all must be refused, not thrown.
+ */
+export function isBareOrigin(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === value;
+}
+
+/** `CORS_ALLOWED_ORIGINS` as a list: comma separated, each entry trimmed, blanks dropped. */
+export function splitOriginList(value: string | undefined): string[] | undefined {
+  if (value === undefined) return undefined;
+  const entries = value.split(',').map((s) => s.trim()).filter((s) => s !== '');
+  return entries.length > 0 ? entries : undefined;
+}
+
 export const baseConfigSchema = z.object({
   server: z.object({
     port: z.coerce.number().int().positive().default(3021),
@@ -95,6 +116,24 @@ export const baseConfigSchema = z.object({
      * read-only token is what a script or an operator's `curl` should hold.
      */
     readyzDetailToken: z.string().min(32, 'READYZ_DETAIL_TOKEN must be at least 32 characters').optional(),
+    /**
+     * `CORS_ALLOWED_ORIGINS`: the browser origins allowed to call this API cross-origin, comma
+     * separated (`https://app.example.com,https://staging.app.example.com`). For a deployment
+     * where the console is served from one host and calls the API on another (its image built
+     * with `CONSOLE_API_BASE_URL`); `app.ts` registers CORS with exactly these
+     * (`api/middleware/cors.ts`).
+     *
+     * Unset or blank = no CORS at all, which is right for the single-origin deployment (the
+     * console calls its own origin and nginx proxies the API paths): the browser then refuses
+     * every cross-origin call, as before. Each entry must be a bare origin, `scheme://host[:port]`
+     * with no path or trailing slash, because the browser's `Origin` header is compared
+     * exactly; `*` is refused, so the allow-list can never silently become "any site".
+     */
+    corsAllowedOrigins: z.array(
+      z.string().refine(isBareOrigin, (v) => ({
+        message: `CORS_ALLOWED_ORIGINS entry "${v}" must be a bare http(s) origin like https://app.example.com (no path, no trailing slash, no *)`,
+      })),
+    ).default([]),
   }),
   db: z.object({
     /**
@@ -243,6 +282,8 @@ export function readBaseEnv(env: Env) {
       wsMaxPayloadBytes: env['WS_MAX_PAYLOAD_BYTES'],
       // Blank is unset (detail off), not a boot error: an empty line in an env file.
       readyzDetailToken: env['READYZ_DETAIL_TOKEN']?.trim() || undefined,
+      // Blank (or only commas) is unset (no CORS), like READYZ_DETAIL_TOKEN above.
+      corsAllowedOrigins: splitOriginList(env['CORS_ALLOWED_ORIGINS']),
     },
     db: {
       url: env['DATABASE_URL'],

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import type { RouteOptions } from 'fastify';
 
@@ -175,5 +176,41 @@ describe('docker/Dockerfile and docker/entrypoint.sh', () => {
     const start = entrypoint.indexOf('exec node');
     expect(migrate).toBeGreaterThan(-1);
     expect(start).toBeGreaterThan(migrate);
+  });
+});
+
+describe('docker/web.Dockerfile', () => {
+  const web = read('web.Dockerfile');
+  // Dockerfile instructions with their `\` line continuations joined, as Docker hands RUN to sh.
+  const instructions = web.replace(/\\\n/g, '').split('\n').filter((l) => /^[A-Z]+ /.test(l));
+  const build = instructions.find((l) => l.startsWith('RUN ') && l.includes('@magick-agency/super-admin build')) ?? '';
+  const steps = build.slice('RUN '.length).split(/\s&&\s/).map((s) => s.trim());
+
+  // The super-admin API is reachable only through nginx's :8081 block (the console block does
+  // not proxy /super-admin), so the super-admin must keep calling its own origin even when the
+  // console is built to call a separate API host.
+  it("gives the API base to the console's build only, never the super-admin's", () => {
+    expect(instructions.filter((l) => /^(ARG|ENV) +VITE_API_BASE_URL\b/.test(l))).toEqual([]);
+    const consoleStep = steps.find((s) => s.includes('@magick-agency/console build'));
+    const adminStep = steps.find((s) => s.includes('@magick-agency/super-admin build'));
+    expect(consoleStep).toMatch(/^VITE_API_BASE_URL="\$CONSOLE_API_BASE_URL" pnpm /);
+    expect(adminStep).toBeDefined();
+    expect(adminStep).not.toContain('VITE_API_BASE_URL');
+    // No other instruction mentions it: the console step is the only place it is set.
+    expect(instructions.filter((l) => l.includes('VITE_API_BASE_URL'))).toEqual([build]);
+    expect(service('web')).toMatch(/^ +CONSOLE_API_BASE_URL: \$\{CONSOLE_API_BASE_URL:-\}$/m);
+  });
+
+  // The console joins the base as `${API_BASE}/auth/...`, so anything but a bare origin 404s every
+  // REST call. The checks before the build run here exactly as the image's sh runs them.
+  it('refuses to build with a CONSOLE_API_BASE_URL that is not a bare origin', () => {
+    const checks = steps.filter((s) => s.startsWith('case "$CONSOLE_API_BASE_URL"'));
+    expect(checks.length).toBeGreaterThan(0);
+    const accepts = (value: string) =>
+      spawnSync('sh', ['-c', checks.join(' && ')], { env: { CONSOLE_API_BASE_URL: value } }).status === 0;
+    for (const ok of ['', 'https://staging.api.example.com', 'http://localhost:3021']) expect(accepts(ok), ok).toBe(true);
+    for (const bad of ['https://api.example.com/', 'https://api.example.com/v1', 'api.example.com', 'https://', 'wss://api.example.com', 'https://api.example.com?x=1']) {
+      expect(accepts(bad), bad).toBe(false);
+    }
   });
 });

@@ -769,6 +769,9 @@ the server publishes no port, Redis runs with AOF and `noeviction`, the image is
       them; a failure stops the container).
 - [ ] Firebase: agency's domain in the authorised domains, `FIREBASE_PROJECT_ID` set (no service
       account: tokens are verified against Google's public keys).
+- [ ] API on its own host only (B25, `DEPLOYMENT.md` 7.3): `web` built with `CONSOLE_API_BASE_URL`,
+      every origin the console is served from in `CORS_ALLOWED_ORIGINS`, the preflight `curl` in 7.3
+      names the app's origin, and the mobile app's link host is the console's name.
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,
       `VOICELINK_WEBHOOK_BASE_URL` reachable by the carrier.
 - [ ] `SUPER_ADMIN_JWT_SECRET` set; first super-admin created with `node dist/create-super-admin.js`
