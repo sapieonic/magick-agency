@@ -5,9 +5,15 @@
 // preflight, exactly as before.
 //
 // What a cross-origin console needs, and why each option is what it is:
-//  - **origin**: the exact allow-list. The browser's `Origin` is compared as a string, so a
-//    matching origin gets `Access-Control-Allow-Origin: <that origin>` (and `Vary: Origin`);
-//    any other origin gets no CORS headers and the browser blocks the response.
+//  - **origin**: the exact allow-list, decided per request by {@link corsOptionsFor}. A listed
+//    `Origin` gets `Access-Control-Allow-Origin: <that origin>`, the expose list and, on a
+//    preflight, the preflight headers. An unlisted or missing `Origin` gets CORS turned off for
+//    that request (`origin: false`): no CORS headers at all, and an `OPTIONS` falls through to
+//    the plugin's `OPTIONS *` route, which answers 404 as it did before CORS existed. So a
+//    webhook, a media route, a mobile call or `/healthz` carries no CORS headers.
+//  - **Vary: Origin on every response**: per-request options make the plugin add it always,
+//    and that is the fetch spec's advice: a shared cache must not hand a response stored for one
+//    origin (or for none) to another origin.
 //  - **credentials: false**: the console authenticates with `Authorization: Bearer`, never a
 //    cookie, so there is nothing for the browser to attach and no reason to allow it.
 //  - **allowedHeaders unset**: `@fastify/cors` reflects the preflight's
@@ -33,7 +39,7 @@
 // authenticates with its single-use token.
 
 import type { FastifyInstance } from 'fastify';
-import cors from '@fastify/cors';
+import cors, { type FastifyCorsOptions } from '@fastify/cors';
 
 /** The response headers a cross-origin console must be able to read (lower case). */
 export const CORS_EXPOSED_HEADERS = [
@@ -57,14 +63,27 @@ export const CORS_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as
 /** How long (seconds) a browser may cache one preflight answer. */
 export const CORS_PREFLIGHT_MAX_AGE_SECONDS = 7200;
 
-export async function registerCors(app: FastifyInstance, allowedOrigins: readonly string[]): Promise<void> {
-  if (allowedOrigins.length === 0) return;
-  await app.register(cors, {
-    origin: [...allowedOrigins],
+/**
+ * The CORS options for one request: the full set for a listed `Origin`, else CORS off
+ * (`origin: false`). The allow-list holds normalised origins (`config/blocks/base.ts`), which is
+ * the form a browser sends.
+ */
+export function corsOptionsFor(allowed: ReadonlySet<string>, origin: string | undefined): FastifyCorsOptions {
+  if (origin === undefined || !allowed.has(origin)) return { origin: false };
+  return {
+    origin,
     methods: [...CORS_METHODS],
     exposedHeaders: [...CORS_EXPOSED_HEADERS],
     credentials: false,
-    hook: 'onRequest',
     maxAge: CORS_PREFLIGHT_MAX_AGE_SECONDS,
+  };
+}
+
+export async function registerCors(app: FastifyInstance, allowedOrigins: readonly string[]): Promise<void> {
+  if (allowedOrigins.length === 0) return;
+  const allowed = new Set(allowedOrigins);
+  await app.register(cors, {
+    hook: 'onRequest',
+    delegator: (req, cb) => cb(null, corsOptionsFor(allowed, req.headers.origin)),
   });
 }

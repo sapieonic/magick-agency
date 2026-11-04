@@ -590,7 +590,7 @@ Files: `call-duration-limits.ts`, `env.ts`, `index.ts`, `load.ts`, `schema.ts`
 | `apps/server/test/unit/config/analysis-config.test.ts` | 12 |
 | `apps/server/test/unit/config/blocks-disjoint.test.ts` | 2 |
 | `apps/server/test/unit/config/floor-sizing-defaults.test.ts` | 3 |
-| `apps/server/test/unit/config/config.test.ts` | 7 |
+| `apps/server/test/unit/config/config.test.ts` | 8 |
 | `apps/server/test/unit/config/open-questions-config.test.ts` | 38 |
 | `apps/server/test/unit/config/otel-config.test.ts` | 4 |
 | `apps/server/test/unit/config/schema.dialer-analysis.test.ts` | 12 |
@@ -915,7 +915,7 @@ Scenario, flow, guard and setup tests that span several modules.
 | `apps/server/test/integration/scripts/create-super-admin.test.ts` | ~5 |
 | `apps/server/test/unit/branding/no-parent-brand.test.ts` | 5 |
 | `apps/server/test/unit/deploy/mobile-app-links.test.ts` | 17 |
-| `apps/server/test/unit/deploy/production-packaging.test.ts` | 17 |
+| `apps/server/test/unit/deploy/production-packaging.test.ts` | 18 |
 | `apps/server/test/unit/scenarios/feature-flag-rollout-scenarios.test.ts` | 3 |
 | `apps/server/test/unit/scenarios/stale-call-sweep-lifecycle-scenarios.test.ts` | 4 |
 | `apps/server/test/unit/scenarios/voicelink-config-factory-scenarios.test.ts` | 5 |

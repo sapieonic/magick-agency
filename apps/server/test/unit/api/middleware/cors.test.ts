@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 
 /**
@@ -13,14 +14,16 @@ import type { FastifyInstance } from 'fastify';
  *      bucket (it carries no bearer, and a NAT'd floor preflights many URLs);
  *  (b) the real request gets the allow-origin and the exposed headers, even when it is refused
  *      (the console must be able to read a 401 / 429 body and its request id);
- *  (c) any other origin gets no allow-origin, so the browser blocks the response;
+ *  (c) any other origin, or none, gets CORS turned off for the request: no CORS headers at all,
+ *      and a preflight is the 404 it was before CORS existed (not a 204, not a 400);
  *  (d) an empty allow-list (the single-origin deployment) registers nothing: no preflight
  *      route, no CORS header;
  *  (e) every non-safelisted response header the console or `@magick-agency/web-ui` reads is
  *      exposed, or a cross-origin console would read it as missing.
  *
  * Mutation-checked: dropping the `registerCors` call from `app.ts` reds (a) and (b); removing
- * `'x-request-id'` from `CORS_EXPOSED_HEADERS` reds (e).
+ * `'x-request-id'` from `CORS_EXPOSED_HEADERS` reds (e); passing the static options for every
+ * origin instead of `origin: false` (the pre-delegator behaviour) reds (c).
  */
 
 vi.mock('@magick-agency/observability', async (importOriginal) => ({
@@ -80,13 +83,21 @@ describe('CORS with an allow-list', () => {
     expect(res.headers['vary']).toContain('Origin');
   });
 
-  it('(c) gives any other origin no allow-origin', async () => {
+  it('(c) turns CORS off for any other origin, or none', async () => {
     const a = await build([APP_ORIGIN]);
+    const corsHeaders = (headers: Record<string, unknown>) => Object.keys(headers).filter((h) => h.startsWith('access-control-'));
     for (const origin of ['https://evil.example.com', 'https://staging.app.example.com.evil.com', 'http://staging.app.example.com']) {
       const pre = await preflight(a, origin);
-      expect(pre.headers['access-control-allow-origin'], origin).toBeUndefined();
+      expect(pre.statusCode, origin).toBe(404);
+      expect(corsHeaders(pre.headers), origin).toEqual([]);
       const get = await a.inject({ method: 'GET', url: '/auth/me', headers: { origin } });
-      expect(get.headers['access-control-allow-origin'], origin).toBeUndefined();
+      expect(corsHeaders(get.headers), origin).toEqual([]);
+    }
+    // No Origin: a webhook, a media route, the mobile app, a probe.
+    const bare = await a.inject({ method: 'OPTIONS', url: '/auth/me' });
+    expect(bare.statusCode).toBe(404);
+    for (const url of ['/healthz', '/auth/me']) {
+      expect(corsHeaders((await a.inject({ method: 'GET', url })).headers), url).toEqual([]);
     }
   });
 });
@@ -106,7 +117,7 @@ describe('CORS without an allow-list (single-origin deployment)', () => {
 describe('CORS_EXPOSED_HEADERS', () => {
   // CORS-safelisted response headers: readable cross-origin without being exposed.
   const SAFELISTED = new Set(['cache-control', 'content-language', 'content-length', 'content-type', 'expires', 'last-modified', 'pragma']);
-  const ROOTS = ['../../../../../console/src', '../../../../../../packages/web-ui/src'].map((p) => new URL(p, import.meta.url).pathname);
+  const ROOTS = ['../../../../../console/src', '../../../../../../packages/web-ui/src'].map((p) => fileURLToPath(new URL(p, import.meta.url)));
 
   function sources(dir: string): string[] {
     return readdirSync(dir).flatMap((name) => {

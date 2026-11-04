@@ -411,7 +411,8 @@ super-admin keeps calling its own origin: only nginx's :8081 block proxies `/sup
      no trailing slash. Only the console build gets it.
    - `CORS_ALLOWED_ORIGINS` lists every origin the console is served from, comma separated. If an
      old console name still serves it, list that one too, or the console on that name cannot reach
-     the API. Bare origins only; the server refuses a path, a trailing slash or `*` at boot.
+     the API. Bare origins only; the server refuses a path, a query, a trailing slash or `*` at
+     boot. Any other origin gets no CORS answer at all (its preflight is a 404).
    - `CONSOLE_BASE_URL` is the app name (invite links, and the mobile app's invite links, open there).
 
 4. Reload Caddy first, so the new names have certificates before the console starts calling the
@@ -432,7 +433,7 @@ super-admin keeps calling its own origin: only nginx's :8081 block proxies `/sup
    ```
 
    The build stops with `CONSOLE_API_BASE_URL must be …` if the value has a path, a trailing slash
-   or no `https://`.
+   or is not `https://` (plain `http://` only for `localhost`).
 
 5. The rest that follows the console's new name:
    - Firebase: add `app.example.com` to the authorised domains (step 8.1). If the Web API key has

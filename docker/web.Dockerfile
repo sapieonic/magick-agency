@@ -44,17 +44,20 @@ ARG VITE_POSTHOG_ENVIRONMENT=production
 # the super-admin keeps calling its own origin, whose nginx block (:8081) is the only path to
 # the /super-admin API. Checked before the build: the console joins it as `${API_BASE}/auth/...`,
 # so a trailing slash or a path would 404 every REST call while the station socket (which takes
-# only the origin) still connects.
+# only the origin) still connects; and it must be https (http only for localhost), or the
+# browser blocks every call from the https console as mixed content. The two builds run in
+# parallel, as one `pnpm --filter a --filter b build` did; `wait` fails the step if the
+# console's build fails.
 ARG CONSOLE_API_BASE_URL=
 RUN case "$CONSOLE_API_BASE_URL" in \
-      ""|http://?*|https://?*) ;; \
-      *) echo "CONSOLE_API_BASE_URL must be an http(s) origin, got: $CONSOLE_API_BASE_URL" >&2; exit 1 ;; \
+      ""|https://?*|http://localhost|http://localhost:*|http://127.0.0.1|http://127.0.0.1:*) ;; \
+      *) echo "CONSOLE_API_BASE_URL must be an https origin (http only for localhost), got: $CONSOLE_API_BASE_URL" >&2; exit 1 ;; \
     esac \
  && case "$CONSOLE_API_BASE_URL" in \
       *://*/*|*\?*|*\#*) echo "CONSOLE_API_BASE_URL must be a bare origin (no path, no trailing slash), got: $CONSOLE_API_BASE_URL" >&2; exit 1 ;; \
     esac \
- && VITE_API_BASE_URL="$CONSOLE_API_BASE_URL" pnpm --filter @magick-agency/console build \
- && pnpm --filter @magick-agency/super-admin build
+ && { (VITE_API_BASE_URL="$CONSOLE_API_BASE_URL" pnpm --filter @magick-agency/console build) & c=$!; \
+      pnpm --filter @magick-agency/super-admin build && wait $c; }
 
 FROM nginx:1.27-alpine
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf

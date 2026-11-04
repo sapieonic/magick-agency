@@ -32,17 +32,23 @@ export function findUrlTlsParams(url: string): string[] {
 }
 
 /**
- * True for exactly `scheme://host[:port]` over http or https: what a browser sends as `Origin`.
- * Guarded, because a value that is not a URL at all must be refused, not thrown.
+ * `value` as the browser would send it in `Origin` (lower-case host, no default port), or `null`
+ * when it is not exactly `scheme://host[:port]` over http or https: a path, a trailing slash, a
+ * query, a fragment, credentials or `*` are refused rather than silently dropped, because the
+ * operator meant something by them. Guarded, because a value that is not a URL at all must be
+ * refused, not thrown.
  */
-export function isBareOrigin(value: string): boolean {
+export function normaliseOrigin(value: string): string | null {
+  if (/[/?#]$/.test(value) || /[?#]/.test(value)) return null;
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    return false;
+    return null;
   }
-  return (url.protocol === 'https:' || url.protocol === 'http:') && url.origin === value;
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  if (url.username !== '' || url.password !== '' || url.pathname !== '/') return null;
+  return url.origin;
 }
 
 /** `CORS_ALLOWED_ORIGINS` as a list: comma separated, each entry trimmed, blanks dropped. */
@@ -126,13 +132,14 @@ export const baseConfigSchema = z.object({
      * Unset or blank = no CORS at all, which is right for the single-origin deployment (the
      * console calls its own origin and nginx proxies the API paths): the browser then refuses
      * every cross-origin call, as before. Each entry must be a bare origin, `scheme://host[:port]`
-     * with no path or trailing slash, because the browser's `Origin` header is compared
-     * exactly; `*` is refused, so the allow-list can never silently become "any site".
+     * with no path or trailing slash; each is normalised to the form a browser sends as
+     * `Origin` (`https://App.example.com:443` → `https://app.example.com`), which is then
+     * compared exactly. `*` is refused, so the allow-list can never silently become "any site".
      */
     corsAllowedOrigins: z.array(
-      z.string().refine(isBareOrigin, (v) => ({
-        message: `CORS_ALLOWED_ORIGINS entry "${v}" must be a bare http(s) origin like https://app.example.com (no path, no trailing slash, no *)`,
-      })),
+      z.string().refine((v) => normaliseOrigin(v) !== null, (v) => ({
+        message: `CORS_ALLOWED_ORIGINS entry "${v}" must be a bare http(s) origin like https://app.example.com (no path, query, trailing slash or *)`,
+      })).transform((v) => normaliseOrigin(v) ?? v),
     ).default([]),
   }),
   db: z.object({
