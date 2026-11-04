@@ -724,14 +724,14 @@ app.
 
 ## Test counts
 
-Latest run, 2026-11-04, the contact assignment branch after the cleanup pass (`87be111`), from
+Latest run, 2026-11-04, the contact assignment branch after the PR #33 review fixes, from
 inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
 `pnpm test:release` 10 pass):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7889 passed + 42 skipped (394 files) | rest lane 1744 passed + 9 expected fail (185 files); wall-clock lane 15 (3 files) |
-| `packages/db` | 427 (25 files) | 534 (49 files) |
+| `apps/server` | 7895 passed + 42 skipped (394 files) | rest lane 1749 passed + 9 expected fail (186 files); wall-clock lane 15 (3 files) |
+| `packages/db` | 427 (25 files) | 536 (49 files) |
 | `apps/console` | 5159 (268 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 281 | — |
