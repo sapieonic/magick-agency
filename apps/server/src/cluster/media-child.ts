@@ -23,6 +23,7 @@ import type { AgencyRuntime } from '../agency/runtime.js';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import type { TelephonyGuardHost } from '../core/telephony-guard-host.js';
 import { setPacingInvalidationBus, type PacingInvalidationBus } from '../agency/pacing/invalidation-bus.js';
+import { queuedBreakReleaseOf, returnReservedAgent } from '../agency/reserved-agent.js';
 import { injectLocal, type CoreInjectArgs } from '../api/core-dispatch.js';
 import { handleVoicelinkStatusWebhook } from '../api/routes/webhooks.routes.js';
 import type { IpcChannel } from './ipc-channel.js';
@@ -123,8 +124,7 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   });
   channel.handle('agent.return_reserved', async ({ sessionId }) => {
     // The single-process `returnReserved`, run where the queued break lives.
-    if (runtime.breaks.peek(sessionId) !== null) await runtime.dialer.releaseAgent(sessionId);
-    else await runtime.agents.set(sessionId, 'available');
+    await returnReservedAgent(sessionId, queuedBreakReleaseOf(runtime), (id) => runtime.agents.set(id, 'available'));
     return {};
   });
 

@@ -281,7 +281,10 @@ export interface AgencyAssignmentProgressRow {
   agent_name: string | null;
   /** Has an active staffing row on the campaign. */
   staffed: boolean;
-  /** Has a live session on the campaign now. */
+  /**
+   * Has a live session on the campaign now: joined, with its station connected (a session
+   * whose station closed is `offline` and not live), the rule the callback fallback (CA5) reads.
+   */
   live: boolean;
   /** ISO-8601: when the agent was last seen on the campaign (heartbeat or leave); null if never. */
   last_seen_at: string | null;

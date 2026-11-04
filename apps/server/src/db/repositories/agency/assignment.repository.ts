@@ -566,7 +566,7 @@ export class AgencyAssignmentRepository {
       `WITH camp AS MATERIALIZED (
          SELECT ac.id, ac.account_id, ac.on_unstaff, gen_random_uuid() AS batch_id
            FROM agency_campaigns ac
-          WHERE ac.tenant_id = $1 AND ac.id = ANY($3::uuid[])
+          WHERE ac.tenant_id = $1::uuid AND ac.id = ANY($3::uuid[])
        ),
        held AS (
          SELECT c.campaign_id,
@@ -629,11 +629,11 @@ export class AgencyAssignmentRepository {
     const { rows } = await getPool().query<{ contact_id: string; from_user_id: string }>(
       `WITH RECURSIVE owners(uid) AS (
          (SELECT c.assigned_user_id FROM agency_contacts c
-           WHERE c.campaign_id = $1 AND c.assigned_user_id IS NOT NULL
+           WHERE c.campaign_id = $1::uuid AND c.assigned_user_id IS NOT NULL
            ORDER BY c.assigned_user_id LIMIT 1)
          UNION ALL
          SELECT (SELECT c.assigned_user_id FROM agency_contacts c
-                  WHERE c.campaign_id = $1 AND c.assigned_user_id > o.uid
+                  WHERE c.campaign_id = $1::uuid AND c.assigned_user_id > o.uid
                   ORDER BY c.assigned_user_id LIMIT 1)
            FROM owners o WHERE o.uid IS NOT NULL
        ),
@@ -642,12 +642,12 @@ export class AgencyAssignmentRepository {
           WHERE o.uid IS NOT NULL
             AND NOT EXISTS (
               SELECT 1 FROM agency_campaign_agents a
-               WHERE a.campaign_id = $1 AND a.user_id = o.uid AND a.unassigned_at IS NULL)
+               WHERE a.campaign_id = $1::uuid AND a.user_id = o.uid AND a.unassigned_at IS NULL)
        ),
        due AS MATERIALIZED (
          SELECT c.id, c.assigned_user_id
            FROM agency_contacts c JOIN gone g ON c.assigned_user_id = g.uid
-          WHERE c.campaign_id = $1 AND c.state = 'pending'
+          WHERE c.campaign_id = $1::uuid AND c.state = 'pending'
           ORDER BY c.id
           LIMIT $3
             FOR UPDATE OF c SKIP LOCKED

@@ -53,6 +53,7 @@ import { campaignChangeReasonFor } from './outcome-classifier.js';
 import type { AgencyCampaignChangeReason, AgencyCampaignStatus } from '@magick-agency/contracts/agency';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
+import { RESERVING_MARKER, returnReservedAgent, type QueuedBreakRelease } from './reserved-agent.js';
 import {
   agencyPacingMissedWakeupsTotal,
   agencyPacingTicksTotal,
@@ -137,15 +138,6 @@ export const COMPLETION_NOTICE_DRAIN_TIMEOUT_MS = 30_000;
  */
 export const TICK_DRAIN_TIMEOUT_MS = 5_000;
 
-/**
- * Written into the agent's Redis hash between reservation and dial.
- *
- * There is no attempt yet at reservation time — that is the whole point of
- * reserving first — and `executeDial` overwrites this with the real attempt id.
- * A marker rather than a synthesized id so anyone reading the hash mid-dial can
- * tell "reserved, attempt not created yet" from "an attempt id we lost track of".
- */
-const RESERVING_MARKER = 'reserving';
 
 /** An available agent and how long they have been waiting. */
 interface AgentCandidate {
@@ -392,15 +384,9 @@ export class PacingEngine {
    * strand the queue until their next call. A registration, as the completion
    * notifier is; without one (the unit suites) every return is the plain write.
    */
-  private queuedBreakRelease: {
-    hasQueuedBreak(sessionId: string): boolean;
-    release(sessionId: string): Promise<unknown>;
-  } | null = null;
+  private queuedBreakRelease: QueuedBreakRelease | null = null;
 
-  registerQueuedBreakRelease(release: {
-    hasQueuedBreak(sessionId: string): boolean;
-    release(sessionId: string): Promise<unknown>;
-  }): void {
+  registerQueuedBreakRelease(release: QueuedBreakRelease): void {
     this.queuedBreakRelease = release;
   }
 
@@ -423,11 +409,7 @@ export class PacingEngine {
       await this.reservedReturn.returnReserved(sessionId);
       return;
     }
-    if (this.queuedBreakRelease?.hasQueuedBreak(sessionId)) {
-      await this.queuedBreakRelease.release(sessionId);
-      return;
-    }
-    await this.agents.set(sessionId, 'available');
+    await returnReservedAgent(sessionId, this.queuedBreakRelease, (id) => this.agents.set(id, 'available'));
   }
 
   /**

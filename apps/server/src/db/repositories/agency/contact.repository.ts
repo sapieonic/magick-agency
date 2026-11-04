@@ -34,7 +34,7 @@ import {
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
-import { contactBucketSql, numberLiveSql, openContactSql, returnToPoolSql } from './assignment-sql.js';
+import { contactBucketSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import {
   applyExtraAttemptOverride,
   type OverrideGrant,
@@ -201,8 +201,8 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
        pool_locked AS MATERIALIZED (
          SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
-          WHERE c.campaign_id = $1 AND c.assigned_user_id IS NULL
-            AND ${dueAndNotBusySql('c', '$1')}
+          WHERE c.campaign_id = $1::uuid AND c.assigned_user_id IS NULL
+            AND ${dueAndNotBusySql('c', '$1::uuid')}
           ORDER BY c.next_attempt_at
           LIMIT ((SELECT count(*) FROM agents) - (SELECT count(*) FROM own)) * $3::int
             FOR UPDATE OF c SKIP LOCKED
@@ -238,8 +238,8 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
           CROSS JOIN LATERAL (
             SELECT c.id, ${contactPhoneDigitsSql('c')} AS digits
               FROM agency_contacts c
-             WHERE c.campaign_id = $1 AND c.assigned_user_id = a.agent_user_id
-               AND ${dueAndNotBusySql('c', '$1')}
+             WHERE c.campaign_id = $1::uuid AND c.assigned_user_id = a.agent_user_id
+               AND ${dueAndNotBusySql('c', '$1::uuid')}
              ORDER BY c.next_attempt_at
              LIMIT 1
                FOR UPDATE OF c SKIP LOCKED
@@ -549,10 +549,8 @@ export class AgencyContactRepository {
    * `agency_contact_assignment_events` row (`callback_fallback`, actor NULL: the system) under
    * `batchId`. Both in one statement, so a move without its history row cannot exist.
    *
-   * "Live session" is a joined session (`left_at IS NULL`) that is not `offline`: a station
-   * that closed writes its row `offline` (`releaseStationOnClose`), and so do the startup reaper
-   * and a dead media worker's reap, while the session stays joined until the agent leaves. An
-   * agent on break or in a call is present; one whose station is gone is not.
+   * "Live session" is `presentSessionSql`: joined (`left_at IS NULL`) and not `offline` (a
+   * station that closed, or a reaped one), the rule the supervisor's progress reads too.
    *
    * Never a live contact: only `pending` rows are picked, under `FOR UPDATE SKIP LOCKED` in a
    * MATERIALIZED pick (a row a tick is claiming is skipped, not waited on), and the UPDATE
@@ -570,15 +568,15 @@ export class AgencyContactRepository {
       `WITH due AS MATERIALIZED (
          SELECT c.id, c.assigned_user_id
            FROM agency_contacts c
-          WHERE c.campaign_id = $1
+          WHERE c.campaign_id = $1::uuid
             AND c.state = 'pending'
             AND c.assigned_user_id IS NOT NULL
             AND c.next_attempt_at <= now() - make_interval(mins => $2::int)
             AND ${contactBucketSql('c', '$3')} = 'callback'
             AND NOT EXISTS (
               SELECT 1 FROM agency_agent_sessions s
-               WHERE s.campaign_id = $1 AND s.agent_user_id = c.assigned_user_id
-                 AND s.left_at IS NULL AND s.state <> 'offline')
+               WHERE s.campaign_id = $1::uuid AND s.agent_user_id = c.assigned_user_id
+                 AND ${presentSessionSql('s')})
           ORDER BY c.next_attempt_at
           LIMIT $5
             FOR UPDATE OF c SKIP LOCKED
@@ -1419,7 +1417,7 @@ export class AgencyContactRepository {
         await client.query(
           `INSERT INTO agency_contact_assignment_events
              (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
-           VALUES ($1, $2, $3, NULL, $4, $4, 'callback', gen_random_uuid())`,
+           VALUES ($1, $2, $3, NULL, $4::uuid, $4::uuid, 'callback', gen_random_uuid())`,
           [locked.tenant_id, locked.campaign_id, opts.contactId, assignTo],
         );
       }
