@@ -137,7 +137,8 @@ export function overrideSummary(entry: AgencyDispositionEntry): string | null {
   return `The agent may then make ${joinAnd(allows)}.`;
 }
 
-function joinAnd(items: string[]): string {
+/** `a`, `a and b`, `a, b and c`. */
+export function joinAnd(items: readonly string[]): string {
   if (items.length <= 1) return items.join('');
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
@@ -150,6 +151,13 @@ function retryCadence(delayMinutes: number): string {
     return `every ${hours} hour${hours === 1 ? '' : 's'}`;
   }
   return `every ${delayMinutes} minutes`;
+}
+
+/** The entry without its `override` key (an outcome that grants nothing). */
+function withoutOverride<T extends { override?: unknown }>(entry: T): Omit<T, 'override'> {
+  const { override: _override, ...rest } = entry;
+  void _override;
+  return rest;
 }
 
 /**
@@ -274,8 +282,7 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
       if (!entry) return state;
       const merged = { ...entry, ...edit.patch };
       if (merged.override && (merged.suppress || merged.terminal)) {
-        const { override: _dropped, ...rest } = merged;
-        void _dropped;
+        const rest = withoutOverride(merged);
         return {
           dispositions: dispositions.map((row, i) => (i === edit.index ? rest : row)),
           autoCodeRows,
@@ -293,8 +300,7 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
       if (next.extra_attempts !== undefined && next.extra_attempts > 0) kept.extra_attempts = next.extra_attempts;
       if (next.retry_delay) kept.retry_delay = true;
       if (next.calling_hours) kept.calling_hours = true;
-      const { override: _old, ...rest } = entry;
-      void _old;
+      const rest = withoutOverride(entry);
       const row: AgencyDispositionEntry = Object.keys(kept).length > 0 ? { ...rest, override: kept } : rest;
       return {
         dispositions: dispositions.map((current, i) => (i === edit.index ? row : current)),
@@ -447,11 +453,7 @@ export function resetAssignmentConfig(state: CampaignConfigState): CampaignConfi
   return {
     ...state,
     assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
-    dispositions: state.dispositions.map((entry) => {
-      const { override: _dropped, ...rest } = cloneDisposition(entry);
-      void _dropped;
-      return rest;
-    }),
+    dispositions: state.dispositions.map((entry) => withoutOverride(cloneDisposition(entry))),
   };
 }
 

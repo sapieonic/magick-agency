@@ -314,16 +314,24 @@ export function toggleRow(
   return { selected: next, anchor: shift && from !== -1 ? selection.anchor : id };
 }
 
+/** Whether every row "Select page" can reach (the first `cap` loaded) is ticked; false with none loaded. */
+export function isPageTicked(
+  selection: RowSelection,
+  rowIds: readonly string[],
+  cap: number = AGENCY_ASSIGNMENT_RANGE_MAX,
+): boolean {
+  const reachable = rowIds.slice(0, cap);
+  return reachable.length > 0 && reachable.every((id) => selection.selected.has(id));
+}
+
 /** "Select page": every loaded row, up to `cap`; pressed again with all of them ticked, none. */
 export function togglePage(
   selection: RowSelection,
   rowIds: readonly string[],
   cap: number = AGENCY_ASSIGNMENT_RANGE_MAX,
 ): RowSelection {
-  const reachable = rowIds.slice(0, cap);
-  const allTicked = reachable.length > 0 && reachable.every((id) => selection.selected.has(id));
-  if (allTicked) return EMPTY_SELECTION;
-  return { selected: new Set(reachable), anchor: null };
+  if (isPageTicked(selection, rowIds, cap)) return EMPTY_SELECTION;
+  return { selected: new Set(rowIds.slice(0, cap)), anchor: null };
 }
 
 /** The ticked rows in on-screen order (the order a `range` sends). */

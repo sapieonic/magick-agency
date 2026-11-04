@@ -28,6 +28,7 @@ import type {
   AgencyAssignmentMode,
   AgencyMyContact,
   AgencyMyContactBucket,
+  AgencyMyContactsQuery,
   AgencyMyContactsSummary,
 } from '@magick-agency/contracts/api/agency/assignment';
 import styles from './MyContactsPanel.module.css';
@@ -55,6 +56,25 @@ import styles from './MyContactsPanel.module.css';
  */
 
 const PAGE_SIZE = 25;
+
+/** The search the list shows: what the filter form held when Search (or a count) was pressed. */
+interface AppliedFilters {
+  bucket: AgencyMyContactBucket | '';
+  phone: string;
+  q: string;
+}
+
+/** The list read for `applied`; with `cursor`, the page after it. */
+function queryOf(campaignId: string, applied: AppliedFilters, cursor?: string): AgencyMyContactsQuery {
+  return {
+    campaign_id: campaignId,
+    ...(applied.bucket ? { bucket: [applied.bucket] } : {}),
+    ...(applied.phone ? { phone: applied.phone } : {}),
+    ...(applied.q ? { q: applied.q } : {}),
+    ...(cursor ? { cursor } : {}),
+    limit: PAGE_SIZE,
+  };
+}
 
 export interface MyContactsPanelProps {
   campaignId: string;
@@ -114,9 +134,7 @@ export function MyContactsPanel({
   const [bucket, setBucket] = useState<AgencyMyContactBucket | ''>('');
   const [phone, setPhone] = useState('');
   const [text, setText] = useState('');
-  const [applied, setApplied] = useState<{ bucket: AgencyMyContactBucket | ''; phone: string; q: string }>(
-    { bucket: '', phone: '', q: '' },
-  );
+  const [applied, setApplied] = useState<AppliedFilters>({ bucket: '', phone: '', q: '' });
 
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [confirmRetry, setConfirmRetry] = useState(false);
@@ -139,13 +157,7 @@ export function MyContactsPanel({
     try {
       const [nextSummary, page] = await Promise.all([
         getMyContactsSummary(campaignId, tenantId, accountId),
-        listMyContacts({
-          campaign_id: campaignId,
-          ...(applied.bucket ? { bucket: [applied.bucket] } : {}),
-          ...(applied.phone ? { phone: applied.phone } : {}),
-          ...(applied.q ? { q: applied.q } : {}),
-          limit: PAGE_SIZE,
-        }, tenantId, accountId),
+        listMyContacts(queryOf(campaignId, applied), tenantId, accountId),
       ]);
       if (mine !== seq.current) return;
       setSummary(nextSummary);
@@ -169,14 +181,7 @@ export function MyContactsPanel({
     const mine = seq.current;
     setLoadingMore(true);
     try {
-      const page = await listMyContacts({
-        campaign_id: campaignId,
-        ...(applied.bucket ? { bucket: [applied.bucket] } : {}),
-        ...(applied.phone ? { phone: applied.phone } : {}),
-        ...(applied.q ? { q: applied.q } : {}),
-        cursor,
-        limit: PAGE_SIZE,
-      }, tenantId, accountId);
+      const page = await listMyContacts(queryOf(campaignId, applied, cursor), tenantId, accountId);
       if (mine !== seq.current) return;
       setRows((current) => [...current, ...page.rows]);
       setCursor(page.next_cursor);
@@ -207,6 +212,7 @@ export function MyContactsPanel({
     setBusy('retry');
     setNotice(null);
     const ids = [...picked];
+    const event = { campaign_id: campaignId, scope: retryScope, requested: retryCount };
     try {
       const result = await retryMyContacts(
         { campaign_id: campaignId, ...(ids.length > 0 ? { contact_ids: ids } : { all: true }) },
@@ -214,9 +220,7 @@ export function MyContactsPanel({
         accountId,
       );
       trackAgencyAgentRetry({
-        campaign_id: campaignId,
-        scope: retryScope,
-        requested: retryCount,
+        ...event,
         outcome: 'reopened',
         reopened: result.reopened,
         skipped_total: result.skipped_total,
@@ -234,9 +238,7 @@ export function MyContactsPanel({
       await load();
     } catch (err: unknown) {
       trackAgencyAgentRetry({
-        campaign_id: campaignId,
-        scope: retryScope,
-        requested: retryCount,
+        ...event,
         outcome: 'refused',
         reopened: 0,
         skipped_total: 0,
@@ -254,6 +256,7 @@ export function MyContactsPanel({
     if (!tenantId || !accountId || !sessionId) return;
     setBusy(contact.id);
     setNotice(null);
+    const event = { campaign_id: campaignId, bucket: contact.bucket, with_override_note: overrideNote !== undefined };
     try {
       const result = await callMyContact(
         contact.id,
@@ -266,9 +269,7 @@ export function MyContactsPanel({
         accountId,
       );
       trackAgencyMyContactCall({
-        campaign_id: campaignId,
-        bucket: contact.bucket,
-        with_override_note: overrideNote !== undefined,
+        ...event,
         outcome: 'placed',
         code: null,
         override_applied_count: result.override_applied.length,
@@ -280,9 +281,7 @@ export function MyContactsPanel({
     } catch (err: unknown) {
       const code = errorCode(err) as AgencyAgentRetryErrorCode | null;
       trackAgencyMyContactCall({
-        campaign_id: campaignId,
-        bucket: contact.bucket,
-        with_override_note: overrideNote !== undefined,
+        ...event,
         outcome: 'refused',
         code,
         override_applied_count: 0,

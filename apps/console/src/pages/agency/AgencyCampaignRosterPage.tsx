@@ -19,6 +19,7 @@ import {
 } from '../../utils/agencyAssignmentCopy';
 import {
   EMPTY_SELECTION,
+  isPageTicked,
   selectedInOrder,
   togglePage,
   toggleRow,
@@ -305,7 +306,7 @@ export function AgencyCampaignRosterPage() {
   const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
   const selectedIds = useMemo(() => selectedInOrder(selection, rowIds), [selection, rowIds]);
   const reachable = Math.min(rowIds.length, AGENCY_ASSIGNMENT_RANGE_MAX);
-  const pageTicked = reachable > 0 && rowIds.slice(0, reachable).every((rowId) => selection.selected.has(rowId));
+  const pageTicked = isPageTicked(selection, rowIds);
 
   /*
     A link arriving with filters already on it has to fill the draft controls,
