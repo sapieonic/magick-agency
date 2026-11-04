@@ -18,9 +18,12 @@ import { envBoolean, type Env } from '../env.js';
  * `insightsRollup`: the insights rollup job (`agency/insights-rollup-job.ts`, migration 0012).
  *  - `intervalMs` (`AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`, default 15 s): how often a pass runs.
  *    The page's range sections are at most about this far behind the attempts table.
- *  - `batchSize` (`AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE`, default 200): dirty buckets claimed per
- *    batch, one transaction each. A pass keeps taking batches while they come back full (a
- *    backfill, a burst), within half an interval.
+ *  - `batchSize` (`AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE`, default 200): dirty MARKS claimed per
+ *    batch, oldest first, one transaction each (`INSIGHTS_CLAIM_SQL`'s LIMIT). The batch then
+ *    collapses every other mark of the buckets those marks name and recomputes each bucket once,
+ *    so it recomputes at most this many buckets (fewer when several claimed marks share one). A
+ *    pass keeps taking batches while they come back full (a backfill, a burst), within half an
+ *    interval.
  */
 const insightsRollupSchema = z.object({
   intervalMs: z.coerce.number().int().min(1000).max(600_000).default(15_000),

@@ -80,6 +80,9 @@ export function startInsightsRollupJob(
         log.error({ err }, 'Insights rollup batch failed; its buckets stay dirty for the next pass');
         break;
       }
+      // Every committed batch, an empty one included, on purpose: the stalled-job alert
+      // (`agy-insights-rollup-stalled`) reads this histogram's count as the job's heartbeat, and
+      // an idle pass's empty batch is what keeps it beating on a healthy idle system.
       agencyInsightsRollupRecomputeSeconds.observe(Number(process.hrtime.bigint() - started) / 1e9);
       if (batch.claimed === 0) break;
       result.batches += 1;
