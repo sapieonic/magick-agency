@@ -286,7 +286,8 @@ printf "DB_SSL_CA='%s'\n" "$(awk 'NF {printf "%s\\n", $0}' ~/rds-ca.pem)" >> doc
 
 ### 6.2 Domain-dependent values
 
-These must all name the same public origin:
+These must all name the same public origin (with the API on its own host, step 7.3 says which
+name each one takes):
 
 ```ini
 CONSOLE_BASE_URL=https://agency.example.com
@@ -368,6 +369,90 @@ address in its certificates, so there is nothing to staple, and browsers check r
 way. It shows again at every renewal; ignore it.
 
 The chain is now client → Caddy → nginx → server, which is what `TRUST_PROXY_HOPS=2` describes.
+
+### 7.3 Optional: the API on its own host
+
+By default the console calls the API on its own origin (`agency.example.com/auth/...`), and nginx
+proxies the API paths. You can instead give each part its own name, which keeps the bare domain
+free for a marketing site (decision B25):
+
+| Name | What it serves | Caddy sends it to |
+|---|---|---|
+| `app.example.com` | the console | `127.0.0.1:8080` |
+| `api.example.com` | the API the console calls, the mobile app, VoiceLink's webhooks and media socket | `127.0.0.1:8080` |
+| `admin.example.com` | the super-admin UI and its API (step 8.4) | `127.0.0.1:8081` |
+
+The app and API names go to the same nginx block, so `TRUST_PROXY_HOPS=2` does not change. The
+super-admin keeps calling its own origin: only nginx's :8081 block proxies `/super-admin`.
+
+1. Add `A` records for `app` and `api` (and `admin`, step 8.4) pointing at the Elastic IP.
+2. Give each name a site block in `/etc/caddy/Caddyfile`:
+
+   ```caddy
+   app.example.com {
+   	reverse_proxy 127.0.0.1:8080
+   }
+
+   api.example.com {
+   	reverse_proxy 127.0.0.1:8080
+   }
+   ```
+
+3. In `docker/.env`:
+
+   ```ini
+   CONSOLE_API_BASE_URL=https://api.example.com
+   CORS_ALLOWED_ORIGINS=https://app.example.com
+   CONSOLE_BASE_URL=https://app.example.com
+   VOICELINK_WEBHOOK_BASE_URL=https://api.example.com/api/v1/webhooks/voicelink
+   ```
+
+   - `CONSOLE_API_BASE_URL` is a build arg of the `web` image: the API's origin, with no path and
+     no trailing slash. Only the console build gets it.
+   - `CORS_ALLOWED_ORIGINS` lists every origin the console is served from, comma separated. If an
+     old console name still serves it, list that one too, or the console on that name cannot reach
+     the API. Bare origins only; the server refuses a path, a query, a trailing slash or `*` at
+     boot. Any other origin gets no CORS answer at all (its preflight is a 404).
+   - `CONSOLE_BASE_URL` is the app name (invite links, and the mobile app's invite links, open there).
+
+4. Reload Caddy first, so the new names have certificates before the console starts calling the
+   API name. Wait for `certificate obtained successfully` for each new name (step 7.2):
+
+   ```bash
+   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+   ```
+
+   ```bash
+   sudo systemctl reload caddy
+   ```
+
+   Then rebuild `web` and restart `server` with the new values:
+
+   ```bash
+   docker compose -f docker/docker-compose.prod.yml up -d --build
+   ```
+
+   The build stops with `CONSOLE_API_BASE_URL must be …` if the value has a path, a trailing slash
+   or is not `https://` (plain `http://` only for `localhost`).
+
+5. The rest that follows the console's new name:
+   - Firebase: add `app.example.com` to the authorised domains (step 8.1). If the Web API key has
+     HTTP-referrer restrictions in Google Cloud (*APIs & Services → Credentials*), add the name
+     there too. Sign-in is per origin, so agents sign in once more on the new name.
+   - Mobile app: point `API_ORIGIN` at `https://api.example.com` (`apps/mobile/env/`). Invite links
+     now open on `app.example.com`, so the app's link host must be that name too: `appLinkHost` in
+     `apps/mobile/android/app/build.gradle.kts` and `applinks:` in
+     `apps/mobile/ios/Runner/Runner.entitlements` (step 8.5 checks the `.well-known` files on it).
+     Until the app is rebuilt with it, invite links open in the browser instead of the app.
+
+In step 9, use `app.example.com` where it says `agency.example.com` for the invite link, and
+`api.example.com` for `/healthz`, `/readyz` and the webhook check. Then check the CORS answer from
+your laptop. A line naming the app's origin is right; no `access-control-allow-origin` line means
+`CORS_ALLOWED_ORIGINS` does not list it:
+
+```bash
+curl -si -X OPTIONS https://api.example.com/auth/me -H 'Origin: https://app.example.com' -H 'Access-Control-Request-Method: GET' | grep -i '^access-control-allow-origin'
+```
 
 ## 8. Wire up the vendors and the first admin
 
@@ -485,7 +570,8 @@ Skip this until the agent app is published. Two things on the server side, both 
    starts). Without them an agent's invite link still works, in the browser.
    - iOS: `MOBILE_IOS_APP_IDS=<TEAMID>.com.magickagency.agent` (the Apple Developer team ID, 10
      characters, then the bundle id; comma-separate several). The app's Associated Domains
-     entitlement must list `applinks:agency.example.com`.
+     entitlement must list `applinks:agency.example.com` (the console's name: `app.example.com`
+     with the API on its own host, step 7.3).
    - Android: `MOBILE_ANDROID_CERT_SHA256` = the SHA-256 fingerprint of the **app signing key** from
      Play Console → *Test and release* → *App integrity* → *App signing* (not the upload key: Play
      re-signs the app). Comma-separate several. `MOBILE_ANDROID_PACKAGE` only if the package is not
@@ -503,7 +589,8 @@ Skip this until the agent app is published. Two things on the server side, both 
 
 ## 9. Verify the deployment
 
-Run through this once before letting agents in.
+Run through this once before letting agents in. With the API on its own host, step 7.3 says
+which name each check uses.
 
 - [ ] `curl -s https://agency.example.com/healthz` and `/readyz` both answer 200 from your laptop.
 - [ ] The certificate is valid: `curl -sI https://agency.example.com` shows no TLS error, and the
@@ -603,7 +690,9 @@ Update all of these together, then recreate the server:
 1. the new DNS record (and Mailjet's records if the mail domain changes);
 2. the Caddyfile (or the ACM certificate and ALB listener);
 3. Firebase's authorised domains;
-4. `CONSOLE_BASE_URL` and `VOICELINK_WEBHOOK_BASE_URL` in `docker/.env`.
+4. `CONSOLE_BASE_URL` and `VOICELINK_WEBHOOK_BASE_URL` in `docker/.env`;
+5. with the API on its own host (step 7.3), `CORS_ALLOWED_ORIGINS` and `CONSOLE_API_BASE_URL`, then
+   rebuild `web`.
 
 Invites already sent still carry the old domain; keep the old name redirecting for a while, or
 resend them. Calls in progress at the switch keep reporting to the old webhook base.
@@ -643,6 +732,7 @@ resend them. Calls in progress at the switch keep reporting to the old webhook b
 | `permission denied` on the Docker socket | Shell is `ssm-user` (Session Manager), or the `docker` group change has not applied | `sudo -iu ubuntu`, or log out and back in |
 | `docker compose ... --build` says buildx is missing or too old | Ubuntu's `docker.io` only suggests the buildx plugin | `sudo apt-get install -y docker-buildx` |
 | The console's *EC2 Instance Connect* tab fails to connect | TCP 22 not open to the Instance Connect range, or the `ec2-instance-connect` package missing | `enable_instance_connect = true` in `aws/terraform`; `sudo apt-get install -y ec2-instance-connect` over Session Manager |
+| Console loads, but every API call fails and the browser console says `blocked by CORS policy` | The console's origin is not in `CORS_ALLOWED_ORIGINS` (a typo, a trailing slash, an old name), or the `web` image was built with `CONSOLE_API_BASE_URL` and the server was not restarted with the allow-list | Fix `CORS_ALLOWED_ORIGINS`, restart `server`; check with the `curl` in step 7.3 |
 | Super-admin domain answers 403 | Your IP is not in the Caddyfile's allow-list (it changed, or you are on another network) | Update `remote_ip`, `sudo systemctl reload caddy`; the tunnel still works meanwhile |
 | Server exits with `unable to verify the first certificate` | `DB_SSL_CA` missing or wrong | Redo step 6.1; test with step 5.1 |
 | Server exits listing missing keys (`FIREBASE_PROJECT_ID`, `VOICELINK_*`) | Production requires them | Fill them in `docker/.env` |

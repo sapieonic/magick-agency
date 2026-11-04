@@ -81,6 +81,8 @@ services:
         VITE_POSTHOG_KEY: ${VITE_POSTHOG_KEY:-}
         VITE_POSTHOG_HOST: ${VITE_POSTHOG_HOST:-}
         VITE_POSTHOG_ENVIRONMENT: ${VITE_POSTHOG_ENVIRONMENT:-production}
+        # The console's API origin when the API has its own host; unset = same origin.
+        CONSOLE_API_BASE_URL: ${CONSOLE_API_BASE_URL:-}
     image: magick-agency-web
     # Universal Links / App Links for the mobile app (docker/mobile-app-links.sh, read at
     # every start): unset or empty = that file is not served (404).
