@@ -96,7 +96,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-retry-seeding.test.ts` | ~21 |
 | `apps/server/test/integration/agency/agency-roster-handoff.test.ts` | ~19 |
 | `apps/server/test/integration/agency/agency-session-tenant-unique.test.ts` | ~5 |
-| `apps/server/test/integration/agency/agency-drilldown-filters.test.ts` | 22 |
+| `apps/server/test/integration/agency/agency-drilldown-filters.test.ts` | 23 |
 | `apps/server/test/integration/agency/agency-spine-read.test.ts` | ~20 |
 | `apps/server/test/integration/agency/agency-stats-enrichment.test.ts` | ~16 |
 | `apps/server/test/integration/agency/agent-grouped-read.test.ts` | ~14 |

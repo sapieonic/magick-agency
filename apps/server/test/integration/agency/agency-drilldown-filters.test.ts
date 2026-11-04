@@ -24,11 +24,13 @@ import { uuidFor } from '../setup/factories.js';
 
 /** Every statement the repositories send, so a plan case can EXPLAIN exactly that SQL. */
 const sent: Array<{ sql: string; values: unknown[] }> = [];
+/** When set, the repositories' statements run on this client (one open transaction). */
+let inTransaction: { query: (sql: string, values: unknown[]) => Promise<unknown> } | null = null;
 vi.mock('@magick-agency/db', () => ({
   getPool: () => ({
     query: (sql: string, values: unknown[]) => {
       sent.push({ sql, values });
-      return getTestPool().query(sql, values);
+      return inTransaction ? inTransaction.query(sql, values) : getTestPool().query(sql, values);
     },
   }),
 }));
@@ -253,6 +255,27 @@ describe('contacts: waiting and attempted, total = direct SQL = rows listed', ()
     expect(listed.sort()).toEqual(
       [s.contacts.callbackNotReached.id, s.contacts.retryNull.id, s.contacts.retryPtp.id].sort(),
     );
+  });
+
+  it('due now includes a contact due at exactly now(): `<=`, not `<`', async () => {
+    // One transaction, so the seed's now() and the count's now() are the same instant.
+    const campaign = await insertAgencyCampaign({ status: 'running', disposition_catalog: JSON.stringify(CATALOG) });
+    const client = await getTestPool().connect();
+    try {
+      await client.query('BEGIN');
+      inTransaction = client as never;
+      await client.query(
+        `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, state, next_attempt_at)
+         VALUES ($1, $2, $3, '+919800000001', 'pending', now())`,
+        [campaign.id, campaign.tenant_id, campaign.account_id],
+      );
+      expect(await contactTotal(campaign.id, { waiting: 'due_now' })).toBe(1);
+      expect(await contactTotal(campaign.id, { waiting: 'retry' })).toBe(0);
+    } finally {
+      inTransaction = null;
+      await client.query('ROLLBACK');
+      client.release();
+    }
   });
 
   it('the three waiting buckets partition the pending contacts', async () => {
