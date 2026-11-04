@@ -634,12 +634,45 @@ app.
 - **Left open** (none blocks the flag staying off): unstaffing does not end the agent's open
   session (in `preferred` mode they can still take pool contacts until they leave; the owner
   sweep returns anything they are left holding); the pacing probe ignores the one-live-call per
-  number rule (an agent can be reserved and then get nothing that tick, and is returned); extra
-  attempts are not spent by the soft phone's settlement or the reaper's lapsed wrap-up close; in
+  number rule (an agent can be reserved and then get nothing that tick, and is returned); in
   `strict` mode a callback that falls back waits for a supervisor (CA5); the summary has no next
-  callback time; the roster cannot filter by bucket, so the progress links open a superset; the
-  console's per-contact history client is unused; roster replace (B15) is not built, so nothing
-  supersedes an owner (CA11). Not verified on a real carrier or phone.
+  callback time; the console's per-contact history client is unused; and the three follow-ups
+  below. Not verified on a real carrier or phone.
+- **Follow-up: extra attempts on the soft phone and the lapsed wrap-up.** An outcome-granted
+  extra attempt (CA8) is spent only where a paced or agent-dialled call settles
+  (`agency/dialer/contact-settlement.ts` → `markExhaustedOrSpendExtraAttempt`). Two other writes
+  can exhaust a contact for `max_attempts` and do not look at the grant: the soft phone's
+  `settleFromManual` (`contact.repository.ts`) and the reaper's `sweepLapsedWrapups` →
+  `closeLapsedWrapup` (an agent left wrap-up without saving an outcome). There the contact ends
+  `exhausted` one attempt early with its grant unused. Nothing is dialled that should not be,
+  nothing is stranded, DNC is unaffected, and the agent can still reopen it ("Retry not reached":
+  exhausted contacts are eligible); a granted contact reaching its last attempt on either path
+  is rare. Fix: route both through the same spend when the decision is `exhausted` for
+  `max_attempts`, with the once-per-attempt guard. The soft phone needs care: a manual call is
+  not an `agency_call_attempts` row, where `override_applied` (the guard) lives today, and its
+  settlement has its own rulings (SP1–SP7). About a day with tests.
+- **Follow-up: the roster has no bucket filter.** My contacts and the progress panel put each
+  contact in one of seven buckets, computed by `contactBucketSql` from several columns (state,
+  last outcome, last disposition, attempt count, the DNC mark). The roster's filters
+  (`contactFilterConditions`, `query-builders.ts`) are raw columns only, so the progress panel's
+  links (`CampaignAssignmentProgress.tsx`) map a bucket to roster states
+  (`BUCKET_ROSTER_STATES`), and `pending`, `callback` and `not_reached` all map to state
+  `pending`: "12 not reached" opens that agent's pending contacts, the 12 plus their callbacks and
+  never-attempted ones. A superset, never a wrong row; the other four buckets map one to one, and
+  the agent's own My contacts list filters by bucket exactly. Fix: an optional `bucket` roster
+  filter built on `contactBucketSql` (so it cannot disagree with the counts) and the links
+  pointed at it. It touches the shared filter (also the CSV export and the spine) and its
+  contract; the retry selector must refuse it, as it refuses `assigned_to`.
+- **Follow-up: the owner on roster replace (waits on B15).** Replace and clear are refused (B15:
+  `supersedeRoster` throws `unsupported`, behind `AGENCY_ROSTER_REPLACE_ENABLED`, off; the
+  console sends neither), so the ask's "superseded contacts lose their assignment" (CA11) has
+  nothing to act on: uploaded rows always land unassigned, an append leaves owners alone, and
+  owners carry over only into a retry campaign with `keep_assignments` (owners still staffed on
+  the parent). When B15 is built, its replace must clear `assigned_user_id` /
+  `assigned_at` / `assigned_by_user_id` on every contact it retires and write one
+  `agency_contact_assignment_events` row each, in the replace transaction, under one batch id.
+  That needs a new reason (e.g. `superseded`), which is a CHECK change
+  (`ck_agency_assignment_event_reason`) in a new migration.
 
 ## Test counts
 
@@ -876,7 +909,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up; abandon clip upload-only; no API keys; super-admins created fresh |
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
-| B15 roster supersede | Build it, or leave replace and clear refused |
+| B15 roster supersede | Build it, or leave replace and clear refused; when built, it also clears the owner of every contact it retires (CA11, "Contact assignment" above) |
 | Scaling defaults (2026-11-02/03) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial (now charged to the our-fault ledger, so its bound retires a contact), a dial failed before the carrier (uncharged, redial after 60 s), Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default; and D13 (the `/readyz?detail=1` token, the 1 s readiness cache, the 5 s loop window) |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
