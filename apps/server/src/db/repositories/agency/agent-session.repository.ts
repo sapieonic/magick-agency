@@ -103,9 +103,22 @@ interface AgencySessionTransitionRow {
    * itself, never the moment the log INSERT later runs. See
    * {@link AgencyAgentSessionRepository.recordTransitions} for why the difference
    * is not cosmetic.
+   *
+   * ISO-8601 TEXT in UTC with microseconds (`2026-11-04T08:00:00.123456Z`), never a `Date`:
+   * a JavaScript `Date` keeps milliseconds, so two transitions on one session that the row
+   * lock serialises within the same millisecond would be logged with EQUAL instants, and a
+   * reader ordering by `at` could put them back in either order (the chain then reads
+   * `offline → on_call`, `offline → wrapup`). Inserted as `$9::timestamptz[]`, unchanged.
    */
-  at: Date;
+  at: string;
 }
+
+/**
+ * The transition's instant, projected by the statement that performs it: `clock_timestamp()`
+ * as UTC ISO-8601 text with microseconds (see {@link AgencySessionTransitionRow.at} for why
+ * not a `Date`). Every writer of the transition log projects it with this one expression.
+ */
+const TRANSITION_AT_SQL = `to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`;
 
 /**
  * The session-transition UPDATE every writer of `agency_agent_sessions.state`
@@ -132,7 +145,7 @@ function sessionTransitionSql(input: { prevWhere: string; set: string; where?: s
        RETURNING s.id AS session_id, s.tenant_id, s.account_id, s.campaign_id, s.agent_user_id,
                  prev.state AS from_state, prev.break_reason AS from_break_reason,
                  s.state AS to_state, s.break_reason,
-                 clock_timestamp() AS at`;
+                 ${TRANSITION_AT_SQL}`;
 }
 
 export class AgencyAgentSessionRepository {
@@ -449,7 +462,7 @@ export class AgencyAgentSessionRepository {
       const { rows } = await getPool().query<AgencyAgentSessionRecord & {
         from_state: AgencyAgentState | null;
         from_break_reason: string | null;
-        at: Date;
+        at: string;
         inserted: boolean;
       }>(
         `WITH prev AS (
@@ -483,7 +496,7 @@ export class AgencyAgentSessionRepository {
                 CASE WHEN prev.id IS NOT NULL THEN prev.break_reason
                      WHEN upserted.inserted THEN NULL
                      ELSE upserted.break_reason END AS from_break_reason,
-                clock_timestamp() AS at
+                ${TRANSITION_AT_SQL}
            FROM upserted LEFT JOIN prev ON prev.id = upserted.id`,
         [input.tenantId, input.accountId, input.campaignId, input.agentUserId, input.replicaId,
           input.kind, breakReason],
