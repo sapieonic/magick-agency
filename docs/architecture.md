@@ -271,7 +271,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   campaign repository write), `account_limit_changed` (the `ConcurrencyControl` seam's limit
   invalidations, wrapped by `startAgency`), `account_capacity_freed` (attempt and manual-call
   ends), `agent_available` (a state write into `available`, a station attach), `contacts_changed`
-  (ingest chunks). The campaign row and the account limit are cached between full ticks in a
+  (ingest chunks, owner sweeps), `station_ready` (a `ready` sent on a `strict` / `preferred`
+  campaign: the engine forgets the session's last `queue` frame and sends it again). The campaign row and the account limit are cached between full ticks in a
   generation-guarded TTL cache (2 s backstop), dropped by their events and re-primed by the
   supervise pass. `tickOnce` is a forced full tick that reads everything fresh. Measured by
   `test/integration/load/pacing-statements.test.ts`; `agency_pacing_ticks_total` and
@@ -337,7 +338,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   on a `strict` or `preferred` campaign, the tick pairs by agent (`claimForAgents`, one statement,
   a `LATERAL ... LIMIT 1` per agent), never reserves an agent with nothing due, and tells the
   station why with a `queue` frame on a change (`pacing/agent-queue.ts`, the one reading shared
-  with the join bootstrap, `ready` and the My contacts summary); the leader sweeps due callbacks
+  with the join bootstrap, `ready` and the My contacts summary; after a `ready` the next tick
+  sends the frame again, so a reconnect cannot keep a stale or missing queue); the leader sweeps due callbacks
   whose owner is away past the grace back to the pool, and the open contacts of owners no longer
   staffed on the campaign (`pacing/callback-fallback.ts`). *Agent*:
   the My contacts reads, the set-based reopen of not-reached contacts

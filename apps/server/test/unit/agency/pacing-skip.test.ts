@@ -197,10 +197,12 @@ describe('PacingInvalidationBus (in process)', () => {
       { type: 'account_capacity_freed', tenantId: 't', accountId: 'a' },
       { type: 'agent_available', sessionId: 's', campaignId: 'c1' },
       { type: 'agent_available', sessionId: 's', campaignId: null },
+      { type: 'station_ready', sessionId: 's', campaignId: 'c1' },
     ];
     for (const e of events) expect(parsePacingInvalidationEvent(JSON.parse(JSON.stringify(e)))).toEqual(e);
     for (const bad of [null, 'x', {}, { type: 'nope' }, { type: 'campaign_changed' },
-      { type: 'account_limit_changed', tenantId: 't' }, { type: 'agent_available', sessionId: 's', campaignId: 7 }]) {
+      { type: 'account_limit_changed', tenantId: 't' }, { type: 'agent_available', sessionId: 's', campaignId: 7 },
+      { type: 'station_ready', sessionId: 's', campaignId: null }, { type: 'station_ready', campaignId: 'c1' }]) {
       expect(parsePacingInvalidationEvent(bad)).toBeNull();
     }
   });

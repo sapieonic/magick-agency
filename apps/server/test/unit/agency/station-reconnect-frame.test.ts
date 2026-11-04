@@ -78,6 +78,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
 
 // The station handler lives in `agency/station-socket.ts` (`registerStationSocket`), mounted below at the same prefix.
 import { registerStationSocket } from '../../../src/agency/station-socket.js';
+import { getPacingInvalidationBus, type PacingInvalidationEvent } from '../../../src/agency/pacing/invalidation-bus.js';
 import { BreakRegistry } from '@magick-agency/domain/break-manager';
 
 const SESSION = {
@@ -343,5 +344,40 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
     const frame = await ready(h);
     expect(frame.event).toBe('ready');
     expect('queue' in frame).toBe(false);
+  });
+
+  // The pacing leader forgets the last `queue` frame it sent this session once `ready` is out
+  // (a frame it sent while this run read the queue is overwritten by `ready`, and a failed read
+  // clears the station's queue), so its next tick tells the agent again.
+  // FALSIFIED: with the publish removed (or moved before the `ready` send) the first case reds.
+  describe('tells the pacing leader after `ready` (station_ready)', () => {
+    let events: { event: PacingInvalidationEvent; readySent: boolean }[];
+    let unsubscribe: () => void;
+    beforeEach(() => {
+      events = [];
+      unsubscribe = getPacingInvalidationBus().subscribe((event) => {
+        events.push({ event, readySent: h.sent.some((f) => f.event === 'ready') });
+      });
+    });
+    afterEach(() => { unsubscribe(); });
+
+    it('on an owner-mode campaign, after the `ready` frame, also when the queue read failed', async () => {
+      repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'preferred' });
+      repos.campaign.findById.mockRejectedValue(new Error('db down'));
+      await ready(h);
+      expect(events).toEqual([
+        { event: { type: 'station_ready', sessionId: 'sess-1', campaignId: 'camp-1' }, readySent: true },
+      ]);
+    });
+
+    it('not on a pool campaign, nor on a soft-phone session', async () => {
+      await ready(h);
+      h.sent.length = 0;
+      repos.session.findById.mockResolvedValue({
+        ...SESSION, kind: 'softphone', campaign_id: null, state: 'break', break_reason: null, campaign_assignment_mode: null,
+      });
+      await ready(h);
+      expect(events).toEqual([]);
+    });
   });
 });

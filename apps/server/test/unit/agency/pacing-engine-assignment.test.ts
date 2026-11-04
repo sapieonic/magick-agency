@@ -68,7 +68,11 @@ vi.mock('../../../src/agency/pacing/callback-fallback.js', async (importOriginal
 }));
 
 import { PacingEngine, type PacingTickObservation } from '../../../src/agency/pacing-engine.js';
-import { getPacingInvalidationBus, type PacingInvalidationEvent } from '../../../src/agency/pacing/invalidation-bus.js';
+import {
+  getPacingInvalidationBus,
+  InProcessPacingInvalidationBus,
+  type PacingInvalidationEvent,
+} from '../../../src/agency/pacing/invalidation-bus.js';
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3', tenant_id: 't1', account_id: 'a1',
@@ -350,6 +354,46 @@ describe('the `queue` frame: sent to the agent only when it changes (CA3)', () =
     await e.tickOnce('camp-1');
     await e.tickOnce('camp-1');
     expect(queueFrames(send)).toHaveLength(4);
+  });
+
+  // A reconnect's `ready` carries a queue read before it is sent: a frame this engine sent in
+  // between is overwritten on the station by the older reading, and a failed read sends none
+  // (the clients then clear their queue). The attach publishes `station_ready` after `ready`.
+  // FALSIFIED: with the engine's `station_ready` case not dropping the entry, the resend reds.
+  it("sends an agent's queue again after their station was sent `ready` (station_ready), and only theirs", async () => {
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    repos.contact.probeAgentQueues.mockResolvedValue(probe([], { all: ['u1', 'u2'] }));
+    const bus = new InProcessPacingInvalidationBus();
+    const e = new PacingEngine(
+      null, '', 'r1', makeStations(['s1', 's2'], send) as any, makeAgents({ s1: 'available', s2: 'available' }) as any,
+      { dispatch: vi.fn() } as any, { check: vi.fn().mockResolvedValue('clear') } as any, { bus },
+    );
+    e.setAutoRounds(false);
+    const ticks: PacingTickObservation[] = [];
+    e.registerTickObserver((o) => ticks.push(o));
+    (e as any).beginLeading(CAMPAIGN);
+    try {
+      await e.runRound();
+      expect(queueFrames(send)).toHaveLength(2);
+      send.mockClear();
+      await e.tickOnce('camp-1');
+      expect(queueFrames(send)).toHaveLength(0);
+
+      // s1's station reconnected and was sent `ready`: the reading is unchanged, but s1 is told
+      // again on the next tick, and s2 is not.
+      bus.publish({ type: 'station_ready', sessionId: 's1', campaignId: 'camp-1' });
+      ticks.length = 0;
+      await e.runRound();
+      expect(ticks[0]).toMatchObject({ mode: 'full', cause: 'event' });
+      expect(queueFrames(send)).toEqual([['s1', expect.objectContaining({ event: 'queue', reason: 'waiting_for_retry' })]]);
+
+      // Once told, unchanged again.
+      send.mockClear();
+      await e.tickOnce('camp-1');
+      expect(queueFrames(send)).toHaveLength(0);
+    } finally {
+      await e.stop();
+    }
   });
 
   it('pool mode: claimDialable with N, no probe and no queue frame (the tick as it was)', async () => {

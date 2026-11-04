@@ -980,6 +980,12 @@ export class PacingEngine {
       case 'contacts_changed':
         this.markDirty(event.campaignId);
         return;
+      case 'station_ready':
+        // The station's `ready` now holds its queue (or none, if the read failed), whatever
+        // frame this engine sent it before, so the next tick sends it again (`queueSent`).
+        this.queueSent.get(event.campaignId)?.delete(event.sessionId);
+        this.markDirty(event.campaignId);
+        return;
       case 'account_limit_changed': {
         const key = accountKeyOf(event.tenantId, event.accountId);
         this.limitCache.invalidate(key);
@@ -1922,8 +1928,12 @@ export class PacingEngine {
    * The last `queue` frame each agent was sent, per campaign (`queueStateKey`), so a frame
    * goes out only on a change (contact assignment, CA3). An entry is dropped when its session
    * is no longer live on the campaign (left), and the campaign's map when the campaign is
-   * `pool` or its leadership is given up. A `ready` frame or the bootstrap carries the state
-   * at (re)connect, so a reconnect needs no resend.
+   * `pool` or its leadership is given up. The bootstrap carries the state at join, before any
+   * frame. A `ready` frame carries it at every (re)connect, read before it is sent, so a frame
+   * this engine sent in between is overwritten on the station by an older reading, and a
+   * failed read sends none: the station attach therefore publishes `station_ready` after
+   * `ready`, which drops the session's entry here, and the next tick sends the agent's queue
+   * again (at most one repeated frame per reconnect).
    */
   private readonly queueSent = new Map<string, Map<string, string>>();
 
