@@ -738,6 +738,12 @@ inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
 | `packages/observability` | 14 | — |
 | `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean, `contracts-literals --check` up to date | — |
 
+After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
+assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest
+lane 1743 passed + 9 expected fail + 1 failed (185 files), the one failure being the scale test
+below timing out at 20 s (alone: 18 passed, that test in ~1.1 s); `pnpm lint` clean,
+`pnpm test:release` 10 pass.
+
 **Open: one scale test times out in some full runs.** `assignment-repository.test.ts` "splits
 10,000 contacts across 5 agents" takes about 1.1 s alone, but in 2 of 4 full rest-lane runs on
 the build container it passed the 20 s test timeout when it ran in the middle of the lane (each
