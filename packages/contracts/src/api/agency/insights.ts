@@ -367,9 +367,11 @@ export interface AgencyInsightsOutcomeRow {
  * contact's next placed dial after the booking:
  *  - `kept_on_time`: that dial came no later than `callback_at` + 15 minutes (an early one counts);
  *  - `kept_late`: it came after that;
- *  - `missed`: no dial, and either the time has passed with the contact closed (completed,
- *    exhausted, suppressed) or the campaign has ended (completed, stopped);
- *  - `pending_future`: no dial yet, `callback_at` still ahead;
+ *  - `missed`: no dial, and either the contact has closed (anything but pending, in flight or
+ *    in wrap-up: completed, exhausted, suppressed), whatever `callback_at` says, or the campaign
+ *    has ended (completed, stopped);
+ *  - `pending_future`: no dial yet, `callback_at` still ahead, the contact open, the campaign not
+ *    ended;
  *  - `pending_due`: no dial yet, `callback_at` passed, the contact open, the campaign not ended
  *    (overdue).
  */

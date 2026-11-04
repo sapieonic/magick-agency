@@ -112,9 +112,9 @@ export interface InsightsCallbackTiming {
   kept_on_time: number;
   /** Followed by a dial after that. */
   kept_late: number;
-  /** Never dialled, and either the time has passed with the contact closed, or the campaign has ended. */
+  /** Never dialled, and the contact has closed (whatever `callback_at` says) or the campaign has ended. */
   missed: number;
-  /** Never dialled yet, `callback_at` still after `now`. */
+  /** Never dialled yet, `callback_at` still after `now`, contact open, campaign not ended. */
   pending_future: number;
   /** Never dialled yet, `callback_at` passed, contact still open, campaign not ended (overdue). */
   pending_due: number;
@@ -130,11 +130,17 @@ export interface InsightsCallbackTiming {
  * classified by the contact's next placed attempt after it (the first higher `attempt_number`
  * with `dialed_at` set, `uq_agency_attempt_number`).
  *
- * The contact is closed when it is `completed`, `exhausted` or `suppressed`; the campaign has
- * ended when it is `completed` or `stopped`. A never-dialled callback is `missed` once its time
- * has passed and the contact closed, or once the campaign ended; otherwise it is pending:
- * `pending_future` while `callback_at > now`, `pending_due` after (a closed contact whose
- * callback is still in the future is `pending_future` until that time passes).
+ * Kept: on time when that dial came no later than `callback_at` + 15 minutes
+ * (`AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES`, the bound included), an EARLY dial included (IN4
+ * counts a callback kept when the contact was reached for it, and a dial before the booked time
+ * still is); late after that.
+ *
+ * Never dialled: `missed` when the contact closed first or the campaign ended (IN4), whatever
+ * `callback_at` says: a closed contact (anything but `pending`, `in_flight` or `connected`, or a
+ * contact row that is gone) will not be dialled again, so its callback cannot still be kept and
+ * must not be counted open by its owner. The campaign has ended when it is `completed` or
+ * `stopped`. Otherwise it is pending: `pending_future` while `callback_at > now`,
+ * `pending_due` after (overdue).
  */
 export async function insightsCallbackTiming(
   q: InsightsRangeQuery & { now: Date },
@@ -149,7 +155,7 @@ export async function insightsCallbackTiming(
        ), booked AS (
          SELECT b.callback_at,
                 ct.assigned_user_id,
-                ct.state IN ('completed', 'exhausted', 'suppressed') AS contact_closed,
+                COALESCE(ct.state NOT IN ('pending', 'in_flight', 'connected'), true) AS contact_closed,
                 camp.ended AS campaign_ended,
                 (SELECT n.dialed_at FROM agency_call_attempts n
                   WHERE n.contact_id = b.contact_id
@@ -167,7 +173,7 @@ export async function insightsCallbackTiming(
                   WHEN next_dialed_at IS NOT NULL
                    AND next_dialed_at <= callback_at + make_interval(mins => $6::int) THEN 'on_time'
                   WHEN next_dialed_at IS NOT NULL THEN 'late'
-                  WHEN callback_at <= $5::timestamptz AND contact_closed THEN 'missed'
+                  WHEN contact_closed THEN 'missed'
                   WHEN campaign_ended THEN 'missed'
                   WHEN callback_at > $5::timestamptz THEN 'pending_future'
                   ELSE 'pending_due'

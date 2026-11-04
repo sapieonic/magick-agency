@@ -124,15 +124,16 @@ describe('callbackTiming', () => {
     await book(await contact({ state: 'completed' }), t('15:00'));                                        // missed: passed, closed
     await book(await contact({ assigned_user_id: owner, assigned_at: t('07:00') }), t('08:00', '2026-10-02'));  // overdue
     await book(await contact({ assigned_user_id: owner, assigned_at: t('07:00') }), t('20:00', '2026-10-02'));  // future
-    await book(await contact({ state: 'exhausted' }), t('22:00', '2026-10-02'));                          // future (closed, not yet passed)
+    await book(await contact({ state: 'exhausted' }), t('22:00', '2026-10-02'));                          // missed: closed first, its time still ahead
     await book(await contact(), t('11:00'), { dialed_at: null });                                         // a queued follow-up is no dial: overdue
     await book(await contact(), t('10:00', '2026-10-04'));                                                // out of range
 
     const q = { campaignId: campaign.id, tenantId: DEFAULTS.tenantId, from: t('00:00'), to: t('00:00', '2026-10-03'), now: t('12:00', '2026-10-02') };
     expect(await repo.callbackTiming(q)).toEqual({
-      due_in_range: 8, kept_on_time: 2, kept_late: 1, missed: 1, pending_future: 2, pending_due: 2, pending: 4,
+      due_in_range: 8, kept_on_time: 2, kept_late: 1, missed: 2, pending_future: 1, pending_due: 2, pending: 3,
+      // The closed contact's future callback is nobody's open callback.
       by_owner: [
-        { agent_user_id: null, open: 2, overdue: 1 },
+        { agent_user_id: null, open: 1, overdue: 1 },
         { agent_user_id: owner, open: 2, overdue: 1 },
       ].sort((x, y) => y.open - x.open || String(x.agent_user_id).localeCompare(String(y.agent_user_id))),
     });
@@ -142,6 +143,52 @@ describe('callbackTiming', () => {
     expect(await repo.callbackTiming(q)).toMatchObject({ kept_on_time: 2, kept_late: 1, missed: 5, pending: 0, by_owner: [] });
     // Scoped by tenant.
     expect(await repo.callbackTiming({ ...q, tenantId: '00000000-0000-0000-0000-00000000dead' })).toBeNull();
+  });
+
+  it('the on-time bound is callback_at + 15 minutes inclusive, an early dial on time, one second past late', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    let phone = 0;
+    const followedAt = async (callbackAt: Date, dialedAt: Date) => {
+      const c = await insertAgencyContact(campaign.id, { phone_e164: `+9181000000${String(phone++).padStart(2, '0')}` });
+      await insertAgencyAttempt(campaign.id, c.id, { attempt_number: 1, state: 'ended', outcome: 'connected', dialed_at: t('08:00'), callback_at: callbackAt, disposition_code: 'callback' });
+      await insertAgencyAttempt(campaign.id, c.id, { attempt_number: 2, state: 'ended', dialed_at: dialedAt });
+    };
+    const due = t('10:00');
+    const sec = 1000;
+    const q = { campaignId: campaign.id, tenantId: DEFAULTS.tenantId, from: t('00:00'), to: t('00:00', '2026-10-02'), now: t('23:00') };
+    const classOf = async (dialedAt: Date) => {
+      await getTestPool().query('DELETE FROM agency_call_attempts WHERE campaign_id = $1', [campaign.id]);
+      await getTestPool().query('DELETE FROM agency_contacts WHERE campaign_id = $1', [campaign.id]);
+      await followedAt(due, dialedAt);
+      const r = (await repo.callbackTiming(q))!;
+      return r.kept_on_time === 1 ? 'on_time' : r.kept_late === 1 ? 'late' : 'other';
+    };
+    expect(await classOf(new Date(due.getTime() - sec))).toBe('on_time'); // early: kept on time
+    expect(await classOf(due)).toBe('on_time');
+    expect(await classOf(new Date(due.getTime() + 14 * 60 * sec + 59 * sec))).toBe('on_time');
+    expect(await classOf(new Date(due.getTime() + 15 * 60 * sec))).toBe('on_time'); // the bound itself
+    expect(await classOf(new Date(due.getTime() + 15 * 60 * sec + sec))).toBe('late');
+  });
+
+  it('a callback on a contact closed first is missed whatever callback_at says, never open by its owner', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const owner = '00000000-0000-0000-0000-0000000000a2';
+    let phone = 0;
+    const closed = async (state: string, callbackAt: Date) => {
+      const c = await insertAgencyContact(campaign.id, {
+        phone_e164: `+9182000000${String(phone++).padStart(2, '0')}`, state, assigned_user_id: owner, assigned_at: t('07:00'),
+        ...(state === 'suppressed' ? { suppressed_reason: 'dnc' } : {}),
+      });
+      await insertAgencyAttempt(campaign.id, c.id, { attempt_number: 1, state: 'ended', outcome: 'connected', dialed_at: t('08:00'), callback_at: callbackAt, disposition_code: 'callback' });
+    };
+    const now = t('12:00');
+    // Each closed state, with the booked time both ahead of now and passed.
+    for (const state of ['completed', 'exhausted', 'suppressed']) {
+      await closed(state, t('18:00'));
+      await closed(state, t('09:00'));
+    }
+    const r = await repo.callbackTiming({ campaignId: campaign.id, tenantId: DEFAULTS.tenantId, from: t('00:00'), to: t('00:00', '2026-10-02'), now });
+    expect(r).toMatchObject({ missed: 6, pending_future: 0, pending_due: 0, pending: 0, by_owner: [] });
   });
 
   it('reads the booking attempts through the callback index', async () => {
