@@ -40,10 +40,11 @@ abstract final class MyContactsCopy {
   /// caught up with it (the server said the contact holds one).
   static String noteBody(String? disposition) =>
       '${disposition == null ? 'An earlier outcome' : 'The outcome “$disposition”'} lets you call this customer '
-      'outside the campaign’s calling hours, once. Say why (10 to 500 characters); your supervisor sees it.';
+      'outside the campaign’s calling hours, once. '
+      'Say why ($overrideNoteMin to $overrideNoteMax characters); your supervisor sees it.';
   static const noteLabel = 'Why are you calling now?';
-  static const noteTooShort = 'Write at least 10 characters.';
-  static const noteTooLong = 'Keep it to 500 characters.';
+  static const noteTooShort = 'Write at least $overrideNoteMin characters.';
+  static const noteTooLong = 'Keep it to $overrideNoteMax characters.';
   static const noteConfirm = 'Call now';
   static const cancel = 'Cancel';
 
@@ -136,7 +137,7 @@ abstract final class MyContactsCopy {
         AgentRetryErrorCode.outsideCallingHours => r.nextOpenAt == null
             ? 'It’s outside this campaign’s calling hours.'
             : 'It’s outside this campaign’s calling hours. Calls resume at ${formatDueAt(r.nextOpenAt!, now)}.',
-        AgentRetryErrorCode.overrideNoteInvalid => 'The note needs 10 to 500 characters.',
+        AgentRetryErrorCode.overrideNoteInvalid => 'The note needs $overrideNoteMin to $overrideNoteMax characters.',
         AgentRetryErrorCode.dncListed => 'This number is on the Do Not Call list. It can’t be called.',
         AgentRetryErrorCode.dncUnavailable =>
           'We couldn’t check the Do Not Call list just now, so the call wasn’t placed. Try again in a moment.',

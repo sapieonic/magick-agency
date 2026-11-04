@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/api_error.dart';
 import '../../core/auth/app_gate.dart';
+import '../../core/softphone/overrides.dart' show OverrideNoteBlock, overrideNoteBlock;
 import '../../core/station/station_view.dart';
 import '../../core/telemetry/telemetry.dart';
 import '../performance/performance_controller.dart' show statsClockProvider;
@@ -220,12 +221,12 @@ bool canCallContact(MyContact c, DateTime now) {
 
 /// Whether [note] is a calling-hours override note the server takes
 /// (trimmed, [overrideNoteMin]–[overrideNoteMax] characters), or why not.
-String? overrideNoteProblem(String note) {
-  final n = note.trim().runes.length;
-  if (n < overrideNoteMin) return MyContactsCopy.noteTooShort;
-  if (n > overrideNoteMax) return MyContactsCopy.noteTooLong;
-  return null;
-}
+/// The soft phone's rule ([overrideNoteBlock]) in this screen's words.
+String? overrideNoteProblem(String note) => switch (overrideNoteBlock(note)) {
+      OverrideNoteBlock.tooShort => MyContactsCopy.noteTooShort,
+      OverrideNoteBlock.tooLong => MyContactsCopy.noteTooLong,
+      null => null,
+    };
 
 /// How a call request ended.
 sealed class ContactCallResult {

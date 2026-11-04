@@ -16,13 +16,16 @@ import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
 import 'reads.dart';
+import 'softphone.dart';
 import 'station.dart';
 
-/// Bounds of the agent's note on a calling-hours override (trimmed, in code points).
+/// Bounds of the agent's note on a calling-hours override (trimmed, in code
+/// points): the soft phone's override-note rule, not a second one.
 ///
-/// Contract: `AGENCY_OVERRIDE_NOTE_MIN` / `AGENCY_OVERRIDE_NOTE_MAX` (`agency/session.ts`).
-const overrideNoteMin = 10;
-const overrideNoteMax = 500;
+/// Contract: `AGENCY_OVERRIDE_NOTE_MIN` / `AGENCY_OVERRIDE_NOTE_MAX` (`agency/session.ts`),
+/// aliases of `SOFTPHONE_OVERRIDE_NOTE_MIN` / `_MAX`.
+const overrideNoteMin = softphoneOverrideNoteMin;
+const overrideNoteMax = softphoneOverrideNoteMax;
 
 /// At most this many ids in one retry request.
 ///

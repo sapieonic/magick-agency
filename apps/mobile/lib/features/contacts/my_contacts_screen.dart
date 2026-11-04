@@ -723,7 +723,7 @@ class _Footer extends StatelessWidget {
   }
 }
 
-/// The calling-hours override note: 10 to 500 characters, checked as typed.
+/// The calling-hours override note: [overrideNoteMin] to [overrideNoteMax] characters, checked as typed.
 class _OverrideNoteDialog extends StatefulWidget {
   const _OverrideNoteDialog({required this.disposition});
 
