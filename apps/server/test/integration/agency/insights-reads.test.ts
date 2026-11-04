@@ -12,10 +12,10 @@ import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact } from '
  * 1M-contact campaign makes (EXPLAIN on seeded tables).
  *
  * Plans: no ANALYZE (it leaves statistics behind for later files' plan tests, the 0011 migration
- * test's rule); the two coverage cases VACUUM `agency_contacts` (see `vacuumContacts`). The plan
+ * test's rule). The plan
  * cases price sequential and bitmap scans out with SET LOCAL inside a rolled-back transaction, so
  * what they show is which index serves the statement and
- * whether it covers it (Index Only Scan). Mutation-checked: dropping `waitingRetrySql`'s callback
+ * whether it covers it (every column the scan outputs is in the index; `EXPLAIN VERBOSE`). Mutation-checked: dropping `waitingRetrySql`'s callback
  * exclusion reds the partition case (the buckets overlap and no longer sum to the total), and
  * reading a column outside the index (`phone_e164`) in the roster statement reds its plan case.
  */
@@ -33,12 +33,17 @@ const SUCCESS = ['interested'];
 const HOUR = 3_600_000;
 const at = (offsetMs: number) => new Date(Date.now() + offsetMs);
 
-async function plan(sql: string, values: unknown[], settings: string[] = ['enable_seqscan = off', 'enable_bitmapscan = off']): Promise<string> {
+async function plan(
+  sql: string,
+  values: unknown[],
+  settings: string[] = ['enable_seqscan = off', 'enable_bitmapscan = off'],
+  verbose = false,
+): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
     await client.query('BEGIN');
     for (const s of settings) await client.query(`SET LOCAL ${s}`);
-    const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`, values);
+    const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF${verbose ? ', VERBOSE' : ''}) ${sql}`, values);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
   } finally {
     await client.query('ROLLBACK');
@@ -146,35 +151,49 @@ describe('the roster partition (insights-sql.ts)', () => {
   });
 
   /**
-   * The coverage cases VACUUM the table first (no ANALYZE), so every page is all-visible and an
-   * Index Only Scan costs what it would on a settled production table. Without it the result
-   * depended on what earlier files left behind: other suites ANALYZE `agency_contacts`, and with
-   * an all-visible fraction of 0 a plain scan of the smaller `idx_agency_contacts_assignee` prices
-   * below the covering index. (`enable_indexscan = off` cannot isolate the Index Only Scan instead:
-   * on Postgres 16 it disables both.) An Index Only Scan remains possible only on an index holding
-   * every column the statement reads, which is what these cases prove.
+   * The coverage cases prove the statement reads only columns `idx_agency_contacts_insights`
+   * holds, so an Index Only Scan is available on a settled production table. They assert it from
+   * `EXPLAIN VERBOSE`, not from the scan's name: whether the planner picks the Index Only Scan
+   * over a plain Index Scan here depends on the table's visibility map (a VACUUM on a shared host
+   * cannot always mark the pages all-visible) and on statistics earlier files left behind, and
+   * the name-based version of these cases flaked on the merged branch. The scan node's `Output:`
+   * is the set of columns it produces from the relation; every one must be in the index (key or
+   * INCLUDE), and the scan must use the index with the campaign as its condition.
+   * (`enable_indexscan = off` cannot isolate the Index Only Scan: on Postgres 16 it disables both.)
    */
-  async function vacuumContacts(): Promise<void> {
-    await getTestPool().query('VACUUM agency_contacts');
+  async function insightsIndexColumns(): Promise<Set<string>> {
+    const { rows } = await getTestPool().query<{ attname: string }>(
+      `SELECT a.attname FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+        WHERE i.indexrelid = 'idx_agency_contacts_insights'::regclass`,
+    );
+    return new Set(rows.map((r) => r.attname));
   }
 
-  it('the roster statement is one Index Only Scan of idx_agency_contacts_insights', async () => {
-    await vacuumContacts();
-    const { text, values } = repo.rosterStatement(rosterInput(randomUUID(), { pausedAt: new Date(), windowEndAt: new Date() }));
-    const p = await plan(text, values);
-    expect(p).toMatch(/Index Only Scan using idx_agency_contacts_insights on agency_contacts c/);
-    expect(p).toMatch(/Index Cond: \(campaign_id = /);
+  async function expectCoveredByInsightsIndex(p: string): Promise<void> {
+    const lines = p.split('\n');
+    const at = lines.findIndex((l) => /(Index Only Scan|Index Scan) using idx_agency_contacts_insights on public\.agency_contacts c\b/.test(l));
+    expect(at, p).toBeGreaterThanOrEqual(0);
+    const output = lines[at + 1]?.match(/^\s*Output: (.*)$/)?.[1];
+    expect(output, p).toBeTruthy();
+    // An item is a column or a cast of one, e.g. `(assigned_user_id)::text`: keep the column.
+    const read = output!.split(',').map((c) => c.replace(/::[a-z_ ]+/g, '').replace(/[()]/g, '').trim().replace(/^c\./, ''));
+    const index = await insightsIndexColumns();
+    expect(read.filter((c) => !index.has(c)), p).toEqual([]);
+    expect(p).toMatch(/Index Cond: \(c\.campaign_id = /);
     expect(p).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+  }
+
+  it('the roster statement reads only columns idx_agency_contacts_insights holds (an Index Only Scan)', async () => {
+    const { text, values } = repo.rosterStatement(rosterInput(randomUUID(), { pausedAt: new Date(), windowEndAt: new Date() }));
+    await expectCoveredByInsightsIndex(await plan(text, values, undefined, true));
   });
 
-  it('the allocation statement is one Index Only Scan of idx_agency_contacts_insights too', async () => {
-    await vacuumContacts();
+  it('the allocation statement reads only columns idx_agency_contacts_insights holds too', async () => {
     const { text, values } = repo.allocationStatement({
       campaignId: randomUUID(), callbackCodes: CALLBACK, successCodes: SUCCESS, dayEndAt: new Date(),
     });
-    const p = await plan(text, values);
-    expect(p).toMatch(/Index Only Scan using idx_agency_contacts_insights on agency_contacts c/);
-    expect(p).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+    await expectCoveredByInsightsIndex(await plan(text, values, undefined, true));
   });
 });
 
