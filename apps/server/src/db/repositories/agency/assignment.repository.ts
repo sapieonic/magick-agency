@@ -448,6 +448,15 @@ export class AgencyAssignmentRepository {
           : '';
         const gate = `(${exact})${within}`;
         const actor = bind.add(input.actorUserId);
+        // No nested loop for the write: `upd` joins `agency_contacts` to `mv`, a CTE scan with no
+        // statistics of its own, and when the contacts' statistics are missing too (a campaign
+        // whose roster just landed, before autovacuum has analysed it) both sides estimate at one
+        // row. The planner then rescans `mv` once per contact: measured on 10,000 contacts, 99.99
+        // million rows removed by the join filter and 27.7 s for the statement, against 0.4 s for
+        // the hash join it picks once the table is analysed. A hash join is linear whatever the
+        // estimates say. `SET LOCAL` ends with this transaction; the lock statement above keeps
+        // the planner's choice (its primary-key lookups are the right plan there).
+        await client.query('SET LOCAL enable_nestloop = off');
         const { rows } = await client.query<FingerprintRow & { ok: boolean; written: number }>(
           `WITH ${plan.ctes},
            ${MOVES_CTE},
@@ -458,8 +467,10 @@ export class AgencyAssignmentRepository {
                 SET assigned_user_id = m.to_user_id,
                     assigned_at = CASE WHEN m.to_user_id IS NULL THEN NULL ELSE now() END,
                     assigned_by_user_id = CASE WHEN m.to_user_id IS NULL THEN NULL ELSE ${actor}::uuid END
-               FROM mv m, gate g
-              WHERE g.ok AND m.moving AND c.id = m.id
+               FROM mv m
+              -- The gate as a scalar subquery (an InitPlan), not a cross join: a join with no
+              -- join clause can only be a nested loop, which the setting above refuses.
+              WHERE (SELECT ok FROM gate) AND m.moving AND c.id = m.id
                 AND c.campaign_id = ${bind.add(scope.campaignId)}::uuid
                 AND ${plan.writeGuard}
                 AND c.assigned_user_id IS NOT DISTINCT FROM m.from_user_id
