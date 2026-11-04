@@ -486,18 +486,14 @@ export async function handleStationSocket(
   // that can create something for it to watch.
   runtime.wakeStationSweep();
 
-  // Redis, or `break` — never the DB row. The rule and
-  // the reason live on the runtime; this is transport.
-  const resumedState = await runtime.rehydrateAgent(sessionId, session);
-
   // Contact assignment (CA3): the agent's own queue on a `strict` / `preferred` campaign, so a
   // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
   // change, so a reconnecting station cannot wait for one). Read here, before the fence
   // below, so no await sits between the fence and the side effects. Best effort: a failed
   // read omits the field and the station keeps the reconnect.
   const campaignId = session.campaign_id;
-  const queue = campaignId
-    ? await Promise.resolve()
+  const queueRead = campaignId
+    ? Promise.resolve()
       .then(() => agencyCampaignRepository.findById(campaignId))
       .then((campaign) => (campaign ? readAgentQueueState(campaign, session.agent_user_id) : undefined))
       .catch((err: unknown) => {
@@ -505,6 +501,11 @@ export async function handleStationSocket(
         return undefined;
       })
     : undefined;
+
+  // Redis, or `break` — never the DB row. The rule and
+  // the reason live on the runtime; this is transport. Together with the queue read, which
+  // never rejects, so a rehydrate failure surfaces exactly as before.
+  const [resumedState, queue] = await Promise.all([runtime.rehydrateAgent(sessionId, session), queueRead]);
 
   // Re-adopt a call the previous socket dropped out of, if the window has not
   // lapsed. This is what makes a wifi blip survivable: the bridge disarms its

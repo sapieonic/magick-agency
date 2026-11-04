@@ -252,14 +252,17 @@ export async function registerSessionRoutes(sub: FastifyInstance, runtime: Agenc
     // whole shift, on the one frame whose latency the design guards hardest.
     // Resolved here rather than in the object literal below so its `await` is
     // plainly outside the frame path.
-    const retryContext = await resolveRetryContext(campaign);
     // Contact assignment (CA3): this agent's own queue at join, on a `strict` / `preferred`
     // campaign (undefined for `pool`). Best effort, as the retry context is: a failed read
     // omits the field rather than refusing the join, and pacing's `queue` frame follows.
-    const queue = await Promise.resolve().then(() => readAgentQueueState(campaign, session.agent_user_id)).catch((err: unknown) => {
-      log.warn({ err, sessionId: session.id, campaignId: campaign.id }, 'Could not read the agent queue — bootstrapping without it');
-      return undefined;
-    });
+    // The two reads are independent and run together, each with its own error handling.
+    const [retryContext, queue] = await Promise.all([
+      resolveRetryContext(campaign),
+      Promise.resolve().then(() => readAgentQueueState(campaign, session.agent_user_id)).catch((err: unknown) => {
+        log.warn({ err, sessionId: session.id, campaignId: campaign.id }, 'Could not read the agent queue — bootstrapping without it');
+        return undefined;
+      }),
+    ]);
 
     const bootstrap: AgencySessionBootstrap = {
       session_id: session.id,

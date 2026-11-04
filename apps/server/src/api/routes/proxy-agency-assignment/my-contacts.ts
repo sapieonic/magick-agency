@@ -24,6 +24,7 @@ import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/
 import { UUID_RE } from '../../../utils/uuid.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
+import { settledValue } from '../helpers/settled.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
 import { agentRetryOpen, staffedCampaign } from './shared.js';
 
@@ -61,10 +62,14 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
     if (!campaign) return reply;
 
     const now = new Date();
-    const tally = await agencyAssignmentReadRepository.myTally(campaign, userId);
+    // Independent reads, started together; a throw is rethrown in this order.
+    const [tallyRead, queueRead] = await Promise.allSettled([
+      agencyAssignmentReadRepository.myTally(campaign, userId),
+      readAgentQueueState(campaign, userId, now),
+    ]);
+    const tally = settledValue(tallyRead);
     // The queue pacing and the station read (strict / preferred); pool mode has none of its own.
-    const queue = (await readAgentQueueState(campaign, userId, now))
-      ?? poolModeQueueState(campaign, tally.pool.next_open_at, now);
+    const queue = settledValue(queueRead) ?? poolModeQueueState(campaign, tally.pool.next_open_at, now);
     const body: AgencyMyContactsSummary = {
       campaign_id: campaign.id,
       assignment_mode: campaign.assignment_mode,
