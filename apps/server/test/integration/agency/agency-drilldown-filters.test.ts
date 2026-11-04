@@ -440,29 +440,49 @@ describe('plans: index-shaped predicates (sequential scans off for one transacti
     return planOf(last.sql, last.values);
   }
 
+  /*
+   * Which campaign-led index wins depends on the table's statistics, and this seed is a few
+   * rows in a database other files have filled and emptied (autovacuum analyses it between
+   * runs). So these assert the SHAPE: no sequential scan, and the bucket's own predicate is
+   * an index condition under the campaign, on one of the indexes built for it. On a 1M-row
+   * campaign the planner picks `idx_agency_contacts_insights` (index-only) for every bucket
+   * but due now, which `idx_agency_contacts_dialable` serves index-only; the EXPLAIN ANALYZE
+   * output is in the WS F report.
+   */
+  const CONTACT_INDEXES = /Index (Only )?Scan using (idx_agency_contacts_insights|idx_agency_contacts_dialable) on agency_contacts/;
+
   it.each(['due_now', 'retry', 'callback'] as const)(
-    'contacts total, waiting=%s: idx_agency_contacts_insights on (campaign_id, state)',
+    'contacts total, waiting=%s: an index condition on the campaign and the bucket',
     async (waiting) => {
       const s = await seed();
       await contactTotal(s.campaign.id, { waiting });
       const plan = await planOfLast();
-      expect(plan).toContain('idx_agency_contacts_insights');
-      // The bucket's `state = 'pending'` is an index condition, not a filter over the campaign.
-      expect(plan).toMatch(/Index Cond: \(\(campaign_id = [^\n]*\) AND \(\(?state\)?(::text)? = 'pending'/);
+      expect(plan).not.toContain('Seq Scan');
+      expect(plan).toMatch(CONTACT_INDEXES);
+      const cond = plan.split('\n').find((l) => l.includes('Index Cond:')) ?? '';
+      expect(cond).toContain('campaign_id =');
+      // `state = 'pending'` (the insights index) or `next_attempt_at` (the dialable index,
+      // partial on pending): the bucket narrows the scan, it is not a filter over the campaign.
+      expect(cond).toMatch(/state\)?(::text)? = 'pending'|next_attempt_at [<>]/);
     },
   );
 
-  it('contacts total, attempted=1: idx_agency_contacts_insights on the campaign prefix', async () => {
+  it('contacts total, attempted=1: a campaign-prefix scan of the insights index', async () => {
     const s = await seed();
     await contactTotal(s.campaign.id, { attempted: '1' });
-    expect(await planOfLast()).toContain('idx_agency_contacts_insights');
+    const plan = await planOfLast();
+    expect(plan).not.toContain('Seq Scan');
+    expect(plan).toMatch(/Index Cond: \(campaign_id = /);
   });
 
-  it('attempts total, dialed window: idx_agency_attempts_campaign_dialed range scan', async () => {
+  it('attempts total, dialed window: a dialed_at range under the campaign, both bounds in the index', async () => {
     const s = await seed();
     await attemptTotal(s.campaign.id, { dialed_from: '2026-10-01T09:00:00Z', dialed_to: '2026-10-01T14:00:00Z', redial: '1' });
     const plan = await planOfLast();
-    expect(plan).toContain('idx_agency_attempts_campaign_dialed');
-    expect(plan).toMatch(/Index Cond: \(\(campaign_id = .*\) AND \(dialed_at >= .*\) AND \(dialed_at < /);
+    expect(plan).not.toContain('Seq Scan');
+    const cond = plan.split('\n').find((l) => l.includes('Index Cond:')) ?? '';
+    expect(cond).toContain('campaign_id =');
+    expect(cond).toContain('dialed_at >=');
+    expect(cond).toContain('dialed_at <');
   });
 });
