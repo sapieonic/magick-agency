@@ -11,7 +11,7 @@ before writing a repository or a migration.
 - `migrations/0001_baseline.sql` plus numbered migrations after it (0002 telephony credentials,
   0003 and 0004 dialer indexes, 0005 soft phone, 0006 session `client_kind`, 0007 ingest
   `dedupe_column`, 0008 wrap-up redial, 0009 contact assignment, 0010 its index and CHECK
-  validation, 0011 insights foundation, 0012 insights rollup, 0013 pacing history). node-pg-migrate,
+  validation, 0011 insights foundation, 0012 insights rollup, 0013 pacing history, 0014 the rollup's connect-rate measures and carrier errors). node-pg-migrate,
   one file per migration, one transaction, exactly one `-- up migration` and one
   `-- down migration` marker (a test asserts it).
 - **Never edit or renumber an applied migration; add a new one.** A migration is a shared file:

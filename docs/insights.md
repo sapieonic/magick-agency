@@ -73,7 +73,7 @@ Every measure is a count or a sum, so a range is the SUM of its buckets.
 | `agency_insights_rollup_buckets` | campaign, bucket | the bucket's totals (every measure below), `source_updated_at` (the newest attempt `updated_at` folded in: "as of"), and the row the job locks |
 | `agency_insights_rollup_agents` | + agent (`agency_agent_sessions.agent_user_id` of the reserved session; NULL without one) | every measure, per agent |
 | `agency_insights_rollup_codes` | + agent, disposition code | conversations and dials per code, so successes and override grants are filtered by the caller's current code lists at read time |
-| `agency_insights_rollup_facets` | + facet, key (+ agent for `override`) | `outcome` (dials), `caller_id` and `local_hour` (dials, connected), `no_outcome` (by wrap-up resolution), `override` (dials that spent an override, by the granting code) |
+| `agency_insights_rollup_facets` | + facet, key (+ agent for `override`) | `outcome` (dials), `caller_id` and `local_hour` (dials, first dials, connected, human connects; the last two with 0014), `no_outcome` (by wrap-up resolution), `override` (dials that spent an override, by the granting code), `carrier_error` (failed dials by `agency_calls.error_code`, NULL for none; 0014) |
 | `agency_insights_rollup_dirty` | append-only marks | "this bucket changed", written by triggers, deleted by the job |
 
 **Measures** (`insights-rollup-sql.ts`), each spelled from `/stats`' definition and held to it by
@@ -83,7 +83,8 @@ own expressions:
 | Measure | Definition |
 |---|---|
 | `dials` | every placed attempt (`dialed_at` in the bucket), wrap-up redials included |
-| `connected` | `/stats` `attempts_connected`: `outcome = 'connected' AND redial_number = 0` |
+| `connected` | `/stats` `attempts_connected`: `outcome = 'connected' AND redial_number = 0`; the Connected figure and its link, not the connect rate's numerator |
+| first dials | `PLACED_FIRST_DIAL_SQL` (`dialed_at` set and `redial_number = 0`): the connect rate's denominator. Buckets and agents derive it as dials − redials placed; the `caller_id` and `local_hour` facets store it (0014) |
 | `conversations` | `CONVERSATION_ATTEMPT_SQL` (a redial chain once): the series' `connected` and the success denominator |
 | successes | conversations whose code is in the caller's `successCodes` (the `successDispositionSql` predicate, with the catalog read by the caller) |
 | `abandoned` / `answered` | `ABANDONED_ATTEMPT_PREDICATE_SQL` / `state = 'ended' AND answered_at IS NOT NULL` |
@@ -93,7 +94,7 @@ own expressions:
 | overrides used | `override_applied` non-empty; the granting code is the contact's latest dispositioned attempt before the dial |
 | recorded | `connected` calls whose `agency_calls` row (`webrtc_call_id`) has a `recording_url` |
 | callbacks booked | `callback_at` set, at the booking dial's bucket |
-| human connects | conversations coded neither `voicemail` nor `no_disposition` (`/stats` `human_connects`) |
+| human connects | `HUMAN_CONNECT_ATTEMPT_SQL` (`sql-fragments.ts`): conversations coded neither `voicemail` nor `no_disposition`; a stored measure on buckets, agents and the `caller_id` / `local_hour` facets (0014); the connect rate's numerator |
 | no outcome | conversations coded NULL or `no_disposition` (`/stats` `unclassified_connects`), by wrap-up resolution |
 | local hour | `dialed_at` in the contact's zone, else the campaign's, else UTC (an unresolvable name falls through) |
 
@@ -339,9 +340,16 @@ Success and override-granting codes are the campaign's CURRENT catalog (`success
 - Callbacks: `pending` replaced by `pending_future` and `pending_due`, with IN4's definitions on the type.
 - Freshness: `pending_buckets` beside `as_of` on all three; the page says "updating" above 0.
 - "Connected": `calls.conversations`, `agents[].conversations`, `buckets[].conversations` added.
-  `connected` is `/stats`' `attempts_connected` (outcome connected, not a redial), the CONNECT rate's
-  numerator over dials; `conversations` (a redial chain once) is the SUCCESS rate's denominator. The
-  console's `successRate` takes conversations. `calls.successes` added.
+  `connected` is `/stats`' `attempts_connected` (outcome connected, not a redial), the Connected
+  figure; `conversations` (a redial chain once) is the SUCCESS rate's denominator. The console's
+  `successRate` takes conversations. `calls.successes` added.
+- The connect rate (decision IN10) is the product's one definition, the same as `/stats`
+  `connect_rate_pct` and the agent record's: human connects ÷ placed first dials. Calls and agent rows
+  carry `human_connects` (first dials = dials − redials placed); trend buckets, best hours and caller
+  IDs carry `human_connects` and `first_dials`. `test/integration/api/agency-connect-rate.test.ts`
+  pins Insights, `/stats`, the roster and the scorecard to one number on a seed with voicemail,
+  no-disposition and unwritten connects, redial chains and never-placed queued attempts.
+- `range.clamped` (IN12) and `health.carrier_failures_by_code` (0014) added.
 
 **Drill-downs, end to end.** `apps/server/test/fixtures/insights-drilldowns.json` lists every number
 that opens a list, the list, and its params. `test/integration/api/agency-insights-drilldowns.test.ts`

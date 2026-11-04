@@ -257,6 +257,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_agency_attempts_insights_delete` (0012) | AFTER DELETE, FOR EACH STATEMENT, `OLD TABLE AS old_rows` | `agency_call_attempts` | `agency_insights_mark_attempt_buckets()` |
 | `trg_agency_calls_insights_recording_insert` (0012) | AFTER INSERT, WHEN `NEW.recording_url IS NOT NULL` | `agency_calls` | `agency_insights_mark_call_recording()` |
 | `trg_agency_calls_insights_recording_update` (0012) | AFTER UPDATE OF `recording_url`, WHEN it changed | `agency_calls` | `agency_insights_mark_call_recording()` |
+| `trg_agency_calls_insights_error_insert` (0014) | AFTER INSERT, WHEN `NEW.error_code IS NOT NULL` | `agency_calls` | `agency_insights_mark_call_error()` |
+| `trg_agency_calls_insights_error_update` (0014) | AFTER UPDATE OF `error_code`, WHEN it changed | `agency_calls` | `agency_insights_mark_call_error()` |
 | `trg_agency_contacts_insights_zone` (0012) | AFTER UPDATE OF `timezone`, WHEN it changed | `agency_contacts` | `agency_insights_mark_contact_zone()` |
 | `trg_agency_campaigns_insights_zone` (0012) | AFTER UPDATE OF `default_timezone`, WHEN it changed | `agency_campaigns` | `agency_insights_mark_campaign_zone()` |
 
@@ -708,6 +710,34 @@ rollup).
 upsert, the cascade, both read plans on the primary key, the marker's default, down then up), the
 table list in `baseline.test.ts`, and the down → up suite.
 
+
+### 0014 — `migrations/0014_insights_rollup_first_dials_carrier_errors.sql`
+
+The rollup's connect-rate measures (decision IN10: human connects ÷ placed first dials, the same
+number as `/stats` and the agent record) and carrier failures by error code (the mapping's §9).
+Additive to 0012.
+
+- **Columns**, all `BIGINT NOT NULL DEFAULT 0`: `human_connects` on
+  `agency_insights_rollup_buckets` and `agency_insights_rollup_agents`; `first_dials` and
+  `human_connects` on `agency_insights_rollup_facets` (the `caller_id` and `local_hour` facets;
+  0 on every other facet). Buckets and agents derive first dials as dials − redials placed.
+- **CHECK** `ck_agency_insights_rollup_facet` gains `carrier_error`: failed dials keyed by
+  `agency_calls.error_code` (NULL key for no call row or no code).
+- **Triggers** `trg_agency_calls_insights_error_insert` (WHEN `NEW.error_code IS NOT NULL`) and
+  `trg_agency_calls_insights_error_update` (AFTER UPDATE OF `error_code`, WHEN it changed), function
+  `agency_insights_mark_call_error()`: mark the bucket of the attempt whose `webrtc_call_id` is the
+  call (`idx_agency_attempts_webrtc`). Cost: ~15 µs per error-code-changing call update (5,000
+  updates, median of five: 536 ms with, 459 ms without); every other call write is excluded by the
+  WHEN clauses.
+- **Backfill**: one mark per existing rollup header, so the job recomputes every bucket with the
+  new measures.
+- **Locking.** ACCESS EXCLUSIVE on `agency_insights_rollup_facets` for the CHECK swap, SHARE ROW
+  EXCLUSIVE on `agency_calls` for the triggers; one transaction.
+
+**Down** drops the triggers and the function, deletes the `carrier_error` rows, restores the
+CHECK and drops the four columns. **Tests**: `test/integration/db/insights-rollup-facets-migration.test.ts`
+(the columns, the CHECK, both triggers marking the right bucket, the backfill, down then up), the
+trigger list in `baseline.test.ts`, the down → up suite, and the server's rollup oracle.
 
 ## Tests
 
