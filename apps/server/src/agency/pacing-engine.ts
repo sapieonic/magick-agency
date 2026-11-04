@@ -53,6 +53,9 @@ import { campaignChangeReasonFor } from './outcome-classifier.js';
 import type { AgencyCampaignChangeReason, AgencyCampaignStatus } from '@magick-agency/contracts/agency';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
+import { callingWindowState } from './calling-hours.js';
+import { PacingHistoryAccumulator } from './pacing/pacing-history.js';
+import { PACING_IDLE_FIELD, type PacingHistoryField } from './pacing/pacing-history-fields.js';
 import { RESERVING_MARKER, returnReservedAgent, type QueuedBreakRelease } from './reserved-agent.js';
 import {
   agencyPacingMissedWakeupsTotal,
@@ -226,6 +229,13 @@ interface CampaignPacingState {
   idle?: TickIdleReason;
   /** The campaign's account, learned from its row: account events wake it. */
   accountKey: string | null;
+  /** The campaign's tenant, for the pacing history a skipped tick still counts into. */
+  tenantId: string;
+  /**
+   * The row the last full tick found `running`, or null when it was not: a skipped tick counts
+   * a running tick into the pacing history from it (`countRunningTick`).
+   */
+  runningRow: AgencyCampaignRecord | null;
 }
 
 const NEVER = Number.NEGATIVE_INFINITY;
@@ -238,6 +248,8 @@ export interface PacingEngineOptions {
   cacheTtlMs?: number;
   /** The engine clock for the skip logic and the caches. Default `Date.now`. */
   now?: () => number;
+  /** The pacing history (`pacing/pacing-history.ts`). Default: a new one over the repository. */
+  history?: PacingHistoryAccumulator;
 }
 
 /** One tick, as the engine saw it. For tests and the measurement harness only. */
@@ -326,7 +338,19 @@ export class PacingEngine {
     const ttl = options.cacheTtlMs ?? PACING_CACHE_TTL_MS;
     this.campaignCache = new GenerationTtlCache(ttl, this.now);
     this.limitCache = new GenerationTtlCache(ttl, this.now);
+    this.history = options.history ?? new PacingHistoryAccumulator();
   }
+
+  /**
+   * The pacing history (IN2): per campaign per minute, counted next to every
+   * `agency_tick_idle_total` / `agency_predial_gate_total` increment, every running tick and
+   * every paced dial, and flushed off the tick (`pacing/pacing-history.ts`). Armed by `start()`,
+   * flushed when a campaign is given up, closed (one last flush, bounded) by `halt()`.
+   */
+  private readonly history: PacingHistoryAccumulator;
+
+  /** Per campaign: whether its own calling window was closed, decided once a minute per row. */
+  private readonly windowClosedAt = new Map<string, { minute: number; row: AgencyCampaignRecord; closed: boolean }>();
 
   /** See every tick the engine runs or skips (tests, the measurement harness). */
   registerTickObserver(observer: ((o: PacingTickObservation) => void) | null): void {
@@ -527,6 +551,7 @@ export class PacingEngine {
     };
     this.superviseTimer = setInterval(supervise, SUPERVISE_INTERVAL_MS);
     this.superviseTimer.unref?.();
+    this.history.start();
     supervise();
   }
 
@@ -556,6 +581,8 @@ export class PacingEngine {
       // Wait (bounded) for any tick and owner sweep already in flight — see `inFlightTicks`
       // and `inFlightSweeps`. Together: neither waits on the other.
       await Promise.all([this.drainTicks(), this.drainSweeps()]);
+      // Last, so what the final ticks counted is in it. Bounded and never rejects.
+      await this.history.close();
     })();
     return this.halted;
   }
@@ -789,6 +816,7 @@ export class PacingEngine {
     // Dirty, so the first round ticks it in full whatever happened before.
     this.pacingState.set(campaign.id, {
       dirty: true, quiescent: false, lastFullAt: NEVER, accountKey: accountKeyOf(campaign.tenant_id, campaign.account_id),
+      tenantId: campaign.tenant_id, runningRow: null,
     });
 
     const renew = setInterval(() => {
@@ -860,6 +888,10 @@ export class PacingEngine {
     this.campaignCache.invalidate(campaignId);
     this.queueSent.delete(campaignId);
     this.fallbackSweptAt.delete(campaignId);
+    this.windowClosedAt.delete(campaignId);
+    // What this campaign counted goes out now rather than at the next interval (a stop, a
+    // completion, a lost lease). Off the path: never awaited, never rejects.
+    void this.history.flush();
     if (this.led.size === 0) this.disarmRounds();
     if (!opts.alreadyLost) await this.lease.release(campaignId);
   }
@@ -917,8 +949,9 @@ export class PacingEngine {
       const cause = this.wakeCause(state, now);
       if (cause === null) {
         // Replay the idle reason the last full tick found, so `agency_tick_idle_total`
-        // keeps counting idle ticks, not only the full ones.
-        if (state?.idle) this.recordIdle(campaignId, state.idle);
+        // keeps counting idle ticks, not only the full ones (and the pacing history its ticks).
+        if (state?.runningRow) this.countRunningTick(state.runningRow);
+        if (state?.idle) this.recordIdle(campaignId, state.tenantId, state.idle);
         safeEmit('agency-pacing-ticks', () => agencyPacingTicksTotal.inc({ mode: 'skipped', cause: 'none' }));
         this.observe({ campaignId, mode: 'skipped' });
         continue;
@@ -1071,6 +1104,11 @@ export class PacingEngine {
       if (campaign.status === 'completed' || campaign.status === 'stopped') this.lastStatus.delete(campaignId);
       else this.lastStatus.set(campaignId, campaign.status);
 
+      // The pacing history counts ticks on a RUNNING campaign only: its stall rule reads a minute
+      // whose ticks mostly idled as stalled, and a paused campaign is not stalled.
+      if (campaign.status === 'running') this.countRunningTick(campaign);
+      if (startState) startState.runningRow = campaign.status === 'running' ? campaign : null;
+
       // ── Refuse BEFORE reserving anything, not after. ────────────────────────
       //
       // An empty caller-ID pool cannot produce a dial, and it cannot clear without
@@ -1097,7 +1135,7 @@ export class PacingEngine {
       // dials nothing. Testing length here while the picker tested truthiness is
       // what let a junk pool past this guard and into an unlatched 4 Hz spin.
       if (campaign.status === 'running' && usableCallerIds(campaign).length === 0) {
-        this.recordIdle(campaign.id, 'no_caller_ids');
+        this.recordIdle(campaign.id, campaign.tenant_id, 'no_caller_ids');
         this.noteMisconfigured(campaign, 'has no usable caller IDs — every tick will dial nothing until one is added');
         // Only a campaign edit clears it, and an edit publishes `campaign_changed`.
         quiescent = true;
@@ -1125,7 +1163,7 @@ export class PacingEngine {
         this.maybeStartOwnerSweeps(campaign);
         const plan = await this.planTick(campaign, round);
         planned = plan;
-        if (plan.idle) this.recordIdle(campaign.id, plan.idle);
+        if (plan.idle) this.recordIdle(campaign.id, campaign.tenant_id, plan.idle);
         if (plan.toDial > 0) {
           willBeQuiescent = false;
           // `planTick` awaited on Redis and the DB; leadership may have been given
@@ -1488,7 +1526,7 @@ export class PacingEngine {
       // must not dial on a guess. Both just move to the next candidate.
     }
     if (reserved.length === 0) {
-      this.recordIdle(campaign.id, 'no_reservations');
+      this.recordIdle(campaign.id, campaign.tenant_id, 'no_reservations');
       return 0;
     }
 
@@ -1508,7 +1546,7 @@ export class PacingEngine {
       if (!paired.has(surplus.sessionId)) await this.returnReserved(surplus.sessionId);
     }
     if (pairs.length === 0) {
-      this.recordIdle(campaign.id, 'no_contacts');
+      this.recordIdle(campaign.id, campaign.tenant_id, 'no_contacts');
       return 0;
     }
     const contacts = pairs.map((p) => p.contact);
@@ -1525,7 +1563,7 @@ export class PacingEngine {
       const gate = await evaluatePreDialGates(
         { campaign, contact, now: new Date() }, { dnc: this.dnc },
       );
-      this.recordGate(campaign.id, gate);
+      this.recordGate(campaign, gate);
 
       if (gate.action === 'halt') {
         // Campaign-wide, so the contacts claimed ALONGSIDE this one are abandoned
@@ -1648,6 +1686,7 @@ export class PacingEngine {
           stillAuthorised: () => this.mayDial(campaign.id),
         });
         dialed++;
+        this.history.count(campaign.id, campaign.tenant_id, 'dials_placed');
       } catch (err) {
         log.error({ err, attemptId: attempt.id }, 'Dial dispatch failed');
         await agencyAttemptRepository.setState(attempt.id, 'ended', {
@@ -1835,7 +1874,12 @@ export class PacingEngine {
    * creates confidence that does not extend one line past it. Telemetry is what we
    * sacrifice; dialing is not.
    */
-  private recordGate(campaignId: string, decision: PreDialDecision): void {
+  private recordGate(campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id'>, decision: PreDialDecision): void {
+    const campaignId = campaign.id;
+    // The pacing history first, and outside the metric's guard: a throwing counter must not
+    // cost the history its count (the two are pinned together by `pacing-history-pin.test.ts`).
+    const field = gateHistoryField(decision);
+    if (field) this.history.count(campaignId, campaign.tenant_id, field);
     // `dial` is counted too, so the gate's own throughput is visible: a `gate`
     // series with no `cleared` alongside it means everything is being stopped, and
     // a reviewer should be able to see that without a second query.
@@ -1848,11 +1892,37 @@ export class PacingEngine {
     }));
   }
 
-  private recordIdle(campaignId: string, reason: TickIdleReason): void {
+  private recordIdle(campaignId: string, tenantId: string, reason: TickIdleReason): void {
+    // The pacing history's count beside the metric, never behind its guard (see `recordGate`).
+    this.history.count(campaignId, tenantId, PACING_IDLE_FIELD[reason]);
     // Same rule. This one is called from `planTick`'s result handling, where a
     // throw would abort the tick before it reserved anything — less damaging, and
     // still not a trade worth making for a counter.
     safeEmit('agency-tick-idle', () => agencyTickIdleTotal.inc({ campaign_id: campaignId, reason }));
+  }
+
+  /**
+   * One tick (full or skipped) on a running campaign, into the pacing history: `ticks`, and
+   * `outside_hours_ticks` when the campaign's own calling window (its default zone) is closed.
+   * The window is decided once a minute per campaign row (an Intl read, not one per tick); a
+   * changed row decides again.
+   */
+  private countRunningTick(campaign: AgencyCampaignRecord): void {
+    this.history.count(campaign.id, campaign.tenant_id, 'ticks');
+    const nowMs = Date.now();
+    const minute = nowMs - (nowMs % 60_000);
+    let cached = this.windowClosedAt.get(campaign.id);
+    if (!cached || cached.minute !== minute || cached.row !== campaign) {
+      const closed = callingWindowState({
+        start: campaign.calling_window_start,
+        end: campaign.calling_window_end,
+        days: campaign.calling_days,
+        timezone: campaign.default_timezone,
+      }, new Date(nowMs)) === 'closed';
+      cached = { minute, row: campaign, closed };
+      this.windowClosedAt.set(campaign.id, cached);
+    }
+    if (cached.closed) this.history.count(campaign.id, campaign.tenant_id, 'outside_hours_ticks');
   }
 
   /**
@@ -1959,6 +2029,23 @@ export class PacingEngine {
   /** Campaign ids this replica currently leads (observability + tests). */
   leading(): string[] {
     return [...this.led.keys()];
+  }
+}
+
+/**
+ * The pacing history column a gate decision counts into (`agency_predial_gate_total`'s
+ * non-`dial` decisions), or null for a cleared dial (counted as `dials_placed` once dispatched).
+ */
+export function gateHistoryField(decision: PreDialDecision): PacingHistoryField | null {
+  switch (decision.action) {
+    case 'dial':
+      return null;
+    case 'suppress':
+      return decision.suppressedReason === 'dnc' ? 'predial_dnc_suppressed' : 'predial_invalid_suppressed';
+    case 'defer':
+      return 'calling_hours_deferrals';
+    case 'halt':
+      return 'dnc_unavailable_halts';
   }
 }
 

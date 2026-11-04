@@ -476,6 +476,22 @@ export const agencyPacingMissedWakeupsTotal = counter(meter, 'agency_pacing_miss
   description: 'Pacing safety ticks that found work no invalidation event announced',
 });
 
+// ─── Agency dialer: pacing history writes (IN2) ─────────────────────────────
+//
+// The pacing history (`agency_campaign_pacing_minutes`) is best effort: the leader counts per
+// campaign per minute in memory and flushes every ~15 s (`path="batch"`), and the writes outside
+// the tick are one upsert each (`path="direct"`). A failed write never fails a tick or a request;
+// it counts here. A failed batch is kept for the next flush, and beyond the cap its oldest
+// minutes are dropped and counted in `..._dropped_total`: a steady rate there means the
+// insights page's stall history has holes.
+export const agencyPacingHistoryWriteFailuresTotal = counter<'path'>(meter, 'agency_pacing_history_write_failures_total', {
+  description: 'Pacing history writes that failed (batch: kept for the next flush; direct: lost)',
+});
+
+export const agencyPacingHistoryDroppedTotal = counter(meter, 'agency_pacing_history_dropped_total', {
+  description: 'Campaign minutes of pacing history dropped unwritten (oldest first, beyond the pending cap)',
+});
+
 // ─── Agency dialer: SEAT TIME, so pacing decisions stop being arguments ──────
 //
 // Added 2026-09-10. Every number in the pacing recommendation — the 5-agent

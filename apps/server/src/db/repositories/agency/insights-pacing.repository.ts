@@ -35,37 +35,13 @@ import {
   type AgencyInsightsStallEpisode,
   type AgencyPacingIdleReason,
 } from '@magick-agency/contracts/api/agency/insights';
+import {
+  PACING_HISTORY_FIELDS,
+  PACING_IDLE_FIELD,
+  type PacingHistoryField,
+} from '../../../agency/pacing/pacing-history-fields.js';
 
-/** Every counter column, in table order. The accumulator's slots follow this order. */
-export const PACING_HISTORY_FIELDS = [
-  'ticks',
-  'outside_hours_ticks',
-  'idle_no_agents',
-  'idle_no_slots',
-  'idle_no_contacts',
-  'idle_no_reservations',
-  'idle_no_caller_ids',
-  'idle_nothing_due',
-  'calling_hours_deferrals',
-  'dnc_unavailable_halts',
-  'dials_placed',
-  'predial_dnc_suppressed',
-  'predial_invalid_suppressed',
-  'our_fault_retired',
-  'redials_refused_at_limit',
-] as const;
-
-export type PacingHistoryField = (typeof PACING_HISTORY_FIELDS)[number];
-
-/** The idle column of each reason (the metric label → the column). */
-export const PACING_IDLE_FIELD: Readonly<Record<AgencyPacingIdleReason, PacingHistoryField>> = {
-  no_agents: 'idle_no_agents',
-  no_slots: 'idle_no_slots',
-  no_contacts: 'idle_no_contacts',
-  no_reservations: 'idle_no_reservations',
-  no_caller_ids: 'idle_no_caller_ids',
-  nothing_due: 'idle_nothing_due',
-};
+export { PACING_HISTORY_FIELDS, PACING_IDLE_FIELD, type PacingHistoryField };
 
 /** One minute's counts for one campaign, in {@link PACING_HISTORY_FIELDS} order. */
 export interface PacingMinuteRow {

@@ -169,6 +169,20 @@
     ]
   },
   {
+    "name": "agency_pacing_history_dropped_total",
+    "kind": "Counter",
+    "description": "Campaign minutes of pacing history dropped unwritten (oldest first, beyond the pending cap)",
+    "attributes": []
+  },
+  {
+    "name": "agency_pacing_history_write_failures_total",
+    "kind": "Counter",
+    "description": "Pacing history writes that failed (batch: kept for the next flush; direct: lost)",
+    "attributes": [
+      "path"
+    ]
+  },
+  {
     "name": "agency_pacing_missed_wakeups_total",
     "kind": "Counter",
     "description": "Pacing safety ticks that found work no invalidation event announced",
