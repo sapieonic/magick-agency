@@ -51,6 +51,19 @@ export {
 } from './agency/fleet-metrics.repository.js';
 export type { AgencyLiveAttemptStateRow, AgencyLiveManualCallStateRow } from './agency/fleet-metrics.repository.js';
 export { AgencyAgentStatsRepository, agencyAgentStatsRepository } from './agency/agent-stats.repository.js';
+export {
+  AgencyInsightsPacingRepository,
+  agencyInsightsPacingRepository,
+  PACING_HISTORY_FIELDS,
+  PACING_HISTORY_MAX_EPISODES,
+  PACING_IDLE_FIELD,
+} from './agency/insights-pacing.repository.js';
+export type {
+  AgencyPacingHistory,
+  AgencyStallReason,
+  PacingHistoryField,
+  PacingMinuteRow,
+} from './agency/insights-pacing.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
 export { AgencyAssignmentRepository, agencyAssignmentRepository, planCtes } from './agency/assignment.repository.js';
 export type {
