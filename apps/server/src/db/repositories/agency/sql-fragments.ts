@@ -31,6 +31,15 @@ import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agenc
 export const CONTACT_PHONE_DIGITS_SQL = "regexp_replace(phone_e164, '[^0-9]', '', 'g')";
 
 /**
+ * {@link CONTACT_PHONE_DIGITS_SQL} on the `phone_e164` of table alias `alias`. Only the column
+ * is qualified, so the expression still matches `idx_agency_contacts_campaign_phone_digits`
+ * (the planner compares parsed expressions, and an alias does not change one).
+ */
+export function contactPhoneDigitsSql(alias: string): string {
+  return CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
+}
+
+/**
  * The wrap-up resolutions that are evidence of how long wrap-up TAKES.
  *
  * `disposition_submitted` (the agent finished and said so), `auto_return` (the

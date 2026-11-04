@@ -25,7 +25,7 @@ import type {
 // claims to have suppressed. See its own header for why a second, SQL-shaped copy
 // of this rule was deliberately not written.
 import { normalizeE164 } from '../../../agency/dnc-registry.js';
-import { CONTACT_PHONE_DIGITS_SQL } from './sql-fragments.js';
+import { CONTACT_PHONE_DIGITS_SQL, contactPhoneDigitsSql } from './sql-fragments.js';
 import {
   contactFilterConditions,
   keysetCondition,
@@ -34,7 +34,7 @@ import {
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
-import { contactBucketSql } from './assignment-sql.js';
+import { contactBucketSql, numberLiveSql, openContactSql, returnToPoolSql } from './assignment-sql.js';
 import {
   applyExtraAttemptOverride,
   type OverrideGrant,
@@ -178,28 +178,17 @@ const MAX_REPORTED_DUPLICATE_ROWS = 20;
 const CLAIM_CANDIDATE_FACTOR = 4;
 
 /**
- * `CONTACT_PHONE_DIGITS_SQL` for a table alias. Spelled the same so Postgres
- * matches `idx_agency_contacts_campaign_phone_digits` structurally.
- */
-function contactDigits(alias: string): string {
-  return CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
-}
-
-/**
- * The terms every claim puts on a candidate row `alias` of campaign `campaignParam`, exactly as
- * {@link AgencyContactRepository.claimDialable} spells them: open (`pending`), due, not DNC, and
- * its number not live on the campaign (another contact on it `in_flight` or `connected`). See
- * that method's header for why each term is there and why DNC is `IS DISTINCT FROM`.
+ * The terms every claim ({@link AgencyContactRepository.claimDialable} and the owner claim) puts
+ * on a candidate row `alias` of campaign `campaignParam`: open (`pending`), due, not DNC, and its
+ * number not live on the campaign (`numberLiveSql`). See `claimDialable`'s header for why each
+ * term is there and why DNC is `IS DISTINCT FROM`. Spelled in the order the index serves them
+ * (`state`, `next_attempt_at`), not through `openContactSql`.
  */
 function dueAndNotBusySql(alias: string, campaignParam: string): string {
   const c = alias;
   return `${c}.state = 'pending' AND ${c}.next_attempt_at <= now()
             AND ${c}.suppressed_reason IS DISTINCT FROM 'dnc'
-            AND NOT EXISTS (
-              SELECT 1 FROM agency_contacts live
-               WHERE live.campaign_id = ${campaignParam}
-                 AND ${contactDigits('live')} = ${contactDigits(c)}
-                 AND live.state IN ('in_flight', 'connected'))`;
+            AND NOT ${numberLiveSql(c, campaignParam)}`;
 }
 
 /**
@@ -210,7 +199,7 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
   const pool = mode === 'preferred'
     ? `,
        pool_locked AS MATERIALIZED (
-         SELECT c.id, c.next_attempt_at, ${contactDigits('c')} AS digits
+         SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
           WHERE c.campaign_id = $1 AND c.assigned_user_id IS NULL
             AND ${dueAndNotBusySql('c', '$1')}
@@ -247,7 +236,7 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
          SELECT a.agent_user_id, a.ord, x.id, x.digits
            FROM agents a
           CROSS JOIN LATERAL (
-            SELECT c.id, ${contactDigits('c')} AS digits
+            SELECT c.id, ${contactPhoneDigitsSql('c')} AS digits
               FROM agency_contacts c
              WHERE c.campaign_id = $1 AND c.assigned_user_id = a.agent_user_id
                AND ${dueAndNotBusySql('c', '$1')}
@@ -373,15 +362,9 @@ export class AgencyContactRepository {
     if (limit <= 0) return [];
     const { rows } = await getPool().query<AgencyContactRecord>(
       `WITH locked AS MATERIALIZED (
-         SELECT c.id, c.next_attempt_at, ${contactDigits('c')} AS digits
+         SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
-          WHERE c.campaign_id = $1 AND c.state = 'pending' AND c.next_attempt_at <= now()
-            AND c.suppressed_reason IS DISTINCT FROM 'dnc'
-            AND NOT EXISTS (
-              SELECT 1 FROM agency_contacts live
-               WHERE live.campaign_id = $1
-                 AND ${contactDigits('live')} = ${contactDigits('c')}
-                 AND live.state IN ('in_flight', 'connected'))
+          WHERE c.campaign_id = $1 AND ${dueAndNotBusySql('c', '$1')}
           ORDER BY c.next_attempt_at
             FOR UPDATE OF c SKIP LOCKED
           LIMIT $3
@@ -504,8 +487,7 @@ export class AgencyContactRepository {
     const campaign = p.add(campaignId);
     const ids = p.add([...agentUserIds]);
     const codes = p.add([...opts.callbackCodes]);
-    const open = (alias: string) =>
-      `${alias}.campaign_id = ${campaign} AND ${alias}.state = 'pending' AND ${alias}.suppressed_reason IS DISTINCT FROM 'dnc'`;
+    const open = (alias: string) => `${alias}.campaign_id = ${campaign} AND ${openContactSql(alias)}`;
     const poolSql = pool
       ? `
        UNION ALL
@@ -601,17 +583,7 @@ export class AgencyContactRepository {
           LIMIT $5
             FOR UPDATE OF c SKIP LOCKED
        ),
-       moved AS (
-         UPDATE agency_contacts c
-            SET assigned_user_id = NULL, assigned_at = NULL, assigned_by_user_id = NULL, updated_at = now()
-           FROM due
-          WHERE c.id = due.id AND c.state = 'pending' AND c.assigned_user_id = due.assigned_user_id
-         RETURNING c.id, c.tenant_id, c.campaign_id, due.assigned_user_id AS from_user_id
-       )
-       INSERT INTO agency_contact_assignment_events
-         (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
-       SELECT tenant_id, campaign_id, id, from_user_id, NULL, NULL, 'callback_fallback', $4::uuid FROM moved
-       RETURNING contact_id, from_user_id`,
+       ${returnToPoolSql('callback_fallback', '$4')}`,
       [input.campaignId, input.graceMinutes, [...input.callbackCodes], input.batchId, input.limit],
     );
     return rows.map((r) => ({ contactId: r.contact_id, fromUserId: r.from_user_id }));

@@ -24,13 +24,14 @@ import type { PhoneFilter } from '../../../agency/spine-filters.js';
 import {
   agentRetryAvailableAtSql,
   agentRetryBlockSql,
+  agentRetrySettingsOf,
+  bindAgentRetrySettings,
   callbackCodes,
   contactBucketSql,
-  lastAttemptAtSql,
+  openContactSql,
 } from './assignment-sql.js';
+import { iso } from './projections.js';
 import { params, phoneCondition, toKeysetPage } from './query-builders.js';
-
-const OPEN_BUCKETS: readonly AgencyMyContactBucket[] = ['pending', 'callback', 'not_reached'];
 
 export function emptyBucketCounts(): AgencyContactBucketCounts {
   return Object.fromEntries(AGENCY_MY_CONTACT_BUCKETS.map((b) => [b, 0])) as AgencyContactBucketCounts;
@@ -63,7 +64,7 @@ export interface ProgressRaw {
 }
 
 export interface MyContactsTally {
-  own: OwnerTally & { eligible: number; open_non_callback: number; next_open_at: Date | null };
+  own: OwnerTally & { eligible: number; next_open_at: Date | null };
   /**
    * The contacts nobody owns: their open count in strict mode (`unassigned_open`; null
    * otherwise), and in pool mode the earliest `next_attempt_at` among the campaign's open
@@ -96,8 +97,6 @@ interface MyContactRaw {
   cursor_at: string;
 }
 
-const iso = (d: Date | string | null): string | null => (d === null ? null : new Date(d).toISOString());
-
 function emptyTally(): OwnerTally {
   return { total: 0, counts: emptyBucketCounts(), attempted: 0, due_now: 0 };
 }
@@ -114,8 +113,7 @@ export class AgencyAssignmentReadRepository {
       pool.query<{ uid: string | null; bucket: AgencyMyContactBucket; n: number; attempted: number; due: number }>(
         `SELECT c.assigned_user_id::text AS uid, ${bucket} AS bucket, count(*)::int AS n,
                 (count(*) FILTER (WHERE c.attempt_count > 0))::int AS attempted,
-                (count(*) FILTER (WHERE c.state = 'pending' AND c.suppressed_reason IS DISTINCT FROM 'dnc'
-                                    AND c.next_attempt_at <= now()))::int AS due
+                (count(*) FILTER (WHERE ${openContactSql('c')} AND c.next_attempt_at <= now()))::int AS due
            FROM agency_contacts c
           WHERE c.campaign_id = ${id}::uuid
           GROUP BY 1, 2`,
@@ -168,33 +166,27 @@ export class AgencyAssignmentReadRepository {
     const bind = params();
     const id = bind.add(campaign.id);
     const user = bind.add(userId);
-    const codes = bind.add(callbackCodes(campaign.disposition_catalog));
-    const block = agentRetryBlockSql('c', {
-      allowed: bind.add(campaign.allow_agent_retry),
-      rounds: bind.add(campaign.agent_retry_rounds),
-      cooldownMinutes: bind.add(campaign.agent_retry_cooldown_minutes),
-      callbackCodes: codes,
-    });
+    const settings = bindAgentRetrySettings(bind, agentRetrySettingsOf(campaign));
+    const block = agentRetryBlockSql('c', settings);
     const own = await pool.query<{ bucket: AgencyMyContactBucket; n: number; attempted: number; due: number; eligible: number; next_open_at: Date | null }>(
       `SELECT b.bucket, count(*)::int AS n,
               (count(*) FILTER (WHERE b.attempt_count > 0))::int AS attempted,
               (count(*) FILTER (WHERE b.bucket IN ('pending', 'callback', 'not_reached') AND b.next_attempt_at <= now()))::int AS due,
               (count(*) FILTER (WHERE b.blocked IS NULL))::int AS eligible,
               min(b.next_attempt_at) FILTER (WHERE b.bucket IN ('pending', 'callback', 'not_reached')) AS next_open_at
-         FROM (SELECT c.attempt_count, c.next_attempt_at, ${contactBucketSql('c', codes)} AS bucket, ${block} AS blocked
+         FROM (SELECT c.attempt_count, c.next_attempt_at, ${contactBucketSql('c', settings.callbackCodes)} AS bucket, ${block} AS blocked
                  FROM agency_contacts c
                 WHERE c.campaign_id = ${id}::uuid AND c.assigned_user_id = ${user}::uuid) b
         GROUP BY b.bucket`,
       bind.values,
     );
-    const tally: MyContactsTally['own'] = { ...emptyTally(), eligible: 0, open_non_callback: 0, next_open_at: null };
+    const tally: MyContactsTally['own'] = { ...emptyTally(), eligible: 0, next_open_at: null };
     for (const r of own.rows) {
       tally.total += r.n;
       tally.counts[r.bucket] += r.n;
       tally.attempted += r.attempted;
       tally.due_now += r.due;
       tally.eligible += r.eligible;
-      if (OPEN_BUCKETS.includes(r.bucket) && r.bucket !== 'callback') tally.open_non_callback += r.n;
       if (r.next_open_at && (!tally.next_open_at || r.next_open_at < tally.next_open_at)) tally.next_open_at = r.next_open_at;
     }
 
@@ -206,11 +198,11 @@ export class AgencyAssignmentReadRepository {
         ? `SELECT count(*)::int AS open, NULL::timestamptz AS next_open_at
              FROM agency_contacts c
             WHERE c.campaign_id = $1::uuid AND c.assigned_user_id IS NULL
-              AND c.state = 'pending' AND c.suppressed_reason IS DISTINCT FROM 'dnc'`
+              AND ${openContactSql('c')}`
         : `SELECT NULL::int AS open, min(c.next_attempt_at) AS next_open_at
              FROM agency_contacts c
             WHERE c.campaign_id = $1::uuid
-              AND c.state = 'pending' AND c.suppressed_reason IS DISTINCT FROM 'dnc'`,
+              AND ${openContactSql('c')}`,
       [campaign.id],
     );
     return { own: tally, pool: { open: rows[0]!.open, next_open_at: rows[0]!.next_open_at } };
@@ -231,16 +223,13 @@ export class AgencyAssignmentReadRepository {
   }): Promise<AgencyKeysetPage<AgencyMyContact>> {
     const { campaign } = input;
     const bind = params();
-    const codes = bind.add(callbackCodes(campaign.disposition_catalog));
-    const cooldown = bind.add(campaign.agent_retry_cooldown_minutes);
-    const block = agentRetryBlockSql('c', {
-      allowed: bind.add(campaign.allow_agent_retry),
-      rounds: bind.add(campaign.agent_retry_rounds),
-      cooldownMinutes: cooldown,
-      callbackCodes: codes,
-    });
+    const settings = bindAgentRetrySettings(bind, agentRetrySettingsOf(campaign));
+    // The row's latest attempt, read once per row of the page (the lateral `la` below) for the
+    // list, the retry block and the cooldown's end.
+    const lastAttemptAt = 'la.at';
+    const block = agentRetryBlockSql('c', settings, lastAttemptAt);
     const hero = bind.add(heroColumns(campaign));
-    const bucket = contactBucketSql('c', codes);
+    const bucket = contactBucketSql('c', settings.callbackCodes);
     // THE OWNER PREDICATE: the caller's contacts on this campaign, never anyone else's.
     const conditions = [
       `c.campaign_id = ${bind.add(campaign.id)}::uuid`,
@@ -258,19 +247,23 @@ export class AgencyAssignmentReadRepository {
     const { rows } = await getPool().query<MyContactRaw>(
       `SELECT c.id, c.campaign_id, c.phone_e164, ${bucket} AS bucket, c.state, c.attempt_count,
               c.last_outcome, c.last_disposition, c.next_attempt_at,
-              ${lastAttemptAtSql('c')} AS last_attempt_at,
+              ${lastAttemptAt} AS last_attempt_at,
               (SELECT COALESCE(json_agg(json_build_object('name', h.name, 'value', c.context ->> h.name) ORDER BY h.ord), '[]'::json)
                  FROM unnest(${hero}::text[]) WITH ORDINALITY AS h(name, ord)
                 WHERE NULLIF(btrim(c.context ->> h.name), '') IS NOT NULL) AS hero,
               ${block} AS retry_blocked, c.agent_retry_rounds_used,
-              ${agentRetryAvailableAtSql('c', cooldown)} AS retry_available_at,
+              ${agentRetryAvailableAtSql('c', settings.cooldownMinutes, lastAttemptAt)} AS retry_available_at,
               c.override_disposition, c.override_extra_attempts, c.override_retry_delay,
               c.override_calling_hours, c.override_granted_at,
               ${keysetAtSql('c.next_attempt_at')} AS cursor_at
-         FROM agency_contacts c
-        WHERE ${conditions.join(' AND ')}
-        ORDER BY c.next_attempt_at ASC, c.id ASC
-        LIMIT ${bind.add(input.limit + 1)}`,
+         FROM (SELECT c.* FROM agency_contacts c
+                WHERE ${conditions.join(' AND ')}
+                ORDER BY c.next_attempt_at ASC, c.id ASC
+                LIMIT ${bind.add(input.limit + 1)}) c
+         LEFT JOIN LATERAL (
+           SELECT max(a.created_at) AS at FROM agency_call_attempts a WHERE a.contact_id = c.id
+         ) la ON true
+        ORDER BY c.next_attempt_at ASC, c.id ASC`,
       bind.values,
     );
     return toKeysetPage(rows, input.limit, projectMyContact);

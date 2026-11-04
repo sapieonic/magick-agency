@@ -53,7 +53,7 @@ import {
   type AgentDialClaim,
   type AgentRetrySettings,
 } from '../db/repositories/agency.repository.js';
-import { callbackCodes } from '../db/repositories/agency/assignment-sql.js';
+import { agentRetrySettingsOf } from '../db/repositories/agency/assignment-sql.js';
 import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
 import type { AgentStateMachine } from './agent-state-machine.js';
 import type { AgencyDialer } from './agency-dialer.js';
@@ -136,15 +136,8 @@ function notRetryable(blocked: AgencyAgentRetryBlock, availableAt: Date | null):
   });
 }
 
-/** The retry settings `agentRetryBlockSql` reads, from the campaign row. */
-export function agentRetrySettingsOf(campaign: AgencyCampaignRecord): AgentRetrySettings {
-  return {
-    allowed: campaign.allow_agent_retry === true,
-    rounds: campaign.agent_retry_rounds,
-    cooldownMinutes: campaign.agent_retry_cooldown_minutes,
-    callbackCodes: callbackCodes(campaign.disposition_catalog),
-  };
-}
+/** The retry settings `agentRetryBlockSql` reads, from the campaign row (the route's import). */
+export { agentRetrySettingsOf };
 
 /** Dial `input.contactId` for its owner now. The route has checked the flag and the staffing. */
 export async function startMyContactCall(

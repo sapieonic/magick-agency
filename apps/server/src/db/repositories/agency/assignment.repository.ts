@@ -63,9 +63,10 @@ import {
   type RebalanceLoad,
   type RebalanceQuotas,
 } from '../../../agency/assignment/operation.js';
-import { contactBucketSql } from './assignment-sql.js';
+import { contactBucketSql, LIVE_STATES_SQL, openContactSql, returnToPoolSql } from './assignment-sql.js';
 import { params } from './query-builders.js';
-import { CONTACT_PHONE_DIGITS_SQL } from './sql-fragments.js';
+import { iso } from './projections.js';
+import { contactPhoneDigitsSql } from './sql-fragments.js';
 
 type Bind = ReturnType<typeof params>;
 type Queryable = Pick<PoolClient, 'query'>;
@@ -77,8 +78,6 @@ export interface AssignmentCampaignScope {
   /** `callbackCodes(campaign.disposition_catalog)`: rebalance leaves callbacks alone. */
   callbackCodes: string[];
 }
-
-const LIVE_STATES_SQL = `('in_flight', 'connected')`;
 
 /** The roster order: upload order, ties by line, then id. */
 const ROSTER_ORDER_SQL = 'c.created_at, c.csv_line_number NULLS LAST, c.id';
@@ -99,7 +98,7 @@ interface PlanSpec {
 function specFor(op: Exclude<CanonicalAssignment, { kind: 'rebalance' }>, bind: Bind): PlanSpec {
   const notLive = `c.state NOT IN ${LIVE_STATES_SQL}`;
   // "Open" (CA2): pending and not DNC — a contact something will still dial.
-  const open = `c.state = 'pending' AND c.suppressed_reason IS DISTINCT FROM 'dnc'`;
+  const open = openContactSql('c');
   const owned = (onlyUnassigned: boolean) =>
     onlyUnassigned ? 'c.assigned_user_id IS NULL' : `(c.assigned_user_id IS NULL OR c.state = 'pending')`;
   switch (op.kind) {
@@ -188,7 +187,7 @@ function specFor(op: Exclude<CanonicalAssignment, { kind: 'rebalance' }>, bind: 
 
 function groupKeySql(group: boolean): string {
   if (!group) return 'c.id::text';
-  const digits = CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', 'c.phone_e164');
+  const digits = contactPhoneDigitsSql('c');
   // A number with no digits at all is its own group, never one group of every such row.
   return `COALESCE(NULLIF(${digits}, ''), c.id::text)`;
 }
@@ -653,17 +652,7 @@ export class AgencyAssignmentRepository {
           LIMIT $3
             FOR UPDATE OF c SKIP LOCKED
        ),
-       moved AS (
-         UPDATE agency_contacts c
-            SET assigned_user_id = NULL, assigned_at = NULL, assigned_by_user_id = NULL, updated_at = now()
-           FROM due
-          WHERE c.id = due.id AND c.state = 'pending' AND c.assigned_user_id = due.assigned_user_id
-         RETURNING c.id, c.tenant_id, c.campaign_id, due.assigned_user_id AS from_user_id
-       )
-       INSERT INTO agency_contact_assignment_events
-         (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
-       SELECT tenant_id, campaign_id, id, from_user_id, NULL, NULL, 'unstaffed', $2::uuid FROM moved
-       RETURNING contact_id, from_user_id`,
+       ${returnToPoolSql('unstaffed', '$2')}`,
       [input.campaignId, input.batchId, input.limit],
     );
     return rows.map((r) => ({ contactId: r.contact_id, fromUserId: r.from_user_id }));
@@ -688,7 +677,7 @@ export class AgencyAssignmentRepository {
         LIMIT $3`,
       [contactId, campaignId, limit],
     );
-    return rows.map((r) => ({ ...r, created_at: new Date(r.created_at).toISOString() }));
+    return rows.map((r) => ({ ...r, created_at: iso(r.created_at)! }));
   }
 }
 
