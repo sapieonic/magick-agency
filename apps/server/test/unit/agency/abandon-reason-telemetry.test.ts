@@ -84,6 +84,8 @@ const { repos } = vi.hoisted(() => ({
       requeueOrphaned: vi.fn().mockResolvedValue({ state: 'pending', our_fault_attempts: 1 }),
     },
     session: { setState: vi.fn().mockResolvedValue(undefined) },
+    // The pacing history's single-row write: an our-fault retirement is counted there too (IN2).
+    insightsPacing: { addToMinute: vi.fn().mockResolvedValue(undefined) },
   },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -91,6 +93,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyCampaignRepository: {},
   agencyAgentSessionRepository: repos.session,
+  agencyInsightsPacingRepository: repos.insightsPacing,
 }));
 
 import { AgencyDialer, DIAL_OUTCOME_UNKNOWN_REDIAL_DELAY_MS, PRE_CARRIER_FAILURE_REDIAL_DELAY_MS } from '../../../src/agency/agency-dialer.js';
@@ -685,6 +688,10 @@ describe('the our-fault retirement counter', () => {
         - before,
       'a contact was retired by our own fault and nothing counted it',
     ).toBe(1);
+    // And the campaign's pacing history, beside the counter (one helper writes both).
+    expect(repos.insightsPacing.addToMinute).toHaveBeenCalledWith(expect.objectContaining({
+      campaignId: LABELS.campaign_id, tenantId: LABELS.tenant_id, field: 'our_fault_retired',
+    }));
   });
 
   it('does NOT count a retirement whose durable write rejected', async () => {

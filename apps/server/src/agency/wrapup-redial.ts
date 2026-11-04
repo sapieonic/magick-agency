@@ -48,6 +48,13 @@
  * (`redialRefusalForAttempt`: running, setting on). The cost: a redial is outside the
  * IPC channel's `maxDialsInFlight` back-pressure, which bounds requests on the channel,
  * not calls (one redial per agent at most, each behind the concurrency guard).
+ *
+ * ── A refusal at the limit is recorded ───────────────────────────────────────
+ *
+ * Every `redial_limit_reached` answer (the row check, the live wrap-up's count, the take) adds
+ * one to the campaign's pacing history for this minute (`redials_refused_at_limit`, IN2), a
+ * single-row upsert from whichever process serves the request (`recordPacingEvent`). Best
+ * effort: it never fails the answer.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import {
@@ -71,6 +78,7 @@ import { RESERVING_MARKER } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import type { WrapupManager, WrapupRedialRefusal } from './wrapup-manager.js';
 import { REDIAL_MESSAGES, redialRefusalForAttempt, type RedialRefusal } from './wrapup-redial-rules.js';
+import { recordPacingEvent } from './pacing/pacing-history.js';
 
 const log = createChildLogger({ component: 'agency-wrapup-redial' });
 
@@ -116,6 +124,15 @@ export function redialRefusalForGate(decision: PreDialDecision): RedialRefusal |
   }
 }
 
+/** A refusal at the redial limit, recorded in the campaign's pacing history first. */
+async function refuseAtLimit(
+  campaign: Pick<AgencyCampaignRecord, 'id' | 'tenant_id'>,
+  refusal: RedialRefusal,
+): Promise<WrapupRedialResult> {
+  await recordPacingEvent(campaign.id, campaign.tenant_id, 'redials_refused_at_limit');
+  return refuse(refusal);
+}
+
 function refusalForTake(reason: WrapupRedialRefusal): RedialRefusal {
   switch (reason) {
     case 'limit_reached':
@@ -147,7 +164,9 @@ export async function startWrapupRedial(
   const campaign = await agencyCampaignRepository.findById(attempt.campaign_id);
   if (!campaign) return refuse(NOT_YOURS);
   const rowRefusal = redialRefusalForAttempt(attempt, campaign, sessionId);
-  if (rowRefusal) return refuse(rowRefusal);
+  if (rowRefusal) {
+    return rowRefusal.code === 'redial_limit_reached' ? refuseAtLimit(campaign, rowRefusal) : refuse(rowRefusal);
+  }
 
   // ── 2. The live wrap-up (peeked; taken only once nothing else can refuse) ─────
   const live = deps.wrapup.stateFor(sessionId);
@@ -163,7 +182,9 @@ export async function startWrapupRedial(
     // ring the customer).
     return refuse({ code: 'redial_not_allowed', message: REDIAL_MESSAGES.not_offered });
   }
-  if (live.redial_remaining <= 0) return refuse({ code: 'redial_limit_reached', message: REDIAL_MESSAGES.limit });
+  if (live.redial_remaining <= 0) {
+    return refuseAtLimit(campaign, { code: 'redial_limit_reached', message: REDIAL_MESSAGES.limit });
+  }
 
   const contact = await agencyContactRepository.findById(attempt.contact_id);
   if (!contact || contact.state !== 'connected') {
@@ -189,7 +210,10 @@ export async function startWrapupRedial(
 
   // ── 5. Take the wrap-up: the countdown stops here, synchronously ────────────
   const take = deps.wrapup.takeForRedial(sessionId, attemptId);
-  if (!take.ok) return refuse(refusalForTake(take.reason));
+  if (!take.ok) {
+    const refusal = refusalForTake(take.reason);
+    return refusal.code === 'redial_limit_reached' ? refuseAtLimit(campaign, refusal) : refuse(refusal);
+  }
   const { taken } = take;
 
   // From here on, a refusal re-opens the wrap-up on the attempt it was taken from (a

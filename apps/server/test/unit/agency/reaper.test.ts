@@ -82,6 +82,8 @@ const { repos } = vi.hoisted(() => ({
       setState: vi.fn().mockResolvedValue(undefined),
       findById: vi.fn().mockResolvedValue(null),
     },
+    // The pacing history's single-row write: an our-fault retirement is counted there too (IN2).
+    insightsPacing: { addToMinute: vi.fn().mockResolvedValue(undefined) },
   },
 }));
 vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
@@ -89,6 +91,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyContactRepository: repos.contact,
   agencyAgentSessionRepository: repos.session,
   agencyCampaignRepository: {},
+  agencyInsightsPacingRepository: repos.insightsPacing,
 }));
 
 // The retry seam is spied but NOT stubbed — the real decision runs, so a test
@@ -1009,6 +1012,11 @@ describe('the reaper as a producer of our-fault retirements', () => {
       await retirementCount('orphaned') - before,
       'the reaper retired a contact and nothing counted it',
     ).toBe(1);
+    // And the campaign's pacing history, beside the counter (one helper writes both).
+    expect(repos.insightsPacing.addToMinute).toHaveBeenCalledTimes(1);
+    expect(repos.insightsPacing.addToMinute).toHaveBeenCalledWith(expect.objectContaining({
+      campaignId: 'camp-1', tenantId: 'ten-1', field: 'our_fault_retired',
+    }));
   });
 
   it('labels the reaper`s retirements `orphaned`, never the dial site`s causes', async () => {
@@ -1047,6 +1055,7 @@ describe('the reaper as a producer of our-fault retirements', () => {
       await retirementCount('orphaned') - before,
       'a refused transition was counted as a permanent retirement',
     ).toBe(0);
+    expect(repos.insightsPacing.addToMinute).not.toHaveBeenCalled();
   });
 
   it('counts nothing when the retirement write REJECTED', async () => {

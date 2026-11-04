@@ -33,6 +33,7 @@
  */
 import { createChildLogger } from '@magick-agency/observability';
 import {
+  agencyOurFaultRetirementTotal,
   agencyPacingHistoryDroppedTotal,
   agencyPacingHistoryWriteFailuresTotal,
 } from '@magick-agency/observability/metrics/agency';
@@ -273,4 +274,16 @@ export async function recordPacingEvent(
     safeEmit('agency-pacing-history-failure', () => agencyPacingHistoryWriteFailuresTotal.inc({ path: 'direct' }));
     log.warn({ err, campaignId, field }, 'Pacing history write failed — this event is not recorded');
   }
+}
+
+/**
+ * An our-fault retirement that LANDED: `agency_our_fault_retirement_total` and the campaign's
+ * pacing history (`our_fault_retired`) together, so the two cannot drift. Every producer (the
+ * dialer's settlement, the soft phone's, the reaper's requeue) calls this instead of the
+ * counter. The counter is guarded (`safeEmit`): a telemetry fault must not fail a settlement.
+ * Never rejects.
+ */
+export async function countOurFaultRetirement(labels: { tenant_id: string; campaign_id: string; outcome: string }): Promise<void> {
+  safeEmit('agency-our-fault-retirement', () => agencyOurFaultRetirementTotal.inc(labels));
+  await recordPacingEvent(labels.campaign_id, labels.tenant_id, 'our_fault_retired');
 }

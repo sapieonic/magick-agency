@@ -8,7 +8,7 @@
  */
 import { createChildLogger } from '@magick-agency/observability';
 import type { AgencyAttemptOutcome } from '@magick-agency/contracts/agency';
-import { agencyOurFaultRetirementTotal } from '@magick-agency/observability/metrics/agency';
+import { countOurFaultRetirement } from '../pacing/pacing-history.js';
 import { agencyContactRepository } from '../../db/repositories/agency.repository.js';
 import type { DialCommand } from '../dial-dispatcher.js';
 import {
@@ -180,7 +180,8 @@ export async function settleContact(
      * sustained non-zero — it is a revenue loss and a list-quality lie at once.
      */
     if (decision.reason === 'our_fault_bound_reached' && retirementLanded) {
-      agencyOurFaultRetirementTotal.inc({
+      // The counter and the campaign's pacing history (`our_fault_retired`), together.
+      await countOurFaultRetirement({
         tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, outcome,
       });
       // WARN rather than INFO, and deliberately thin: the `log.info` below
@@ -355,7 +356,7 @@ export async function holdOutcomeUnknownContact(
   }
   // Counted only when the retirement LANDED (a DNC row stays `suppressed`).
   if (landed.state === OUR_FAULT_RETIRED_STATE) {
-    agencyOurFaultRetirementTotal.inc({
+    await countOurFaultRetirement({
       tenant_id: cmd.tenantId, campaign_id: cmd.campaignId, outcome: DIAL_OUTCOME_UNKNOWN_RETIREMENT_LABEL,
     });
     log.warn(

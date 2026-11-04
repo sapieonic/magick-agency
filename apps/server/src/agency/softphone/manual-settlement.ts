@@ -15,7 +15,7 @@
  */
 import type { PoolClient } from 'pg';
 import { createChildLogger } from '@magick-agency/observability';
-import { agencyOurFaultRetirementTotal } from '@magick-agency/observability/metrics/agency';
+import { countOurFaultRetirement } from '../pacing/pacing-history.js';
 import type { AgencyContactState } from '@magick-agency/contracts/agency';
 import {
   agencyCampaignRepository,
@@ -105,7 +105,7 @@ export async function applyNoOutcomeSettlement(
   }, deps);
   if (!settled || settled.applied !== 'settled') return null;
   if (decision.reason === 'our_fault_bound_reached' && settled.state === decision.contactState && row.campaign_id) {
-    agencyOurFaultRetirementTotal.inc({ tenant_id: row.tenant_id, campaign_id: row.campaign_id, outcome: row.outcome ?? 'unknown' });
+    await countOurFaultRetirement({ tenant_id: row.tenant_id, campaign_id: row.campaign_id, outcome: row.outcome ?? 'unknown' });
     log.warn({ manualCallId: row.id, contactId: settled.contactId, outcome: row.outcome },
       'Contact retired by the our-fault redial bound — we never reached them');
   }
