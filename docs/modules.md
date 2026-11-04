@@ -1208,9 +1208,10 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 Scenario, flow, guard and setup tests that span several modules. The migrations themselves are SQL
 files in `packages/db/migrations/`, `0001_baseline.sql` to
-`0010_contact_assignment_index_and_checks.sql` (0009 and 0010 are contact assignment's; tested by
+`0011_insights_foundation.sql` (0009 and 0010 are contact assignment's; tested by
 `db/contact-assignment-migration.test.ts`; `0008_wrapup_redial.sql`, the wrap-up redial's, by
-`db/wrapup-redial-migration.test.ts`).
+`db/wrapup-redial-migration.test.ts`; 0011, the insights page's shared schema, by
+`db/insights-foundation-migration.test.ts`).
 
 | Test file | Cases |
 |---|---|
@@ -1224,6 +1225,7 @@ files in `packages/db/migrations/`, `0001_baseline.sql` to
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |
 | `packages/db/test/integration/db/ingest-dedupe-column-migration.test.ts` | 3 |
 | `packages/db/test/integration/db/wrapup-redial-migration.test.ts` | 6 |
+| `packages/db/test/integration/db/insights-foundation-migration.test.ts` | 8 |
 | `packages/db/test/integration/db/audio-file-pcm-migration.test.ts` | ~4 |
 | `packages/db/test/integration/db/dialer-analysis-migration.test.ts` | ~6 |
 | `packages/db/test/integration/db/webrtc-call-analysis-projection.test.ts` | ~2 |

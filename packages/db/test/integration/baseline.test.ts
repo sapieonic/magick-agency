@@ -96,6 +96,9 @@ const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
 const ALL_TRIGGERS: Array<[trigger: string, table: string]> = [
   ...UPDATED_AT_TRIGGERS,
   ['trg_agency_contacts_root', 'agency_contacts'],
+  // dials_placed (0011)
+  ['trg_agency_attempts_dial_placed_insert', 'agency_call_attempts'],
+  ['trg_agency_attempts_dial_placed_update', 'agency_call_attempts'],
 ];
 
 async function indexDef(name: string): Promise<string | undefined> {

@@ -158,7 +158,7 @@ Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snap
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provider`, `calling_window_start`, `calling_window_end`, `calling_days`, `default_timezone`, `wrapup_seconds`, `wrapup_auto_return`, `retry_policy`, `disposition_catalog`, `record_calls`, `analysis_profile_id`, `context_display`, `status`, `contacts_total`, `created_by`, `started_at`, `completed_at`, `created_at`, `updated_at`, `break_reasons`, `abandon_announcement_id`, `abandonment_ceiling_pct`, `pause_reason`, `paused_at`, `pause_abandonment_rate_pct`, `ended_at`, `last_transition_by_user_id`, `last_transition_by_name`, `parent_campaign_id`, `root_campaign_id`, `retry_generation`, `retry_selector`, `retry_idempotency_key`.
 
-**`agency_contacts`**. Roster contacts: E.164 phone, context, timezone, state, attempt counts, last outcome and disposition, next attempt, DNC suppression, row fingerprint, and retry lineage (`source_contact_id`, `root_contact_id`). `source_row_number` is a legacy column, not written.
+**`agency_contacts`**. Roster contacts: E.164 phone, context, timezone, state, attempt counts, last outcome and disposition, next attempt, DNC suppression, row fingerprint, and retry lineage (`source_contact_id`, `root_contact_id`). `source_row_number` is a legacy column, not written. 0011 adds `dials_placed` (every placed dial, kept by a trigger on `agency_call_attempts`; see below).
 
 Columns: `id`, `campaign_id`, `tenant_id`, `account_id`, `phone_e164`, `context`, `source_row_number`, `timezone`, `state`, `attempt_count`, `last_outcome`, `last_disposition`, `next_attempt_at`, `suppressed_reason`, `created_at`, `updated_at`, `our_fault_attempts`, `row_fingerprint`, `csv_line_number`, `source_contact_id`, `root_contact_id`.
 
@@ -170,7 +170,7 @@ Columns: `id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `state
 
 Columns: `id`, `session_id`, `tenant_id`, `account_id`, `campaign_id`, `agent_user_id`, `from_state`, `to_state`, `break_reason`, `at`.
 
-**`agency_call_attempts`**. One row per dial: reserved agent, state, outcome, disposition, callback, `dialed_at` / `answered_at` / `bridged_at` / `ended_at`, talk and wrap-up seconds. One live attempt per contact (`uq_agency_attempt_live`). 0008 adds `redial_of_attempt_id` and `redial_number` (the wrap-up redial chain, one redial per attempt by `uq_agency_attempt_redial_of`) and `redialed` to `ck_agency_wrapup_resolution` (see below).
+**`agency_call_attempts`**. One row per dial: reserved agent, state, outcome, disposition, callback, `dialed_at` / `answered_at` / `bridged_at` / `ended_at`, talk and wrap-up seconds. One live attempt per contact (`uq_agency_attempt_live`). 0008 adds `redial_of_attempt_id` and `redial_number` (the wrap-up redial chain, one redial per attempt by `uq_agency_attempt_redial_of`) and `redialed` to `ck_agency_wrapup_resolution` (see below). 0011 adds `agent_reopened` (see below).
 
 Columns: `id`, `campaign_id`, `contact_id`, `tenant_id`, `account_id`, `attempt_number`, `webrtc_call_id`, `caller_id`, `reserved_agent_id`, `state`, `outcome`, `disposition_code`, `notes`, `callback_at`, `dialed_at`, `answered_at`, `bridged_at`, `ended_at`, `talk_seconds`, `wrapup_seconds`, `created_at`, `updated_at`, `dispositioned_by_user_id`, `dispositioned_at`, `dispositioned_on_behalf`, `wrapup_started_at`, `wrapup_ended_at`, `wrapup_resolution`, `abandon_reason`, `wrapup_resolution`.
 
@@ -237,7 +237,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `announcements_updated_at` | BEFORE UPDATE | `announcements` | `update_updated_at()` |
 | `trg_analysis_profiles_updated_at` | BEFORE UPDATE | `call_analysis_profiles` | `update_updated_at()` |
 | `trg_agency_campaigns_updated_at` | BEFORE UPDATE | `agency_campaigns` | `update_updated_at()` |
-| `trg_agency_contacts_updated_at` | BEFORE UPDATE | `agency_contacts` | `update_updated_at()` |
+| `trg_agency_contacts_updated_at` | BEFORE UPDATE (0011: WHEN not the `dials_placed` counter's nested update) | `agency_contacts` | `update_updated_at()` |
 | `trg_agency_contacts_root` | BEFORE INSERT | `agency_contacts` | `agency_contact_stamp_root()` |
 | `trg_agency_agent_sessions_updated_at` | BEFORE UPDATE | `agency_agent_sessions` | `update_updated_at()` |
 | `trg_agency_call_attempts_updated_at` | BEFORE UPDATE | `agency_call_attempts` | `update_updated_at()` |
@@ -246,6 +246,8 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `trg_dialer_analysis_jobs_updated_at` | BEFORE UPDATE | `dialer_analysis_jobs` | `update_updated_at()` |
 | `trg_agency_manual_calls_updated_at` (0005) | BEFORE UPDATE | `agency_manual_calls` | `update_updated_at()` |
 | `trg_agency_softphone_settings_updated_at` (0005) | BEFORE UPDATE | `agency_softphone_settings` | `update_updated_at()` |
+| `trg_agency_attempts_dial_placed_insert` (0011) | AFTER INSERT, WHEN `NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
+| `trg_agency_attempts_dial_placed_update` (0011) | AFTER UPDATE OF `dialed_at`, WHEN `OLD.dialed_at IS NULL AND NEW.dialed_at IS NOT NULL` | `agency_call_attempts` | `agency_attempt_count_placed_dial()` |
 
 Functions:
 
@@ -254,6 +256,8 @@ Functions:
   retry lineage always has a root.
 - `agency_contact_row_fingerprint(VARCHAR, JSONB, VARCHAR)`: called by the ingest INSERT to fingerprint
   a roster row. It is a function only; no trigger calls it.
+- `agency_attempt_count_placed_dial()` (0011): adds one to the attempt's contact's `dials_placed`.
+  The two `trg_agency_attempts_dial_placed_*` triggers' WHEN clauses decide that a dial was placed.
 
 `super_admins` and `account_settings` have `updated_at` columns but no trigger.
 
@@ -538,6 +542,64 @@ pass `--no-single-transaction` to it on a large roster.
 again; 0009's Down drops them). **Tests**: `test/integration/db/contact-assignment-migration.test.ts`
 (every 0009 CHECK validated, the index definition) and the down → up suite (0009 alone, then 0010
 over rows that predate both).
+
+### 0011 — `migrations/0011_insights_foundation.sql`
+
+The shared schema of the campaign insights page (`docs/insights.md`).
+
+- **`agency_call_attempts.agent_reopened`** `BOOLEAN NOT NULL DEFAULT false`: the dial came from
+  an agent-led reopen ("Retry not reached") placed through pacing. Written by the pacing writer
+  (insights workstream C); 0011 only adds the column.
+- **`agency_contacts.dials_placed`** `INTEGER NOT NULL DEFAULT 0`, CHECK
+  `ck_agency_contact_dials_placed` (`>= 0`): every placed dial on the contact, wrap-up redials and
+  our-fault redials included (IN6). Not `attempt_count` (the customer's retry allowance) nor
+  `our_fault_attempts` (the our-fault ledger). Application code never writes it.
+- **Triggers** `trg_agency_attempts_dial_placed_insert` (AFTER INSERT, WHEN `NEW.dialed_at IS NOT
+  NULL`) and `trg_agency_attempts_dial_placed_update` (AFTER UPDATE OF `dialed_at`, WHEN `OLD.dialed_at
+  IS NULL AND NEW.dialed_at IS NOT NULL`), both calling `agency_attempt_count_placed_dial()`. One
+  increment per attempt that is placed: a second write of `dialed_at` (setState's `COALESCE`) does
+  not count again, an attempt never placed never counts, a deleted attempt does not decrement. The
+  WHEN clauses run without calling the function, so the attempt writes that place nothing pay one
+  comparison. `agency_call_attempts` is not partitioned.
+- **`trg_agency_contacts_updated_at`** re-created with `WHEN (pg_trigger_depth() = 0 OR
+  NEW.dials_placed IS NOT DISTINCT FROM OLD.dials_placed)`: the increment (a nested update that
+  changes `dials_placed`) does not move the contact's `updated_at`, because counting a dial is not
+  an edit and the reaper's stranded-contact sweep reads `updated_at` ("untouched since"). Every
+  statement the server sends runs at depth 0 and is stamped as before. Down restores 0001's
+  trigger.
+- **Backfill**: `dials_placed` = the contact's attempts with `dialed_at` set, run between dropping
+  and re-creating that trigger, so the filled contacts keep their `updated_at` too.
+- **Indexes**, each with a `COMMENT ON INDEX`:
+  - `idx_agency_contacts_insights` `(campaign_id, state) INCLUDE (next_attempt_at, suppressed_reason,
+    attempt_count, dials_placed, last_outcome, last_disposition, assigned_user_id)`: the as-of-now
+    roster buckets, allocation and headline for one campaign, as an Index Only Scan.
+  - `idx_agency_attempts_campaign_dialed` `(campaign_id, dialed_at) WHERE dialed_at IS NOT NULL`:
+    ranged attempt reads within one campaign and the rollup recompute. `idx_agency_attempts_billing`
+    leads with `dialed_at` (a range across campaigns) and does not serve this.
+  - `idx_agency_attempts_campaign_callback` `(campaign_id, callback_at) WHERE callback_at IS NOT
+    NULL`: callback timing (IN4).
+  - `idx_agency_session_events_campaign_at` `(campaign_id, at)` on `agency_agent_session_events`:
+    the per-campaign agent state history (`idx_agency_session_events_agent` leads with the agent).
+- **Locking.** One transaction, everything under ACCESS EXCLUSIVE on `agency_contacts` and
+  `agency_call_attempts` (ADD COLUMN, CHECK, triggers), including the backfill and four plain
+  `CREATE INDEX` builds. Production has no data yet (`docs/status.md`). Measured on 1.2M contacts
+  with 1.2M attempts (800k placed), shared dev host: CHECK ~0.3 s, backfill ~115 s, builds ~4.1 s
+  (contacts), ~1.0 s and ~0.2 s (attempts). On a populated database the backfill and the builds
+  go in a file of their own first, as 0010 did for 0009.
+- **Plans** on that seed (`EXPLAIN ANALYZE`): the bucket count for a 50k-contact campaign is an
+  Index Only Scan on `idx_agency_contacts_insights` (56 ms); for the 1M-contact campaign, 83% of
+  the table, the planner prefers a parallel seq scan (279 ms; the index-only scan, forced, 392 ms);
+  a day of one campaign's dials in 15-minute buckets is an Index Only Scan on
+  `idx_agency_attempts_campaign_dialed` (2.7 ms); a week of callbacks is a bitmap scan on
+  `idx_agency_attempts_campaign_callback` (32 ms). The two dial triggers add ~0.33 ms per placed
+  dial (10k `dialed_at` stamps: 4.2 s, against 0.95 s for an update that places nothing).
+
+**Down** drops the indexes, both triggers, the function, restores 0001's
+`trg_agency_contacts_updated_at`, and drops the CHECK and both columns. **Tests**:
+`test/integration/db/insights-foundation-migration.test.ts` (columns and defaults, the CHECK, one
+increment per placed dial including a wrap-up redial, counting leaving `updated_at` alone, the index definitions and comments, the
+roster count as an Index Only Scan, the range plans, the backfill keeping `updated_at`, down then
+up), the trigger list in `baseline.test.ts`, and the down → up suite.
 
 
 ## Tests
