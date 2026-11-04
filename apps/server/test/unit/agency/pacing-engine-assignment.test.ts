@@ -505,6 +505,7 @@ describe('the owner sweeps run from the leader, throttled, beside the tick (CA5,
       await e.tickOnce('camp-1');
       expect(fallback.sweep).toHaveBeenCalledTimes(2);
     } finally {
+      held.resolve(0);
       unsubscribe();
       await e.stop();
     }
