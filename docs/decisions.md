@@ -3,7 +3,7 @@
 Every decision that shapes Magick Agency, by ID, in one place. Read it when you need to know
 whether something is settled, why the code is built the way it is, or what is still waiting on
 someone. Source comments cite entries here by ID ("decision B8", "Q6 (Manas, 2026-10-09)"), so
-IDs are never renumbered or reused. As of 2026-11-03.
+IDs are never renumbered or reused. As of 2026-11-04.
 
 Status words: **settled** (a founding product decision, not reopened here); **default, pending
 Manas** (built with the recommended option, not yet ratified); **open** (no default yet; a launch
@@ -310,6 +310,28 @@ outcome in the campaign's catalog can grant the contact an override. Migration
 | CA13 | Preview and commit | Every operation is previewed and then committed with the preview's token: a hash of the normalised operation (seed included), the counts and an order-independent hash of every move. The commit locks the rows, re-plans, and writes only when the new plan matches the token contact by contact, or, for a preview moving 100 or more contacts, when its move and to-pool counts are within 2% of the preview's (`commitDrift`: a running campaign's claims and settlements change rows every second; the commit then writes the plan as it stands and reports what it moved); otherwise `409 preview_stale` with the fresh preview (also for a lock timeout or a deadlock). A random split must send back the preview's seed. The token is not signed: a token that matches the current roster commits exactly what a preview would show | **default, pending Manas** |
 | CA14 | Agent reads | The agent's routes take the subject from the session, never a parameter, and answer `403 not_staffed` off an active staffing row, the same answer for a campaign that is missing or in another tenant or account (one helper, `staffedCampaign`, for the reads and the actions); with no `X-Account-Id` the flag is read again for the campaign's account. The list is in due order (keyset); hero values that are blank are left out and `q` searches hero columns only. A contact of another agent is the same 404 as a missing one on the per-contact call | **default, pending Manas** |
 | CA15 | Soft phone on an owned contact | On a `strict` campaign an agent's tagged soft-phone call refuses a number whose matched contact is assigned to another agent (`409 contact_assigned_elsewhere`, no override), judged on the contact the soft phone would pick (oldest pending, else oldest), before hours and DNC, and not re-checked under the claim's lock (a reassignment in between, or a number shared by contacts of different owners, can slip through; same-number grouping makes the second rare). A supervisor may call it; the pool and the caller's own contacts are fine; `pool` and `preferred` campaigns do not check (only `strict` promises an agent that nobody else calls their contacts) | **default, pending Manas** |
+
+Campaign insights, 2026-11-04 (ClickUp "Campaign insights page"; the data mapping and IN1–IN8
+signed off by Manas on 2026-11-04). One Insights tab per campaign, every number opening a list
+whose total is that number. Migrations `0011_insights_foundation.sql`, `0012_insights_rollup.sql`,
+`0013_insights_pacing_history.sql`; wire `packages/contracts/src/api/agency/insights.ts`; design
+and API in [`insights.md`](insights.md). IN9–IN12 are the build's own calls where the mapping left
+a definition open.
+
+| # | Topic | Default used | Status |
+|---|---|---|---|
+| IN1 | Where it lives | A tab of the campaign shell at `/agency/campaigns/:id/insights`, gated on `agency.supervise`; it replaces Overview and Performance, whose URLs redirect to it. Agents, Contacts, Call attempts, Activity and Settings stay | **Decided** |
+| IN2 | Pacing history | What was Prometheus-only (idle reasons, calling-hours deferrals, concurrency hits, pre-dial suppressions, our-fault retirements, redials refused at the limit) is persisted per campaign per minute (`agency_campaign_pacing_minutes`); it starts the day it ships | **Decided** |
+| IN3 | Target date | None in v1; "pace vs needed pace" is dropped | **Decided** |
+| IN4 | Callback timing | On time: the follow-up dial is within 15 min of `callback_at`; late: after that; missed: never dialled and `callback_at` passed, or the contact closed first, or the campaign ended | **Decided** |
+| IN5 | Small samples | One minimum-sample floor, 25, for every rate on the page (`AGENCY_INSIGHTS_MIN_RATE_DENOMINATOR`) | **Decided** |
+| IN6 | Attempts per contact | Counts every placed dial, wrap-up redials included (`agency_contacts.dials_placed`, kept by 0011's trigger) | **Decided** |
+| IN7 | Calling hours | The launch checklist warns while the window and days are still the column defaults (09:00–20:00, Mon–Fri) | **Decided** |
+| IN8 | Order | The defects found in the mapping and the start-recording writes ship ahead of the page | **Decided** |
+| IN9 | Waiting buckets | Pending contacts split three ways that sum to the pending count: due now (`next_attempt_at <= now`, a callback whose time has come included), callback (later, waiting on a booked callback), retry (later, not a callback). One definition, `insights-sql.ts`, read by the counts and the Contacts list's `waiting=` filter | **default, pending Manas** |
+| IN10 | Connect rate | One definition across the product, `/stats`' `connect_rate_pct`: connected ÷ first dials, wrap-up redials out of both | **default, pending Manas** |
+| IN11 | Who an allocation dial belongs to | The allocation table's contact columns are by owner; its dial columns (redials, retries, overrides, last activity) by the agent who placed the dial, so each opens a Call attempts list of exactly those dials. In `strict` mode the two agree | **default, pending Manas** |
+| IN12 | "Lifetime" | From the campaign's `created_at` to now, at most 92 days (`AGENCY_INSIGHTS_MAX_RANGE_DAYS`, the limit on every range read); an older campaign's Lifetime serves the last 92 days and the page says so | **default, pending Manas** |
 
 ## 5. Still open
 

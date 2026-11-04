@@ -1242,7 +1242,7 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 
 Scenario, flow, guard and setup tests that span several modules. The migrations themselves are SQL
 files in `packages/db/migrations/`, `0001_baseline.sql` to
-`0012_insights_rollup.sql` (0009 and 0010 are contact assignment's; tested by
+`0013_insights_pacing_history.sql` (0009 and 0010 are contact assignment's; tested by
 `db/contact-assignment-migration.test.ts`; `0008_wrapup_redial.sql`, the wrap-up redial's, by
 `db/wrapup-redial-migration.test.ts`; 0011, the insights page's shared schema, by
 `db/insights-foundation-migration.test.ts`; 0012, the insights rollup and its dirty-marking

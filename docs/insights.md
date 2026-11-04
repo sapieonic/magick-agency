@@ -18,6 +18,10 @@ eight decisions (IN1–IN8 below) were signed off by Manas on 2026-11-04. The wi
 | IN7 | The launch checklist warns while calling hours are still the 09:00–20:00 default. |
 | IN8 | The defects found during the mapping and the start-recording writes ship first, ahead of the page. |
 
+IN9–IN12 (the waiting buckets, the connect rate, whose an allocation dial is, what "Lifetime" serves)
+are the build's own calls where the mapping left a definition open, recorded in
+[`decisions.md`](decisions.md) §4 as defaults pending Manas.
+
 ## Shape
 
 ```
@@ -37,7 +41,7 @@ section so every `reconciliation` block is computed at one instant.
 **Range numbers** (calls, outcomes, agents, trends, caller IDs, recording) read a rollup, never the
 attempt table. The rollup is a pure function of `agency_call_attempts`: a statement trigger marks
 the 15-minute buckets an attempt write touches as dirty, and a background job (agency bootstrap,
-leader only) recomputes each dirty bucket from the attempts in it. Recompute, never increment:
+main process only, so once per deployment) recomputes each dirty bucket from the attempts in it. Recompute, never increment:
 dispositions arrive after the call ends, the reaper rewrites outcomes, and an incremental counter
 drifts the first time one path forgets it. Backfill is marking every bucket dirty. Freshness is
 the `as_of` field on each range read.
@@ -249,8 +253,8 @@ legacy rows with no stored fingerprint that duplicate one another).
 **Cache** (`agency/insights/cache.ts`): in process (HTTP is served by one process, `scaling.md`),
 single flight, keyed by section, campaign id, status and `updated_at` (a transition or a settings
 edit misses), fresh for 5 s or four times the answer's compute time when longer (so one campaign's
-insights keep the database busy at most a quarter of the time; a 1M running summary is reused for
-~12 s), at most 500 entries. The guards run on every request before it is consulted.
+insights keep the database busy at most a quarter of the time; a 1M running summary, measured at
+2.5–2.9 s, is reused for ~10–12 s), at most 500 entries. The guards run on every request before it is consulted.
 
 ## API (range reads)
 

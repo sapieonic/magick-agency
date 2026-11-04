@@ -22,7 +22,7 @@ the SQL is the authority. As of 2026-11-01.
 
 ## Tables
 
-33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
+33 tables in the baseline (35 with 0002, 37 with 0005, 38 with 0009, 43 with 0012, 44 with 0013), plus monthly partitions 2026-01 to 2027-12 and a DEFAULT partition for each of the two audit tables.
 
 | Group | Tables |
 |---|---|
@@ -36,6 +36,7 @@ the SQL is the authority. As of 2026-11-01.
 | Analysis | `call_analysis_profiles`, `dialer_analysis_jobs` |
 | Dialer | `agency_campaigns`, `agency_contacts`, `agency_agent_sessions`, `agency_agent_session_events`, `agency_call_attempts`, `agency_ingest_chunks`, `agency_dnc_outbox`, `agency_calls` |
 | Insights rollup (0012) | `agency_insights_rollup_dirty`, `agency_insights_rollup_buckets`, `agency_insights_rollup_agents`, `agency_insights_rollup_codes`, `agency_insights_rollup_facets` |
+| Pacing history (0013) | `agency_campaign_pacing_minutes` |
 
 ### Identity
 

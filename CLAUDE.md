@@ -16,6 +16,7 @@ only; never cite another system, repo or external design doc.
 | `docs/decisions.md` | a comment cites an ID (B16, Q6, SP3, ...) |
 | `docs/seams.md` | you move a file, add config, a route plugin, a bootstrap or touch a seam |
 | `docs/softphone.md`, `docs/mobile.md` | you work on the soft phone or the agent app |
+| `docs/insights.md` | you work on the campaign Insights tab, its rollup or the pacing history |
 | `docs/operations.md`, `DEPLOYMENT.md` | you run, release or deploy it |
 
 ## Layout
