@@ -65,6 +65,7 @@ import type { DialDispatcher } from './dial-dispatcher.js';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates } from './pre-dial-gates.js';
 import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { queuedBreakReleaseOf, RESERVING_MARKER, returnReservedAgent } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import {
   chooseAgentDialBasis,
@@ -74,9 +75,6 @@ import {
 } from './contact-overrides.js';
 
 const log = createChildLogger({ component: 'agency-my-contact-call' });
-
-/** The placeholder a reservation holds until the attempt exists (as the pacing tick's). */
-const RESERVING_MARKER = 'reserving';
 
 export interface MyContactCallDeps {
   agents: Pick<AgentStateMachine, 'get' | 'reserve' | 'transition'>;
@@ -237,12 +235,11 @@ export async function startMyContactCall(
   if (reserved !== 'reserved') return refuse(409, 'agent_not_available');
   const returnAgent = async (): Promise<void> => {
     try {
-      if (deps.breaks.peek(sessionId) !== null) {
-        await deps.dialer.releaseAgent(sessionId);
-        return;
-      }
-      const back = await deps.agents.transition(sessionId, 'reserved', 'available');
-      if (!back) log.warn({ sessionId }, 'Agent dial reservation was lost before it could be returned');
+      // As the tick's return, but to the pool by a CAS from `reserved`.
+      await returnReservedAgent(sessionId, queuedBreakReleaseOf(deps), async (id) => {
+        const back = await deps.agents.transition(id, 'reserved', 'available');
+        if (!back) log.warn({ sessionId }, 'Agent dial reservation was lost before it could be returned');
+      });
     } catch (err) {
       log.error({ err, sessionId }, 'Could not return the agent after a refused agent dial');
     }

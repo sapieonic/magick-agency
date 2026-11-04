@@ -67,14 +67,13 @@ import type { ClearedDialCommand, DialDispatcher } from './dial-dispatcher.js';
 import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates, type PreDialDecision } from './pre-dial-gates.js';
 import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
+import { RESERVING_MARKER } from './reserved-agent.js';
 import type { StationRegistry } from './station-registry.js';
 import type { WrapupManager, WrapupRedialRefusal } from './wrapup-manager.js';
 import { REDIAL_MESSAGES, redialRefusalForAttempt, type RedialRefusal } from './wrapup-redial-rules.js';
 
 const log = createChildLogger({ component: 'agency-wrapup-redial' });
 
-/** The placeholder a reservation holds until the attempt exists (as the pacing tick's). */
-const REDIAL_RESERVING_MARKER = 'reserving';
 
 export interface WrapupRedialDeps {
   agents: Pick<AgentStateMachine, 'reserveFromWrapup' | 'transition'>;
@@ -206,7 +205,7 @@ export async function startWrapupRedial(
   };
 
   // ── 6. The agent: wrapup → reserved ────────────────────────────────────────
-  const reserved = await deps.agents.reserveFromWrapup(sessionId, REDIAL_RESERVING_MARKER);
+  const reserved = await deps.agents.reserveFromWrapup(sessionId, RESERVING_MARKER);
   if (reserved !== 'reserved') {
     log.warn({ sessionId, attemptId, reserved }, 'Wrap-up redial could not reserve the agent — back to wrap-up');
     await backToWrapup();
