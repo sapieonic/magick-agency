@@ -7,7 +7,9 @@
  *   job, the file name, the mode and the duplicate rule (`dedupe_column`, null = phone).
  * - `agency_campaign.roster_upload_completed` / `agency_campaign.roster_upload_failed`:
  *   the job reached a terminal state, read back from the job row once the run has ended,
- *   so every terminal branch of the ingest is covered by one write. `failed` also covers
+ *   so every terminal branch of the ingest is covered by one write; a job the stale-job
+ *   reaper fails (`reapStaleJobs`, its run gone with a restart) is written by the reap from
+ *   the rows it failed (`error_code: 'interrupted'`). `failed` also covers
  *   `cancelled` (`details.status` says which). The `system` actor: the background run, not
  *   a person, ended it; the started row names who began it.
  * - `agency_campaign.roster_cleared`: the roster-clear route retired the roster (or could
@@ -51,6 +53,14 @@ export function auditRosterUploadStarted(job: AgencyIngestJobRecord, actor: Audi
  * row claiming an end that did not happen would be worse than none).
  */
 export function auditRosterUploadEnded(job: AgencyIngestJobRecord): void {
+  try {
+    writeRosterUploadEnded(job);
+  } catch (err) {
+    log.warn({ err, jobId: job.id }, 'Could not record the roster upload outcome in the activity log');
+  }
+}
+
+function writeRosterUploadEnded(job: AgencyIngestJobRecord): void {
   if (job.dry_run || !job.campaign_id) return;
   if (job.status !== 'completed' && job.status !== 'failed' && job.status !== 'cancelled') return;
   platformAuditLogger.log({

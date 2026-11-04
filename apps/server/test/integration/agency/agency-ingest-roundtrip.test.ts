@@ -303,4 +303,36 @@ describe('the activity log records how a committed upload ended (IN8)', () => {
     await agencyIngestService.run({ job: await newJob({ dry_run: true }), campaignId });
     expect(await uploadRows()).toEqual([]);
   });
+
+  it('a job the stale-job reaper fails writes one failed row (its run never returns to write it)', async () => {
+    const { AGENCY_INGEST_JOB_STALE_MINUTES } = await import('../../../src/agency/agency-ingest-job.repository.js');
+    const orphan = await newJob();
+    const live = await newJob();
+    const preview = await newJob({ dry_run: true });
+    // Orphaned: its process died mid-run, so its heartbeat aged. The updated_at trigger rewrites
+    // the column on UPDATE, so age the rows with it off.
+    await getTestPool().query('ALTER TABLE agency_ingest_jobs DISABLE TRIGGER agency_ingest_jobs_updated_at');
+    try {
+      await getTestPool().query(
+        `UPDATE agency_ingest_jobs SET status = 'running', updated_at = NOW() - make_interval(mins => $3::int)
+          WHERE id IN ($1, $2)`,
+        [orphan.id, preview.id, AGENCY_INGEST_JOB_STALE_MINUTES + 5]);
+    } finally {
+      await getTestPool().query('ALTER TABLE agency_ingest_jobs ENABLE TRIGGER agency_ingest_jobs_updated_at');
+    }
+
+    expect(await agencyIngestJobRepository.reapStaleJobs()).toBe(2);
+
+    // One row: the committed orphan's. The live job is untouched, the reaped preview writes none.
+    expect(await uploadRows()).toEqual([{
+      action: 'agency_campaign.roster_upload_failed',
+      actor_type: 'system',
+      user_id: null,
+      details: {
+        campaign_id: campaignId, job_id: orphan.id, file_name: 'roster.csv', mode: 'append',
+        status: 'failed', rows_read: 0, accepted: 0, rejected: 0, duplicates: 0, error_code: 'interrupted',
+      },
+    }]);
+    expect((await agencyIngestJobRepository.findById(live.id, TENANT))!.status).toBe('pending');
+  });
 });
