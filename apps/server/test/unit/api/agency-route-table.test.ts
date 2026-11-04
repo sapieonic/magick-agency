@@ -64,6 +64,9 @@ const PENDING: ReadonlyMap<string, string> = new Map([
 const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['GET /healthz', 'liveness probe'],
   ['GET /readyz', 'readiness probe'],
+  // The console's Overview/Performance tabs were its only caller; the Insights tab replaced them
+  // (docs/insights.md, IN1). Retired with its contract once `/insights/trends` serves the same series.
+  ['GET /proxy/agency/campaigns/:_/stats/series', 'campaign series, pending retirement (insights IN1)'],
   ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (carrier-facing)'],
   ['WS /api/v1/webrtc-call/:_/pstn-stream', 'VoiceLink PSTN media leg (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],

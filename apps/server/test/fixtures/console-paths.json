@@ -283,13 +283,6 @@
     },
     {
       "method": "GET",
-      "path": "/proxy/agency/campaigns/:id/stats/series",
-      "source": "apps/console/src/api/agencyCampaignSeries.ts",
-      "status": "served",
-      "reason": "agency route, served by the public API layer at the console path (decision B16) (ENDPOINTS.proxy.agency.campaignStatsSeries, src/config.ts:292)"
-    },
-    {
-      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/attempts",
       "source": "apps/console/src/api/agencySpine.ts",
       "status": "served",
