@@ -179,8 +179,27 @@ describe('strict / preferred: an agent with nothing due is not reserved (CA3)', 
     expect(full.plan).toMatchObject({ toDial: 0, idle: 'nothing_due' });
     // Retries fall due with time, and nothing announces that: the campaign keeps ticking.
     expect(full.quiescent).toBe(false);
-    // Completion is still evaluated on the idle tick (open contacts keep it running).
+    // The probe saw open contacts (every reading has a `next_due_at`), so completion cannot be
+    // due and the roster is not counted this tick.
+    expect(repos.campaign.countOutstanding).not.toHaveBeenCalled();
+    expect(repos.campaign.transitionStatus).not.toHaveBeenCalled();
+  });
+
+  it('nothing due and every queue empty: completion is evaluated on the idle tick', async () => {
+    repos.contact.probeAgentQueues.mockResolvedValue({
+      agents: ['u1', 'u2', 'u3'].map((u) => ({ agentUserId: u, ownDue: false, ownNextAt: null, ownHasNonCallback: null })),
+      pool: null,
+    });
+    repos.campaign.countOutstanding.mockResolvedValueOnce(0);
+    repos.campaign.transitionStatus.mockResolvedValueOnce(null);
+    const { e, ticks } = engine(makeStations(['s1', 's2', 's3']), makeAgents({ s1: 'available', s2: 'available', s3: 'available' }));
+
+    await e.tickOnce('camp-1');
+
+    const full = ticks.find((t) => t.mode === 'full') as Extract<PacingTickObservation, { mode: 'full' }>;
+    expect(full.plan).toMatchObject({ toDial: 0, idle: 'nothing_due' });
     expect(repos.campaign.countOutstanding).toHaveBeenCalledWith('camp-1');
+    expect(repos.campaign.transitionStatus).toHaveBeenCalledWith('camp-1', ['running'], 'completed');
   });
 
   it('preferred: agents without own work are reserved only up to the due pool contacts', async () => {
