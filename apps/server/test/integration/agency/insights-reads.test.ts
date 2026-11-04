@@ -38,11 +38,15 @@ async function plan(
   values: unknown[],
   settings: string[] = ['enable_seqscan = off', 'enable_bitmapscan = off'],
   verbose = false,
+  analyze: string[] = [],
 ): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
     await client.query('BEGIN');
     for (const s of settings) await client.query(`SET LOCAL ${s}`);
+    // ANALYZE inside the transaction: the plan sees statistics of this test's own seed, and the
+    // ROLLBACK discards them, so no later file plans on what this one left behind.
+    for (const t of analyze) await client.query(`ANALYZE ${t}`);
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF${verbose ? ', VERBOSE' : ''}) ${sql}`, values);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
   } finally {
@@ -152,13 +156,13 @@ describe('the roster partition (insights-sql.ts)', () => {
 
   /**
    * The coverage cases prove the statement reads only columns `idx_agency_contacts_insights`
-   * holds, so an Index Only Scan is available on a settled production table. They assert it from
-   * `EXPLAIN VERBOSE`, not from the scan's name: whether the planner picks the Index Only Scan
-   * over a plain Index Scan here depends on the table's visibility map (a VACUUM on a shared host
-   * cannot always mark the pages all-visible) and on statistics earlier files left behind, and
-   * the name-based version of these cases flaked on the merged branch. The scan node's `Output:`
-   * is the set of columns it produces from the relation; every one must be in the index (key or
-   * INCLUDE), and the scan must use the index with the campaign as its condition.
+   * holds, so an Index Only Scan of it is available on a settled production table. They assert
+   * it from `EXPLAIN VERBOSE`, not from which scan the planner chose: that depends on the table's
+   * visibility map (a VACUUM on a shared host cannot always mark the pages all-visible) and on
+   * statistics earlier files left behind, and both name-based versions of these cases flaked in
+   * full runs. The contacts scan's `Output:` is the set of columns it reads from the relation;
+   * every one must be in the insights index (key or INCLUDE), and the campaign must be an index
+   * condition.
    * (`enable_indexscan = off` cannot isolate the Index Only Scan: on Postgres 16 it disables both.)
    */
   async function insightsIndexColumns(): Promise<Set<string>> {
@@ -172,7 +176,10 @@ describe('the roster partition (insights-sql.ts)', () => {
 
   async function expectCoveredByInsightsIndex(p: string): Promise<void> {
     const lines = p.split('\n');
-    const at = lines.findIndex((l) => /(Index Only Scan|Index Scan) using idx_agency_contacts_insights on public\.agency_contacts c\b/.test(l));
+    // Whichever campaign-prefixed index the planner takes on this test DB's statistics (another
+    // file can leave them favouring `idx_agency_contacts_phone_suffix`), the claim is the same:
+    // the scan reads nothing the covering index does not hold.
+    const at = lines.findIndex((l) => /(Index Only Scan|Index Scan) using \w+ on public\.agency_contacts c\b/.test(l));
     expect(at, p).toBeGreaterThanOrEqual(0);
     const output = lines[at + 1]?.match(/^\s*Output: (.*)$/)?.[1];
     expect(output, p).toBeTruthy();
@@ -292,7 +299,7 @@ describe('the running headline\'s pace', () => {
          SELECT $1, c.id, $2, $3, 1, '+919000000001', 'ended', now() - make_interval(mins => right(c.phone_e164, 4)::int * 8) FROM c`,
         [id, DEFAULTS.tenantId, DEFAULTS.accountId]);
       const { text, values } = repo.dialPaceStatement(id);
-      const p = await plan(text, values);
+      const p = await plan(text, values, undefined, false, ['agency_call_attempts']);
       // The hour is the index condition, beside the campaign: idx_agency_attempts_campaign_dialed
       // (campaign, dialed_at), or idx_agency_attempts_billing (dialed_at, campaign) when this
       // test DB's few campaigns make the cross-campaign range as cheap; never a scan of the
