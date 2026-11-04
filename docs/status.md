@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-03.
+"is it done". As of 2026-11-04.
 
 ## Summary
 
@@ -721,6 +721,56 @@ app.
   - **Extra-attempt spend guards.** CA8's spend has two idempotency guards in
     `contact.repository.ts`: a SQL `NOT … = ANY` versus a pre-read with `FOR UPDATE`.
   - **`returnOnUnstaff` is unlike the sweeps.** It does not set `updated_at`; the sweeps do.
+
+### Campaign insights 2026-11-04 (IN1–IN12, [`insights.md`](insights.md))
+
+One Insights tab per campaign at `/agency/campaigns/:id/insights` (`agency.supervise`), replacing
+Overview and Performance, whose URLs redirect to it: the campaign's whole health in every status,
+and every number opens the Contacts or Call attempts list whose total is that number. ClickUp
+"Campaign insights page"; the data mapping and IN1–IN8 signed off by Manas; IN9–IN12 are the
+build's own calls, defaults pending Manas (`decisions.md` §4).
+
+- Migrations: `0011_insights_foundation.sql` (`agent_reopened` on attempts, `dials_placed` on
+  contacts kept by a trigger, the read indexes), `0012_insights_rollup.sql` (the rollup tables,
+  dirty-bucket triggers, backfill), `0013_insights_pacing_history.sql` (pacing history per
+  campaign per minute, the reopen marker), `0014_insights_rollup_first_dials_carrier_errors.sql`
+  (the connect-rate measures, carrier errors). All inventoried in `packages/db/BASELINE.md` and
+  tested down and up. Wire: `packages/contracts/src/api/agency/insights.ts`; the spine lists gain
+  drill-down filters and an opt-in exact `total`. No mobile wire shape changed.
+- Seven routes under `/proxy/agency/campaigns/:id/insights/`: `summary`, `readiness`, `allocation`,
+  `uploads` (as of now, from `agency_contacts` through a covering index) and `activity`, `trends`,
+  `health` (a range, from the rollup, the agent session events and the pacing history). Guards:
+  session, `agency.supervise`, the dialer flag, a UUID id, the ownership probe; an in-process
+  single-flight cache below them.
+- The rollup: per campaign per 15-minute UTC bucket, recomputed from the attempts by a job in the
+  main process every 15 s (`agency.insightsRollup`), never incremented; an oracle test holds every
+  read to the attempts table. Pacing history: the pacing leader's per-minute counters, flushed
+  every 15 s, best effort. Five warning alerts and four dashboard panels (`grafana/`), with
+  runbooks in `operations.md`.
+- Start-recording writes and the mapping's defects, fixed first (IN8): `/stats` `contacts_connected`;
+  `created_by` from the actor; `agency_campaign.config_changed` and roster-upload audit rows; stale
+  comments; one connect rate across the product, human connects ÷ placed first dials (IN10;
+  `/stats`, the agent record and Insights pinned equal by `agency-connect-rate.test.ts`).
+- Scale, 1M contacts or 1M attempts in one campaign: lifetime rollup reads 0.15–0.25 s; activity
+  1.2 s and trends 1.0 s end to end over 30 days (the agent-state and callback reads are the slow
+  part); a running campaign's summary 2.5–2.9 s, cached for four times its cost; drill-down totals
+  0.1–0.3 s. The attempt triggers add ~85 µs per attempt write and the dial counter ~0.33 ms per
+  placed dial.
+- Built in parallel lanes (foundation, defects, rollup, pacing history, console, as-of-now API,
+  drill-downs, range API), then a fresh-context review of the whole branch. It found no blocker;
+  this branch fixed what it found: a flaky plan test; the connect rate counted three ways; IN4's
+  closed-first rule; the account ownership guard untested; an unbounded lifetime range (now the
+  last 92 days, IN12); four links untested and two whose lists did not match; the reaper's failed
+  uploads unaudited; dead code; stale docs; no alerts on the new metrics. Every fix has a
+  mutation-checked test.
+- **Left open:** `health.analysis` is not served (no index-driven read of a range's analysed calls;
+  needs a rollup facet or an index); the mapping's "waiting for calling hours" bucket (needs
+  `timezone` in the covering index, a concurrent rebuild over the roster); override notes in the
+  Call attempts list (the attempt row is mobile wire; the list filter `override_applied` exists);
+  the agent page's per-campaign connect rate and the Performance card's fraction (their wire rows,
+  under `contracts/src/agency/`, need first dials; needs the Dart toolchain to change); Grafana
+  rules applied with the rest of `grafana/` (never applied); the summary's cost on a 1M running
+  campaign (2.5–2.9 s, cached) if the page is kept open on many campaigns at once.
 
 ## Test counts
 
