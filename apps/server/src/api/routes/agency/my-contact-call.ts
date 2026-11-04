@@ -14,12 +14,17 @@
  * agent-retry vocabulary (`AgencyAgentRetryErrorResponse`), which the public route passes on.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { AgencyAgentRetryErrorResponse } from '@magick-agency/contracts/api/agency/assignment';
+import type { AgencyAgentRetryErrorCode } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
-import { MY_CONTACT_CALL_MESSAGES, startMyContactCall } from '../../../agency/my-contact-call.js';
+import {
+  MY_CONTACT_CALL_MESSAGES,
+  startMyContactCall,
+  type MyContactCallRefusal,
+} from '../../../agency/my-contact-call.js';
 import { getAccountId, getTenantId } from '../../middleware/auth.middleware.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
+import { sendRefusal, VALIDATION_FAILED_TITLE } from '../helpers/refusal.js';
 import { requireOwnedSession } from './helpers.js';
 
 interface MyContactCallBody {
@@ -28,13 +33,15 @@ interface MyContactCallBody {
   override_note?: unknown;
 }
 
-function title(status: number): string {
-  if (status === 400) return 'Validation failed';
-  if (status === 403) return 'Forbidden';
-  if (status === 404) return 'Not Found';
-  if (status === 409) return 'Conflict';
-  if (status === 502) return 'Bad Gateway';
-  return 'Service Unavailable';
+/** A refusal in the agent-retry vocabulary (`AgencyAgentRetryErrorResponse`). */
+function refuse(
+  reply: FastifyReply,
+  status: MyContactCallRefusal['status'] | 403,
+  code: AgencyAgentRetryErrorCode,
+  message: string,
+  details?: Record<string, unknown>,
+): FastifyReply {
+  return sendRefusal(reply, status, code, message, { details, badRequestTitle: VALIDATION_FAILED_TITLE });
 }
 
 export async function registerMyContactCallRoutes(sub: FastifyInstance, runtime: AgencyRuntime): Promise<void> {
@@ -50,21 +57,15 @@ export async function registerMyContactCallRoutes(sub: FastifyInstance, runtime:
     if (!(await getFeatureFlagService().isEnabled(FLAGS.agency_dialer_enabled, {
       tenantId: getTenantId(request), accountId: getAccountId(request),
     }))) {
-      return reply.code(403).send({
-        error: 'Forbidden', code: 'feature_disabled', message: MY_CONTACT_CALL_MESSAGES.feature_disabled,
-      } satisfies AgencyAgentRetryErrorResponse);
+      return refuse(reply, 403, 'feature_disabled', MY_CONTACT_CALL_MESSAGES.feature_disabled);
     }
     const body = (request.body ?? {}) as MyContactCallBody;
     // Validated at the edge: a non-UUID reaching a `uuid` cast is a 22P02, not an answer.
     if (typeof body.contact_id !== 'string' || !UUID_RE.test(body.contact_id)) {
-      return reply.code(404).send({
-        error: 'Not Found', code: 'contact_not_found', message: MY_CONTACT_CALL_MESSAGES.contact_not_found,
-      } satisfies AgencyAgentRetryErrorResponse);
+      return refuse(reply, 404, 'contact_not_found', MY_CONTACT_CALL_MESSAGES.contact_not_found);
     }
     if (typeof body.campaign_id !== 'string' || !UUID_RE.test(body.campaign_id)) {
-      return reply.code(409).send({
-        error: 'Conflict', code: 'agent_not_available', message: MY_CONTACT_CALL_MESSAGES.agent_not_available,
-      } satisfies AgencyAgentRetryErrorResponse);
+      return refuse(reply, 409, 'agent_not_available', MY_CONTACT_CALL_MESSAGES.agent_not_available);
     }
     const result = await startMyContactCall(
       {
@@ -78,22 +79,14 @@ export async function registerMyContactCallRoutes(sub: FastifyInstance, runtime:
       {
         tenantId: getTenantId(request),
         accountId: getAccountId(request),
-        sessionId: session.id,
+        session,
         actorUserId: session.agent_user_id,
         campaignId: body.campaign_id,
         contactId: body.contact_id,
         overrideNote: typeof body.override_note === 'string' ? body.override_note : null,
       },
     );
-    if (!result.ok) {
-      const err: AgencyAgentRetryErrorResponse = {
-        error: title(result.status),
-        code: result.code,
-        message: result.message,
-        ...(result.details ? { details: result.details } : {}),
-      };
-      return reply.code(result.status).send(err);
-    }
+    if (!result.ok) return refuse(reply, result.status, result.code, result.message, result.details);
     // `basis` rides along for the public route's audit row; the console reads the contract fields.
     return reply.send({ ...result.response, basis: result.basis });
   });

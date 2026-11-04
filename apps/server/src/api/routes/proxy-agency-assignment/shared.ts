@@ -14,15 +14,11 @@ import { agencyCampaignRepository } from '../../../db/repositories/agency.reposi
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { MY_CONTACT_CALL_MESSAGES } from '../../../agency/my-contact-call.js';
+import { sendRefusal } from '../helpers/refusal.js';
+import { settledValue } from '../helpers/settled.js';
 
-const TITLES: Record<number, string> = {
-  400: 'Bad Request',
-  403: 'Forbidden',
-  404: 'Not Found',
-  409: 'Conflict',
-};
-
-/** The repo-wide refusal shape: `{ error: <title>, code, message, details? }`. */
+/** The repo-wide refusal shape: `{ error: <title>, code, message, details? }` ({@link sendRefusal}). */
 export function refuse(
   reply: FastifyReply,
   status: number,
@@ -30,7 +26,7 @@ export function refuse(
   message: string,
   details?: Record<string, unknown>,
 ): FastifyReply {
-  return reply.code(status).send({ error: TITLES[status] ?? 'Error', code, message, ...(details ? { details } : {}) });
+  return sendRefusal(reply, status, code, message, { details });
 }
 
 export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_RE.test(value);
@@ -49,8 +45,8 @@ export function agentRetryOpen(campaign: Pick<AgencyCampaignRecord, 'allow_agent
 
 /** The copy of the two scope refusals the agent's routes share. */
 export const AGENT_SCOPE_MESSAGES = {
-  assignment_disabled: 'Contact assignment is not enabled for this account.',
-  not_staffed: "You're not assigned to this campaign. Ask your supervisor to add you.",
+  assignment_disabled: MY_CONTACT_CALL_MESSAGES.assignment_disabled,
+  not_staffed: MY_CONTACT_CALL_MESSAGES.not_staffed,
 } as const;
 
 /** The flag for a tenant and, when known, an account (account overrides are read only with one). */
@@ -83,12 +79,17 @@ export async function supervisedCampaign(
   reply: FastifyReply,
   campaignId: string,
 ): Promise<AgencyCampaignRecord | null> {
-  const probe = await fetchOwnedCoreCampaign(request, campaignId);
+  // The row read starts with the probe and is discarded when the probe refuses.
+  const [probeRead, campaignRead] = await Promise.allSettled([
+    fetchOwnedCoreCampaign(request, campaignId),
+    agencyCampaignRepository.findById(campaignId),
+  ]);
+  const probe = settledValue(probeRead);
   if (!probe.ok) {
     reply.code(probe.status).send(probe.body);
     return null;
   }
-  const campaign = await agencyCampaignRepository.findById(campaignId);
+  const campaign = settledValue(campaignRead);
   if (!campaign || campaign.tenant_id !== request.tenantId) {
     refuse(reply, 404, 'campaign_not_found', 'Campaign not found.');
     return null;
@@ -116,13 +117,23 @@ export async function staffedCampaign(
   campaignId: string,
   userId: string,
 ): Promise<AgencyCampaignRecord | null> {
-  if (!(await requireAssignmentEnabled(request, reply))) return null;
   const tenantId = request.tenantId!;
-  const campaign = await agencyCampaignRepository.findById(campaignId);
+  // Three independent reads started together, judged in the order above (a read that throws
+  // is rethrown in that order; the staffing answer is looked at only for a campaign in scope).
+  const [enabledRead, campaignRead, activeRead] = await Promise.allSettled([
+    assignmentEnabledFor(tenantId, request.accountId),
+    agencyCampaignRepository.findById(campaignId),
+    agencyCampaignAgentRepository.isActiveOnCampaign(tenantId, campaignId, userId),
+  ]);
+  if (!settledValue(enabledRead)) {
+    refuse(reply, 403, 'assignment_disabled', AGENT_SCOPE_MESSAGES.assignment_disabled);
+    return null;
+  }
+  const campaign = settledValue(campaignRead);
   const account = request.accountId ?? request.membership?.account_id ?? null;
   const inScope = campaign !== null && campaign.tenant_id === tenantId
     && (account === null || campaign.account_id === account);
-  const staffed = inScope && await agencyCampaignAgentRepository.isActiveOnCampaign(tenantId, campaignId, userId);
+  const staffed = inScope && settledValue(activeRead);
   if (!campaign || !staffed) {
     refuse(reply, 403, 'not_staffed', AGENT_SCOPE_MESSAGES.not_staffed);
     return null;

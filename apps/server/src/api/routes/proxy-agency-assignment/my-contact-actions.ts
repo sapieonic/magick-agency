@@ -34,7 +34,6 @@ import { createChildLogger } from '@magick-agency/observability';
 import {
   AGENCY_ASSIGNMENT_RANGE_MAX,
   type AgencyAgentRetryErrorCode,
-  type AgencyAgentRetryErrorResponse,
   type AgencyAgentRetryResponse,
   type AgencyMyContactCallResponse,
 } from '@magick-agency/contracts/api/agency/assignment';
@@ -49,6 +48,7 @@ import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import { callCore } from '../../core-dispatch.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { sendRefusal, VALIDATION_FAILED_TITLE } from '../helpers/refusal.js';
 import { stringField } from '../helpers/core-campaign.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
 import { UUID_RE } from '../../../utils/uuid.js';
@@ -76,19 +76,16 @@ const callSchema = z.object({
  */
 const REVIEWED_5XX_CODES: ReadonlySet<unknown> = new Set(['dnc_unavailable', 'no_station', 'dial_failed']);
 
-function sendRefusal(
+/** A refusal in the agent-retry vocabulary (`AgencyAgentRetryErrorResponse`), with its copy. */
+function refuseAgent(
   reply: FastifyReply,
-  status: number,
+  status: 400 | 403 | 404 | 409,
   code: AgencyAgentRetryErrorCode,
   details?: Record<string, unknown>,
 ): FastifyReply {
-  const body: AgencyAgentRetryErrorResponse = {
-    error: status === 403 ? 'Forbidden' : status === 404 ? 'Not Found' : status === 400 ? 'Validation failed' : 'Conflict',
-    code,
-    message: MY_CONTACT_CALL_MESSAGES[code],
-    ...(details ? { details } : {}),
-  };
-  return reply.code(status).send(body);
+  return sendRefusal(reply, status, code, MY_CONTACT_CALL_MESSAGES[code], {
+    details, badRequestTitle: VALIDATION_FAILED_TITLE,
+  });
 }
 
 /** The reopened contact ids one audit row carries; past this, `contact_ids_truncated`. */
@@ -115,8 +112,8 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
     if (!parsed) return reply;
     const campaign = await staffedCampaign(request, reply, parsed.data.campaign_id.toLowerCase(), userId);
     if (!campaign) return reply;
-    if (!campaign.allow_agent_retry) return sendRefusal(reply, 403, 'agent_retry_disabled');
-    if (!AGENT_RETRY_STATUSES.has(campaign.status)) return sendRefusal(reply, 409, 'campaign_not_running');
+    if (!campaign.allow_agent_retry) return refuseAgent(reply, 403, 'agent_retry_disabled');
+    if (!AGENT_RETRY_STATUSES.has(campaign.status)) return refuseAgent(reply, 409, 'campaign_not_running');
 
     const result = await agencyAgentRetryRepository.reopenForAgent({
       campaignId: campaign.id,
@@ -165,14 +162,14 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
     const userId = resolveMyAgentId(request, reply);
     if (!userId) return reply;
     // A malformed id is the not-found answer an unknown one gets (never a 22P02).
-    if (!UUID_RE.test(request.params.contactId)) return sendRefusal(reply, 404, 'contact_not_found');
+    if (!UUID_RE.test(request.params.contactId)) return refuseAgent(reply, 404, 'contact_not_found');
     const parsed = parseOr400(callSchema, request.body ?? {}, reply, 'agency');
     if (!parsed) return reply;
     const campaign = await staffedCampaign(request, reply, parsed.data.campaign_id.toLowerCase(), userId);
     if (!campaign) return reply;
     // The note's shape, before anything else is asked: a note given is a note that counts.
     if (parsed.data.override_note !== undefined && validateOverrideNoteText(parsed.data.override_note) === null) {
-      return sendRefusal(reply, 400, 'override_note_invalid', { min: AGENCY_OVERRIDE_NOTE_MIN, max: AGENCY_OVERRIDE_NOTE_MAX });
+      return refuseAgent(reply, 400, 'override_note_invalid', { min: AGENCY_OVERRIDE_NOTE_MIN, max: AGENCY_OVERRIDE_NOTE_MAX });
     }
 
     const contactId = request.params.contactId.toLowerCase();
@@ -193,8 +190,8 @@ export async function registerMyContactActionRoutes(app: FastifyInstance): Promi
       // The session routes' shared guard answers a session that is not the caller's (404,
       // no code) or has ended (`409 session_ended`); in this vocabulary both are "not your
       // live available session on this campaign".
-      if (result.status === 404 && code === undefined) return sendRefusal(reply, 409, 'agent_not_available');
-      if (result.status === 409 && code === 'session_ended') return sendRefusal(reply, 409, 'agent_not_available');
+      if (result.status === 404 && code === undefined) return refuseAgent(reply, 409, 'agent_not_available');
+      if (result.status === 409 && code === 'session_ended') return refuseAgent(reply, 409, 'agent_not_available');
       if (result.status >= 500 && REVIEWED_5XX_CODES.has(code)) request.preserveReviewedUpstreamError = true;
       return reply.code(result.status).send(result.body);
     }

@@ -235,6 +235,8 @@ describe('flag off: what the campaign already holds asks for nothing (a save aft
     });
     expect(res.statusCode, res.body).toBe(201);
     expect(mocks.flagEnabled).not.toHaveBeenCalled();
+    // The gate's read of the parent is the ownership read: one GET, not two.
+    expect(mocks.proxyToCore.mock.calls.filter(([req]) => req.method === 'GET')).toHaveLength(1);
     await app.close();
   });
 });

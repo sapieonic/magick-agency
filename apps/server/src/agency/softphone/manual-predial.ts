@@ -56,6 +56,7 @@ import { normalizePhoneToE164 } from '../../utils/phone-normalizer.js';
 import { normalizeE164, type DncRegistry } from '../dnc-registry.js';
 import { callingWindowState, nextWindowOpen, resolveCallingWindow } from '../calling-hours.js';
 import { pickCallerId, usableCallerIds } from '../pacing/caller-id-pool.js';
+import { trimmedNoteWithin } from '../contact-overrides.js';
 import type { SoftphoneRefusal } from './types.js';
 
 /** What the dial uses, once every gate has passed. */
@@ -111,9 +112,8 @@ export function validateOverrideNote(
   field: 'dnc_note' | 'hours_note',
 ): { ok: true; note: string | null } | Refused {
   if (raw === undefined || raw === null) return { ok: true, note: null };
-  const note = typeof raw === 'string' ? raw.trim() : '';
-  const length = [...note].length;
-  if (typeof raw !== 'string' || length < SOFTPHONE_OVERRIDE_NOTE_MIN || length > SOFTPHONE_OVERRIDE_NOTE_MAX) {
+  const note = trimmedNoteWithin(raw, SOFTPHONE_OVERRIDE_NOTE_MIN, SOFTPHONE_OVERRIDE_NOTE_MAX);
+  if (note === null) {
     return {
       ok: false,
       refusal: {

@@ -58,13 +58,22 @@ export async function fetchOwnedCoreCampaign(
 }
 
 /**
- * A lazy read of the stored campaign through {@link fetchOwnedCoreCampaign}: its body, or null
- * when the probe refused (the write that follows answers that refusal itself). For gates that
- * judge a body against what the campaign already holds, and read it only when they must.
+ * {@link fetchOwnedCoreCampaign}, run at most once per request and only when first asked.
+ * `probe` is its answer; `stored` the campaign body, or null when the probe refused (the
+ * route answers that refusal itself), for gates that judge a body against what the campaign
+ * already holds and read it only when they must.
  */
-export function storedCampaignLoader(request: FastifyRequest, campaignId: string): () => Promise<unknown> {
-  return async () => {
-    const probe = await fetchOwnedCoreCampaign(request, campaignId);
-    return probe.ok ? probe.body : null;
+export function ownedCoreCampaignOnce(
+  request: FastifyRequest,
+  campaignId: string,
+): { probe: () => Promise<OwnedCoreCampaign>; stored: () => Promise<unknown> } {
+  let read: Promise<OwnedCoreCampaign> | null = null;
+  const probe = (): Promise<OwnedCoreCampaign> => (read ??= fetchOwnedCoreCampaign(request, campaignId));
+  return {
+    probe,
+    stored: async () => {
+      const found = await probe();
+      return found.ok ? found.body : null;
+    },
   };
 }

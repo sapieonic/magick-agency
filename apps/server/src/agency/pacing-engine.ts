@@ -75,9 +75,29 @@ import { PacingRound, accountKeyOf } from './pacing/round.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { ownerModeOf, queueStateKey, readAgentQueues, type AgentQueueReading } from './pacing/agent-queue.js';
-import { CALLBACK_FALLBACK_SWEEP_MS, sweepCallbackFallback, sweepUnstaffedOwners } from './pacing/callback-fallback.js';
+import {
+  CALLBACK_FALLBACK_SWEEP_MS,
+  callbackFallbackApplies,
+  sweepCallbackFallback,
+  sweepUnstaffedOwners,
+  unstaffedOwnersSweepApplies,
+} from './pacing/callback-fallback.js';
 
 const log = createChildLogger({ component: 'agency-pacing-engine' });
+
+/** The owner sweeps, in the order the leader runs them, each with the line its failure logs. */
+const OWNER_SWEEPS = [
+  {
+    applies: unstaffedOwnersSweepApplies,
+    run: sweepUnstaffedOwners,
+    failure: 'Unstaffed-owner sweep failed — retried on a later tick',
+  },
+  {
+    applies: callbackFallbackApplies,
+    run: sweepCallbackFallback,
+    failure: 'Callback fallback sweep failed — retried on a later tick',
+  },
+] as const;
 
 /** How often the leader evaluates a campaign (one ROUND over every campaign it leads). */
 export const TICK_INTERVAL_MS = 250;
@@ -171,6 +191,11 @@ interface TickPlan {
   /** The account limit and live calls the plan used (absent when it stopped at `no_agents`). */
   accountLimit?: number;
   occupied?: number;
+  /**
+   * `nothing_due` only: an agent's queue reading carried a `next_due_at`, so an open
+   * (`pending`) contact existed when the probe ran.
+   */
+  openPendingSeen?: boolean;
 }
 
 /**
@@ -1082,6 +1107,7 @@ export class PacingEngine {
       // (paused, or stopping and draining) changes only through a campaign event, or
       // — for the drain — a call on its account ending.
       let willBeQuiescent = true;
+      let openPendingSeen = false;
       if (campaign.status === 'running' && !this.drainOnly.has(campaignId)) {
         // Owner-mode campaigns: hand overdue callbacks of absent owners to the pool first, so
         // a `preferred` agent can be given one on this very tick (throttled, never throws).
@@ -1102,6 +1128,7 @@ export class PacingEngine {
           // due and nothing publishes that, so this tick is not quiescent (like a claim
           // that came back empty).
           willBeQuiescent = false;
+          openPendingSeen = plan.openPendingSeen === true;
         } else {
           // `no_agents` or `no_slots`: only an agent entering `available`, a call
           // ending or the limit rising can change it, and each publishes.
@@ -1112,7 +1139,12 @@ export class PacingEngine {
       // Idle tick (or a stopping campaign draining): the leader — and ONLY the
       // leader — evaluates completion, so there is exactly one writer of these two
       // transitions and no race with the supervisor's controls.
-      await this.maybeFinalize(campaign);
+      // Skipped when this tick's queue probe saw an open (`pending`) contact: the running
+      // campaign's `countOutstanding` counts every `pending` contact, so it is at least 1 at
+      // the probe's instant, which lies within this tick before any transition just as the
+      // count's own would. Completion cannot be due; the next tick (this one is not
+      // quiescent) evaluates it again.
+      if (!openPendingSeen) await this.maybeFinalize(campaign);
       quiescent = willBeQuiescent;
     } finally {
       this.ticking.delete(campaignId);
@@ -1215,8 +1247,11 @@ export class PacingEngine {
     // round's headroom is taken for the agents that can actually be dialled.
     let pickable = candidates;
     if (mode) {
-      pickable = await this.agentsWithWorkDue(campaign, mode, candidates);
-      if (pickable.length === 0) return { toDial: 0, candidates: [], idle: 'nothing_due' };
+      const work = await this.agentsWithWorkDue(campaign, mode, candidates);
+      pickable = work.picked;
+      if (pickable.length === 0) {
+        return { toDial: 0, candidates: [], idle: 'nothing_due', openPendingSeen: work.openPendingSeen };
+      }
     }
 
     // Both account reads are per ROUND, not per tick (`pacing/round.ts`): the limit
@@ -1273,12 +1308,13 @@ export class PacingEngine {
    * The available agents worth reserving on an owner-mode campaign, in fairness order: those
    * with an own contact due, and (`preferred`) as many of the rest as the pool has due
    * contacts. Sends each candidate's `queue` frame on a change, from the same read.
+   * `openPendingSeen`: a reading carried a `next_due_at` (an open contact existed at the probe).
    */
   private async agentsWithWorkDue(
     campaign: AgencyCampaignRecord,
     mode: AgencyOwnerClaimMode,
     candidates: AgentCandidate[],
-  ): Promise<AgentCandidate[]> {
+  ): Promise<{ picked: AgentCandidate[]; openPendingSeen: boolean }> {
     // One live session per agent per tenant (`uq` on the session table) makes this a 1:1 map;
     // a repeat, or a row with no agent, is dropped rather than paired by guesswork.
     const seen = new Set<string>();
@@ -1287,7 +1323,7 @@ export class PacingEngine {
       seen.add(c.agentUserId);
       return true;
     });
-    if (agents.length === 0) return [];
+    if (agents.length === 0) return { picked: [], openPendingSeen: false };
     const { agents: readings, poolDue } = await readAgentQueues(
       campaign, mode, agents.map((c) => c.agentUserId), new Date(), agents.length,
     );
@@ -1302,7 +1338,9 @@ export class PacingEngine {
         poolLeft--;
       }
     }
-    return out;
+    let openPendingSeen = false;
+    for (const reading of readings.values()) if (reading.state.next_due_at !== null) openPendingSeen = true;
+    return { picked: out, openPendingSeen };
   }
 
   /** Send each agent's `queue` frame when it differs from the last one they were sent. */
@@ -1351,30 +1389,21 @@ export class PacingEngine {
    * `callback_fallback = 'pool'`), at most every {@link CALLBACK_FALLBACK_SWEEP_MS} per
    * campaign. A move wakes the campaign (and any other replica's view of it) as new contacts
    * would. A failure is logged and costs the tick nothing; one sweep's failure does not skip
-   * the other.
+   * the other. Serial, in {@link OWNER_SWEEPS} order.
    */
   private async maybeSweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<void> {
-    if (!ownerModeOf(campaign)) return;
-    const returnUnstaffed = campaign.on_unstaff === 'return_to_pool';
-    const fallBack = campaign.callback_fallback === 'pool';
-    if (!returnUnstaffed && !fallBack) return;
+    const due = OWNER_SWEEPS.filter((sweep) => sweep.applies(campaign));
+    if (due.length === 0) return;
     const now = this.now();
     const last = this.fallbackSweptAt.get(campaign.id);
     if (last !== undefined && now - last < CALLBACK_FALLBACK_SWEEP_MS) return;
     this.fallbackSweptAt.set(campaign.id, now);
     let moved = 0;
-    if (returnUnstaffed) {
+    for (const sweep of due) {
       try {
-        moved += await sweepUnstaffedOwners(campaign);
+        moved += await sweep.run(campaign);
       } catch (err) {
-        log.error({ err, campaignId: campaign.id }, 'Unstaffed-owner sweep failed — retried on a later tick');
-      }
-    }
-    if (fallBack) {
-      try {
-        moved += await sweepCallbackFallback(campaign);
-      } catch (err) {
-        log.error({ err, campaignId: campaign.id }, 'Callback fallback sweep failed — retried on a later tick');
+        log.error({ err, campaignId: campaign.id }, sweep.failure);
       }
     }
     if (moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });

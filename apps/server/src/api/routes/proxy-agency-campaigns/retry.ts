@@ -16,7 +16,7 @@ import {
 import { validateAgencyCampaignConfig, issuesToDetails } from '../../../agency/agency-campaign-config.js';
 import { assertAssignmentSettingsAllowed } from '../../../agency/campaign-assignment-gate.js';
 import type { ConfigIssue } from '../../../agency/agency-campaign-config.js';
-import { fetchOwnedCoreCampaign, storedCampaignLoader, stringField } from '../helpers/core-campaign.js';
+import { ownedCoreCampaignOnce, stringField } from '../helpers/core-campaign.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { AUDIT_FILTER_VALUE_MAX_CHARS } from './spine.js';
 import { resolveActorDisplayName } from './lifecycle.js';
@@ -360,11 +360,13 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
     // non-default value, or a catalog entry with an `override`, needs the flag. Only
     // the OVERRIDES are judged — what the child inherits is the parent's stored config,
     // the same line the config validation above draws. Before the first `callCore`, as
-    // every route-authored refusal here is (see the ordering note above).
+    // every route-authored refusal here is (see the ordering note above). The parent is read
+    // at most once: the gate's read, when it needs one, is the parent read below.
+    const parentRead = ownedCoreCampaignOnce(request, request.params.id);
     if (!(await assertAssignmentSettingsAllowed(reply, parsed.data.config_overrides, {
       tenantId: request.tenantId!,
       accountId: request.accountId,
-    }, storedCampaignLoader(request, request.params.id)))) return;
+    }, parentRead.stored))) return;
 
     /*
      * The actor — this layer's fact, from the session.
@@ -422,7 +424,7 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
      * shorten the wait for it. A request the gates below refuse discards the name.
      */
     const actorNameLookup = resolveActorDisplayName(request, actorUserId);
-    const parent = await fetchOwnedCoreCampaign(request, request.params.id);
+    const parent = await parentRead.probe();
     if (!parent.ok) return reply.code(parent.status).send(parent.body);
 
     // The behavioral capabilities, on a route that sends no config of its own.

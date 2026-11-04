@@ -137,10 +137,7 @@ function nonNegativeMinutes(delay: unknown): number {
  * phone's `validateOverrideNote` applies the same rule to its SP2 note.
  */
 export function validateOverrideNoteText(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null;
-  const note = raw.trim();
-  const length = [...note].length;
-  return length >= AGENCY_OVERRIDE_NOTE_MIN && length <= AGENCY_OVERRIDE_NOTE_MAX ? note : null;
+  return trimmedNoteWithin(raw, AGENCY_OVERRIDE_NOTE_MIN, AGENCY_OVERRIDE_NOTE_MAX);
 }
 
 // ─── Why an agent may dial one of their contacts now (CA7) ───────────────────
@@ -200,4 +197,19 @@ export function chooseAgentDialBasis(facts: AgentDialFacts): AgentDialChoice {
     blocked,
     availableAt: blocked === 'cooldown' ? facts.availableAt : null,
   };
+}
+
+// ─── One rule for an override note's length ─────────────────────────────────
+
+/**
+ * An override note's text: `raw` trimmed, when it is a string of `min`–`max` CHARACTERS (code
+ * points, as the database's `char_length` checks count; `.length` would count an emoji
+ * twice); else null. {@link validateOverrideNoteText} and the soft phone's
+ * `validateOverrideNote` both count through this.
+ */
+export function trimmedNoteWithin(raw: unknown, min: number, max: number): string | null {
+  if (typeof raw !== 'string') return null;
+  const note = raw.trim();
+  const length = [...note].length;
+  return length >= min && length <= max ? note : null;
 }

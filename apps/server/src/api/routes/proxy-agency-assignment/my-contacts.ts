@@ -19,11 +19,12 @@ import {
 } from '@magick-agency/contracts/api/agency/assignment';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
-import { clampLimit, multiParam, parsePhoneFilter } from '../../../agency/spine-filters.js';
+import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
 import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { readKeysetCursor } from '../helpers/read-cursor.js';
+import { settledValue } from '../helpers/settled.js';
 import { resolveMyAgentId } from '../proxy-agency-staffing/my.js';
 import { agentRetryOpen, staffedCampaign } from './shared.js';
 
@@ -61,10 +62,14 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
     if (!campaign) return reply;
 
     const now = new Date();
-    const tally = await agencyAssignmentReadRepository.myTally(campaign, userId);
+    // Independent reads, started together; a throw is rethrown in this order.
+    const [tallyRead, queueRead] = await Promise.allSettled([
+      agencyAssignmentReadRepository.myTally(campaign, userId),
+      readAgentQueueState(campaign, userId, now),
+    ]);
+    const tally = settledValue(tallyRead);
     // The queue pacing and the station read (strict / preferred); pool mode has none of its own.
-    const queue = (await readAgentQueueState(campaign, userId, now))
-      ?? poolModeQueueState(campaign, tally.pool.next_open_at, now);
+    const queue = settledValue(queueRead) ?? poolModeQueueState(campaign, tally.pool.next_open_at, now);
     const body: AgencyMyContactsSummary = {
       campaign_id: campaign.id,
       assignment_mode: campaign.assignment_mode,
@@ -97,7 +102,7 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
     if (!query) return reply;
     const phone = parsePhoneFilter(query.data.phone);
     if (phone === 'unusable') {
-      return fieldError(reply, 'phone', 'must contain at least one digit — search by the whole number or its last few digits');
+      return fieldError(reply, 'phone', PHONE_FILTER_UNUSABLE_MESSAGE);
     }
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;

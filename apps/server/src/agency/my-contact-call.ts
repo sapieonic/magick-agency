@@ -47,14 +47,17 @@ import type {
 } from '@magick-agency/contracts/api/agency/assignment';
 import {
   agencyAgentRetryRepository,
-  agencyAgentSessionRepository,
   agencyAttemptRepository,
   agencyCampaignRepository,
   type AgentDialClaim,
   type AgentRetrySettings,
 } from '../db/repositories/agency.repository.js';
 import { agentRetrySettingsOf } from '../db/repositories/agency/assignment-sql.js';
-import { isCampaignSession, type AgencyCampaignRecord } from '../db/models/agency.model.js';
+import {
+  isCampaignSession,
+  type AgencyAgentSessionRecord,
+  type AgencyCampaignRecord,
+} from '../db/models/agency.model.js';
 import type { AgentStateMachine } from './agent-state-machine.js';
 import type { AgencyDialer } from './agency-dialer.js';
 import type { DialDispatcher } from './dial-dispatcher.js';
@@ -62,7 +65,12 @@ import type { DncRegistry } from './dnc-registry.js';
 import { evaluatePreDialGates } from './pre-dial-gates.js';
 import { pickCallerId, usableCallerIds } from './pacing/caller-id-pool.js';
 import type { StationRegistry } from './station-registry.js';
-import { chooseAgentDialBasis, validateOverrideNoteText, type AgentDialBasis } from './contact-overrides.js';
+import {
+  chooseAgentDialBasis,
+  validateOverrideNoteText,
+  type AgentDialBasis,
+  type AgentDialChoice,
+} from './contact-overrides.js';
 
 const log = createChildLogger({ component: 'agency-my-contact-call' });
 
@@ -82,7 +90,11 @@ export interface MyContactCallDeps {
 export interface MyContactCallInput {
   tenantId: string;
   accountId: string;
-  sessionId: string;
+  /**
+   * The caller's session, as the route's session guard read it (the caller's, in the tenant
+   * and account, not left). Checked here for the campaign; not read again.
+   */
+  session: AgencyAgentSessionRecord;
   /** The caller: the session's agent and the contact's owner. */
   actorUserId: string;
   campaignId: string;
@@ -129,6 +141,11 @@ function refuse(
   return { ok: false, status, code, message: MY_CONTACT_CALL_MESSAGES[code], ...(details ? { details } : {}) };
 }
 
+/** The refusal of a contact {@link chooseAgentDialBasis} found no basis to dial. */
+function refusalOfChoice(choice: Extract<AgentDialChoice, { ok: false }>): { ok: false } & MyContactCallRefusal {
+  return choice.reason === 'in_flight' ? refuse(409, 'contact_in_flight') : notRetryable(choice.blocked, choice.availableAt);
+}
+
 function notRetryable(blocked: AgencyAgentRetryBlock, availableAt: Date | null): { ok: false } & MyContactCallRefusal {
   return refuse(409, 'contact_not_retryable', {
     blocked,
@@ -144,23 +161,30 @@ export async function startMyContactCall(
   deps: MyContactCallDeps,
   input: MyContactCallInput,
 ): Promise<MyContactCallResult> {
-  const { sessionId, actorUserId, contactId } = input;
+  const { session, actorUserId, contactId } = input;
+  const sessionId = session.id;
 
   // ── 1. The rows ───────────────────────────────────────────────────────────
-  const campaign = await agencyCampaignRepository.findById(input.campaignId);
+  // The campaign and the agent's live state are independent reads, started together and
+  // judged in this order (a read that throws is rethrown in the same order).
+  const [campaignRead, liveRead] = await Promise.allSettled([
+    agencyCampaignRepository.findById(input.campaignId),
+    deps.agents.get(sessionId),
+  ]);
+  if (campaignRead.status === 'rejected') throw campaignRead.reason;
+  const campaign = campaignRead.value;
   if (!campaign || campaign.tenant_id !== input.tenantId || campaign.account_id !== input.accountId) {
     return refuse(404, 'contact_not_found');
   }
   if (campaign.status !== 'running') return refuse(409, 'campaign_not_running');
 
-  const session = await agencyAgentSessionRepository.findById(sessionId);
-  if (!session || session.tenant_id !== input.tenantId || session.account_id !== input.accountId
+  if (session.tenant_id !== input.tenantId || session.account_id !== input.accountId
     || session.agent_user_id !== actorUserId || session.left_at || !isCampaignSession(session)
     || session.campaign_id !== campaign.id) {
     return refuse(409, 'agent_not_available');
   }
-  const live = await deps.agents.get(sessionId);
-  if (live?.state !== 'available') return refuse(409, 'agent_not_available');
+  if (liveRead.status === 'rejected') throw liveRead.reason;
+  if (liveRead.value?.state !== 'available') return refuse(409, 'agent_not_available');
 
   const settings = agentRetrySettingsOf(campaign);
   const evaluated = await agencyAgentRetryRepository.evaluateForAgentDial({
@@ -171,11 +195,7 @@ export async function startMyContactCall(
 
   // ── 2. Why it may be dialled now ──────────────────────────────────────────
   const choice = chooseAgentDialBasis(evaluated.facts);
-  if (!choice.ok) {
-    return choice.reason === 'in_flight'
-      ? refuse(409, 'contact_in_flight')
-      : notRetryable(choice.blocked, choice.availableAt);
-  }
+  if (!choice.ok) return refusalOfChoice(choice);
 
   // ── 3. The pre-dial gates (last of the reads: the clearance is short-lived) ──
   const note = input.overrideNote === undefined || input.overrideNote === null
@@ -333,9 +353,7 @@ async function explainLostClaim(
   });
   if (!now) return refuse(404, 'contact_not_found');
   const choice = chooseAgentDialBasis(now.facts);
-  if (!choice.ok) {
-    return choice.reason === 'in_flight' ? refuse(409, 'contact_in_flight') : notRetryable(choice.blocked, choice.availableAt);
-  }
+  if (!choice.ok) return refusalOfChoice(choice);
   if (spendCallingHours && !now.contact.override_calling_hours) {
     // Spent by a concurrent dial between the gates and the claim.
     return refuse(409, 'outside_calling_hours', { next_open_at: null });
