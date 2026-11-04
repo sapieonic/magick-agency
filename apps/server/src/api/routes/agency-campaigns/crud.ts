@@ -17,6 +17,8 @@ import type {
 // definition — see its header for why it is derived from the record rather than
 // an allow-list.
 import { formatAgencyCampaignResponse } from '../../responses/agency-campaign.response.js';
+import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
+import { campaignConfigChange, encodeConfigChange } from '../../../agency/campaign-config-audit.js';
 import { CAMPAIGN_CONFIG_COLUMN_DEFAULTS } from '../../../agency/campaign-config.js';
 import { replyValidationFailed } from '../helpers/parse-or-400.js';
 // How many ids one `GET /summaries` may name; the staffing `my-*` routes split
@@ -275,7 +277,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
         error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found',
       });
     }
-    return reply.send(formatAgencyCampaignResponse(updated));
+    const response = formatAgencyCampaignResponse(updated);
+    // What changed, for the public route's `agency_campaign.config_changed` row (IN8):
+    // this handler is the one place holding the row before AND after the write.
+    // Compared over the body's own keys (the caller's, before `caller_ids` trimming).
+    const change = campaignConfigChange(
+      request.body, formatAgencyCampaignResponse(campaign), response,
+    );
+    if (change) reply.header(CONFIG_CHANGE_HEADER, encodeConfigChange(change));
+    return reply.send(response);
   };
   app.patch<{ Params: { id: string } }>('/:id', { preHandler: ownedCampaign({ gated: true }) }, patchHandler);
 }

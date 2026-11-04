@@ -163,6 +163,30 @@ describe('activityDetailSummary', () => {
       .toBe('Un-suppressed, scope: tenant.');
   });
 
+  it('names every changed setting, with before and after where the row carries them (IN8)', () => {
+    const changed = row({
+      source: 'master',
+      action: 'agency_campaign.config_changed',
+      detail: {
+        campaign_id: 'camp-1',
+        fields: ['calling_window_end', 'record_calls', 'calling_days', 'retry_policy', 'brand_new_setting'],
+        changes: {
+          calling_window_end: { from: '20:00:00', to: '21:00:00' },
+          record_calls: { from: false, to: true },
+          calling_days: { from: [1, 2, 3, 4, 5], to: [1, 2, 3, 4, 5, 6] },
+        },
+      },
+    });
+    expect(activityDetailSummary(changed)).toBe(
+      'Changed calling hours end (20:00:00 → 21:00:00), call recording (off → on), '
+      + 'calling days (1, 2, 3, 4, 5 → 1, 2, 3, 4, 5, 6), retry policy and brand new setting.',
+    );
+    // One field reads as a sentence too, and a row naming nothing falls back to the raw detail.
+    expect(activityDetailSummary({ ...changed, detail: { fields: ['retry_policy'] } }))
+      .toBe('Changed retry policy.');
+    expect(activityDetailSummary({ ...changed, detail: { fields: [] } })).toBeNull();
+  });
+
   it('renders a status transition generically', () => {
     expect(activityDetailSummary(row({ action: 'agency_campaign.stopped', detail: { from: 'running', to: 'stopping' } })))
       .toBe('running → stopping');

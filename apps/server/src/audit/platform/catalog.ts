@@ -31,6 +31,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // or paused). Written by the public PATCH route on success only; `details` carry
   // `{ campaign_id, from, to }`. Sending the stored mode again is not a change.
   'agency_campaign.assignment_mode_changed',
+  // A campaign's configuration changed (IN8). Written by the public PATCH route on
+  // success, one row per PATCH that changed anything; `details` carry `{ campaign_id,
+  // fields, changes }`: every changed field's name, and `{ from, to }` for the small
+  // ones (scalars, short lists). JSON fields (retry policy, catalog) are names only.
+  'agency_campaign.config_changed',
   'agency_session.joined',
   'agency_session.left',
   'agency_session.break_started',

@@ -34,6 +34,7 @@ import { insertAgencyCampaign, insertAgencyContact } from '../agency/agency-fact
 import { buildApp } from '../../../src/app.js';
 import { callCore } from '../../../src/api/core-dispatch.js';
 import { auditLogger } from '../../../src/audit/audit-logger.js';
+import { platformAuditLogger } from '../../../src/audit/platform/audit-logger.js';
 
 initDbPool({ url: TEST_DB_URL, poolMin: 0, poolMax: 4 });
 
@@ -157,5 +158,79 @@ describe('the creator is recorded (IN8)', () => {
 
     expect(await createdBy(id)).toBeNull();
     expect(await createdAuditActors(id)).toEqual(['system:api']);
+  });
+});
+
+/** The `agency_campaign.config_changed` rows for a campaign, after the logger has flushed. */
+async function configChangedRows(campaignId: string) {
+  await platformAuditLogger.shutdown();
+  const { rows } = await getTestPool().query<{ actor_type: string; user_id: string | null; details: Record<string, unknown> }>(
+    `SELECT actor_type, user_id, details FROM platform_audit_log
+      WHERE action = 'agency_campaign.config_changed' AND campaign_id = $1
+      ORDER BY created_at`,
+    [campaignId],
+  );
+  return rows;
+}
+
+describe('a config change is in the activity log (IN8)', () => {
+  async function create(): Promise<string> {
+    const res = await app.inject({
+      method: 'POST', url: '/proxy/agency/campaigns', headers: headers(),
+      payload: { name: 'Q4 Renewals', caller_ids: ['+919000000001'] },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return (res.json() as { id: string }).id;
+  }
+
+  it('one row per PATCH that changed anything, with names and the small values', async () => {
+    const id = await create();
+    const res = await app.inject({
+      method: 'PATCH', url: `/proxy/agency/campaigns/${id}`, headers: headers(),
+      payload: {
+        name: 'Q4 Renewals v2', calling_window_end: '21:00', wrapup_seconds: 45,
+        // Sent unchanged: not named.
+        calling_window_start: '09:00',
+        disposition_catalog: [{ code: 'sale', label: 'Sale', is_success: true }],
+      },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    // The private change header never reaches the client.
+    expect(res.headers['x-mgkvc-config-change']).toBeUndefined();
+
+    const rows = await configChangedRows(id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor_type: 'human', user_id: w.user.id });
+    expect(rows[0]!.details).toEqual({
+      campaign_id: id,
+      fields: ['name', 'calling_window_end', 'wrapup_seconds', 'disposition_catalog'],
+      changes: {
+        name: { from: 'Q4 Renewals', to: 'Q4 Renewals v2' },
+        calling_window_end: { from: '20:00:00', to: '21:00:00' },
+        wrapup_seconds: { from: 30, to: 45 },
+      },
+    });
+
+    // And it is on the campaign's Activity tab, labelled by the served vocabulary.
+    const activity = await app.inject({
+      method: 'GET', url: `/proxy/agency/campaigns/${id}/activity`, headers: headers(),
+    });
+    const body = activity.json() as {
+      rows: Array<{ action: string }>;
+      available_actions?: Array<{ value: string; label: string }>;
+    };
+    expect(body.rows.filter((r) => r.action === 'agency_campaign.config_changed')).toHaveLength(1);
+    expect(body.available_actions?.find((a) => a.value === 'agency_campaign.config_changed')?.label)
+      .toBe('Settings changed');
+  });
+
+  it('a save of what is already stored files no row', async () => {
+    const id = await create();
+    const res = await app.inject({
+      method: 'PATCH', url: `/proxy/agency/campaigns/${id}`, headers: headers(),
+      payload: { name: 'Q4 Renewals', calling_window_end: '20:00' },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(await configChangedRows(id)).toEqual([]);
   });
 });

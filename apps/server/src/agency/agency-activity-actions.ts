@@ -142,6 +142,7 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   // that has already finished.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign' },
   { value: 'agency_campaign.assignment_mode_changed', label: 'Assignment mode changed', group: 'Campaign' },
+  { value: 'agency_campaign.config_changed', label: 'Settings changed', group: 'Campaign' },
   { value: 'agency_disposition.created', label: 'Disposition filed', group: 'Calls' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls' },
   { value: 'agency_attempt.redialed', label: 'Customer redialled from wrap-up', group: 'Calls' },

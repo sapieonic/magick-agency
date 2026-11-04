@@ -125,6 +125,78 @@ function str(value: unknown): string | null {
 }
 
 /**
+ * Campaign settings as the builder names them, for the `config_changed` summary. The
+ * row carries wire field names; a field missing here (one added later) is spelled out
+ * from its name rather than dropped, because an audit summary must never hide a change.
+ */
+const CONFIG_FIELD_LABEL: Record<string, string> = {
+  name: 'name',
+  caller_ids: 'caller IDs',
+  telephony_provider: 'carrier',
+  calling_window_start: 'calling hours start',
+  calling_window_end: 'calling hours end',
+  calling_days: 'calling days',
+  default_timezone: 'default time zone',
+  wrapup_seconds: 'wrap-up time',
+  wrapup_auto_return: 'automatic return after wrap-up',
+  allow_wrapup_redial: 'redial from wrap-up',
+  assignment_mode: 'assignment mode',
+  on_unstaff: 'when an agent is unstaffed',
+  callback_owner_grace_minutes: 'callback owner grace',
+  callback_fallback: 'callback fallback',
+  allow_agent_retry: 'agent retry',
+  agent_retry_rounds: 'agent retry rounds',
+  agent_retry_cooldown_minutes: 'agent retry cool-down',
+  retry_policy: 'retry policy',
+  disposition_catalog: 'call outcomes',
+  context_display: 'contact details layout',
+  break_reasons: 'break reasons',
+  record_calls: 'call recording',
+  analysis_profile_id: 'analysis profile',
+  abandon_announcement_id: 'abandon announcement',
+  abandonment_ceiling_pct: 'abandonment ceiling',
+};
+
+function configFieldLabel(field: string): string {
+  return CONFIG_FIELD_LABEL[field] ?? field.replace(/_/g, ' ');
+}
+
+function configValue(value: unknown): string {
+  if (value === null || value === undefined) return 'none';
+  if (typeof value === 'boolean') return value ? 'on' : 'off';
+  if (Array.isArray(value)) return value.length === 0 ? 'none' : value.map(String).join(', ');
+  return String(value);
+}
+
+/** "a", "a and b", "a, b and c". */
+function listSentence(items: string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+/**
+ * `agency_campaign.config_changed`: every changed setting, with before and after where
+ * the row carries them (the small ones; a JSON setting such as the retry policy is named
+ * only). `null` when the row names nothing, so the raw detail shows instead.
+ */
+function configChangedSummary(detail: Record<string, unknown>): string | null {
+  const fields = Array.isArray(detail['fields'])
+    ? (detail['fields'] as unknown[]).filter((f): f is string => typeof f === 'string')
+    : [];
+  if (fields.length === 0) return null;
+  const changes = (detail['changes'] && typeof detail['changes'] === 'object'
+    ? detail['changes']
+    : {}) as Record<string, { from?: unknown; to?: unknown } | undefined>;
+  const parts = fields.map((field) => {
+    const change = changes[field];
+    return change && 'from' in change && 'to' in change
+      ? `${configFieldLabel(field)} (${configValue(change.from)} → ${configValue(change.to)})`
+      : configFieldLabel(field);
+  });
+  return `Changed ${listSentence(parts)}.`;
+}
+
+/**
  * A one-line summary of a row's detail, or `null` to fall back to the raw
  * key/value list.
  *
@@ -158,6 +230,8 @@ export function activityDetailSummary(row: ActivityRow): string | null {
       ? `Filed “${code}” on behalf of the agent who took the call.`
       : `Filed “${code}”.`;
   }
+
+  if (row.action === 'agency_campaign.config_changed') return configChangedSummary(detail);
 
   if (row.action === 'dnc_entry.created' || row.action === 'dnc_entry.deleted') {
     const scope = str(detail['scope']);

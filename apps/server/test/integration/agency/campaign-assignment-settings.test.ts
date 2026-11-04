@@ -361,7 +361,9 @@ describe('the routes — internal handler and the public layer in front of it (i
     const res = await patchPublic(campaign.id as string, { assignment_mode: 'preferred' });
     expect(res.statusCode, res.body).toBe(200);
     expect((await stored(campaign.id as string))['assignment_mode']).toBe('preferred');
-    expect(platformAudit.log).toHaveBeenCalledTimes(1);
+    // One mode row, and beside it the config-change row every changing PATCH writes (IN8).
+    expect(platformAudit.log.mock.calls.map(([row]) => (row as { action: string }).action))
+      .toEqual(['agency_campaign.assignment_mode_changed', 'agency_campaign.config_changed']);
     expect(platformAudit.log).toHaveBeenCalledWith(expect.objectContaining({
       tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId, actor_type: 'human', user_id: SUPERVISOR,
       action: 'agency_campaign.assignment_mode_changed', campaign_id: campaign.id,
@@ -398,7 +400,12 @@ describe('the routes — internal handler and the public layer in front of it (i
 
     const defaults = await patchPublic(campaign.id as string, { ...AGENCY_CONTACT_ASSIGNMENT_DEFAULTS, wrapup_seconds: 45 });
     expect(defaults.statusCode, defaults.body).toBe(200);
-    expect(platformAudit.log).not.toHaveBeenCalled();
+    // The two refusals audited nothing; the save audits only what it changed (IN8).
+    expect(platformAudit.log).toHaveBeenCalledTimes(1);
+    expect(platformAudit.log).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'agency_campaign.config_changed',
+      details: { campaign_id: campaign.id, fields: ['wrapup_seconds'], changes: { wrapup_seconds: { from: 30, to: 45 } } },
+    }));
   });
 
   it('internal retry create: keep_assignments false lands the cohort in the pool; a non-boolean is a 400', async () => {
