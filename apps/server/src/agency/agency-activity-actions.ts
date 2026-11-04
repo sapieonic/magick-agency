@@ -141,9 +141,13 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   // through it, and authoring a retry is something that happens to a campaign
   // that has already finished.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign' },
+  { value: 'agency_campaign.assignment_mode_changed', label: 'Assignment mode changed', group: 'Campaign' },
   { value: 'agency_disposition.created', label: 'Disposition filed', group: 'Calls' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls' },
   { value: 'agency_attempt.redialed', label: 'Customer redialled from wrap-up', group: 'Calls' },
+  // Contact assignment: an agent's own retry and dial of their contacts (CA12).
+  { value: 'agency_contacts.agent_retry_reopened', label: 'Agent reopened not-reached contacts', group: 'Calls' },
+  { value: 'agency_contact.agent_dialed', label: 'Agent called one of their contacts', group: 'Calls' },
   // A bulk export of every number on a campaign takes no permission
   // beyond `agency.supervise`, on the reasoning that a second gate to keep
   // aligned is a second gate to drift. Attribution is what answers the exposure
@@ -164,8 +168,11 @@ export const CAMPAIGN_ACTIVITY_ACTIONS = [
   { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls' },
   { value: 'agency_manual_call.orphaned', label: 'Soft-phone call closed after a restart', group: 'Calls' },
   { value: 'agency_manual_call.lapsed', label: 'Soft-phone outcome lapsed', group: 'Calls' },
+  { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned', group: 'Staffing' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned', group: 'Staffing' },
+  { value: 'agency_contacts.assigned', label: 'Contacts assigned', group: 'Staffing' },
+  { value: 'agency_contacts.unassigned_on_unstaff', label: "Unstaffed agent's contacts returned (or kept)", group: 'Staffing' },
   { value: 'agency_session.joined', label: 'Agent joined', group: 'Staffing' },
   { value: 'agency_session.left', label: 'Agent left', group: 'Staffing' },
   { value: 'agency_session.break_started', label: 'Break started', group: 'Staffing' },

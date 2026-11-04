@@ -10,7 +10,21 @@
  */
 export { AgencyCampaignRepository, agencyCampaignRepository } from './agency/campaign.repository.js';
 export { AgencyContactRepository, agencyContactRepository } from './agency/contact.repository.js';
+export type {
+  AgencyAgentClaim,
+  AgencyAgentQueueProbe,
+  AgencyAgentQueueProbeRow,
+  AgencyCallbackFallbackMove,
+  AgencyOwnerClaimMode,
+  AgencyPoolQueueProbe,
+} from './agency/contact.repository.js';
 export { AgencyAttemptRepository, agencyAttemptRepository } from './agency/attempt.repository.js';
+export {
+  AGENT_RETRY_SKIPPED_LIST_MAX,
+  AgencyAgentRetryRepository,
+  agencyAgentRetryRepository,
+} from './agency/agent-retry.repository.js';
+export type { AgentDialClaim, AgentRetryReopenResult, AgentRetrySettings } from './agency/agent-retry.repository.js';
 export { AgencyAgentSessionRepository, agencyAgentSessionRepository } from './agency/agent-session.repository.js';
 export type { AgencySoftphoneJoinResult } from './agency/agent-session.repository.js';
 export { AgencyManualCallRepository, agencyManualCallRepository } from './agency/manual-call.repository.js';
@@ -38,5 +52,18 @@ export {
 export type { AgencyLiveAttemptStateRow, AgencyLiveManualCallStateRow } from './agency/fleet-metrics.repository.js';
 export { AgencyAgentStatsRepository, agencyAgentStatsRepository } from './agency/agent-stats.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
+export { AgencyAssignmentRepository, agencyAssignmentRepository, planCtes } from './agency/assignment.repository.js';
+export type {
+  AssignmentCampaignScope,
+  AssignmentCommitOutcome,
+  UnstaffReturn,
+} from './agency/assignment.repository.js';
+export {
+  AgencyAssignmentReadRepository,
+  agencyAssignmentReadRepository,
+  emptyBucketCounts,
+  heroColumns,
+} from './agency/assignment-reads.repository.js';
+export type { MyContactsTally, OwnerTally, ProgressRaw } from './agency/assignment-reads.repository.js';
 export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';
 export type { AgencyManualCallJoinedRow } from './agency/projections.js';

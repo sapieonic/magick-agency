@@ -369,6 +369,35 @@ class MissedReleaseView {
   int get hashCode => Object.hash(headline, detail);
 }
 
+/// Why nothing is due for the agent on a `strict` or `preferred` campaign
+/// (contact assignment). [other]: a reason this build does not know.
+enum QueueIdle { queueEmpty, waitingForRetry, callbacksLater, outsideCallingHours, other }
+
+/// The agent's own queue on a `strict` or `preferred` campaign: something is
+/// due now, or nothing is, why, and when the next contact falls due.
+@immutable
+class QueueView {
+  const QueueView({required this.due, this.reason, this.nextDueAt});
+
+  /// A contact is due for this agent now: the station waits as usual.
+  final bool due;
+
+  /// Why nothing is due; null when [due].
+  final QueueIdle? reason;
+
+  /// When the next contact falls due, on this device's clock; null when none is scheduled.
+  final DateTime? nextDueAt;
+
+  /// "Nothing due now" belongs on the waiting screen.
+  bool get nothingDue => !due;
+
+  @override
+  bool operator ==(Object other) =>
+      other is QueueView && other.due == due && other.reason == reason && other.nextDueAt == nextDueAt;
+  @override
+  int get hashCode => Object.hash(due, reason, nextDueAt);
+}
+
 /// An action in flight, so its button shows progress and cannot double-fire.
 ///
 /// [redialing] lasts from the tap until the redial's call reaches the
@@ -416,6 +445,8 @@ class StationView {
     this.busy = StationBusy.none,
     this.actionError,
     this.fatal,
+    this.queue,
+    this.myContactsOffered = false,
   });
 
   final String campaignId;
@@ -467,6 +498,16 @@ class StationView {
   /// The station cannot open at all (join refused); shown full-screen with a way back.
   final String? fatal;
 
+  /// The agent's own queue (contact assignment): null on a `pool` campaign,
+  /// where the waiting screen keeps its usual words.
+  final QueueView? queue;
+
+  /// Whether this campaign has a My contacts for the agent (contact
+  /// assignment), as the join bootstrap says: it assigns contacts (not
+  /// `pool`) or lets agents retry the ones they did not reach. The
+  /// console's rule for its header button; the flag is checked on top.
+  final bool myContactsOffered;
+
   /// The call screen must be in front: reserved, on a call or in wrap-up.
   bool get callActive => phase == AgentPhase.reserved || phase == AgentPhase.onCall || phase == AgentPhase.wrapup;
 
@@ -501,10 +542,12 @@ class StationView {
       other.weakConnection == weakConnection &&
       other.busy == busy &&
       other.actionError == actionError &&
-      other.fatal == fatal;
+      other.fatal == fatal &&
+      other.queue == queue &&
+      other.myContactsOffered == myContactsOffered;
 
   @override
-  int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError]);
+  int get hashCode => Object.hashAll([campaignId, sessionId, link, phase, phaseSince, call, wrapup, busy, audio, notes, actionError, queue]);
 }
 
 /// Everything the station screens can ask for. Each returns when the server

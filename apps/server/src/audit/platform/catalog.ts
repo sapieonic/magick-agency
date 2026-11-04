@@ -27,6 +27,10 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // parent it came from, and which selector the supervisor chose. Without this row the parent's trail
   // says nothing happened on the day someone re-dialled 812 of its contacts.
   'agency_campaign.retry_created',
+  // Contact assignment (CA10): the campaign's `assignment_mode` changed (only while draft
+  // or paused). Written by the public PATCH route on success only; `details` carry
+  // `{ campaign_id, from, to }`. Sending the stored mode again is not a change.
+  'agency_campaign.assignment_mode_changed',
   'agency_session.joined',
   'agency_session.left',
   'agency_session.break_started',
@@ -49,8 +53,24 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // ARE that attribution: without them the decision has nothing behind it.
   'agency_attempts.exported',
   'agency_contacts.exported',
+  // Contact assignment (CA5): due callbacks whose owner stayed away past the campaign's grace
+  // went to the pool. One row per sweep batch (the system actor); the per-contact moves are in
+  // `agency_contact_assignment_events` under the same `batch_id`.
+  'agency_contacts.callback_fallback',
   'agency_campaign_agent.assigned',
   'agency_campaign_agent.unassigned',
+  // ── Contact assignment ─────────────────────────────────────────────────────
+  // One row per committed operation (details: batch_id, kind, moved, skipped_live, to_pool,
+  // per_agent; the per-contact history rows carry the same batch_id), and one per campaign
+  // where an unstaffed agent held contacts (moved to the pool, or `kept: true`).
+  'agency_contacts.assigned',
+  'agency_contacts.unassigned_on_unstaff',
+  // ── Contact assignment: the agent's own contacts (decision CA12) ─────────────────────
+  // An agent reopened their not-reached contacts into their queue (one row per request that
+  // reopened any; `details`: campaign, counts). And an agent dialled one of their contacts
+  // themselves (one row per dial; `details`: the attempt, the session, what it spent).
+  'agency_contacts.agent_retry_reopened',
+  'agency_contact.agent_dialed',
   // ── The soft phone (docs/softphone.md §6) ─────────────────────────────────
   // One row per soft-phone dial and per act on it. The two overrides are rows of
   // their own beside `placed` (SP1, SP2): a dial placed THROUGH a DNC hit or a closed
@@ -96,6 +116,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   'agency_attempt',
   'agency_disposition',
   'agency_campaign_agent',
+  // One roster contact (`agency_contacts.id`): an agent's dial of one of their own contacts.
+  'agency_contact',
   // One soft-phone dial (`agency_manual_calls.id`), and the account's soft-phone
   // settings row (`resource_id` is absent: one row per account, named by it).
   'agency_manual_call',

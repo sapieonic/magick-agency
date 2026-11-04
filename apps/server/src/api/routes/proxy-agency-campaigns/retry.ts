@@ -14,8 +14,9 @@ import {
   resolveInheritedBehavioralConfig,
 } from '../../../agency/campaign-behavioral-settings.js';
 import { validateAgencyCampaignConfig, issuesToDetails } from '../../../agency/agency-campaign-config.js';
+import { assertAssignmentSettingsAllowed } from '../../../agency/campaign-assignment-gate.js';
 import type { ConfigIssue } from '../../../agency/agency-campaign-config.js';
-import { fetchOwnedCoreCampaign, stringField } from '../helpers/core-campaign.js';
+import { ownedCoreCampaignOnce, stringField } from '../helpers/core-campaign.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { AUDIT_FILTER_VALUE_MAX_CHARS } from './spine.js';
 import { resolveActorDisplayName } from './lifecycle.js';
@@ -209,6 +210,12 @@ const retryCreateSchema = z.object({
    * keep in step, on a field whose failure mode is silent duplication.
    */
   idempotency_key: z.string().optional(),
+  /*
+   * Contact assignment: each copied contact keeps its parent contact's owner (the
+   * handler's default when absent) or lands in the pool. A boolean or absent; the
+   * handler applies the same rule to a body that reaches it another way.
+   */
+  keep_assignments: z.boolean().optional(),
 }).strict();
 
 /** Registered by `proxyAgencyCampaignsRoutes` on its own instance, after its hooks. */
@@ -349,6 +356,18 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
         .send({ error: 'Validation Error', details: issuesToDetails(configIssues) });
     }
 
+    // Contact assignment (CA9): an override that sets an assignment setting to a
+    // non-default value, or a catalog entry with an `override`, needs the flag. Only
+    // the OVERRIDES are judged — what the child inherits is the parent's stored config,
+    // the same line the config validation above draws. Before the first `callCore`, as
+    // every route-authored refusal here is (see the ordering note above). The parent is read
+    // at most once: the gate's read, when it needs one, is the parent read below.
+    const parentRead = ownedCoreCampaignOnce(request, request.params.id);
+    if (!(await assertAssignmentSettingsAllowed(reply, parsed.data.config_overrides, {
+      tenantId: request.tenantId!,
+      accountId: request.accountId,
+    }, parentRead.stored))) return;
+
     /*
      * The actor — this layer's fact, from the session.
      *
@@ -405,7 +424,7 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
      * shorten the wait for it. A request the gates below refuse discards the name.
      */
     const actorNameLookup = resolveActorDisplayName(request, actorUserId);
-    const parent = await fetchOwnedCoreCampaign(request, request.params.id);
+    const parent = await parentRead.probe();
     if (!parent.ok) return reply.code(parent.status).send(parent.body);
 
     // The behavioral capabilities, on a route that sends no config of its own.
@@ -497,6 +516,10 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
         // survives the error mask.
         ...(parsed.data.idempotency_key !== undefined
           ? { idempotency_key: parsed.data.idempotency_key }
+          : {}),
+        // Absent stays absent: the handler's default (keep) applies.
+        ...(parsed.data.keep_assignments !== undefined
+          ? { keep_assignments: parsed.data.keep_assignments }
           : {}),
       },
       tenantId: request.tenantId!,

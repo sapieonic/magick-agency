@@ -56,3 +56,24 @@ export async function fetchOwnedCoreCampaign(
     ? { ok: false, status: result.status, body: result.body }
     : { ok: true, body: result.body };
 }
+
+/**
+ * {@link fetchOwnedCoreCampaign}, run at most once per request and only when first asked.
+ * `probe` is its answer; `stored` the campaign body, or null when the probe refused (the
+ * route answers that refusal itself), for gates that judge a body against what the campaign
+ * already holds and read it only when they must.
+ */
+export function ownedCoreCampaignOnce(
+  request: FastifyRequest,
+  campaignId: string,
+): { probe: () => Promise<OwnedCoreCampaign>; stored: () => Promise<unknown> } {
+  let read: Promise<OwnedCoreCampaign> | null = null;
+  const probe = (): Promise<OwnedCoreCampaign> => (read ??= fetchOwnedCoreCampaign(request, campaignId));
+  return {
+    probe,
+    stored: async () => {
+      const found = await probe();
+      return found.ok ? found.body : null;
+    },
+  };
+}

@@ -920,6 +920,71 @@ describe('allow_wrapup_redial (wrap-up redial)', () => {
   });
 });
 
+describe('contact assignment settings (0009)', () => {
+  it('accepts every vocabulary member, the bounds, both booleans, and says nothing when absent', () => {
+    expect(validateAgencyCampaignConfig({
+      assignment_mode: 'strict', on_unstaff: 'keep', callback_owner_grace_minutes: 10080, callback_fallback: 'wait',
+      allow_agent_retry: true, agent_retry_rounds: 10, agent_retry_cooldown_minutes: 0,
+    })).toEqual([]);
+    expect(validateAgencyCampaignConfig({
+      assignment_mode: 'preferred', on_unstaff: 'return_to_pool', callback_owner_grace_minutes: 0,
+      callback_fallback: 'pool', allow_agent_retry: false, agent_retry_rounds: 1, agent_retry_cooldown_minutes: 10080,
+    })).toEqual([]);
+    expect(fields({ name: 'x' })).toEqual([]);
+  });
+
+  it('refuses each enum outside its vocabulary, null included', () => {
+    expect(messageFor({ assignment_mode: 'shared' }, 'assignment_mode'))
+      .toBe('assignment_mode must be one of: pool, strict, preferred.');
+    expect(messageFor({ on_unstaff: null }, 'on_unstaff')).toBe('on_unstaff must be one of: return_to_pool, keep.');
+    expect(messageFor({ callback_fallback: 'never' }, 'callback_fallback')).toBe('callback_fallback must be one of: pool, wait.');
+  });
+
+  it('refuses each integer just outside its bound, a fraction and a string', () => {
+    for (const [field, below, above] of [
+      ['callback_owner_grace_minutes', -1, 10081],
+      ['agent_retry_rounds', 0, 11],
+      ['agent_retry_cooldown_minutes', -1, 10081],
+    ] as const) {
+      for (const bad of [below, above, 1.5, '5', null]) {
+        expect(fields({ [field]: bad }), `${field}=${String(bad)}`).toEqual([field]);
+      }
+    }
+  });
+
+  it('refuses a non-boolean allow_agent_retry', () => {
+    for (const bad of ['true', 1, null]) {
+      expect(messageFor({ allow_agent_retry: bad }, 'allow_agent_retry')).toBe('allow_agent_retry must be a boolean.');
+    }
+  });
+});
+
+describe('an outcome override on a catalog entry', () => {
+  const entry = (override: unknown, extra: Record<string, unknown> = {}) => ({
+    disposition_catalog: [{ code: 'promise_to_pay', label: 'Promise to pay', ...extra, override }],
+  });
+
+  it('accepts the three parts, alone or together', () => {
+    for (const override of [{ extra_attempts: 1 }, { extra_attempts: 5 }, { retry_delay: true }, { calling_hours: true }]) {
+      expect(validateAgencyCampaignConfig(entry(override)), JSON.stringify(override)).toEqual([]);
+    }
+  });
+
+  it('refuses a dnc key: do-not-call is never overridable', () => {
+    expect(fields(entry({ retry_delay: true, dnc: true }))).toEqual(['disposition_catalog[0].override.dnc']);
+    expect(messageFor(entry({ retry_delay: true, dnc: true }), 'disposition_catalog[0].override.dnc'))
+      .toContain('do-not-call is never overridable');
+  });
+
+  it('refuses extra_attempts outside 1–5, a grant of nothing, and an override on a suppress or terminal entry', () => {
+    expect(fields(entry({ extra_attempts: 6 }))).toEqual(['disposition_catalog[0].override.extra_attempts']);
+    expect(fields(entry({ extra_attempts: 0 }))).toEqual(['disposition_catalog[0].override.extra_attempts']);
+    expect(fields(entry({}))).toEqual(['disposition_catalog[0].override']);
+    expect(fields(entry({ retry_delay: true }, { suppress: true }))).toEqual(['disposition_catalog[0].override']);
+    expect(fields(entry({ retry_delay: true }, { terminal: true }))).toEqual(['disposition_catalog[0].override']);
+  });
+});
+
 describe("the reserved system disposition code 'redialed'", () => {
   it('refuses it on the entry\'s code field, naming why', () => {
     const body = {

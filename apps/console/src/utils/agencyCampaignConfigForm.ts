@@ -5,8 +5,12 @@ import type {
   AgencyRetryRule,
 } from '../types/agency-campaign';
 import { hhmm } from './format/weekdays';
+import type { AgencyDispositionOverride } from '@magick-agency/contracts/agency';
+import { ASSIGNMENT_MODE_COPY } from './agencyAssignmentCopy';
 import {
+  type AssignmentConfigState,
   type CampaignConfigState,
+  DEFAULT_ASSIGNMENT_CONFIG,
   DEFAULT_DISPOSITIONS,
   DEFAULT_DISPOSITION_RETRY,
   OUR_FAULT_RETRY_DEFAULT,
@@ -107,7 +111,36 @@ export function dispositionSummary(entry: AgencyDispositionEntry): string {
       : 'It does not count as a success.',
   );
 
+  const allows = overrideSummary(entry);
+  if (allows) parts.push(allows);
+
   return parts.join(' ');
+}
+
+/**
+ * What an outcome's override lets the contact's agent do next, as one sentence,
+ * or `null` when it grants nothing or nothing would read it (an entry that
+ * suppresses or ends the contact; the server refuses an override there).
+ */
+export function overrideSummary(entry: AgencyDispositionEntry): string | null {
+  const override = entry.override;
+  if (!override || entry.suppress || entry.terminal) return null;
+  const allows: string[] = [];
+  if (override.extra_attempts && override.extra_attempts > 0) {
+    allows.push(
+      `${override.extra_attempts} extra attempt${override.extra_attempts === 1 ? '' : 's'} past the limit`,
+    );
+  }
+  if (override.retry_delay) allows.push('a call before the next scheduled time');
+  if (override.calling_hours) allows.push('a call outside calling hours, with a note');
+  if (allows.length === 0) return null;
+  return `The agent may then make ${joinAnd(allows)}.`;
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+export function joinAnd(items: readonly string[]): string {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
 /** `every 4 hours` / `every 20 minutes` / `straight away`. */
@@ -118,6 +151,13 @@ function retryCadence(delayMinutes: number): string {
     return `every ${hours} hour${hours === 1 ? '' : 's'}`;
   }
   return `every ${delayMinutes} minutes`;
+}
+
+/** The entry without its `override` key (an outcome that grants nothing). */
+function withoutOverride<T extends { override?: unknown }>(entry: T): Omit<T, 'override'> {
+  const { override: _override, ...rest } = entry;
+  void _override;
+  return rest;
 }
 
 /**
@@ -132,7 +172,13 @@ function retryCadence(delayMinutes: number): string {
  * site replacing the object rather than assigning into it.
  */
 function cloneDisposition(entry: AgencyDispositionEntry): AgencyDispositionEntry {
-  return { ...entry, ...(entry.retry ? { retry: { ...entry.retry } } : {}) };
+  return {
+    ...entry,
+    ...(entry.retry ? { retry: { ...entry.retry } } : {}),
+    // The override is nested the same way and edited the same way, so it is
+    // copied for the same reason.
+    ...(entry.override ? { override: { ...entry.override } } : {}),
+  };
 }
 
 export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
@@ -142,6 +188,7 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   wrapupSeconds: 30,
   autoReturn: true,
   allowWrapupRedial: false,
+  assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
 };
 
 /**
@@ -174,8 +221,17 @@ export type CatalogEdit =
   | { type: 'rename'; index: number; label: string }
   /** A hand-typed code, which detaches the row from its label for good. */
   | { type: 'setCode'; index: number; code: string }
-  /** Any other field of a row (a flag, the retry rule). */
+  /**
+   * Any other field of a row (a flag, the retry rule). A patch that makes the row
+   * suppress or end the contact drops its override: the server refuses one there.
+   */
   | { type: 'update'; index: number; patch: Partial<AgencyDispositionEntry> }
+  /**
+   * One part of a row's override. `undefined` / `false` / `0` clears that part,
+   * and clearing the last part removes the override, so an "all off" group never
+   * saves as `{}` (which the server refuses: at least one part is set).
+   */
+  | { type: 'setOverride'; index: number; patch: Partial<AgencyDispositionOverride> }
   /** Switch a row's own retry on (seeded from the voicemail default) or off. */
   | { type: 'toggleRetry'; index: number; on: boolean }
   /** Delete a row. A built-in cannot be removed. */
@@ -221,9 +277,36 @@ export function editCatalog(state: CatalogEditState, edit: CatalogEdit): Catalog
       rows.delete(edit.index);
       return { dispositions: patchRow(edit.index, { code: edit.code }), autoCodeRows: rows };
     }
-    case 'update':
-      if (!dispositions[edit.index]) return state;
+    case 'update': {
+      const entry = dispositions[edit.index];
+      if (!entry) return state;
+      const merged = { ...entry, ...edit.patch };
+      if (merged.override && (merged.suppress || merged.terminal)) {
+        const rest = withoutOverride(merged);
+        return {
+          dispositions: dispositions.map((row, i) => (i === edit.index ? rest : row)),
+          autoCodeRows,
+        };
+      }
       return { dispositions: patchRow(edit.index, edit.patch), autoCodeRows };
+    }
+    case 'setOverride': {
+      const entry = dispositions[edit.index];
+      if (!entry) return state;
+      const next: AgencyDispositionOverride = { ...(entry.override ?? {}), ...edit.patch };
+      // Only the parts that are on are kept, so the saved object names exactly
+      // what the outcome grants.
+      const kept: AgencyDispositionOverride = {};
+      if (next.extra_attempts !== undefined && next.extra_attempts > 0) kept.extra_attempts = next.extra_attempts;
+      if (next.retry_delay) kept.retry_delay = true;
+      if (next.calling_hours) kept.calling_hours = true;
+      const rest = withoutOverride(entry);
+      const row: AgencyDispositionEntry = Object.keys(kept).length > 0 ? { ...rest, override: kept } : rest;
+      return {
+        dispositions: dispositions.map((current, i) => (i === edit.index ? row : current)),
+        autoCodeRows,
+      };
+    }
     case 'toggleRetry':
       /*
         Seeded from the voicemail default rather than from zero, for the same
@@ -285,6 +368,7 @@ export function emptyCampaignConfig(): CampaignConfigState {
     dispositions: EMPTY_CAMPAIGN_CONFIG.dispositions.map(cloneDisposition),
     retryPolicy: { ...EMPTY_CAMPAIGN_CONFIG.retryPolicy },
     window: { ...EMPTY_CAMPAIGN_CONFIG.window, days: [...EMPTY_CAMPAIGN_CONFIG.window.days] },
+    assignment: { ...EMPTY_CAMPAIGN_CONFIG.assignment },
   };
 }
 
@@ -312,6 +396,64 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     autoReturn: campaign.wrapup_auto_return ?? EMPTY_CAMPAIGN_CONFIG.autoReturn,
     // Absent on a campaign read from a server that predates the setting: off.
     allowWrapupRedial: campaign.allow_wrapup_redial ?? EMPTY_CAMPAIGN_CONFIG.allowWrapupRedial,
+    assignment: assignmentFromCampaign(campaign),
+  };
+}
+
+/**
+ * The assignment settings off a campaign, each `??` its 0009 default: absent on a
+ * campaign read from a server that predates them, which behaves as the defaults.
+ */
+function assignmentFromCampaign(campaign: AgencyCampaign): AssignmentConfigState {
+  const d = DEFAULT_ASSIGNMENT_CONFIG;
+  return {
+    mode: campaign.assignment_mode ?? d.mode,
+    onUnstaff: campaign.on_unstaff ?? d.onUnstaff,
+    callbackGraceMinutes: campaign.callback_owner_grace_minutes ?? d.callbackGraceMinutes,
+    callbackFallback: campaign.callback_fallback ?? d.callbackFallback,
+    allowAgentRetry: campaign.allow_agent_retry ?? d.allowAgentRetry,
+    agentRetryRounds: campaign.agent_retry_rounds ?? d.agentRetryRounds,
+    agentRetryCooldownMinutes: campaign.agent_retry_cooldown_minutes ?? d.agentRetryCooldownMinutes,
+  };
+}
+
+/**
+ * What a stored campaign still holds of contact assignment beyond the defaults, as
+ * short phrases for the settings page's flag-off notice (empty when it holds
+ * nothing). Read from the LOADED campaign, never the form, so the notice stays
+ * put until a reset is actually saved.
+ */
+export function storedAssignmentLeftovers(campaign: AgencyCampaign): string[] {
+  const a = assignmentFromCampaign(campaign);
+  const d = DEFAULT_ASSIGNMENT_CONFIG;
+  const parts: string[] = [];
+  if (a.mode !== d.mode) parts.push(`the “${ASSIGNMENT_MODE_COPY[a.mode].label}” assignment mode`);
+  if (a.allowAgentRetry !== d.allowAgentRetry) parts.push('agent retry');
+  if (a.onUnstaff !== d.onUnstaff) parts.push('keeping contacts with agents taken off it');
+  if (
+    a.callbackGraceMinutes !== d.callbackGraceMinutes
+    || a.callbackFallback !== d.callbackFallback
+    || a.agentRetryRounds !== d.agentRetryRounds
+    || a.agentRetryCooldownMinutes !== d.agentRetryCooldownMinutes
+  ) {
+    parts.push('changed callback or retry timings');
+  }
+  const overrides = (campaign.disposition_catalog ?? []).filter((entry) => entry.override != null).length;
+  if (overrides > 0) parts.push(`${overrides} outcome override${overrides === 1 ? '' : 's'}`);
+  return parts;
+}
+
+/**
+ * The form with contact assignment put back to the defaults: every setting at
+ * `DEFAULT_ASSIGNMENT_CONFIG` and no catalog entry carrying an `override`. The
+ * way out after the flag is turned off; saved with an assignment scope that SENDS
+ * the defaults (the server lets a default through with the flag off).
+ */
+export function resetAssignmentConfig(state: CampaignConfigState): CampaignConfigState {
+  return {
+    ...state,
+    assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
+    dispositions: state.dispositions.map((entry) => withoutOverride(cloneDisposition(entry))),
   };
 }
 
@@ -382,6 +524,44 @@ export function retryPreview(outcome: AgencyRetryOutcome, rule: AgencyRetryRule 
 const NEVER_SENT_RETRY_OUTCOMES = ['invalid'] as const;
 
 /**
+ * Which contact-assignment settings a save sends.
+ *
+ *  - `all`: every one, always, including the defaults, so a value turned back to
+ *    its default is saved too (the same reason `wrapup_auto_return` is always sent).
+ *  - `settings_only`: everything but `assignment_mode`. The mode changes only while
+ *    the campaign is draft or paused (`409 mode_change_requires_pause` otherwise),
+ *    and its control is locked then, so the value cannot have changed; leaving it
+ *    out keeps every other save on a running campaign from depending on how the
+ *    server compares an unchanged mode.
+ *  - `none`: the `agency_contact_assignment_enabled` flag is off. The settings are
+ *    not shown and not sent, so the campaign keeps what it stores. The catalog is
+ *    still sent whole, stored `override`s included: the server's gate
+ *    (`campaign-assignment-gate.ts`) lets through, with the flag off, any setting
+ *    or override EQUAL to what the campaign already stores, and any value at its
+ *    default; only a change away from both needs the flag. So an unchanged
+ *    campaign set up while the flag was on keeps saving its other fields, and
+ *    the way back to the defaults (`resetAssignmentConfig`, saved with
+ *    `all` / `settings_only`) is always allowed.
+ */
+export type AssignmentPayloadScope = 'all' | 'settings_only' | 'none';
+
+function assignmentPayload(
+  assignment: AssignmentConfigState,
+  scope: AssignmentPayloadScope,
+): Partial<AgencyCampaign> {
+  if (scope === 'none') return {};
+  return {
+    ...(scope === 'all' ? { assignment_mode: assignment.mode } : {}),
+    on_unstaff: assignment.onUnstaff,
+    callback_owner_grace_minutes: assignment.callbackGraceMinutes,
+    callback_fallback: assignment.callbackFallback,
+    allow_agent_retry: assignment.allowAgentRetry,
+    agent_retry_rounds: assignment.agentRetryRounds,
+    agent_retry_cooldown_minutes: assignment.agentRetryCooldownMinutes,
+  };
+}
+
+/**
  * The PATCH body.
  *
  * `retry_policy` is sent as-is including `{}`, because the server's
@@ -390,11 +570,15 @@ const NEVER_SENT_RETRY_OUTCOMES = ['invalid'] as const;
  * one exception is {@link NEVER_SENT_RETRY_OUTCOMES}; everything else round-trips
  * untouched, including keys this form does not render.
  */
-export function buildConfigPayload(state: CampaignConfigState): Partial<AgencyCampaign> {
+export function buildConfigPayload(
+  state: CampaignConfigState,
+  scope: AssignmentPayloadScope = 'all',
+): Partial<AgencyCampaign> {
   const retryPolicy = { ...state.retryPolicy };
   for (const key of NEVER_SENT_RETRY_OUTCOMES) delete retryPolicy[key];
 
   return {
+    ...assignmentPayload(state.assignment, scope),
     disposition_catalog: state.dispositions.map(cloneDisposition),
     retry_policy: retryPolicy,
     calling_window_start: state.window.start,

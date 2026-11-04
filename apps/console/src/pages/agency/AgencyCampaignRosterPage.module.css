@@ -119,3 +119,32 @@
   composes: sr-only from global;
 }
 
+/* Contact assignment: the toolbar above the table and the selection column. */
+.assignBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.assignCount {
+  margin-right: auto;
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.selectCell {
+  width: 36px;
+  text-align: center;
+}
+
+.selectedRow > td {
+  background: var(--bg-tertiary);
+}
+

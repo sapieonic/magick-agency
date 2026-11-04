@@ -18,8 +18,9 @@ vi.mock('../../../src/agency/pre-dial-gates.js', () => ({
 describe('StationDirectory', () => {
   function dir(owner: string | null = null) {
     const broadcast = vi.fn();
-    const d = new StationDirectory({ readOwner: async () => owner, broadcastToWorkers: broadcast });
-    return { d, broadcast };
+    const sendToWorker = vi.fn((_slot: number, _sessionId: string, _frame: unknown) => true);
+    const d = new StationDirectory({ readOwner: async () => owner, broadcastToWorkers: broadcast, sendToWorker });
+    return { d, broadcast, sendToWorker };
   }
 
   it('an agent is dialable only while attached to a live worker; a worker going down drops all of its agents', () => {
@@ -70,6 +71,19 @@ describe('StationDirectory', () => {
     const frame = { event: 'campaign_state' } as never;
     expect(d.broadcast('c1', frame)).toBe(1);
     expect(broadcast).toHaveBeenCalledWith('c1', frame);
+  });
+
+  it("a session's frame goes to the worker holding its station, and nowhere when no live worker does", () => {
+    const { d, sendToWorker } = dir();
+    d.workerUp(2, 'r2');
+    d.attached(2, 's1', 'c1', 'r2');
+    const frame = { event: 'queue', campaign_id: 'c1', due: true, reason: null, next_due_at: null } as never;
+    expect(d.send('s1', frame)).toBe(true);
+    expect(sendToWorker).toHaveBeenCalledWith(2, 's1', frame);
+    expect(d.send('s-unknown', frame)).toBe(false);
+    d.workerDown(2);
+    expect(d.send('s1', frame)).toBe(false);
+    expect(sendToWorker).toHaveBeenCalledTimes(1);
   });
 });
 

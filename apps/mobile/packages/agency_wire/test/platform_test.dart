@@ -70,6 +70,13 @@ void main() {
       expect(f.isOn('agency_late_binding'), isFalse);
     });
 
+    test('contact assignment has its key', () {
+      final f = FeatureFlags.fromJson(fixture('platform.json', 'feature_flags'));
+      expect(FeatureFlags.contactAssignmentEnabled, 'agency_contact_assignment_enabled');
+      expect(f.isOn(FeatureFlags.contactAssignmentEnabled), isTrue);
+      expect(FeatureFlags.fromJson(const {}).isOn(FeatureFlags.contactAssignmentEnabled), isFalse);
+    });
+
     test('values are booleans, numbers or strings', () {
       expect(FeatureFlags.fromJson({'a': 3, 'b': 'x'}).values, {'a': 3, 'b': 'x'});
       expect(() => FeatureFlags.fromJson({'a': null}), throwsA(isA<WireFormatException>()));

@@ -59,10 +59,12 @@ final class Disposition {
     this.terminal,
     this.suppress,
     this.retry,
+    this.overrideGrant,
   });
 
   factory Disposition.fromJson(Map<String, Object?> j) {
     final retry = j.objOrNull('retry');
+    final override = j.objOrNull('override');
     return Disposition(
       code: j.str('code'),
       label: j.str('label'),
@@ -72,6 +74,7 @@ final class Disposition {
       terminal: j.boolOrNull('terminal'),
       suppress: j.boolOrNull('suppress'),
       retry: retry == null ? null : DispositionRetry.fromJson(retry),
+      overrideGrant: override == null ? null : DispositionOverride.fromJson(override),
     );
   }
 
@@ -93,6 +96,10 @@ final class Disposition {
   final bool? suppress;
   final DispositionRetry? retry;
 
+  /// What recording this outcome lets the agent override for this contact
+  /// afterwards (contact assignment); null when it grants nothing.
+  final DispositionOverride? overrideGrant;
+
   bool get noteRequired => requiresNote ?? false;
   bool get datetimeRequired => requiresDatetime ?? false;
 
@@ -106,10 +113,57 @@ final class Disposition {
       other.requiresDatetime == requiresDatetime &&
       other.terminal == terminal &&
       other.suppress == suppress &&
-      other.retry == retry;
+      other.retry == retry &&
+      other.overrideGrant == overrideGrant;
 
   @override
-  int get hashCode => Object.hash(code, label, isSuccess, requiresNote, requiresDatetime, terminal, suppress, retry);
+  int get hashCode =>
+      Object.hash(code, label, isSuccess, requiresNote, requiresDatetime, terminal, suppress, retry, overrideGrant);
+}
+
+/// An outcome's override grant: what the agent may then do past the
+/// campaign's rules for this one contact. At least one part is set. DNC is
+/// never overridable (there is no field for it).
+///
+/// Contract: `AgencyDispositionOverride` (`agency/session.ts`).
+@immutable
+final class DispositionOverride {
+  const DispositionOverride({this.extraAttempts, this.retryDelay, this.callingHours});
+
+  factory DispositionOverride.fromJson(Map<String, Object?> j) => DispositionOverride(
+    extraAttempts: j.integerOrNull('extra_attempts'),
+    retryDelay: j.boolOrNull('retry_delay'),
+    callingHours: j.boolOrNull('calling_hours'),
+  );
+
+  /// Contract: `AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX`.
+  static const extraAttemptsMax = 5;
+
+  /// Dials allowed past `max_attempts` (1–[extraAttemptsMax]).
+  final int? extraAttempts;
+
+  /// One dial before the contact's next scheduled time.
+  final bool? retryDelay;
+
+  /// One dial outside the calling hours, with a note.
+  final bool? callingHours;
+
+  /// The parts this outcome grants, in the contract's order.
+  List<OverrideKind> get kinds => [
+    if ((extraAttempts ?? 0) > 0) OverrideKind.extraAttempts,
+    if (retryDelay ?? false) OverrideKind.retryDelay,
+    if (callingHours ?? false) OverrideKind.callingHours,
+  ];
+
+  @override
+  bool operator ==(Object other) =>
+      other is DispositionOverride &&
+      other.extraAttempts == extraAttempts &&
+      other.retryDelay == retryDelay &&
+      other.callingHours == callingHours;
+
+  @override
+  int get hashCode => Object.hash(extraAttempts, retryDelay, callingHours);
 }
 
 /// Contract: `AgencyDisposition['retry']`.
@@ -295,6 +349,10 @@ final class SessionBootstrap {
     required this.wrapupSeconds,
     required this.wrapupAutoReturn,
     this.allowWrapupRedial = false,
+    this.assignmentMode = AssignmentMode.pool,
+    String? assignmentModeRaw,
+    this.allowAgentRetry = false,
+    this.queue,
     required this.recordCalls,
     required List<BreakReason> breakReasons,
     required this.contextDisplay,
@@ -302,6 +360,7 @@ final class SessionBootstrap {
     this.retryContext,
   }) : stateRaw = stateRaw ?? state.wire,
        campaignStatusRaw = campaignStatusRaw ?? campaignStatus.wire,
+       assignmentModeRaw = assignmentModeRaw ?? assignmentMode.wire,
        dispositionCatalog = List.unmodifiable(dispositionCatalog),
        breakReasons = List.unmodifiable(breakReasons);
 
@@ -309,6 +368,8 @@ final class SessionBootstrap {
     final state = j.str('state');
     final status = j.str('campaign_status');
     final retry = j.objOrNull('retry_context');
+    final mode = j.strOrNull('assignment_mode');
+    final queue = j.objOrNull('queue');
     return SessionBootstrap(
       sessionId: j.str('session_id'),
       campaignId: j.str('campaign_id'),
@@ -325,6 +386,10 @@ final class SessionBootstrap {
       wrapupSeconds: j.integer('wrapup_seconds'),
       wrapupAutoReturn: j.boolean('wrapup_auto_return'),
       allowWrapupRedial: j.boolOrNull('allow_wrapup_redial') ?? false,
+      assignmentMode: mode == null ? AssignmentMode.pool : AssignmentMode.fromWire(mode),
+      assignmentModeRaw: mode ?? AssignmentMode.pool.wire,
+      allowAgentRetry: j.boolOrNull('allow_agent_retry') ?? false,
+      queue: queue == null ? null : QueueState.fromJson(queue),
       recordCalls: j.boolean('record_calls'),
       breakReasons: j.list('break_reasons', BreakReason.fromJson),
       contextDisplay: ContextDisplay.fromJson(j.obj('context_display')),
@@ -369,6 +434,20 @@ final class SessionBootstrap {
   /// `wrapup` frame's `redial_remaining` is the live answer for one wrap-up.
   final bool allowWrapupRedial;
 
+  /// How pacing pairs this campaign's contacts with agents. Absent (an older
+  /// server) reads as [AssignmentMode.pool]; a mode this build does not know
+  /// is [AssignmentMode.unknown] with the wire string in [assignmentModeRaw].
+  final AssignmentMode assignmentMode;
+  final String assignmentModeRaw;
+
+  /// Whether the agent may retry the contacts they did not reach. Absent
+  /// reads as false.
+  final bool allowAgentRetry;
+
+  /// This agent's queue at join, on a `strict` or `preferred` campaign; null
+  /// in `pool` mode. The station's `queue` frame carries every later change.
+  final QueueState? queue;
+
   /// Whether calls are recorded: the app must disclose it.
   final bool recordCalls;
   final List<BreakReason> breakReasons;
@@ -403,6 +482,9 @@ final class SessionBootstrap {
       other.wrapupSeconds == wrapupSeconds &&
       other.wrapupAutoReturn == wrapupAutoReturn &&
       other.allowWrapupRedial == allowWrapupRedial &&
+      other.assignmentModeRaw == assignmentModeRaw &&
+      other.allowAgentRetry == allowAgentRetry &&
+      other.queue == queue &&
       other.recordCalls == recordCalls &&
       listEquals(other.breakReasons, breakReasons) &&
       other.contextDisplay == contextDisplay &&
@@ -410,7 +492,7 @@ final class SessionBootstrap {
       other.retryContext == retryContext;
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll(<Object?>[
     sessionId,
     campaignId,
     campaignName,
@@ -424,12 +506,15 @@ final class SessionBootstrap {
     wrapupSeconds,
     wrapupAutoReturn,
     allowWrapupRedial,
+    assignmentModeRaw,
+    allowAgentRetry,
+    queue,
     recordCalls,
     listHash(breakReasons),
     contextDisplay,
     intervals,
     retryContext,
-  );
+  ]);
 }
 
 /// `POST /proxy/agency/sessions/:id/station-token`: a fresh single-use

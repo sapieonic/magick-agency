@@ -43,7 +43,7 @@ export const ATTEMPT_QUERY_PARAMS = [
  * `ATTEMPT_QUERY_PARAMS`.
  */
 export const CONTACT_QUERY_PARAMS = [
-  'state', 'suppressed_reason', 'last_outcome', 'last_disposition', 'phone', 'from', 'to',
+  'state', 'suppressed_reason', 'last_outcome', 'last_disposition', 'assigned_to', 'phone', 'from', 'to',
 ] as const;
 
 export const PAGING_QUERY_PARAMS = ['cursor', 'limit'] as const;
@@ -199,6 +199,14 @@ export interface SpineContactRow {
   suppressed_reason: string | null;
   timezone: string | null;
   csv_line_number: number | null;
+  /** Contact assignment: the owner's user id, null for the pool. */
+  assigned_user_id?: string | null;
+  assigned_at?: string | null;
+  /**
+   * Added by the public layer on the CSV export only (the owner's display name, from
+   * {@link enrichContactOwnerNames}); null for the pool or an id this tenant cannot name.
+   */
+  assigned_to_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -382,6 +390,12 @@ export const CONTACT_CSV_COLUMNS = [
   'csv_line_number',
   'created_at',
   'updated_at',
+  // Contact assignment, appended so a consumer reading by position keeps its columns:
+  // the owner's id, their name (resolved per page; blank for the pool or an unknown id),
+  // and when they were given it.
+  'assigned_user_id',
+  'assigned_to',
+  'assigned_at',
 ] as const;
 
 /** `null`/`undefined` → an empty cell; everything else → its string form. */
@@ -418,6 +432,7 @@ export function contactCsvRow(row: SpineContactRow): string {
     cell(row.our_fault_attempts), cell(row.last_outcome), cell(row.last_disposition),
     cell(row.suppressed_reason), cell(row.next_attempt_at), cell(row.timezone),
     cell(row.csv_line_number), cell(row.created_at), cell(row.updated_at),
+    cell(row.assigned_user_id), cell(row.assigned_to_name), cell(row.assigned_at),
   ]);
 }
 
@@ -552,6 +567,39 @@ export async function enrichAttemptAgentNames(
     rows: rows.map((row) => ({
       ...row,
       agent_name: row.agent_user_id ? names.get(row.agent_user_id) ?? null : null,
+    })),
+  };
+}
+
+/**
+ * Put `assigned_to_name` beside each contact row's `assigned_user_id`, for the roster CSV:
+ * one lookup per page through the same identity lookup the attempt export uses, degrading to
+ * nulls on failure (a name improves the id; it never fails the export).
+ */
+export async function enrichContactOwnerNames(
+  body: unknown,
+  tenantId: string,
+  resolveNames: (ids: readonly string[], tenantId: string) => Promise<Map<string, string | null>>,
+  onError?: (err: unknown) => void,
+): Promise<unknown> {
+  const rows = pageRows<SpineContactRow>(body);
+  if (!rows) return body;
+  const ids = [...new Set(rows
+    .map((row) => row.assigned_user_id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  let names = new Map<string, string | null>();
+  if (ids.length > 0) {
+    try {
+      names = await resolveNames(ids, tenantId);
+    } catch (err) {
+      onError?.(err);
+    }
+  }
+  return {
+    ...(body as Record<string, unknown>),
+    rows: rows.map((row) => ({
+      ...row,
+      assigned_to_name: row.assigned_user_id ? names.get(row.assigned_user_id) ?? null : null,
     })),
   };
 }

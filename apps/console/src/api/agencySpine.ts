@@ -42,8 +42,11 @@ const AGENCY_BASE = `${API_BASE}/proxy/agency`;
  *
  * A blank value is dropped: `?phone=` is what a cleared search box posts, and
  * sending it would make an empty box look like a filter matching nothing.
+ *
+ * Exported for the other `/proxy/agency` list reads that share the convention
+ * (`agencyAssignment.ts`'s agent contact list), so there is one encoder.
  */
-function toQuery(
+export function toQuery(
   filters: Record<string, string | string[] | undefined>,
   extra: Record<string, string> = {},
 ): string {

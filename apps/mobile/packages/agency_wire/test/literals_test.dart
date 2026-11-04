@@ -56,6 +56,13 @@ final Map<String, List<WireEnum>> dartVocabularies = {
   'manual_call_list_statuses': ManualCallListStatus.values,
   'hours_timezone_sources': HoursTimezoneSource.values,
   'call_availabilities': CallAvailability.values,
+  // Contact assignment: the agent's queue, own contacts and retry.
+  'assignment_modes': AssignmentMode.values,
+  'queue_idle_reasons': QueueIdleReason.values,
+  'override_kinds': OverrideKind.values,
+  'my_contact_buckets': MyContactBucket.values,
+  'agent_retry_blocks': AgentRetryBlock.values,
+  'agent_retry_error_codes': AgentRetryErrorCode.values,
 };
 
 /// The vocabularies whose Dart enum is NOT a one-to-one mirror, so the
@@ -94,6 +101,11 @@ final Map<String, List<WireEnum>> appSends = {
   'manual_call_outcomes': [
     for (final o in AttemptOutcome.values)
       if (!o.isUnknown) o,
+  ],
+  // `MyContactsQuery.buckets` can filter on any of them.
+  'my_contact_buckets': [
+    for (final b in MyContactBucket.values)
+      if (!b.isUnknown) b,
   ],
 };
 
@@ -213,6 +225,12 @@ void main() {
     }
     for (final v in ts('manual_call_end_reasons')) {
       expect(ManualCallEndReason.fromWire(v).wire, v);
+    }
+    for (final v in ts('agent_retry_error_codes')) {
+      expect(AgentRetryErrorCode.fromWire(v).wire, v);
+    }
+    for (final v in ts('queue_idle_reasons')) {
+      expect(QueueIdleReason.fromWire(v).wire, v);
     }
   });
 

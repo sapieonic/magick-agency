@@ -391,5 +391,19 @@
       "held_reason": "disposition_required",
       "redial_remaining": 0
     }
+  },
+  "queue_nothing_due": {
+    "event": "queue",
+    "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+    "due": false,
+    "reason": "callbacks_later",
+    "next_due_at": "2026-11-04T10:30:00.000Z"
+  },
+  "queue_due": {
+    "event": "queue",
+    "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+    "due": true,
+    "reason": null,
+    "next_due_at": null
   }
 }

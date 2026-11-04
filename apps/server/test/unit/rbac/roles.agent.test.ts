@@ -26,6 +26,10 @@ const AGENCY_PERMISSIONS: Permission[] = [
   // dials from it, with no per-agent switch (SP4, Manas 2026-10-30). An action on the
   // caller's own session, like the four above.
   'agency.softphone.dial',
+  // Contact assignment: read and retry the contacts a supervisor assigned to the caller.
+  // An action on the caller's own contacts (the subject is the session's user, never a
+  // parameter), like the five above.
+  'agency.contacts.own',
 ];
 
 /**
@@ -104,7 +108,7 @@ describe('agent role — grants nothing that predates the Agency Dialer', () => 
     expect(hasPermission('agent', 'tenant.read')).toBe(false);
   });
 
-  it('resolves to exactly the five agency action permissions plus the flag map, and nothing else', () => {
+  it('resolves to exactly the six agency action permissions plus the flag map, and nothing else', () => {
     const granted = ALL_PERMISSIONS.filter((p) => hasPermission('agent', p)).sort();
     expect(granted).toEqual([...AGENT_PERMISSIONS].sort());
   });

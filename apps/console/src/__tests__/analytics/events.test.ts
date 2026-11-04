@@ -12,6 +12,13 @@ import {
   trackAgencyWaitingForDialer,
   trackAgencyRedialRequested,
   trackAgencyRedialRefused,
+  trackAgencyAssignmentPreviewed,
+  trackAgencyAssignmentCommitted,
+  trackAgencyAssignmentRefused,
+  trackAgencyMyContactsOpened,
+  trackAgencyAgentRetry,
+  trackAgencyMyContactCall,
+  trackAgencyStationNothingDue,
   trackAgencyInviteClaimSucceeded,
   trackWorkspaceInviteViewed,
   trackWorkspaceInviteClaimAttempted,
@@ -250,5 +257,42 @@ describe('analytics/events catalog', () => {
     expect(capture).toHaveBeenNthCalledWith(3, 'agency_redial_refused', { campaign_id: 'camp-1', code: null });
     // @ts-expect-error — the refusal code is the closed action-error union
     trackAgencyRedialRefused({ campaign_id: 'camp-1', code: 'not_a_code' });
+  });
+
+  it('emits the contact-assignment events under the names the mobile app shares, ids and counts only', () => {
+    capture.mockClear();
+    trackAgencyAssignmentPreviewed({
+      campaign_id: 'camp-1', kind: 'random_split', origin: 'roster', agent_count: 3,
+      group_same_number: true, matched: 10, moving: 9, skipped_live: 1,
+    });
+    trackAgencyAssignmentCommitted({
+      campaign_id: 'camp-1', kind: 'reassign', origin: 'progress', agent_count: 1,
+      moved: 6, skipped_live: 0, unchanged: 0, to_pool: 0, after_stale: true,
+    });
+    trackAgencyAssignmentRefused({ campaign_id: 'camp-1', kind: 'range', code: 'preview_stale' });
+    trackAgencyMyContactsOpened({ campaign_id: 'camp-1', assignment_mode: 'strict' });
+    trackAgencyAgentRetry({
+      campaign_id: 'camp-1', scope: 'all', requested: 8, outcome: 'reopened', reopened: 8, skipped_total: 0, code: null,
+    });
+    trackAgencyMyContactCall({
+      campaign_id: 'camp-1', bucket: 'not_reached', with_override_note: true, outcome: 'refused',
+      code: 'outside_calling_hours', override_applied_count: 0, retry_round_spent: false,
+    });
+    trackAgencyStationNothingDue({ campaign_id: 'camp-1', reason: 'waiting_for_retry' });
+    expect(capture.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      'agency_assignment_previewed',
+      'agency_assignment_committed',
+      'agency_assignment_refused',
+      'agency_my_contacts_viewed',
+      'agency_agent_retry_requested',
+      'agency_my_contact_call_requested',
+      'agency_station_nothing_due',
+    ]);
+    expect(capture).toHaveBeenNthCalledWith(7, 'agency_station_nothing_due', {
+      campaign_id: 'camp-1',
+      reason: 'waiting_for_retry',
+    });
+    // @ts-expect-error — the refusal code is the closed agent-retry union
+    trackAgencyAgentRetry({ campaign_id: 'c', scope: 'all', requested: 0, outcome: 'refused', reopened: 0, skipped_total: 0, code: 'nope' });
   });
 });

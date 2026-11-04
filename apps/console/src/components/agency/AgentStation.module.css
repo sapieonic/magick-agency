@@ -779,6 +779,13 @@ button.fatalEscape {
   cursor: pointer;
 }
 
+/* The header's My contacts button (contact assignment): present or absent for
+   the whole shift, refused in place while a call is live, so it never moves. */
+.myContactsSlot {
+  display: inline-flex;
+  align-items: center;
+}
+
 .srOnly {
   position: absolute;
   width: 1px;

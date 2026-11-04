@@ -109,7 +109,7 @@ unique.
 6. `app.listen`, only after the bootstraps, so no request lands before the startup reap.
 
 Shutdown closes HTTP first (`app.close()`), then runs the stops in reverse: analysis; agency
-(pacing stops first, waiting up to 5 s for ticks in flight; then reaper, sweeps, dialer and wrap-up
+(pacing stops first, waiting up to 5 s for ticks and owner sweeps in flight; then reaper, sweeps, dialer and wrap-up
 timers; completion notices drained up to 30 s); voice (the bridge ends live calls, then the guard host, then the PostHog flush); platform
 (both audit buffers flushed last). Then Redis and the pool close. Pinned by
 `apps/server/test/integration/agency/runtime-boot-order.test.ts`.
@@ -271,7 +271,8 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   campaign repository write), `account_limit_changed` (the `ConcurrencyControl` seam's limit
   invalidations, wrapped by `startAgency`), `account_capacity_freed` (attempt and manual-call
   ends), `agent_available` (a state write into `available`, a station attach), `contacts_changed`
-  (ingest chunks). The campaign row and the account limit are cached between full ticks in a
+  (ingest chunks, owner sweeps), `station_ready` (a `ready` sent on a `strict` / `preferred`
+  campaign: the engine forgets the session's last `queue` frame and sends it again). The campaign row and the account limit are cached between full ticks in a
   generation-guarded TTL cache (2 s backstop), dropped by their events and re-primed by the
   supervise pass. `tickOnce` is a forced full tick that reads everything fresh. Measured by
   `test/integration/load/pacing-statements.test.ts`; `agency_pacing_ticks_total` and
@@ -327,6 +328,36 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   outcome is unknown reopens wrap-up with no further redial offered (WR9). Stats count each
   conversation once (`CONVERSATION_ATTEMPT_SQL`) and report redials as `attempts_redialed`
   (WR12). In media-worker mode the redial dispatches in the worker that owns the station (WR13).
+- **Contact assignment** (decisions CA1–CA15; flag `agency_contact_assignment_enabled` gates the
+  surface, never the runtime). Each contact may have an owner (`agency_contacts.assigned_user_id`),
+  and every move is a row in `agency_contact_assignment_events` under its operation's `batch_id`.
+  *Supervisor*: `proxy-agency-assignment.routes.ts` previews an operation and commits it with the
+  preview's token (`db/repositories/agency/assignment.repository.ts`: one SQL planner for every
+  kind; the commit locks the rows, re-plans and writes only when the plan still matches the token,
+  else `409 preview_stale`), and reads progress per agent and a contact's owner history. *Pacing*:
+  on a `strict` or `preferred` campaign, the tick pairs by agent (`claimForAgents`, one statement,
+  a `LATERAL ... LIMIT 1` per agent), never reserves an agent with nothing due (in `preferred`
+  mode the pool's due contacts count for as many agents without own work, longest idle first,
+  as there are such contacts), and tells the
+  station why with a `queue` frame on a change (`pacing/agent-queue.ts`, the one reading shared
+  with the join bootstrap, `ready` and the My contacts summary; after a `ready` the next tick
+  sends the frame again, so a reconnect cannot keep a stale or missing queue); the leader sweeps due callbacks
+  whose owner is away past the grace back to the pool, and the open contacts of owners no longer
+  staffed on the campaign (`pacing/callback-fallback.ts`), every 30 s per campaign, in the
+  background: the tick starts the sweep and plans without waiting for it, one sweep per campaign
+  runs at a time, a move wakes the campaign (`contacts_changed`), and `stop()` waits for one in
+  flight within the tick drain bound. *Agent*:
+  the My contacts reads, the set-based reopen of not-reached contacts
+  (`agent-retry.repository.ts`) and the per-contact call, which runs in the process holding the
+  station (`agency/my-contact-call.ts`, `session_param`) on the campaign's normal dial path with
+  `agent_manual` on the attempt. *Outcomes*: the disposition write grants a catalog entry's
+  `override` and assigns a pooled callback to the agent who took it (CA4); a settlement or
+  disposition that would exhaust a contact spends an extra attempt instead
+  (`markExhaustedOrSpendExtraAttempt`); the agent's call spends a retry-delay or calling-hours
+  override (`agency/contact-overrides.ts`, the pre-dial gate's `callingHoursOverride`). *Unstaff*:
+  every path that closes a staffing row runs `assignment/unstaff.ts` (CA6). One SQL definition of
+  a contact's bucket and its retry eligibility (`db/repositories/agency/assignment-sql.ts`) serves
+  every read.
 - **Reaper** (`reaper.ts`). On startup and every 60 s, closes attempts nobody owns: liveness is
   decided by ownership, with a 5-minute age floor for the window between inserting an attempt and
   dispatching it. A reaped attempt's contact is requeued on the our-fault ledger in one guarded
@@ -539,7 +570,11 @@ a rate-limit key and never an auth input.
   dialer's attempt and contact indexes; 0004: the in-flight contacts index the reaper's
   stranded-contact sweep reads; 0005: the soft phone; 0006: `agency_agent_sessions.client_kind`;
   0007: `agency_ingest_jobs.dedupe_column`; 0008: wrap-up redial, `agency_campaigns.allow_wrapup_redial`
-  and the attempt's `redial_of_attempt_id` / `redial_number`),
+  and the attempt's `redial_of_attempt_id` / `redial_number`; 0009: contact assignment, the
+  campaign's assignment and agent-retry settings, the contact's owner and override columns,
+  `agency_contact_assignment_events`, and the attempt's `agent_manual` / `override_applied` /
+  `override_note`; 0010: validates 0009's contact and attempt CHECKs and builds the assignee
+  index, outside 0009's ACCESS EXCLUSIVE),
   all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`: `agency.repository.ts`, a barrel over `agency/`). Repository

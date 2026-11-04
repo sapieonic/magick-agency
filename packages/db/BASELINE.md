@@ -154,7 +154,7 @@ Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snap
 
 ### Dialer
 
-**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. One running campaign per account (`uq_agency_campaign_running`). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below).
+**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. One running campaign per account (`uq_agency_campaign_running`). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below).
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provider`, `calling_window_start`, `calling_window_end`, `calling_days`, `default_timezone`, `wrapup_seconds`, `wrapup_auto_return`, `retry_policy`, `disposition_catalog`, `record_calls`, `analysis_profile_id`, `context_display`, `status`, `contacts_total`, `created_by`, `started_at`, `completed_at`, `created_at`, `updated_at`, `break_reasons`, `abandon_announcement_id`, `abandonment_ceiling_pct`, `pause_reason`, `paused_at`, `pause_abandonment_rate_pct`, `ended_at`, `last_transition_by_user_id`, `last_transition_by_name`, `parent_campaign_id`, `root_campaign_id`, `retry_generation`, `retry_selector`, `retry_idempotency_key`.
 
@@ -473,6 +473,72 @@ the same customer (`POST /proxy/agency/sessions/:id/redial`, `apps/server/src/ag
 the two CHECKs and the three columns. A `redialed` disposition code is left as it is (an ordinary
 string to the schema). **Tests**: `test/integration/db/wrapup-redial-migration.test.ts` and the
 down → up suite (`test/integration/baseline-down-up.test.ts`, including a Down over a redial chain).
+
+### 0009 — `migrations/0009_contact_assignment.sql`
+
+Contact assignment (supervisors assign roster contacts to agents), agent-led retry and
+outcome-granted overrides.
+
+- **`agency_campaigns`**: `assignment_mode` (`pool` default | `strict` | `preferred`), `on_unstaff`
+  (`return_to_pool` default | `keep`), `callback_owner_grace_minutes` (0–10080, default 30),
+  `callback_fallback` (`pool` default | `wait`), `allow_agent_retry` (default false),
+  `agent_retry_rounds` (1–10, default 1), `agent_retry_cooldown_minutes` (0–10080, default 30).
+  Each CHECKed (`ck_agency_campaign_*`). The defaults are today's behaviour.
+- **`agency_contacts.assigned_user_id`** `UUID NULL`: the owning agent (NULL: the shared pool).
+  No FK to `users`, as `agency_agent_sessions.agent_user_id`: user ids are opaque to the dialer
+  and an FK would scan the roster on every user delete. `assigned_at` / `assigned_by_user_id`
+  stamp it; `ck_agency_contact_assigned_at` requires `assigned_at` with an owner.
+- **`agency_contacts.agent_retry_rounds_used`** `SMALLINT NOT NULL DEFAULT 0`: reopens an agent
+  spent on the contact (bounded by `agent_retry_rounds`).
+- **`agency_contacts.override_*`**: the latest override-granting outcome (`override_disposition`),
+  what is left of it (`override_extra_attempts` 0–5, `override_retry_delay`,
+  `override_calling_hours`) and `override_granted_at`. DNC has no column: never overridable.
+- **Index `idx_agency_contacts_assignee`**: built by 0010 (below), not here.
+- **`agency_contact_assignment_events`**: one row per contact per owner change (`from_user_id`,
+  `to_user_id`, NULL = pool; `actor_user_id`, NULL = system; `reason`, CHECKed; `batch_id`
+  shared by one operation, whose `platform_audit_log` row carries the same id). Cascades from the
+  contact and the campaign. `ck_agency_assignment_event_moves` refuses a row that moves nothing.
+- **`agency_call_attempts`**: `agent_manual` (an agent dialled the contact from their own list),
+  `override_applied TEXT[]` (subset of `extra_attempts`, `retry_delay`, `calling_hours`) and
+  `override_note` (10–500 characters, the calling-hours note).
+- The bucket and retry-eligibility rules every read uses are SQL fragments in
+  `apps/server/src/db/repositories/agency/assignment-sql.ts`.
+- **Locking.** Catalog changes only, so its ACCESS EXCLUSIVE on `agency_contacts`,
+  `agency_call_attempts` and `agency_campaigns` lasts milliseconds (~25 ms on 1M contacts with 1M
+  attempts, against ~2 s with the scans and the index build in it). The five CHECKs on
+  `agency_contacts` and `agency_call_attempts` (`ck_agency_contact_assigned_at`,
+  `ck_agency_contact_agent_retry_rounds_used`, `ck_agency_contact_override_extra_attempts`,
+  `ck_agency_attempt_override_applied`, `ck_agency_attempt_override_note`) are added `NOT
+  VALID`: enforced on every new write, the existing rows satisfying them through the column
+  defaults. The `agency_campaigns` CHECKs are validated here (one row per campaign).
+
+**Down** drops the three attempt columns and their CHECKs, the history table, the contact columns
+and the campaign settings with their CHECKs; contacts and their attempts survive, unowned.
+**Tests**: `test/integration/db/contact-assignment-migration.test.ts` and the down → up suite
+(`test/integration/baseline-down-up.test.ts`, including a Down with assigned contacts and their
+history present, and 0009 applied alone: the five CHECKs not validated yet refusing bad writes).
+
+### 0010 — `migrations/0010_contact_assignment_index_and_checks.sql`
+
+The work over contact assignment's existing rows, kept out of 0009's ACCESS EXCLUSIVE. Its own
+transaction: the image's runner (`apps/server/src/migrate.ts`) commits each file separately. The
+node-pg-migrate CLI (`pnpm migrate:up`) puts every pending file in one transaction by default;
+pass `--no-single-transaction` to it on a large roster.
+
+- **`VALIDATE CONSTRAINT`** for the five `NOT VALID` CHECKs of 0009. Each scans its table under
+  SHARE UPDATE EXCLUSIVE (reads and writes proceed); afterwards `pg_constraint.convalidated` is
+  true for all. Cannot fail: rows written since 0009 were checked, older rows hold the defaults.
+- **Index `idx_agency_contacts_assignee`** `(campaign_id, assigned_user_id, state,
+  next_attempt_at)`: the per-agent claim, the preferred-mode pool claim (`assigned_user_id IS
+  NULL`) and per-agent counts. `idx_agency_contacts_dialable` still serves the pool-mode claim.
+  Plain `CREATE INDEX`, as 0003's: SHARE on `agency_contacts` while it builds (reads proceed,
+  writes wait). ~0.6 s on 1M contacts, plus ~0.12–0.18 s per VALIDATE.
+
+**Down** drops the index. The CHECKs stay validated (a constraint cannot be marked `NOT VALID`
+again; 0009's Down drops them). **Tests**: `test/integration/db/contact-assignment-migration.test.ts`
+(every 0009 CHECK validated, the index definition) and the down → up suite (0009 alone, then 0010
+over rows that predate both).
+
 
 ## Tests
 

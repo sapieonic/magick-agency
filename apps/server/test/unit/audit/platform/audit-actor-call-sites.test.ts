@@ -180,7 +180,9 @@ describe('every auditLogger.log call site derives its actor', () => {
       .filter((site) => site.block.includes('...SYSTEM_AUDIT_ACTOR'))
       .map((site) => site.file);
 
-    expect([...new Set(systemSites)].sort()).toEqual([]);
+    // The pacing leader's callback grace/fallback sweep (contact assignment, CA5): no request,
+    // no person; the owner stayed away and the campaign's setting moved the callbacks.
+    expect([...new Set(systemSites)].sort()).toEqual(['agency/pacing/callback-fallback.ts']);
   });
 
   /**

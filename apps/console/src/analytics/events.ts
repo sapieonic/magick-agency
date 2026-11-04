@@ -1,5 +1,10 @@
 import { captureEvent } from './posthog';
-import type { AgencyAgentState, AgencyReleaseReason, AgencyActionErrorCode } from '../types/agency';
+import type {
+  AgencyAgentState,
+  AgencyReleaseReason,
+  AgencyActionErrorCode,
+  AgencyQueueIdleReason,
+} from '../types/agency';
 import type {
   AgencyCampaignStatus,
   AgencyStallCode,
@@ -13,6 +18,12 @@ import type { CampaignTabId } from '../utils/agencyCampaignTabs';
 import type { AgencyPersona } from '../utils/agencyPersona';
 import type { AgentStatsWindow } from '../utils/agencyAgentPerformance';
 import type { BuilderStepId } from '../pages/campaigns/agency/builderFlow';
+import type {
+  AgencyAgentRetryErrorCode,
+  AgencyAssignmentKind,
+  AgencyAssignmentMode,
+  AgencyMyContactBucket,
+} from '@magick-agency/contracts/api/agency/assignment';
 
 /**
  * Typed product-event catalog.
@@ -471,6 +482,47 @@ export function trackAgencyCampaignConfigSaved(props: EventCatalog['agency_campa
 
 export function trackAgencyCampaignConfigBlocked(props: EventCatalog['agency_campaign_config_blocked']): void {
   track('agency_campaign_config_blocked', props);
+}
+
+// --- Contact assignment (supervisor) and My contacts (agent) ----------------
+//
+// The mobile app sends the same names for the agent's events. Ids, enum labels,
+// counts and booleans only: never a phone number, a hero field, a column value
+// or an override note.
+
+/** A supervisor previewed an assignment operation (roster toolbar or progress "Reassign…"). */
+export function trackAgencyAssignmentPreviewed(props: EventCatalog['agency_assignment_previewed']): void {
+  track('agency_assignment_previewed', props);
+}
+
+/** A previewed operation was committed. */
+export function trackAgencyAssignmentCommitted(props: EventCatalog['agency_assignment_committed']): void {
+  track('agency_assignment_committed', props);
+}
+
+/** A commit was refused (`preview_stale` included: the supervisor was shown a fresh preview). */
+export function trackAgencyAssignmentRefused(props: EventCatalog['agency_assignment_refused']): void {
+  track('agency_assignment_refused', props);
+}
+
+/** An agent opened My contacts at the station. */
+export function trackAgencyMyContactsOpened(props: EventCatalog['agency_my_contacts_viewed']): void {
+  track('agency_my_contacts_viewed', props);
+}
+
+/** An agent reopened not-reached contacts into their queue (or was refused). */
+export function trackAgencyAgentRetry(props: EventCatalog['agency_agent_retry_requested']): void {
+  track('agency_agent_retry_requested', props);
+}
+
+/** An agent pressed Call on one of their contacts (placed or refused). */
+export function trackAgencyMyContactCall(props: EventCatalog['agency_my_contact_call_requested']): void {
+  track('agency_my_contact_call_requested', props);
+}
+
+/** The station said "Nothing due now" (once per reason it started saying). */
+export function trackAgencyStationNothingDue(props: EventCatalog['agency_station_nothing_due']): void {
+  track('agency_station_nothing_due', props);
 }
 
 export function trackAgentSurfaceViewed(props: EventCatalog['agent_surface_viewed']): void {
@@ -1189,6 +1241,12 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
     auto_return: boolean;
     /** `allow_wrapup_redial` as saved. */
     wrapup_redial: boolean;
+    /** Contact assignment (only while its flag is on): the mode as saved. */
+    assignment_mode?: AgencyAssignmentMode;
+    /** `allow_agent_retry` as saved. */
+    agent_retry?: boolean;
+    /** Outcomes carrying an override. */
+    override_outcome_count?: number;
     recording_enabled: boolean;
     analysis_profile_set: boolean;
     /** The disposition order was changed via the row arrows. */
@@ -1198,6 +1256,71 @@ export interface EventCatalog extends SetupEventProps, ExportEventProps {
   agency_campaign_config_blocked: {
     source: 'builder' | 'settings';
     field_error_count: number;
+  };
+  /** {@link trackAgencyAssignmentPreviewed} */
+  agency_assignment_previewed: {
+    campaign_id: string;
+    kind: AgencyAssignmentKind;
+    /** Where the operation was started. */
+    origin: 'roster' | 'progress';
+    /** Target agents named by the operation (0 for unassign). */
+    agent_count: number;
+    group_same_number: boolean;
+    matched: number;
+    moving: number;
+    skipped_live: number;
+  };
+  /** {@link trackAgencyAssignmentCommitted} */
+  agency_assignment_committed: {
+    campaign_id: string;
+    kind: AgencyAssignmentKind;
+    origin: 'roster' | 'progress';
+    agent_count: number;
+    moved: number;
+    skipped_live: number;
+    unchanged: number;
+    to_pool: number;
+    /** The commit went through only after a `preview_stale` re-confirmation. */
+    after_stale: boolean;
+  };
+  /** {@link trackAgencyAssignmentRefused} */
+  agency_assignment_refused: {
+    campaign_id: string;
+    kind: AgencyAssignmentKind;
+    /** An `AgencyAssignmentErrorCode`, or null for a failure without one. */
+    code: string | null;
+  };
+  /** {@link trackAgencyMyContactsOpened} */
+  agency_my_contacts_viewed: {
+    campaign_id: string;
+    assignment_mode: AgencyAssignmentMode | null;
+  };
+  /** {@link trackAgencyAgentRetry} */
+  agency_agent_retry_requested: {
+    campaign_id: string;
+    /** "Retry not reached (N)" for all, or the ticked rows. */
+    scope: 'all' | 'selected';
+    requested: number;
+    outcome: 'reopened' | 'refused';
+    reopened: number;
+    skipped_total: number;
+    code: AgencyAgentRetryErrorCode | null;
+  };
+  /** {@link trackAgencyMyContactCall} */
+  agency_my_contact_call_requested: {
+    campaign_id: string;
+    bucket: AgencyMyContactBucket;
+    /** A calling-hours note was sent (its text never is). */
+    with_override_note: boolean;
+    outcome: 'placed' | 'refused';
+    code: AgencyAgentRetryErrorCode | null;
+    override_applied_count: number;
+    retry_round_spent: boolean;
+  };
+  /** {@link trackAgencyStationNothingDue} */
+  agency_station_nothing_due: {
+    campaign_id: string;
+    reason: AgencyQueueIdleReason;
   };
   /** {@link trackAgentSurfaceViewed} */
   agent_surface_viewed: {

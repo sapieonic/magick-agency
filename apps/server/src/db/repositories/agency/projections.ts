@@ -110,6 +110,8 @@ export function projectContactRow(row: AgencyContactRecord): AgencyContactRow {
     suppressed_reason: row.suppressed_reason,
     timezone: row.timezone,
     csv_line_number: row.csv_line_number,
+    assigned_user_id: row.assigned_user_id ?? null,
+    assigned_at: iso(row.assigned_at ?? null),
     created_at: iso(row.created_at) ?? '',
     updated_at: iso(row.updated_at) ?? '',
   };

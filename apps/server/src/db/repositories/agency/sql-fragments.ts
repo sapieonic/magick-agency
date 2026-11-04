@@ -31,6 +31,15 @@ import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agenc
 export const CONTACT_PHONE_DIGITS_SQL = "regexp_replace(phone_e164, '[^0-9]', '', 'g')";
 
 /**
+ * {@link CONTACT_PHONE_DIGITS_SQL} on the `phone_e164` of table alias `alias`. Only the column
+ * is qualified, so the expression still matches `idx_agency_contacts_campaign_phone_digits`
+ * (the planner compares parsed expressions, and an alias does not change one).
+ */
+export function contactPhoneDigitsSql(alias: string): string {
+  return CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
+}
+
+/**
  * The wrap-up resolutions that are evidence of how long wrap-up TAKES.
  *
  * `disposition_submitted` (the agent finished and said so), `auto_return` (the
@@ -426,8 +435,8 @@ export function readAttemptMetrics(row: {
 }
 
 /**
- * The twenty-one columns a campaign is created with, in the order `create()` and
- * `retryFromCampaign` bind `$1..$21`. A retry appends its five lineage columns
+ * The twenty-eight columns a campaign is created with, in the order `create()` and
+ * `retryFromCampaign` bind `$1..$28`. A retry appends its five lineage columns
  * after them. One list, so a column added to the config is added to both writers or
  * to neither — an optional input field beside an explicit column list typechecks
  * and silently drops the value.
@@ -436,4 +445,6 @@ export const CAMPAIGN_INSERT_COLUMNS_SQL = `tenant_id, account_id, name, caller_
           calling_window_start, calling_window_end, calling_days, default_timezone,
           wrapup_seconds, wrapup_auto_return, retry_policy, disposition_catalog,
           context_display, break_reasons, record_calls, analysis_profile_id, created_by,
-          abandon_announcement_id, abandonment_ceiling_pct, allow_wrapup_redial`;
+          abandon_announcement_id, abandonment_ceiling_pct, allow_wrapup_redial,
+          assignment_mode, on_unstaff, callback_owner_grace_minutes, callback_fallback,
+          allow_agent_retry, agent_retry_rounds, agent_retry_cooldown_minutes`;

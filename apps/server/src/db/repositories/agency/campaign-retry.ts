@@ -3,6 +3,7 @@
  * all-or-nothing create that seeds it. Bodies of
  * `AgencyCampaignRepository.retryPreview` / `retryFromCampaign`, which delegate here.
  */
+import { randomUUID } from 'node:crypto';
 import { getPool } from '@magick-agency/db';
 // The `23505` predicate, matched on the CONSTRAINT NAME. A leaf module (see its
 // header) so the catch arms below can ask the question without dragging config
@@ -41,6 +42,14 @@ export type AgencyRetryCreateResult =
        */
       duplicates_collapsed: number;
       excluded: { dnc: number; invalid: number };
+      /**
+       * How many seeded contacts kept their parent contact's owner
+       * (`keep_assignments`), each with one `inherited` history row; 0 when the
+       * create sent them to the pool or the cohort held no owned contact.
+       */
+      assignments_kept: number;
+      /** The `batch_id` of those history rows; null when there are none. */
+      assignment_batch_id: string | null;
     }
   /**
    * This exact key already created a campaign. **Nothing was created now**, and
@@ -240,6 +249,16 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
   config: AgencyCampaignConfigColumns;
   createdBy: string | null;
   /**
+   * Each copied contact keeps its parent contact's owner (true; omitted reads as true,
+   * the contract's default for `keep_assignments`) or lands in the pool (false).
+   */
+  keepAssignments?: boolean;
+  /**
+   * The user authoring the retry, as a validated UUID, for the `inherited` history
+   * rows' `actor_user_id`; null or omitted when the caller named nobody (the system).
+   */
+  actorUserId?: string | null;
+  /**
    * The caller's idempotency key, or `null` for an unkeyed create.
    *
    * Minted by the console when the retry dialog opens and passed through
@@ -365,8 +384,9 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
                    $10,$11,$12::jsonb,$13::jsonb,
                    $14::jsonb,$15::jsonb,$16,$17,$18,
                    $19,$20,$21,
-                   $22,$23,$24,$25::jsonb,
-                   $26)
+                   $22,$23,$24,$25,$26,$27,$28,
+                   $29,$30,$31,$32::jsonb,
+                   $33)
            RETURNING *`,
         [
           input.parent.tenant_id, input.parent.account_id, input.name,
@@ -381,6 +401,10 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
           input.config.record_calls, input.config.analysis_profile_id, input.createdBy,
           input.config.abandon_announcement_id, input.config.abandonment_ceiling_pct,
           input.config.allow_wrapup_redial,
+          input.config.assignment_mode, input.config.on_unstaff,
+          input.config.callback_owner_grace_minutes, input.config.callback_fallback,
+          input.config.allow_agent_retry, input.config.agent_retry_rounds,
+          input.config.agent_retry_cooldown_minutes,
           input.parent.id,
           // The chain head. A generation-0 parent carries NULL here (it
           // deliberately does not stamp itself), so the child of a first retry gets
@@ -424,9 +448,13 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
       // `last_outcome`, `last_disposition` and `suppressed_reason` are all absent
       // and take their column defaults — `pending`, `0`, `0`, `now()`, NULL, NULL,
       // NULL. A retry campaign is a FRESH ALLOWANCE, which is the whole point of a
-      // supervisor authoring one.
+      // supervisor authoring one. So are the 0009 per-contact allowances:
+      // `agent_retry_rounds_used` (0) and the outcome override's `override_disposition`,
+      // `override_extra_attempts`, `override_retry_delay`, `override_calling_hours` and
+      // `override_granted_at` (NULL, 0, false, false, NULL). An override was granted by
+      // an outcome on the PARENT's run; the child's own outcomes grant their own.
       //
-      // ⚠️ That includes `our_fault_attempts`, which is bounded by
+      // ⚠️ The reset includes `our_fault_attempts`, which is bounded by
       // `OUR_FAULT_REDIAL_BOUND` — a regulated repeat-dial limit no campaign config
       // can raise — and which therefore DOES reset per retry campaign. Three retry
       // campaigns is nine our-fault redials on one number. The bound exists to stop
@@ -440,22 +468,46 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
       // `root_contact_id` is passed through explicitly, which is what makes a
       // generation-3 contact still point at generation 0; `trg_agency_contacts_root`
       // only fires when the column arrives NULL, so it leaves these rows alone.
+      //
+      // ── The owner is the one 0009 column that may be copied ─────────────
+      //
+      // `keep_assignments` (default true): a contact's owner on the parent stays its
+      // owner on the child when that owner is still actively staffed on the PARENT (a former
+      // member's or an unstaffed agent's contacts land in the pool: nobody would work them);
+      // staffing itself is not copied, so the supervisor staffs the child with those agents
+      // before starting it, or the pacing leader's unstaffed-owner sweep returns their open
+      // contacts to the pool once it runs (CA6, `on_unstaff = 'return_to_pool'`). Kept:
+      // (`assigned_user_id` and `assigned_by_user_id` copied,
+      // `assigned_at` restamped now(), since that is when the child's row got its
+      // owner), and each such contact gets one `inherited` history row below, in
+      // this transaction. False: every copied contact lands in the pool. The CASE
+      // keeps `ck_agency_contact_assigned_at` true row by row (a stamp only beside an
+      // owner) and keeps the statement one shape either way.
       const seedParams = params();
       const childId = seedParams.add(campaign.id);
+      const keepAssignments = input.keepAssignments ?? true;
+      const parentId = seedParams.add(input.parent.id);
+      const keep = `(${seedParams.add(keepAssignments)}::boolean AND c.assigned_user_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM agency_campaign_agents a
+                 WHERE a.campaign_id = ${parentId} AND a.user_id = c.assigned_user_id AND a.unassigned_at IS NULL))`;
       const seedConditions = [
-        `c.campaign_id = ${seedParams.add(input.parent.id)}`,
+        `c.campaign_id = ${parentId}`,
         ...retrySelectionConditions(input.selector, 'c', seedParams),
         `NOT (${neverSeededSuppressionSql('c')})`,
       ];
       const seeded = await client.query(
         `INSERT INTO agency_contacts
              (campaign_id, tenant_id, account_id, phone_e164, context, timezone,
-              csv_line_number, row_fingerprint, source_contact_id, root_contact_id)
+              csv_line_number, row_fingerprint, source_contact_id, root_contact_id,
+              assigned_user_id, assigned_at, assigned_by_user_id)
            SELECT ${childId}, c.tenant_id, c.account_id, c.phone_e164, c.context, c.timezone,
                   c.csv_line_number,
                   agency_contact_row_fingerprint(c.phone_e164, c.context, c.timezone),
                   c.id,
-                  c.root_contact_id
+                  c.root_contact_id,
+                  CASE WHEN ${keep} THEN c.assigned_user_id END,
+                  CASE WHEN ${keep} THEN now() END,
+                  CASE WHEN ${keep} THEN c.assigned_by_user_id END
              FROM agency_contacts c
             WHERE ${seedConditions.join(' AND ')}
            ON CONFLICT (campaign_id, row_fingerprint) WHERE row_fingerprint IS NOT NULL
@@ -473,6 +525,31 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
       // `seeded.rowCount`. `contacts_total +` rather than `=` so the column still
       // reads "every row on this roster" if a later step ever adds rows first.
       const seededRows = seeded.rowCount ?? 0;
+
+      // ── The history of the kept owners: one `inherited` row per owned contact ──
+      //
+      // Set-based over the child's roster, which is exactly the rows the seed wrote
+      // (the child is invisible to every other transaction until COMMIT, as the
+      // `contacts_total` note below argues). One batch id for the whole create, the
+      // way one assignment operation is one batch. The pool is `from_user_id` NULL:
+      // the child's row had no owner before this create gave it one. The actor is
+      // the user who authored the retry, or NULL (the system) when the caller named
+      // nobody.
+      let assignmentsKept = 0;
+      let assignmentBatchId: string | null = null;
+      if (keepAssignments) {
+        assignmentBatchId = randomUUID();
+        const events = await client.query(
+          `INSERT INTO agency_contact_assignment_events
+               (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
+             SELECT c.tenant_id, c.campaign_id, c.id, NULL, c.assigned_user_id, $2::uuid, 'inherited', $3::uuid
+               FROM agency_contacts c
+              WHERE c.campaign_id = $1 AND c.assigned_user_id IS NOT NULL`,
+          [campaign.id, input.actorUserId ?? null, assignmentBatchId],
+        );
+        assignmentsKept = events.rowCount ?? 0;
+        if (assignmentsKept === 0) assignmentBatchId = null;
+      }
 
       const totalled = await client.query<AgencyCampaignRecord>(
         `UPDATE agency_campaigns
@@ -498,6 +575,8 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
         // publish.
         duplicates_collapsed: Math.max(matchedRows - seededRows, 0),
         excluded,
+        assignments_kept: assignmentsKept,
+        assignment_batch_id: assignmentBatchId,
       };
     }, { pool, isolation: 'REPEATABLE READ' });
   } catch (err) {

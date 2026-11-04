@@ -1,5 +1,13 @@
 import { isUsableTimezone } from './calling-hours.js';
 import {
+  AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX,
+  AGENCY_AGENT_RETRY_ROUNDS_MAX,
+  AGENCY_AGENT_RETRY_ROUNDS_MIN,
+  AGENCY_ASSIGNMENT_MODES,
+  AGENCY_CALLBACK_FALLBACK_VALUES,
+  AGENCY_CALLBACK_GRACE_MINUTES_MAX,
+  AGENCY_ON_UNSTAFF_VALUES,
+  AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX,
   AGENCY_REDIALED_DISPOSITION_CODE,
   DEVICE_AWAY_BREAK_REASON,
   RESERVED_BREAK_REASONS,
@@ -178,6 +186,16 @@ export const CAMPAIGN_CONFIG_COLUMN_DEFAULTS = {
 // (B9 layering); re-exported so this module's importers are unchanged.
 export { DEFAULT_ABANDONMENT_CEILING_PCT } from './campaign-thresholds.js';
 
+/**
+ * Where the config being validated belongs. The soft phone's settings
+ * (`softphone-settings.repository.ts`) reuse this validator for their outcome catalog,
+ * with `allowDispositionOverride: false`: an override is a campaign feature.
+ */
+export interface CampaignConfigOptions {
+  /** A catalog entry may carry `override` (default true: a campaign's catalog). */
+  allowDispositionOverride?: boolean;
+}
+
 /** What the effective config is, before this body is applied. */
 export interface CampaignConfigBase {
   calling_window_start?: string;
@@ -259,7 +277,123 @@ function validateBooleanSetting(record: Record<string, unknown>, field: string):
   return [{ field, message: `${field} must be a boolean.` }];
 }
 
-function validateDispositionCatalog(catalog: unknown): CampaignConfigIssue[] {
+/**
+ * The contact-assignment and agent-retry settings (0009), each refused unless it is a
+ * value its column's CHECK accepts: an enum member, an integer within the contract's
+ * bound, or a JSON boolean. `null` is refused like any other wrong type: every column
+ * is `NOT NULL` with a default, so "unset it" means sending the default.
+ *
+ * Exported because the public API layer's validator (`agency-campaign-config.ts`)
+ * applies the same rules with the same messages: the two must not drift.
+ */
+export function validateAssignmentSettings(record: Record<string, unknown>): CampaignConfigIssue[] {
+  const issues: CampaignConfigIssue[] = [];
+  const oneOf = (field: string, allowed: readonly string[]): void => {
+    const value = record[field];
+    if (value === undefined) return;
+    if (typeof value !== 'string' || !allowed.includes(value)) {
+      issues.push({ field, message: `${field} must be one of: ${allowed.join(', ')}.` });
+    }
+  };
+  const integer = (field: string, min: number, max: number): void => {
+    const value = record[field];
+    if (value === undefined) return;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) {
+      issues.push({ field, message: `${field} must be an integer between ${min} and ${max}.` });
+    }
+  };
+  oneOf('assignment_mode', AGENCY_ASSIGNMENT_MODES);
+  oneOf('on_unstaff', AGENCY_ON_UNSTAFF_VALUES);
+  integer('callback_owner_grace_minutes', 0, AGENCY_CALLBACK_GRACE_MINUTES_MAX);
+  oneOf('callback_fallback', AGENCY_CALLBACK_FALLBACK_VALUES);
+  issues.push(...validateBooleanSetting(record, 'allow_agent_retry'));
+  integer('agent_retry_rounds', AGENCY_AGENT_RETRY_ROUNDS_MIN, AGENCY_AGENT_RETRY_ROUNDS_MAX);
+  integer('agent_retry_cooldown_minutes', 0, AGENCY_AGENT_RETRY_COOLDOWN_MINUTES_MAX);
+  return issues;
+}
+
+/** The keys an outcome's `override` may carry (`AgencyDispositionOverride`). */
+const OVERRIDE_KEYS: ReadonlySet<string> = new Set(['extra_attempts', 'retry_delay', 'calling_hours']);
+
+/**
+ * A catalog entry's `override` (contact assignment, phase 2), or nothing when the entry
+ * has none.
+ *
+ *  - Keys only `extra_attempts` (an integer 1 to `AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX`),
+ *    `retry_delay` and `calling_hours` (booleans). **Any other key is refused**, so a
+ *    `dnc` (or any spelling of it) can never be stored: DNC is not overridable, and an
+ *    unknown key that were ignored would read to the operator as a grant that works.
+ *  - At least one part granted: `{}` or all-false grants nothing and would store an
+ *    entry that looks like it does something.
+ *  - Refused on an entry that `suppress`es (the do-not-call outcome) or is `terminal`
+ *    (the contact is finished, so nothing could ever spend the grant).
+ *  - Refused outright where `allowed` is false: the soft phone's catalog, whose calls
+ *    are not campaign dials and have no roster contact to carry a grant.
+ *
+ * Exported because the public API layer's validator applies the same rules with the
+ * same messages.
+ */
+export function dispositionOverrideIssues(
+  entry: Record<string, unknown>,
+  at: string,
+  allowed = true,
+): CampaignConfigIssue[] {
+  const override = entry['override'];
+  if (override === undefined) return [];
+  const field = `${at}.override`;
+  if (!allowed) {
+    return [{
+      field,
+      message: "Overrides are a campaign feature: the soft phone's outcome catalog cannot grant one.",
+    }];
+  }
+  if (override === null || typeof override !== 'object' || Array.isArray(override)) {
+    return [{ field, message: 'override must be an object.' }];
+  }
+  const grant = override as Record<string, unknown>;
+  const issues: CampaignConfigIssue[] = [];
+  for (const key of Object.keys(grant)) {
+    if (!OVERRIDE_KEYS.has(key)) {
+      issues.push({
+        field: `${field}.${key}`,
+        message: `Unknown override field '${key}'. An outcome may grant only extra_attempts, retry_delay and calling_hours; do-not-call is never overridable.`,
+      });
+    }
+  }
+  const extra = grant['extra_attempts'];
+  if (extra !== undefined
+    && (typeof extra !== 'number' || !Number.isInteger(extra) || extra < 1 || extra > AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX)) {
+    issues.push({
+      field: `${field}.extra_attempts`,
+      message: `extra_attempts must be an integer between 1 and ${AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX}.`,
+    });
+  }
+  for (const flag of ['retry_delay', 'calling_hours']) {
+    if (grant[flag] !== undefined && typeof grant[flag] !== 'boolean') {
+      issues.push({ field: `${field}.${flag}`, message: `${flag} must be a boolean.` });
+    }
+  }
+  // Only over well-formed parts: a mistyped or unknown one is already the refusal, and
+  // "grants nothing" beside it would describe a grant the operator did not write.
+  if (issues.length === 0
+    && extra === undefined && grant['retry_delay'] !== true && grant['calling_hours'] !== true) {
+    issues.push({
+      field,
+      message: 'override must grant at least one of extra_attempts, retry_delay or calling_hours.',
+    });
+  }
+  if (entry['suppress'] === true || entry['terminal'] === true) {
+    issues.push({
+      field,
+      message: entry['suppress'] === true
+        ? 'An outcome that suppresses the contact cannot grant an override: do-not-call is never overridable.'
+        : 'A terminal outcome cannot grant an override: it finishes the contact, so nothing could spend it.',
+    });
+  }
+  return issues;
+}
+
+function validateDispositionCatalog(catalog: unknown, allowOverride: boolean): CampaignConfigIssue[] {
   if (!Array.isArray(catalog)) {
     return [{ field: 'disposition_catalog', message: 'disposition_catalog must be an array.' }];
   }
@@ -316,6 +450,8 @@ function validateDispositionCatalog(catalog: unknown): CampaignConfigIssue[] {
         issues.push(...validateRetryRule(retry as Record<string, unknown>, `${at}.retry`));
       }
     }
+
+    issues.push(...dispositionOverrideIssues(entry, at, allowOverride));
   });
 
   return issues;
@@ -482,13 +618,17 @@ function validateCallingWindow(
 export function validateAgencyCampaignConfig(
   body: unknown,
   base: CampaignConfigBase = {},
+  options: CampaignConfigOptions = {},
 ): CampaignConfigIssue[] {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return [];
   const record = body as Record<string, unknown>;
 
   const issues: CampaignConfigIssue[] = [];
   if (record['disposition_catalog'] !== undefined) {
-    issues.push(...validateDispositionCatalog(record['disposition_catalog']));
+    issues.push(...validateDispositionCatalog(
+      record['disposition_catalog'],
+      options.allowDispositionOverride ?? true,
+    ));
   }
   if (record['retry_policy'] !== undefined) {
     issues.push(...validateRetryPolicy(record['retry_policy']));
@@ -500,6 +640,7 @@ export function validateAgencyCampaignConfig(
     issues.push(...validateBreakReasonsReserved(record['break_reasons']));
   }
   issues.push(...validateBooleanSetting(record, 'allow_wrapup_redial'));
+  issues.push(...validateAssignmentSettings(record));
   issues.push(...validateCallingWindow(record, base));
   return issues;
 }

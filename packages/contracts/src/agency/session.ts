@@ -8,7 +8,9 @@
 
 import type { AgencyActionErrorResponse } from './actions';
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
-import type { AgencyClientKind } from './station';
+import type { AgencyClientKind, AgencyQueueState } from './station';
+import type { AgencyAssignmentMode } from './assignment';
+import { SOFTPHONE_OVERRIDE_NOTE_MAX, SOFTPHONE_OVERRIDE_NOTE_MIN } from './softphone';
 
 // ─── Campaign-derived config the agent console needs ────────────────────────
 
@@ -39,7 +41,46 @@ export interface AgencyDisposition {
   suppress?: boolean;
   /** Disposition-driven retry — this is how voicemail retry works without answering-machine detection. */
   retry?: { delay_minutes?: number; max_attempts: number };
+  /**
+   * What recording this outcome lets the contact's agent override, from then on, for this
+   * contact only (contact assignment, phase 2). The latest granting outcome on a contact wins;
+   * each part is used up when spent. Absent: the outcome grants nothing (every built-in).
+   *
+   * **DNC is never overridable.** There is no field for it, a catalog entry with an unknown key
+   * here is refused, and so is an override on an entry that `suppress`es or is `terminal`.
+   */
+  override?: AgencyDispositionOverride;
 }
+
+/** The most extra attempts one outcome can grant past `max_attempts`. */
+export const AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX = 5;
+
+/**
+ * An outcome's override grant ({@link AgencyDisposition.override}). At least one part is set.
+ *
+ *  - `extra_attempts` (1–{@link AGENCY_OVERRIDE_EXTRA_ATTEMPTS_MAX}): dials allowed past the
+ *    retry policy's `max_attempts`; one is spent per dial past it.
+ *  - `retry_delay`: the agent may dial the contact before its next scheduled time (once).
+ *  - `calling_hours`: the agent may dial outside the calling hours (once), with a note of
+ *    {@link AGENCY_OVERRIDE_NOTE_MIN}–{@link AGENCY_OVERRIDE_NOTE_MAX} characters, as the soft
+ *    phone's hours override (SP2).
+ */
+export interface AgencyDispositionOverride {
+  extra_attempts?: number;
+  retry_delay?: boolean;
+  calling_hours?: boolean;
+}
+
+/** The override parts a dial can spend; recorded on the attempt as `override_applied`. */
+export const AGENCY_OVERRIDE_KINDS = ['extra_attempts', 'retry_delay', 'calling_hours'] as const;
+export type AgencyOverrideKind = (typeof AGENCY_OVERRIDE_KINDS)[number];
+
+/**
+ * Bounds of the agent's note on a calling-hours override (trimmed, in code points): the soft
+ * phone's override note bounds, one source of truth.
+ */
+export const AGENCY_OVERRIDE_NOTE_MIN = SOFTPHONE_OVERRIDE_NOTE_MIN;
+export const AGENCY_OVERRIDE_NOTE_MAX = SOFTPHONE_OVERRIDE_NOTE_MAX;
 
 /**
  * Which of a contact's arbitrary CSV columns matter, and in what order
@@ -230,6 +271,22 @@ export interface AgencySessionBootstrap {
    * so a client built against an older server reads its absence as `false`.
    */
   allow_wrapup_redial?: boolean;
+  /**
+   * How pacing pairs this campaign's contacts with agents (contact assignment). `pool` (or
+   * absent, from an older server): one shared queue. `strict`: this agent is dialled only
+   * their own contacts. `preferred`: their own first, then unassigned ones.
+   */
+  assignment_mode?: AgencyAssignmentMode;
+  /**
+   * Whether the agent may retry the contacts they did not reach (`POST
+   * /proxy/agency/my-contacts/retry`, and the per-contact call). Absent reads as `false`.
+   */
+  allow_agent_retry?: boolean;
+  /**
+   * This agent's queue at join, in `strict` and `preferred` mode; absent in `pool` mode. The
+   * `queue` station frame carries every later change.
+   */
+  queue?: AgencyQueueState;
   /** Whether calls on this campaign are recorded — the console must disclose it. */
   record_calls: boolean;
   break_reasons: AgencyBreakReason[];

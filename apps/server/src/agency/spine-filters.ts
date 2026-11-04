@@ -126,9 +126,42 @@ export interface AgencyContactFilters {
    * nothing. See {@link parseRetrySelector}.
    */
   lastDispositions?: string[];
+  /**
+   * Contact assignment: the owner. Agent user ids and/or the pool (`unassigned`), ORed.
+   * A roster filter only, never a retry-selector dimension: `parseRetrySelector` refuses the
+   * key and `retrySelectionConditions` builds its filter without it.
+   */
+  assignedTo?: AssignedToFilter;
   phone?: PhoneFilter;
   from?: Date;
   to?: Date;
+}
+
+/** `?assigned_to=`: owners to match (lower-cased ids) and whether the pool matches too. */
+export interface AssignedToFilter {
+  userIds: string[];
+  unassigned: boolean;
+}
+
+/** The `assigned_to` value that selects the pool (`AGENCY_UNASSIGNED_FILTER`). */
+export const UNASSIGNED_FILTER = 'unassigned';
+
+/**
+ * Parse `?assigned_to=` (repeated or comma-separated): each value an agent's user id or
+ * `unassigned`. Anything else is an issue rather than a filter that silently matches nobody.
+ */
+export function parseAssignedToFilter(raw: unknown, issues: FilterIssue[]): AssignedToFilter | undefined {
+  const values = multiParam(raw);
+  if (!values) return undefined;
+  const bad = values.filter((v) => v !== UNASSIGNED_FILTER && !UUID_RE.test(v));
+  if (bad.length > 0) {
+    issues.push({ param: 'assigned_to', message: `must be agent user ids or ${UNASSIGNED_FILTER}, not: ${bad.join(', ')}` });
+    return undefined;
+  }
+  return {
+    userIds: [...new Set(values.filter((v) => v !== UNASSIGNED_FILTER).map((v) => v.toLowerCase()))],
+    unassigned: values.includes(UNASSIGNED_FILTER),
+  };
 }
 
 /**
@@ -337,14 +370,15 @@ export function parsePhoneFilter(raw: unknown): PhoneFilter | 'unusable' | undef
   return exact ? { mode: 'exact', value: `+${digits}` } : { mode: 'suffix', value: digits };
 }
 
+/** The field message for a `phone` filter {@link parsePhoneFilter} answers `'unusable'`. */
+export const PHONE_FILTER_UNUSABLE_MESSAGE =
+  'must contain at least one digit — search by the whole number or its last few digits';
+
 /** Fold {@link parsePhoneFilter}'s third outcome into the issue list. */
 function readPhoneFilter(raw: unknown, issues: FilterIssue[]): PhoneFilter | undefined {
   const parsed = parsePhoneFilter(raw);
   if (parsed === 'unusable') {
-    issues.push({
-      param: 'phone',
-      message: 'must contain at least one digit — search by the whole number or its last few digits',
-    });
+    issues.push({ param: 'phone', message: PHONE_FILTER_UNUSABLE_MESSAGE });
     return undefined;
   }
   return parsed;
@@ -479,6 +513,7 @@ export function parseContactFilters(query: Record<string, unknown>): FilterParse
   // on historic rows, which are the rows this question is about. See
   // `AgencyContactFilters.lastDispositions`.
   const lastDispositions = multiParam(query['last_disposition']);
+  const assignedTo = parseAssignedToFilter(query['assigned_to'], issues);
   const from = parseFilterDate('from', query['from'], issues);
   const to = parseFilterDate('to', query['to'], issues);
   checkRange(from, to, issues);
@@ -492,6 +527,7 @@ export function parseContactFilters(query: Record<string, unknown>): FilterParse
       ...(suppressedReasons ? { suppressedReasons } : {}),
       ...(lastOutcomes ? { lastOutcomes } : {}),
       ...(lastDispositions ? { lastDispositions } : {}),
+      ...(assignedTo ? { assignedTo } : {}),
       ...(phone ? { phone } : {}),
       ...(from ? { from } : {}),
       ...(to ? { to } : {}),

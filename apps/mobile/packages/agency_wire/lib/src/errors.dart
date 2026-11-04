@@ -9,6 +9,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import 'assignment.dart';
 import 'enums.dart';
 import 'equality.dart';
 import 'json.dart';
@@ -125,6 +126,7 @@ final class ErrorBody {
     Map<String, Object?> raw = const <String, Object?>{},
   }) : code = AgencyErrorCode.fromWire(codeRaw),
        softphoneCode = SoftphoneErrorCode.fromWire(codeRaw),
+       agentRetryCode = AgentRetryErrorCode.fromWire(codeRaw),
        allowedCodes = allowedCodes == null ? null : List.unmodifiable(allowedCodes),
        details = details == null ? null : List.unmodifiable(details),
        raw = frozenMap(raw);
@@ -169,6 +171,11 @@ final class ErrorBody {
   /// routes (and the SP7 switch), [code] on the station's.
   final SoftphoneErrorCode softphoneCode;
 
+  /// [codeRaw] as a refusal of the agent's own-contact routes (My contacts,
+  /// retry, the per-contact call); [AgentRetryErrorCode.unknown] when absent
+  /// or not one of those codes. Read this on those routes only.
+  final AgentRetryErrorCode agentRetryCode;
+
   /// The values that ARE accepted; read against [code], never generically.
   final List<String>? allowedCodes;
 
@@ -178,6 +185,11 @@ final class ErrorBody {
 
   /// The whole body, for code-specific fields.
   final Map<String, Object?> raw;
+
+  /// The refusal of an own-contact route, with its `details` read, when
+  /// [codeRaw] is one of [AgentRetryErrorCode]. Null otherwise.
+  AgentRetryRefusal? get agentRetryRefusal =>
+      agentRetryCode == AgentRetryErrorCode.unknown ? null : AgentRetryRefusal.fromBody(raw);
 
   /// The structured 409 for `session_on_other_campaign`, when this is one
   /// and its fields read.

@@ -10,6 +10,7 @@ import 'package:magick_agency_agent/app/theme/tokens.dart';
 import 'package:magick_agency_agent/core/auth/app_gate.dart';
 import 'package:magick_agency_agent/core/auth/fake_auth_service.dart';
 import 'package:magick_agency_agent/core/station/station_signals.dart';
+import 'package:magick_agency_agent/core/station/station_view.dart';
 import 'package:magick_agency_agent/features/campaigns/assignment_entry.dart';
 import 'package:magick_agency_agent/features/campaigns/campaigns_screen.dart';
 import 'package:magick_agency_agent/ui/primitives.dart';
@@ -22,8 +23,10 @@ Map<String, Object?> assignment(String id, String? name, String? status) =>
 void main() {
   late Harness h;
 
-  Future<ProviderContainer> started(WidgetTester tester) async {
-    final c = ProviderContainer.test(overrides: h.overrides);
+  Future<ProviderContainer> started(WidgetTester tester, {StationView? station}) async {
+    final c = ProviderContainer.test(
+      overrides: [...h.overrides, if (station != null) stationViewProvider.overrideWithValue(station)],
+    );
     await tester.runAsync(() => startGate(c));
     expect(c.read(appGateProvider), isA<GateReady>());
     return c;
@@ -69,6 +72,72 @@ void main() {
     await tapVisible(tester, find.text('Enter station'));
     await tester.pumpAndSettle();
     expect(find.text('at /preflight/c1?campaignName=Q4+Card+Renewals'), findsOneWidget);
+  });
+
+  group('My contacts (contact assignment)', () {
+    StationView onDutyOn(String id, {required bool offered}) => StationView(
+          campaignId: id,
+          campaignName: 'Q4 Card Renewals',
+          sessionId: 's1',
+          link: StationLink.open,
+          phase: AgentPhase.available,
+          myContactsOffered: offered,
+        );
+
+    testWidgets('with the flag on, the campaign the agent is on links to their own contacts there', (tester) async {
+      h.server.json('GET', '/feature-flags', {'agency_contact_assignment_enabled': true});
+      assignments([assignment('c1', 'Q4 Card Renewals', 'running'), assignment('c2', 'Diwali Offers', 'running')]);
+      final c = await started(tester, station: onDutyOn('c1', offered: true));
+      c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+      await pumpScreen(tester, c, const CampaignsScreen(), extraRoutes: const ['/home', '/home/contacts/:campaignId']);
+      expect(find.byKey(const Key('my-contacts-c1')), findsOneWidget);
+      expect(find.byKey(const Key('my-contacts-c2')), findsNothing, reason: 'on duty elsewhere');
+      expect(find.bySemanticsLabel('My contacts in Q4 Card Renewals'), findsOneWidget);
+      await tapVisible(tester, find.byKey(const Key('my-contacts-c1')));
+      await tester.pumpAndSettle();
+      expect(find.text('at /home/contacts/c1'), findsOneWidget);
+    });
+
+    testWidgets('the console’s rule, from the join bootstrap: not on a pool campaign without agent retry', (tester) async {
+      h.server.json('GET', '/feature-flags', {'agency_contact_assignment_enabled': true});
+      assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+      final c = await started(tester, station: onDutyOn('c1', offered: false));
+      c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+      await pumpScreen(tester, c, const CampaignsScreen());
+      expect(find.byKey(const Key('my-contacts-c1')), findsNothing);
+    });
+
+    testWidgets('off duty there is no bootstrap to judge by: nothing', (tester) async {
+      h.server.json('GET', '/feature-flags', {'agency_contact_assignment_enabled': true});
+      assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+      final c = await started(tester);
+      await pumpScreen(tester, c, const CampaignsScreen());
+      expect(find.byKey(const Key('my-contacts-c1')), findsNothing);
+      expect(find.text('Enter station'), findsOneWidget);
+    });
+
+    testWidgets('with the flag off (or its map unread), nothing', (tester) async {
+      h.server.json('GET', '/feature-flags', {'agency_dialer_enabled': true});
+      assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+      final c = await started(tester, station: onDutyOn('c1', offered: true));
+      c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+      await pumpScreen(tester, c, const CampaignsScreen());
+      expect(find.byKey(const Key('my-contacts-c1')), findsNothing);
+      expect(find.text('Back to your station'), findsWidgets);
+    });
+
+    testWidgets('a flag map that failed to load is read again on pull to refresh', (tester) async {
+      h.server.offline('GET', '/feature-flags');
+      assignments([assignment('c1', 'Q4 Card Renewals', 'running')]);
+      final c = await started(tester, station: onDutyOn('c1', offered: true));
+      c.read(testSignalsProvider.notifier).set(const StationSignals(onDuty: true, campaignId: 'c1'));
+      await pumpScreen(tester, c, const CampaignsScreen());
+      expect(find.byKey(const Key('my-contacts-c1')), findsNothing);
+      h.server.json('GET', '/feature-flags', {'agency_contact_assignment_enabled': true});
+      await tester.fling(find.text('My campaigns'), const Offset(0, 400), 1000);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('my-contacts-c1')), findsOneWidget);
+    });
   });
 
   testWidgets('empty: not assigned yet', (tester) async {

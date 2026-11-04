@@ -366,6 +366,24 @@ describe('the settings', () => {
     expect(repos.settings.upsert).not.toHaveBeenCalled();
   });
 
+  it('refuses an outcome override in the soft phone\'s catalog: overrides are a campaign feature', async () => {
+    // A grant a campaign's catalog would accept, so the soft-phone rule is the only refusal.
+    const res = await putSettings({
+      ...valid,
+      disposition_catalog: [{ code: 'promise_to_pay', label: 'Promise to pay', override: { retry_delay: true } }],
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({
+      code: 'settings_invalid',
+      details: [{
+        path: 'disposition_catalog[0].override',
+        message: "Overrides are a campaign feature: the soft phone's outcome catalog cannot grant one.",
+      }],
+    });
+    expect(res.json().details).toHaveLength(1);
+    expect(repos.settings.upsert).not.toHaveBeenCalled();
+  });
+
   it('writes a valid body and reports which settings changed', async () => {
     repos.settings.upsert.mockResolvedValue({ ...valid, updated_at: 'now' });
     const res = await putSettings(valid);

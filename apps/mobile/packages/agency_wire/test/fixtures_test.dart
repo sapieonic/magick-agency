@@ -48,6 +48,8 @@ final Map<String, Map<String, Decoder>> decoders = {
       'reserved_redial',
       'wrapup_redial_offered',
       'wrapup_redial_used_up',
+      'queue_nothing_due',
+      'queue_due',
     ])
       name: (j) => StationFrame.decode(jsonEncode(j)),
   },
@@ -115,6 +117,7 @@ final Map<String, Map<String, Decoder>> decoders = {
     'refusal_fields_invalid': ErrorBody.fromJson,
     'refusal_disposition_invalid': ErrorBody.fromJson,
     'refusal_softphone_disabled': ErrorBody.fromJson,
+    'refusal_contact_assigned_elsewhere': ErrorBody.fromJson,
   },
   'actions.json': {
     'hangup_response': HangupResponse.fromJson,
@@ -137,6 +140,22 @@ final Map<String, Map<String, Decoder>> decoders = {
     'redial_response': RedialResponse.fromJson,
     'error_redial_limit_reached': ErrorBody.fromJson,
     'error_redial_blocked_dnc': ErrorBody.fromJson,
+    'agent_retry_request_selected': (j) => AgentRetryRequest.selected(
+      campaignId: j['campaign_id']! as String,
+      contactIds: (j['contact_ids']! as List<Object?>).cast<String>(),
+    ),
+    'agent_retry_request_all': (j) => AgentRetryRequest.all(campaignId: j['campaign_id']! as String),
+    'agent_retry_response': AgentRetryResponse.fromJson,
+    'my_contact_call_request': (j) =>
+        MyContactCallRequest(campaignId: j['campaign_id']! as String, sessionId: j['session_id']! as String),
+    'my_contact_call_request_hours_override': (j) => MyContactCallRequest(
+      campaignId: j['campaign_id']! as String,
+      sessionId: j['session_id']! as String,
+      overrideNote: j['override_note']! as String,
+    ),
+    'my_contact_call_response': MyContactCallResponse.fromJson,
+    'error_contact_not_retryable': (j) =>
+        ErrorBody.fromJson(j).agentRetryRefusal ?? (throw StateError('not an own-contact refusal')),
   },
   'reads.json': {
     'my_assignments': MyAssignments.fromJson,
@@ -146,6 +165,9 @@ final Map<String, Map<String, Decoder>> decoders = {
     'my_stats_unmeasured': AgentStats.fromJson,
     'my_attempts': decodeAttemptsPage,
     'my_attempts_last_page': decodeAttemptsPage,
+    'my_contacts_summary': MyContactsSummary.fromJson,
+    'my_contacts': decodeMyContactsPage,
+    'my_contacts_last_page': decodeMyContactsPage,
   },
   'platform.json': {
     'session_request': (j) => SessionRequest(idToken: j['id_token']! as String),
@@ -187,6 +209,8 @@ Map<String, Object?>? encoded(Object o) => switch (o) {
   final ManualCallUpdateRequest r => r.toJson(),
   final ManualCallDispositionRequest r => r.toJson(),
   final ManualCallDncRequest r => r.toJson(),
+  final AgentRetryRequest r => r.toJson(),
+  final MyContactCallRequest r => r.toJson(),
   _ => null,
 };
 
@@ -194,6 +218,7 @@ Map<String, Object?>? encoded(Object o) => switch (o) {
 /// literals the contract declares, so none of these may be `unknown`.
 Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   final ReadyFrame f => [
+    f.queue?.reason,
     f.state,
     f.pendingState,
     f.activeAttempt?.state,
@@ -212,7 +237,14 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
     f.state,
     ...manualCallEnums(f.manualCall ?? (throw StateError('manual_call did not decode'))),
   ],
-  final SessionBootstrap b => [b.state, b.campaignStatus],
+  final QueueFrame f => [f.queue.reason],
+  final SessionBootstrap b => [
+    b.state,
+    b.campaignStatus,
+    b.assignmentMode,
+    b.queue?.reason,
+    ...b.dispositionCatalog.expand((d) => d.overrideGrant?.kinds ?? const <OverrideKind>[]),
+  ],
   final SessionStateResponse s => [s.kind, s.state, s.pendingState],
   final SessionCampaignConflict c => [c.state],
   final HangupResponse h => [h.state, h.outcome],
@@ -246,6 +278,13 @@ Iterable<WireEnum?> enumsOf(Object o) => switch (o) {
   final SoftphoneCallPendingRefusal r => [r.code, ...manualCallEnums(r.call)],
   final ManualCall c => manualCallEnums(c),
   final AgentStats s => [s.bucket],
+  final MyContactsSummary s => [s.assignmentMode, s.queue.reason],
+  final KeysetPage<MyContact> p => p.rows.expand(
+    (r) => [r.bucket, r.state, r.retry.blocked, ...?r.overrideGrant?.kinds],
+  ),
+  final AgentRetryResponse r => r.skipped.map((s) => s.blocked),
+  final MyContactCallResponse r => r.overrideApplied,
+  final AgentRetryRefusal r => [r.code, r.blocked],
   final KeysetPage<AttemptRow> p => p.rows.expand((r) => [r.state, r.outcome]),
   final SessionResponse s => [
     s.user.status,

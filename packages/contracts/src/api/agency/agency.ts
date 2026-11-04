@@ -39,6 +39,9 @@ import type {
   AgencyStationReservedFrame,
   AgencyStationTokenResponse,
   AgencyStationManualCallFrame,
+  AgencyStationQueueFrame,
+  AgencyQueueIdleReason,
+  AgencyQueueState,
   AgencyWrapupHoldReason,
   AgencyRedialInfo,
   AgencyRedialResponse,
@@ -47,6 +50,9 @@ import type * as Core from '../../agency';
 import type { AgencyActionErrorCode, AgencyStationErrorCode } from '../../errors';
 
 export type {
+  AgencyStationQueueFrame,
+  AgencyQueueIdleReason,
+  AgencyQueueState,
   AgencyActionErrorResponse,
   AgencyActiveAttempt,
   AgencyAgentState,
@@ -347,7 +353,9 @@ export type AgencyStationServerFrame =
   | AgencyStationBridgeEndedFrame
   | AgencyStationMediaFrame
   // A soft-phone call's state change; re-exported from `./softphone` unchanged.
-  | AgencyStationManualCallFrame;
+  | AgencyStationManualCallFrame
+  // Contact assignment: this agent's own queue; re-exported from the dialer contract unchanged.
+  | AgencyStationQueueFrame;
 
 /**
  * The station socket's close codes (re-mint and retry versus re-bootstrap), declared

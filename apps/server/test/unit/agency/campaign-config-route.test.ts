@@ -763,6 +763,237 @@ describe('allow_wrapup_redial (wrap-up redial, 0008)', () => {
   });
 });
 
+/**
+ * Bodies each contact-assignment rule refuses, with the field it refuses on. Shared by
+ * the internal validator's cases below and by the pairing test at the bottom, so the
+ * two validators are held to agree on every one.
+ */
+const ASSIGNMENT_REFUSALS: ReadonlyArray<{ body: Record<string, unknown>; field: string; message: string }> = [
+  ...['shared', 'POOL', '', 1, null, true].map((v) => ({
+    body: { assignment_mode: v }, field: 'assignment_mode',
+    message: 'assignment_mode must be one of: pool, strict, preferred.',
+  })),
+  ...['pool', 'Keep', null, 0].map((v) => ({
+    body: { on_unstaff: v }, field: 'on_unstaff',
+    message: 'on_unstaff must be one of: return_to_pool, keep.',
+  })),
+  ...['return_to_pool', 'never', null].map((v) => ({
+    body: { callback_fallback: v }, field: 'callback_fallback',
+    message: 'callback_fallback must be one of: pool, wait.',
+  })),
+  ...[-1, 10081, 1.5, '30', null].map((v) => ({
+    body: { callback_owner_grace_minutes: v }, field: 'callback_owner_grace_minutes',
+    message: 'callback_owner_grace_minutes must be an integer between 0 and 10080.',
+  })),
+  ...[0, 11, 2.5, '1', null].map((v) => ({
+    body: { agent_retry_rounds: v }, field: 'agent_retry_rounds',
+    message: 'agent_retry_rounds must be an integer between 1 and 10.',
+  })),
+  ...[-1, 10081, 0.5, '30', null].map((v) => ({
+    body: { agent_retry_cooldown_minutes: v }, field: 'agent_retry_cooldown_minutes',
+    message: 'agent_retry_cooldown_minutes must be an integer between 0 and 10080.',
+  })),
+  ...['true', 1, 0, null, {}].map((v) => ({
+    body: { allow_agent_retry: v }, field: 'allow_agent_retry',
+    message: 'allow_agent_retry must be a boolean.',
+  })),
+];
+
+/** An outcome entry carrying `override`, as the catalog's only entry. */
+const withOverride = (override: unknown, entry: Record<string, unknown> = {}) => ({
+  disposition_catalog: [{ code: 'promise_to_pay', label: 'Promise to pay', ...entry, override }],
+});
+const AT = 'disposition_catalog[0].override';
+
+const OVERRIDE_REFUSALS: ReadonlyArray<{ body: Record<string, unknown>; field: string; message: string }> = [
+  // DNC is never overridable: there is no key for it, and any key that is not one of
+  // the three is refused, whatever it is spelled.
+  ...['dnc', 'do_not_call', 'suppress', 'max_attempts'].map((key) => ({
+    body: withOverride({ retry_delay: true, [key]: true }), field: `${AT}.${key}`,
+    message: `Unknown override field '${key}'. An outcome may grant only extra_attempts, retry_delay and calling_hours; do-not-call is never overridable.`,
+  })),
+  ...[0, 6, 1.5, '2', null].map((v) => ({
+    body: withOverride({ extra_attempts: v }), field: `${AT}.extra_attempts`,
+    message: 'extra_attempts must be an integer between 1 and 5.',
+  })),
+  { body: withOverride({ retry_delay: 'yes' }), field: `${AT}.retry_delay`, message: 'retry_delay must be a boolean.' },
+  { body: withOverride({ calling_hours: 1 }), field: `${AT}.calling_hours`, message: 'calling_hours must be a boolean.' },
+  ...[{}, { retry_delay: false, calling_hours: false }].map((override) => ({
+    body: withOverride(override), field: AT,
+    message: 'override must grant at least one of extra_attempts, retry_delay or calling_hours.',
+  })),
+  ...[null, [], 'retry_delay', true].map((override) => ({
+    body: withOverride(override), field: AT, message: 'override must be an object.',
+  })),
+  {
+    body: withOverride({ extra_attempts: 2 }, { suppress: true }), field: AT,
+    message: 'An outcome that suppresses the contact cannot grant an override: do-not-call is never overridable.',
+  },
+  {
+    body: withOverride({ retry_delay: true }, { terminal: true }), field: AT,
+    message: 'A terminal outcome cannot grant an override: it finishes the contact, so nothing could spend it.',
+  },
+];
+
+describe('contact assignment settings (0009)', () => {
+  it('accepts every vocabulary member, each bound, both booleans and the defaults', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    const { AGENCY_CONTACT_ASSIGNMENT_DEFAULTS } = await import('@magick-agency/contracts/agency');
+    expect(validate({ ...AGENCY_CONTACT_ASSIGNMENT_DEFAULTS })).toEqual([]);
+    for (const assignment_mode of ['pool', 'strict', 'preferred']) expect(validate({ assignment_mode })).toEqual([]);
+    for (const on_unstaff of ['return_to_pool', 'keep']) expect(validate({ on_unstaff })).toEqual([]);
+    for (const callback_fallback of ['pool', 'wait']) expect(validate({ callback_fallback })).toEqual([]);
+    for (const v of [0, 10080]) {
+      expect(validate({ callback_owner_grace_minutes: v, agent_retry_cooldown_minutes: v })).toEqual([]);
+    }
+    for (const agent_retry_rounds of [1, 10]) expect(validate({ agent_retry_rounds })).toEqual([]);
+    for (const allow_agent_retry of [true, false]) expect(validate({ allow_agent_retry })).toEqual([]);
+  });
+
+  it('refuses each out-of-vocabulary, out-of-bound or mistyped value, null included, on its field', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    for (const { body, field, message } of ASSIGNMENT_REFUSALS) {
+      expect(validate(body), JSON.stringify(body)).toEqual([{ field, message }]);
+    }
+  });
+
+  it('POST passes all seven to the repository, and leaves them unset when omitted (the column defaults)', async () => {
+    const app = await makeApp();
+    const settings = {
+      assignment_mode: 'strict', on_unstaff: 'keep', callback_owner_grace_minutes: 15,
+      callback_fallback: 'wait', allow_agent_retry: true, agent_retry_rounds: 3, agent_retry_cooldown_minutes: 60,
+    };
+    const on = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS, payload: { ...MINIMAL, ...settings },
+    });
+    expect(on.statusCode, on.body).toBe(201);
+    expect(campaigns.create.mock.calls[0]![0]).toMatchObject(settings);
+
+    const omitted = await app.inject({ method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS, payload: MINIMAL });
+    expect(omitted.statusCode, omitted.body).toBe(201);
+    for (const key of Object.keys(settings)) expect(campaigns.create.mock.calls[1]![0][key], key).toBeUndefined();
+  });
+
+  it('POST refuses a bad value and creates nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, assignment_mode: 'shared' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details).toEqual({ assignment_mode: 'assignment_mode must be one of: pool, strict, preferred.' });
+    expect(campaigns.create).not.toHaveBeenCalled();
+  });
+
+  it('PATCH writes the other six on a RUNNING campaign: no status gate', async () => {
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status: 'running', assignment_mode: 'strict' });
+    const app = await makeApp();
+    const patch = {
+      on_unstaff: 'keep', callback_owner_grace_minutes: 5, callback_fallback: 'wait',
+      allow_agent_retry: true, agent_retry_rounds: 2, agent_retry_cooldown_minutes: 0,
+    };
+    const res = await app.inject({ method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS, payload: patch });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(campaigns.update).toHaveBeenCalledWith('camp-1', patch);
+  });
+
+  describe('assignment_mode changes only while draft or paused (CA10)', () => {
+    it.each(['running', 'stopping', 'completed', 'stopped'])('a change on a %s campaign is 409 mode_change_requires_pause and writes nothing', async (status) => {
+      campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status, assignment_mode: 'pool' });
+      const app = await makeApp();
+      const res = await app.inject({
+        method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+        payload: { assignment_mode: 'strict', wrapup_seconds: 40 },
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(res.json()).toEqual({
+        error: 'Conflict',
+        code: 'mode_change_requires_pause',
+        message: `The assignment mode can be changed only while the campaign is a draft or paused; it is ${status}. Pause it first.`,
+      });
+      expect(campaigns.update).not.toHaveBeenCalled();
+    });
+
+    it.each(['draft', 'paused'])('a change on a %s campaign is written', async (status) => {
+      campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status, assignment_mode: 'pool' });
+      const app = await makeApp();
+      const res = await app.inject({
+        method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+        payload: { assignment_mode: 'preferred' },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(campaigns.update).toHaveBeenCalledWith('camp-1', { assignment_mode: 'preferred' });
+    });
+
+    it('sending the stored mode again on a RUNNING campaign is not a change, and is written', async () => {
+      campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status: 'running', assignment_mode: 'strict' });
+      const app = await makeApp();
+      const res = await app.inject({
+        method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+        payload: { assignment_mode: 'strict', allow_agent_retry: true },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(campaigns.update).toHaveBeenCalledWith('camp-1', { assignment_mode: 'strict', allow_agent_retry: true });
+    });
+
+    it('a malformed mode is the 400 that names the field, not the 409', async () => {
+      campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status: 'running', assignment_mode: 'pool' });
+      const app = await makeApp();
+      const res = await app.inject({
+        method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS, payload: { assignment_mode: null },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().details).toHaveProperty('assignment_mode');
+    });
+  });
+});
+
+describe('an outcome override on a catalog entry (CA8)', () => {
+  it('accepts each part alone, all three together, and the extra_attempts bounds', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    for (const override of [
+      { extra_attempts: 1 }, { extra_attempts: 5 }, { retry_delay: true }, { calling_hours: true },
+      { extra_attempts: 2, retry_delay: true, calling_hours: true },
+      // One part granted is enough; the others may say false.
+      { retry_delay: true, calling_hours: false },
+    ]) {
+      expect(validate(withOverride(override)), JSON.stringify(override)).toEqual([]);
+    }
+    // An entry with no override is untouched, the built-ins included.
+    expect(validate({ disposition_catalog: [{ code: 'not_interested', label: 'Not interested' }] })).toEqual([]);
+  });
+
+  it('refuses an unknown key (a DNC one among them), a bad part, a grant of nothing, and an override on a suppress or terminal entry', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    for (const { body, field, message } of OVERRIDE_REFUSALS) {
+      expect(validate(body), JSON.stringify(body)).toEqual([{ field, message }]);
+    }
+  });
+
+  it('a POST whose catalog grants a dnc override is a 400 and creates nothing', async () => {
+    const app = await makeApp();
+    const res = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, ...withOverride({ extra_attempts: 1, dnc: true }) },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().details).toEqual({ [`${AT}.dnc`]: expect.stringContaining('do-not-call is never overridable') });
+    expect(campaigns.create).not.toHaveBeenCalled();
+  });
+
+  it('the soft phone\'s catalog refuses any override, through the same validator', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    const body = withOverride({ retry_delay: true });
+    expect(validate(body)).toEqual([]);
+    expect(validate(body, {}, { allowDispositionOverride: false })).toEqual([{
+      field: AT, message: "Overrides are a campaign feature: the soft phone's outcome catalog cannot grant one.",
+    }]);
+    // Everything else about the catalog is held to the same rules either way.
+    expect(validate({ disposition_catalog: [{ code: 'redialed', label: 'R' }] }, {}, { allowDispositionOverride: false }))
+      .toEqual(validate({ disposition_catalog: [{ code: 'redialed', label: 'R' }] }));
+  });
+});
+
 describe("the reserved system disposition code 'redialed'", () => {
   it('refuses a catalog entry using it, on the entry\'s code field, and nothing else about the catalog', async () => {
     const { AGENCY_REDIALED_DISPOSITION_CODE } = await import('@magick-agency/contracts/agency');
@@ -814,6 +1045,24 @@ describe("the reserved system disposition code 'redialed'", () => {
     ]) {
       expect(pub.validateAgencyCampaignConfig(body)).toEqual(internal.validateAgencyCampaignConfig(body));
       expect(pub.validateAgencyCampaignConfig(body)).toHaveLength(1);
+    }
+  });
+
+  it('the two validators agree on every contact-assignment setting and every override rule', async () => {
+    const internal = await import('../../../src/agency/campaign-config.js');
+    const pub = await import('../../../src/agency/agency-campaign-config.js');
+    for (const { body } of [...ASSIGNMENT_REFUSALS, ...OVERRIDE_REFUSALS]) {
+      expect(pub.validateAgencyCampaignConfig(body), JSON.stringify(body)).toEqual(internal.validateAgencyCampaignConfig(body));
+      expect(pub.validateAgencyCampaignConfig(body), JSON.stringify(body)).toHaveLength(1);
+    }
+    // And on the accepts: neither refuses what the other takes.
+    for (const body of [
+      { assignment_mode: 'preferred', on_unstaff: 'keep', callback_owner_grace_minutes: 0, callback_fallback: 'wait',
+        allow_agent_retry: true, agent_retry_rounds: 10, agent_retry_cooldown_minutes: 10080 },
+      withOverride({ extra_attempts: 5, retry_delay: true, calling_hours: true }),
+    ]) {
+      expect(pub.validateAgencyCampaignConfig(body)).toEqual([]);
+      expect(internal.validateAgencyCampaignConfig(body)).toEqual([]);
     }
   });
 });

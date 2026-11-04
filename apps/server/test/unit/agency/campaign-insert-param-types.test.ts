@@ -43,12 +43,13 @@ import { dirname, resolve } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // The column types are read off the squashed BASELINE's CREATE TABLE, plus the
 // `ALTER TABLE agency_campaigns ADD COLUMN` of every later migration's up half
-// (0008 adds `allow_wrapup_redial`); the INSERT has 21 columns.
+// (0008 adds `allow_wrapup_redial`, 0009 the seven assignment settings); the INSERT has
+// 28 columns.
 const MIGRATIONS = resolve(__dirname, '../../../../../packages/db/migrations');
 const BASELINE = resolve(MIGRATIONS, '0001_baseline.sql');
 // The repository is a folder behind the `agency.repository.ts` barrel: `create()`
 // lives in the campaign class's file, and the column list it interpolates in the
-// shared SQL fragments (`retryFromCampaign` binds the same twenty-one).
+// shared SQL fragments (`retryFromCampaign` binds the same twenty-eight).
 const REPOSITORY = resolve(__dirname, '../../../src/db/repositories/agency/campaign.repository.ts');
 const FRAGMENTS = resolve(__dirname, '../../../src/db/repositories/agency/sql-fragments.ts');
 
@@ -163,7 +164,7 @@ function createInsertPairs(): Array<{ column: string; expr: string }> {
   const colsOpen = repoSource.indexOf('(', at);
   const colsClose = matchParen(repoSource, colsOpen);
   // The column list is the shared `CAMPAIGN_INSERT_COLUMNS_SQL` constant (create()
-  // and retryFromCampaign bind the same twenty-one), interpolated: resolve it from the
+  // and retryFromCampaign bind the same twenty-eight), interpolated: resolve it from the
   // source so the pairing below is still against the real text.
   const columns = splitTopLevel(
     repoSource.slice(colsOpen + 1, colsClose).replace('${CAMPAIGN_INSERT_COLUMNS_SQL}', insertColumnsConstant()),
@@ -188,13 +189,21 @@ describe('AgencyCampaignRepository.create — parameter typing inside COALESCE',
     // deliberately hard-coded and deliberately annoying to change: it is the only
     // thing standing between a silently-stale parser and a whole file of
     // assertions that pass over an empty set.
-    expect(pairs).toHaveLength(21);
+    expect(pairs).toHaveLength(28);
     expect(types['calling_window_start']).toBe('time');
     expect(types['calling_window_end']).toBe('time');
     expect(types['calling_days']).toBe('smallint[]');
     expect(types['telephony_provider']).toBe('varchar(20)');
     // From 0008, not the baseline: proves the later-migration scan ran.
     expect(types['allow_wrapup_redial']).toBe('boolean');
+    // From 0009: one ALTER adding seven columns, every one of them found.
+    expect(types['assignment_mode']).toBe('varchar(16)');
+    expect(types['on_unstaff']).toBe('varchar(16)');
+    expect(types['callback_owner_grace_minutes']).toBe('integer');
+    expect(types['callback_fallback']).toBe('varchar(8)');
+    expect(types['allow_agent_retry']).toBe('boolean');
+    expect(types['agent_retry_rounds']).toBe('smallint');
+    expect(types['agent_retry_cooldown_minutes']).toBe('integer');
     for (const { column } of pairs) {
       expect(types[column], `no declared type found for ${column}`).toBeTruthy();
     }

@@ -91,10 +91,18 @@ export interface AgencyContactFilters {
    * `last_disposition` only. Attempts use `disposition_code`.
    */
   last_disposition?: string[];
+  /**
+   * Owner: agent user ids, and/or {@link AGENCY_UNASSIGNED_FILTER} for the shared pool
+   * (contact assignment). Repeated or comma-separated, like the other list filters.
+   */
+  assigned_to?: string[];
   phone?: string;
   from?: string;
   to?: string;
 }
+
+/** The `assigned_to` filter value that selects contacts in the shared pool (no owner). */
+export const AGENCY_UNASSIGNED_FILTER = 'unassigned';
 
 /**
  * The retry-campaign selector — one encoding used identically

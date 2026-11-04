@@ -24,6 +24,12 @@
  *     Untagged: the number `in_flight` on ANY campaign of the account
  *     (`findInFlightForAccount`) refuses `contact_in_flight` with that campaign;
  *     nothing is claimed or linked (SP6 settles tagged calls only).
+ *     Then, tagged on a `strict` campaign (contact assignment): a picked contact
+ *     assigned to another agent refuses `contact_assigned_elsewhere`, no override,
+ *     unless the actor supervises (`SoftphoneActor.supervise`). The pool and the
+ *     caller's own contacts are fine, and so is any contact of a `pool` or
+ *     `preferred` campaign: the soft phone is a manual dial by number, and only
+ *     `strict` promises an agent that nobody else calls their contacts.
  *  5. Tagged only — the calling window, in the matched contact's timezone, else
  *     the campaign default (`resolveCallingWindow`): closed → `outside_calling_hours`
  *     with the window and its next opening, unless `hours_note` overrides it. A
@@ -50,6 +56,7 @@ import { normalizePhoneToE164 } from '../../utils/phone-normalizer.js';
 import { normalizeE164, type DncRegistry } from '../dnc-registry.js';
 import { callingWindowState, nextWindowOpen, resolveCallingWindow } from '../calling-hours.js';
 import { pickCallerId, usableCallerIds } from '../pacing/caller-id-pool.js';
+import { trimmedNoteWithin } from '../contact-overrides.js';
 import type { SoftphoneRefusal } from './types.js';
 
 /** What the dial uses, once every gate has passed. */
@@ -81,6 +88,8 @@ export interface ManualPredialInput {
   settings: AgencySoftphoneSettings;
   overrides?: { dnc_note?: unknown; hours_note?: unknown } | null;
   now: Date;
+  /** Who is dialling: the owner check of a `strict` tag (step 4) reads both. */
+  actor: { userId: string; supervise: boolean };
 }
 
 export interface ManualPredialDeps {
@@ -103,9 +112,8 @@ export function validateOverrideNote(
   field: 'dnc_note' | 'hours_note',
 ): { ok: true; note: string | null } | Refused {
   if (raw === undefined || raw === null) return { ok: true, note: null };
-  const note = typeof raw === 'string' ? raw.trim() : '';
-  const length = [...note].length;
-  if (typeof raw !== 'string' || length < SOFTPHONE_OVERRIDE_NOTE_MIN || length > SOFTPHONE_OVERRIDE_NOTE_MAX) {
+  const note = trimmedNoteWithin(raw, SOFTPHONE_OVERRIDE_NOTE_MIN, SOFTPHONE_OVERRIDE_NOTE_MAX);
+  if (note === null) {
     return {
       ok: false,
       refusal: {
@@ -181,6 +189,21 @@ export function pickRosterContact(
   return { ok: true, contact: matches.find((c) => c.state === 'pending') ?? matches[0] ?? null };
 }
 
+/**
+ * Step 4's owner check: the tag is `strict` and the contact belongs to another agent,
+ * and the actor does not supervise. A contact in the pool (no owner) or the caller's
+ * own is not refused; neither is any contact of a `pool` or `preferred` campaign.
+ */
+export function assignedElsewhere(
+  tag: Pick<AgencyCampaignRecord, 'assignment_mode'>,
+  contact: Pick<AgencyContactRecord, 'assigned_user_id'> | null,
+  actor: { userId: string; supervise: boolean },
+): boolean {
+  if (tag.assignment_mode !== 'strict' || actor.supervise) return false;
+  const owner = contact?.assigned_user_id ?? null;
+  return owner !== null && owner !== actor.userId;
+}
+
 export async function runManualPredial(
   input: ManualPredialInput,
   deps: ManualPredialDeps,
@@ -210,6 +233,9 @@ export async function runManualPredial(
     const picked = pickRosterContact(input.tag.id, await deps.findRosterMatches(input.tag.id, destinationE164));
     if (!picked.ok) return picked;
     contact = picked.contact;
+    if (assignedElsewhere(input.tag, contact, input.actor)) {
+      return { ok: false, refusal: { code: 'contact_assigned_elsewhere' } };
+    }
   } else {
     const live = await deps.findInFlightInAccount(destinationE164);
     if (live) {

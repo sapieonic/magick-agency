@@ -8,6 +8,12 @@ import {
   type AgencyRetryPolicy,
   type AgencyRetryRule,
 } from '../../../types/agency-campaign';
+import {
+  AGENCY_CONTACT_ASSIGNMENT_DEFAULTS,
+  type AgencyAssignmentMode,
+  type AgencyCallbackFallback,
+  type AgencyOnUnstaff,
+} from '@magick-agency/contracts/agency';
 
 /*
   The campaign builder's vocabulary: the built-in outcomes and their flags, the
@@ -347,7 +353,34 @@ export interface CampaignConfigState {
    * the wrap-up screen before saving the outcome. Off by default.
    */
   allowWrapupRedial: boolean;
+  /** Contact assignment (0009): how contacts reach agents, and the agent's own retry. */
+  assignment: AssignmentConfigState;
 }
+
+/**
+ * The campaign's contact-assignment settings, camelCase like the rest of the
+ * form. Seeded from the contract's `AGENCY_CONTACT_ASSIGNMENT_DEFAULTS`, which are
+ * the 0009 column defaults, so a campaign that says nothing behaves as before.
+ */
+export interface AssignmentConfigState {
+  mode: AgencyAssignmentMode;
+  onUnstaff: AgencyOnUnstaff;
+  callbackGraceMinutes: number;
+  callbackFallback: AgencyCallbackFallback;
+  allowAgentRetry: boolean;
+  agentRetryRounds: number;
+  agentRetryCooldownMinutes: number;
+}
+
+export const DEFAULT_ASSIGNMENT_CONFIG: Readonly<AssignmentConfigState> = Object.freeze({
+  mode: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.assignment_mode,
+  onUnstaff: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.on_unstaff,
+  callbackGraceMinutes: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.callback_owner_grace_minutes,
+  callbackFallback: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.callback_fallback,
+  allowAgentRetry: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.allow_agent_retry,
+  agentRetryRounds: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.agent_retry_rounds,
+  agentRetryCooldownMinutes: AGENCY_CONTACT_ASSIGNMENT_DEFAULTS.agent_retry_cooldown_minutes,
+});
 
 /**
  * The retry rule the server ships on the built-in `voicemail` disposition (the

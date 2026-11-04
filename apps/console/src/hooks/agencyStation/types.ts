@@ -1,6 +1,7 @@
 import type {
   AgencyAgentState,
   AgencyMissedRelease,
+  AgencyQueueState,
   AgencyReservedAttempt,
   AgencySessionBootstrap,
   AgencyStationErrorFrame,
@@ -221,6 +222,13 @@ export interface UseAgencyStationResult {
    * soft phone's to reconcile against `GET /softphone/bootstrap`.
    */
   manualCall: AgencyManualCall | null;
+  /**
+   * Contact assignment: this agent's own queue on a `strict` / `preferred`
+   * campaign, as the socket last stated it (`ready.queue`, then each `queue`
+   * frame). `undefined` until the socket has said anything, so the console falls
+   * back to the bootstrap's `queue`; `null` when the campaign states none.
+   */
+  queue: AgencyQueueState | null | undefined;
   /** Force a reconnect (the "Reconnect" button on a dropped station). */
   reconnect: () => void;
   /**

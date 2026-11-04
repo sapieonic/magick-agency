@@ -37,7 +37,7 @@ import type { AgencyContactFilters } from '../types/agency-spine';
  */
 
 /** The array-valued filters that round-trip. Order fixes the query string's. */
-const LIST_KEYS = ['state', 'suppressed_reason', 'last_disposition'] as const;
+const LIST_KEYS = ['state', 'suppressed_reason', 'last_disposition', 'assigned_to'] as const;
 
 type ListKey = (typeof LIST_KEYS)[number];
 
@@ -53,6 +53,10 @@ const _listKeysAreArrays: ListKeysAreArrays = {
   state: true,
   suppressed_reason: true,
   last_disposition: true,
+  // Contact assignment: agent user ids and/or `unassigned` (the pool). Read from
+  // a link whether or not the flag is on; the roster only offers the chip, and
+  // sends it, while the flag is on (see the page).
+  assigned_to: true,
 };
 void _listKeysAreArrays;
 

@@ -10,7 +10,13 @@ import {
   type AgencyCampaignDependent,
   type AgencyCampaignRecord,
 } from '../../models/agency.model.js';
-import type { AgencyCampaignLineage, AgencyCampaignActor } from '@magick-agency/contracts/agency';
+import type {
+  AgencyAssignmentMode,
+  AgencyCallbackFallback,
+  AgencyCampaignActor,
+  AgencyCampaignLineage,
+  AgencyOnUnstaff,
+} from '@magick-agency/contracts/agency';
 import { DEFAULT_ABANDONMENT_CEILING_PCT } from '../../../agency/campaign-thresholds.js';
 import { CAMPAIGN_INSERT_COLUMNS_SQL } from './sql-fragments.js';
 import { iso } from './projections.js';
@@ -41,6 +47,11 @@ const CAMPAIGN_PATCHABLE_COLUMNS: ReadonlySet<string> = new Set([
   // Wrap-up redial (0008). An operator setting like `wrapup_auto_return`, so it is
   // patchable at any status; a session reads it at join (the bootstrap).
   'allow_wrapup_redial',
+  // Contact assignment and agent-led retry (0009). Operator settings, patchable at any
+  // status like `allow_wrapup_redial` — except `assignment_mode`, whose status rule
+  // (draft or paused only) is the PATCH route's, not this allow-list's.
+  'assignment_mode', 'on_unstaff', 'callback_owner_grace_minutes', 'callback_fallback',
+  'allow_agent_retry', 'agent_retry_rounds', 'agent_retry_cooldown_minutes',
   'context_display', 'record_calls', 'analysis_profile_id',
   // The abandonment ceiling is an operator setting, so it is
   // patchable on a live campaign. NOT nullable — the column is NOT NULL with
@@ -88,6 +99,9 @@ export class AgencyCampaignRepository {
     record_calls?: boolean; analysis_profile_id?: string | null; created_by?: string | null;
     abandon_announcement_id?: string | null;
     abandonment_ceiling_pct?: number;
+    assignment_mode?: AgencyAssignmentMode; on_unstaff?: AgencyOnUnstaff;
+    callback_owner_grace_minutes?: number; callback_fallback?: AgencyCallbackFallback;
+    allow_agent_retry?: boolean; agent_retry_rounds?: number; agent_retry_cooldown_minutes?: number;
   }): Promise<AgencyCampaignRecord> {
     // ── Every placeholder inside a COALESCE must carry its column's type ───────
     //
@@ -109,7 +123,9 @@ export class AgencyCampaignRepository {
     // beside `30`/`true`/`false` which are already-typed literals that pull the
     // placeholder to integer/boolean, and `$13`–`$16` carry an explicit `::jsonb`
     // on the whole expression. `$21` (`allow_wrapup_redial`) sits beside `false`
-    // for the same reason. `update()` is unaffected throughout: it writes
+    // for the same reason. `$22`–`$28` (the 0009 assignment settings) each carry
+    // their column's type on the placeholder, which is the safe spelling whatever
+    // the literal beside it. `update()` is unaffected throughout: it writes
     // `col = $n`, so the column supplies the type.
     //
     // NOTE (drift): the defaults below duplicate the schema's column defaults,
@@ -125,7 +141,10 @@ export class AgencyCampaignRepository {
                COALESCE($6::time,'09:00'),COALESCE($7::time,'20:00'),COALESCE($8::smallint[],'{1,2,3,4,5}'),COALESCE($9,'UTC'),
                COALESCE($10,30),COALESCE($11,true),COALESCE($12,'{}')::jsonb,COALESCE($13,'[]')::jsonb,
                COALESCE($14,'{}')::jsonb,COALESCE($15,'[]')::jsonb,COALESCE($16,false),$17,$18,
-               $19, $20, COALESCE($21,false))
+               $19, $20, COALESCE($21,false),
+               COALESCE($22::varchar,'pool'),COALESCE($23::varchar,'return_to_pool'),COALESCE($24::integer,30),
+               COALESCE($25::varchar,'pool'),COALESCE($26::boolean,false),COALESCE($27::smallint,1),
+               COALESCE($28::integer,30))
        RETURNING *`,
       [
         input.tenant_id, input.account_id, input.name, input.caller_ids,
@@ -147,6 +166,11 @@ export class AgencyCampaignRepository {
         input.abandonment_ceiling_pct ?? DEFAULT_ABANDONMENT_CEILING_PCT,
         // The column's DEFAULT (`false`, 0008), applied in SQL beside its neighbours.
         input.allow_wrapup_redial ?? null,
+        // The 0009 column DEFAULTs (`AGENCY_CONTACT_ASSIGNMENT_DEFAULTS`), applied in SQL.
+        input.assignment_mode ?? null, input.on_unstaff ?? null,
+        input.callback_owner_grace_minutes ?? null, input.callback_fallback ?? null,
+        input.allow_agent_retry ?? null, input.agent_retry_rounds ?? null,
+        input.agent_retry_cooldown_minutes ?? null,
       ],
     );
     return rows[0]!;

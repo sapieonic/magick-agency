@@ -30,7 +30,9 @@ server 6755 unit + 4 expected fail / 1288 integration + 10 expected fail. The 20
 work for 400–500 simultaneous calls on one host (phase A: a faster bridge transcoder, the console
 on binary A-law, WebSocket and carrier bounds, sized ceilings, a continuous analysis worker,
 cheaper pacing) leaves server 7430 unit / 1511 integration + 10 expected fail; phase B (media and
-analysis worker processes over IPC) is next.
+analysis worker processes over IPC) is next. Contact assignment (2026-11-03, behind a flag: supervisors
+assign contacts, agents work their own queue, agent retry and outcome overrides, decisions
+CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; console 5136; app 1392.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)

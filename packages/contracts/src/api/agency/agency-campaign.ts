@@ -11,6 +11,7 @@
 import type * as Core from '../../agency';
 import type { AgencyAgentState, AgencyContextDisplay, AgencyDisposition } from './agency';
 import type { AgencyRetrySelector } from './agency-spine';
+import type { AgencyAssignmentMode, AgencyCallbackFallback, AgencyOnUnstaff } from '../../agency';
 // Identical in the dialer contract, so re-exported rather than copied (`CONTRACT-DIFF.md` §3).
 import type {
   AgencyAgentLiveState,
@@ -437,6 +438,20 @@ export interface AgencyCampaign {
    * per call). Off by default; the column is `NOT NULL DEFAULT false`.
    */
   allow_wrapup_redial?: boolean;
+  /** Contact assignment (0009): how pacing reads each contact's owner. Changed only while draft or paused. */
+  assignment_mode?: AgencyAssignmentMode;
+  /** When an agent is unstaffed: their open contacts return to the pool (default) or stay theirs. */
+  on_unstaff?: AgencyOnUnstaff;
+  /** Minutes a due callback waits for its owner to be live on the campaign (0–10080, default 30). */
+  callback_owner_grace_minutes?: number;
+  /** After that grace: `pool` (default) hands the callback to the pool; `wait` keeps waiting. */
+  callback_fallback?: AgencyCallbackFallback;
+  /** Agents may retry the contacts they did not reach (default off). */
+  allow_agent_retry?: boolean;
+  /** How many times an agent may reopen one contact after it was not reached (1–10, default 1). */
+  agent_retry_rounds?: number;
+  /** Minutes since a contact's last attempt before an agent may retry it (0–10080, default 30). */
+  agent_retry_cooldown_minutes?: number;
   record_calls?: boolean;
   /**
    * Which of a contact's uploaded CSV columns are rendered, and in what order
@@ -587,6 +602,11 @@ export interface AgencyRetryCreateRequest {
    * real customers dialled twice, and nothing in the product can undo it.
    */
   idempotency_key?: string;
+  /**
+   * Contact assignment: each copied contact keeps its parent contact's owner (`true`, the
+   * default) or lands in the pool (`false`).
+   */
+  keep_assignments?: boolean;
 }
 
 export interface AgencyRetryCreateResponse {

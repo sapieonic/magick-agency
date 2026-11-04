@@ -41,15 +41,16 @@ describe('feature-flag registry', () => {
       }
     });
 
-    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8', () => {
+    it('declares exactly agency_call_analysis, agency_dialer_enabled, agency_late_binding, agency_softphone_enabled, agency_console_alaw8, agency_contact_assignment_enabled', () => {
       expect(getFlag('agency_call_analysis')).toBeDefined();
       expect(getFlag('agency_dialer_enabled')).toBeDefined();
       expect(getFlag('agency_late_binding')).toBeDefined();
       expect(getFlag('agency_softphone_enabled')).toBeDefined();
       expect(getFlag('agency_console_alaw8')).toBeDefined();
+      expect(getFlag('agency_contact_assignment_enabled')).toBeDefined();
       expect(allFlags().map((f) => f.key)).toEqual([
         'agency_call_analysis', 'agency_dialer_enabled', 'agency_late_binding', 'agency_softphone_enabled',
-        'agency_console_alaw8',
+        'agency_console_alaw8', 'agency_contact_assignment_enabled',
       ]);
     });
 

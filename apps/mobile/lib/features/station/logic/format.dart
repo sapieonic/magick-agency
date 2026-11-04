@@ -41,6 +41,14 @@ String formatDayTime(DateTime t) {
   return '${l.day} ${_months[l.month - 1]} · ${formatTime(l)}';
 }
 
+/// `15:00` when [t] falls on [now]'s day (both in the device's zone), else
+/// `4 Nov · 10:30`: when a contact is next due, read at a glance.
+String formatDueAt(DateTime t, DateTime now) {
+  final l = t.toLocal();
+  final n = now.toLocal();
+  return l.year == n.year && l.month == n.month && l.day == n.day ? formatTime(l) : formatDayTime(l);
+}
+
 /// `Mon, 3 Nov, 10:00 IST`: the callback the agent chose, with the zone named
 /// so nobody promises a time they silently converted.
 String formatCallback(DateTime t) {

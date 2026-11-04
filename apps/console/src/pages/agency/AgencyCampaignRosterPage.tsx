@@ -1,10 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Download, ListChecks, RefreshCw, RotateCcw, Search, Upload, Users } from 'lucide-react';
+import { Download, ListChecks, RefreshCw, RotateCcw, Search, Upload, UserPlus, Users } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { getAgencyCampaign } from '../../api/agencyCampaigns';
 import { downloadSpineCsv, getCampaignContacts } from '../../api/agencySpine';
+import { listCampaignAgents } from '../../api/agency';
+import { getAssignmentProgress } from '../../api/agencyAssignment';
+import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
+import { AgencyAssignmentDialog, type AssignmentAgentOption } from '../../components/agency/AgencyAssignmentDialog';
+import {
+  ASSIGNMENT_KIND_COPY,
+  CONTACT_ASSIGNMENT_FLAG,
+  FORMER_MEMBER_LABEL,
+  UNASSIGNED_LABEL,
+  assigneeLabel,
+  assignmentResultToast,
+} from '../../utils/agencyAssignmentCopy';
+import {
+  EMPTY_SELECTION,
+  isPageTicked,
+  selectedInOrder,
+  togglePage,
+  toggleRow,
+  type RowSelection,
+} from '../../utils/agencyAssignmentOps';
+import {
+  AGENCY_ASSIGNMENT_RANGE_MAX,
+  type AgencyAssignmentKind,
+  type AgencyAssignmentProgressRow,
+} from '@magick-agency/contracts/api/agency/assignment';
 import { outcomeReportFilename } from '../../api/exportCsv';
 import { hasPermission } from '../../utils/permissions';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
@@ -26,6 +51,7 @@ import { FiltersCard } from '../../components/agency/FiltersCard';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_DISPOSITIONS } from '../../utils/agencyCampaignConfigForm';
 import { retryCreatedToast, selectorFromContactFilters } from '../../utils/agencyRetrySelector';
+import { formatCount } from '../../utils/format/number';
 import {
   isRosterFiltered,
   rosterFilterGroupCount,
@@ -34,6 +60,7 @@ import {
 } from '../../utils/agencyRosterFilters';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import {
+  AGENCY_UNASSIGNED_FILTER,
   CONTACT_STATE_LABELS,
   SUPPRESSED_REASON_LABELS,
   attemptOutcomeLabel,
@@ -42,11 +69,33 @@ import {
   type AgencyContactFilters,
   type AgencyRosterContact,
 } from '../../types/agency-spine';
-import type { AgencyCampaign, AgencyDispositionEntry } from '../../types/agency-campaign';
+import type { AgencyAssignedAgent, AgencyCampaign, AgencyDispositionEntry } from '../../types/agency-campaign';
 import spine from '../../components/agency/SpineListLayout.module.css';
 import styles from './AgencyCampaignRosterPage.module.css';
 
 const PAGE_SIZE = 50;
+
+/**
+ * The toolbar's operations, in the order a supervisor reaches for them. "Selected
+ * rows" is first because it acts on what is already ticked on screen.
+ */
+const TOOLBAR_KINDS: readonly AgencyAssignmentKind[] = [
+  'range',
+  'random_split',
+  'count',
+  'filter',
+  'reassign',
+  'unassign',
+  'rebalance',
+];
+
+/** Every applied filter but the owner, for a page that does not offer it (flag off). */
+function withoutOwnerFilter(filters: AgencyContactFilters): AgencyContactFilters {
+  if (!filters.assigned_to) return filters;
+  const { assigned_to: _owner, ...rest } = filters;
+  void _owner;
+  return rest;
+}
 
 /**
  * The campaign's contact roster.
@@ -105,7 +154,12 @@ export function AgencyCampaignRosterPage() {
     answer to "what is applied" — a mirrored copy is what makes a back-button
     press show one thing and request another.
   */
-  const filters = useMemo(() => rosterFiltersFromParams(searchParams), [searchParams]);
+  const urlFilters = useMemo(() => rosterFiltersFromParams(searchParams), [searchParams]);
+  const assignmentEnabled = useFeatureFlagEnabled(CONTACT_ASSIGNMENT_FLAG);
+  const filters = useMemo(
+    () => (assignmentEnabled ? urlFilters : withoutOwnerFilter(urlFilters)),
+    [assignmentEnabled, urlFilters],
+  );
   const [draftStates, setDraftStates] = useState<string[]>(() => filters.state ?? []);
   const [draftReasons, setDraftReasons] = useState<string[]>(
     () => filters.suppressed_reason ?? [],
@@ -114,6 +168,7 @@ export function AgencyCampaignRosterPage() {
     () => filters.last_disposition ?? [],
   );
   const [draftPhone, setDraftPhone] = useState(() => filters.phone ?? '');
+  const [draftAssignees, setDraftAssignees] = useState<string[]>(() => filters.assigned_to ?? []);
   const [retryOpen, setRetryOpen] = useState(false);
 
   const canExport = hasPermission(role, 'agency.supervise');
@@ -126,6 +181,27 @@ export function AgencyCampaignRosterPage() {
     a button that renders and then 403s is worse than no button.
   */
   const canRetry = canExport && canUpload;
+
+  /*
+    ── Contact assignment ────────────────────────────────────────────────────
+    Behind `agency_contact_assignment_enabled` (fails closed) and floored on
+    `agency.supervise`, the permission every assignment route and the campaign
+    agents read are floored on: a supervisor sees who owns each contact, filters
+    by owner, ticks rows and assigns them. Without both, the page is unchanged —
+    no column, no chip, no checkboxes, and an `assigned_to` in a link is not
+    sent (the server would refuse a filter the page does not offer).
+  */
+  const canAssign = canExport && assignmentEnabled;
+  const [agents, setAgents] = useState<AgencyAssignedAgent[]>([]);
+  /**
+   * Everyone holding contacts on the campaign, staffed or not (the progress read's
+   * per-agent rows): an agent taken off it with `on_unstaff = keep`, or a former
+   * member, still owns contacts a supervisor must be able to find and move.
+   */
+  const [holders, setHolders] = useState<AgencyAssignmentProgressRow[]>([]);
+  const [selection, setSelection] = useState<RowSelection>(EMPTY_SELECTION);
+  const [assignKind, setAssignKind] = useState<AgencyAssignmentKind | null>(null);
+  const [reloadHolders, setReloadHolders] = useState(0);
 
   /** Applied filters → the URL. The single writer. */
   const applyToUrl = useCallback(
@@ -147,6 +223,9 @@ export function AgencyCampaignRosterPage() {
       if (seq !== requestSeq.current) return;
       setRows(page.rows);
       setNextCursor(page.next_cursor);
+      // A new list is a new set of rows: a tick on a row that is no longer shown
+      // would be sent by "Selected rows" without the supervisor seeing it.
+      setSelection(EMPTY_SELECTION);
     } catch (err: unknown) {
       if (seq !== requestSeq.current) return;
       setError(getErrorMessage(err, 'Could not load this campaign’s contacts.'));
@@ -164,6 +243,79 @@ export function AgencyCampaignRosterPage() {
     void load(filters);
   }, [load, filters]);
 
+  // The staffed agents: the "Assigned to" names, the owner chips and the only
+  // legal targets of an operation. A failure leaves the list empty, which the
+  // dialog says in words ("Nobody is staffed…") rather than offering nobody.
+  useEffect(() => {
+    if (!canAssign || !id || !tenantId || !accountId) return;
+    let live = true;
+    listCampaignAgents(id, tenantId, accountId)
+      .then((result) => { if (live) setAgents(result.agents); })
+      .catch(() => { if (live) setAgents([]); });
+    return () => { live = false; };
+  }, [canAssign, id, tenantId, accountId]);
+
+  // Who holds contacts: read again after a commit, which can change the holders
+  // but never the staffing. A failure leaves only the staffed agents as owners.
+  useEffect(() => {
+    if (!canAssign || !id || !tenantId || !accountId) return;
+    let live = true;
+    getAssignmentProgress(id, {}, tenantId, accountId)
+      .then((result) => { if (live) setHolders(result.agents); })
+      .catch(() => { if (live) setHolders([]); });
+    return () => { live = false; };
+  }, [canAssign, id, tenantId, accountId, reloadHolders]);
+
+  const agentOptions = useMemo((): AssignmentAgentOption[] => agents.map((agent) => ({
+    user_id: agent.user_id,
+    name: agent.name ?? agent.email ?? 'Unnamed agent',
+  })), [agents]);
+  /**
+   * Sources of a reassign / unassign: the staffed agents, then every other holder
+   * (named by the progress read, or "Former member" for a user who is gone).
+   */
+  const ownerOptions = useMemo((): AssignmentAgentOption[] => {
+    const staffed = new Set(agentOptions.map((agent) => agent.user_id));
+    return [
+      ...agentOptions,
+      ...holders
+        .filter((row) => !staffed.has(row.agent_user_id))
+        .map((row) => ({ user_id: row.agent_user_id, name: row.agent_name ?? FORMER_MEMBER_LABEL })),
+    ];
+  }, [agentOptions, holders]);
+  // Names for the "Assigned to" column and preview lines: an id with none is a
+  // former member (`agentName` / `assigneeLabel` say so).
+  const agentNames = useMemo(() => new Map<string, string>([
+    ...holders.flatMap((row) => (row.agent_name ? [[row.agent_user_id, row.agent_name] as [string, string]] : [])),
+    ...agentOptions.map((agent) => [agent.user_id, agent.name] as [string, string]),
+  ]), [holders, agentOptions]);
+  const agentName = useCallback(
+    (userId: string) => agentNames.get(userId) ?? FORMER_MEMBER_LABEL,
+    [agentNames],
+  );
+  /*
+    The owner chips: the pool, every staffed agent and every other holder of
+    contacts, plus any id already in the applied filter that is none of these (a
+    link to a former member's contacts must still show, and clear, its own filter).
+  */
+  const assigneeOptions = useMemo(() => {
+    const options: Array<{ value: string; label: string }> = [
+      { value: AGENCY_UNASSIGNED_FILTER, label: UNASSIGNED_LABEL },
+      ...ownerOptions.map((owner) => ({ value: owner.user_id, label: owner.name })),
+    ];
+    for (const value of filters.assigned_to ?? []) {
+      if (!options.some((option) => option.value === value)) {
+        options.push({ value, label: FORMER_MEMBER_LABEL });
+      }
+    }
+    return options;
+  }, [ownerOptions, filters.assigned_to]);
+
+  const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
+  const selectedIds = useMemo(() => selectedInOrder(selection, rowIds), [selection, rowIds]);
+  const reachable = Math.min(rowIds.length, AGENCY_ASSIGNMENT_RANGE_MAX);
+  const pageTicked = isPageTicked(selection, rowIds);
+
   /*
     A link arriving with filters already on it has to fill the draft controls,
     or the panel shows an empty form above a narrowed list and Apply silently
@@ -175,6 +327,7 @@ export function AgencyCampaignRosterPage() {
     setDraftReasons(filters.suppressed_reason ?? []);
     setDraftDispositions(filters.last_disposition ?? []);
     setDraftPhone(filters.phone ?? '');
+    setDraftAssignees(filters.assigned_to ?? []);
   }, [filters]);
 
   const onLoadMore = useCallback(async () => {
@@ -235,9 +388,10 @@ export function AgencyCampaignRosterPage() {
       ...(draftStates.length > 0 ? { state: draftStates } : {}),
       ...(draftReasons.length > 0 ? { suppressed_reason: draftReasons } : {}),
       ...(draftDispositions.length > 0 ? { last_disposition: draftDispositions } : {}),
+      ...(draftAssignees.length > 0 ? { assigned_to: draftAssignees } : {}),
       ...(draftPhone.trim() ? { phone: draftPhone.trim() } : {}),
     });
-  }, [applyToUrl, draftStates, draftReasons, draftDispositions, draftPhone]);
+  }, [applyToUrl, draftStates, draftReasons, draftDispositions, draftAssignees, draftPhone]);
 
   const clearFilters = useCallback(() => {
     applyToUrl({});
@@ -477,6 +631,24 @@ export function AgencyCampaignRosterPage() {
           </fieldset>
         )}
 
+        {canAssign && (
+          <fieldset className={styles.stateFilter} data-testid="roster-assignee-filter">
+            <legend className={spine.filterLegend}>Assigned to</legend>
+            <div className={styles.options}>
+              {assigneeOptions.map((option) => (
+                <FilterChip
+                  key={option.value}
+                  label={option.label}
+                  checked={draftAssignees.includes(option.value)}
+                  onChange={(checked) => setDraftAssignees((current) => (
+                    checked ? [...current, option.value] : current.filter((v) => v !== option.value)
+                  ))}
+                />
+              ))}
+            </div>
+          </fieldset>
+        )}
+
         <div className={spine.fieldRow}>
           <label className={spine.field}>
             <span className={spine.fieldLabel}>Phone number</span>
@@ -523,6 +695,37 @@ export function AgencyCampaignRosterPage() {
         )}
       </p>
 
+      {canAssign && campaign && (
+        <div className={styles.assignBar} role="toolbar" aria-label="Assign contacts" data-testid="assign-toolbar">
+          <span className={styles.assignCount} data-testid="assign-selection-count" aria-live="polite">
+            {selectedIds.length > 0
+              ? `${formatCount(selectedIds.length)} selected`
+              : 'Tick rows, or assign by rule'}
+          </span>
+          {selectedIds.length > 0 && (
+            <button type="button" className="btn-secondary" onClick={() => setSelection(EMPTY_SELECTION)}>
+              Clear selection
+            </button>
+          )}
+          {TOOLBAR_KINDS.map((kind) => (
+            <button
+              key={kind}
+              type="button"
+              className={`${spine.actionButton} btn-secondary`}
+              onClick={() => setAssignKind(kind)}
+              disabled={loading || (kind === 'range' && selectedIds.length === 0)}
+              title={kind === 'range' && selectedIds.length === 0
+                ? 'Tick the rows to assign first'
+                : ASSIGNMENT_KIND_COPY[kind].explain}
+              data-testid={`assign-op-${kind}`}
+            >
+              {kind === 'range' ? <UserPlus size={16} aria-hidden="true" /> : null}
+              {ASSIGNMENT_KIND_COPY[kind].label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {loading && <LoadingSpinner />}
 
       {!loading && rows.length === 0 && !error && (
@@ -546,6 +749,20 @@ export function AgencyCampaignRosterPage() {
               </caption>
               <thead>
                 <tr>
+                  {canAssign && (
+                    <th className={styles.selectCell}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select the first ${formatCount(reachable)} rows`}
+                        title={rowIds.length > AGENCY_ASSIGNMENT_RANGE_MAX
+                          ? `Selects the first ${AGENCY_ASSIGNMENT_RANGE_MAX} — one operation takes at most that many`
+                          : 'Select every row shown'}
+                        checked={pageTicked}
+                        onChange={() => setSelection((current) => togglePage(current, rowIds))}
+                        data-testid="roster-select-page"
+                      />
+                    </th>
+                  )}
                   <th>Number</th>
                   <th>State</th>
                   <th>Attempts</th>
@@ -553,13 +770,36 @@ export function AgencyCampaignRosterPage() {
                   <th>Last disposition</th>
                   <th>Why suppressed</th>
                   <th>Next attempt</th>
+                  {canAssign && <th>Assigned to</th>}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((contact) => {
                   const reason = suppressedReasonLabel(contact.suppressed_reason);
                   return (
-                    <tr key={contact.id} data-testid={`roster-row-${contact.id}`}>
+                    <tr
+                      key={contact.id}
+                      data-testid={`roster-row-${contact.id}`}
+                      className={selection.selected.has(contact.id) ? styles.selectedRow : undefined}
+                      data-selected={selection.selected.has(contact.id) ? 'true' : undefined}
+                    >
+                      {canAssign && (
+                        <td className={styles.selectCell}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${contact.phone_e164}`}
+                            checked={selection.selected.has(contact.id)}
+                            onChange={(event) => {
+                              // Shift-click selects the range from the last row
+                              // clicked, the spreadsheet gesture.
+                              const shift = (event.nativeEvent as MouseEvent).shiftKey === true;
+                              const checked = event.currentTarget.checked;
+                              setSelection((current) => toggleRow(current, rowIds, contact.id, checked, shift));
+                            }}
+                            data-testid={`roster-select-${contact.id}`}
+                          />
+                        </td>
+                      )}
                       <td>
                         <Link
                           to={`/agency/campaigns/${id}/contacts/${contact.id}`}
@@ -614,6 +854,13 @@ export function AgencyCampaignRosterPage() {
                           ? formatSpineTimestamp(contact.next_attempt_at)
                           : <span className={styles.mutedCell}>—</span>}
                       </td>
+                      {canAssign && (
+                        <td data-testid={`roster-assignee-${contact.id}`}>
+                          {contact.assigned_user_id === null
+                            ? <span className={styles.mutedCell}>{UNASSIGNED_LABEL}</span>
+                            : assigneeLabel(contact.assigned_user_id, agentNames)}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -641,6 +888,26 @@ export function AgencyCampaignRosterPage() {
         roster page view — it is a count over the whole campaign, not over the
         page on screen.
       */}
+      {campaign && assignKind && id && (
+        <AgencyAssignmentDialog
+          campaignId={id}
+          kind={assignKind}
+          agents={agentOptions}
+          owners={ownerOptions}
+          agentName={agentName}
+          selectedIds={selectedIds}
+          dispositionOptions={dispositionOptions}
+          origin="roster"
+          onClose={() => setAssignKind(null)}
+          onCommitted={(result) => {
+            setAssignKind(null);
+            showToast(assignmentResultToast(result), 'success');
+            void load(filters);
+            setReloadHolders((n) => n + 1);
+          }}
+        />
+      )}
+
       {campaign && retryOpen && (
         <AgencyRetryDialog
           open

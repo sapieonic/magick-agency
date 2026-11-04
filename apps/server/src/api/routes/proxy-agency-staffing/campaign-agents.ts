@@ -14,6 +14,7 @@ import { membershipRepository } from '@magick-agency/db/repositories/membership.
 import { agencyCampaignAgentRepository, StaffingUpgradePendingError } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import { enrichAssignedAgents } from '../../../agency/agency-agent-identity.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { returnContactsOnUnstaff } from '../../../agency/assignment/unstaff.js';
 
 const log = createChildLogger({ component: 'proxy-agency-staffing' });
 
@@ -373,6 +374,15 @@ export async function registerCampaignAgentRoutes(app: FastifyInstance): Promise
         resource_id: removedId,
         campaign_id: params.data.id,
         details: { campaign_id: params.data.id, user_id: params.data.userId },
+      });
+      // CA6: their open contacts on this campaign follow its `on_unstaff` (never throws).
+      await returnContactsOnUnstaff({
+        tenantId: request.tenantId!,
+        userId: params.data.userId,
+        campaignIds: [params.data.id],
+        eventActorUserId: request.user?.id ?? null,
+        actor: requestAuditActor(request),
+        cause: 'unstaffed',
       });
     }
 

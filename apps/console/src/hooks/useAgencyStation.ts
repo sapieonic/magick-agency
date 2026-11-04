@@ -205,6 +205,7 @@ export function useAgencyStation(
     dialing,
     missedPings,
     manualCall,
+    queue,
   } = state;
   const diagnosticsRef = useRef<DiagnosticsLog | null>(null);
   if (diagnosticsRef.current === null) {
@@ -994,6 +995,25 @@ export function useAgencyStation(
           return;
         }
 
+        case 'queue': {
+          /**
+           * Contact assignment: this agent's own queue changed between due and
+           * nothing due (or the reason changed). Sent only on `strict` /
+           * `preferred` campaigns, only on a change. It moves the idle guide's
+           * copy and nothing else: no agent state, no panel, no cue.
+           */
+          if (typeof frame.due !== 'boolean') {
+            logDiagnostic('queue_malformed', JSON.stringify(frame).slice(0, 200));
+            return;
+          }
+          dispatch({
+            type: 'queue',
+            queue: { due: frame.due, reason: frame.reason ?? null, next_due_at: frame.next_due_at ?? null },
+          });
+          logDiagnostic('queue', frame.due ? 'due' : `nothing due (${frame.reason ?? 'unknown'})`);
+          return;
+        }
+
         case 'error': {
           // Non-fatal by contract; the socket stays open.
           dispatch({ type: 'error', frame });
@@ -1530,6 +1550,11 @@ export function useAgencyStation(
     missedPings,
     diagnostics: diagnostics.entries,
     manualCall,
+    /**
+     * The agent's own queue as the socket last stated it (`undefined` until it
+     * has; the console falls back to the bootstrap's `queue` then).
+     */
+    queue,
     reconnect,
     sendMedia,
     mediaFormat: socketFormat,

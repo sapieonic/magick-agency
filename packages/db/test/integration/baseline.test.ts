@@ -34,8 +34,9 @@ afterAll(closeTestPool);
 
 /**
  * Every table the migrations own (partitions excluded): the baseline's, plus the two
- * tenant carrier credential tables from 0002_telephony_credentials.sql and the two
- * soft-phone tables from 0005_softphone.sql.
+ * tenant carrier credential tables from 0002_telephony_credentials.sql, the two
+ * soft-phone tables from 0005_softphone.sql and the contact owner history from
+ * 0009_contact_assignment.sql.
  */
 const EXPECTED_TABLES = [
   // identity
@@ -62,6 +63,8 @@ const EXPECTED_TABLES = [
   'agency_call_attempts', 'agency_ingest_chunks', 'agency_dnc_outbox', 'agency_calls',
   // the soft phone (0005, docs/softphone.md)
   'agency_manual_calls', 'agency_softphone_settings',
+  // contact assignment's owner history (0009)
+  'agency_contact_assignment_events',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [

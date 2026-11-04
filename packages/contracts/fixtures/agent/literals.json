@@ -141,7 +141,8 @@
       "status",
       "ended",
       "media",
-      "manual_call"
+      "manual_call",
+      "queue"
     ]
   },
   "wrapup_hold_reasons": {
@@ -279,7 +280,8 @@
       "call_settled",
       "disposition_invalid",
       "fields_invalid",
-      "settings_invalid"
+      "settings_invalid",
+      "contact_assigned_elsewhere"
     ]
   },
   "manual_call_states": {
@@ -414,6 +416,74 @@
     "values": [
       "daily",
       "weekly"
+    ]
+  },
+  "assignment_modes": {
+    "source": "packages/contracts/src/agency/assignment.ts#AGENCY_ASSIGNMENT_MODES",
+    "values": [
+      "pool",
+      "strict",
+      "preferred"
+    ]
+  },
+  "queue_idle_reasons": {
+    "source": "packages/contracts/src/agency/station.ts#AgencyQueueIdleReason",
+    "values": [
+      "queue_empty",
+      "waiting_for_retry",
+      "callbacks_later",
+      "outside_calling_hours"
+    ]
+  },
+  "override_kinds": {
+    "source": "packages/contracts/src/agency/session.ts#AGENCY_OVERRIDE_KINDS",
+    "values": [
+      "extra_attempts",
+      "retry_delay",
+      "calling_hours"
+    ]
+  },
+  "my_contact_buckets": {
+    "source": "packages/contracts/src/api/agency/assignment.ts#AGENCY_MY_CONTACT_BUCKETS",
+    "values": [
+      "pending",
+      "callback",
+      "not_reached",
+      "in_progress",
+      "reached",
+      "exhausted",
+      "suppressed"
+    ]
+  },
+  "agent_retry_blocks": {
+    "source": "packages/contracts/src/api/agency/assignment.ts#AGENCY_AGENT_RETRY_BLOCKS",
+    "values": [
+      "retry_disabled",
+      "not_retryable",
+      "rounds_used",
+      "cooldown",
+      "suppressed"
+    ]
+  },
+  "agent_retry_error_codes": {
+    "source": "packages/contracts/src/api/agency/assignment.ts#AGENCY_AGENT_RETRY_ERROR_CODES",
+    "values": [
+      "assignment_disabled",
+      "not_staffed",
+      "agent_retry_disabled",
+      "contact_not_found",
+      "contact_not_retryable",
+      "contact_in_flight",
+      "campaign_not_running",
+      "agent_not_available",
+      "outside_calling_hours",
+      "override_note_invalid",
+      "dnc_listed",
+      "dnc_unavailable",
+      "no_caller_id",
+      "no_station",
+      "dial_failed",
+      "feature_disabled"
     ]
   }
 }

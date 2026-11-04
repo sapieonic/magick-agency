@@ -151,6 +151,7 @@ describe('soft-phone codes', () => {
       'disposition_invalid',
       'fields_invalid',
       'settings_invalid',
+      'contact_assigned_elsewhere',
     ]);
     expectUnique(AGENCY_SOFTPHONE_ERROR_CODES);
   });

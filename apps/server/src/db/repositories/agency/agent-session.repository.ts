@@ -1,7 +1,11 @@
 /** `AgencyAgentSessionRepository`: agent sessions and their transition event log. */
 import { getPool } from '@magick-agency/db';
 import { createChildLogger } from '@magick-agency/observability';
-import type { AgencyAgentSessionRecord, AgencyCampaignSessionRecord } from '../../models/agency.model.js';
+import type {
+  AgencyAgentSessionRecord,
+  AgencyCampaignSessionRecord,
+  AgencyStationAttachRecord,
+} from '../../models/agency.model.js';
 import { SOFTPHONE_BREAK_REASON, type AgencyAgentState, type AgencyClientKind, type AgencySessionKind } from '@magick-agency/contracts/agency';
 
 const log = createChildLogger({ component: 'agency-repository' });
@@ -253,14 +257,17 @@ export class AgencyAgentSessionRepository {
    * and takes no row lock. Never written on a session that has left.
    *
    * Returns the row as it stands after the write (the old row when nothing changed), or
-   * null when there is no such session; the caller's `left_at` check is unchanged.
+   * null when there is no such session; the caller's `left_at` check is unchanged. The row
+   * carries its campaign's `assignment_mode` as `campaign_assignment_mode` (null for a
+   * soft-phone session), joined here so the attach reads the campaign row only on a `strict`
+   * or `preferred` campaign, whose `ready` carries the agent's queue (CA3).
    *
    * `$2` is typed at each use (`42P08` otherwise). `cur` and `upd` project the same
    * table's columns in the same order, so the `UNION ALL` lines up; `cur` is the
    * statement's snapshot, so it is read only when `upd` wrote nothing.
    */
-  async readForStationAttach(id: string, clientKind: AgencyClientKind): Promise<AgencyAgentSessionRecord | null> {
-    const { rows } = await getPool().query<AgencyAgentSessionRecord>(
+  async readForStationAttach(id: string, clientKind: AgencyClientKind): Promise<AgencyStationAttachRecord | null> {
+    const { rows } = await getPool().query<AgencyStationAttachRecord>(
       `WITH cur AS (
          SELECT * FROM agency_agent_sessions WHERE id = $1
        ), upd AS (
@@ -272,9 +279,11 @@ export class AgencyAgentSessionRepository {
             AND cur.client_kind IS DISTINCT FROM $2::varchar
          RETURNING s.*
        )
-       SELECT * FROM upd
-       UNION ALL
-       SELECT * FROM cur WHERE NOT EXISTS (SELECT 1 FROM upd)`,
+       SELECT r.*, c.assignment_mode AS campaign_assignment_mode
+         FROM (SELECT * FROM upd
+               UNION ALL
+               SELECT * FROM cur WHERE NOT EXISTS (SELECT 1 FROM upd)) r
+         LEFT JOIN agency_campaigns c ON c.id = r.campaign_id`,
       [id, clientKind],
     );
     return rows[0] ?? null;

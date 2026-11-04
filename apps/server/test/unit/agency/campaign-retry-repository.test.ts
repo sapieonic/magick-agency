@@ -43,6 +43,8 @@ const PARENT = {
   calling_window_start: '09:00:00', calling_window_end: '20:00:00',
   calling_days: [1, 2, 3, 4, 5], default_timezone: 'UTC',
   wrapup_seconds: 30, wrapup_auto_return: true, allow_wrapup_redial: true,
+  assignment_mode: 'strict', on_unstaff: 'keep', callback_owner_grace_minutes: 45, callback_fallback: 'wait',
+  allow_agent_retry: true, agent_retry_rounds: 2, agent_retry_cooldown_minutes: 20,
   retry_policy: {}, disposition_catalog: [], context_display: {}, break_reasons: [],
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
   abandonment_ceiling_pct: 3,
@@ -56,6 +58,10 @@ const CONFIG: AgencyCampaignConfigColumns = {
   calling_days: PARENT.calling_days, default_timezone: PARENT.default_timezone,
   wrapup_seconds: PARENT.wrapup_seconds, wrapup_auto_return: PARENT.wrapup_auto_return,
   allow_wrapup_redial: PARENT.allow_wrapup_redial,
+  assignment_mode: PARENT.assignment_mode, on_unstaff: PARENT.on_unstaff,
+  callback_owner_grace_minutes: PARENT.callback_owner_grace_minutes, callback_fallback: PARENT.callback_fallback,
+  allow_agent_retry: PARENT.allow_agent_retry, agent_retry_rounds: PARENT.agent_retry_rounds,
+  agent_retry_cooldown_minutes: PARENT.agent_retry_cooldown_minutes,
   retry_policy: PARENT.retry_policy, disposition_catalog: PARENT.disposition_catalog,
   context_display: PARENT.context_display, break_reasons: PARENT.break_reasons,
   record_calls: false, analysis_profile_id: null, abandon_announcement_id: null,
@@ -350,6 +356,38 @@ describe('the child campaign row', () => {
         config: { ...CONFIG, allow_wrapup_redial: value }, createdBy: null, idempotencyKey: null,
       });
       expect(campaignInsert()['allow_wrapup_redial']).toBe(value);
+    }
+  });
+
+  it('copies the seven contact-assignment settings from the config', async () => {
+    const settings = {
+      assignment_mode: 'preferred', on_unstaff: 'return_to_pool', callback_owner_grace_minutes: 0,
+      callback_fallback: 'pool', allow_agent_retry: false, agent_retry_rounds: 10, agent_retry_cooldown_minutes: 10080,
+    } as const;
+    stubTransaction();
+    await new AgencyCampaignRepository().retryFromCampaign({
+      parent: PARENT, name: 'r1', selector: { never_attempted: true },
+      config: { ...CONFIG, ...settings }, createdBy: null, idempotencyKey: null,
+    });
+    expect(campaignInsert()).toMatchObject(settings);
+  });
+
+  it('keep_assignments: the seed binds the choice, and only a keeping create writes the inherited history', async () => {
+    for (const keep of [true, false, undefined]) {
+      vi.clearAllMocks();
+      pool.connect.mockResolvedValue(client);
+      stubTransaction();
+      await new AgencyCampaignRepository().retryFromCampaign({
+        parent: PARENT, name: 'r1', selector: { never_attempted: true }, config: CONFIG, createdBy: null,
+        idempotencyKey: null, ...(keep === undefined ? {} : { keepAssignments: keep }), actorUserId: null,
+      });
+      const seed = statement('INSERT INTO agency_contacts');
+      expect(seed.sql).toContain('assigned_user_id, assigned_at, assigned_by_user_id');
+      // Omitted reads as the contract's default: keep.
+      expect(seed.values, String(keep)).toContain(keep ?? true);
+      const history = client.query.mock.calls.filter((c: unknown[]) => String(c[0]).includes('agency_contact_assignment_events'));
+      expect(history, String(keep)).toHaveLength(keep === false ? 0 : 1);
+      if (keep !== false) expect(String(history[0]![0])).toContain("'inherited'");
     }
   });
 

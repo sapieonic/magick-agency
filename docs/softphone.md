@@ -129,7 +129,10 @@ Owned by `AgencyRuntime`. One call at a time per session.
    dials; untagged: the account's assigned numbers, `findAvailableForAccount`, default the
    settings' `default_caller_id` while still assigned, else the account's default number); roster
    guard — tagged, the match on the tag (`campaign_id` + phone digits, the existing index), and
-   a contact `in_flight` refuses `contact_in_flight` with no override; untagged, the number
+   a contact `in_flight` refuses `contact_in_flight` with no override; then, on a `strict`
+   campaign (contact assignment, decision CA15), a picked contact assigned to another agent
+   refuses `contact_assigned_elsewhere` (409) with no override, unless the caller supervises (the
+   pool, the caller's own contacts and `pool` / `preferred` campaigns are not checked); untagged, the number
    `in_flight` on ANY campaign of the account (`findInFlightForAccount`, the partial in-flight
    index) refuses `contact_in_flight` with that campaign, and nothing is claimed or linked;
    calling window (tagged) → `outside_calling_hours` unless overridden; DNC, one read →

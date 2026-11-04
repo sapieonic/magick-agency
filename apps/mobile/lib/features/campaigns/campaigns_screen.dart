@@ -7,7 +7,9 @@ import '../../app/routes.dart';
 import '../../app/theme/tokens.dart';
 import '../../core/api/api_error.dart';
 import '../../core/auth/app_gate.dart';
+import '../../core/flags/feature_flags.dart';
 import '../../core/station/station_signals.dart';
+import '../../core/station/station_view.dart' show stationViewProvider;
 import '../../ui/primitives.dart';
 import '../accounts/account_switcher.dart';
 // "Enter station" goes to pre-flight with the campaign's name in the query,
@@ -33,6 +35,7 @@ class CampaignsScreen extends ConsumerWidget {
 
     Future<void> refresh() async {
       if (workspace == null) return;
+      rereadFeatureFlagsIfFailed(ref, workspace);
       try {
         final _ = await ref.refresh(myAssignmentsProvider(workspace).future);
       } catch (e) {
@@ -225,19 +228,36 @@ class SoftphoneOpenBanner extends StatelessWidget {
   }
 }
 
-class _CampaignCard extends StatelessWidget {
+class _CampaignCard extends ConsumerWidget {
   const _CampaignCard({required this.assignment, required this.onDutyCampaign});
 
   final Assignment assignment;
   final String? onDutyCampaign;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final text = Theme.of(context).textTheme;
     final t = context.tokens;
     final entry = assignmentEntry(assignment);
     final name = campaignDisplayName(assignment);
     final isOnDutyHere = onDutyCampaign == assignment.campaignId;
+    // Contact assignment: the agent's own contacts here, on the console's
+    // rule, which reads the join bootstrap: only while on duty on this
+    // campaign, and only when it assigns contacts or lets agents retry
+    // ([StationView.myContactsOffered]). Off duty there is no bootstrap to
+    // judge by, so nothing (the console offers it from the station only).
+    final offeredHere = isOnDutyHere &&
+        ref.watch(stationViewProvider.select(
+          (v) => v != null && v.campaignId == assignment.campaignId && v.myContactsOffered,
+        ));
+    final contacts = ref.watch(contactAssignmentEnabledProvider) && offeredHere
+        ? TextButton.icon(
+            key: Key('my-contacts-${assignment.campaignId}'),
+            onPressed: () => context.go(Routes.myContacts(assignment.campaignId)),
+            icon: const Icon(Icons.people_alt_outlined, size: 18),
+            label: Semantics(label: 'My contacts in $name', excludeSemantics: true, child: const Text('My contacts')),
+          )
+        : null;
 
     final Widget? action;
     if (isOnDutyHere) {
@@ -274,9 +294,14 @@ class _CampaignCard extends StatelessWidget {
             const SizedBox(height: Space.xs),
             Text(entry.note!, style: text.bodySmall),
           ],
-          if (action != null) ...[
+          if (action != null || contacts != null) ...[
             const SizedBox(height: Space.md),
-            Align(alignment: Alignment.centerLeft, child: action),
+            Wrap(
+              spacing: Space.sm,
+              runSpacing: Space.sm,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [?action, ?contacts],
+            ),
           ],
         ],
       ),

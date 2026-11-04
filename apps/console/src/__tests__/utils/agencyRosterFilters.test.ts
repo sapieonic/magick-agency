@@ -92,3 +92,17 @@ describe('the filter badge counts GROUPS, not values', () => {
     expect(isRosterFiltered({ last_disposition: ['voicemail'] })).toBe(true);
   });
 });
+
+describe('the "Assigned to" filter (contact assignment)', () => {
+  it('round-trips agents and the pool as repeated params', () => {
+    const filters = { state: ['pending'], assigned_to: ['agent-1', 'unassigned'] };
+    const params = rosterFiltersToParams(filters);
+    expect(params.getAll('assigned_to')).toEqual(['agent-1', 'unassigned']);
+    expect(rosterFiltersFromParams(params)).toEqual(filters);
+  });
+
+  it('drops a blank owner and counts as its own group', () => {
+    expect(rosterFiltersFromParams(new URLSearchParams('assigned_to='))).toEqual({});
+    expect(rosterFilterGroupCount({ state: ['pending'], assigned_to: ['agent-1'] })).toBe(2);
+  });
+});

@@ -37,6 +37,11 @@ async function downTo0005(): Promise<() => Promise<void>> {
 
 const UP_TO_0005 = ['0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index', '0005_softphone'];
 
+async function indexExists(name: string): Promise<boolean> {
+  const { rowCount } = await getTestPool().query('SELECT 1 FROM pg_indexes WHERE indexname = $1', [name]);
+  return rowCount === 1;
+}
+
 /** Every user-visible object in `public` except the migrations ledger. */
 async function inventory(): Promise<string[]> {
   const { rows } = await getTestPool().query<{ o: string }>(
@@ -60,8 +65,21 @@ async function inventory(): Promise<string[]> {
 const ALL_MIGRATIONS = [
   '0001_baseline', '0002_telephony_credentials', '0003_agency_attempt_indexes', '0004_agency_contacts_in_flight_index',
   '0005_softphone', '0006_agent_session_client_kind', '0007_ingest_dedupe_column',
-  '0008_wrapup_redial',
+  '0008_wrapup_redial', '0009_contact_assignment', '0010_contact_assignment_index_and_checks',
 ];
+
+/** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */
+const CONTACT_ASSIGNMENT_DEFERRED_CHECKS = [
+  'ck_agency_attempt_override_applied', 'ck_agency_attempt_override_note',
+  'ck_agency_contact_agent_retry_rounds_used', 'ck_agency_contact_assigned_at',
+  'ck_agency_contact_override_extra_attempts',
+];
+
+async function checksValidated(names: readonly string[]): Promise<Record<string, boolean>> {
+  const { rows } = await getTestPool().query<{ conname: string; convalidated: boolean }>(
+    'SELECT conname, convalidated FROM pg_constraint WHERE conname = ANY($1::text[]) ORDER BY conname', [names]);
+  return Object.fromEntries(rows.map((r) => [r.conname, r.convalidated]));
+}
 
 describe('migrations down → up', () => {
   afterAll(closeTestPool);
@@ -138,10 +156,10 @@ describe('migrations down → up', () => {
     const redial = await insertAttempt(campaign.id, contact.id, {
       state: 'ended', attempt_number: 2, outcome: 'no_answer', redial_of_attempt_id: original.id, redial_number: 1,
     });
-    await migrate('down', 1);
+    await migrate('down', ALL_MIGRATIONS.length - ALL_MIGRATIONS.indexOf('0008_wrapup_redial'));
     try {
       const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
-      expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS.slice(0, -1));
+      expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS.slice(0, ALL_MIGRATIONS.indexOf('0008_wrapup_redial')));
       const { rows } = await getTestPool().query<Record<string, unknown>>(
         'SELECT * FROM agency_call_attempts WHERE id = ANY($1::uuid[]) ORDER BY attempt_number', [[original.id, redial.id]]);
       expect(rows).toHaveLength(2);
@@ -157,6 +175,77 @@ describe('migrations down → up', () => {
       'SELECT redial_number, redial_of_attempt_id FROM agency_call_attempts WHERE id = $1', [redial.id]);
     // Re-applied with the column defaults: the link is not restored (it was dropped).
     expect(back.rows[0]).toEqual({ redial_number: 0, redial_of_attempt_id: null });
+    await truncateAll();
+  });
+
+  it('0009 down runs with assigned contacts and their history present: the rows survive, unowned', async () => {
+    await truncateAll();
+    const campaign = await insertCampaign({ assignment_mode: 'strict', allow_agent_retry: true });
+    const agent = randomUUID();
+    const contact = await insertContact(campaign.id, {
+      assigned_user_id: agent, assigned_at: new Date(), override_extra_attempts: 2, override_disposition: 'ptp',
+    });
+    await getTestPool().query(
+      `INSERT INTO agency_contact_assignment_events (tenant_id, campaign_id, contact_id, to_user_id, reason, batch_id)
+       VALUES ($1, $2, $3, $4, 'manual', $5)`,
+      [campaign['tenant_id'], campaign.id, contact.id, agent, randomUUID()]);
+    await insertAttempt(campaign.id, contact.id, {
+      state: 'ended', attempt_number: 1, agent_manual: true, override_applied: ['calling_hours'], override_note: 'customer asked for 9pm',
+    });
+    await migrate('down', ALL_MIGRATIONS.length - ALL_MIGRATIONS.indexOf('0009_contact_assignment'));
+    try {
+      const { rows } = await getTestPool().query<Record<string, unknown>>('SELECT * FROM agency_contacts WHERE id = $1', [contact.id]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).not.toHaveProperty('assigned_user_id');
+      expect(rows[0]).not.toHaveProperty('override_extra_attempts');
+      const camp = await getTestPool().query('SELECT * FROM agency_campaigns WHERE id = $1', [campaign.id]);
+      expect(camp.rows[0]).not.toHaveProperty('assignment_mode');
+      const attempts = await getTestPool().query('SELECT * FROM agency_call_attempts WHERE contact_id = $1', [contact.id]);
+      expect(attempts.rows[0]).not.toHaveProperty('agent_manual');
+    } finally {
+      await migrate('up');
+    }
+    const back = await getTestPool().query<{ assigned_user_id: string | null; assignment_mode: string }>(
+      `SELECT c.assigned_user_id, k.assignment_mode FROM agency_contacts c
+         JOIN agency_campaigns k ON k.id = c.campaign_id WHERE c.id = $1`, [contact.id]);
+    // Re-applied with the column defaults: the owner is not restored (it was dropped).
+    expect(back.rows[0]).toEqual({ assigned_user_id: null, assignment_mode: 'pool' });
+    await truncateAll();
+  });
+
+  it('0009 adds its contact and attempt CHECKs NOT VALID yet enforced; 0010 validates the rows already there', async () => {
+    // 0009 holds ACCESS EXCLUSIVE on agency_contacts and agency_call_attempts, so it must not
+    // scan them: the CHECKs go in NOT VALID, and 0010 validates them under SHARE UPDATE
+    // EXCLUSIVE in its own transaction (0009's header, "Locking"). Rows that predate 0009 are
+    // present at both steps, so validation runs over real rows.
+    await truncateAll();
+    await migrate('down', ALL_MIGRATIONS.length - ALL_MIGRATIONS.indexOf('0009_contact_assignment'));
+    try {
+      const campaign = await insertCampaign();
+      const contact = await insertContact(campaign.id);
+      await insertAttempt(campaign.id, contact.id, { state: 'ended', attempt_number: 1 });
+
+      await migrate('up', 1);
+      const ledger = await getTestPool().query<{ name: string }>('SELECT name FROM pgmigrations ORDER BY id');
+      expect(ledger.rows.map((r) => r.name)).toEqual(ALL_MIGRATIONS.slice(0, ALL_MIGRATIONS.indexOf('0009_contact_assignment') + 1));
+      expect(await checksValidated(CONTACT_ASSIGNMENT_DEFERRED_CHECKS))
+        .toEqual(Object.fromEntries(CONTACT_ASSIGNMENT_DEFERRED_CHECKS.map((n) => [n, false])));
+      // The small table's CHECKs are validated by 0009 itself.
+      expect(await checksValidated(['ck_agency_campaign_assignment_mode'])).toEqual({ ck_agency_campaign_assignment_mode: true });
+      // NOT VALID still refuses every new bad write.
+      await expect(getTestPool().query('UPDATE agency_contacts SET assigned_user_id = $1 WHERE id = $2', [randomUUID(), contact.id]))
+        .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_contact_assigned_at' });
+      await expect(getTestPool().query('UPDATE agency_contacts SET override_extra_attempts = 6 WHERE id = $1', [contact.id]))
+        .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_contact_override_extra_attempts' });
+      await expect(insertAttempt(campaign.id, contact.id, { state: 'ended', attempt_number: 2, override_note: 'short' }))
+        .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_attempt_override_note' });
+      expect(await indexExists('idx_agency_contacts_assignee')).toBe(false);
+    } finally {
+      await migrate('up');
+    }
+    expect(await checksValidated(CONTACT_ASSIGNMENT_DEFERRED_CHECKS))
+      .toEqual(Object.fromEntries(CONTACT_ASSIGNMENT_DEFERRED_CHECKS.map((n) => [n, true])));
+    expect(await indexExists('idx_agency_contacts_assignee')).toBe(true);
     await truncateAll();
   });
 

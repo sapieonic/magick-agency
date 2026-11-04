@@ -106,6 +106,10 @@ const EXPECTED_AGENT_REACHABLE = [
   'GET /proxy/agency/my-assignments',
   'GET /proxy/agency/my-attempts',
   'GET /proxy/agency/my-campaigns',
+  // Contact assignment: the caller's own contacts (`agency.contacts.own`, floored at `agent`).
+  // The flag and the staffing check refuse past the guards; the subject is always the caller.
+  'GET /proxy/agency/my-contacts',
+  'GET /proxy/agency/my-contacts/summary',
   'GET /proxy/agency/my-stats',
   // The agent's own station actions: `agency.station.connect`,
   // `agency.attempts.handle|dispose` and `agency.dnc.write` all floor at `agent`. The internal handler instance then
@@ -121,6 +125,10 @@ const EXPECTED_AGENT_REACHABLE = [
   'POST /proxy/agency/sessions/:id/break/cancel',
   'POST /proxy/agency/sessions/:id/leave',
   'POST /proxy/agency/sessions/:id/redial',
+  // Contact assignment: the agent's own contacts (`agency.contacts.own`, floored at `agent`).
+  // The subject is always the caller; another agent's contact is the route's 404.
+  'POST /proxy/agency/my-contacts/:contactId/call',
+  'POST /proxy/agency/my-contacts/retry',
   'POST /proxy/agency/sessions/:id/station-token',
   // The soft phone (docs/softphone.md §6, SP4): `agency.softphone.dial` floors at `agent`.
   // Every route but `PUT /softphone/settings` (`agency.softphone.manage`, account_admin).

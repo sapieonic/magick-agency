@@ -55,7 +55,13 @@ void main() {
     test('a refusal whose fields do not read is null, never a throw', () {
       expect(ErrorBody.fromJson({...sp('refusal_dnc_listed'), 'entry': 'nope'}).dncListed, isNull);
       expect(ErrorBody.fromJson({...sp('refusal_outside_hours'), 'window': null}).outsideHours, isNull);
-      expect(ErrorBody.fromJson({...sp('refusal_outcome_pending'), 'call': {'id': 'x'}}).callPending, isNull);
+      expect(
+        ErrorBody.fromJson({
+          ...sp('refusal_outcome_pending'),
+          'call': {'id': 'x'},
+        }).callPending,
+        isNull,
+      );
       expect(ErrorBody.fromJson({...sp('refusal_session_on_campaign'), 'account_id': 5}).sessionOnCampaign, isNull);
     });
 
@@ -93,6 +99,15 @@ void main() {
       expect(body.softphoneCode, SoftphoneErrorCode.sessionOnSoftphone);
       expect(body.softphoneConflict, isNotNull);
     });
+
+    test('contact_assigned_elsewhere (contact assignment) is its own code, with nothing else to read', () {
+      final body = ErrorBody.fromJson(sp('refusal_contact_assigned_elsewhere'));
+      expect(body.softphoneCode, SoftphoneErrorCode.contactAssignedElsewhere);
+      expect(body.code, AgencyErrorCode.unknown);
+      expect(body.agentRetryCode, AgentRetryErrorCode.unknown);
+      expect(body.contactInFlight, isNull);
+      expect(body.message, 'This number belongs to another agent on this campaign.');
+    });
   });
 
   group('requests', () {
@@ -122,14 +137,19 @@ void main() {
     });
 
     test('a second override keeps the first note', () {
-      final both = const ManualCallOverridesRequest().withDncNote('first reason here').withHoursNote('second reason here');
+      final both = const ManualCallOverridesRequest()
+          .withDncNote('first reason here')
+          .withHoursNote('second reason here');
       expect(both.toJson(), {'dnc_note': 'first reason here', 'hours_note': 'second reason here'});
     });
 
     test('update: null is left out, an empty string clears the notes, an empty map clears the fields', () {
       expect(ManualCallUpdateRequest().toJson(), isEmpty);
       expect(ManualCallUpdateRequest(notes: 'hi').toJson(), {'notes': 'hi'});
-      expect(ManualCallUpdateRequest(notes: '', fields: const {}).toJson(), {'notes': '', 'fields': <String, Object?>{}});
+      expect(ManualCallUpdateRequest(notes: '', fields: const {}).toJson(), {
+        'notes': '',
+        'fields': <String, Object?>{},
+      });
     });
 
     test('disposition: callback_at in UTC ISO, the rest only when given', () {
@@ -212,7 +232,10 @@ void main() {
       final owed = call('bootstrap_finish_mode');
       expect((owed.isLive, owed.isUnsettled, owed.owesOutcome, owed.isSettled), (false, true, true, false));
       final settled = ManualCallDispositionResponse.fromJson(sp('call_disposition_response')).call;
-      expect((settled.isLive, settled.isUnsettled, settled.owesOutcome, settled.isSettled), (false, false, false, true));
+      expect(
+        (settled.isLive, settled.isUnsettled, settled.owesOutcome, settled.isSettled),
+        (false, false, false, true),
+      );
     });
 
     test('versionKey names the copy: id at updated_at', () {
@@ -250,7 +273,10 @@ void main() {
       expect(d.call.dispositionedOnBehalf, isTrue);
       expect(d.overrides.dncEntry!.campaignId, 'c0ffee00-1111-4222-8333-444455556666');
       expect(d.call.contact!.priorAttempts, hasLength(1));
-      final supervisor = ManualCallDetail.fromJson({...sp('call_detail_agent'), 'media': {'id': 'm1'}});
+      final supervisor = ManualCallDetail.fromJson({
+        ...sp('call_detail_agent'),
+        'media': {'id': 'm1'},
+      });
       expect(supervisor.media, {'id': 'm1'});
     });
   });

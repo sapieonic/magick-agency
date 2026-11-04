@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  assignedElsewhere,
   normalizeDialledNumber,
   pickRosterContact,
   runManualPredial,
@@ -17,6 +18,8 @@ import type { AgencyCampaignRecord, AgencyContactRecord } from '../../../../src/
  */
 
 const NOW = new Date('2026-10-30T10:00:00Z'); // a Friday, 15:30 in Kolkata
+const AGENT = 'agent-1';
+const OTHER_AGENT = 'agent-2';
 
 const tag = (over: Partial<AgencyCampaignRecord> = {}): AgencyCampaignRecord => ({
   id: 'camp-1', tenant_id: 't1', account_id: 'a1', name: 'Q4',
@@ -34,6 +37,7 @@ function input(over: Partial<ManualPredialInput> = {}): ManualPredialInput {
   return {
     tenantId: 't1', accountId: 'a1', to: '9811100001', defaultCountryCode: '91',
     tag: tag(), accountNumbers: [], settings: { ...SOFTPHONE_SETTINGS_DEFAULTS }, now: NOW,
+    actor: { userId: AGENT, supervise: false },
     ...over,
   };
 }
@@ -172,6 +176,64 @@ describe('the roster match', () => {
     const r = await runManualPredial(input(), d);
     expect(r.ok).toBe(true);
     expect(d.findInFlightInAccount).not.toHaveBeenCalled();
+  });
+});
+
+describe('contact assignment: a strict campaign\'s contact of another agent', () => {
+  const strict = tag({ assignment_mode: 'strict' });
+  const owned = (owner: string | null) => contact('c1', 'pending', { assigned_user_id: owner });
+
+  it('refuses contact_assigned_elsewhere, before the window and DNC are asked', async () => {
+    const d = deps({ matches: [owned(OTHER_AGENT)] });
+    const r = await runManualPredial(input({ tag: strict }), d);
+    expect(r.ok ? null : r.refusal).toEqual({ code: 'contact_assigned_elsewhere' });
+    expect(d.dnc.checkEntry).not.toHaveBeenCalled();
+  });
+
+  it('allows the caller\'s own contact and a contact in the pool', async () => {
+    for (const owner of [AGENT, null]) {
+      const r = await runManualPredial(input({ tag: strict }), deps({ matches: [owned(owner)] }));
+      expect(r.ok && r.plan.contact?.id, String(owner)).toBe('c1');
+    }
+  });
+
+  it('allows a supervisor (the API layer checked agency.supervise)', async () => {
+    const r = await runManualPredial(
+      input({ tag: strict, actor: { userId: AGENT, supervise: true } }),
+      deps({ matches: [owned(OTHER_AGENT)] }),
+    );
+    expect(r.ok && r.plan.contact?.id).toBe('c1');
+  });
+
+  it('does not refuse on a pool or preferred campaign', async () => {
+    for (const mode of ['pool', 'preferred'] as const) {
+      const r = await runManualPredial(
+        input({ tag: tag({ assignment_mode: mode }) }),
+        deps({ matches: [owned(OTHER_AGENT)] }),
+      );
+      expect(r.ok && r.plan.contact?.id, mode).toBe('c1');
+    }
+  });
+
+  it('judges the contact the guard picked: another agent\'s finished row does not refuse when a pending one is the caller\'s', async () => {
+    const r = await runManualPredial(input({ tag: strict }), deps({
+      matches: [
+        contact('c0', 'completed', { assigned_user_id: OTHER_AGENT }),
+        contact('c1', 'pending', { assigned_user_id: AGENT }),
+      ],
+    }));
+    expect(r.ok && r.plan.contact?.id).toBe('c1');
+  });
+
+  it('assignedElsewhere: the rule on its own', () => {
+    const me = { userId: AGENT, supervise: false };
+    expect(assignedElsewhere({ assignment_mode: 'strict' }, { assigned_user_id: OTHER_AGENT }, me)).toBe(true);
+    expect(assignedElsewhere({ assignment_mode: 'strict' }, { assigned_user_id: AGENT }, me)).toBe(false);
+    expect(assignedElsewhere({ assignment_mode: 'strict' }, { assigned_user_id: null }, me)).toBe(false);
+    expect(assignedElsewhere({ assignment_mode: 'strict' }, null, me)).toBe(false);
+    expect(assignedElsewhere({ assignment_mode: 'strict' }, { assigned_user_id: OTHER_AGENT }, { ...me, supervise: true })).toBe(false);
+    expect(assignedElsewhere({ assignment_mode: 'preferred' }, { assigned_user_id: OTHER_AGENT }, me)).toBe(false);
+    expect(assignedElsewhere({ assignment_mode: 'pool' }, { assigned_user_id: OTHER_AGENT }, me)).toBe(false);
   });
 });
 

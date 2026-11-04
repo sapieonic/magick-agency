@@ -575,9 +575,191 @@ fails on the old code and goes red when the fix is reverted.
 - `load/pacing-skip.test.ts` failed once in a full integration run beside other worktrees' runs
   and passed alone; the cause is not found.
 
+### Contact assignment 2026-11-03
+
+A supervisor assigns roster contacts to agents, agents work their own queue, agents retry or call
+the contacts they did not reach, and an outcome can grant a contact an override (phases 1 and 2 of
+the ask; inbound routing out of scope). Behind `agency_contact_assignment_enabled` (default off);
+decisions CA1–CA15 in [`decisions.md`](decisions.md) §4, "Contact assignment". Console and agent
+app.
+
+- Migrations `0009_contact_assignment.sql` (seven campaign settings, the contact's owner, retry
+  rounds and override columns, the history table `agency_contact_assignment_events`, the
+  attempt's `agent_manual` / `override_applied` / `override_note`; catalog changes only, its
+  contact and attempt CHECKs added `NOT VALID`) and `0010_contact_assignment_index_and_checks.sql`
+  (validates those CHECKs and builds `idx_agency_contacts_assignee` in its own transaction, outside
+  0009's ACCESS EXCLUSIVE), inventoried in `packages/db/BASELINE.md` and tested down and up. Contracts:
+  `agency/assignment.ts`, `api/agency/assignment.ts` (eight routes, both refusal unions), the
+  `queue` station frame, the disposition `override`, the roster's `assigned_to` filter, the flag,
+  the permission `agency.contacts.own`, agent fixtures and Dart literals.
+- Campaign settings: `assignment_mode` (`pool` / `strict` / `preferred`, changed only while draft
+  or paused), `on_unstaff`, the callback grace and fallback, agent retry on/off, rounds and
+  cooldown; one validator for both write paths; a retry campaign can keep the owners.
+- Supervisor: preview then commit (random split, count, filter, range, reassign, rebalance,
+  unassign), with a token so the commit is exactly the preview (or, for 100+ moves, within 2% of
+  its counts) or `409 preview_stale`; progress per agent with
+  presence and the pool; a contact's owner history; the roster's owner column, filter and CSV
+  columns. Console: assignment settings in the campaign form, the assignment dialog from the
+  roster selection or the filter, progress on the campaign page.
+- Pacing: `strict` / `preferred` pair by agent in one statement; an agent with nothing due is not
+  reserved and is told why (`queue` frame, bootstrap, `ready`, the My contacts summary: one
+  reading; in `preferred` a due pool contact reads due only for the agent pacing gives it to, and
+  the frame is sent again after every `ready`); due callbacks whose owner is away past the grace
+  fall back to the pool (leader sweep, run beside the tick, never awaited by it).
+- Agent: My contacts on the console (a panel from the station header) and the app (a page from
+  the campaign card and the waiting screen): counts, "Retry not reached (N)", the contacts in due
+  order with bucket and number filters, and Call, which places the call on the campaign's normal
+  path with `agent_manual` on the attempt.
+- Outcomes: a catalog entry's `override` (extra attempts 1–5, retry delay, calling hours with a
+  note) is granted when it is recorded and spent at exhaustion (extra attempts) or by the agent's
+  call (the other two); a pooled callback goes to the agent who took it. DNC wins everywhere. The
+  soft phone refuses another agent's contact on a `strict` campaign (`contact_assigned_elsewhere`).
+- Unstaff on all three paths returns the agent's open contacts to the pool (or keeps them), audited;
+  the pacing leader's owner sweep returns what was on a call then, once it settles.
+- A fresh-context review in three parts (data and pacing, routes and wire, clients and docs) found
+  and this branch fixed: the agent's per-contact call ignored the `agency_dialer_enabled` kill
+  switch; agent retry reopened contacts on a completed campaign; contacts on a call at an unstaff
+  were stranded with the former agent; `count` handed out closed contacts and `range` moved them;
+  preview then commit almost never succeeded on a running campaign (now a bounded 2% drift for
+  100+ moves); an unanswered callback stayed a callback; a retry campaign copied owners nobody
+  staffed; a campaign that used the feature could not be saved, or set back, once the flag was
+  turned off; the calling-hours note prompt never appeared on either client (it waited for a
+  refusal the server does not send); and smaller client parity, focus and copy issues. Each fix
+  has a test that was mutation-checked.
+- Built in six parallel lanes over one foundation (migration, contracts, the shared bucket and
+  eligibility SQL), then integrated: the agent's actions moved into the assignment route family,
+  and the My contacts summary reads the pacing probe's queue so it cannot disagree with the
+  station. Every lane's guard tests were mutation-checked (owner predicate, live skip, split seed,
+  agent-dial 404, the queue reading).
+- Scale, measured once on a throwaway 1M-contact roster: a random-split preview 5.4 s, progress
+  0.8 s, an agent's summary 0.28 s and list 0.26 s; a commit moving all 1M contacts took about
+  177 s (the bare UPDATE alone is 80 s on that disk). Batching very large commits is the next step
+  if a roster that size is assigned in one operation.
+- **Left open** (none blocks the flag staying off): unstaffing does not end the agent's open
+  session (in `preferred` mode they can still take pool contacts until they leave; the owner
+  sweep returns anything they are left holding); the pacing probe ignores the one-live-call per
+  number rule (an agent can be reserved and then get nothing that tick, and is returned); in
+  `strict` mode a callback that falls back waits for a supervisor (CA5); the summary has no next
+  callback time; the console's per-contact history client is unused; and the three follow-ups
+  below. Not verified on a real carrier or phone.
+- **Follow-up: extra attempts on the soft phone and the lapsed wrap-up.** An outcome-granted
+  extra attempt (CA8) is spent only where a paced or agent-dialled call settles
+  (`agency/dialer/contact-settlement.ts` → `markExhaustedOrSpendExtraAttempt`). Two other writes
+  can exhaust a contact for `max_attempts` and do not look at the grant: the soft phone's
+  `settleFromManual` (`contact.repository.ts`) and the reaper's `sweepLapsedWrapups` →
+  `closeLapsedWrapup` (an agent left wrap-up without saving an outcome). There the contact ends
+  `exhausted` one attempt early with its grant unused. Nothing is dialled that should not be,
+  nothing is stranded, DNC is unaffected, and the agent can still reopen it ("Retry not reached":
+  exhausted contacts are eligible); a granted contact reaching its last attempt on either path
+  is rare. Fix: route both through the same spend when the decision is `exhausted` for
+  `max_attempts`, with the once-per-attempt guard. The soft phone needs care: a manual call is
+  not an `agency_call_attempts` row, where `override_applied` (the guard) lives today, and its
+  settlement has its own rulings (SP1–SP7). About a day with tests.
+- **Follow-up: the roster has no bucket filter.** My contacts and the progress panel put each
+  contact in one of seven buckets, computed by `contactBucketSql` from several columns (state,
+  last outcome, last disposition, attempt count, the DNC mark). The roster's filters
+  (`contactFilterConditions`, `query-builders.ts`) are raw columns only, so the progress panel's
+  links (`CampaignAssignmentProgress.tsx`) map a bucket to roster states
+  (`BUCKET_ROSTER_STATES`), and `pending`, `callback` and `not_reached` all map to state
+  `pending`: "12 not reached" opens that agent's pending contacts, the 12 plus their callbacks and
+  never-attempted ones. A superset, never a wrong row; the other four buckets map one to one, and
+  the agent's own My contacts list filters by bucket exactly. Fix: an optional `bucket` roster
+  filter built on `contactBucketSql` (so it cannot disagree with the counts) and the links
+  pointed at it. It touches the shared filter (also the CSV export and the spine) and its
+  contract; the retry selector must refuse it, as it refuses `assigned_to`.
+- **Follow-up: the owner on roster replace (waits on B15).** Replace and clear are refused (B15:
+  `supersedeRoster` throws `unsupported`, behind `AGENCY_ROSTER_REPLACE_ENABLED`, off; the
+  console sends neither), so the ask's "superseded contacts lose their assignment" (CA11) has
+  nothing to act on: uploaded rows always land unassigned, an append leaves owners alone, and
+  owners carry over only into a retry campaign with `keep_assignments` (owners still staffed on
+  the parent). When B15 is built, its replace must clear `assigned_user_id` /
+  `assigned_at` / `assigned_by_user_id` on every contact it retires and write one
+  `agency_contact_assignment_events` row each, in the replace transaction, under one batch id.
+  That needs a new reason (e.g. `superseded`), which is a CHECK change
+  (`ck_agency_assignment_event_reason`) in a new migration.
+- **Cleanup pass 2026-11-04 (behaviour unchanged).**
+  - **Shared SQL.** The "open contact", "number is live" and phone-digits terms are each
+    defined once (`assignment-sql.ts`, `sql-fragments.ts`), and so are the agent-retry settings
+    and their binding. Both owner sweeps share one return-to-pool statement, one audit and log
+    helper, and one loop in the pacing engine.
+  - **Server routes and reads.** One refusal-body helper (`api/routes/helpers/refusal.ts`).
+    Reads that don't depend on each other now run together: agent scope, supervisor scope, the
+    My contacts summary, the session bootstrap, station connect and start-call. The retry route
+    reads the parent campaign once (`ownedCoreCampaignOnce`).
+  - **Database work.** My contacts reads each page row's last attempt once. A `nothing_due`
+    tick that saw an open contact skips the completion count.
+  - **Contract.** The operation limits are exported from the contract and used by the server
+    and the console. The assignment override-note limits are aliases of the soft phone's, and
+    one note check serves both.
+  - **Clients.** The console uses `useDialogFocus`, `formatCount`/`plural`, `errorBody` and
+    `useAsyncResource`. It no longer re-reads the summary on a filter change or staffing after
+    a commit. The mobile app shares the soft phone's note check, `EnIn.count` and
+    `humaniseCode`.
+- **Left as found by that pass (each would change behaviour or reach well past the feature):**
+  - **DNC rows can be moved.** Reassign, unassign, the unstaff return and both owner sweeps move
+    any `pending` contact, including a DNC-marked one. Count and range moves take open rows only.
+    Whether a DNC row should keep or change its owner is undecided.
+  - **Wrap-up redial and the kill switch.** Redial (`wrapup-redial-rules.ts`) checks only that
+    the campaign is `running`, not `agency_dialer_enabled`. This predates this feature. The fix
+    is one `campaignMayDial` rule shared with pacing and start-call.
+  - **Where CA9 compares stored values.** The public layer reads the stored campaign to compare
+    the request against it. The internal PATCH handler already has that row, so the compare and
+    the mode-change audit belong there; that also removes a race against the write.
+  - **CA7 call gate on the clients.** The console (`contactCallGate`) and the app
+    (`canCallContact`) each re-derive the call gate from row fields. The server could send the
+    call basis on each row instead.
+  - **"Note required" has no code of its own.** The server signals it with
+    `400 override_note_invalid`, and both clients detect it as that code plus no note sent. A
+    separate `override_note_required` would be a wire change.
+  - **Roster holder names.** The roster takes holder names from the full progress read. A
+    lightweight holders read would be cheaper.
+  - **Hero columns.** The server's hero-column rule (`heroColumns`) ignores case and spacing
+    differences that the console's `resolveContextFields` handles. One rule in
+    `packages/domain` would fix it.
+  - **Idle pacing ticks.** A `nothing_due` tick never goes idle. The engine could sleep until
+    the probe's earliest `next_due_at`, which is a change to the wake logic.
+  - **Extra-attempt spend guards.** CA8's spend has two idempotency guards in
+    `contact.repository.ts`: a SQL `NOT … = ANY` versus a pre-read with `FOR UPDATE`.
+  - **`returnOnUnstaff` is unlike the sweeps.** It does not set `updated_at`; the sweeps do.
+
 ## Test counts
 
-Latest run, 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
+Latest run, 2026-11-04, the contact assignment branch after the PR #33 review fixes, from
+inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
+`pnpm test:release` 10 pass):
+
+| Package | Unit | Integration |
+|---|---|---|
+| `apps/server` | 7895 passed + 42 skipped (394 files) | rest lane 1749 passed + 9 expected fail (186 files); wall-clock lane 15 (3 files) |
+| `packages/db` | 427 (25 files) | 536 (49 files) |
+| `apps/console` | 5159 (268 files) | — |
+| `apps/super-admin` | 436 | — |
+| `packages/contracts` | 281 | — |
+| `packages/web-ui` | 235 | — |
+| `packages/domain` | 61 | — |
+| `packages/observability` | 14 | — |
+| `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean, `contracts-literals --check` up to date | — |
+
+After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
+assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest
+lane 1743 passed + 9 expected fail + 1 failed (185 files), the one failure being the scale test
+below timing out at 20 s (alone: 18 passed, that test in ~1.1 s); `pnpm lint` clean,
+`pnpm test:release` 10 pass.
+
+**Open: one scale test times out in some full runs.** `assignment-repository.test.ts` "splits
+10,000 contacts across 5 agents" takes about 1.1 s alone, but in 2 of 4 full rest-lane runs on
+the build container it passed the 20 s test timeout when it ran in the middle of the lane (each
+time the lane was otherwise 1730 passed; the second run also had the known `agent-churn`
+intermittent). It passed in the two runs where it ran first and last, and in the run above. Ruled out: lock waits (no
+lock-timeout errors), stale planner statistics, rows left by earlier files, and CPU contention
+alone (the second failure was on a quiet machine). Not ruled out: I/O stalls on that disk
+(checkpoints ran through both windows, but through the passing ones too). Its timeout is
+unchanged; if CI shows it, record per-phase timings before deciding between a fix and a longer
+timeout for this one test. Seen on the way and pre-existing: `agency_contacts.source_contact_id`
+(`ON DELETE SET NULL`) has no index, so deleting a contact checks the whole table for rows naming
+it; the likely reason a 200 000-row `DELETE` in a scratch test ran for minutes.
+
+Run of 2026-11-03, the wrap-up redial branch after its review fixes, on `028b2ab`, from inside
 each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and `pnpm test:release` 10
 pass; details and the one file that fails only in the combined run: "Wrap-up redial 2026-11-03"):
 
@@ -781,13 +963,14 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Launch defaults | Ratify: re-issue invites; inbound calls play a message and hang up; abandon clip upload-only; no API keys; super-admins created fresh |
 | Launch open items | Existing numbers; launch style; domain, feature freeze, rollback window |
 | Q3 contract choices | Ratify the five |
-| B15 roster supersede | Build it, or leave replace and clear refused |
+| B15 roster supersede | Build it, or leave replace and clear refused; when built, it also clears the owner of every contact it retires (CA11, "Contact assignment" above) |
 | Scaling defaults (2026-11-02/03) | Ratify the **default, pending Manas** rows of the scaling rulings (`decisions.md` §4): frame bound, back-pressure, VoiceLink timeouts and the 15 min deferred redial (now charged to the our-fault ledger, so its bound retires a contact), a dial failed before the carrier (uncharged, redial after 60 s), Redis timeouts, ceilings and rate limits, analysis slots, pacing skips, the console's A-law default; and D13 (the `/readyz?detail=1` token, the 1 s readiness cache, the 5 s loop window) |
 | Gated items | Vendor setup; Playwright happy path; parity check; dark pilot; real VoiceLink call and recording; launch |
 | Load-suite defects | The 12 open defects pinned by `it.fails` ("Load and scenario suites 2026-10-23"): decide each fix; size `RATE_LIMIT_MAX` for a floor behind one NAT |
 | Mobile app | Ratify the Q9 amendment (per-user and bearer IP rate-limit buckets). Decide whether a cellular call arriving while the agent is available pauses them (today it only shows the audio interruption, so the next reservation can land on someone on another call). First iOS build on a Mac; a device test on Android and iOS against a VoiceLink sandbox (include a failed `startForeground` on Android 14+, and the App Link hosts once the domain is decided), the soft phone included (ringback and Mute ring, the owed outcome's hold, M1 mid-call, SP7 on a phone, iOS CallKit for soft-phone calls); store accounts and signing |
 | Metric export | Grafana Cloud's OTLP gateway is the assumed destination; confirm it and issue the token |
 | Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected` |
+| Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 
 ## Deployment invariants

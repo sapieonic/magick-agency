@@ -152,6 +152,10 @@ export interface AgencyContactRow {
   timezone: string | null;
   /** Provenance: the row's line in the uploaded CSV. NULL when the row was not uploaded from a CSV. */
   csv_line_number: number | null;
+  /** The agent (user id) who owns this contact (contact assignment). NULL: the shared pool. */
+  assigned_user_id: string | null;
+  /** ISO-8601: when the current owner was given it. NULL in the pool. */
+  assigned_at: string | null;
   created_at: string;
   updated_at: string;
 }

@@ -12,7 +12,13 @@ import {
   validateDispositionFields,
 } from '../../../agency/disposition.js';
 import { resolveDispositionDecision } from '../../../agency/disposition-policy.js';
+import {
+  dispositionRuleDelayMinutes,
+  MAX_ATTEMPTS_EXHAUSTION_REASONS,
+  overrideGrantOf,
+} from '../../../agency/contact-overrides.js';
 import { markDnc } from '../../../agency/dnc-mark.js';
+import { ownerModeOf } from '../../../agency/pacing/agent-queue.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type {
   AgencyDisposition,
@@ -139,8 +145,10 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // ── 5. The contact: `completed`, or `pending` for a callback or retry ──
     // A callback is honoured rather than merely captured: storing the datetime
     // and doing nothing would have an agent promise a customer a call that never
-    // comes. It re-enters the roster as an ordinary contact — whichever agent is
-    // available takes it, which is why nothing binds it to this session.
+    // comes. It re-enters the roster as an ordinary contact. Nothing binds it to this
+    // SESSION; on a strict / preferred campaign it is bound to the AGENT who took the call
+    // (contact assignment, CA4: see the ownership note at the write below), on a `pool`
+    // campaign to nobody: whichever agent is available takes it.
     //
     // No `bump_attempt`: the attempt was already counted when it ended. Bumping
     // here would charge a contact twice for one dial and, at `max_attempts: 3`,
@@ -238,6 +246,32 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
     // one. Harmless today — `claimDialable` gates on `state = 'pending'`, so nothing
     // reads it — but a test asserting "no retry was scheduled" here would be
     // observing a stale value rather than an absence. Assert the STATE.
+    //
+    // ── Overrides and callback ownership (contact assignment, CA8 and CA4) ──────────
+    // Decided on the locked row and written by the same guarded statement, so each lands
+    // exactly when the release lands, and only on the FIRST write (a same-code replay grants,
+    // spends and assigns nothing):
+    //  - an entry carrying `override` REPLACES the contact's override columns (an entry
+    //    without one leaves an existing grant alone);
+    //  - a disposition `retry` whose `max_attempts` is spent keeps the contact `pending`
+    //    when it holds an unspent `extra_attempts` (the grant above included), spending one;
+    //  - a booked callback on a strict / preferred campaign, on a contact in the pool, is
+    //    assigned to the agent who TOOK the call (the reserved agent, also when a supervisor
+    //    files the write-up on their behalf), with a history row (`callback`). A contact
+    //    someone owns keeps its owner. This is why, on those campaigns, a callback IS bound
+    //    to a person: pacing pairs it with its owner (and, past the campaign's grace, the
+    //    callback fallback may return it to the pool). On a `pool` campaign it is still not
+    //    bound to anyone: whichever agent is available takes it.
+    const grant = overrideGrantOf(resolved.entry);
+    const extraAttempt = MAX_ATTEMPTS_EXHAUSTION_REASONS.has(decision.reason)
+      ? { reason: decision.reason, delayMinutes: dispositionRuleDelayMinutes(resolved.entry), now: new Date() }
+      : null;
+    const callbackOwner = decision.reason === 'callback_scheduled'
+      && resolved.entry.requires_datetime === true
+      && ownerModeOf(campaign) !== null
+      && reservedUserId
+      ? { userId: reservedUserId }
+      : null;
     const landed = await agencyContactRepository.releaseFromDisposition({
       contactId: attempt.contact_id,
       attemptId: attempt.id,
@@ -246,13 +280,18 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       lastOutcome: attempt.outcome,
       nextAttemptAt,
       suppressedReason: decision.suppressedReason ?? null,
+      grant,
+      extraAttempt,
+      callbackOwner,
     });
     if (landed) {
       log.info(
         {
           contactId: attempt.contact_id, attemptId: attempt.id,
           dispositionCode: resolved.entry.code, contactState: landed.state,
-          dispositionReason: decision.reason, nextAttemptAt,
+          dispositionReason: decision.reason, nextAttemptAt: landed.extraAttemptSpent ? landed.next_attempt_at : nextAttemptAt,
+          extraAttemptSpent: landed.extraAttemptSpent, overrideGranted: landed.overrideGranted,
+          assignedTo: landed.assignedTo,
         },
         'Contact released by the disposition policy',
       );
@@ -277,7 +316,8 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       contact_id: attempt.contact_id,
       campaign_id: attempt.campaign_id,
       disposition_code: resolved.entry.code,
-      contact_state: contactState,
+      // An outcome-granted extra attempt kept the contact open (CA8): report where it went.
+      contact_state: landed?.extraAttemptSpent ? landed.state : contactState,
       // When we will dial, not what was asked for. The echo is a separate field
       // precisely so a console cannot mistake one for the other.
       //
@@ -286,7 +326,9 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       // back, and reporting `null` for a retry that is genuinely scheduled would be
       // a worse lie than reporting a raw time. `callback_requested_at` stays null on
       // that arm, which is how a console tells the two apart.
-      next_attempt_at: nextAttemptAt ? nextAttemptAt.toISOString() : null,
+      next_attempt_at: landed?.extraAttemptSpent
+        ? landed.next_attempt_at.toISOString()
+        : nextAttemptAt ? nextAttemptAt.toISOString() : null,
       callback_requested_at: fields.callbackAt ? fields.callbackAt.toISOString() : null,
       // ADVISORY, and it races the socket by design — releasing the wrap-up
       // returns the agent to the pool and the tick runs every 250ms, so a new

@@ -11,7 +11,7 @@
  *
  * Its IPC surface (`ipc-protocol.ts`): it serves `dial.execute`, `core.inject`,
  * `carrier.webhook`, `agent.return_reserved`, `reaper.snapshot`, `softphone.closed_by_sweep`,
- * `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`,
+ * `health.ping` and `shutdown`, applies `pacing.revoke`, `station.broadcast`, `station.send`,
  * `concurrency.invalidate` and `reaper.forget_unrecorded`, and tells the primary
  * `ready`, `station.attached` / `.detached` / `.snapshot`, `pacing.invalidate`,
  * `voice.wake_self_heal` and `analysis.wake`.
@@ -23,6 +23,7 @@ import type { AgencyRuntime } from '../agency/runtime.js';
 import type { WebRtcBridgeManager } from '../core/webrtc-bridge-manager.js';
 import type { TelephonyGuardHost } from '../core/telephony-guard-host.js';
 import { setPacingInvalidationBus, type PacingInvalidationBus } from '../agency/pacing/invalidation-bus.js';
+import { queuedBreakReleaseOf, returnReservedAgent } from '../agency/reserved-agent.js';
 import { injectLocal, type CoreInjectArgs } from '../api/core-dispatch.js';
 import { handleVoicelinkStatusWebhook } from '../api/routes/webhooks.routes.js';
 import type { IpcChannel } from './ipc-channel.js';
@@ -103,6 +104,9 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   channel.onEvent('station.broadcast', ({ campaignId, frame }) => {
     runtime.stations.broadcast(campaignId, frame);
   });
+  channel.onEvent('station.send', ({ sessionId, frame }) => {
+    runtime.stations.send(sessionId, frame);
+  });
 
   // ── Telephony slots: every take and give-back, as it happens ──────────────
   bridge.observeLeases((change) => { channel.emit('call.lease', change); });
@@ -120,8 +124,7 @@ export function startMediaChild(deps: MediaChildDeps): MediaChild {
   });
   channel.handle('agent.return_reserved', async ({ sessionId }) => {
     // The single-process `returnReserved`, run where the queued break lives.
-    if (runtime.breaks.peek(sessionId) !== null) await runtime.dialer.releaseAgent(sessionId);
-    else await runtime.agents.set(sessionId, 'available');
+    await returnReservedAgent(sessionId, queuedBreakReleaseOf(runtime), (id) => runtime.agents.set(id, 'available'));
     return {};
   });
 

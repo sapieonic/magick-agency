@@ -6,38 +6,125 @@
         "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
         "campaign_name": "Q4 Renewals — Pune",
         "status": "running",
-        "caller_ids": ["+912071234567", "+912071234568"],
-        "disposition_catalog": [
-          { "code": "interested", "label": "Interested", "is_success": true },
-          { "code": "callback", "label": "Call back later", "requires_datetime": true },
-          { "code": "documents", "label": "Needs documents", "requires_note": true },
-          { "code": "do_not_call", "label": "Do not call", "suppress": true, "terminal": true }
+        "caller_ids": [
+          "+912071234567",
+          "+912071234568"
         ],
-        "calling_window": { "start": "09:00:00", "end": "20:00:00", "days": [1, 2, 3, 4, 5, 6], "timezone": "Asia/Kolkata" },
+        "disposition_catalog": [
+          {
+            "code": "interested",
+            "label": "Interested",
+            "is_success": true
+          },
+          {
+            "code": "callback",
+            "label": "Call back later",
+            "requires_datetime": true
+          },
+          {
+            "code": "documents",
+            "label": "Needs documents",
+            "requires_note": true
+          },
+          {
+            "code": "do_not_call",
+            "label": "Do not call",
+            "suppress": true,
+            "terminal": true
+          }
+        ],
+        "calling_window": {
+          "start": "09:00:00",
+          "end": "20:00:00",
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "timezone": "Asia/Kolkata"
+        },
         "calling_window_open": true,
         "record_calls": true,
-        "analysis_profile": { "id": "a7b6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d", "name": "Renewals v3" },
-        "context_display": { "hero": ["Customer name", "Policy number"], "hidden": ["internal_ref"] }
+        "analysis_profile": {
+          "id": "a7b6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d",
+          "name": "Renewals v3"
+        },
+        "context_display": {
+          "hero": [
+            "Customer name",
+            "Policy number"
+          ],
+          "hidden": [
+            "internal_ref"
+          ]
+        }
       }
     ],
     "untagged": {
-      "caller_ids": ["+912071239999", "+912071238888"],
+      "caller_ids": [
+        "+912071239999",
+        "+912071238888"
+      ],
       "default_caller_id": "+912071238888",
       "disposition_catalog": [
-        { "code": "resolved", "label": "Query resolved", "is_success": true },
-        { "code": "wrong_number", "label": "Wrong number" },
-        { "code": "callback", "label": "Callback requested", "requires_datetime": true },
-        { "code": "do_not_call", "label": "Do not call", "suppress": true }
+        {
+          "code": "resolved",
+          "label": "Query resolved",
+          "is_success": true
+        },
+        {
+          "code": "wrong_number",
+          "label": "Wrong number"
+        },
+        {
+          "code": "callback",
+          "label": "Callback requested",
+          "requires_datetime": true
+        },
+        {
+          "code": "do_not_call",
+          "label": "Do not call",
+          "suppress": true
+        }
       ],
       "record_calls": false,
       "analysis_profile": null
     },
     "call_fields": [
-      { "key": "customer_name", "label": "Customer name", "type": "text", "required": true },
-      { "key": "loan_amount", "label": "Loan amount", "type": "number" },
-      { "key": "reason", "label": "Reason for call", "type": "choice", "options": ["Rate query", "Documents", "Renewal"] },
-      { "key": "follow_up", "label": "Follow-up needed", "type": "boolean" },
-      { "key": "visit_on", "label": "Branch visit on", "type": "date" }
+      {
+        "key": "customer_name",
+        "label": "Customer name",
+        "type": "text",
+        "required": true
+      },
+      {
+        "key": "loan_amount",
+        "label": "Loan amount",
+        "type": "number"
+      },
+      {
+        "key": "reason",
+        "label": "Reason for call",
+        "type": "choice",
+        "options": [
+          "Rate query",
+          "Documents",
+          "Renewal"
+        ]
+      },
+      {
+        "key": "follow_up",
+        "label": "Follow-up needed",
+        "type": "boolean"
+      },
+      {
+        "key": "visit_on",
+        "label": "Branch visit on",
+        "type": "date"
+      }
     ],
     "default_country_code": "+91",
     "session": {
@@ -57,12 +144,20 @@
       "agent_name": "Meera Krishnan",
       "destination_e164": "+919812345678",
       "caller_id": "+912071234567",
-      "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+      "tag": {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune"
+      },
       "contact": {
         "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
         "state": "in_flight",
         "claimed": true,
-        "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931", "City": "Pune", "internal_ref": "X-9" },
+        "context": {
+          "Customer name": "Rahul Verma",
+          "Policy number": "HL-20931",
+          "City": "Pune",
+          "internal_ref": "X-9"
+        },
         "prior_attempts": [
           {
             "attempt_number": 1,
@@ -88,7 +183,12 @@
       "disposition_source": null,
       "notes": null,
       "callback_at": null,
-      "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "follow_up": false, "visit_on": null },
+      "fields": {
+        "customer_name": "Rahul Verma",
+        "loan_amount": 250000,
+        "follow_up": false,
+        "visit_on": null
+      },
       "dispositioned_by_user_id": null,
       "dispositioned_at": null,
       "dispositioned_on_behalf": false,
@@ -106,34 +206,94 @@
       "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
       "campaign_name": "Q4 Renewals — Pune",
       "status": "running",
-      "caller_ids": ["+912071234567", "+912071234568"],
-      "disposition_catalog": [
-        { "code": "interested", "label": "Interested", "is_success": true },
-        { "code": "callback", "label": "Call back later", "requires_datetime": true },
-        { "code": "documents", "label": "Needs documents", "requires_note": true },
-        { "code": "do_not_call", "label": "Do not call", "suppress": true, "terminal": true }
+      "caller_ids": [
+        "+912071234567",
+        "+912071234568"
       ],
-      "calling_window": { "start": "09:00:00", "end": "20:00:00", "days": [1, 2, 3, 4, 5, 6], "timezone": "Asia/Kolkata" },
+      "disposition_catalog": [
+        {
+          "code": "interested",
+          "label": "Interested",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Call back later",
+          "requires_datetime": true
+        },
+        {
+          "code": "documents",
+          "label": "Needs documents",
+          "requires_note": true
+        },
+        {
+          "code": "do_not_call",
+          "label": "Do not call",
+          "suppress": true,
+          "terminal": true
+        }
+      ],
+      "calling_window": {
+        "start": "09:00:00",
+        "end": "20:00:00",
+        "days": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "timezone": "Asia/Kolkata"
+      },
       "calling_window_open": true,
       "record_calls": true,
-      "analysis_profile": { "id": "a7b6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d", "name": "Renewals v3" },
-      "context_display": { "hero": ["Customer name", "Policy number"], "hidden": ["internal_ref"] }
+      "analysis_profile": {
+        "id": "a7b6c5d4-e3f2-4a1b-9c8d-7e6f5a4b3c2d",
+        "name": "Renewals v3"
+      },
+      "context_display": {
+        "hero": [
+          "Customer name",
+          "Policy number"
+        ],
+        "hidden": [
+          "internal_ref"
+        ]
+      }
     }
   },
   "bootstrap_finish_mode": {
     "softphone_enabled": false,
     "taggable_campaigns": [],
     "untagged": {
-      "caller_ids": ["+912071239999"],
+      "caller_ids": [
+        "+912071239999"
+      ],
       "default_caller_id": "+912071239999",
       "disposition_catalog": [
-        { "code": "resolved", "label": "Query resolved", "is_success": true },
-        { "code": "callback", "label": "Callback requested", "requires_datetime": true }
+        {
+          "code": "resolved",
+          "label": "Query resolved",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Callback requested",
+          "requires_datetime": true
+        }
       ],
       "record_calls": false,
       "analysis_profile": null
     },
-    "call_fields": [{ "key": "customer_name", "label": "Customer name", "type": "text", "required": true }],
+    "call_fields": [
+      {
+        "key": "customer_name",
+        "label": "Customer name",
+        "type": "text",
+        "required": true
+      }
+    ],
     "default_country_code": "+91",
     "session": {
       "session_id": "6c1f0d3e-8a4b-4f7e-9d21-3b5a7c9e0f12",
@@ -166,7 +326,9 @@
       "disposition_source": null,
       "notes": "Asked about the renewal rate",
       "callback_at": null,
-      "fields": { "customer_name": "Anita Desai" },
+      "fields": {
+        "customer_name": "Anita Desai"
+      },
       "dispositioned_by_user_id": null,
       "dispositioned_at": null,
       "dispositioned_on_behalf": false,
@@ -189,13 +351,38 @@
         "campaign_id": "d00dfeed-2222-4333-8444-555566667777",
         "campaign_name": "Collections — Mumbai",
         "status": "paused",
-        "caller_ids": ["+912261234567"],
-        "disposition_catalog": [
-          { "code": "promised", "label": "Promised to pay", "is_success": true },
-          { "code": "callback", "label": "Call back later", "requires_datetime": true },
-          { "code": "do_not_call", "label": "Do not call", "suppress": true }
+        "caller_ids": [
+          "+912261234567"
         ],
-        "calling_window": { "start": "10:00:00", "end": "18:00:00", "days": [1, 2, 3, 4, 5], "timezone": "Asia/Kolkata" },
+        "disposition_catalog": [
+          {
+            "code": "promised",
+            "label": "Promised to pay",
+            "is_success": true
+          },
+          {
+            "code": "callback",
+            "label": "Call back later",
+            "requires_datetime": true
+          },
+          {
+            "code": "do_not_call",
+            "label": "Do not call",
+            "suppress": true
+          }
+        ],
+        "calling_window": {
+          "start": "10:00:00",
+          "end": "18:00:00",
+          "days": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "timezone": "Asia/Kolkata"
+        },
         "calling_window_open": false,
         "record_calls": false,
         "analysis_profile": null,
@@ -206,8 +393,16 @@
       "caller_ids": [],
       "default_caller_id": null,
       "disposition_catalog": [
-        { "code": "resolved", "label": "Query resolved", "is_success": true },
-        { "code": "callback", "label": "Callback requested", "requires_datetime": true }
+        {
+          "code": "resolved",
+          "label": "Query resolved",
+          "is_success": true
+        },
+        {
+          "code": "callback",
+          "label": "Callback requested",
+          "requires_datetime": true
+        }
       ],
       "record_calls": false,
       "analysis_profile": null
@@ -238,7 +433,13 @@
     "to": "98123 45678",
     "caller_id": "+912071234567",
     "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
-    "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "reason": "Renewal", "follow_up": true, "visit_on": "2026-11-05" },
+    "fields": {
+      "customer_name": "Rahul Verma",
+      "loan_amount": 250000,
+      "reason": "Renewal",
+      "follow_up": true,
+      "visit_on": "2026-11-05"
+    },
     "overrides": {
       "dnc_note": "Customer asked us to call back about the renewal",
       "hours_note": "Customer is only free after work today"
@@ -252,7 +453,13 @@
     "code": "callback",
     "notes": "Call after salary day",
     "callback_at": "2026-11-02T04:30:00.000Z",
-    "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "reason": "Renewal", "follow_up": true, "visit_on": null }
+    "fields": {
+      "customer_name": "Rahul Verma",
+      "loan_amount": 250000,
+      "reason": "Renewal",
+      "follow_up": true,
+      "visit_on": null
+    }
   },
   "call_disposition_response": {
     "call": {
@@ -262,12 +469,20 @@
       "agent_name": null,
       "destination_e164": "+919812345678",
       "caller_id": "+912071234567",
-      "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+      "tag": {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune"
+      },
       "contact": {
         "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
         "state": "pending",
         "claimed": true,
-        "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931", "City": "Pune", "internal_ref": "X-9" },
+        "context": {
+          "Customer name": "Rahul Verma",
+          "Policy number": "HL-20931",
+          "City": "Pune",
+          "internal_ref": "X-9"
+        },
         "prior_attempts": [
           {
             "attempt_number": 1,
@@ -293,7 +508,13 @@
       "disposition_source": "campaign",
       "notes": "Call after salary day",
       "callback_at": "2026-11-02T04:30:00.000Z",
-      "fields": { "customer_name": "Rahul Verma", "loan_amount": 250000, "reason": "Renewal", "follow_up": true, "visit_on": null },
+      "fields": {
+        "customer_name": "Rahul Verma",
+        "loan_amount": 250000,
+        "reason": "Renewal",
+        "follow_up": true,
+        "visit_on": null
+      },
       "dispositioned_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
       "dispositioned_at": "2026-11-01T08:09:40.000Z",
       "dispositioned_on_behalf": false,
@@ -318,12 +539,18 @@
     "agent_name": null,
     "destination_e164": "+919812345678",
     "caller_id": "+912071234567",
-    "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+    "tag": {
+      "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+      "campaign_name": "Q4 Renewals — Pune"
+    },
     "contact": {
       "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
       "state": "in_flight",
       "claimed": true,
-      "context": { "Customer name": "Rahul Verma", "Policy number": "HL-20931" },
+      "context": {
+        "Customer name": "Rahul Verma",
+        "Policy number": "HL-20931"
+      },
       "prior_attempts": []
     },
     "state": "bridged",
@@ -371,8 +598,15 @@
         "agent_name": "Meera Krishnan",
         "destination_e164": "+919812345678",
         "caller_id": "+912071234567",
-        "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
-        "contact": { "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b", "state": "pending", "claimed": true },
+        "tag": {
+          "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+          "campaign_name": "Q4 Renewals — Pune"
+        },
+        "contact": {
+          "contact_id": "f1e2d3c4-b5a6-4978-8a6b-5c4d3e2f1a0b",
+          "state": "pending",
+          "claimed": true
+        },
         "state": "ended",
         "outcome": "connected",
         "end_reason": "agent_hangup",
@@ -385,7 +619,9 @@
         "disposition_source": "campaign",
         "notes": "Call after salary day",
         "callback_at": "2026-11-02T04:30:00.000Z",
-        "fields": { "customer_name": "Rahul Verma" },
+        "fields": {
+          "customer_name": "Rahul Verma"
+        },
         "dispositioned_by_user_id": "u-7b1e5c4a-2d3f-4e6a-9b8c-7d6e5f4a3b2c",
         "dispositioned_at": "2026-11-01T08:09:40.000Z",
         "dispositioned_on_behalf": false,
@@ -421,7 +657,9 @@
         "disposition_source": null,
         "notes": null,
         "callback_at": null,
-        "fields": { "customer_name": null },
+        "fields": {
+          "customer_name": null
+        },
         "dispositioned_by_user_id": null,
         "dispositioned_at": null,
         "dispositioned_on_behalf": false,
@@ -448,12 +686,18 @@
       "agent_name": "Meera Krishnan",
       "destination_e164": "+919876501234",
       "caller_id": "+912071234567",
-      "tag": { "campaign_id": "c0ffee00-1111-4222-8333-444455556666", "campaign_name": "Q4 Renewals — Pune" },
+      "tag": {
+        "campaign_id": "c0ffee00-1111-4222-8333-444455556666",
+        "campaign_name": "Q4 Renewals — Pune"
+      },
       "contact": {
         "contact_id": "a0b1c2d3-e4f5-4a6b-8c7d-9e0f1a2b3c4d",
         "state": "completed",
         "claimed": true,
-        "context": { "Customer name": "Anita Desai", "Policy number": "HL-31877" },
+        "context": {
+          "Customer name": "Anita Desai",
+          "Policy number": "HL-31877"
+        },
         "prior_attempts": [
           {
             "attempt_number": 2,
@@ -479,7 +723,13 @@
       "disposition_source": "campaign",
       "notes": "Renewing this month",
       "callback_at": null,
-      "fields": { "customer_name": "Anita Desai", "loan_amount": 180000, "reason": "Renewal", "follow_up": false, "visit_on": "2026-11-04" },
+      "fields": {
+        "customer_name": "Anita Desai",
+        "loan_amount": 180000,
+        "reason": "Renewal",
+        "follow_up": false,
+        "visit_on": "2026-11-04"
+      },
       "dispositioned_by_user_id": "u-5a4b3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
       "dispositioned_at": "2026-11-01T09:20:00.000Z",
       "dispositioned_on_behalf": true,
@@ -533,7 +783,19 @@
     "error": "Conflict",
     "message": "The campaign's calling hours are closed for this number.",
     "code": "outside_calling_hours",
-    "window": { "start": "09:00:00", "end": "20:00:00", "days": [1, 2, 3, 4, 5, 6], "timezone": "Asia/Kolkata" },
+    "window": {
+      "start": "09:00:00",
+      "end": "20:00:00",
+      "days": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "timezone": "Asia/Kolkata"
+    },
     "timezone_source": "contact",
     "next_open_at": "2026-11-02T03:30:00.000Z"
   },
@@ -600,8 +862,14 @@
     "message": "Some call details are invalid.",
     "code": "fields_invalid",
     "details": [
-      { "path": "fields.customer_name", "message": "Customer name is required" },
-      { "path": "fields.loan_amount", "message": "Loan amount must be a number" }
+      {
+        "path": "fields.customer_name",
+        "message": "Customer name is required"
+      },
+      {
+        "path": "fields.loan_amount",
+        "message": "Loan amount must be a number"
+      }
     ]
   },
   "refusal_disposition_invalid": {
@@ -609,11 +877,21 @@
     "message": "That outcome cannot be saved as submitted.",
     "code": "disposition_invalid",
     "reason": "unknown_code",
-    "allowed_codes": ["interested", "callback", "documents", "do_not_call"]
+    "allowed_codes": [
+      "interested",
+      "callback",
+      "documents",
+      "do_not_call"
+    ]
   },
   "refusal_softphone_disabled": {
     "error": "Forbidden",
     "message": "The soft phone is not enabled for this account.",
     "code": "softphone_disabled"
+  },
+  "refusal_contact_assigned_elsewhere": {
+    "error": "Conflict",
+    "message": "This number belongs to another agent on this campaign.",
+    "code": "contact_assigned_elsewhere"
   }
 }

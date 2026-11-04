@@ -13,7 +13,7 @@ import {
 } from '../../../agency/spine-filters.js';
 import type { AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
-import { CONTACT_PHONE_DIGITS_SQL } from './sql-fragments.js';
+import { contactPhoneDigitsSql } from './sql-fragments.js';
 
 // ─── Supervisor read surface — shared paging machinery ────────────
 
@@ -68,7 +68,7 @@ export function phoneCondition(
   alias: string,
   bind: ReturnType<typeof params>,
 ): string {
-  const digits = CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
+  const digits = contactPhoneDigitsSql(alias);
   // Re-stripped here, not trusted from the caller. `parsePhoneFilter` already
   // does it, but this is the only place a `%` or `_` could become a LIKE
   // wildcard, and the consequence is not an error — it is a filter that matches
@@ -147,6 +147,17 @@ export function contactFilterConditions(
   }
   if (filters.lastDispositions?.length) {
     conditions.push(`${alias}.last_disposition = ANY(${bind.add(filters.lastDispositions)}::varchar[])`);
+  }
+  // The owner (contact assignment). Never reached from the retry seed: its caller builds the
+  // filter object from the selector, which has no owner dimension (`parseRetrySelector`
+  // refuses `assigned_to`), pinned by `test/unit/agency/assigned-to-filter.test.ts`.
+  if (filters.assignedTo) {
+    const parts: string[] = [];
+    if (filters.assignedTo.userIds.length > 0) {
+      parts.push(`${alias}.assigned_user_id = ANY(${bind.add(filters.assignedTo.userIds)}::uuid[])`);
+    }
+    if (filters.assignedTo.unassigned) parts.push(`${alias}.assigned_user_id IS NULL`);
+    conditions.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);
   }
   return conditions;
 }

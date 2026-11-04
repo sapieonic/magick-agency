@@ -31,6 +31,12 @@ abstract final class Routes {
   static const stationPattern = '/home/station/:campaignId';
   static String station(String campaignId) => '/home/station/$campaignId';
 
+  /// The agent's own contacts on a campaign (contact assignment), a child of
+  /// [home] like the station. Open while on duty on that same campaign (the
+  /// per-contact call dials from the station), until a call takes the screen.
+  static const myContactsPattern = '/home/contacts/:campaignId';
+  static String myContacts(String campaignId) => '/home/contacts/$campaignId';
+
   /// Paths reachable without a ready gate.
   static bool isPublic(String path) =>
       path == signIn || path == verifyEmail || path == noMembership || path == updateRequired || path.startsWith('/agency/join/');

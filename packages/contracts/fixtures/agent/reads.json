@@ -147,7 +147,14 @@
       "campaigns": 0,
       "occupancy": {
         "shift_seconds": 0,
-        "by_state": { "offline": 0, "available": 0, "reserved": 0, "on_call": 0, "wrapup": 0, "break": 0 }
+        "by_state": {
+          "offline": 0,
+          "available": 0,
+          "reserved": 0,
+          "on_call": 0,
+          "wrapup": 0,
+          "break": 0
+        }
       }
     },
     "buckets": [],
@@ -214,6 +221,124 @@
     "limit": 50
   },
   "my_attempts_last_page": {
+    "rows": [],
+    "next_cursor": null,
+    "limit": 50
+  },
+  "my_contacts_summary": {
+    "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+    "assignment_mode": "strict",
+    "total": 30,
+    "counts": {
+      "pending": 12,
+      "callback": 2,
+      "not_reached": 5,
+      "in_progress": 0,
+      "reached": 7,
+      "exhausted": 3,
+      "suppressed": 1
+    },
+    "due_now": 0,
+    "queue": {
+      "due": false,
+      "reason": "waiting_for_retry",
+      "next_due_at": "2026-11-03T15:00:00.000Z"
+    },
+    "unassigned_open": 4,
+    "retry": {
+      "allowed": true,
+      "rounds": 1,
+      "cooldown_minutes": 30,
+      "eligible": 6
+    }
+  },
+  "my_contacts": {
+    "rows": [
+      {
+        "id": "0b7e3c52-6a1d-4f8e-9b2c-5d4e3f2a1b0c",
+        "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+        "phone_e164": "+919812345678",
+        "bucket": "exhausted",
+        "state": "exhausted",
+        "attempt_count": 3,
+        "last_outcome": "no_answer",
+        "last_disposition": null,
+        "next_attempt_at": "2026-11-03T09:00:00.000Z",
+        "last_attempt_at": "2026-11-03T09:00:00.000Z",
+        "hero": [
+          {
+            "name": "Name",
+            "value": "Asha Rao"
+          },
+          {
+            "name": "Loan",
+            "value": "LN-2201"
+          }
+        ],
+        "retry": {
+          "eligible": true,
+          "blocked": null,
+          "rounds_used": 0,
+          "available_at": null
+        },
+        "override": null
+      },
+      {
+        "id": "1c8f4d63-7b2e-4a9f-8c3d-6e5f4a3b2c1d",
+        "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+        "phone_e164": "+919876543210",
+        "bucket": "callback",
+        "state": "pending",
+        "attempt_count": 1,
+        "last_outcome": "connected",
+        "last_disposition": "promise_to_pay",
+        "next_attempt_at": "2026-11-05T05:30:00.000Z",
+        "last_attempt_at": "2026-11-03T08:10:00.000Z",
+        "hero": [
+          {
+            "name": "Name",
+            "value": "Vikram Shah"
+          }
+        ],
+        "retry": {
+          "eligible": false,
+          "blocked": "not_retryable",
+          "rounds_used": 0,
+          "available_at": null
+        },
+        "override": {
+          "disposition": "promise_to_pay",
+          "extra_attempts": 3,
+          "retry_delay": true,
+          "calling_hours": false,
+          "granted_at": "2026-11-03T08:12:00.000Z"
+        }
+      },
+      {
+        "id": "2d9a5e74-8c3f-4b0a-9d4e-7f6a5b4c3d2e",
+        "campaign_id": "8c0f5b1e-3f7a-4d2b-9c61-2a4e5f6b7c8d",
+        "phone_e164": "+919700000001",
+        "bucket": "not_reached",
+        "state": "pending",
+        "attempt_count": 1,
+        "last_outcome": "busy",
+        "last_disposition": null,
+        "next_attempt_at": "2026-11-03T15:00:00.000Z",
+        "last_attempt_at": "2026-11-03T14:45:00.000Z",
+        "hero": [],
+        "retry": {
+          "eligible": false,
+          "blocked": "cooldown",
+          "rounds_used": 0,
+          "available_at": "2026-11-03T15:15:00.000Z"
+        },
+        "override": null
+      }
+    ],
+    "next_cursor": "eyJhdCI6IjIwMjYtMTEtMDNUMTQ6NDU6MDAuMDAwMDAwWiIsImlkIjoiMmQ5YTVlNzQifQ",
+    "limit": 3
+  },
+  "my_contacts_last_page": {
     "rows": [],
     "next_cursor": null,
     "limit": 50

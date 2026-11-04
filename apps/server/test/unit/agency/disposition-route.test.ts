@@ -842,3 +842,71 @@ describe('POST /attempts/:id/notes', () => {
     expect((await saveNotes(app, { agent_user_id: 'u-super', on_behalf: true, notes: 'x' })).statusCode).toBe(200);
   });
 });
+
+describe('POST /attempts/:id/disposition — overrides and callback ownership (contact assignment CA8, CA4)', () => {
+  const PTP: AgencyDisposition = {
+    code: 'promise_to_pay', label: 'Promise To Pay', requires_datetime: true,
+    override: { extra_attempts: 3, retry_delay: true },
+  };
+  const VM: AgencyDisposition = { code: 'voicemail', label: 'Voicemail', retry: { delay_minutes: 45, max_attempts: 2 } };
+  const campaignWith = (mode: string) => ({
+    id: 'camp-1', disposition_catalog: [...CATALOG, PTP, VM], assignment_mode: mode,
+    calling_window_start: '00:00:00', calling_window_end: '24:00:00',
+    calling_days: [1, 2, 3, 4, 5, 6, 7], default_timezone: 'UTC',
+  });
+  const written = () => repos.contact.releaseFromDisposition.mock.calls[0]![0] as unknown as Record<string, any>;
+  const CALLBACK = '2099-01-02T10:00:00.000Z';
+
+  it('a granting outcome hands its grant to the write; a plain one hands none', async () => {
+    repos.campaign.findById.mockResolvedValue(campaignWith('pool'));
+    const app = await buildApp();
+    await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'promise_to_pay', callback_at: CALLBACK });
+    expect(written().grant).toEqual({ extraAttempts: 3, retryDelay: true, callingHours: false });
+    repos.contact.releaseFromDisposition.mockClear();
+    await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'sale' });
+    expect(written().grant).toBeNull();
+  });
+
+  it('a callback on a strict or preferred campaign is owned by the RESERVED agent, also when a supervisor files it', async () => {
+    for (const mode of ['strict', 'preferred']) {
+      repos.campaign.findById.mockResolvedValue(campaignWith(mode));
+      repos.contact.releaseFromDisposition.mockClear();
+      const app = await buildApp();
+      await dispose(app, { agent_user_id: 'u-super', on_behalf: true, disposition_code: 'callback', callback_at: CALLBACK });
+      expect(written().callbackOwner, mode).toEqual({ userId: 'u-agent' });
+    }
+  });
+
+  it('no owner on a pool campaign, and none for an outcome that books no callback', async () => {
+    repos.campaign.findById.mockResolvedValue(campaignWith('pool'));
+    const app = await buildApp();
+    await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'callback', callback_at: CALLBACK });
+    expect(written().callbackOwner).toBeNull();
+    repos.campaign.findById.mockResolvedValue(campaignWith('strict'));
+    repos.contact.releaseFromDisposition.mockClear();
+    await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'sale' });
+    expect(written().callbackOwner).toBeNull();
+  });
+
+  it('a disposition retry whose max is spent asks for the extra-attempt spend with the rule delay, and reports where it landed', async () => {
+    repos.campaign.findById.mockResolvedValue(campaignWith('pool'));
+    repos.contact.findById.mockResolvedValue({ id: 'contact-1', timezone: null, attempt_count: 2 });
+    const at = new Date(Date.now() + 45 * 60_000);
+    repos.contact.releaseFromDisposition.mockImplementationOnce(async () => ({
+      state: 'pending', suppressed_reason: null, next_attempt_at: at,
+      extraAttemptSpent: true, overrideGranted: false, assignedTo: null,
+    }) as never);
+    const app = await buildApp();
+    const res = await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'voicemail' });
+    expect(written()).toMatchObject({ state: 'exhausted', extraAttempt: { reason: 'disposition_attempts_reached', delayMinutes: 45 } });
+    expect(res.json()).toMatchObject({ contact_state: 'pending', next_attempt_at: at.toISOString() });
+  });
+
+  it('a retry under its cap asks for no spend', async () => {
+    repos.campaign.findById.mockResolvedValue(campaignWith('pool'));
+    repos.contact.findById.mockResolvedValue({ id: 'contact-1', timezone: null, attempt_count: 1 });
+    const app = await buildApp();
+    await dispose(app, { agent_user_id: 'u-agent', disposition_code: 'voicemail' });
+    expect(written()).toMatchObject({ state: 'pending', extraAttempt: null });
+  });
+});

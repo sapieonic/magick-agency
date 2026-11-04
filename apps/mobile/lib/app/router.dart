@@ -12,6 +12,7 @@ import '../features/auth/update_required_screen.dart';
 import '../features/auth/verify_email_screen.dart';
 import '../features/calls/calls_screen.dart';
 import '../features/campaigns/campaigns_screen.dart';
+import '../features/contacts/my_contacts_screen.dart';
 import '../features/join/invite_screen.dart';
 import '../features/performance/performance_screen.dart';
 import '../features/preflight/preflight_screen.dart';
@@ -80,7 +81,8 @@ String? homeRouteOf(StationSignals station) => switch (station.home) {
 /// * on duty on a campaign and not on a break, the agent stays on the
 ///   station. Only the pre-flight of that same campaign stays open (it is
 ///   still finishing the join that made them on duty, and moves to the station
-///   itself).
+///   itself), and that campaign's My contacts (the agent picks whom to call
+///   next from it; the call it places takes the screen back to the station).
 /// On a break (the soft phone's own included, so an idle soft phone holds
 /// nothing), or off duty, the agent moves freely.
 ///
@@ -96,7 +98,10 @@ String? stationRedirect(StationSignals station, String location) {
   final holds = campaign && station.holdsStation;
   if (!(station.callActive || station.outcomeOwed || holds)) return null;
   if (location == target) return null;
-  if (campaign && !station.callActive && !station.outcomeOwed && location == Routes.preflight(station.campaignId!)) {
+  if (campaign &&
+      !station.callActive &&
+      !station.outcomeOwed &&
+      (location == Routes.preflight(station.campaignId!) || location == Routes.myContacts(station.campaignId!))) {
     return null;
   }
   return target;
@@ -175,6 +180,10 @@ final routerProvider = Provider<GoRouter>(
                 GoRoute(
                   path: 'station/:campaignId',
                   builder: (_, s) => StationScreen(campaignId: s.pathParameters['campaignId']!),
+                ),
+                GoRoute(
+                  path: 'contacts/:campaignId',
+                  builder: (_, s) => MyContactsScreen(campaignId: s.pathParameters['campaignId']!),
                 ),
               ],
             ),

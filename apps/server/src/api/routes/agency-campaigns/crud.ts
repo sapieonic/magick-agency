@@ -6,7 +6,12 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId, getOriginator } from '../../middleware/auth.middleware.js';
 import { auditLogger } from '../../../audit/audit-logger.js';
 import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
-import type { AgencyCampaignStatus } from '@magick-agency/contracts/agency';
+import type {
+  AgencyAssignmentMode,
+  AgencyCallbackFallback,
+  AgencyCampaignStatus,
+  AgencyOnUnstaff,
+} from '@magick-agency/contracts/agency';
 // The two `last_transition_by_*` columns folded into the one wire object. Every
 // route here that serves a campaign row goes through it, so the fold has one
 // definition — see its header for why it is derived from the record rather than
@@ -41,6 +46,39 @@ export function parseStatusFilter(raw: unknown): AgencyCampaignStatus[] | undefi
   if (parts.length === 0) return undefined;
   if (!parts.every((s): s is AgencyCampaignStatus => Object.hasOwn(CAMPAIGN_STATUSES, s))) return 'invalid';
   return parts;
+}
+
+/** The statuses in which `assignment_mode` may change (CA10): before the first dial, or paused. */
+const ASSIGNMENT_MODE_EDITABLE: ReadonlySet<AgencyCampaignStatus> = new Set(['draft', 'paused']);
+
+/**
+ * `assignment_mode` changes only while the campaign is `draft` or `paused`: 409
+ * `mode_change_requires_pause` otherwise. This handler is the authority (the public
+ * API layer holds no campaign copy and forwards the 409 unchanged).
+ *
+ * The mode decides which agent pacing pairs with which contact, and a running campaign
+ * has agents mid-queue on the old rule: their queue frames, the `unassigned_open` count
+ * and a callback's owner were all computed under it. Pausing first drains that and
+ * makes the switch a deliberate act. Sending the stored mode again is not a change and
+ * is accepted at any status, so a settings form that re-sends every field does not
+ * 409 on a running campaign. Every other setting stays patchable at any status.
+ *
+ * Returns false only when it has already replied.
+ */
+export function assignmentModeChangeRefused(
+  reply: FastifyReply,
+  body: Record<string, unknown>,
+  campaign: { status: AgencyCampaignStatus; assignment_mode: AgencyAssignmentMode },
+): boolean {
+  const next = body['assignment_mode'];
+  if (next === undefined || next === campaign.assignment_mode) return false;
+  if (ASSIGNMENT_MODE_EDITABLE.has(campaign.status)) return false;
+  reply.code(409).send({
+    error: 'Conflict',
+    code: 'mode_change_requires_pause',
+    message: `The assignment mode can be changed only while the campaign is a draft or paused; it is ${campaign.status}. Pause it first.`,
+  });
+  return true;
 }
 
 /** Registered by `agencyCampaignRoutes` on its own instance, after its `authMiddleware`. */
@@ -87,6 +125,15 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       wrapup_auto_return: body?.wrapup_auto_return as boolean | undefined,
       // Omitted ⇒ `false`, the column DEFAULT (0008). Shape-checked by `configRejected`.
       allow_wrapup_redial: body?.allow_wrapup_redial as boolean | undefined,
+      // Contact assignment and agent retry (0009). Omitted ⇒ the column DEFAULTs
+      // (`AGENCY_CONTACT_ASSIGNMENT_DEFAULTS`); shape-checked by `configRejected`.
+      assignment_mode: body?.assignment_mode as AgencyAssignmentMode | undefined,
+      on_unstaff: body?.on_unstaff as AgencyOnUnstaff | undefined,
+      callback_owner_grace_minutes: body?.callback_owner_grace_minutes as number | undefined,
+      callback_fallback: body?.callback_fallback as AgencyCallbackFallback | undefined,
+      allow_agent_retry: body?.allow_agent_retry as boolean | undefined,
+      agent_retry_rounds: body?.agent_retry_rounds as number | undefined,
+      agent_retry_cooldown_minutes: body?.agent_retry_cooldown_minutes as number | undefined,
       retry_policy: body?.retry_policy,
       disposition_catalog: body?.disposition_catalog,
       context_display: body?.context_display,
@@ -207,6 +254,9 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
     }
 
     if (configRejected(reply, body, campaign)) return reply;
+
+    // After the shape check, so a malformed mode is the 400 that names the field.
+    if (assignmentModeChangeRefused(reply, body, campaign)) return reply;
 
     if ('abandon_announcement_id' in body
       && await abandonAnnouncementRejected(request, reply, body.abandon_announcement_id)) return reply;

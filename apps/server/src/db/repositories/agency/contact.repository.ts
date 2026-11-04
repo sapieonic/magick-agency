@@ -25,7 +25,7 @@ import type {
 // claims to have suppressed. See its own header for why a second, SQL-shaped copy
 // of this rule was deliberately not written.
 import { normalizeE164 } from '../../../agency/dnc-registry.js';
-import { CONTACT_PHONE_DIGITS_SQL } from './sql-fragments.js';
+import { CONTACT_PHONE_DIGITS_SQL, contactPhoneDigitsSql } from './sql-fragments.js';
 import {
   contactFilterConditions,
   keysetCondition,
@@ -34,8 +34,74 @@ import {
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
+import { contactBucketSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
+import {
+  applyExtraAttemptOverride,
+  type OverrideGrant,
+  type SpendableDecision,
+} from '../../../agency/contact-overrides.js';
 
 const log = createChildLogger({ component: 'agency-repository' });
+
+/** The assignment modes that pair a contact with its owner (`strict`, `preferred`); `pool` claims through `claimDialable`. */
+export type AgencyOwnerClaimMode = 'strict' | 'preferred';
+
+/** One contact {@link AgencyContactRepository.claimForAgents} claimed, and the agent (user id) it was claimed for. */
+export interface AgencyAgentClaim {
+  agentUserId: string;
+  contact: AgencyContactRecord;
+}
+
+/**
+ * Where one agent's own queue stands ({@link AgencyContactRepository.probeAgentQueues}). "Open"
+ * is `pending` and not DNC, as the claim reads it.
+ */
+export interface AgencyAgentQueueProbeRow {
+  agentUserId: string;
+  /** An own open contact is due now (`next_attempt_at <= now()`). */
+  ownDue: boolean;
+  /** The earliest `next_attempt_at` among the agent's own open contacts; null when they have none. */
+  ownNextAt: Date | null;
+  /**
+   * Whether any own open contact is NOT a callback (`contactBucketSql`). Read only when the agent
+   * has open contacts and none is due (the one case the queue reason needs it); null otherwise.
+   */
+  ownHasNonCallback: boolean | null;
+}
+
+/** The unassigned pool, as a `preferred` agent sees it. */
+export interface AgencyPoolQueueProbe {
+  /** Due pool contacts, counted up to the probe's cap (never more). */
+  dueCount: number;
+  nextAt: Date | null;
+  /** As {@link AgencyAgentQueueProbeRow.ownHasNonCallback}, for the pool. */
+  hasNonCallback: boolean | null;
+}
+
+export interface AgencyAgentQueueProbe {
+  agents: AgencyAgentQueueProbeRow[];
+  /** Null unless the probe was asked for the pool (`preferred`). */
+  pool: AgencyPoolQueueProbe | null;
+}
+
+/** A due callback the grace/fallback sweep handed back to the pool. */
+export interface AgencyCallbackFallbackMove {
+  contactId: string;
+  fromUserId: string;
+}
+
+/** What {@link AgencyContactRepository.releaseFromDisposition} wrote. */
+export interface DispositionRelease {
+  state: AgencyContactState;
+  suppressed_reason: string | null;
+  next_attempt_at: Date;
+  /** An `extra_attempts` override kept the contact `pending` (CA8 spend). */
+  extraAttemptSpent: boolean;
+  /** The entry's override replaced the contact's (CA8 grant). */
+  overrideGranted: boolean;
+  /** The callback's new owner (CA4), or null when the owner did not change. */
+  assignedTo: string | null;
+}
 
 /** Result of applying one roster-ingest chunk. */
 interface AgencyIngestResult {
@@ -112,11 +178,85 @@ const MAX_REPORTED_DUPLICATE_ROWS = 20;
 const CLAIM_CANDIDATE_FACTOR = 4;
 
 /**
- * `CONTACT_PHONE_DIGITS_SQL` for a table alias. Spelled the same so Postgres
- * matches `idx_agency_contacts_campaign_phone_digits` structurally.
+ * The terms every claim ({@link AgencyContactRepository.claimDialable} and the owner claim) puts
+ * on a candidate row `alias` of campaign `campaignParam`: open (`pending`), due, not DNC, and its
+ * number not live on the campaign (`numberLiveSql`). See `claimDialable`'s header for why each
+ * term is there and why DNC is `IS DISTINCT FROM`. Spelled in the order the index serves them
+ * (`state`, `next_attempt_at`), not through `openContactSql`.
  */
-function contactDigits(alias: string): string {
-  return CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
+function dueAndNotBusySql(alias: string, campaignParam: string): string {
+  const c = alias;
+  return `${c}.state = 'pending' AND ${c}.next_attempt_at <= now()
+            AND ${c}.suppressed_reason IS DISTINCT FROM 'dnc'
+            AND NOT ${numberLiveSql(c, campaignParam)}`;
+}
+
+/**
+ * {@link AgencyContactRepository.claimForAgents}' statement. `$1` campaign, `$2` the agents' user
+ * ids in reservation order, `$3` (preferred only) the pool candidate factor.
+ */
+function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
+  const pool = mode === 'preferred'
+    ? `,
+       pool_locked AS MATERIALIZED (
+         SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
+           FROM agency_contacts c
+          WHERE c.campaign_id = $1::uuid AND c.assigned_user_id IS NULL
+            AND ${dueAndNotBusySql('c', '$1::uuid')}
+          ORDER BY c.next_attempt_at
+          LIMIT ((SELECT count(*) FROM agents) - (SELECT count(*) FROM own)) * $3::int
+            FOR UPDATE OF c SKIP LOCKED
+       ),
+       needy AS MATERIALIZED (
+         SELECT a.agent_user_id, row_number() OVER (ORDER BY a.ord) AS rn
+           FROM agents a
+          WHERE NOT EXISTS (SELECT 1 FROM own o WHERE o.agent_user_id = a.agent_user_id)
+       ),
+       pool_one AS MATERIALIZED (
+         SELECT p.id, row_number() OVER (ORDER BY p.next_attempt_at, p.id) AS rn
+           FROM (
+             SELECT DISTINCT ON (l.digits) l.id, l.next_attempt_at
+               FROM pool_locked l
+              WHERE NOT EXISTS (SELECT 1 FROM own_one o WHERE o.digits = l.digits)
+              ORDER BY l.digits, l.next_attempt_at, l.id
+           ) p
+       )`
+    : '';
+  const pickedFromPool = mode === 'preferred'
+    ? `
+         UNION ALL
+         SELECT n.agent_user_id, p.id FROM needy n JOIN pool_one p ON p.rn = n.rn`
+    : '';
+  return `WITH agents AS MATERIALIZED (
+         SELECT DISTINCT ON (a.agent_user_id) a.agent_user_id, a.ord
+           FROM unnest($2::uuid[]) WITH ORDINALITY AS a(agent_user_id, ord)
+          ORDER BY a.agent_user_id, a.ord
+       ),
+       own AS MATERIALIZED (
+         SELECT a.agent_user_id, a.ord, x.id, x.digits
+           FROM agents a
+          CROSS JOIN LATERAL (
+            SELECT c.id, ${contactPhoneDigitsSql('c')} AS digits
+              FROM agency_contacts c
+             WHERE c.campaign_id = $1::uuid AND c.assigned_user_id = a.agent_user_id
+               AND ${dueAndNotBusySql('c', '$1::uuid')}
+             ORDER BY c.next_attempt_at
+             LIMIT 1
+               FOR UPDATE OF c SKIP LOCKED
+          ) x
+       ),
+       own_one AS MATERIALIZED (
+         SELECT DISTINCT ON (digits) agent_user_id, id, digits
+           FROM own
+          ORDER BY digits, ord
+       )${pool},
+       picked AS MATERIALIZED (
+         SELECT agent_user_id, id FROM own_one${pickedFromPool}
+       )
+       UPDATE agency_contacts c SET state = 'in_flight', updated_at = now()
+         FROM picked
+        WHERE c.id = picked.id
+       RETURNING picked.agent_user_id AS claimed_for_user_id, c.*`;
 }
 
 export class AgencyContactRepository {
@@ -222,15 +362,9 @@ export class AgencyContactRepository {
     if (limit <= 0) return [];
     const { rows } = await getPool().query<AgencyContactRecord>(
       `WITH locked AS MATERIALIZED (
-         SELECT c.id, c.next_attempt_at, ${contactDigits('c')} AS digits
+         SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
-          WHERE c.campaign_id = $1 AND c.state = 'pending' AND c.next_attempt_at <= now()
-            AND c.suppressed_reason IS DISTINCT FROM 'dnc'
-            AND NOT EXISTS (
-              SELECT 1 FROM agency_contacts live
-               WHERE live.campaign_id = $1
-                 AND ${contactDigits('live')} = ${contactDigits('c')}
-                 AND live.state IN ('in_flight', 'connected'))
+          WHERE c.campaign_id = $1 AND ${dueAndNotBusySql('c', '$1')}
           ORDER BY c.next_attempt_at
             FOR UPDATE OF c SKIP LOCKED
           LIMIT $3
@@ -251,6 +385,206 @@ export class AgencyContactRepository {
       [campaignId, limit, limit * CLAIM_CANDIDATE_FACTOR],
     );
     return rows;
+  }
+
+  /**
+   * The contact-assignment claim (`strict` and `preferred` campaigns; `pool` keeps
+   * {@link claimDialable}): at most ONE due contact for each of `agentUserIds`, and for each
+   * row returned, the agent it was claimed for.
+   *
+   *  - `strict`: an agent's own contacts only (`assigned_user_id` = them). Nothing unassigned,
+   *    nothing of another agent's, ever.
+   *  - `preferred`: the agent's own earliest due contact; an agent with NO own contact
+   *    claimable now takes one from the pool (`assigned_user_id IS NULL`). Never another
+   *    agent's. An agent whose own pick lost the same-number tie below gets nothing this tick
+   *    rather than a pool contact: they have own work due, and the next tick takes it.
+   *
+   * `agentUserIds` is the reservation order (the tick's longest-idle fairness order): it
+   * decides ties, so the pairing is deterministic. A repeated id counts once.
+   *
+   * ── Every property of {@link claimDialable}, kept ─────────────────────────
+   *
+   * Same terms (`pending`, `next_attempt_at <= now()`, DNC `IS DISTINCT FROM`, the busy probe:
+   * `dueAndNotBusySql`), the same `FOR UPDATE … SKIP LOCKED` as the correctness mechanism
+   * against a second leader, and every pick in a MATERIALIZED CTE so it runs exactly once (no
+   * `IN (SELECT … LIMIT n FOR UPDATE)` the planner can re-run, `packages/db/CLAUDE.md`). One
+   * live call per number holds ACROSS agents: two agents' own picks on one number keep the
+   * first agent's (`own_one`), and a pool pick on a number an own pick took is dropped, so
+   * one claim never puts two calls on a number; the next tick sees it busy and moves on.
+   *
+   * ── Never more rows than agents ───────────────────────────────────────────
+   *
+   * `own` is one LATERAL pick per agent with `LIMIT 1`; `own_one` only removes rows; the pool
+   * rows are joined 1:1 by rank to the agents with no own pick (`needy`), which are disjoint
+   * from the agents in `own`. So each agent appears at most once and the final UPDATE joins a
+   * materialised list of distinct ids. Pinned under the forced re-run plan by
+   * `agency-contact-claim-owner.test.ts`.
+   *
+   * ── One statement, and the plan ───────────────────────────────────────────
+   *
+   * One round trip per tick, like {@link claimDialable}: the per-agent picks run inside the
+   * statement (a LATERAL index probe per agent) instead of one claim per agent from the
+   * engine. Each own pick is a range scan of `idx_agency_contacts_assignee` (`campaign_id`,
+   * `assigned_user_id`, `state`, `next_attempt_at <= now()` as the index condition, DNC as a
+   * filter), read in `next_attempt_at` order and stopped at the first row it can lock, so its
+   * cost does not grow with the agent's queue. The pool pick (preferred only) reads the due
+   * head of the campaign (`idx_agency_contacts_dialable`, or the assignee index's NULL range)
+   * for `needy × CLAIM_CANDIDATE_FACTOR` rows, and `LIMIT 0` — no rows read, none locked — when
+   * every agent had their own pick. EXPLAIN ANALYZE on a 200k-row seeded campaign (50 agents
+   * × 2k own, 100k pool), 3 agents: ~15 ms, `Index Scan using idx_agency_contacts_assignee`
+   * with `Limit → LockRows` per agent (loops=3).
+   *
+   * A bounded loop of per-agent claims was the alternative: N round trips per tick with the
+   * one-per-number rule re-checked between them by a read the next claim could race. Nothing
+   * the single statement gives up made that worth it.
+   *
+   * The busy probe is a read, not a lock, exactly as in {@link claimDialable} (see its "What
+   * the guard does not cover"): enough against other ticks, which never overlap per campaign.
+   */
+  async claimForAgents(
+    campaignId: string,
+    agentUserIds: readonly string[],
+    mode: AgencyOwnerClaimMode,
+  ): Promise<AgencyAgentClaim[]> {
+    if (agentUserIds.length === 0) return [];
+    const values: unknown[] = [campaignId, [...agentUserIds]];
+    if (mode === 'preferred') values.push(CLAIM_CANDIDATE_FACTOR);
+    const { rows } = await getPool().query<AgencyContactRecord & { claimed_for_user_id: string }>(
+      ownerClaimSql(mode),
+      values,
+    );
+    return rows.map(({ claimed_for_user_id, ...contact }) => ({
+      agentUserId: claimed_for_user_id,
+      contact: contact as AgencyContactRecord,
+    }));
+  }
+
+  /**
+   * Where each agent's own queue stands, for pacing (who has something due, so who is worth
+   * reserving) and for the agent's `queue` frame (why nothing is due). One statement for every
+   * agent; with `pool`, one row more for the unassigned pool (`preferred`).
+   *
+   * Every read is an index probe that stops early, never a count of a queue: the earliest own
+   * open contact per agent (`idx_agency_contacts_assignee`, `next_attempt_at` order, LIMIT 1;
+   * due iff it is due now), and only for an agent with nothing due, whether ANY open contact is
+   * not a callback (`contactBucketSql`, the one definition of a callback), which stops at the
+   * first one. The pool's due count stops at `pool.dueCap`.
+   *
+   * "Due" here is the claim's open-and-due terms without the busy probe: an agent whose only
+   * due contact shares a number with a live call reads as due and is reserved, and the claim
+   * then gives them nothing that tick, as a short claim does in pool mode.
+   *
+   * @param callbackCodes the campaign's `callbackCodes(catalog)`.
+   */
+  async probeAgentQueues(
+    campaignId: string,
+    agentUserIds: readonly string[],
+    opts: { callbackCodes: readonly string[]; pool?: { dueCap: number } },
+  ): Promise<AgencyAgentQueueProbe> {
+    const pool = opts.pool ?? null;
+    if (agentUserIds.length === 0 && !pool) return { agents: [], pool: null };
+    const p = params();
+    const campaign = p.add(campaignId);
+    const ids = p.add([...agentUserIds]);
+    const codes = p.add([...opts.callbackCodes]);
+    const open = (alias: string) => `${alias}.campaign_id = ${campaign} AND ${openContactSql(alias)}`;
+    const poolSql = pool
+      ? `
+       UNION ALL
+       SELECT NULL::uuid, head.next_at, head.next_at <= now(),
+              CASE WHEN head.next_at > now() THEN EXISTS (
+                SELECT 1 FROM agency_contacts n
+                 WHERE ${open('n')} AND n.assigned_user_id IS NULL
+                   AND ${contactBucketSql('n', codes)} <> 'callback') END,
+              (SELECT count(*)::int FROM (
+                 SELECT 1 FROM agency_contacts d
+                  WHERE ${open('d')} AND d.assigned_user_id IS NULL AND d.next_attempt_at <= now()
+                  LIMIT ${p.add(Math.max(0, Math.floor(pool.dueCap)))}::int) due)
+         FROM (SELECT (SELECT h.next_attempt_at FROM agency_contacts h
+                        WHERE ${open('h')} AND h.assigned_user_id IS NULL
+                        ORDER BY h.next_attempt_at LIMIT 1) AS next_at) head`
+      : '';
+    const { rows } = await getPool().query<{
+      agent_user_id: string | null;
+      next_at: Date | null;
+      due: boolean | null;
+      has_non_callback: boolean | null;
+      due_count: number | null;
+    }>(
+      `SELECT a.agent_user_id, own.next_at, own.next_at <= now() AS due,
+              CASE WHEN own.next_at > now() THEN EXISTS (
+                SELECT 1 FROM agency_contacts n
+                 WHERE ${open('n')} AND n.assigned_user_id = a.agent_user_id
+                   AND ${contactBucketSql('n', codes)} <> 'callback') END AS has_non_callback,
+              NULL::int AS due_count
+         FROM (SELECT DISTINCT unnest(${ids}::uuid[]) AS agent_user_id) a
+         LEFT JOIN LATERAL (
+           SELECT c.next_attempt_at AS next_at FROM agency_contacts c
+            WHERE ${open('c')} AND c.assigned_user_id = a.agent_user_id
+            ORDER BY c.next_attempt_at LIMIT 1
+         ) own ON true${poolSql}`,
+      p.values,
+    );
+    const agents: AgencyAgentQueueProbeRow[] = [];
+    let poolRow: AgencyPoolQueueProbe | null = null;
+    for (const r of rows) {
+      if (r.agent_user_id === null) {
+        poolRow = { dueCount: r.due_count ?? 0, nextAt: r.next_at, hasNonCallback: r.has_non_callback };
+      } else {
+        agents.push({
+          agentUserId: r.agent_user_id,
+          ownDue: r.due === true,
+          ownNextAt: r.next_at,
+          ownHasNonCallback: r.has_non_callback,
+        });
+      }
+    }
+    return { agents, pool: pool ? poolRow ?? { dueCount: 0, nextAt: null, hasNonCallback: null } : null };
+  }
+
+  /**
+   * The callback grace/fallback (CA5), one campaign, one statement: every DUE callback (bucket
+   * `callback` by `contactBucketSql`, `next_attempt_at <= now() - grace`) whose owner has no
+   * live session on the campaign loses its owner, and each move writes its
+   * `agency_contact_assignment_events` row (`callback_fallback`, actor NULL: the system) under
+   * `batchId`. Both in one statement, so a move without its history row cannot exist.
+   *
+   * "Live session" is `presentSessionSql`: joined (`left_at IS NULL`) and not `offline` (a
+   * station that closed, or a reaped one), the rule the supervisor's progress reads too.
+   *
+   * Never a live contact: only `pending` rows are picked, under `FOR UPDATE SKIP LOCKED` in a
+   * MATERIALIZED pick (a row a tick is claiming is skipped, not waited on), and the UPDATE
+   * re-checks `pending` on the locked row. Returns the moves (at most `limit`).
+   */
+  async fallBackOverdueCallbacks(input: {
+    campaignId: string;
+    graceMinutes: number;
+    callbackCodes: readonly string[];
+    batchId: string;
+    limit: number;
+  }): Promise<AgencyCallbackFallbackMove[]> {
+    if (input.callbackCodes.length === 0 || input.limit <= 0) return [];
+    const { rows } = await getPool().query<{ contact_id: string; from_user_id: string }>(
+      `WITH due AS MATERIALIZED (
+         SELECT c.id, c.assigned_user_id
+           FROM agency_contacts c
+          WHERE c.campaign_id = $1::uuid
+            AND c.state = 'pending'
+            AND c.assigned_user_id IS NOT NULL
+            AND c.next_attempt_at <= now() - make_interval(mins => $2::int)
+            AND ${contactBucketSql('c', '$3')} = 'callback'
+            AND NOT EXISTS (
+              SELECT 1 FROM agency_agent_sessions s
+               WHERE s.campaign_id = $1::uuid AND s.agent_user_id = c.assigned_user_id
+                 AND ${presentSessionSql('s')})
+          ORDER BY c.next_attempt_at
+          LIMIT $5
+            FOR UPDATE OF c SKIP LOCKED
+       ),
+       ${returnToPoolSql('callback_fallback', '$4')}`,
+      [input.campaignId, input.graceMinutes, [...input.callbackCodes], input.batchId, input.limit],
+    );
+    return rows.map((r) => ({ contactId: r.contact_id, fromUserId: r.from_user_id }));
   }
 
   /**
@@ -934,55 +1268,240 @@ export class AgencyContactRepository {
     lastOutcome: string | null;
     nextAttemptAt: Date | null;
     suppressedReason: string | null;
-  }): Promise<{ state: AgencyContactState; suppressed_reason: string | null } | null> {
-    const { rows } = await getPool().query<{ state: AgencyContactState; suppressed_reason: string | null }>(
-      `UPDATE agency_contacts c
-          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $4::varchar END,
-              last_outcome = COALESCE($5::varchar, c.last_outcome),
-              last_disposition = $3::varchar,
-              next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at
-                                     ELSE COALESCE($6::timestamptz, c.next_attempt_at) END,
-              suppressed_reason = CASE WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason
-                                       ELSE COALESCE($7::varchar, c.suppressed_reason) END,
-              updated_at = now()
-         FROM agency_call_attempts r
-        WHERE c.id = $1
-          AND r.id = $2
-          AND r.contact_id = c.id
-          AND (c.state = 'connected'
-               OR (c.state = 'pending' AND c.last_disposition = $3::varchar)
-               OR c.suppressed_reason = 'dnc')
-          AND NOT EXISTS (
-                SELECT 1 FROM agency_call_attempts n
-                 WHERE n.contact_id = c.id AND n.attempt_number > r.attempt_number)
-          AND NOT EXISTS (
-                SELECT 1 FROM agency_manual_calls m
-                 WHERE m.contact_id = c.id AND m.contact_claimed
-                   AND (m.settled_at IS NULL OR m.created_at > r.created_at))
-      RETURNING c.state, c.suppressed_reason`,
-      [
-        opts.contactId,
-        opts.attemptId,
-        opts.dispositionCode,
-        opts.state,
-        opts.lastOutcome,
-        opts.nextAttemptAt,
-        opts.suppressedReason,
-      ],
-    );
-    const landed = rows[0] ?? null;
-    if (landed && landed.state !== opts.state) {
-      log.warn(
-        {
-          contactId: opts.contactId,
-          requestedState: opts.state,
-          state: landed.state,
-          suppressedReason: landed.suppressed_reason,
-        },
-        'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+    /**
+     * CA8 grant: the recorded entry's `override` (`overrideGrantOf`). The contact's
+     * `override_*` columns are REPLACED with it, `override_disposition` = this code. Absent or
+     * null: an existing grant is left alone.
+     */
+    grant?: OverrideGrant | null;
+    /**
+     * CA8 spend: the decision is the disposition `retry`'s max-attempts exhaustion
+     * (`disposition_attempts_reached`); `delayMinutes` is that rule's delay. An unspent
+     * `extra_attempts` then keeps the contact `pending` instead.
+     */
+    extraAttempt?: { reason: string; delayMinutes: number; now: Date } | null;
+    /**
+     * CA4: the decision booked a callback on a strict / preferred campaign; the agent who took
+     * the call (the attempt's reserved agent). A contact in the pool is assigned to them.
+     */
+    callbackOwner?: { userId: string } | null;
+  }): Promise<DispositionRelease | null> {
+    return withTransaction(async (client) => {
+      // ── The row, locked: everything decided below reads it as it is now ────────
+      // The grant, the spend and the owner are decided on the locked row and written by the
+      // ONE guarded statement below, so they land exactly when the release lands.
+      const { rows: [locked] } = await client.query<Pick<AgencyContactRecord,
+        'state' | 'suppressed_reason' | 'last_disposition' | 'assigned_user_id' | 'override_extra_attempts'
+        | 'tenant_id' | 'campaign_id'>>(
+        `SELECT state, suppressed_reason, last_disposition, assigned_user_id, override_extra_attempts,
+                tenant_id, campaign_id
+           FROM agency_contacts WHERE id = $1 FOR UPDATE`,
+        [opts.contactId],
       );
-    }
-    return landed;
+      if (!locked) return null;
+      const dnc = locked.suppressed_reason === 'dnc';
+      // The FIRST write of this attempt's disposition: the contact is parked for it. The only
+      // write that grants, spends or assigns. A same-code replay (`pending` on this code)
+      // re-lands the record but never grants again (a replay must not top a spent grant back
+      // up), never spends again, and keeps the state the first write chose.
+      const firstWrite = locked.state === 'connected' && !dnc;
+      const replay = !dnc && locked.state === 'pending' && locked.last_disposition === opts.dispositionCode;
+
+      const grant = firstWrite ? (opts.grant ?? null) : null;
+      let state: AgencyContactState = opts.state;
+      let nextAttemptAt = opts.nextAttemptAt;
+      let extraAttempts: number | null = grant ? grant.extraAttempts : null;
+      let extraAttemptSpent = false;
+      if (opts.extraAttempt && firstWrite) {
+        const remaining = grant ? grant.extraAttempts : locked.override_extra_attempts;
+        const applied = applyExtraAttemptOverride(
+          { contactState: opts.state, nextAttemptAt: opts.nextAttemptAt, reason: opts.extraAttempt.reason },
+          remaining,
+          { delayMinutes: opts.extraAttempt.delayMinutes },
+          opts.extraAttempt.now,
+        );
+        if (applied.spent) {
+          state = applied.decision.contactState;
+          nextAttemptAt = applied.decision.nextAttemptAt;
+          extraAttempts = remaining - 1;
+          extraAttemptSpent = true;
+        }
+      } else if (replay && state !== 'pending') {
+        // A replay whose decision closes the contact, finding it `pending` on this code: the
+        // first write left it open (it spent an extra attempt), or the agent reopened it since
+        // (agent retry). Either way the replay keeps it `pending` at its time and spends
+        // nothing: re-closing it would undo what happened after the first write.
+        state = 'pending';
+        nextAttemptAt = null;
+      }
+      const assignTo = firstWrite && opts.callbackOwner && locked.assigned_user_id === null
+        ? opts.callbackOwner.userId
+        : null;
+
+      const { rows } = await client.query<{ state: AgencyContactState; suppressed_reason: string | null; next_attempt_at: Date }>(
+        `UPDATE agency_contacts c
+            SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $4::varchar END,
+                last_outcome = COALESCE($5::varchar, c.last_outcome),
+                last_disposition = $3::varchar,
+                next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at
+                                       ELSE COALESCE($6::timestamptz, c.next_attempt_at) END,
+                suppressed_reason = CASE WHEN c.suppressed_reason = 'dnc' THEN c.suppressed_reason
+                                         ELSE COALESCE($7::varchar, c.suppressed_reason) END,
+                -- CA8: a grant replaces every part; a spend decrements (never below 0, the CHECK).
+                override_disposition = CASE WHEN $8::boolean THEN $3::varchar ELSE c.override_disposition END,
+                override_granted_at = CASE WHEN $8::boolean THEN now() ELSE c.override_granted_at END,
+                override_retry_delay = CASE WHEN $8::boolean THEN $9::boolean ELSE c.override_retry_delay END,
+                override_calling_hours = CASE WHEN $8::boolean THEN $10::boolean ELSE c.override_calling_hours END,
+                -- Not COALESCE(GREATEST(0, $11), col): GREATEST ignores a NULL argument,
+                -- so that would write 0 over every grant on every non-granting outcome.
+                override_extra_attempts = CASE WHEN $11::int IS NULL THEN c.override_extra_attempts
+                                               ELSE GREATEST(0, $11::int) END,
+                -- CA4: a callback in the pool goes to the agent who took the call.
+                assigned_user_id = COALESCE(c.assigned_user_id, $12::uuid),
+                assigned_at = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN now() ELSE c.assigned_at END,
+                assigned_by_user_id = CASE WHEN c.assigned_user_id IS NULL AND $12::uuid IS NOT NULL THEN $12::uuid
+                                           ELSE c.assigned_by_user_id END,
+                updated_at = now()
+           FROM agency_call_attempts r
+          WHERE c.id = $1
+            AND r.id = $2
+            AND r.contact_id = c.id
+            AND (c.state = 'connected'
+                 OR (c.state = 'pending' AND c.last_disposition = $3::varchar)
+                 OR c.suppressed_reason = 'dnc')
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_call_attempts n
+                   WHERE n.contact_id = c.id AND n.attempt_number > r.attempt_number)
+            AND NOT EXISTS (
+                  SELECT 1 FROM agency_manual_calls m
+                   WHERE m.contact_id = c.id AND m.contact_claimed
+                     AND (m.settled_at IS NULL OR m.created_at > r.created_at))
+        RETURNING c.state, c.suppressed_reason, c.next_attempt_at`,
+        [
+          opts.contactId,
+          opts.attemptId,
+          opts.dispositionCode,
+          state,
+          opts.lastOutcome,
+          nextAttemptAt,
+          opts.suppressedReason,
+          grant !== null,
+          grant?.retryDelay ?? false,
+          grant?.callingHours ?? false,
+          extraAttempts,
+          assignTo,
+        ],
+      );
+      const landed = rows[0] ?? null;
+      if (!landed) return null;
+      if (landed.state !== state) {
+        log.warn(
+          {
+            contactId: opts.contactId,
+            requestedState: state,
+            state: landed.state,
+            suppressedReason: landed.suppressed_reason,
+          },
+          'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+        );
+      }
+      if (extraAttemptSpent) {
+        await client.query(
+          `UPDATE agency_call_attempts
+              SET override_applied = array_append(override_applied, 'extra_attempts')
+            WHERE id = $1 AND NOT ('extra_attempts' = ANY(override_applied))`,
+          [opts.attemptId],
+        );
+      }
+      if (assignTo) {
+        await client.query(
+          `INSERT INTO agency_contact_assignment_events
+             (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
+           VALUES ($1, $2, $3, NULL, $4::uuid, $4::uuid, 'callback', gen_random_uuid())`,
+          [locked.tenant_id, locked.campaign_id, opts.contactId, assignTo],
+        );
+      }
+      return {
+        state: landed.state,
+        suppressed_reason: landed.suppressed_reason,
+        next_attempt_at: landed.next_attempt_at,
+        extraAttemptSpent,
+        overrideGranted: grant !== null,
+        assignedTo: assignTo,
+      };
+    }, { pool: getPool() });
+  }
+
+  /**
+   * The settlement's write for an attempt whose outcome-policy decision EXHAUSTS the contact
+   * because the rule's `max_attempts` is spent (`max_attempts_reached`), with the CA8 spend:
+   * when the contact holds an unspent `extra_attempts` override it stays `pending`, due after
+   * the rule's delay, one extra attempt is spent and the attempt being settled records
+   * `override_applied += 'extra_attempts'`. Otherwise it is exactly {@link markState}'s write
+   * of the decision.
+   *
+   * One transaction, contact row first then the attempt's (the order the disposition's write
+   * takes them in, so the two can never deadlock). Spent at most once per attempt: an attempt
+   * that already records the spend (a replayed settlement) writes nothing and spends nothing,
+   * and the decrement never goes below 0. The DNC freeze is {@link markState}'s: a row carrying
+   * `suppressed_reason = 'dnc'` stays `suppressed` and spends nothing.
+   *
+   * @returns the state that landed and whether an extra attempt was spent; null when the
+   *   contact or the attempt does not exist (nothing written).
+   */
+  async markExhaustedOrSpendExtraAttempt(opts: {
+    contactId: string;
+    attemptId: string;
+    decision: SpendableDecision;
+    delayMinutes: number;
+    now: Date;
+  }): Promise<{ state: AgencyContactState; extraAttemptSpent: boolean; nextAttemptAt: Date | null } | null> {
+    return withTransaction(async (client) => {
+      const { rows: [contact] } = await client.query<Pick<AgencyContactRecord, 'override_extra_attempts' | 'suppressed_reason'>>(
+        'SELECT override_extra_attempts, suppressed_reason FROM agency_contacts WHERE id = $1 FOR UPDATE',
+        [opts.contactId],
+      );
+      const { rows: [attempt] } = await client.query<{ override_applied: string[] }>(
+        'SELECT override_applied FROM agency_call_attempts WHERE id = $1 AND contact_id = $2 FOR UPDATE',
+        [opts.attemptId, opts.contactId],
+      );
+      if (!contact || !attempt) return null;
+      if (attempt.override_applied.includes('extra_attempts')) {
+        // This attempt's settlement already spent one: nothing is decided twice.
+        return { state: 'pending', extraAttemptSpent: false, nextAttemptAt: null };
+      }
+      const remaining = contact.suppressed_reason === 'dnc' ? 0 : contact.override_extra_attempts;
+      const applied = applyExtraAttemptOverride(opts.decision, remaining, { delayMinutes: opts.delayMinutes }, opts.now);
+      const { rows: [landed] } = await client.query<{ state: AgencyContactState; suppressed_reason: string | null }>(
+        `UPDATE agency_contacts
+            SET state = CASE WHEN suppressed_reason = 'dnc' THEN 'suppressed' ELSE $2 END,
+                next_attempt_at = CASE WHEN suppressed_reason = 'dnc' THEN next_attempt_at ELSE COALESCE($3, next_attempt_at) END,
+                override_extra_attempts = GREATEST(0, override_extra_attempts - $4::int),
+                updated_at = now()
+          WHERE id = $1
+        RETURNING state, suppressed_reason`,
+        [opts.contactId, applied.decision.contactState, applied.decision.nextAttemptAt, applied.spent ? 1 : 0],
+      );
+      if (applied.spent) {
+        await client.query(
+          `UPDATE agency_call_attempts
+              SET override_applied = array_append(override_applied, 'extra_attempts')
+            WHERE id = $1`,
+          [opts.attemptId],
+        );
+      }
+      if (landed && landed.state !== applied.decision.contactState) {
+        log.warn(
+          { contactId: opts.contactId, requestedState: applied.decision.contactState, state: landed.state },
+          'Refused a state transition on a DNC-suppressed contact — the row stays suppressed',
+        );
+      }
+      return {
+        state: landed?.state ?? applied.decision.contactState,
+        extraAttemptSpent: applied.spent,
+        nextAttemptAt: applied.decision.nextAttemptAt,
+      };
+    }, { pool: getPool() });
   }
 
   /**
@@ -1498,6 +2017,7 @@ export class AgencyContactRepository {
       SELECT c.id, c.phone_e164, c.state, c.attempt_count, c.our_fault_attempts,
              c.last_outcome, c.last_disposition, c.next_attempt_at,
              c.suppressed_reason, c.timezone, c.csv_line_number,
+             c.assigned_user_id, c.assigned_at,
              c.created_at, c.updated_at,
              ${keysetAtSql('c.created_at')} AS cursor_at
         FROM agency_contacts c

@@ -18,6 +18,7 @@
  * | `account_capacity_freed` | a live call on the account ended            | the attempt and manual-call end writes |
  * | `agent_available`        | an agent entered `available`, or attached a station | `AgentStateMachine` (via the runtime), the station attach |
  * | `contacts_changed`       | contacts arrived on the campaign            | the CSV ingest's roster chunks |
+ * | `station_ready`          | a station was sent `ready` on a `strict` / `preferred` campaign, so what it last heard of its queue is that frame's | the station attach |
  *
  * ── Serialisable on purpose ─────────────────────────────────────────────────
  * Events are plain JSON objects and carry ids only, never a row, a callback or a
@@ -46,7 +47,13 @@ export type PacingInvalidationEvent =
   | { type: 'account_capacity_freed'; tenantId: string; accountId: string }
   /** `campaignId` null when the publisher does not know it; consumers then resolve it or widen. */
   | { type: 'agent_available'; sessionId: string; campaignId: string | null }
-  | { type: 'contacts_changed'; campaignId: string };
+  | { type: 'contacts_changed'; campaignId: string }
+  /**
+   * The engine forgets the last `queue` frame it sent this session (contact assignment, CA3):
+   * the `ready` replaced it on the station, or cleared it when its queue read failed, so the
+   * next tick sends the agent's queue again.
+   */
+  | { type: 'station_ready'; sessionId: string; campaignId: string };
 
 export type PacingInvalidationEventType = PacingInvalidationEvent['type'];
 
@@ -84,6 +91,10 @@ export function parsePacingInvalidationEvent(raw: unknown): PacingInvalidationEv
       if (campaignId !== null && campaignId !== undefined && !isId(campaignId)) return null;
       return { type: 'agent_available', sessionId: e['sessionId'], campaignId: campaignId ?? null };
     }
+    case 'station_ready':
+      return isId(e['sessionId']) && isId(e['campaignId'])
+        ? { type: 'station_ready', sessionId: e['sessionId'], campaignId: e['campaignId'] }
+        : null;
     default:
       return null;
   }

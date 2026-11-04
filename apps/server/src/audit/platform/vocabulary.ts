@@ -147,12 +147,15 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   // Two unrelated things called "retry" on adjacent surfaces is how an operator
   // reads a roster of 812 new contacts as 812 redials.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.assignment_mode_changed', label: 'Campaign assignment mode changed', group: 'Campaign', product: 'agency' },
 
   { value: 'agency_disposition.created', label: 'Call disposition filed', group: 'Calls', product: 'agency' },
   { value: 'agency_attempts.exported', label: 'Call attempts exported', group: 'Calls', product: 'agency' },
   { value: 'agency_contacts.exported', label: 'Contact roster exported', group: 'Calls', product: 'agency' },
   { value: 'agency_attempt.hung_up', label: 'Call ended by agent', group: 'Calls', product: 'agency' },
   { value: 'agency_attempt.redialed', label: 'Customer redialled from wrap-up', group: 'Calls', product: 'agency' },
+  { value: 'agency_contacts.agent_retry_reopened', label: 'Agent reopened their not-reached contacts', group: 'Calls', product: 'agency' },
+  { value: 'agency_contact.agent_dialed', label: 'Agent called one of their contacts', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.created', label: 'Number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'dnc_entry.deleted', label: 'Do-not-call entry removed', group: 'Calls', product: 'agency' },
   // The soft phone (docs/softphone.md §6). "Soft-phone call" in every label: on this
@@ -165,8 +168,11 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   { value: 'agency_manual_call.dnc_marked', label: 'Soft-phone number marked do-not-call', group: 'Calls', product: 'agency' },
   { value: 'agency_softphone_settings.updated', label: 'Soft-phone settings changed', group: 'Calls', product: 'agency' },
 
+  { value: 'agency_contacts.callback_fallback', label: 'Overdue callbacks returned to the pool', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.assigned', label: 'Agent assigned to campaign', group: 'Staffing', product: 'agency' },
   { value: 'agency_campaign_agent.unassigned', label: 'Agent unassigned from campaign', group: 'Staffing', product: 'agency' },
+  { value: 'agency_contacts.assigned', label: 'Contacts assigned to agents', group: 'Staffing', product: 'agency' },
+  { value: 'agency_contacts.unassigned_on_unstaff', label: "Unstaffed agent's contacts returned to the pool (or kept)", group: 'Staffing', product: 'agency' },
   { value: 'agency_session.joined', label: 'Agent joined session', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.left', label: 'Agent left session', group: 'Staffing', product: 'agency' },
   { value: 'agency_session.break_started', label: 'Agent break started', group: 'Staffing', product: 'agency' },
@@ -202,6 +208,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   { value: 'agency_attempt', label: 'Call attempt' },
   { value: 'agency_disposition', label: 'Call disposition' },
   { value: 'agency_campaign_agent', label: 'Campaign agent assignment' },
+  { value: 'agency_contact', label: 'Contact' },
   { value: 'agency_manual_call', label: 'Soft-phone call' },
   { value: 'agency_softphone_settings', label: 'Soft-phone settings' },
   { value: 'dnc_entry', label: 'Do-not-call entry' },
