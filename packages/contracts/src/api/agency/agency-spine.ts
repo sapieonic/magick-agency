@@ -98,6 +98,8 @@ export interface AgencyAttemptFilters {
   agent_manual?: AgencyListFlag;
   /** From an agent-led reopen ("Retry not reached") placed through pacing. */
   agent_reopened?: AgencyListFlag;
+  /** The dial spent an override (an outcome that let the agent go past the retry rules). */
+  override_applied?: AgencyListFlag;
   /** A dial was placed (`dialed_at` set). */
   placed?: AgencyListFlag;
   /**

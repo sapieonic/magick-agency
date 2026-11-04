@@ -28,6 +28,8 @@ export const ATTEMPT_QUERY_PARAMS = [
   // HALF-OPEN window on `dialed_at` the insights counts use; `from` / `to` above keep their
   // inclusive `created_at` meaning for the date pickers that rely on it.
   'caller_id', 'redial', 'agent_manual', 'agent_reopened', 'placed', 'dialed_from', 'dialed_to',
+  // The Insights overrides counts (dials that spent an override).
+  'override_applied',
 ] as const;
 
 /**

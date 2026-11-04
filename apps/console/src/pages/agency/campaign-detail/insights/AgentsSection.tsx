@@ -142,7 +142,13 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
       csv: (r) => r.redials,
     },
     { key: 'retries', header: 'Retries', numeric: true, render: (r) => formatCount(r.retries), csv: (r) => r.retries },
-    { key: 'overrides', header: 'Overrides', numeric: true, render: (r) => formatCount(r.overrides), csv: (r) => r.overrides },
+    {
+      key: 'overrides',
+      header: 'Overrides',
+      numeric: true,
+      render: (r) => agentCount(r, { ...range, override_applied: true }, r.overrides, 'dials that used an override'),
+      csv: (r) => r.overrides,
+    },
   ];
 
   return (

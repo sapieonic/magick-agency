@@ -301,6 +301,9 @@ export function OverridesSection({
     { key: 'code', header: 'Outcome', render: (l) => (l.total ? labels.get(l.code) ?? l.code : ''), csv: (l) => l.code },
     { key: 'agent', header: 'Agent', render: who, csv: who },
     { key: 'granted', header: 'Granted', numeric: true, render: (l) => formatCount(l.granted), csv: (l) => l.granted },
+    // Not linked: `used` is by the GRANTING outcome (the contact's earlier disposition), which no
+    // attempts filter selects. Every dial that spent an override opens from the Agents table's
+    // Overrides column and the allocation's Overrides used (`override_applied=1`).
     { key: 'used', header: 'Used', numeric: true, render: (l) => formatCount(l.used), csv: (l) => l.used },
   ];
   return (

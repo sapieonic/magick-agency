@@ -32,7 +32,7 @@ const SCALAR_KEYS = [
   'contact_id', 'agent_user_id', 'caller_id', 'phone', 'from', 'to', 'dialed_from', 'dialed_to',
 ] as const;
 /** `1` / `0` flags. */
-const FLAG_KEYS = ['redial', 'agent_manual', 'agent_reopened', 'placed'] as const;
+const FLAG_KEYS = ['redial', 'agent_manual', 'agent_reopened', 'override_applied', 'placed'] as const;
 
 type ListKey = (typeof LIST_KEYS)[number];
 type ScalarKey = (typeof SCALAR_KEYS)[number];
@@ -101,6 +101,7 @@ const FLAG_COPY: Record<FlagKey, { on: string; off: string }> = {
   redial: { on: 'Wrap-up redials', off: 'Not wrap-up redials' },
   agent_manual: { on: 'Dialled by hand', off: 'Not dialled by hand' },
   agent_reopened: { on: 'Dials after a reopen', off: 'Not after a reopen' },
+  override_applied: { on: 'Dials that used an override', off: 'No override used' },
   placed: { on: 'Dials placed', off: 'Never dialled' },
 };
 

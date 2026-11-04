@@ -18,6 +18,7 @@ import { contactPhoneDigitsSql } from './sql-fragments.js';
 import {
   agentManualAttemptSql,
   agentReopenedAttemptSql,
+  overrideAppliedAttemptSql,
   attemptedContactSql,
   dialedRangeSql,
   placedDialSql,
@@ -427,6 +428,7 @@ export function attemptFilterConditions(
   if (f.redial !== undefined) conditions.push(redialAttemptSql(f.redial, 'a'));
   if (f.agentManual !== undefined) conditions.push(agentManualAttemptSql(f.agentManual, 'a'));
   if (f.agentReopened !== undefined) conditions.push(agentReopenedAttemptSql(f.agentReopened, 'a'));
+  if (f.overrideApplied !== undefined) conditions.push(overrideAppliedAttemptSql(f.overrideApplied, 'a'));
   if (f.dialedFrom || f.dialedTo) {
     conditions.push(dialedRangeSql(
       'a',

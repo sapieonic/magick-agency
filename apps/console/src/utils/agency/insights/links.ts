@@ -18,7 +18,7 @@ import { AGENCY_UNASSIGNED_FILTER } from '@magick-agency/contracts/api/agency/ag
  *    (the roster's waiting buckets), `attempted=1|0` (a dial placed, or none).
  *  - Call attempts: `outcome`, `disposition_code`, `agent_user_id` (through the
  *    attempt's session), `caller_id`, `redial=1|0`, `agent_manual=1`,
- *    `agent_reopened=1`, and `placed=1` plus `dialed_from` / `dialed_to`.
+ *    `agent_reopened=1`, `override_applied=1`, and `placed=1` plus `dialed_from` / `dialed_to`.
  *
  * ── Every attempts link is a placed-dial link ───────────────────────────────
  * The insights attempt numbers count dials PLACED (IN6: `dialed_at` set), cut by
@@ -56,6 +56,8 @@ export interface InsightsAttemptsFilter {
   redial?: boolean;
   agent_manual?: boolean;
   agent_reopened?: boolean;
+  /** `true`: dials that spent an override (`override_applied=1`). */
+  override_applied?: boolean;
   /** The insights range, half-open `[from, to)`; sent as `dialed_from` / `dialed_to`. */
   from?: string;
   to?: string;
@@ -95,6 +97,7 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
   if (filter.redial !== undefined) params.set('redial', filter.redial ? '1' : '0');
   if (filter.agent_manual) params.set('agent_manual', '1');
   if (filter.agent_reopened) params.set('agent_reopened', '1');
+  if (filter.override_applied) params.set('override_applied', '1');
   params.set('placed', '1');
   if (filter.from) params.set('dialed_from', filter.from);
   if (filter.to) params.set('dialed_to', filter.to);
@@ -179,6 +182,7 @@ export const ALLOCATION_LINK_FILTERS: Readonly<Record<string, AllocationLinkSpec
   redials: { attempts: { redial: true } },
   retries_reopened: { attempts: { agent_reopened: true } },
   retries_manual: { attempts: { agent_manual: true } },
+  overrides_used: { attempts: { override_applied: true } },
 };
 
 /**

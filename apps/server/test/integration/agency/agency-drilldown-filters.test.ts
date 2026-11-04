@@ -437,6 +437,26 @@ describe('attempts: the drill-down slices, total = direct SQL = rows listed', ()
     expect(await attemptTotal(s.campaign.id, { placed: '1', agent_user_id: U1 })).toBe(4);
   });
 
+  it('override_applied=1|0: the dials that spent an override (the rollup\'s overrides_used), and the rest', async () => {
+    const s = await seed();
+    const contact = await insertAgencyContact(s.campaign.id, { state: 'exhausted' });
+    await insertAgencyAttempt(s.campaign.id, contact.id, { attempt_number: 1, state: 'ended', dialed_at: at(1), override_applied: ['extra_attempts'] });
+    await insertAgencyAttempt(s.campaign.id, contact.id, { attempt_number: 2, state: 'ended', dialed_at: at(2), override_applied: ['retry_delay', 'calling_hours'] });
+    await insertAgencyAttempt(s.campaign.id, contact.id, { attempt_number: 3, state: 'ended', dialed_at: at(8), override_applied: ['extra_attempts'] });
+    const query = { ...WINDOW, override_applied: '1' };
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_call_attempts
+        WHERE campaign_id = $1 AND cardinality(override_applied) > 0 AND dialed_at >= $2 AND dialed_at < $3`,
+      [s.campaign.id, WINDOW.dialed_from, WINDOW.dialed_to]);
+    expect(expected).toBe(2);
+    expect(await attemptTotal(s.campaign.id, query)).toBe(expected);
+    expect(await walkAttempts(s.campaign.id, query)).toHaveLength(expected);
+    // The two halves partition the window's dials.
+    expect(await attemptTotal(s.campaign.id, { ...WINDOW, override_applied: '0' }) + expected)
+      .toBe(await attemptTotal(s.campaign.id, WINDOW));
+    expect(parseAttemptFilters({ override_applied: 'yes' }).ok).toBe(false);
+  });
+
   it('the total is the whole filtered list, not what is left after a cursor', async () => {
     const s = await seed();
     const parsed = parseAttemptFilters(WINDOW);
@@ -528,6 +548,18 @@ describe('plans: index-shaped predicates (sequential and bitmap scans off, the s
     await crowd();
     await contactTotal(s.campaign.id, { attempted: '1' });
     expectCampaignIndexed(await planOfLast(), 'agency_contacts');
+  });
+
+  it('attempts total, override_applied=1 for an agent over a window: the campaign and window in the index, the flag a filter on them', async () => {
+    const s = await seed();
+    await crowd();
+    await attemptTotal(s.campaign.id, { dialed_from: '2026-10-01T09:00:00Z', dialed_to: '2026-10-01T14:00:00Z', override_applied: '1' });
+    const plan = await planOfLast();
+    expect(plan).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+    const cond = plan.split('\n').find((l) => l.includes('Index Cond:') && l.includes('dialed_at')) ?? '';
+    expect(cond, plan).toContain('campaign_id =');
+    expect(cond, plan).toContain('dialed_at >=');
+    expect(plan).toMatch(/Filter: .*cardinality\(override_applied\) > 0/);
   });
 
   it('attempts total, dialed window: a dialed_at range under the campaign, both bounds in the index', async () => {

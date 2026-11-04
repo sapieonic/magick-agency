@@ -119,6 +119,8 @@ export interface AgencyAttemptFilters {
   agentManual?: boolean;
   /** `agent_reopened=1|0`: from an agent-led reopen placed through pacing (0011), or not. */
   agentReopened?: boolean;
+  /** `override_applied=1|0`: the dial spent an override (`overrideAppliedAttemptSql`), or not. */
+  overrideApplied?: boolean;
   /** `placed=1|0`: a dial was placed (`dialed_at` set), or the attempt never left the building. */
   placed?: boolean;
   /**
@@ -561,6 +563,7 @@ export function parseAttemptFilters(query: Record<string, unknown>): FilterParse
   const redial = parseFlagParam('redial', query['redial'], issues);
   const agentManual = parseFlagParam('agent_manual', query['agent_manual'], issues);
   const agentReopened = parseFlagParam('agent_reopened', query['agent_reopened'], issues);
+  const overrideApplied = parseFlagParam('override_applied', query['override_applied'], issues);
   const placed = parseFlagParam('placed', query['placed'], issues);
   const dialedFrom = parseFilterDate('dialed_from', query['dialed_from'], issues);
   const dialedTo = parseFilterDate('dialed_to', query['dialed_to'], issues);
@@ -591,6 +594,7 @@ export function parseAttemptFilters(query: Record<string, unknown>): FilterParse
       ...(redial !== undefined ? { redial } : {}),
       ...(agentManual !== undefined ? { agentManual } : {}),
       ...(agentReopened !== undefined ? { agentReopened } : {}),
+      ...(overrideApplied !== undefined ? { overrideApplied } : {}),
       ...(placed !== undefined ? { placed } : {}),
       ...(dialedFrom ? { dialedFrom } : {}),
       ...(dialedTo ? { dialedTo } : {}),

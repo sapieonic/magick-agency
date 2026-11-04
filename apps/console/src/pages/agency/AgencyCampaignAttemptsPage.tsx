@@ -305,6 +305,7 @@ export function AgencyCampaignAttemptsPage() {
     if (filters.redial) n += 1;
     if (filters.agent_manual) n += 1;
     if (filters.agent_reopened) n += 1;
+    if (filters.override_applied) n += 1;
     if (filters.placed) n += 1;
     if (filters.dialed_from || filters.dialed_to) n += 1;
     if (filters.from || filters.to) n += 1;

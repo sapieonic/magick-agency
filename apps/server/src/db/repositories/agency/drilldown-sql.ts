@@ -130,6 +130,17 @@ export function agentReopenedAttemptSql(reopened: boolean, alias: string): strin
 }
 
 /**
+ * The dial spent an override (`override_applied` non-empty, migration 0009): the rollup's
+ * `overrides_used` measure (`insights-rollup-sql.ts`) spelled once more, word for word, so the
+ * Insights overrides counts and the list they open are one set. Not indexed on its own: it
+ * filters the campaign's (and agent's, and window's) placed dials, like `redial` and
+ * `agent_manual` (`agency-drilldown-filters.test.ts` pins the plan).
+ */
+export function overrideAppliedAttemptSql(applied: boolean, alias: string): string {
+  return applied ? `cardinality(${alias}.override_applied) > 0` : `cardinality(${alias}.override_applied) = 0`;
+}
+
+/**
  * Attempts placed for agent USER `userParam` on campaign `campaignParam`: the attempt's
  * `reserved_agent_id` is one of that person's sessions on the campaign
  * (`agency_agent_sessions.agent_user_id`). Sessions are per shift, so the set is a handful of
