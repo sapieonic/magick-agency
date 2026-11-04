@@ -14,15 +14,10 @@ import { agencyCampaignRepository } from '../../../db/repositories/agency.reposi
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import { UUID_RE } from '../../../utils/uuid.js';
+import { MY_CONTACT_CALL_MESSAGES } from '../../../agency/my-contact-call.js';
+import { sendRefusal } from '../helpers/refusal.js';
 
-const TITLES: Record<number, string> = {
-  400: 'Bad Request',
-  403: 'Forbidden',
-  404: 'Not Found',
-  409: 'Conflict',
-};
-
-/** The repo-wide refusal shape: `{ error: <title>, code, message, details? }`. */
+/** The repo-wide refusal shape: `{ error: <title>, code, message, details? }` ({@link sendRefusal}). */
 export function refuse(
   reply: FastifyReply,
   status: number,
@@ -30,7 +25,7 @@ export function refuse(
   message: string,
   details?: Record<string, unknown>,
 ): FastifyReply {
-  return reply.code(status).send({ error: TITLES[status] ?? 'Error', code, message, ...(details ? { details } : {}) });
+  return sendRefusal(reply, status, code, message, { details });
 }
 
 export const isUuid = (value: unknown): value is string => typeof value === 'string' && UUID_RE.test(value);
@@ -49,8 +44,8 @@ export function agentRetryOpen(campaign: Pick<AgencyCampaignRecord, 'allow_agent
 
 /** The copy of the two scope refusals the agent's routes share. */
 export const AGENT_SCOPE_MESSAGES = {
-  assignment_disabled: 'Contact assignment is not enabled for this account.',
-  not_staffed: "You're not assigned to this campaign. Ask your supervisor to add you.",
+  assignment_disabled: MY_CONTACT_CALL_MESSAGES.assignment_disabled,
+  not_staffed: MY_CONTACT_CALL_MESSAGES.not_staffed,
 } as const;
 
 /** The flag for a tenant and, when known, an account (account overrides are read only with one). */
