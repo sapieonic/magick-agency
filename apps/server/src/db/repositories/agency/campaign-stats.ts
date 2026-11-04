@@ -166,6 +166,7 @@ export async function campaignStats(
          SELECT COUNT(*) AS contacts_total,
                 COUNT(*) FILTER (WHERE state = 'pending') AS contacts_pending,
                 COUNT(*) FILTER (WHERE state = 'in_flight') AS contacts_in_flight,
+                COUNT(*) FILTER (WHERE state = 'connected') AS contacts_connected,
                 COUNT(*) FILTER (WHERE state = 'completed') AS contacts_completed,
                 COUNT(*) FILTER (WHERE state = 'suppressed') AS contacts_suppressed,
                 COUNT(*) FILTER (WHERE state = 'exhausted') AS contacts_exhausted,
@@ -319,6 +320,7 @@ export async function campaignStats(
        SELECT ct.contacts_total::text AS contacts_total,
               ct.contacts_pending::text AS contacts_pending,
               ct.contacts_in_flight::text AS contacts_in_flight,
+              ct.contacts_connected::text AS contacts_connected,
               ct.contacts_completed::text AS contacts_completed,
               ct.contacts_suppressed::text AS contacts_suppressed,
               ct.contacts_exhausted::text AS contacts_exhausted,
@@ -403,6 +405,9 @@ export async function campaignStats(
     contacts_total: num('contacts_total'),
     contacts_pending: num('contacts_pending'),
     contacts_in_flight: num('contacts_in_flight'),
+    // Bridged and owing an outcome (live or in wrap-up). Without it the six buckets
+    // do not sum to `contacts_total` while calls are parked.
+    contacts_connected: num('contacts_connected'),
     contacts_completed: num('contacts_completed'),
     contacts_suppressed: num('contacts_suppressed'),
     contacts_exhausted: num('contacts_exhausted'),

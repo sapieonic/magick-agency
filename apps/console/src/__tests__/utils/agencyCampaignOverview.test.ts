@@ -186,8 +186,8 @@ describe('the contact state the stats payload does not count', () => {
     expect(funnel.unaccounted).toBe(0);
     expect(funnel.reconciles).toBe(true);
 
-    const onCall = funnel.cells.find((c) => c.key === 'contacts_on_call')!;
-    expect(onCall.label).toBe('On a call');
+    const onCall = funnel.cells.find((c) => c.key === 'contacts_connected')!;
+    expect(onCall.label).toBe('On a call or in wrap-up');
     expect(onCall.count).toBe(3);
     expect(onCall.percentLabel).toBe('8.3%');
     // It is a subtraction, not a reading, and says so.
@@ -196,7 +196,7 @@ describe('the contact state the stats payload does not count', () => {
     // With the sixth state named, the key now accounts for the whole list.
     const shares = funnel.cells.reduce((sum, c) => sum + (c.percent ?? 0), 0);
     expect(shares).toBeCloseTo(100, 6);
-    expect(funnel.barLabel).toContain('On a call 3');
+    expect(funnel.barLabel).toContain('On a call or in wrap-up 3');
   });
 
   it('stays out of the way when the buckets already reconcile', () => {
@@ -207,7 +207,7 @@ describe('the contact state the stats payload does not count', () => {
 
     expect(funnel.unaccounted).toBe(0);
     expect(funnel.reconciles).toBe(true);
-    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_on_call');
+    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_connected');
     expect(funnel.cells).toHaveLength(5);
   });
 
@@ -221,7 +221,7 @@ describe('the contact state the stats payload does not count', () => {
     const funnel = contactFunnel(reconciling({ contacts_exhausted: undefined }));
 
     expect(funnel.unaccounted).toBeNull();
-    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_on_call');
+    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_connected');
   });
 
   it('draws no bar at all on an incoherent payload', () => {
@@ -260,29 +260,26 @@ describe('the contact state the stats payload does not count', () => {
 
     expect(funnel.reconciles).toBe(false);
     expect(funnel.unaccounted).toBeNull();
-    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_on_call');
+    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_connected');
   });
 
   it('prefers a real counter over the subtraction the moment the API carries one', () => {
-    // Forward-compatible: `contacts_on_call` is not on the payload today, but
-    // it is the field that closes this properly, and it must win when it lands.
-    const funnel = contactFunnel({
-      ...reconciling(),
-      contacts_on_call: 3,
-    } as AgencyCampaignStats & { contacts_on_call: number });
+    // The server counts `contacts_connected` (IN8); the subtraction is only the
+    // fallback for a payload without it, and the reading must win.
+    const funnel = contactFunnel({ ...reconciling(), contacts_connected: 3 });
 
-    const onCall = funnel.cells.find((c) => c.key === 'contacts_on_call')!;
+    const onCall = funnel.cells.find((c) => c.key === 'contacts_connected')!;
     expect(onCall.count).toBe(3);
     expect(onCall.derived).toBe(false);
   });
 
   it('does not state a derived figure as an observation', () => {
     const onCall = contactFunnel(reconciling()).cells
-      .find((c) => c.key === 'contacts_on_call')!;
+      .find((c) => c.key === 'contacts_connected')!;
 
-    // The plain hint asserts a fact ("Bridged to an agent right now"). While the
+    // The plain hint asserts a fact ("Bridged to an agent…"). While the
     // number is a subtraction, the hint must not.
-    expect(onCall.hint).not.toBe('Bridged to an agent right now.');
+    expect(onCall.hint).not.toMatch(/^Bridged to an agent/);
     expect(onCall.hint).toMatch(/do not cover/);
     // And it must route the reader to the one place that can confirm it.
     expect(onCall.hint).toMatch(/Contacts tab/);
@@ -291,11 +288,11 @@ describe('the contact state the stats payload does not count', () => {
   it('reads as an observation once it is one', () => {
     const onCall = contactFunnel({
       ...reconciling(),
-      contacts_on_call: 3,
-    } as AgencyCampaignStats & { contacts_on_call: number })
-      .cells.find((c) => c.key === 'contacts_on_call')!;
+      contacts_connected: 3,
+    })
+      .cells.find((c) => c.key === 'contacts_connected')!;
 
-    expect(onCall.hint).toBe('Bridged to an agent right now.');
+    expect(onCall.hint).toBe('Bridged to an agent and still owing an outcome: on the call now, or in wrap-up.');
   });
 
   describe('the note beneath the funnel', () => {
@@ -372,16 +369,16 @@ describe('the contact state the stats payload does not count', () => {
     /*
       The invariant the panel now claims: every contact is in a listed cell or in
       `unaccounted`. Summing only the five would break it the moment the API carries
-      `contacts_on_call` and disagrees with the residual — sending 2 where the
+      `contacts_connected` and disagrees with the residual — sending 2 where the
       five leave 3 would report 3 unaccounted beside a cell reading 2, and the
       genuinely unexplained 1 would go unnamed.
     */
     const funnel = contactFunnel({
       ...reconciling(),
-      contacts_on_call: 2,
-    } as AgencyCampaignStats & { contacts_on_call: number });
+      contacts_connected: 2,
+    });
 
-    const onCall = funnel.cells.find((c) => c.key === 'contacts_on_call')!;
+    const onCall = funnel.cells.find((c) => c.key === 'contacts_connected')!;
     expect(onCall.count).toBe(2);
     expect(onCall.derived).toBe(false);
     // 36 total − (0+0+2+23+8 counted) − 2 measured on-call = 1 still unexplained.
@@ -392,27 +389,42 @@ describe('the contact state the stats payload does not count', () => {
   it('treats a measured count that overshoots the total as incoherent', () => {
     const funnel = contactFunnel({
       ...reconciling(),
-      contacts_on_call: 10,
-    } as AgencyCampaignStats & { contacts_on_call: number });
+      contacts_connected: 10,
+    });
 
     expect(funnel.reconciles).toBe(false);
     expect(funnel.unaccounted).toBeNull();
     expect(funnel.segments).toEqual([]);
   });
 
+  it('sums to the total from six READ counters, the parked contact named as wrap-up', () => {
+    // The IN8 payload: every bucket counted by the server, one contact parked in
+    // `connected` (bridged, owing an outcome). Nothing derived, nothing left over.
+    const funnel = contactFunnel({ ...reconciling(), contacts_pending: 4, contacts_connected: 1 });
+
+    const cell = funnel.cells.find((c) => c.key === 'contacts_connected')!;
+    expect(cell.derived).toBe(false);
+    expect(cell.count).toBe(1);
+    expect(cell.label).toMatch(/in wrap-up/);
+    expect(funnel.cells).toHaveLength(6);
+    expect(funnel.cells.reduce((sum, c) => sum + (c.count ?? 0), 0)).toBe(36);
+    expect(funnel.unaccounted).toBe(0);
+    expect(funnel.reconciles).toBe(true);
+  });
+
   it('keeps a measured zero, unlike a derived one', () => {
     // Once it is a reading, "no contact is on a call" is a fact worth printing.
     const funnel = contactFunnel({
       ...reconciling({ contacts_pending: 5 }),
-      contacts_on_call: 0,
-    } as AgencyCampaignStats & { contacts_on_call: number });
+      contacts_connected: 0,
+    });
 
-    const onCall = funnel.cells.find((c) => c.key === 'contacts_on_call')!;
+    const onCall = funnel.cells.find((c) => c.key === 'contacts_connected')!;
     expect(onCall.count).toBe(0);
     expect(onCall.value).toBe('0');
     expect(onCall.derived).toBe(false);
     // A real zero is still not drawn on the bar — there is nothing to see.
-    expect(funnel.segments.map((s) => s.key)).not.toContain('contacts_on_call');
+    expect(funnel.segments.map((s) => s.key)).not.toContain('contacts_connected');
   });
 });
 
@@ -1270,7 +1282,7 @@ describe('funnelBarWithheldNote', () => {
     }));
 
     expect(funnel.unaccounted).toBeNull();
-    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_on_call');
+    expect(funnel.cells.map((c) => c.key)).not.toContain('contacts_connected');
     expect(funnel.segments).toEqual([]);
     // And the sentence in place of the bar does not turn the withheld
     // subtraction into a claim that the 500 got nowhere.

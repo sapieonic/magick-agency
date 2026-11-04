@@ -149,7 +149,7 @@ function expectedContact(code: string): { state: string; next?: 'retry' | 'callb
 
 /** The numeric fields of the stats payload these checks read. */
 const COUNTERS = [
-  'contacts_total', 'contacts_pending', 'contacts_in_flight', 'contacts_completed', 'contacts_suppressed', 'contacts_exhausted',
+  'contacts_total', 'contacts_pending', 'contacts_in_flight', 'contacts_connected', 'contacts_completed', 'contacts_suppressed', 'contacts_exhausted',
   'retries_pending', 'attempts_total', 'attempts_connected', 'attempts_live', 'answered_24h', 'human_connects',
   'machine_connects', 'unclassified_connects', 'attempts_success',
 ] as const;
@@ -157,8 +157,11 @@ type StatsBody = { [K in (typeof COUNTERS)[number]]: number } & { agents: unknow
 interface StatsRead { at: number; body: StatsBody }
 
 function checkStatsInvariants(s: StatsBody, label: string) {
-  const parts = s.contacts_pending + s.contacts_in_flight + s.contacts_completed + s.contacts_suppressed + s.contacts_exhausted;
-  expect(parts, `${label}: contact states exceed contacts_total`).toBeLessThanOrEqual(s.contacts_total);
+  // One statement reads every bucket, and the six states are exhaustive (the state CHECK), so
+  // they sum to the total exactly, calls parked in `connected` included.
+  const parts = s.contacts_pending + s.contacts_in_flight + s.contacts_connected + s.contacts_completed
+    + s.contacts_suppressed + s.contacts_exhausted;
+  expect(parts, `${label}: contact states do not sum to contacts_total`).toBe(s.contacts_total);
   expect(s.retries_pending, label).toBeLessThanOrEqual(s.contacts_pending);
   expect(s.attempts_connected, label).toBeLessThanOrEqual(s.attempts_total);
   expect(s.attempts_live, label).toBeLessThanOrEqual(s.attempts_total);

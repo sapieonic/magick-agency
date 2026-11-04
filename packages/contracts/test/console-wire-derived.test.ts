@@ -128,6 +128,8 @@ interface OldAgencyCampaignStats {
   contacts_total?: number;
   contacts_pending?: number;
   contacts_in_flight?: number;
+  // Added deliberately (IN8): contacts bridged and owing an outcome, so the buckets sum.
+  contacts_connected?: number;
   contacts_completed?: number;
   contacts_suppressed?: number;
   contacts_exhausted?: number;

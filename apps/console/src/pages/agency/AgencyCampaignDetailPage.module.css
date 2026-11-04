@@ -447,8 +447,8 @@ a.actionButton {
    along. (`AgentFloor` does paint an agent's `on_call` with `--accent`, which is
    the "one state, one colour" rule — but its subject is the agent and this one's
    is the contact, and the collision inside this bar has to win.) */
-.funnelSeg[data-state='contacts_on_call'],
-.swatch[data-state='contacts_on_call'] { background: var(--teal); }
+.funnelSeg[data-state='contacts_connected'],
+.swatch[data-state='contacts_connected'] { background: var(--teal); }
 .funnelSeg[data-state='contacts_pending'],
 .swatch[data-state='contacts_pending'] { background: var(--accent); }
 .funnelSeg[data-state='contacts_suppressed'],

@@ -13,7 +13,7 @@ import { DASH } from './figure';
 export type ContactStateKey =
   | 'contacts_completed'
   | 'contacts_in_flight'
-  | 'contacts_on_call'
+  | 'contacts_connected'
   | 'contacts_pending'
   | 'contacts_suppressed'
   | 'contacts_exhausted';
@@ -40,7 +40,7 @@ export type ContactStateKey =
 export const CONTACT_STATE_BUCKET: Record<AgencyContactState, ContactStateKey> = {
   pending: 'contacts_pending',
   in_flight: 'contacts_in_flight',
-  connected: 'contacts_on_call',
+  connected: 'contacts_connected',
   completed: 'contacts_completed',
   exhausted: 'contacts_exhausted',
   suppressed: 'contacts_suppressed',
@@ -83,9 +83,11 @@ export const CONTACT_FUNNEL_STATES: readonly ContactFunnelState[] = [
   },
   { key: 'contacts_in_flight', label: 'In flight', hint: 'Being dialed right now.' },
   {
-    key: 'contacts_on_call',
-    label: 'On a call',
-    hint: 'Bridged to an agent right now.',
+    key: 'contacts_connected',
+    // The `connected` state: bridged and still owing an outcome, which is the live
+    // call AND the wrap-up after it. "On a call" alone hid the wrap-up half.
+    label: 'On a call or in wrap-up',
+    hint: 'Bridged to an agent and still owing an outcome: on the call now, or in wrap-up.',
   },
   { key: 'contacts_pending', label: 'Waiting', hint: 'Not yet dialed, or waiting on a retry.' },
   {
@@ -113,14 +115,15 @@ const ON_CALL_DERIVED_HINT =
   'The contacts the other five counts do not cover. Filter the Contacts tab by '
   + '“On a call” to see which.';
 
-/** A bucket the stats payload carries a counter for. */
-type CountedKey = Exclude<ContactStateKey, 'contacts_on_call'>;
+/** A bucket the subtraction never stands in for. */
+type CountedKey = Exclude<ContactStateKey, 'contacts_connected'>;
 
 /**
- * The buckets the server actually counts — the terms of the subtraction below.
+ * The five buckets that are always read — the terms of the subtraction below.
  *
- * `contacts_on_call` is excluded by its type because the stats payload has no
- * field for it; that absence is the gap {@link contactFunnel} closes.
+ * `contacts_connected` is excluded by its type: it is read when the payload
+ * carries it (it does since IN8) and derived by subtraction when it does not.
+ * That fallback is the gap {@link contactFunnel} closes for an older server.
  *
  * Written as a `Record` and reduced to a list rather than written as the list
  * directly, because **a `Record` key set is exhaustiveness-checked and an array
@@ -154,8 +157,8 @@ export interface ContactFunnelCell extends ContactFunnelState {
   /**
    * True when {@link count} was worked out by subtraction rather than read.
    *
-   * Only ever true for `contacts_on_call`, and only until the server carries the
-   * field. It exists so the panel can mark the figure as inferred: it is the
+   * Only ever true for `contacts_connected`, and only on a payload that does not
+   * carry the field (a server older than IN8). It exists so the panel can mark the figure as inferred: it is the
    * one number here that is not a measurement, and the module's standing rule
    * is that a derived figure never passes itself off as a reading.
    */
@@ -185,7 +188,7 @@ export interface ContactFunnel {
   /**
    * The states to LIST in the key, in bar order.
    *
-   * Five always, plus `contacts_on_call` only when there is something to say
+   * Five always, plus `contacts_connected` only when there is something to say
    * about it — a real count, or a derived one above zero. A sixth row reading
    * "On a call 0" on every stopped campaign in the workspace would be noise,
    * and worse, it would train a supervisor to skim past the row on the one
@@ -200,9 +203,9 @@ export interface ContactFunnel {
    * Contacts no listed cell accounts for, or `null`.
    *
    * The invariant this panel claims: **every contact is in a listed cell or in
-   * here.** So while `contacts_on_call` is derived it is `0` by construction —
+   * here.** So while `contacts_connected` is derived it is `0` by construction —
    * the remainder *is* that cell — and it only goes positive once the server carries
-   * a real `contacts_on_call` that, with the five, still leaves something over.
+   * a real `contacts_connected` that, with the five, still leaves something over.
    *
    * `null` means the question could not be asked: no total, a counter missing,
    * or five counters that carry no information (all a real zero against a
@@ -272,20 +275,19 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
   const countersInformative = countedSum !== null && (countedSum > 0 || total === 0);
 
   /*
-    Prefer a reading over a derivation, always. `contacts_on_call` is not on the
-    payload today, but it is the field the server would add to close this properly, so
-    the moment it appears the subtraction stops being used — without a second
-    change here.
+    Prefer a reading over a derivation, always. The server counts
+    `contacts_connected` (IN8), so the subtraction below is only the fallback for
+    a payload that does not carry it (a server older than this console).
   */
-  const measuredOnCall = (stats as { contacts_on_call?: number } | null)?.contacts_on_call;
+  const measuredOnCall = stats?.contacts_connected;
   const onCallMeasured = typeof measuredOnCall === 'number';
 
   /*
     The remainder is taken against everything KNOWN, which once the server carries
-    `contacts_on_call` includes it.
+    `contacts_connected` includes it.
 
     Summing only the five would leave `unaccounted` describing the gap the
-    measured cell has already filled: The server sending `contacts_on_call: 2` where
+    measured cell has already filled: The server sending `contacts_connected: 2` where
     the five leave 3 would report 3 unaccounted beside a cell reading 2, and the
     genuinely unexplained 1 would go unnamed. Counting the measurement keeps one
     invariant true in both worlds — **every contact is in a listed cell or in
@@ -308,8 +310,8 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
   const unaccounted = onCallMeasured ? remainder : (remainder === null ? null : 0);
 
   const cells: ContactFunnelCell[] = CONTACT_FUNNEL_STATES.map((state) => {
-    const derived = state.key === 'contacts_on_call' && !onCallMeasured;
-    const raw = state.key === 'contacts_on_call' ? onCallCount : stats?.[state.key];
+    const derived = state.key === 'contacts_connected' && !onCallMeasured;
+    const raw = state.key === 'contacts_connected' ? onCallCount : stats?.[state.key];
     const value = typeof raw === 'number' ? raw : null;
     const percent = drawable && value !== null ? (value / total) * 100 : null;
     return {
@@ -332,7 +334,7 @@ export function contactFunnel(stats: AgencyCampaignStats | null): ContactFunnel 
   */
   const listed = cells.filter(
     (cell) =>
-      cell.key !== 'contacts_on_call'
+      cell.key !== 'contacts_connected'
       || onCallMeasured
       || (cell.count !== null && cell.count > 0),
   );
@@ -460,7 +462,7 @@ export function onCallNote(
   ending: CampaignEnding | null,
 ): string | null {
   if (ending === null) return null;
-  const cell = funnel.cells.find((c) => c.key === 'contacts_on_call');
+  const cell = funnel.cells.find((c) => c.key === 'contacts_connected');
   if (!cell || cell.count === null || cell.count === 0) return null;
 
   const noun = cell.count === 1 ? 'contact is' : 'contacts are';

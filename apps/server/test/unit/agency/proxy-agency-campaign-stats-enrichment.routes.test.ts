@@ -187,7 +187,8 @@ function coreStatsBody(overrides: Record<string, unknown> = {}): Record<string, 
     contacts_total: 400,
     contacts_pending: 120,
     contacts_in_flight: 3,
-    contacts_completed: 260,
+    contacts_connected: 2,
+    contacts_completed: 258,
     contacts_suppressed: 12,
     contacts_exhausted: 5,
     retries_pending: 7,
@@ -569,6 +570,17 @@ describe('the internal handler’s new success fields reach the client untouched
 
     expect(body['attempts_success']).toBe(63);
     expect(body['success_rate_pct']).toBe(26.25);
+    await app.close();
+  });
+
+  it('carries contacts_connected through enrichment, so the buckets still sum', async () => {
+    const app = await buildApp();
+    const body = await getStats(app);
+
+    expect(body['contacts_connected']).toBe(2);
+    const sum = ['contacts_pending', 'contacts_in_flight', 'contacts_connected', 'contacts_completed',
+      'contacts_suppressed', 'contacts_exhausted'].reduce((acc, k) => acc + (body[k] as number), 0);
+    expect(sum).toBe(body['contacts_total']);
     await app.close();
   });
 

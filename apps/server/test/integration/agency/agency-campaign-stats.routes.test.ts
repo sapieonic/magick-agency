@@ -238,6 +238,7 @@ describe('GET /api/v1/agency-campaigns/:id/stats (integration)', () => {
       contacts_total: 6,
       contacts_pending: 2,
       contacts_in_flight: 1,
+      contacts_connected: 0,
       contacts_completed: 1,
       contacts_suppressed: 1,
       contacts_exhausted: 1,

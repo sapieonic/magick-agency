@@ -294,6 +294,15 @@ export interface AgencyCampaignStats {
   contacts_total: number;
   contacts_pending: number;
   contacts_in_flight: number;
+  /**
+   * Contacts in state `connected`: bridged to an agent and still owing an outcome,
+   * whether the call is live or the agent is in wrap-up.
+   *
+   * Its own bucket for the reason `contacts_exhausted` is: without it the buckets
+   * (`pending + in_flight + connected + completed + suppressed + exhausted`) do not
+   * sum to `contacts_total` while calls are parked, and the gap is invisible.
+   */
+  contacts_connected: number;
   contacts_completed: number;
   contacts_suppressed: number;
   /**
@@ -613,6 +622,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   contacts_total: true,
   contacts_pending: true,
   contacts_in_flight: true,
+  contacts_connected: true,
   contacts_completed: true,
   contacts_suppressed: true,
   contacts_exhausted: true,

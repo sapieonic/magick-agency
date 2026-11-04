@@ -119,6 +119,7 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
   contacts_total: { consumedIn: FUNNEL },
   contacts_pending: { consumedIn: FUNNEL },
   contacts_in_flight: { consumedIn: FUNNEL },
+  contacts_connected: { consumedIn: FUNNEL },
   contacts_completed: { consumedIn: FUNNEL },
   contacts_suppressed: { consumedIn: FUNNEL },
   contacts_exhausted: { consumedIn: FUNNEL },

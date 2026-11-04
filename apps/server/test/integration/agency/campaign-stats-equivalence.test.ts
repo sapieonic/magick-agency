@@ -53,6 +53,7 @@ const REFERENCE_STATS_SQL = `SELECT
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1)::text AS contacts_total,
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'pending')::text AS contacts_pending,
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'in_flight')::text AS contacts_in_flight,
+  (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'connected')::text AS contacts_connected,
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'completed')::text AS contacts_completed,
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'suppressed')::text AS contacts_suppressed,
   (SELECT COUNT(*) FROM agency_contacts WHERE campaign_id = $1 AND state = 'exhausted')::text AS contacts_exhausted,
@@ -125,6 +126,9 @@ async function seedCampaign(catalog: unknown[], status = 'running'): Promise<str
   const pendingRetryLater = await contact({ state: 'pending', next_attempt_at: minutesAgo(-30), timezone: null });
   const inFlight = await contact({ state: 'in_flight' });
   const connected = await contact({ state: 'connected' });
+  // A second parked contact (in wrap-up, its attempt ended), so `contacts_connected`
+  // differs from every other bucket and a counter read off the wrong state fails.
+  await contact({ state: 'connected' });
   const completed = await contact({ state: 'completed' });
   const suppressed = await contact({ state: 'suppressed', suppressed_reason: 'dnc' });
   const exhausted = await contact({ state: 'exhausted' });
@@ -247,6 +251,7 @@ describe('campaign stats — single-pass aggregates vs one subquery per counter 
       contacts_total: stats.contacts_total,
       contacts_pending: stats.contacts_pending,
       contacts_in_flight: stats.contacts_in_flight,
+      contacts_connected: stats.contacts_connected,
       contacts_completed: stats.contacts_completed,
       contacts_suppressed: stats.contacts_suppressed,
       contacts_exhausted: stats.contacts_exhausted,
@@ -272,6 +277,7 @@ describe('campaign stats — single-pass aggregates vs one subquery per counter 
       contacts_total: num('contacts_total'),
       contacts_pending: num('contacts_pending'),
       contacts_in_flight: num('contacts_in_flight'),
+      contacts_connected: num('contacts_connected'),
       contacts_completed: num('contacts_completed'),
       contacts_suppressed: num('contacts_suppressed'),
       contacts_exhausted: num('contacts_exhausted'),
@@ -296,8 +302,14 @@ describe('campaign stats — single-pass aggregates vs one subquery per counter 
     });
 
     // Hand-counted, so the comparison above cannot pass on two empty sides.
-    expect(stats.contacts_total).toBe(14);
+    expect(stats.contacts_total).toBe(15);
     expect(stats.contacts_pending).toBe(3);
+    expect(stats.contacts_connected).toBe(2);
+    // The six buckets partition the roster, with a contact parked in `connected`.
+    expect(
+      stats.contacts_pending + stats.contacts_in_flight + stats.contacts_connected
+        + stats.contacts_completed + stats.contacts_suppressed + stats.contacts_exhausted,
+    ).toBe(stats.contacts_total);
     expect(stats.retries_pending).toBe(2);
     expect(stats.attempts_live).toBe(5);
     expect(stats.attempts_total).toBe(21);
