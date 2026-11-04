@@ -128,3 +128,22 @@ export {
 } from './agency/drilldown-sql.js';
 export type { ContactWaitingBucket } from './agency/drilldown-sql.js';
 export { contactListFilterConditions } from './agency/query-builders.js';
+export {
+  AgencyInsightsRollupRepository,
+  agencyInsightsRollupRepository,
+} from './agency/insights-rollup.repository.js';
+export type { InsightsRollupBatchResult } from './agency/insights-rollup.repository.js';
+export { INSIGHTS_BUCKET_MINUTES } from './agency/insights-rollup-sql.js';
+export type {
+  InsightsActivityAgentRow,
+  InsightsActivityRollup,
+  InsightsMeasures,
+  InsightsRangeQuery,
+  InsightsTrendRow,
+  InsightsTrends,
+} from './agency/insights-rollup-reads.js';
+export type {
+  InsightsAgentStateRow,
+  InsightsCallbackClass,
+  InsightsCallbackTiming,
+} from './agency/insights-range-reads.js';

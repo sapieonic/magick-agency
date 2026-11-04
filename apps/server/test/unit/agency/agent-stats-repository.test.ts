@@ -400,9 +400,10 @@ describe('occupancy is derived from the transition log', () => {
     expect(sql).toContain('lead(ev.at) OVER (PARTITION BY ev.session_id ORDER BY ev.at, ev.id)');
     expect(sql).toContain('FROM agency_agent_session_events e');
     // `ev.id` only exists in `intervals` because both halves of `events` carry it
-    // through — a `UNION ALL` of two `SELECT *`, so the column must be on both.
-    expect(sql).toContain('SELECT e.session_id, e.to_state, e.at, e.id');
-    expect(sql).toContain('SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id');
+    // through — a `UNION ALL` of two `SELECT *`, so the column must be on both (as must
+    // `break_reason`, which the insights reads split break time by).
+    expect(sql).toContain('SELECT e.session_id, e.to_state, e.break_reason, e.at, e.id');
+    expect(sql).toContain('SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.break_reason, e.at, e.id');
   });
 
   it('closes an OPEN final interval at min(now, window end, the session\'s own end)', async () => {

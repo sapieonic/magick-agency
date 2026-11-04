@@ -7,6 +7,7 @@ import { agencyIngestJobRepository } from '../agency/agency-ingest-job.repositor
 import { startAgencyIngestReaper } from '../agency/agency-ingest.service.js';
 import { getConcurrencyControl, setConcurrencyControl } from '../seams/concurrency-control.js';
 import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
+import { startInsightsRollupJob } from '../agency/insights-rollup-job.js';
 
 /**
  * The agency background work, and the agency runtime's process-wide singleton.
@@ -26,7 +27,10 @@ import { withPacingInvalidation } from '../agency/pacing/limit-invalidation.js';
  * `startVoice` use.
  *
  * Also the agency ingest reaper: the immediate boot-time `reapStaleJobs()` plus the
- * periodic `startAgencyIngestReaper()`, whose handle is kept and cleared on shutdown.
+ * periodic `startAgencyIngestReaper()`, whose handle is kept and cleared on shutdown; and
+ * the insights rollup job (`agency/insights-rollup-job.ts`, migration 0012), started after
+ * the runtime (the startup reap settles attempts first, and those writes mark their buckets)
+ * and stopped first.
  */
 
 let runtime: AgencyRuntime | null = null;
@@ -99,9 +103,14 @@ export async function startAgency(ctx: AppContext): Promise<() => Promise<void>>
   // occupancy from dead rows and quietly dial nothing forever.
   await agencyRuntime.start();
 
+  // Main process only (this bootstrap never runs in a worker), so once per deployment.
+  const insightsRollup = startInsightsRollupJob(ctx.config.agency.insightsRollup);
+
   const stop = async (): Promise<void> => {
     if (activeStop === stop) activeStop = null;
     if (agencyIngestReapInterval) clearInterval(agencyIngestReapInterval);
+    // The batch in flight commits or rolls back; marks left over are the next boot's.
+    await insightsRollup.stop();
     // Stops pacing first, then the reaper, sweeps, dialer and wrap-up timers. Agents
     // are NOT returned to the pool: they rehydrate into `break`.
     await agencyRuntime.stop();

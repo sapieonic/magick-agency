@@ -3,7 +3,7 @@
  * ../metric-instruments.js and ../meter.js.
  */
 import { meter } from '../meter.js';
-import { counter, histogram, observableGauge } from '../metric-instruments.js';
+import { counter, gauge, histogram, observableGauge } from '../metric-instruments.js';
 
 // ── S3 metrics ────────────────────────────────────────────
 // Names, labels and buckets are charted by the platform overview dashboard. Read by
@@ -732,4 +732,35 @@ export const agencyOurFaultRetirementTotal = counter<
   'tenant_id' | 'campaign_id' | 'outcome'
 >(meter, 'agency_our_fault_retirement_total', {
   description: 'Contacts permanently retired by exhausting the our-fault redial ledger',
+});
+
+// ─── Insights rollup (migration 0012, docs/insights.md "Shape") ───────────────
+//
+// The job in `apps/server/src/agency/insights-rollup-job.ts` recomputes the 15-minute buckets
+// the dirty-marking triggers name. The backlog is what makes the page's "as of" honest: a
+// growing count or an old oldest mark means the range sections are behind the attempts table.
+// Unlabelled: there is one job per deployment, and a per-campaign label would be one series
+// per campaign ever dialled.
+
+export const agencyInsightsRollupDirtyBuckets = gauge(meter, 'agency_insights_rollup_dirty_buckets', {
+  description: 'Insights rollup buckets marked dirty and not yet recomputed, after the last pass',
+});
+
+export const agencyInsightsRollupOldestDirtySeconds = gauge(meter, 'agency_insights_rollup_oldest_dirty_seconds', {
+  description: 'Age of the oldest insights rollup dirty mark after the last pass, seconds (0 when none)',
+  unit: 's',
+});
+
+export const agencyInsightsRollupRecomputeSeconds = histogram(meter, 'agency_insights_rollup_recompute_seconds', {
+  description: 'Seconds one insights rollup batch took: claim, recompute and commit',
+  unit: 's',
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+});
+
+export const agencyInsightsRollupBucketsTotal = counter(meter, 'agency_insights_rollup_buckets_total', {
+  description: 'Insights rollup buckets recomputed',
+});
+
+export const agencyInsightsRollupFailuresTotal = counter(meter, 'agency_insights_rollup_failures_total', {
+  description: 'Insights rollup batches that failed and were rolled back (their marks stay dirty)',
 });

@@ -63,19 +63,10 @@ import {
   AGENCY_RESOLVED_ZONE_JOIN_SQL,
   AGENCY_RESOLVED_ZONE_SQL,
   CONVERSATION_ATTEMPT_SQL,
+  VOICEMAIL_DISPOSITION_CODE,
   WRAPUP_MEASURED_RESOLUTIONS_SQL,
   readAttemptMetrics,
 } from './sql-fragments.js';
-
-/**
- * A machine connect is an agent who sat through an answering machine, and the
- * only signal for it is the agent's own write-up: AMD is out of scope, so
- * nothing else in the system knows. Kept as one constant because the count, its
- * complement (`human_connects`) and both AHT variants must all agree on the same
- * code — a second spelling would put a voicemail in the human column and in the
- * AHT it is excluded from at the same time.
- */
-const VOICEMAIL_DISPOSITION_CODE = 'voicemail';
 
 /**
  * A `TIMESTAMPTZ` as an ISO instant, degrading to the epoch rather than throwing.
