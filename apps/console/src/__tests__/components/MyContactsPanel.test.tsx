@@ -126,6 +126,27 @@ describe('the list and the counts', () => {
     await waitFor(() => expect(mocks.listMyContacts.mock.lastCall![0]).toMatchObject({ cursor: 'cur-2' }));
   });
 
+  it('a search reads the list only: the counts do not depend on it', async () => {
+    renderPanel();
+    await screen.findByTestId('my-row-c-due');
+    expect(mocks.getMyContactsSummary).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId('my-count-reached'));
+    await waitFor(() => expect(mocks.listMyContacts).toHaveBeenCalledTimes(2));
+    await screen.findByTestId('my-row-c-due');
+    expect(mocks.getMyContactsSummary).toHaveBeenCalledTimes(1);
+    expect(within(screen.getByTestId('my-count-not_reached')).getByText('8')).toBeTruthy();
+  });
+
+  it('a summary read that failed is read again with the next search', async () => {
+    mocks.getMyContactsSummary.mockRejectedValueOnce(new ApiError(503, { code: 'x', message: 'x' }));
+    renderPanel();
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: /Search/ }));
+    await screen.findByTestId('my-row-c-due');
+    expect(mocks.getMyContactsSummary).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('says a refusal of the read in words', async () => {
     mocks.getMyContactsSummary.mockRejectedValue(new ApiError(403, { code: 'not_staffed', message: 'x' }));
     renderPanel();
@@ -145,6 +166,9 @@ describe('Retry not reached', () => {
       { campaign_id: 'camp-1', all: true }, 'tenant-1', 'account-1',
     ));
     expect((await screen.findByTestId('my-notice')).textContent).toContain('8 contacts back in your queue');
+    // The counts are read again with the list after a retry.
+    await waitFor(() => expect(mocks.getMyContactsSummary).toHaveBeenCalledTimes(2));
+    expect(mocks.listMyContacts).toHaveBeenCalledTimes(2);
   });
 
   it('retries only the ticked rows when some are ticked (eligible rows only)', async () => {

@@ -150,18 +150,33 @@ export function MyContactsPanel({
     trackAgencyMyContactsOpened({ campaign_id: campaignId, assignment_mode: assignmentMode });
   }, [campaignId, assignmentMode]);
 
+  /*
+    The summary counts do not depend on the search, so a search reads only the
+    list. The summary is read with it on open, when the campaign changes, after a
+    retry, and on the next load after one that did not land (failed, or was
+    overtaken by a newer search), so a failed summary is retried as before.
+  */
+  const needsSummary = useRef(true);
+  useEffect(() => {
+    needsSummary.current = true;
+  }, [campaignId, tenantId, accountId]);
+
   const load = useCallback(async () => {
     if (!tenantId || !accountId) return;
     const mine = ++seq.current;
+    const withSummary = needsSummary.current;
     setLoading(true);
     setError(null);
     try {
       const [nextSummary, page] = await Promise.all([
-        getMyContactsSummary(campaignId, tenantId, accountId),
+        withSummary ? getMyContactsSummary(campaignId, tenantId, accountId) : null,
         listMyContacts(queryOf(campaignId, applied), tenantId, accountId),
       ]);
       if (mine !== seq.current) return;
-      setSummary(nextSummary);
+      if (nextSummary) {
+        setSummary(nextSummary);
+        needsSummary.current = false;
+      }
       setRows(page.rows);
       setCursor(page.next_cursor);
       setPicked(new Set());
@@ -235,6 +250,7 @@ export function MyContactsPanel({
             : ''),
       });
       setConfirmRetry(false);
+      needsSummary.current = true;
       await load();
     } catch (err: unknown) {
       trackAgencyAgentRetry({
