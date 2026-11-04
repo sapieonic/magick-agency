@@ -231,6 +231,15 @@ describe('an agent dials one of their own contacts — real app, real runtime, f
       state: 'exhausted', attempt_count: 3, last_outcome: 'no_answer',
       assigned_user_id: agent.id, assigned_at: new Date(),
     });
+    // Scheduled work keeps the campaign running. Without it the campaign's only contact is
+    // exhausted, `countOutstanding` is 0, and the pacing leader completes the campaign on its
+    // first idle tick: the call below then raced that tick and lost with 409
+    // `campaign_not_running` whenever the leader picked the campaign up first. Due tomorrow,
+    // so pacing has nothing to dial now either.
+    await insertAgencyContact(campaign.id, {
+      tenant_id: tenant, account_id: account, phone_e164: '+919812350009',
+      state: 'pending', next_attempt_at: new Date(Date.now() + 86_400_000),
+    });
     const hourAgo = new Date(Date.now() - 3_600_000);
     await insertAgencyAttempt(campaign.id, contact.id, {
       tenant_id: tenant, account_id: account, attempt_number: 3, state: 'ended', outcome: 'no_answer',

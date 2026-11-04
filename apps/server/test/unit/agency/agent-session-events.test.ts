@@ -56,7 +56,8 @@ const eventParams = (): unknown[][] => (eventCall()[1] ?? []) as unknown[][];
 const eventCount = (): number => pool.query.mock.calls.filter((c) => isEventInsert(c[0])).length;
 
 /** The instant the fixture's mutation happened. */
-const MUTATED_AT = new Date('2026-08-19T09:00:00.000Z');
+// Text with microseconds, as the mutation projects it: a `Date` would keep milliseconds only.
+const MUTATED_AT = '2026-08-19T09:00:00.000123Z';
 
 /**
  * One transition row, as the UPDATE's `RETURNING` produces it.
@@ -187,7 +188,9 @@ describe('`at` comes from the statement that performed the transition', () => {
     // trip. `clock_timestamp()` rather than `now()` because `now()` is the
     // TRANSACTION's start instant, so the loser of a row-lock race can hold the
     // earlier timestamp while having performed the later UPDATE.
-    expect(mutationSql()).toContain('clock_timestamp() AS at');
+    // As UTC text with microseconds (`.US`), so two transitions the row lock serialises within
+    // one millisecond keep distinct, correctly ordered instants; a `Date` would tie them.
+    expect(mutationSql()).toContain(`to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
     expect(eventSql()).toContain('break_reason, at)');
     expect(eventSql()).toContain('$9::timestamptz[]');
     expect(eventParams()[8]).toEqual([MUTATED_AT]);
@@ -206,8 +209,8 @@ describe('`at` comes from the statement that performed the transition', () => {
     // `lead(at) OVER (PARTITION BY session_id ORDER BY at)` differences whatever
     // the timestamps say, so every interval after the inversion is attributed to
     // the wrong state and its duration is wrong by the gap between the two events.
-    const dialledAt = new Date('2026-08-19T09:00:00.000000Z');
-    const wrappedAt = new Date('2026-08-19T09:07:30.000000Z');
+    const dialledAt = '2026-08-19T09:00:00.000000Z';
+    const wrappedAt = '2026-08-19T09:07:30.000000Z';
     const mutations = [
       [transition({ from_state: 'available', to_state: 'on_call', at: dialledAt })],
       [transition({ from_state: 'on_call', to_state: 'wrapup', at: wrappedAt })],
@@ -262,8 +265,9 @@ describe('`at` comes from the statement that performed the transition', () => {
     expect(inserts[0]![8]).toEqual([dialledAt]);
     expect(inserts[1]![8]).toEqual([wrappedAt]);
     const byAt = inserts
-      .map((p) => ({ at: (p[8] as Date[])[0]!, to: (p[6] as string[])[0]! }))
-      .sort((a, b) => a.at.getTime() - b.at.getTime())
+      .map((p) => ({ at: (p[8] as string[])[0]!, to: (p[6] as string[])[0]! }))
+      // Fixed-width UTC ISO text orders as the instants do.
+      .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
       .map((e) => e.to);
     expect(byAt).toEqual(['on_call', 'wrapup']);
   });
@@ -305,7 +309,7 @@ describe('markAllOffline (the startup reaper)', () => {
     // open. Without it an agent who was `on_call` when the replica died has an
     // interval running to the end of the window — the whole outage charged to
     // their on-call time.
-    const sweptAt2 = new Date('2026-08-19T09:00:00.000123Z');
+    const sweptAt2 = '2026-08-19T09:00:00.000124Z';
     serve([
       transition({ session_id: 'sess-1', from_state: 'on_call', to_state: 'offline' }),
       transition({

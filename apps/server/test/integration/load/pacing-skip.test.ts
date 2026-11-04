@@ -306,6 +306,22 @@ describe('pacing rounds: skip, wake, share (load)', () => {
     const back = new Map<number, Array<() => Promise<void>>>();
     const later = (round: number, fn: () => Promise<void>) => back.set(round, [...(back.get(round) ?? []), fn]);
     let lateJoins = 0;
+    /** One round, with the pacing law and the limit checked for every campaign. */
+    const checkedRound = async () => {
+      const r = await world.round();
+      violations.push(...await world.checkInvariants());
+      for (const [label, s] of Object.entries(r.campaigns)) {
+        const want = expectedDials(s);
+        if (s.attemptsCreated !== want) {
+          violations.push(`[seed ${seed}, round ${r.round}] ${label}: dialled ${s.attemptsCreated}, pacing law says ${want} `
+            + `(available ${s.availableBefore}, live ${s.liveBefore}/${s.limit}, claimable ${s.claimableBefore}, ${s.status})`);
+        }
+        if (s.liveBefore + s.attemptsCreated > s.limit) {
+          violations.push(`[seed ${seed}, round ${r.round}] ${label}: ${s.liveBefore} live + ${s.attemptsCreated} new over the limit ${s.limit}`);
+        }
+      }
+      if (violations.length) throw new Error(violations.slice(0, 10).join('\n'));
+    };
 
     for (let round = 1; round <= scaled(160); round++) {
       for (const fn of back.get(round) ?? []) await fn();
@@ -333,19 +349,18 @@ describe('pacing rounds: skip, wake, share (load)', () => {
         await world.joinLate(['A', 'B', 'C'][rng.int(0, 2)]!);
       }
 
-      const r = await world.round();
-      violations.push(...await world.checkInvariants());
-      for (const [label, s] of Object.entries(r.campaigns)) {
-        const want = expectedDials(s);
-        if (s.attemptsCreated !== want) {
-          violations.push(`[seed ${seed}, round ${r.round}] ${label}: dialled ${s.attemptsCreated}, pacing law says ${want} `
-            + `(available ${s.availableBefore}, live ${s.liveBefore}/${s.limit}, claimable ${s.claimableBefore}, ${s.status})`);
-        }
-        if (s.liveBefore + s.attemptsCreated > s.limit) {
-          violations.push(`[seed ${seed}, round ${r.round}] ${label}: ${s.liveBefore} live + ${s.attemptsCreated} new over the limit ${s.limit}`);
-        }
-      }
-      if (violations.length) throw new Error(violations.slice(0, 10).join('\n'));
+      await checkedRound();
+    }
+
+    // A quiet tail: every agent on break (queued behind a live call), the calls left to end.
+    // The churn alone skips only when a round lands between two events and before the 1 s
+    // safety tick, which a slow runner can miss entirely (0 of 392 ticks in one CI run, 2-3 in
+    // others, the same seed). A floor with nothing to do must skip, so the skipped rounds
+    // below are certain, and they are held to the same law and limit as the churn's.
+    const tailStart = seen.length;
+    for (const a of world.agents.filter((x) => x.attached && !x.left)) await world.goBreak(a);
+    for (let i = 0; i < scaled(80) && !seen.slice(tailStart).some((o) => o.mode === 'skipped'); i++) {
+      await checkedRound();
     }
     for (const c of world.campaigns) {
       const peak = world.carrier.peakLiveByAccount.get(`${c.tenantId}:${c.accountId}`) ?? 0;
