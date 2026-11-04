@@ -69,8 +69,10 @@ const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['GET /healthz', 'liveness probe'],
   ['GET /readyz', 'readiness probe'],
   // The console's Overview/Performance tabs were its only caller; the Insights tab replaced them
-  // (docs/insights.md, IN1). Retired with its contract once `/insights/trends` serves the same series.
-  ['GET /proxy/agency/campaigns/:_/stats/series', 'campaign series, pending retirement (insights IN1)'],
+  // (docs/insights.md, IN1). Kept: its types live in `contracts/src/agency/performance.ts`, beside
+  // the agent's own record the mobile wire mirrors, and the insights rollup oracle cross-checks its
+  // day trends against it (`insights-rollup-oracle.test.ts`).
+  ['GET /proxy/agency/campaigns/:_/stats/series', 'campaign stats series (no console caller since the Insights tab)'],
   ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (carrier-facing)'],
   ['WS /api/v1/webrtc-call/:_/pstn-stream', 'VoiceLink PSTN media leg (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],
