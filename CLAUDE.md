@@ -39,7 +39,8 @@ tooling/             test-env resolver, release-please guard, contract-literal e
 
 - **Test counts are evidence.** A run without printed counts is not a run. Never
   `--reporter=basic` (Vitest 4: runs nothing, exits 0). Run a package's tests from inside its
-  directory (dotenv resolves from cwd).
+  directory (dotenv resolves from cwd). Record counts only from a green run; a run with failures
+  is reported as its failures, not as a count.
 - **Real Postgres for repository and SQL tests.** A mocked pool hides SQL drift.
 - **Ports:** Postgres 5436, Redis 6383 (db 0 dev, db 1 test), server 3021, console 5175,
   super-admin 5176. Never 5432/5433/5434/6379/6380/6381 (other local stacks use them).
@@ -47,13 +48,20 @@ tooling/             test-env resolver, release-please guard, contract-literal e
   it. Each git worktree sets an untracked `.test-env.local.json` at the repo root
   (`{ "dbName": "magick_agency_test_<x>", "redisDb": 2 }`), or worktrees truncate each other's
   rows. Guards refuse any other port, a DB not named `magick_agency_test*`, or Redis db 0
-  (`tooling/test-env.ts`).
+  (`tooling/test-env.ts`). Parallel agents that run integration tests each work in their own git
+  worktree with its own `.test-env.local.json`; agents sharing one worktree run integration one at
+  a time.
+- **Verify the server's integration the way CI does:** `INTEGRATION_LANE=rest` and
+  `INTEGRATION_LANE=wall-clock` as separate runs. The unsplit run is not what CI checks
+  (`cluster/mobile-stations.test.ts` fails in it and passes in its lane).
 - **Shared files change deliberately**, with their consumers and tests in the same commit:
   `packages/contracts`, `packages/db/migrations`, `apps/server/src/seams/**`,
   `apps/server/src/{app.ts,app-context.ts,index.ts}`,
   `apps/server/src/config/{index,load,schema,env}.ts`, `apps/server/src/config/blocks/base.ts`,
-  root config, CI (`.github/workflows/`) and the release-please config. Never edit or renumber an
-  applied migration; add a new one.
+  root config, CI (`.github/workflows/`) and the release-please config. For `packages/contracts`
+  the consumers include the hand-written Dart wire types in `apps/mobile/packages/agency_wire`:
+  run its `dart test` before committing a contract change. Never edit or renumber an applied
+  migration; add a new one.
 - **Mutation-check guard tests.** When a test is claimed to guard something, break the code, watch
   it go red, restore. Commit before mutating, so restoring with `git checkout` cannot lose work.
 - **Releases are release-please's** (B24, `docs/operations.md` "Releases and versioning"). PR
@@ -63,7 +71,9 @@ tooling/             test-env resolver, release-please guard, contract-literal e
   workspace package gets a component in `release-please-config.json` and a manifest entry in the
   same commit (`pnpm test:release`).
 - **Scoped git:** `git add <paths>` only; no `git add -A`, no `git stash`. Nothing is pushed
-  without Manas.
+  without Manas; a request from Manas to push or to open a PR is that go-ahead.
+- **User-facing copy is British English** (cancelled, dialled, redialled), in every app and in
+  server messages. Wire codes and identifiers are never respelled (`canceled`, `redialed`).
 
 ## Commands
 

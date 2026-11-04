@@ -29,6 +29,10 @@ flutter run --flavor dev --dart-define-from-file=env/dev.local.json   # Android;
   checked by its fixtures (`packages/contracts/fixtures/agent/*.json`, including `literals.json`).
   A contract change lands with the Dart change in the same commit; see
   `packages/contracts/CLAUDE.md` for regenerating the literals.
+- **The station's phase follows the call.** The server sends no `agent_state` for `reserved` or
+  `on_call`; a live attempt decides the phase (`StationState.effectiveState`), as the console's
+  rail does. Tests drive the controller only with frame sequences the server actually sends;
+  never inject an `agent_state` frame to move the screen.
 - **UI seams:** station screens read only `lib/core/station/station_view.dart`; soft-phone
   screens only `lib/core/softphone/softphone_view.dart`. Do not reach into the controllers.
 - **The app gate** (`lib/core/auth/app_gate.dart`) decides every top-level screen. A 401 never
