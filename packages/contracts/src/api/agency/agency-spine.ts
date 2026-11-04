@@ -256,6 +256,9 @@ export const SUPPRESSED_REASON_LABELS: Record<string, string> = {
   invalid: 'Not a dialable number',
   max_attempts: 'Every permitted retry was used',
   manual: 'Removed by a supervisor',
+  // The contacts list's filter value for a suppression with no reason recorded (NULL), so the
+  // Insights roster's "suppressed, other" opens a list of exactly the rows it counts.
+  none: 'No reason recorded',
 };
 
 export function attemptOutcomeLabel(outcome: string | null): string {

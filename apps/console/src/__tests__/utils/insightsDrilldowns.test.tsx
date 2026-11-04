@@ -7,6 +7,7 @@ import type { ReactElement } from 'react';
 import type {
   AgencyInsightsActivity,
   AgencyInsightsAllocation,
+  AgencyInsightsHealth,
   AgencyInsightsSummary,
 } from '../../types/agency-insights';
 import {
@@ -20,6 +21,7 @@ import { RosterSection } from '../../pages/agency/campaign-detail/insights/Roste
 import { AllocationSection } from '../../pages/agency/campaign-detail/insights/AllocationSection';
 import { CallsSection, type RangeSectionContext } from '../../pages/agency/campaign-detail/insights/ActivitySections';
 import { AgentsSection } from '../../pages/agency/campaign-detail/insights/AgentsSection';
+import { HealthSection } from '../../pages/agency/campaign-detail/insights/HealthSection';
 import * as samplesModule from '../helpers/insights';
 
 /**
@@ -52,6 +54,7 @@ const RESPONSES = JSON.parse(readFileSync(resolve(SERVER_FIXTURES, 'insights-res
   summary: AgencyInsightsSummary;
   allocation: AgencyInsightsAllocation;
   activity: AgencyInsightsActivity;
+  health: AgencyInsightsHealth;
 };
 const P = RESPONSES.placeholders;
 const VARS: Record<string, string> = { agent: P.agent, from: P.from, to: P.to };
@@ -98,6 +101,7 @@ function sectionFor(link: DrillLink): ReactElement | null {
   if (root === 'allocation') return <AllocationSection campaignId={P.campaign} campaignName="c" allocation={RESPONSES.allocation} timezone="UTC" />;
   if (link.number.startsWith('activity.agents')) return <AgentsSection ctx={ctx} activity={RESPONSES.activity} />;
   if (root === 'activity') return <CallsSection ctx={ctx} activity={RESPONSES.activity} />;
+  if (root === 'health') return <HealthSection ctx={ctx} health={RESPONSES.health} timezone="UTC" />;
   return null;
 }
 

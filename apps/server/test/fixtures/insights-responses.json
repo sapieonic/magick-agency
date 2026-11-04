@@ -89,8 +89,8 @@
       "draft": null
     },
     "roster": {
-      "total": 60,
-      "waiting_due_now": 10,
+      "total": 62,
+      "waiting_due_now": 11,
       "waiting_retry": 5,
       "waiting_callback": 5,
       "on_call": 5,
@@ -99,7 +99,7 @@
       "exhausted": 5,
       "suppressed_dnc": 5,
       "suppressed_invalid": 5,
-      "suppressed_other": 10,
+      "suppressed_other": 11,
       "attempted": 40,
       "attempts_per_contact": {
         "one": 10,
@@ -111,8 +111,8 @@
       "reconciliation": [
         {
           "check": "contact_states_vs_total",
-          "expected": 60,
-          "actual": 60,
+          "expected": 62,
+          "actual": 62,
           "ok": true
         },
         {
@@ -123,24 +123,24 @@
         },
         {
           "check": "waiting_vs_pending",
-          "expected": 20,
-          "actual": 20,
+          "expected": 21,
+          "actual": 21,
           "ok": true
         }
       ]
     },
-    "generated_at": "2026-11-04T16:36:13.442Z"
+    "generated_at": "2026-11-04T16:43:56.009Z"
   },
   "allocation": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "assignment_mode": "strict",
     "agents": [
       {
-        "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
-        "agent_name": "agent 0.0",
+        "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+        "agent_name": "agent 0.1",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T16:36:13.257Z",
+        "last_seen_at": "2026-11-04T16:43:55.759Z",
         "allocated": 24,
         "attempted": 16,
         "not_attempted": 8,
@@ -153,11 +153,11 @@
         "not_reached": 0,
         "exhausted": 2,
         "dnc": 2,
-        "redials": 1,
+        "redials": 4,
         "retries_reopened": 6,
-        "retries_manual": 9,
+        "retries_manual": 8,
         "overrides_used": 3,
-        "last_activity_at": "2026-11-04T14:50:46.000Z",
+        "last_activity_at": "2026-11-04T15:28:18.000Z",
         "due_while_absent": 0
       },
       {
@@ -165,7 +165,7 @@
         "agent_name": "agent 0.2",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T16:36:13.279Z",
+        "last_seen_at": "2026-11-04T16:43:55.771Z",
         "allocated": 0,
         "attempted": 0,
         "not_attempted": 0,
@@ -186,15 +186,15 @@
         "due_while_absent": 0
       },
       {
-        "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
-        "agent_name": "agent 0.1",
+        "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+        "agent_name": "agent 0.0",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T16:36:13.272Z",
-        "allocated": 24,
+        "last_seen_at": "2026-11-04T15:50:00.000Z",
+        "allocated": 26,
         "attempted": 16,
-        "not_attempted": 8,
-        "due_now": 4,
+        "not_attempted": 10,
+        "due_now": 5,
         "waiting_retry": 2,
         "callbacks_due_today": 0,
         "callbacks_overdue": 0,
@@ -203,12 +203,12 @@
         "not_reached": 0,
         "exhausted": 2,
         "dnc": 2,
-        "redials": 4,
+        "redials": 1,
         "retries_reopened": 6,
-        "retries_manual": 8,
+        "retries_manual": 9,
         "overrides_used": 3,
-        "last_activity_at": "2026-11-04T15:28:18.000Z",
-        "due_while_absent": 0
+        "last_activity_at": "2026-11-04T14:50:46.000Z",
+        "due_while_absent": 5
       }
     ],
     "unassigned": {
@@ -231,10 +231,10 @@
       "last_activity_at": "2026-11-04T14:05:31.000Z"
     },
     "totals": {
-      "allocated": 60,
+      "allocated": 62,
       "attempted": 40,
-      "not_attempted": 20,
-      "due_now": 10,
+      "not_attempted": 22,
+      "due_now": 11,
       "waiting_retry": 5,
       "callbacks_due_today": 0,
       "callbacks_overdue": 0,
@@ -253,11 +253,7 @@
       "high": [
         {
           "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
-          "factor": 1.5
-        },
-        {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
-          "factor": 1.5
+          "factor": 1.7
         }
       ],
       "empty": [
@@ -265,7 +261,14 @@
       ]
     },
     "at_risk": {
-      "held_by_absent": [],
+      "held_by_absent": [
+        {
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+          "due": 5,
+          "away_since": "2026-11-04T15:50:00.000Z",
+          "staffed": true
+        }
+      ],
       "overdue_callbacks_absent_owner": 0
     },
     "absent_after_minutes": 15,
@@ -273,18 +276,18 @@
     "reconciliation": [
       {
         "check": "allocated_plus_unassigned_vs_total",
-        "expected": 60,
-        "actual": 60,
+        "expected": 62,
+        "actual": 62,
         "ok": true
       },
       {
         "check": "agent_buckets_vs_allocated",
-        "expected": 60,
-        "actual": 60,
+        "expected": 62,
+        "actual": 62,
         "ok": true
       }
     ],
-    "generated_at": "2026-11-04T16:36:13.523Z"
+    "generated_at": "2026-11-04T16:43:56.099Z"
   },
   "activity": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
@@ -361,12 +364,12 @@
       "pending_due": 3,
       "by_owner": [
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
           "open": 1,
           "overdue": 1
         },
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
           "open": 1,
           "overdue": 1
         },
@@ -522,9 +525,9 @@
         "ok": true
       }
     ],
-    "as_of": "2026-11-04T16:36:13.294Z",
+    "as_of": "2026-11-04T16:43:55.794Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:36:13.545Z"
+    "generated_at": "2026-11-04T16:43:56.137Z"
   },
   "trends": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
@@ -739,9 +742,9 @@
         "connected": 0
       }
     ],
-    "as_of": "2026-11-04T16:36:13.294Z",
+    "as_of": "2026-11-04T16:43:55.794Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:36:13.574Z"
+    "generated_at": "2026-11-04T16:43:56.164Z"
   },
   "health": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
@@ -820,8 +823,8 @@
     },
     "analysis": null,
     "pacing_history_since": "2026-11-04T13:20:00.000Z",
-    "as_of": "2026-11-04T16:36:13.294Z",
+    "as_of": "2026-11-04T16:43:55.794Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:36:13.609Z"
+    "generated_at": "2026-11-04T16:43:56.201Z"
   }
 }

@@ -35,6 +35,7 @@ import {
   pendingCallbackSql,
   rosterBucketPredicates,
   ROSTER_BUCKETS,
+  suppressedDncSql,
   waitingDueNowSql,
   waitingRetrySql,
   waitingSql,
@@ -171,7 +172,10 @@ export function allocationStatement(input: AllocationCountsInput): InsightsState
            (count(*) FILTER (WHERE ${bucket('not_reached')}))::int AS not_reached,
            (count(*) FILTER (WHERE ${bucket('exhausted')}))::int AS exhausted,
            (count(*) FILTER (WHERE c.last_disposition = ANY(${success}::text[])))::int AS successes,
-           (count(*) FILTER (WHERE c.suppressed_reason = 'dnc'))::int AS dnc,
+           -- The roster's rule (suppressedDncSql): suppressed FOR DNC. A pending row frozen DNC
+           -- before the claim refused it is still waiting (the roster counts it there), and the
+           -- allocation's dnc link lists state=suppressed&suppressed_reason=dnc.
+           (count(*) FILTER (WHERE ${suppressedDncSql('c')}))::int AS dnc,
            (count(*) FILTER (WHERE ${openContactSql('c')}))::int AS open,
            (${ROSTER_BUCKETS.map((b) => `count(*) FILTER (WHERE ${buckets[b]})`).join('\n            + ')})::int AS partition_sum
       FROM agency_contacts c

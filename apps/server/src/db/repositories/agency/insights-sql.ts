@@ -21,8 +21,10 @@
  *      with no write-up is a retry).
  *  - on a call = `in_flight`; in wrap-up = `connected`; `completed`; `exhausted`.
  *  - suppressed (`state = 'suppressed'`), by reason: `dnc`, `invalid`, and every other reason
- *    (`max_attempts`, `manual`, none). A `pending` row frozen DNC before the claim refused them
- *    is waiting here, as it is in the contacts list's `state=pending` filter.
+ *    (`max_attempts`, `manual`, none: the contacts list's `suppressed_reason=max_attempts,manual,none`).
+ *    A `pending` row frozen DNC before the claim refused them is waiting here, as it is in the
+ *    contacts list's `state=pending` filter, and the allocation's `dnc` column counts
+ *    {@link suppressedDncSql} too, never a bare `suppressed_reason = 'dnc'`.
  *
  * `attempted` (penetration's numerator) is `dials_placed > 0`: a contact we placed a dial to,
  * whoever's fault the call ended on (an our-fault redial charges `our_fault_attempts`, never

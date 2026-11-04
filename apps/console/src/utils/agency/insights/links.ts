@@ -150,7 +150,8 @@ const ROSTER_FILTERS: Record<RosterBucket, InsightsContactsFilter> = {
   suppressed: { state: ['suppressed'] },
   suppressed_dnc: { state: ['suppressed'], suppressed_reason: ['dnc'] },
   suppressed_invalid: { state: ['suppressed'], suppressed_reason: ['invalid'] },
-  suppressed_other: { state: ['suppressed'], suppressed_reason: ['max_attempts', 'manual'] },
+  // Every suppression but DNC and invalid, a NULL reason included (`none`, the list's spelling of it).
+  suppressed_other: { state: ['suppressed'], suppressed_reason: ['max_attempts', 'manual', 'none'] },
   attempted: { attempted: true },
   never_attempted: { attempted: false },
 };

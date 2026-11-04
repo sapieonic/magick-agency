@@ -338,6 +338,30 @@ describe('contacts: waiting and attempted, total = direct SQL = rows listed', ()
   });
 });
 
+describe('contacts: suppressed for another reason, a NULL reason included (suppressed_reason=none)', () => {
+  it('max_attempts, manual and none count every suppression but dnc and invalid, as the roster does', async () => {
+    const s = await seed();
+    const contact = (o: Record<string, unknown>) => insertAgencyContact(s.campaign.id, o);
+    await contact({ state: 'suppressed', suppressed_reason: 'max_attempts' });
+    await contact({ state: 'suppressed', suppressed_reason: 'manual' });
+    await contact({ state: 'suppressed', suppressed_reason: null });
+    await contact({ state: 'suppressed', suppressed_reason: 'invalid' });
+    // A pending contact with no reason is not suppressed: the state filter keeps it out.
+    await contact({ state: 'pending', next_attempt_at: FUTURE() });
+    const query = { state: 'suppressed', suppressed_reason: ['max_attempts', 'manual', 'none'] };
+    // The roster's suppressedOtherSql, spelled again.
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_contacts WHERE campaign_id = $1 AND state = 'suppressed'
+          AND suppressed_reason IS DISTINCT FROM 'dnc' AND suppressed_reason IS DISTINCT FROM 'invalid'`, [s.campaign.id]);
+    expect(expected).toBe(3);
+    expect(await contactTotal(s.campaign.id, query)).toBe(expected);
+    expect(await walkContacts(s.campaign.id, query)).toHaveLength(expected);
+    // `none` alone is the NULL reason; the stored reasons alone leave it out.
+    expect(await contactTotal(s.campaign.id, { state: 'suppressed', suppressed_reason: 'none' })).toBe(1);
+    expect(await contactTotal(s.campaign.id, { state: 'suppressed', suppressed_reason: ['max_attempts', 'manual'] })).toBe(2);
+  });
+});
+
 describe('attempts: the drill-down slices, total = direct SQL = rows listed', () => {
   const WINDOW = { dialed_from: '2026-10-01T09:00:00Z', dialed_to: '2026-10-01T14:00:00Z' };
 

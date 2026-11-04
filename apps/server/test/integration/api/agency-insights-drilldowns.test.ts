@@ -201,6 +201,17 @@ async function seed(): Promise<{ sessions: string[] }> {
     ['agent_manual', 'boolean'], ['override_applied', 'text[]'],
   ], attempts);
 
+  // Agent 0 left 40 minutes ago and has not been seen since (past the absence threshold): the
+  // due contacts they hold are at risk (allocation.at_risk.held_by_absent).
+  await q('UPDATE agency_agent_sessions SET last_heartbeat = left_at WHERE id = $1', [sessions[0]]);
+  // A suppression with no reason recorded (roster "suppressed, other", the list's `none`), and a
+  // pending contact frozen DNC before the claim refused it (waiting, never allocation's `dnc`).
+  await q(
+    `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state, next_attempt_at, suppressed_reason, assigned_user_id, assigned_at)
+     VALUES ($1, $2, $3, '+919899990001', '{}'::jsonb, 'suppressed', now(), NULL, $4, now()),
+            ($1, $2, $3, '+919899990002', '{}'::jsonb, 'pending', now() - interval '30 minutes', 'dnc', $4, now())`,
+    [campaignId, floor.tenant, floor.account, agent(0).id]);
+
   // The pacing history: a three-minute stall for want of agents, a refused redial, a pre-dial DNC.
   for (let m = 0; m < 3; m++) {
     await agencyInsightsPacingRepository.addToMinute({ campaignId, tenantId: floor.tenant, field: 'ticks', at: at(100 + m), n: 4 });
@@ -232,14 +243,19 @@ async function seed(): Promise<{ sessions: string[] }> {
 
 const fill = (text: string, vars: Record<string, string>) => text.replace(/\{(\w+)\}/g, (_, k: string) => vars[k] ?? `{${k}}`);
 
-/** `a.b[{agent}].c`: `[{x}]` picks the array element whose `agent_user_id` is the placeholder. */
+/**
+ * `a.b[{agent}].c`: `[{x}]` picks the array element whose `agent_user_id` is the placeholder;
+ * `[field=value]` the element whose `field` is `value` (a caller ID, a disposition code).
+ */
 function numberAt(root: Record<string, unknown>, path: string, vars: Record<string, string>): number {
   let cur: unknown = root;
-  for (const part of fill(path, vars).split('.')) {
+  // Split on the dots between parts, never inside a `[…]` selector (a caller ID has none, but say so).
+  for (const part of fill(path, vars).split(/\.(?![^[]*\])/)) {
     const m = /^(\w+)\[([^\]]+)\]$/.exec(part);
     if (m) {
       const list = (cur as Record<string, unknown>)[m[1]!] as Array<Record<string, unknown>>;
-      cur = list.find((row) => row['agent_user_id'] === m[2]);
+      const eq = /^(\w+)=(.*)$/.exec(m[2]!);
+      cur = eq ? list.find((row) => String(row[eq[1]!]) === eq[2]) : list.find((row) => row['agent_user_id'] === m[2]);
     } else {
       cur = (cur as Record<string, unknown>)[part];
     }

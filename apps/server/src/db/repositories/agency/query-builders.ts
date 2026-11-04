@@ -7,6 +7,7 @@
 import { encodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import {
   RETRY_NO_OUTCOME,
+  SUPPRESSED_REASON_NONE,
   type AgencyAttemptFilters,
   type AgencyContactFilters,
   type PhoneFilter,
@@ -149,7 +150,13 @@ export function contactFilterConditions(
     conditions.push(`${alias}.state = ANY(${bind.add(filters.states)}::varchar[])`);
   }
   if (filters.suppressedReasons?.length) {
-    conditions.push(`${alias}.suppressed_reason = ANY(${bind.add(filters.suppressedReasons)}::varchar[])`);
+    // `none` is the contacts list's spelling of NULL (spine-filters' SUPPRESSED_REASONS); a retry
+    // selector's narrower vocabulary cannot carry it, so the retry seed never sees this branch.
+    const stored = filters.suppressedReasons.filter((r) => r !== SUPPRESSED_REASON_NONE);
+    const none = stored.length !== filters.suppressedReasons.length;
+    const any = stored.length > 0 ? `${alias}.suppressed_reason = ANY(${bind.add(stored)}::varchar[])` : null;
+    const isNull = none ? `${alias}.suppressed_reason IS NULL` : null;
+    conditions.push(any && isNull ? `(${any} OR ${isNull})` : (any ?? isNull)!);
   }
   if (filters.lastOutcomes?.length) {
     conditions.push(`${alias}.last_outcome = ANY(${bind.add(filters.lastOutcomes)}::varchar[])`);

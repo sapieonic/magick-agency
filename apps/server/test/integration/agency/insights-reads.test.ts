@@ -236,7 +236,10 @@ describe('the allocation per owner', () => {
     expect(pool.callbacks_due_today).toBe(seededToday);
     // Overdue: the seeded callback whose time came (open, due before now).
     expect(mine.callbacks_overdue).toBe(1);
-    expect(mine).toMatchObject({ due_now: 4, waiting_retry: 2, reached: 1, exhausted: 1, successes: 1, dnc: 2 });
+    // DNC is the roster's rule (suppressed for DNC): the pending row frozen DNC is waiting, due
+    // now, never DNC, so the allocation's dnc and its link (state=suppressed&suppressed_reason=dnc)
+    // are one set.
+    expect(mine).toMatchObject({ due_now: 4, waiting_retry: 2, reached: 1, exhausted: 1, successes: 1, dnc: 1 });
   });
 
   it('localDayEnd: the local day across the UTC midnight boundary (Asia/Kolkata)', () => {

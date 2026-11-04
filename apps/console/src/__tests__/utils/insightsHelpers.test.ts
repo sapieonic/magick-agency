@@ -143,7 +143,7 @@ describe('drill-down links', () => {
     expect(rosterBucketLink('c1', 'waiting_due_now')).toBe('/agency/campaigns/c1/contacts?state=pending&waiting=due_now');
     expect(rosterBucketLink('c1', 'in_wrapup')).toBe('/agency/campaigns/c1/contacts?state=connected');
     expect(rosterBucketLink('c1', 'suppressed_other')).toBe(
-      '/agency/campaigns/c1/contacts?state=suppressed&suppressed_reason=max_attempts&suppressed_reason=manual',
+      '/agency/campaigns/c1/contacts?state=suppressed&suppressed_reason=max_attempts&suppressed_reason=manual&suppressed_reason=none',
     );
     expect(rosterBucketLink('c1', 'never_attempted')).toBe('/agency/campaigns/c1/contacts?attempted=0');
   });

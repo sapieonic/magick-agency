@@ -74,8 +74,16 @@ export const CONTACT_STATES = vocabulary<AgencyContactState>({
   suppressed: true,
 });
 
-/** `agency_contacts.suppressed_reason`. */
-export const SUPPRESSED_REASONS = ['dnc', 'invalid', 'max_attempts', 'manual'] as const;
+/**
+ * `agency_contacts.suppressed_reason`, as the contacts list filters on it. `none` is the list's
+ * spelling of NULL (a row suppressed with no reason recorded), never a stored value: the
+ * Insights roster's "suppressed, other" counts every suppression that is neither `dnc` nor
+ * `invalid`, NULL included, and its link sends `max_attempts`, `manual` and `none` so the list's
+ * total is that number (`contactFilterConditions`). A retry selector cannot name it
+ * ({@link RETRY_SELECTABLE_SUPPRESSED_REASONS}).
+ */
+export const SUPPRESSED_REASON_NONE = 'none';
+export const SUPPRESSED_REASONS = ['dnc', 'invalid', 'max_attempts', 'manual', SUPPRESSED_REASON_NONE] as const;
 
 /**
  * How a `phone=` filter is matched.
