@@ -201,7 +201,7 @@ export function AgencyCampaignRosterPage() {
   const [holders, setHolders] = useState<AgencyAssignmentProgressRow[]>([]);
   const [selection, setSelection] = useState<RowSelection>(EMPTY_SELECTION);
   const [assignKind, setAssignKind] = useState<AgencyAssignmentKind | null>(null);
-  const [reloadAgents, setReloadAgents] = useState(0);
+  const [reloadHolders, setReloadHolders] = useState(0);
 
   /** Applied filters → the URL. The single writer. */
   const applyToUrl = useCallback(
@@ -252,12 +252,19 @@ export function AgencyCampaignRosterPage() {
     listCampaignAgents(id, tenantId, accountId)
       .then((result) => { if (live) setAgents(result.agents); })
       .catch(() => { if (live) setAgents([]); });
-    // A failure leaves only the staffed agents as owners, as before.
+    return () => { live = false; };
+  }, [canAssign, id, tenantId, accountId]);
+
+  // Who holds contacts: read again after a commit, which can change the holders
+  // but never the staffing. A failure leaves only the staffed agents as owners.
+  useEffect(() => {
+    if (!canAssign || !id || !tenantId || !accountId) return;
+    let live = true;
     getAssignmentProgress(id, {}, tenantId, accountId)
       .then((result) => { if (live) setHolders(result.agents); })
       .catch(() => { if (live) setHolders([]); });
     return () => { live = false; };
-  }, [canAssign, id, tenantId, accountId, reloadAgents]);
+  }, [canAssign, id, tenantId, accountId, reloadHolders]);
 
   const agentOptions = useMemo((): AssignmentAgentOption[] => agents.map((agent) => ({
     user_id: agent.user_id,
@@ -896,7 +903,7 @@ export function AgencyCampaignRosterPage() {
             setAssignKind(null);
             showToast(assignmentResultToast(result), 'success');
             void load(filters);
-            setReloadAgents((n) => n + 1);
+            setReloadHolders((n) => n + 1);
           }}
         />
       )}

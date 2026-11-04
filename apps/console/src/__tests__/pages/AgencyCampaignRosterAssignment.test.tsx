@@ -268,6 +268,9 @@ describe('preview, then commit', () => {
     expect(mocks.showToast).toHaveBeenCalledWith('Moved 2 contacts. 1 on a call didn’t move.', 'success');
     // Reloaded: the first load plus the one after the commit.
     expect(mocks.getCampaignContacts).toHaveBeenCalledTimes(2);
+    // The holders are read again; the staffing, which a commit cannot change, is not.
+    await waitFor(() => expect(mocks.getAssignmentProgress).toHaveBeenCalledTimes(2));
+    expect(mocks.listCampaignAgents).toHaveBeenCalledTimes(1);
   });
 
   it('Escape closes the dialog, but not while a preview is in flight', async () => {
