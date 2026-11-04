@@ -26,7 +26,7 @@ import {
   type AssignmentDraft,
 } from '../../utils/agencyAssignmentOps';
 import { CONTACT_STATE_LABELS } from '../../types/agency-spine';
-import { formatCount } from '../../utils/format/number';
+import { formatCount, plural } from '../../utils/format/number';
 import type {
   AgencyAssignmentErrorCode,
   AgencyAssignmentKind,
@@ -319,7 +319,7 @@ export function AgencyAssignmentDialog({
           {draft.kind === 'range' ? (
             <>
               <p className={frame.cohort} data-testid="assign-selected-count">
-                {`${formatCount(selectedIds.length)} selected row${selectedIds.length === 1 ? '' : 's'}.`}
+                {`${plural(selectedIds.length, 'selected row')}.`}
               </p>
               {agentPicker('Give them to', draft.agentId, (agentId) => update({ agentId }), agents, 'assign-agent')}
             </>
@@ -431,7 +431,7 @@ export function AgencyAssignmentDialog({
                     onChange={() => update({ unassignSource: 'selected' })}
                     disabled={selectedIds.length === 0}
                   />
-                  {`The ${formatCount(selectedIds.length)} selected row${selectedIds.length === 1 ? '' : 's'}`}
+                  {`The ${plural(selectedIds.length, 'selected row')}`}
                 </label>
               </fieldset>
               {draft.unassignSource === 'agent' ? (

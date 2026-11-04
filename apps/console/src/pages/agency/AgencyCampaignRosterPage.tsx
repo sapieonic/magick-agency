@@ -51,6 +51,7 @@ import { FiltersCard } from '../../components/agency/FiltersCard';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_DISPOSITIONS } from '../../utils/agencyCampaignConfigForm';
 import { retryCreatedToast, selectorFromContactFilters } from '../../utils/agencyRetrySelector';
+import { formatCount } from '../../utils/format/number';
 import {
   isRosterFiltered,
   rosterFilterGroupCount,
@@ -691,7 +692,7 @@ export function AgencyCampaignRosterPage() {
         <div className={styles.assignBar} role="toolbar" aria-label="Assign contacts" data-testid="assign-toolbar">
           <span className={styles.assignCount} data-testid="assign-selection-count" aria-live="polite">
             {selectedIds.length > 0
-              ? `${selectedIds.length.toLocaleString()} selected`
+              ? `${formatCount(selectedIds.length)} selected`
               : 'Tick rows, or assign by rule'}
           </span>
           {selectedIds.length > 0 && (
@@ -745,7 +746,7 @@ export function AgencyCampaignRosterPage() {
                     <th className={styles.selectCell}>
                       <input
                         type="checkbox"
-                        aria-label={`Select the first ${reachable.toLocaleString()} rows`}
+                        aria-label={`Select the first ${formatCount(reachable)} rows`}
                         title={rowIds.length > AGENCY_ASSIGNMENT_RANGE_MAX
                           ? `Selects the first ${AGENCY_ASSIGNMENT_RANGE_MAX} — one operation takes at most that many`
                           : 'Select every row shown'}

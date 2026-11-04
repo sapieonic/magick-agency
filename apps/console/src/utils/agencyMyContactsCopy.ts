@@ -9,6 +9,7 @@ import type {
 import type { AgencyAgentState } from '../types/agency';
 import { errorCode } from './agencyErrors';
 import { formatSpineTimestamp } from './agencySpineCopy';
+import { plural } from './format/number';
 
 /**
  * The agent's own contacts: refusal copy for every code their routes answer,
@@ -95,7 +96,7 @@ export function overrideBadge(override: AgencyContactOverride | null): string | 
   if (!override) return null;
   const parts: string[] = [];
   if (override.extra_attempts > 0) {
-    parts.push(`${override.extra_attempts} extra attempt${override.extra_attempts === 1 ? '' : 's'}`);
+    parts.push(plural(override.extra_attempts, 'extra attempt'));
   }
   if (override.retry_delay) parts.push('may call early');
   if (override.calling_hours) parts.push('may call outside hours');

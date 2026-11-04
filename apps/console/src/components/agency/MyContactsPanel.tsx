@@ -16,6 +16,7 @@ import {
   showRetryNotReached,
 } from '../../utils/agencyMyContactsCopy';
 import { overrideNoteBlock, overrideNoteLength } from '../../utils/softphone/overrides';
+import { formatCount, plural } from '../../utils/format/number';
 import {
   trackAgencyAgentRetry,
   trackAgencyMyContactCall,
@@ -226,12 +227,11 @@ export function MyContactsPanel({
         skipped_total: result.skipped_total,
         code: null,
       });
-      const s = (n: number) => (n === 1 ? '' : 's');
       setNotice({
         tone: 'ok',
-        text: `${result.reopened.toLocaleString()} contact${s(result.reopened)} back in your queue — they’ll be dialled as they come up.`
+        text: `${plural(result.reopened, 'contact')} back in your queue — they’ll be dialled as they come up.`
           + (result.skipped_total > 0
-            ? ` ${result.skipped_total.toLocaleString()} couldn’t be retried.`
+            ? ` ${formatCount(result.skipped_total)} couldn’t be retried.`
             : ''),
       });
       setConfirmRetry(false);
@@ -329,7 +329,7 @@ export function MyContactsPanel({
       onClick={() => pickBucket(key)}
       data-testid={`my-count-${key}`}
     >
-      <span className={styles.countValue}>{(summary?.counts[key] ?? 0).toLocaleString()}</span>
+      <span className={styles.countValue}>{formatCount(summary?.counts[key] ?? 0)}</span>
       <span className={styles.countLabel}>{label}</span>
       {extra ? <span className={styles.countExtra}>{extra}</span> : null}
     </button>
@@ -378,7 +378,7 @@ export function MyContactsPanel({
             {confirmRetry ? (
               <div className={styles.confirm} role="group" aria-label="Confirm retry" data-testid="my-retry-confirm">
                 <p>
-                  {`Put ${retryCount.toLocaleString()} contact${retryCount === 1 ? '' : 's'} you didn’t reach back in your queue? They’re dialled as they come up, and each uses one of its ${summary.retry.rounds} retr${summary.retry.rounds === 1 ? 'y' : 'ies'}.`}
+                  {`Put ${plural(retryCount, 'contact')} you didn’t reach back in your queue? They’re dialled as they come up, and each uses one of its ${plural(summary.retry.rounds, 'retry', 'retries')}.`}
                 </p>
                 <button
                   type="button"
@@ -403,8 +403,8 @@ export function MyContactsPanel({
               >
                 <RotateCcw size={14} aria-hidden="true" />
                 {retryScope === 'selected'
-                  ? `Retry selected (${retryCount.toLocaleString()})`
-                  : `Retry not reached (${retryCount.toLocaleString()})`}
+                  ? `Retry selected (${formatCount(retryCount)})`
+                  : `Retry not reached (${formatCount(retryCount)})`}
               </button>
             )}
           </div>
