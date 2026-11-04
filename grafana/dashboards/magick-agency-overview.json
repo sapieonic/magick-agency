@@ -923,12 +923,331 @@
       ]
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "What the insights rollup job still owes: dirty 15-minute buckets not yet recomputed (left axis) and the age of the oldest dirty mark (right axis), both as of the job's last pass (every 15s). Healthy is 0, or a few seconds while dialling; the Insights page says \"updating\" while the backlog is above 0. A backfill or a large rewrite shows as a spike that drains at about 200 buckets a batch. `agy-insights-rollup-behind` warns when the oldest mark stays over 120s for 10m. The gauges are set only when a pass finishes: a line frozen at one value while the batches line below is flat is a stalled pass (`agy-insights-rollup-stalled`). Empty before the job's first pass.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "oldest dirty mark.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 49
+      },
+      "id": 116,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Insights Rollup \u2014 Backlog and Oldest Dirty Mark",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (service_name) (agency_insights_rollup_dirty_buckets{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "dirty buckets ({{service_name}})",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (service_name) (agency_insights_rollup_oldest_dirty_seconds{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "oldest dirty mark ({{service_name}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Seconds one rollup batch takes (claim up to 200 marks, recompute their buckets from the attempts, commit). The empty batch that ends an idle pass is observed too, so an idle job sits near the bottom bucket. A pass batches for at most half an interval (7.5s), so a p95 near the 10s top bucket means each pass drains about one batch and a backlog grows: Postgres is slow, or the buckets are very large (8.1s was the slowest batch on a 1M-attempt campaign). Failed batches are not observed here; they are in the panel below.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 49
+      },
+      "id": 117,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Insights Rollup \u2014 Batch Recompute Duration (p50 / p95)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(agency_insights_rollup_recompute_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(agency_insights_rollup_recompute_seconds_bucket{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval])))",
+          "interval": "1m",
+          "legendFormat": "p95",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Per interval: rollup batches committed (the job's heartbeat: at least one per 15s pass while it runs), buckets recomputed, and failed batches (right axis, red). A failed batch rolls back with its marks kept and ends the pass, so a persistent failure is one per pass. `agy-insights-rollup-failing` warns at 10+ failures in 15m; `agy-insights-rollup-stalled` warns when the batches line has been flat for 15m.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed batches"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 57
+      },
+      "id": 118,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Insights Rollup \u2014 Batches, Buckets Recomputed and Failures",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(increase(agency_insights_rollup_recompute_seconds_count{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "batches committed",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(agency_insights_rollup_buckets_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "buckets recomputed",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(agency_insights_rollup_failures_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "failed batches",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Failed writes to the pacing history (`agency_campaign_pacing_minutes`), by path, and campaign-minutes dropped unwritten. `batch`: the pacing leader's 15s flush; a failed flush is kept and resent, so a short run of these loses nothing. `direct`: the single-row writes outside the tick (a wrap-up redial refused at the limit, an our-fault retirement); each one is a lost event. `dropped minutes`: the leader held more than 10,000 unwritten campaign-minutes and discarded the oldest; those minutes are gone from the Insights page's pacing history. Empty is healthy. `agy-pacing-history-write-failures` warns at 5+ failures in 15m, `agy-pacing-history-dropped` at any drop.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dropped minutes"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 57
+      },
+      "id": 119,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Pacing History \u2014 Write Failures and Dropped Minutes",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (path) (increase(agency_pacing_history_write_failures_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "write failed: {{path}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(agency_pacing_history_dropped_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "dropped minutes",
+          "refId": "B"
+        }
+      ]
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 49
+        "y": 65
       },
       "id": 2,
       "title": "Voice, capacity and storage",
@@ -965,7 +1284,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 50
+        "y": 66
       },
       "id": 10,
       "options": {
@@ -1054,7 +1373,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 50
+        "y": 66
       },
       "id": 73,
       "options": {
@@ -1143,7 +1462,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 50
+        "y": 66
       },
       "id": 67,
       "options": {
@@ -1202,7 +1521,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 58
+        "y": 74
       },
       "id": 102,
       "options": {
@@ -1290,7 +1609,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 58
+        "y": 74
       },
       "id": 76,
       "options": {
@@ -1331,7 +1650,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 66
+        "y": 82
       },
       "id": 3,
       "title": "Identity and mail",
@@ -1368,7 +1687,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 67
+        "y": 83
       },
       "id": 103,
       "options": {
@@ -1426,7 +1745,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 67
+        "y": 83
       },
       "id": 104,
       "options": {
@@ -1466,7 +1785,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 75
+        "y": 91
       },
       "id": 4,
       "title": "Analysis",
@@ -1534,7 +1853,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 76
+        "y": 92
       },
       "id": 68,
       "options": {
@@ -1598,7 +1917,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 76
+        "y": 92
       },
       "id": 69,
       "options": {
@@ -1674,7 +1993,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 84
+        "y": 100
       },
       "options": {
         "legend": {
@@ -1756,7 +2075,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 84
+        "y": 100
       },
       "options": {
         "legend": {
@@ -1803,7 +2122,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 92
+        "y": 108
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -1840,7 +2159,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 93
+        "y": 109
       },
       "id": 106,
       "options": {
@@ -1904,7 +2223,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 93
+        "y": 109
       },
       "id": 107,
       "options": {
@@ -1962,7 +2281,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 93
+        "y": 109
       },
       "id": 108,
       "options": {
@@ -2022,7 +2341,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 101
+        "y": 117
       },
       "id": 87,
       "options": {
@@ -2079,7 +2398,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 101
+        "y": 117
       },
       "id": 74,
       "options": {
@@ -2137,7 +2456,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 109
+        "y": 125
       },
       "id": 50,
       "options": {
@@ -2175,7 +2494,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 117
+        "y": 133
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -2212,7 +2531,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 118
+        "y": 134
       },
       "id": 112,
       "options": {
@@ -2270,7 +2589,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 118
+        "y": 134
       },
       "id": 113,
       "options": {
@@ -2328,7 +2647,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 126
+        "y": 142
       },
       "id": 114,
       "options": {
@@ -2386,7 +2705,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 126
+        "y": 142
       },
       "id": 115,
       "options": {

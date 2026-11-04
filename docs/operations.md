@@ -528,6 +528,88 @@ nothing, so two probers see the same numbers and a stall stays visible for the w
 For history, the *Processes* row reads the OTel runtime gauges (`nodejs_eventloop_*`, one series
 per process, per export interval), which keep their own histogram and are not touched by probes.
 
+## Alert runbooks
+
+Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
+the alert shows. The entries below are for the insights rules, which all warn (Slack) and never
+page: a stale or holed Insights page costs no call. Their panels are at the bottom of the
+dashboard's *Agency dialer* row (*Insights Rollup*, *Pacing History*). Their thresholds assume the
+default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS` (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
+
+### `agy-insights-rollup-failing`
+
+**Means:** 10+ rollup batches rolled back in 15 minutes (`agency_insights_rollup_failures_total`).
+A failed batch keeps its dirty marks and ends the pass, so the Insights page's range sections stop
+moving and the page says "updating". Nothing is lost: the marks stay until a batch commits.
+
+**Check:** the logs, `component=agency-insights-rollup`, "Insights rollup batch failed". A
+connection, pool or lock error is Postgres; the same SQL error on every pass, usually after a
+deploy, is a recompute bug or one bad bucket (batches claim oldest first, so one bucket that always
+fails blocks the whole backlog).
+
+**Do:** fix Postgres (its load, `DB_POOL_MAX`, `db_pool_clients_waiting`). For a bad bucket, find the
+oldest row of `agency_insights_rollup_dirty` (`ORDER BY id LIMIT 1`), and file the error with its
+`campaign_id` and `bucket_start`; do not delete marks to unblock it, that bucket would then be
+wrong for good. The job catches up on its own once batches commit.
+
+### `agy-insights-rollup-behind`
+
+**Means:** the oldest dirty mark has been older than 120 s for 10 minutes
+(`agency_insights_rollup_oldest_dirty_seconds`). A healthy job stays under ~50 s (one interval,
+plus a long pass, plus the skipped tick); a 1M-attempt backfill drained in 62 s. 120 s is eight
+intervals.
+
+**Check:** the *Insights Rollup* panels. Failures rising: follow `agy-insights-rollup-failing`.
+Backlog shrinking: a backfill or a large rewrite (the migration that marks every bucket, a reaper
+or disposition sweep) is being worked off. Backlog growing with fast batches: marks arrive faster
+than half an interval of batching drains. Batch p95 near 10 s: Postgres is slow.
+
+**Do:** a draining backlog clears on its own; leave it. A growing one with fast batches: raise
+`AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (up to 5000) and restart. Slow batches: look at Postgres load
+and the slow statements on `agency_insights_rollup_buckets`.
+
+### `agy-insights-rollup-stalled`
+
+**Means:** no rollup batch has committed for ~15 minutes
+(`agency_insights_rollup_recompute_seconds_count` flat), although the job committed batches
+before. A pass has started and not finished, so the job skips every later tick and the backlog
+gauges are frozen at their last value (which is why `agy-insights-rollup-behind` cannot see this).
+The server sets no `statement_timeout`, so a batch waiting on a lock waits indefinitely.
+
+**Check:** if `agy-insights-rollup-failing` fires too, follow that one. Otherwise, in agency's
+Postgres, `pg_stat_activity` for a long-running statement on `agency_insights_rollup_dirty` or
+`agency_insights_rollup_buckets`, and what it waits on (`wait_event`, `pg_blocking_pids()`).
+
+**Do:** end whatever holds the lock, or cancel the blocked statement (`pg_cancel_backend`): its
+batch rolls back and the next pass retries it. A restart does the same. Then watch the batches
+line come back.
+
+### `agy-pacing-history-write-failures`
+
+**Means:** 5+ failed writes to `agency_campaign_pacing_minutes` in 15 minutes, by `path`
+(`agency_pacing_history_write_failures_total`). `batch`: the pacing leader's 15 s flush; the
+minutes are kept and resent, so nothing is lost yet. `direct`: the single-row writes outside the
+tick (a wrap-up redial refused at the limit, an our-fault retirement); each failure is an event
+the pacing history never shows. Dialling is unaffected.
+
+**Check:** the logs, "Pacing history flush failed" (`batch`) or "Pacing history write failed"
+(`direct`), for the error; it is almost always Postgres or its pool.
+
+**Do:** fix Postgres. `batch` failures resend on their own once a flush succeeds; past 10,000
+unwritten campaign-minutes they start being dropped (next entry).
+
+### `agy-pacing-history-dropped`
+
+**Means:** the pacing leader held more than 10,000 unwritten campaign-minutes and dropped the
+oldest (`agency_pacing_history_dropped_total`). Those minutes are gone from
+`agency_campaign_pacing_minutes` for good; nothing re-derives them.
+
+**Check:** `agy-pacing-history-write-failures` (`path=batch`) will have fired first; the WARN
+"Pacing history over its pending cap" gives how many were dropped.
+
+**Do:** fix the write (Postgres) and the drops stop with it. Tell the affected supervisors that
+the Insights pacing history of that window is incomplete.
+
 ## Releases and versioning
 
 Every workspace package has its own semantic version, tag, GitHub Release and `CHANGELOG.md`,

@@ -392,6 +392,24 @@ describe('agency alert rules', () => {
     assert.deepEqual(problems, [], `pending periods on the window boundary:\n  ${problems.join('\n  ')}`);
   });
 
+  // A "too little" rule (op lt: a heartbeat such as agy-insights-rollup-stalled) must read an
+  // absent series as no data, which no_data_state = "OK" leaves green: a fallback (`or
+  // vector(0)`, absent(), `or … * 0`) turns a job that never started, or a deployment that does
+  // not run it, into a 0 that fires. So no vector()/absent() and no `or` anywhere in it.
+  // And rate()/increase() are never negative, so `lt 0` (or less) never fires.
+  test('an lt rule reads an absent series as no data, and its threshold is above 0', () => {
+    const problems = [];
+    for (const r of load().rules.filter((x) => x.ast && x.op === 'lt')) {
+      for (const n of allNodes(r.ast)) {
+        if (n.type === 'call' && ['vector', 'absent', 'absent_over_time'].includes(n.fn)) problems.push(`${r.uid}: ${n.fn}() makes an absent series a value`);
+      }
+      if (allNodes(r.ast).some((n) => n.type === 'binary' && n.op === 'or')) problems.push(`${r.uid}: an \`or\` arm can stand in for the absent series`);
+      if (!(Number(r.threshold) > 0)) problems.push(`${r.uid}: lt ${r.threshold} can never fire`);
+      if (r.noData !== 'OK') problems.push(`${r.uid}: no_data_state ${r.noData} fires where the series does not exist`);
+    }
+    assert.deepEqual(problems, [], `lt rules that fire on, or are blind to, an idle deployment:\n  ${problems.join('\n  ')}`);
+  });
+
   // A counter series is created by its first increment, so increase() over it
   // is empty until a second sample: the first failure (or crash) ever, or the
   // first since a restart, would never fire. Every increase() on a rule's firing

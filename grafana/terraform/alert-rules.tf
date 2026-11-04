@@ -69,6 +69,111 @@ locals {
       },
     ]
 
+    # ── Insights: the rollup job and the pacing history ──────────────────
+    #
+    # Both are reporting, not dialling: a stale or holed Insights page costs no call, so these
+    # warn (Slack) and never page. The rollup job (apps/server/src/agency/insights-rollup-job.ts)
+    # runs in the main process only, one pass every AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS (15s),
+    # batches of AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE (200), batching for at most half an interval.
+    # Its gauges exist only once a pass has finished (no series before the job starts), and the
+    # failure and pacing-history counters only once something failed, so on a healthy idle
+    # deployment every rule here reads no data (OK) or 0. The thresholds assume the default
+    # interval; re-derive them if it is raised.
+    "insights" = [
+      {
+        uid  = "agy-insights-rollup-failing"
+        name = "Insights rollup batches failing"
+        # A failed batch rolls back (its marks stay dirty), counts once and ends the pass, so a
+        # persistent failure counts one per pass: ~60 in 15m. 10+ in 15m (threshold 9.5, N-0.5)
+        # is a sixth of the passes failing, or 2.5 minutes of consecutive passes: past a
+        # Postgres blip or a lock timeout, which the next pass retries and nobody sees. A poison
+        # bucket (one that fails its recompute every time) is claimed first in every batch
+        # (oldest first) and fails every pass, so it reads ~60. Sparse counter: new-series guard.
+        expr          = "sum by (service_name) (((agency_insights_rollup_failures_total{${local.agency}} unless agency_insights_rollup_failures_total{${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(agency_insights_rollup_failures_total{${local.agency}}[15m]))"
+        op            = "gt"
+        threshold     = 9.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "The insights rollup keeps failing — the Insights page is going stale"
+        description   = "agency_insights_rollup_failures_total advanced by 10+ in 15m on {{ $labels.service_name }}. Each failure is a rollup batch rolled back with its dirty marks kept, so the range sections of the Insights page (calls, outcomes, trends, caller IDs, recording) stop moving and the page shows \"updating\" until a batch commits. Dialling is unaffected. Read the error in the logs: component=agency-insights-rollup, 'Insights rollup batch failed'. A Postgres error (connection, pool timeout, lock) is the database: check agency's Postgres and its pool. The same SQL error on every pass after a deploy is a recompute bug or a poison bucket (the claim is oldest first, so one bad bucket blocks the whole backlog): find the oldest row of agency_insights_rollup_dirty and fix or report it; the marks stay dirty, so nothing is lost and the job catches up on its own once batches commit. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-insights-rollup-behind"
+        name = "Insights rollup falling behind"
+        # The gauge is the oldest dirty mark's age after each pass, 0 when the backlog is empty.
+        # A healthy job's worst after-pass age, at the default 15s interval and batch 200: one
+        # interval for a mark made just after a claim (15s), plus a long pass (half an interval
+        # of batching, 7.5s, plus one batch's worst case, 10s: the histogram's top bucket; 8.1s
+        # measured on a 1M-attempt campaign, docs/insights.md "At scale"), plus the tick that
+        # pass made the timer skip (15s): ~48s. The same 1M-attempt backfill drained in 62s.
+        # 120s (8 intervals) is 2.5x that ceiling and about twice the backfill; for 10m means
+        # nothing older than two minutes was drained for ~12 minutes. A gauge, so no window and
+        # no guard; max BY service_name, one job per deployment.
+        expr          = "max by (service_name) (agency_insights_rollup_oldest_dirty_seconds{${local.agency}})"
+        op            = "gt"
+        threshold     = 120
+        for           = "10m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "The insights rollup is more than 2 minutes behind for 10 minutes"
+        description   = "agency_insights_rollup_oldest_dirty_seconds has been above 120s for 10m on {{ $labels.service_name }}: the oldest dirty insights bucket has waited more than 8 rollup intervals, so the Insights page's range sections are behind the attempts table and the page says \"updating\". Read agency_insights_rollup_dirty_buckets beside it (the dashboard's Insights Rollup panels). Failures rising too: follow agy-insights-rollup-failing. Backlog shrinking and batches completing: the job is working off a backfill or a burst (the migration that marks every bucket, a large reaper or disposition rewrite) and clears on its own; a backfill drains about 200 buckets per batch, several batches per 15s pass. Backlog growing with fast batches: more marks arrive than half an interval of batching drains; raise AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE. Slow batches (p95 near 10s): Postgres is slow; check its load and agency_insights_rollup_recompute_seconds. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-insights-rollup-stalled"
+        name = "Insights rollup has stopped completing batches"
+        # The backlog gauge is set only when a pass finishes, so a pass that never finishes (a
+        # batch waiting on a lock: the server sets no statement_timeout) freezes it at its last
+        # value, often 0, and agy-insights-rollup-behind cannot see it. Every committed batch
+        # observes the histogram, the empty one that ends an idle pass included, so a running
+        # job adds at least one count per pass (~0.067/s at 15s). Below 0.001/s over 10m, for
+        # 5m, is no batch for 15 minutes. A job that has not started, or has failed every batch
+        # since it started, has no series (no data, OK; the failing rule covers the second); a
+        # fresh series has one sample for its first minute, and rate() of one sample is empty.
+        expr          = "sum by (service_name) (rate(agency_insights_rollup_recompute_seconds_count{${local.agency}}[10m]))"
+        op            = "lt"
+        threshold     = 0.001
+        for           = "5m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "The insights rollup has completed no batch for 15 minutes"
+        description   = "agency_insights_rollup_recompute_seconds_count has not advanced for ~15m on {{ $labels.service_name }}, although the job completed batches before: a rollup pass started and has not finished (the job runs one pass at a time, so every later tick is skipped), and the backlog gauges are frozen at their last value. The Insights page's range sections stop moving. Dialling is unaffected. If agy-insights-rollup-failing fires too, follow that one. Otherwise a batch is blocked: in agency's Postgres, look in pg_stat_activity for a long-running statement on agency_insights_rollup_dirty or agency_insights_rollup_buckets and what it waits on (a lock held by another transaction, an exhausted pool). Cancelling the blocked statement rolls its batch back and the next pass retries it; a restart does the same. The main-process log line 'Insights rollup job started' shows when the job last started. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-pacing-history-write-failures"
+        name = "Pacing history writes failing"
+        # The leader flushes every 15s (path="batch"); a failed flush is kept and resent, so one
+        # costs nothing. The events outside the tick are one upsert each (path="direct") and a
+        # failure loses that event. 5+ in 15m (threshold 4.5) is over a minute of consecutive
+        # failed flushes, or five lost events. BY path, so the instance says which. Sparse
+        # counter: new-series guard.
+        expr          = "sum by (service_name, path) (((agency_pacing_history_write_failures_total{${local.agency}} unless agency_pacing_history_write_failures_total{${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(agency_pacing_history_write_failures_total{${local.agency}}[15m]))"
+        op            = "gt"
+        threshold     = 4.5
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Pacing history is failing to write to Postgres"
+        description   = "agency_pacing_history_write_failures_total{path=\"{{ $labels.path }}\"} advanced by 5+ in 15m on {{ $labels.service_name }}. path=batch: the pacing leader's 15s flush to agency_campaign_pacing_minutes is failing; the minutes are kept in memory and resent, but past 10,000 unwritten campaign-minutes the oldest are dropped (agy-pacing-history-dropped). path=direct: the single-row writes outside the tick (a wrap-up redial refused at the limit, an our-fault retirement) are failing, and each failure is an event the Insights page's pacing history never shows. Dialling is unaffected: a failed write never fails a tick or a request. Read the error in the logs ('Pacing history flush failed' or 'Pacing history write failed'); it is almost always agency's Postgres or its pool. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+      {
+        uid  = "agy-pacing-history-dropped"
+        name = "Pacing history minutes dropped"
+        # Any drop: each one is a campaign-minute of history lost for good. It needs the pending
+        # cap (10,000 campaign-minutes) full, which takes minutes to hours of failed flushes, so
+        # it never fires on a blip. Threshold 0 over a 15m window, for 0s (not the window, the
+        # validators pin that). Sparse counter: new-series guard.
+        expr          = "sum by (service_name) (((agency_pacing_history_dropped_total{${local.agency}} unless agency_pacing_history_dropped_total{${local.agency}} offset 15m) and on (service_name) group by (service_name) (nodejs_eventloop_utilization_ratio{${local.agency}} offset 15m)) or increase(agency_pacing_history_dropped_total{${local.agency}}[15m]))"
+        op            = "gt"
+        threshold     = 0
+        for           = "0s"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "Pacing history is being dropped — the Insights stall history has holes"
+        description   = "agency_pacing_history_dropped_total advanced in the last 15m on {{ $labels.service_name }}: the pacing leader held more than 10,000 unwritten campaign-minutes (its flushes kept failing) and dropped the oldest. Those minutes are gone from agency_campaign_pacing_minutes for good, so the Insights page's pacing and stall history has gaps for that period; nothing re-derives them. agy-pacing-history-write-failures (path=batch) has been firing before this: fix the write first (agency's Postgres), and the drops stop with it. The WARN 'Pacing history over its pending cap' gives how many were dropped. Tell the affected supervisors that the pacing history of that window is incomplete. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
+    ]
+
     "processes" = [
       {
         uid  = "agy-cluster-child-crash"
