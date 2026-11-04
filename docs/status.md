@@ -781,21 +781,22 @@ build's own calls, defaults pending Manas (`decisions.md` §4).
 
 ## Test counts
 
-Latest run, 2026-11-04, the contact assignment branch after the PR #33 review fixes, from
-inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
-`pnpm test:release` 10 pass):
+Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
+review fixes, from inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33
+and `pnpm test:release` 10 pass; `pnpm build` clean). Integration on `05e988e`; unit, release,
+Grafana and build again after merging `main` (#36):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7895 passed + 42 skipped (394 files) | rest lane 1749 passed + 9 expected fail (186 files); wall-clock lane 15 (3 files) |
-| `packages/db` | 427 (25 files) | 536 (49 files) |
-| `apps/console` | 5159 (268 files) | — |
+| `apps/server` | 8036 passed + 42 skipped (404 files) | rest lane 1916 passed + 9 expected fail + 1 skipped (198 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 562 (53 files) |
+| `apps/console` | 5117 (270 files) | — |
 | `apps/super-admin` | 436 | — |
-| `packages/contracts` | 281 | — |
+| `packages/contracts` | 281, `contracts-literals --check` up to date | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean, `contracts-literals --check` up to date | — |
+| `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean: the contact assignment branch's run, not repeated (no Dart toolchain on this branch's host; it changes no file under `apps/mobile` and no mobile wire shape) | — |
 
 After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
 assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest
