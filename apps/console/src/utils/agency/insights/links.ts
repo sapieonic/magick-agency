@@ -1,0 +1,154 @@
+import type { AgencyAttemptOutcome } from '../../../types/agency';
+import type { AgencyInsightsRoster } from '../../../types/agency-insights';
+import { AGENCY_UNASSIGNED_FILTER } from '@magick-agency/contracts/api/agency/agency-spine';
+
+/**
+ * Every drill-down link on the Insights tab: a number opens the list whose rows
+ * it counts.
+ *
+ * ── One builder, so the key names live in one place ─────────────────────────
+ * The Contacts and Call attempts tabs read their filters from the URL. Where a
+ * filter already exists there, this uses its spelling:
+ *
+ *  - Contacts (`agencyRosterFilters.ts`): `state`, `suppressed_reason`,
+ *    `last_disposition`, and `assigned_to` (an agent id, or `unassigned` for the
+ *    pool).
+ *
+ * Where it does not exist yet, the names below were agreed for the drill-down
+ * workstream (docs/insights.md, WS F), which implements them on the list pages
+ * and the server. Until then the lists ignore an unknown key (their readers are
+ * allow-lists), so such a link opens the unfiltered list rather than failing:
+ *
+ *  - Contacts: `waiting=due_now|retry|callback`, `attempted=0|1`.
+ *  - Call attempts (none of its filters are in the URL yet): `outcome`,
+ *    `disposition`, `agent_user_id`, `caller_id`, `redial=1`, `agent_manual=1`,
+ *    `agent_reopened=1`, `from`, `to`.
+ *
+ * `from`/`to` are the insights range's own instants, half-open `[from, to)`.
+ *
+ * ── An agent's own performance has no URL ───────────────────────────────────
+ * The analytics page holds its selected agent in component state, so there is no
+ * link to "agent X". {@link agentLink} goes to the campaign's Agents tab instead.
+ */
+
+export type InsightsWaiting = 'due_now' | 'retry' | 'callback';
+
+export interface InsightsContactsFilter {
+  state?: string[];
+  waiting?: InsightsWaiting;
+  suppressed_reason?: string[];
+  /** An agent's user id, or `null` for the unassigned pool. */
+  assigned_to?: string | null;
+  attempted?: boolean;
+  last_disposition?: string;
+}
+
+export interface InsightsAttemptsFilter {
+  outcome?: AgencyAttemptOutcome | AgencyAttemptOutcome[];
+  disposition?: string;
+  agent_user_id?: string;
+  caller_id?: string;
+  redial?: boolean;
+  agent_manual?: boolean;
+  agent_reopened?: boolean;
+  from?: string;
+  to?: string;
+}
+
+function campaignBase(campaignId: string): string {
+  return `/agency/campaigns/${encodeURIComponent(campaignId)}`;
+}
+
+function withQuery(path: string, params: URLSearchParams): string {
+  const qs = params.toString();
+  return qs ? `${path}?${qs}` : path;
+}
+
+/** `/agency/campaigns/:id/contacts?…` */
+export function contactsLink(campaignId: string, filter: InsightsContactsFilter = {}): string {
+  const params = new URLSearchParams();
+  for (const state of filter.state ?? []) params.append('state', state);
+  if (filter.waiting) params.set('waiting', filter.waiting);
+  for (const reason of filter.suppressed_reason ?? []) params.append('suppressed_reason', reason);
+  if (filter.last_disposition) params.append('last_disposition', filter.last_disposition);
+  if (filter.assigned_to !== undefined) {
+    params.append('assigned_to', filter.assigned_to === null ? AGENCY_UNASSIGNED_FILTER : filter.assigned_to);
+  }
+  if (filter.attempted !== undefined) params.set('attempted', filter.attempted ? '1' : '0');
+  return withQuery(`${campaignBase(campaignId)}/contacts`, params);
+}
+
+/** `/agency/campaigns/:id/attempts?…` */
+export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter = {}): string {
+  const params = new URLSearchParams();
+  const outcomes = filter.outcome === undefined ? [] : Array.isArray(filter.outcome) ? filter.outcome : [filter.outcome];
+  for (const outcome of outcomes) params.append('outcome', outcome);
+  if (filter.disposition) params.set('disposition', filter.disposition);
+  if (filter.agent_user_id) params.set('agent_user_id', filter.agent_user_id);
+  if (filter.caller_id) params.set('caller_id', filter.caller_id);
+  if (filter.redial) params.set('redial', '1');
+  if (filter.agent_manual) params.set('agent_manual', '1');
+  if (filter.agent_reopened) params.set('agent_reopened', '1');
+  if (filter.from) params.set('from', filter.from);
+  if (filter.to) params.set('to', filter.to);
+  return withQuery(`${campaignBase(campaignId)}/attempts`, params);
+}
+
+/** The campaign's Agents tab. */
+export function agentsLink(campaignId: string): string {
+  return `${campaignBase(campaignId)}/agents`;
+}
+
+/** Where an agent's row leads: their performance view if it had a URL, so the Agents tab. */
+export function agentLink(campaignId: string, _agentUserId: string): string {
+  return agentsLink(campaignId);
+}
+
+/** The campaign's Settings tab, Contacts upload, and the ingest job's rejected-rows path. */
+export function settingsLink(campaignId: string): string {
+  return `${campaignBase(campaignId)}/settings`;
+}
+
+export function contactsUploadLink(campaignId: string): string {
+  return `${campaignBase(campaignId)}/contacts/add`;
+}
+
+/** The roster bucket a contacts link narrows to, one per counted field. */
+export type RosterBucket = keyof Pick<
+  AgencyInsightsRoster,
+  | 'total'
+  | 'waiting_due_now'
+  | 'waiting_retry'
+  | 'waiting_callback'
+  | 'on_call'
+  | 'in_wrapup'
+  | 'completed'
+  | 'exhausted'
+  | 'suppressed_dnc'
+  | 'suppressed_invalid'
+  | 'suppressed_other'
+  | 'attempted'
+> | 'waiting' | 'suppressed' | 'never_attempted';
+
+const ROSTER_FILTERS: Record<RosterBucket, InsightsContactsFilter> = {
+  total: {},
+  waiting: { state: ['pending'] },
+  waiting_due_now: { state: ['pending'], waiting: 'due_now' },
+  waiting_retry: { state: ['pending'], waiting: 'retry' },
+  waiting_callback: { state: ['pending'], waiting: 'callback' },
+  on_call: { state: ['in_flight'] },
+  in_wrapup: { state: ['connected'] },
+  completed: { state: ['completed'] },
+  exhausted: { state: ['exhausted'] },
+  suppressed: { state: ['suppressed'] },
+  suppressed_dnc: { state: ['suppressed'], suppressed_reason: ['dnc'] },
+  suppressed_invalid: { state: ['suppressed'], suppressed_reason: ['invalid'] },
+  suppressed_other: { state: ['suppressed'], suppressed_reason: ['max_attempts', 'manual'] },
+  attempted: { attempted: true },
+  never_attempted: { attempted: false },
+};
+
+/** The contacts list behind one roster number. */
+export function rosterBucketLink(campaignId: string, bucket: RosterBucket): string {
+  return contactsLink(campaignId, ROSTER_FILTERS[bucket]);
+}

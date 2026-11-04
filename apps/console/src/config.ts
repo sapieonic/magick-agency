@@ -188,6 +188,13 @@ export const ENDPOINTS = {
        */
       campaignStatsSeries: (campaignId: string) =>
         `${API_BASE}/proxy/agency/campaigns/${encodeURIComponent(campaignId)}/stats/series`,
+      /**
+       * The Insights tab's seven section reads (decision IN1), all floored at
+       * `agency.supervise`. One builder for the family, so a section name is
+       * the only thing that differs between them.
+       */
+      campaignInsights: (campaignId: string, section: string) =>
+        `${API_BASE}/proxy/agency/campaigns/${encodeURIComponent(campaignId)}/insights/${section}`,
     },
   },
   /**
