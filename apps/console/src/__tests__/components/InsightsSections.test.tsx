@@ -46,7 +46,8 @@ const ctx: RangeSectionContext = {
   rangeLabel: 'Today',
   agentName: (id) => (id === null ? 'Unassigned' : NAMES[id] ?? 'Unknown agent'),
 };
-const RANGE_QS = 'from=2026-11-03T18%3A30%3A00.000Z&to=2026-11-04T10%3A12%3A00.000Z';
+// Every attempts link lists placed dials, the range half-open on dialed_at (links.ts).
+const RANGE_QS = 'placed=1&dialed_from=2026-11-03T18%3A30%3A00.000Z&dialed_to=2026-11-04T10%3A12%3A00.000Z';
 
 function show(node: ReactElement) {
   return render(<MemoryRouter>{node}</MemoryRouter>);
@@ -126,7 +127,7 @@ describe('allocation', () => {
     const table = screen.getByTestId('allocation-table');
     const [, priya, , pool] = within(table).getAllByRole('row');
     expect(hrefOf(priya!, '120 due now')).toBe('/agency/campaigns/camp-1/contacts?state=pending&waiting=due_now&assigned_to=usr_priya');
-    expect(hrefOf(priya!, '12 redials')).toBe('/agency/campaigns/camp-1/attempts?agent_user_id=usr_priya&redial=1');
+    expect(hrefOf(priya!, '12 redials')).toBe('/agency/campaigns/camp-1/attempts?agent_user_id=usr_priya&redial=1&placed=1');
     expect(hrefOf(pool!, '200 allocated')).toBe('/agency/campaigns/camp-1/contacts?assigned_to=unassigned');
   });
 
@@ -183,7 +184,7 @@ describe('calls and outcomes', () => {
     const ptp = within(table).getByText('Promise to pay').closest('tr') as HTMLElement;
     expect(ptp.textContent).toContain('Success');
     expect(ptp.textContent).toContain('37.5%');
-    expect(hrefOf(ptp, /written up as Promise to pay/)).toBe(`/agency/campaigns/camp-1/attempts?disposition=ptp&${RANGE_QS}`);
+    expect(hrefOf(ptp, /written up as Promise to pay/)).toBe(`/agency/campaigns/camp-1/attempts?disposition_code=ptp&${RANGE_QS}`);
     expect(within(table).getByText('Closed with no outcome')).toBeTruthy();
   });
 

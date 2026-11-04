@@ -7,24 +7,27 @@ import { AGENCY_UNASSIGNED_FILTER } from '@magick-agency/contracts/api/agency/ag
  * it counts.
  *
  * ── One builder, so the key names live in one place ─────────────────────────
- * The Contacts and Call attempts tabs read their filters from the URL. Where a
- * filter already exists there, this uses its spelling:
+ * The Contacts and Call attempts tabs read their filters from the URL
+ * (`agencyRosterFilters.ts`, `agencyCampaignAttemptParams.ts`) and the server
+ * filters and counts with the same predicates the insights reads use
+ * (`drilldown-sql.ts`), so the list's total ("N contacts", "N attempts") is the
+ * number that was clicked (docs/insights.md, WS F):
  *
- *  - Contacts (`agencyRosterFilters.ts`): `state`, `suppressed_reason`,
- *    `last_disposition`, and `assigned_to` (an agent id, or `unassigned` for the
- *    pool).
+ *  - Contacts: `state`, `suppressed_reason`, `last_disposition`, `assigned_to`
+ *    (an agent id, or `unassigned` for the pool), `waiting=due_now|retry|callback`
+ *    (the roster's waiting buckets), `attempted=1|0` (a dial placed, or none).
+ *  - Call attempts: `outcome`, `disposition_code`, `agent_user_id` (through the
+ *    attempt's session), `caller_id`, `redial=1`, `agent_manual=1`,
+ *    `agent_reopened=1`, and `placed=1` plus `dialed_from` / `dialed_to`.
  *
- * Where it does not exist yet, the names below were agreed for the drill-down
- * workstream (docs/insights.md, WS F), which implements them on the list pages
- * and the server. Until then the lists ignore an unknown key (their readers are
- * allow-lists), so such a link opens the unfiltered list rather than failing:
- *
- *  - Contacts: `waiting=due_now|retry|callback`, `attempted=0|1`.
- *  - Call attempts (none of its filters are in the URL yet): `outcome`,
- *    `disposition`, `agent_user_id`, `caller_id`, `redial=1`, `agent_manual=1`,
- *    `agent_reopened=1`, `from`, `to`.
- *
- * `from`/`to` are the insights range's own instants, half-open `[from, to)`.
+ * ── Every attempts link is a placed-dial link ───────────────────────────────
+ * The insights attempt numbers count dials PLACED (IN6: `dialed_at` set), cut by
+ * a half-open `[from, to)` on `dialed_at`. The attempts list's own `from`/`to`
+ * are a different window (inclusive, on `created_at`, unplaced attempts
+ * included), so the range goes out as `dialed_from` / `dialed_to`, and every link
+ * carries `placed=1` so a lifetime number (no range) still lists placed dials
+ * only. The builder's own fields keep the insights names (`from`, `to`,
+ * `disposition`); only the URL spelling is the list's.
  *
  * ── An agent's own performance has no URL ───────────────────────────────────
  * The analytics page holds its selected agent in component state, so there is no
@@ -45,12 +48,14 @@ export interface InsightsContactsFilter {
 
 export interface InsightsAttemptsFilter {
   outcome?: AgencyAttemptOutcome | AgencyAttemptOutcome[];
+  /** A write-up code; sent as the list's `disposition_code`. */
   disposition?: string;
   agent_user_id?: string;
   caller_id?: string;
   redial?: boolean;
   agent_manual?: boolean;
   agent_reopened?: boolean;
+  /** The insights range, half-open `[from, to)`; sent as `dialed_from` / `dialed_to`. */
   from?: string;
   to?: string;
 }
@@ -78,19 +83,20 @@ export function contactsLink(campaignId: string, filter: InsightsContactsFilter 
   return withQuery(`${campaignBase(campaignId)}/contacts`, params);
 }
 
-/** `/agency/campaigns/:id/attempts?…` */
+/** `/agency/campaigns/:id/attempts?…`: placed dials, the range half-open on `dialed_at`. */
 export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter = {}): string {
   const params = new URLSearchParams();
   const outcomes = filter.outcome === undefined ? [] : Array.isArray(filter.outcome) ? filter.outcome : [filter.outcome];
   for (const outcome of outcomes) params.append('outcome', outcome);
-  if (filter.disposition) params.set('disposition', filter.disposition);
+  if (filter.disposition) params.set('disposition_code', filter.disposition);
   if (filter.agent_user_id) params.set('agent_user_id', filter.agent_user_id);
   if (filter.caller_id) params.set('caller_id', filter.caller_id);
   if (filter.redial) params.set('redial', '1');
   if (filter.agent_manual) params.set('agent_manual', '1');
   if (filter.agent_reopened) params.set('agent_reopened', '1');
-  if (filter.from) params.set('from', filter.from);
-  if (filter.to) params.set('to', filter.to);
+  params.set('placed', '1');
+  if (filter.from) params.set('dialed_from', filter.from);
+  if (filter.to) params.set('dialed_to', filter.to);
   return withQuery(`${campaignBase(campaignId)}/attempts`, params);
 }
 

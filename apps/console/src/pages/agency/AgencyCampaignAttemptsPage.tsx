@@ -37,6 +37,7 @@ import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { PageDescription } from '../../components/common/PageDescription';
 import { FilterChip } from '../../components/agency/FilterChip';
+import { AppliedFilterChips } from '../../components/agency/AppliedFilterChips';
 import { FiltersCard } from '../../components/agency/FiltersCard';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import {
@@ -48,6 +49,14 @@ import {
 import type { AgencyCampaign } from '../../types/agency-campaign';
 import spine from '../../components/agency/SpineListLayout.module.css';
 import { SYSTEM_DISPOSITION_HINTS, isSystemDispositionCode } from '../../utils/agency/systemDisposition';
+import { attemptDateRange } from '../../utils/agencyAttemptFilters';
+import {
+  campaignAttemptFilterChips,
+  campaignAttemptFiltersFromParams,
+  campaignAttemptFiltersToParams,
+  isCampaignAttemptFiltered,
+} from '../../utils/agencyCampaignAttemptParams';
+import { formatCount } from '../../utils/format/number';
 import styles from './AgencyCampaignAttemptsPage.module.css';
 
 const PAGE_SIZE = 50;
@@ -68,41 +77,68 @@ const PAGE_SIZE = 50;
  * matter on a finished campaign — the date range and the outcome — are
  * first-class controls rather than an afterthought.
  *
- * ── There is no total, deliberately ─────────────────────────────────────────
- * Counting a filtered set of up to a million rows costs a second scan on every
- * page, for a number that is stale before it renders on a live campaign. So the
- * page says "showing N" and offers "Load more" — never "N of M", which would be
- * a number the API cannot honestly produce.
+ * ── The filters are in the URL, and the total is asked for once ─────────────
+ * Every filter is read from the query string and written back when it changes
+ * (`agencyCampaignAttemptParams.ts`), so a number on the Insights tab opens this
+ * list already narrowed, the back button undoes a filter, and the view can be
+ * sent to a colleague. Each applied filter is a removable chip, including the
+ * ones the form has no control for (a dialled window, a caller ID, a redial flag).
+ *
+ * The first page asks for the exact total (`?include_total=1`): the server counts
+ * the filtered set with the list's own predicate, once per filter change, not per
+ * page. That is the number a drill-down is checked against, so it is shown as
+ * "N attempts". Later pages keep it; a server that sends none leaves the count at
+ * "showing N", never an "N of M" nothing counted.
  */
 export function AgencyCampaignAttemptsPage() {
   const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { tenantId, accountId, role } = useTenant();
   const { showToast, showErrorToast } = useToast();
 
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   const [rows, setRows] = useState<AgencyAttempt[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  // Arriving from a contact's drill-down pins the view to that contact. Read
-  // once into the applied filters rather than held as a separate mode, so the
-  // export and the "load more" both carry it without a second code path.
-  const pinnedContact = searchParams.get('contact_id');
+  /*
+    ── The applied filters live in the URL; the drafts do not ────────────────
+    Derived from the query string on every render rather than mirrored into
+    state, so there is one answer to "what is applied" (the roster page's rule).
+    Arriving from a contact's drill-down pins the view to that contact through
+    the same path: `contact_id` is one more applied filter, so the export and
+    "load more" carry it without a second code path.
+  */
+  const filters = useMemo(() => campaignAttemptFiltersFromParams(searchParams), [searchParams]);
+  const pinnedContact = filters.contact_id ?? null;
+
+  /** Applied filters → the URL. The single writer. */
+  const applyToUrl = useCallback((next: AgencyAttemptFilters) => {
+    setSearchParams(campaignAttemptFiltersToParams(next));
+  }, [setSearchParams]);
 
   // Draft vs applied, so typing does not fire a request per keystroke and the
   // export is guaranteed to match exactly what is on screen.
-  const [draftOutcomes, setDraftOutcomes] = useState<string[]>([]);
-  const [draftPhone, setDraftPhone] = useState('');
-  const [draftAgent, setDraftAgent] = useState('');
-  const [draftFrom, setDraftFrom] = useState('');
-  const [draftTo, setDraftTo] = useState('');
-  const [filters, setFilters] = useState<AgencyAttemptFilters>(
-    pinnedContact ? { contact_id: pinnedContact } : {},
-  );
+  const [draftOutcomes, setDraftOutcomes] = useState<string[]>(() => filters.outcome ?? []);
+  const [draftPhone, setDraftPhone] = useState(() => filters.phone ?? '');
+  const [draftAgent, setDraftAgent] = useState(() => filters.agent_user_id ?? '');
+  const [draftFrom, setDraftFrom] = useState(() => dayOf(filters.from));
+  const [draftTo, setDraftTo] = useState(() => dayOf(filters.to));
+
+  // A link (or the back button) changes the applied set: the form follows it, or
+  // the panel shows controls that disagree with the list and Apply silently
+  // undoes the link.
+  useEffect(() => {
+    setDraftOutcomes(filters.outcome ?? []);
+    setDraftPhone(filters.phone ?? '');
+    setDraftAgent(filters.agent_user_id ?? '');
+    setDraftFrom(dayOf(filters.from));
+    setDraftTo(dayOf(filters.to));
+  }, [filters]);
 
   const canExport = hasPermission(role, 'agency.supervise');
 
@@ -120,10 +156,13 @@ export function AgencyCampaignAttemptsPage() {
     setLoading(true);
     setError(null);
     try {
-      const page = await getCampaignAttempts(id, active, { limit: PAGE_SIZE }, tenantId, accountId);
+      const page = await getCampaignAttempts(
+        id, active, { limit: PAGE_SIZE, includeTotal: true }, tenantId, accountId,
+      );
       if (seq !== requestSeq.current) return;
       setRows(page.rows);
       setNextCursor(page.next_cursor);
+      setTotal(typeof page.total === 'number' ? page.total : null);
     } catch (err: unknown) {
       if (seq !== requestSeq.current) return;
       setError(getErrorMessage(err, 'Could not load this campaign’s call attempts.'));
@@ -206,42 +245,46 @@ export function AgencyCampaignAttemptsPage() {
   }, [id, filters, campaign, tenantId, accountId, showToast, showErrorToast]);
 
   const applyFilters = useCallback(() => {
-    setFilters({
-      ...(pinnedContact ? { contact_id: pinnedContact } : {}),
+    // The form's five controls are rebuilt from the drafts; every filter the form
+    // has no control for (a link's dialled window, caller ID, flags, write-up,
+    // contact) is kept, so Apply narrows a drill-down rather than undoing it.
+    const {
+      outcome: _outcome, phone: _phone, agent_user_id: _agent, from: _from, to: _to, ...kept
+    } = filters;
+    void _outcome; void _phone; void _agent; void _from; void _to;
+    applyToUrl({
+      ...kept,
       ...(draftOutcomes.length > 0 ? { outcome: draftOutcomes } : {}),
       ...(draftPhone.trim() ? { phone: draftPhone.trim() } : {}),
       ...(draftAgent.trim() ? { agent_user_id: draftAgent.trim() } : {}),
-      ...(draftFrom ? { from: new Date(`${draftFrom}T00:00:00`).toISOString() } : {}),
-      // Inclusive of the chosen day: a supervisor picking "to 3 August" means
-      // the end of the 3rd, and the off-by-one silently drops a whole day of a
-      // compliance window.
-      ...(draftTo ? { to: new Date(`${draftTo}T23:59:59.999`).toISOString() } : {}),
+      // Inclusive of both chosen days, in the viewer's zone, DST-safe
+      // (`attemptDateRange`): "to 3 August" means the end of the 3rd, and the
+      // off-by-one silently drops a whole day of a compliance window.
+      ...attemptDateRange(draftFrom, draftTo),
     });
-  }, [pinnedContact, draftOutcomes, draftPhone, draftAgent, draftFrom, draftTo]);
+  }, [filters, applyToUrl, draftOutcomes, draftPhone, draftAgent, draftFrom, draftTo]);
 
   const clearFilters = useCallback(() => {
-    setDraftOutcomes([]);
-    setDraftPhone('');
-    setDraftAgent('');
-    setDraftFrom('');
-    setDraftTo('');
-    setFilters(pinnedContact ? { contact_id: pinnedContact } : {});
-  }, [pinnedContact]);
+    applyToUrl(pinnedContact ? { contact_id: pinnedContact } : {});
+  }, [applyToUrl, pinnedContact]);
 
-  const filtered = useMemo(
-    () => Boolean(
-      filters.outcome?.length || filters.phone || filters.agent_user_id
-      || filters.from || filters.to
-      // `contact_id` counts, and leaving it out was a real defect: arriving
-      // from a contact with no attempts on a campaign that dialled thousands,
-      // the empty state read "No calls were placed — this campaign has not
-      // dialed anyone yet." An empty result taken as a fact about the campaign
-      // rather than about the query is the exact failure this surface exists
-      // to prevent, arriving through the empty state instead of the table.
-      || filters.contact_id,
-    ),
-    [filters],
-  );
+  // `contact_id` counts, and leaving it out was a real defect: arriving from a
+  // contact with no attempts on a campaign that dialled thousands, the empty
+  // state read "No calls were placed — this campaign has not dialed anyone yet."
+  // An empty result taken as a fact about the campaign rather than about the
+  // query is the exact failure this surface exists to prevent. Every URL key
+  // counts, by construction.
+  const filtered = useMemo(() => isCampaignAttemptFiltered(filters), [filters]);
+
+  const chips = useMemo(() => campaignAttemptFilterChips(filters, {
+    dispositionLabel: (code) => dispositionLabel(code, campaign?.disposition_catalog),
+    agentName: (userId) => rows.find((row) => row.agent_user_id === userId)?.agent_name ?? null,
+  }), [filters, campaign, rows]);
+
+  const removeChip = useCallback((chipId: string) => {
+    const chip = chips.find((c) => c.id === chipId);
+    if (chip) applyToUrl(chip.without);
+  }, [chips, applyToUrl]);
 
   // How many independent filter groups are APPLIED (not merely drafted), for
   // the small badge on the filter panel — a supervisor scanning back to this
@@ -249,11 +292,21 @@ export function AgencyCampaignAttemptsPage() {
   // re-read every field to notice.
   const recordingNote = recordingDisabledNote(campaign);
 
+  // Groups, not values: three outcomes ticked is one narrowing. The pinned
+  // contact has its own note above and is not counted here.
   const activeFilterCount = useMemo(() => {
     let n = 0;
     if (filters.outcome?.length) n += 1;
+    if (filters.state?.length) n += 1;
+    if (filters.disposition_code?.length) n += 1;
     if (filters.phone) n += 1;
     if (filters.agent_user_id) n += 1;
+    if (filters.caller_id) n += 1;
+    if (filters.redial) n += 1;
+    if (filters.agent_manual) n += 1;
+    if (filters.agent_reopened) n += 1;
+    if (filters.placed) n += 1;
+    if (filters.dialed_from || filters.dialed_to) n += 1;
     if (filters.from || filters.to) n += 1;
     return n;
   }, [filters]);
@@ -328,7 +381,9 @@ export function AgencyCampaignAttemptsPage() {
       {pinnedContact && (
         <p className={styles.pinnedNote} data-testid="attempts-pinned-contact">
           Showing only this contact’s attempts.{' '}
-          <Link to={`/agency/campaigns/${id}/attempts`}>Show the whole campaign</Link>
+          <Link to={`/agency/campaigns/${id}/attempts${withQuery(campaignAttemptFiltersToParams({ ...filters, contact_id: undefined }))}`}>
+            Show the whole campaign
+          </Link>
         </p>
       )}
 
@@ -435,6 +490,13 @@ export function AgencyCampaignAttemptsPage() {
           </div>
       </FiltersCard>
 
+      {/* The pinned contact has its own note above, so it is not a chip twice. */}
+      <AppliedFilterChips
+        chips={chips.filter((chip) => chip.id !== 'contact_id')}
+        onRemove={removeChip}
+        testIdPrefix="attempts"
+      />
+
       {error && <ErrorAlert message={error} onRetry={() => void load(filters)} />}
 
       {/*
@@ -448,8 +510,7 @@ export function AgencyCampaignAttemptsPage() {
         {!loading && rows.length > 0 && (
           <>
             <ListChecks size={14} className={spine.countIcon} aria-hidden="true" />
-            {`Showing ${rows.length.toLocaleString()} attempt${rows.length === 1 ? '' : 's'}`
-              + (nextCursor ? ' — there are more' : '')}
+            {attemptsCountCopy(rows.length, total, nextCursor !== null)}
           </>
         )}
       </p>
@@ -585,3 +646,29 @@ export function AgencyCampaignAttemptsPage() {
 }
 
 export default AgencyCampaignAttemptsPage;
+
+/** A `YYYY-MM-DD` for a date picker from an instant the URL carries, in the viewer's zone. */
+function dayOf(iso: string | undefined): string {
+  if (!iso) return '';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function withQuery(params: URLSearchParams): string {
+  const qs = params.toString();
+  return qs ? `?${qs}` : '';
+}
+
+/**
+ * The count line. With the server's exact total: "1,234 attempts — showing 50". Without one
+ * (a server that does not send it): what is on screen, never an "N of M" nothing counted.
+ */
+function attemptsCountCopy(shown: number, total: number | null, more: boolean): string {
+  const noun = (n: number) => `attempt${n === 1 ? '' : 's'}`;
+  if (total !== null) {
+    return `${formatCount(total)} ${noun(total)}` + (shown < total ? ` — showing ${formatCount(shown)}` : '');
+  }
+  return `Showing ${shown.toLocaleString()} ${noun(shown)}` + (more ? ' — there are more' : '');
+}

@@ -20,6 +20,8 @@ import {
   contactsLink,
   rosterBucketLink,
 } from '../../utils/agency/insights/links';
+import { campaignAttemptFiltersFromParams } from '../../utils/agencyCampaignAttemptParams';
+import { rosterFiltersFromParams } from '../../utils/agencyRosterFilters';
 import { csvFromColumns, insightsCsvFilename, toCsv } from '../../utils/agency/insights/csv';
 import { insightsShouldPoll } from '../../utils/agency/insights/polling';
 import { longDuration, readinessDetail, readinessFix, actorName } from '../../utils/agency/insights/copy';
@@ -76,7 +78,7 @@ describe('drill-down links', () => {
     );
   });
 
-  it('uses the agreed new names for the filters that do not exist yet', () => {
+  it('uses the list pages’ final names: waiting/attempted, and the attempts filters', () => {
     expect(contactsLink('c1', { state: ['pending'], waiting: 'callback', attempted: false })).toBe(
       '/agency/campaigns/c1/contacts?state=pending&waiting=callback&attempted=0',
     );
@@ -93,11 +95,40 @@ describe('drill-down links', () => {
         to: '2026-11-04T18:30:00.000Z',
       }),
     ).toBe(
-      '/agency/campaigns/c1/attempts?outcome=no_answer&outcome=busy&disposition=ptp&agent_user_id=usr_a'
-      + '&caller_id=%2B9120&redial=1&agent_manual=1&agent_reopened=1'
-      + '&from=2026-11-03T18%3A30%3A00.000Z&to=2026-11-04T18%3A30%3A00.000Z',
+      '/agency/campaigns/c1/attempts?outcome=no_answer&outcome=busy&disposition_code=ptp&agent_user_id=usr_a'
+      + '&caller_id=%2B9120&redial=1&agent_manual=1&agent_reopened=1&placed=1'
+      + '&dialed_from=2026-11-03T18%3A30%3A00.000Z&dialed_to=2026-11-04T18%3A30%3A00.000Z',
     );
-    expect(attemptsLink('c1')).toBe('/agency/campaigns/c1/attempts');
+  });
+
+  it('sends the range as the half-open dialled window, never the list’s inclusive created_at from/to', () => {
+    const url = new URL(attemptsLink('c1', { from: '2026-11-03T18:30:00.000Z', to: '2026-11-04T18:30:00.000Z' }), 'http://x');
+    expect(url.searchParams.get('dialed_from')).toBe('2026-11-03T18:30:00.000Z');
+    expect(url.searchParams.get('dialed_to')).toBe('2026-11-04T18:30:00.000Z');
+    expect(url.searchParams.has('from')).toBe(false);
+    expect(url.searchParams.has('to')).toBe(false);
+  });
+
+  it('marks every attempts link placed-only, so a lifetime number lists placed dials', () => {
+    expect(attemptsLink('c1')).toBe('/agency/campaigns/c1/attempts?placed=1');
+  });
+
+  it('round-trips: what a link writes is what the list page reads', () => {
+    const attempts = new URL(attemptsLink('c1', {
+      outcome: 'connected', disposition: 'ptp', agent_user_id: 'usr_a', caller_id: '+9120', redial: true,
+      agent_manual: true, agent_reopened: true, from: '2026-11-03T18:30:00.000Z', to: '2026-11-04T18:30:00.000Z',
+    }), 'http://x');
+    expect(campaignAttemptFiltersFromParams(attempts.searchParams)).toEqual({
+      outcome: ['connected'], disposition_code: ['ptp'], agent_user_id: 'usr_a', caller_id: '+9120',
+      redial: '1', agent_manual: '1', agent_reopened: '1', placed: '1',
+      dialed_from: '2026-11-03T18:30:00.000Z', dialed_to: '2026-11-04T18:30:00.000Z',
+    });
+    const contacts = new URL(contactsLink('c1', {
+      state: ['pending'], waiting: 'retry', assigned_to: null, attempted: true,
+    }), 'http://x');
+    expect(rosterFiltersFromParams(contacts.searchParams)).toEqual({
+      state: ['pending'], waiting: 'retry', assigned_to: ['unassigned'], attempted: '1',
+    });
   });
 
   it('maps every roster bucket to the contacts that make it up', () => {

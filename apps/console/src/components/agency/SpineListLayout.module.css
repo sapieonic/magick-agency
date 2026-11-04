@@ -372,6 +372,59 @@
   flex-shrink: 0;
 }
 
+/* ── Applied filters, each removable (AppliedFilterChips.tsx) ─────────────── */
+.appliedChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.appliedChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent-hover);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  max-width: 100%;
+}
+
+.appliedChip span {
+  overflow-wrap: anywhere;
+}
+
+.appliedChipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.appliedChipRemove:hover {
+  background: var(--bg-tertiary);
+}
+
+.appliedChipRemove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* ── Table ───────────────────────────────────────────────────────────────── */
 
 /*

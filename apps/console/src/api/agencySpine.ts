@@ -7,10 +7,10 @@ import type { RecordingOutcome, WebRtcCallRecord } from '../types/webrtc-call';
 import type {
   AgencyAttempt,
   AgencyAttemptFilters,
+  AgencyAttemptsListPage,
   AgencyContactDetail,
   AgencyContactFilters,
-  AgencyKeysetPage,
-  AgencyRosterContact,
+  AgencyRosterContactsPage,
 } from '../types/agency-spine';
 
 /**
@@ -64,18 +64,34 @@ export function toQuery(
   return query ? `?${query}` : '';
 }
 
-export async function getCampaignAttempts(
-  campaignId: string,
-  filters: AgencyAttemptFilters,
-  options: { cursor?: string; limit?: number } = {},
-  tenantId?: string,
-  accountId?: string,
-): Promise<AgencyKeysetPage<AgencyAttempt>> {
+/**
+ * Paging and the opt-in total. `includeTotal` asks the server to count every row the filters
+ * match (`?include_total=1` → `total` on the page): the list's own predicate, so the number
+ * shown is the number listed. Asked on the first page only; later pages keep it.
+ */
+export interface SpineListOptions {
+  cursor?: string;
+  limit?: number;
+  includeTotal?: boolean;
+}
+
+function listExtra(options: SpineListOptions): Record<string, string> {
   const extra: Record<string, string> = {};
   if (options.cursor) extra['cursor'] = options.cursor;
   if (options.limit !== undefined) extra['limit'] = String(options.limit);
-  return apiFetch<AgencyKeysetPage<AgencyAttempt>>(
-    `${AGENCY_BASE}/campaigns/${campaignId}/attempts${toQuery({ ...filters }, extra)}`,
+  if (options.includeTotal) extra['include_total'] = '1';
+  return extra;
+}
+
+export async function getCampaignAttempts(
+  campaignId: string,
+  filters: AgencyAttemptFilters,
+  options: SpineListOptions = {},
+  tenantId?: string,
+  accountId?: string,
+): Promise<AgencyAttemptsListPage> {
+  return apiFetch<AgencyAttemptsListPage>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/attempts${toQuery({ ...filters }, listExtra(options))}`,
     {},
     tenantId,
     accountId,
@@ -85,15 +101,12 @@ export async function getCampaignAttempts(
 export async function getCampaignContacts(
   campaignId: string,
   filters: AgencyContactFilters,
-  options: { cursor?: string; limit?: number } = {},
+  options: SpineListOptions = {},
   tenantId?: string,
   accountId?: string,
-): Promise<AgencyKeysetPage<AgencyRosterContact>> {
-  const extra: Record<string, string> = {};
-  if (options.cursor) extra['cursor'] = options.cursor;
-  if (options.limit !== undefined) extra['limit'] = String(options.limit);
-  return apiFetch<AgencyKeysetPage<AgencyRosterContact>>(
-    `${AGENCY_BASE}/campaigns/${campaignId}/contacts${toQuery({ ...filters }, extra)}`,
+): Promise<AgencyRosterContactsPage> {
+  return apiFetch<AgencyRosterContactsPage>(
+    `${AGENCY_BASE}/campaigns/${campaignId}/contacts${toQuery({ ...filters }, listExtra(options))}`,
     {},
     tenantId,
     accountId,
