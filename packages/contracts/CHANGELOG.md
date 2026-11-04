@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.5.0...contracts-v0.6.0) (2026-11-04)
+
+
+### Features
+
+* **server,console,mobile,contracts,db,domain:** contact assignment, My contacts and agent retry ([#33](https://github.com/sapieonic/magick-agency/issues/33)) ([38aea1b](https://github.com/sapieonic/magick-agency/commit/38aea1b1d660a56c2f9d25885511f391dbd4905c))
+
 ## [0.5.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.4.0...contracts-v0.5.0) (2026-11-03)
 
 
