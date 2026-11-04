@@ -439,9 +439,11 @@ export interface AgencyCampaignStats {
    */
   machine_connects_available: boolean;
   /**
-   * Human connects over attempts, as a percentage. `null` before any attempt. The
-   * denominator leaves wrap-up redials out (`attempts_total - ` redial rows): a redial
-   * continues a conversation already counted, it is not a new try at reaching someone.
+   * The product's one connect rate, as a percentage: `human_connects` over the PLACED
+   * FIRST dials (`dialed_at` set and not a wrap-up redial). `null` before any first dial
+   * is placed. A redial continues a conversation already counted, it is not a new try
+   * at reaching someone, and a queued attempt never placed is not a dial. The agent
+   * record and the Insights tab divide the same two counts.
    */
   connect_rate_pct: number | null;
 
