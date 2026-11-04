@@ -10,7 +10,7 @@ import {
   type AgencyAssignmentPreview,
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyContactState } from '@magick-agency/contracts/agency';
-import { errorCode } from './agencyErrors';
+import { errorBody, errorCode } from './agencyErrors';
 import { rosterFiltersToParams } from './agencyRosterFilters';
 import { formatCount } from './format/number';
 
@@ -234,8 +234,7 @@ export function withPreviewSeed(
  */
 export function stalePreviewOf(err: unknown): AgencyAssignmentPreview | null {
   if (errorCode(err) !== 'preview_stale') return null;
-  const body = (err as { details?: unknown }).details;
-  const preview = body && typeof body === 'object' ? (body as { preview?: unknown }).preview : null;
+  const preview = (errorBody(err) as { preview?: unknown } | null)?.preview;
   if (!preview || typeof preview !== 'object') return null;
   return typeof (preview as { preview_token?: unknown }).preview_token === 'string'
     ? (preview as AgencyAssignmentPreview)
