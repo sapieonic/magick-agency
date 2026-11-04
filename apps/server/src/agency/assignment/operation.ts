@@ -18,7 +18,6 @@ import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import {
   AGENCY_ASSIGNMENT_RANGE_MAX,
-  type AgencyAssignmentKind,
   type AgencyAssignmentOperation,
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyContactState } from '@magick-agency/contracts/agency';
@@ -337,5 +336,3 @@ export function rebalanceQuotas(loads: readonly RebalanceLoad[]): RebalanceQuota
   }
   return { givers, receivers };
 }
-
-export type { AgencyAssignmentKind };

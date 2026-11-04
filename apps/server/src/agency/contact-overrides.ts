@@ -88,7 +88,8 @@ export interface SpendableDecision {
  * completion, an our-fault retirement, nothing left) is returned unchanged with `spent: false`.
  *
  * `remaining` is what the contact holds NOW, read under the row lock the write takes; the
- * write decrements it, never below 0.
+ * write decrements it, never below 0. `rule.delayMinutes` is already normalised: every caller
+ * reads it through {@link outcomeRuleDelayMinutes} or {@link dispositionRuleDelayMinutes}.
  */
 export function applyExtraAttemptOverride<D extends SpendableDecision>(
   decision: D,
@@ -100,9 +101,8 @@ export function applyExtraAttemptOverride<D extends SpendableDecision>(
     return { decision, spent: false };
   }
   if (!(Number.isFinite(remaining) && remaining > 0)) return { decision, spent: false };
-  const delay = Number.isFinite(rule.delayMinutes) ? Math.max(0, rule.delayMinutes) : 0;
   return {
-    decision: { ...decision, contactState: 'pending', nextAttemptAt: new Date(now.getTime() + delay * 60_000) },
+    decision: { ...decision, contactState: 'pending', nextAttemptAt: new Date(now.getTime() + rule.delayMinutes * 60_000) },
     spent: true,
   };
 }
@@ -115,13 +115,16 @@ export function applyExtraAttemptOverride<D extends SpendableDecision>(
 export function outcomeRuleDelayMinutes(policy: AgencyRetryPolicy | null, outcome: AgencyAttemptOutcome | null): number {
   if (!outcome) return 0;
   const rule = policy?.[outcome] ?? DEFAULT_RETRY_POLICY[outcome];
-  const delay = rule?.delay_minutes;
-  return typeof delay === 'number' && Number.isFinite(delay) ? Math.max(0, delay) : 0;
+  return nonNegativeMinutes(rule?.delay_minutes);
 }
 
 /** The delay of a disposition `retry` rule, in minutes (0 when absent), as `resolveDispositionDecision` reads it. */
 export function dispositionRuleDelayMinutes(entry: Pick<AgencyDisposition, 'retry'>): number {
-  const delay = entry.retry?.delay_minutes;
+  return nonNegativeMinutes(entry.retry?.delay_minutes);
+}
+
+/** A rule's `delay_minutes` as a delay: a finite number floored at 0, else 0. */
+function nonNegativeMinutes(delay: unknown): number {
   return typeof delay === 'number' && Number.isFinite(delay) ? Math.max(0, delay) : 0;
 }
 

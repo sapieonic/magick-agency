@@ -21,19 +21,13 @@ import {
   agentRetryAvailableAtSql,
   agentRetryBlockSql,
   agentRetryCoolingSql,
-  type AgentRetrySettingsParams,
+  bindAgentRetrySettings,
+  numberLiveSql,
+  type AgentRetrySettings,
 } from './assignment-sql.js';
-import { CONTACT_PHONE_DIGITS_SQL } from './sql-fragments.js';
 import { params } from './query-builders.js';
 
-/** The campaign settings the retry rule reads (`agentRetryBlockSql`). */
-export interface AgentRetrySettings {
-  allowed: boolean;
-  rounds: number;
-  cooldownMinutes: number;
-  /** `callbackCodes(campaign.disposition_catalog)`. */
-  callbackCodes: string[];
-}
+export type { AgentRetrySettings } from './assignment-sql.js';
 
 /** How many skipped contacts a reopen names (the contract's cap); `skippedTotal` counts all. */
 export const AGENT_RETRY_SKIPPED_LIST_MAX = 50;
@@ -49,20 +43,6 @@ export interface AgentDialClaim {
   contact: AgencyContactRecord;
   prior: { state: AgencyContactState; nextAttemptAt: Date };
   spent: { round: boolean; retryDelay: boolean; callingHours: boolean };
-}
-
-function digits(alias: string): string {
-  return CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
-}
-
-/** Bind the four settings parameters `agentRetryBlockSql` reads. */
-function bindSettings(p: ReturnType<typeof params>, s: AgentRetrySettings): AgentRetrySettingsParams {
-  return {
-    allowed: p.add(s.allowed),
-    rounds: p.add(s.rounds),
-    cooldownMinutes: p.add(s.cooldownMinutes),
-    callbackCodes: p.add(s.callbackCodes),
-  };
 }
 
 export class AgencyAgentRetryRepository {
@@ -101,8 +81,9 @@ export class AgencyAgentRetryRepository {
       if (input.contactIds) {
         filter = `c.id = ANY(${lp.add(input.contactIds)}::uuid[])`;
       } else {
-        const block = agentRetryBlockSql('c', bindSettings(lp, input.settings));
-        filter = `c.state IN ('pending', 'exhausted') AND (${block} IS NULL OR ${block} IN ('rounds_used', 'cooldown'))`;
+        const block = agentRetryBlockSql('c', bindAgentRetrySettings(lp, input.settings));
+        // Eligible now (NULL) or blocked only by rounds or cooldown; COALESCE expands the CASE once.
+        filter = `c.state IN ('pending', 'exhausted') AND COALESCE(${block}, 'rounds_used') IN ('rounds_used', 'cooldown')`;
       }
       const { rows: locked } = await client.query<{ id: string }>(
         `SELECT c.id FROM agency_contacts c
@@ -117,7 +98,7 @@ export class AgencyAgentRetryRepository {
       const ids = p.add(locked.map((r) => r.id));
       const c1 = p.add(input.campaignId);
       const u1 = p.add(input.userId);
-      const s = bindSettings(p, input.settings);
+      const s = bindAgentRetrySettings(p, input.settings);
       const block = agentRetryBlockSql('c', s);
       const { rows } = await client.query<{ id: string; reopened: boolean; blocked: AgencyAgentRetryBlock | null }>(
         `WITH reopened AS (
@@ -136,8 +117,9 @@ export class AgencyAgentRetryRepository {
               AND ${block} IS NULL
            RETURNING c.id
          )
-         SELECT c.id, (c.id IN (SELECT id FROM reopened)) AS reopened, ${block} AS blocked
+         SELECT c.id, (r.id IS NOT NULL) AS reopened, CASE WHEN r.id IS NULL THEN ${block} END AS blocked
            FROM agency_contacts c
+           LEFT JOIN reopened r ON r.id = c.id
           WHERE c.id = ANY(${ids}::uuid[])
           ORDER BY c.id`,
         p.values,
@@ -171,7 +153,7 @@ export class AgencyAgentRetryRepository {
     const id = p.add(input.contactId);
     const campaign = p.add(input.campaignId);
     const user = p.add(input.userId);
-    const s = bindSettings(p, input.settings);
+    const s = bindAgentRetrySettings(p, input.settings);
     const { rows } = await getPool().query<AgencyContactRecord & {
       due: boolean; retry_block: AgencyAgentRetryBlock | null; available_at: Date | null;
     }>(
@@ -232,7 +214,7 @@ export class AgencyAgentRetryRepository {
     const user = p.add(input.userId);
     const basis = p.add(input.basis);
     const hours = p.add(input.spendCallingHours);
-    const s = bindSettings(p, input.settings);
+    const s = bindAgentRetrySettings(p, input.settings);
     const { rows } = await getPool().query<AgencyContactRecord & {
       prior_state: AgencyContactState; prior_next_attempt_at: Date;
       spent_round: boolean; spent_retry_delay: boolean; spent_calling_hours: boolean;
@@ -246,11 +228,7 @@ export class AgencyAgentRetryRepository {
             AND c.assigned_user_id = ${user}::uuid
             AND c.state IN ('pending', 'exhausted')
             AND c.suppressed_reason IS DISTINCT FROM 'dnc'
-            AND NOT EXISTS (
-              SELECT 1 FROM agency_contacts live
-               WHERE live.campaign_id = ${campaign}::uuid
-                 AND ${digits('live')} = ${digits('c')}
-                 AND live.state IN ('in_flight', 'connected'))
+            AND NOT ${numberLiveSql('c', `${campaign}::uuid`)}
             FOR UPDATE OF c SKIP LOCKED
        )
        UPDATE agency_contacts c
@@ -338,10 +316,7 @@ export class AgencyAgentRetryRepository {
     const { rows } = await getPool().query<{ live: boolean }>(
       `SELECT EXISTS (
          SELECT 1 FROM agency_contacts c
-           JOIN agency_contacts live
-             ON live.campaign_id = c.campaign_id AND ${digits('live')} = ${digits('c')}
-          WHERE c.id = $1::uuid AND c.campaign_id = $2::uuid
-            AND live.state IN ('in_flight', 'connected')
+          WHERE c.id = $1::uuid AND c.campaign_id = $2::uuid AND ${numberLiveSql('c', 'c.campaign_id')}
        ) AS live`,
       [contactId, campaignId],
     );

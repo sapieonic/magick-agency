@@ -13,7 +13,7 @@ import {
 } from '../../../agency/spine-filters.js';
 import type { AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
-import { CONTACT_PHONE_DIGITS_SQL } from './sql-fragments.js';
+import { contactPhoneDigitsSql } from './sql-fragments.js';
 
 // ─── Supervisor read surface — shared paging machinery ────────────
 
@@ -68,7 +68,7 @@ export function phoneCondition(
   alias: string,
   bind: ReturnType<typeof params>,
 ): string {
-  const digits = CONTACT_PHONE_DIGITS_SQL.replace('phone_e164', `${alias}.phone_e164`);
+  const digits = contactPhoneDigitsSql(alias);
   // Re-stripped here, not trusted from the caller. `parsePhoneFilter` already
   // does it, but this is the only place a `%` or `_` could become a LIKE
   // wildcard, and the consequence is not an error — it is a filter that matches

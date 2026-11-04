@@ -6,9 +6,41 @@
  * (the same single-definition rule as `contactFilterConditions`).
  *
  * Every fragment takes the alias of an `agency_contacts` row and the positional parameters it
- * needs, bound by the caller through `params()` (`query-builders.ts`).
+ * needs, bound by the caller through `params()` (`query-builders.ts`). The terms the claims and
+ * the assignment writes share (open, the number's busy probe, the return to the pool) are here
+ * for the same reason.
  */
-import type { AgencyDisposition } from '@magick-agency/contracts/agency';
+import type { AgencyAssignmentReason, AgencyDisposition } from '@magick-agency/contracts/agency';
+import type { AgencyCampaignRecord } from '../../models/agency.model.js';
+import type { params } from './query-builders.js';
+import { contactPhoneDigitsSql } from './sql-fragments.js';
+
+/** The states of a contact on a call or held for its write-up, as an `IN` list. */
+export const LIVE_STATES_SQL = `('in_flight', 'connected')`;
+
+/**
+ * Whether contact `c` is open (CA2): `pending` and not DNC-suppressed, a contact something will
+ * still dial. `IS DISTINCT FROM`, never `<> 'dnc'`: the column is NULL for almost every row.
+ * Unparenthesised: wrap it inside an `OR`.
+ */
+export function openContactSql(alias: string): string {
+  return `${alias}.state = 'pending' AND ${alias}.suppressed_reason IS DISTINCT FROM 'dnc'`;
+}
+
+/**
+ * Whether contact `c`'s number is live on its campaign: some contact of `campaignSql` (a
+ * parameter or a column) on the same digits (`CONTACT_PHONE_DIGITS_SQL`, one
+ * `idx_agency_contacts_campaign_phone_digits` probe) is `in_flight` or `connected`, `c` itself
+ * included. Every claim refuses a contact whose number is live (`NOT` this), so one number never
+ * carries two calls at once (`claimDialable`).
+ */
+export function numberLiveSql(alias: string, campaignSql: string): string {
+  return `EXISTS (
+              SELECT 1 FROM agency_contacts live
+               WHERE live.campaign_id = ${campaignSql}
+                 AND ${contactPhoneDigitsSql('live')} = ${contactPhoneDigitsSql(alias)}
+                 AND live.state IN ${LIVE_STATES_SQL})`;
+}
 
 /**
  * The codes in a campaign's catalog that book a callback (`requires_datetime`). A contact whose
@@ -50,7 +82,7 @@ export function isCallbackSql(alias: string, callbackCodesParam: string): string
 export function contactBucketSql(alias: string, callbackCodesParam: string): string {
   const c = alias;
   return `(CASE
-    WHEN ${c}.state IN ('in_flight', 'connected') THEN 'in_progress'
+    WHEN ${c}.state IN ${LIVE_STATES_SQL} THEN 'in_progress'
     WHEN ${c}.state = 'completed' THEN 'reached'
     WHEN ${c}.state = 'exhausted' THEN 'exhausted'
     WHEN ${c}.state = 'suppressed' OR ${c}.suppressed_reason = 'dnc' THEN 'suppressed'
@@ -66,6 +98,35 @@ export function contactBucketSql(alias: string, callbackCodesParam: string): str
  */
 export function lastAttemptAtSql(alias: string): string {
   return `(SELECT max(a.created_at) FROM agency_call_attempts a WHERE a.contact_id = ${alias}.id)`;
+}
+
+/** The campaign settings the retry rule reads ({@link agentRetryBlockSql}). */
+export interface AgentRetrySettings {
+  allowed: boolean;
+  rounds: number;
+  cooldownMinutes: number;
+  /** `callbackCodes(campaign.disposition_catalog)`. */
+  callbackCodes: string[];
+}
+
+/** The retry settings {@link agentRetryBlockSql} reads, from the campaign row. */
+export function agentRetrySettingsOf(campaign: AgencyCampaignRecord): AgentRetrySettings {
+  return {
+    allowed: campaign.allow_agent_retry === true,
+    rounds: campaign.agent_retry_rounds,
+    cooldownMinutes: campaign.agent_retry_cooldown_minutes,
+    callbackCodes: callbackCodes(campaign.disposition_catalog),
+  };
+}
+
+/** Bind the four settings parameters {@link agentRetryBlockSql} reads. */
+export function bindAgentRetrySettings(p: ReturnType<typeof params>, s: AgentRetrySettings): AgentRetrySettingsParams {
+  return {
+    allowed: p.add(s.allowed),
+    rounds: p.add(s.rounds),
+    cooldownMinutes: p.add(s.cooldownMinutes),
+    callbackCodes: p.add(s.callbackCodes),
+  };
 }
 
 /** The settings the retry rule reads, bound as parameters. */
@@ -91,8 +152,15 @@ export interface AgentRetrySettingsParams {
  * (`suppressed`); it must be not reached (`not_retryable`); a round must be left
  * (`rounds_used`); and the cooldown since its last attempt must have passed (`cooldown`),
  * unless an outcome granted it a retry-delay override.
+ *
+ * @param lastAttemptAt the contact's latest attempt time; defaults to {@link lastAttemptAtSql}.
+ *   A read that already has it (a lateral join) passes it so it is computed once per row.
  */
-export function agentRetryBlockSql(alias: string, p: AgentRetrySettingsParams): string {
+export function agentRetryBlockSql(
+  alias: string,
+  p: AgentRetrySettingsParams,
+  lastAttemptAt: string = lastAttemptAtSql(alias),
+): string {
   const c = alias;
   return `(CASE
     WHEN NOT ${p.allowed}::boolean THEN 'retry_disabled'
@@ -108,7 +176,7 @@ export function agentRetryBlockSql(alias: string, p: AgentRetrySettingsParams): 
           AND ${c}.next_attempt_at > statement_timestamp())
     ) THEN 'not_retryable'
     WHEN ${c}.agent_retry_rounds_used >= ${p.rounds}::int THEN 'rounds_used'
-    WHEN NOT ${c}.override_retry_delay AND ${agentRetryCoolingSql(c, p.cooldownMinutes)} THEN 'cooldown'
+    WHEN NOT ${c}.override_retry_delay AND ${agentRetryCoolingSql(c, p.cooldownMinutes, lastAttemptAt)} THEN 'cooldown'
     ELSE NULL
   END)`;
 }
@@ -118,13 +186,47 @@ export function agentRetryBlockSql(alias: string, p: AgentRetrySettingsParams): 
  * recent than `cooldownMinutesParam` minutes (`int`). NULL-safe: a contact never attempted
  * is not cooling. {@link agentRetryBlockSql} blocks on it unless a retry-delay override is
  * held; a retry that goes ahead while it runs spends that override (the reopen and the
- * agent's own dial read this to know).
+ * agent's own dial read this to know). `lastAttemptAt` as in {@link agentRetryBlockSql}.
  */
-export function agentRetryCoolingSql(alias: string, cooldownMinutesParam: string): string {
-  return `COALESCE(${lastAttemptAtSql(alias)} > now() - make_interval(mins => ${cooldownMinutesParam}::int), false)`;
+export function agentRetryCoolingSql(
+  alias: string,
+  cooldownMinutesParam: string,
+  lastAttemptAt: string = lastAttemptAtSql(alias),
+): string {
+  return `COALESCE(${lastAttemptAt} > now() - make_interval(mins => ${cooldownMinutesParam}::int), false)`;
 }
 
-/** When the cooldown on contact `c` ends: last attempt + cooldown (NULL if never attempted). */
-export function agentRetryAvailableAtSql(alias: string, cooldownMinutesParam: string): string {
-  return `(${lastAttemptAtSql(alias)} + make_interval(mins => ${cooldownMinutesParam}::int))`;
+/**
+ * When the cooldown on contact `c` ends: last attempt + cooldown (NULL if never attempted).
+ * `lastAttemptAt` as in {@link agentRetryBlockSql}.
+ */
+export function agentRetryAvailableAtSql(
+  alias: string,
+  cooldownMinutesParam: string,
+  lastAttemptAt: string = lastAttemptAtSql(alias),
+): string {
+  return `(${lastAttemptAt} + make_interval(mins => ${cooldownMinutesParam}::int))`;
+}
+
+/**
+ * The tail shared by the sweeps that hand owned contacts back to the pool (the unstaff
+ * catch-up, the callback fallback): after the caller's `due(id, assigned_user_id)` CTE (its
+ * pick, `pending` rows locked `FOR UPDATE … SKIP LOCKED`), `moved` clears the owner of each row
+ * still `pending` and still held by that owner, and every move writes its
+ * `agency_contact_assignment_events` row (`reason`, actor NULL: the system, under the
+ * `batchIdParam` batch). One statement, so a move without its history row cannot exist.
+ * Returns `(contact_id, from_user_id)` per move.
+ */
+export function returnToPoolSql(reason: AgencyAssignmentReason, batchIdParam: string): string {
+  return `moved AS (
+         UPDATE agency_contacts c
+            SET assigned_user_id = NULL, assigned_at = NULL, assigned_by_user_id = NULL, updated_at = now()
+           FROM due
+          WHERE c.id = due.id AND c.state = 'pending' AND c.assigned_user_id = due.assigned_user_id
+         RETURNING c.id, c.tenant_id, c.campaign_id, due.assigned_user_id AS from_user_id
+       )
+       INSERT INTO agency_contact_assignment_events
+         (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
+       SELECT tenant_id, campaign_id, id, from_user_id, NULL, NULL, '${reason}', ${batchIdParam}::uuid FROM moved
+       RETURNING contact_id, from_user_id`;
 }
