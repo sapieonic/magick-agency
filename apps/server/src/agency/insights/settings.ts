@@ -6,6 +6,7 @@ import { AGENCY_WRAPUP_REDIAL_LIMIT } from '@magick-agency/contracts/agency';
 import type { AgencyInsightsSettings } from '@magick-agency/contracts/api/agency/insights';
 import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
 import { DEFAULT_RETRY_POLICY } from '../retry-policy.js';
+import { grantsOverride } from './shared.js';
 
 /**
  * The calling-hours column defaults (0001: `calling_window_start` 09:00, `calling_window_end`
@@ -67,7 +68,7 @@ export function insightsSettings(
     agent_retry_rounds: campaign.agent_retry_rounds,
     agent_retry_cooldown_minutes: campaign.agent_retry_cooldown_minutes,
     override_outcomes: catalog
-      .filter((d) => !!d && typeof d === 'object' && d.override && typeof d.override === 'object')
+      .filter(grantsOverride)
       .map((d) => ({
         code: d.code,
         label: d.label,

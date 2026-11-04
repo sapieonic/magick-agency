@@ -7,6 +7,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { useTenant } from '../../../../contexts/TenantContext';
 import { useAfterFirstPaint, useInsightsLive, useInsightsRange } from '../../../../hooks/useCampaignInsights';
 import { formatClockTime } from '../../../../utils/format/date';
+import { rangeFreshness } from '../../../../utils/agency/insights/copy';
 import {
   allowedBuckets,
   defaultBucket,
@@ -79,7 +80,8 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   const [customOpen, setCustomOpen] = useState(choice.preset === 'custom');
 
   // ── Bucket ─────────────────────────────────────────────────────────────
-  const lifetimeStart = summary?.started_at ?? summary?.created_at ?? null;
+  // The server's lifetime starts at `created_at` (its default `from`), so the bucket choices do too.
+  const lifetimeStart = summary?.created_at ?? null;
   const bucketOptions = range ? allowedBuckets(range, lifetimeStart, rangeNow) : (['day'] as AgencyInsightsBucket[]);
   const [chosenBucket, setChosenBucket] = useState<AgencyInsightsBucket | null>(null);
   const bucket = chosenBucket && bucketOptions.includes(chosenBucket)
@@ -136,7 +138,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   const names = useMemo(() => {
     const map = new Map<string, string>();
     for (const row of allocation?.agents ?? []) if (row.agent_name) map.set(row.agent_user_id, row.agent_name);
-    for (const row of activity?.agents ?? []) if (row.agent_name) map.set(row.agent_user_id, row.agent_name);
+    for (const row of activity?.agents ?? []) if (row.agent_user_id && row.agent_name) map.set(row.agent_user_id, row.agent_name);
     return map;
   }, [allocation, activity]);
   const agentName = useCallback(
@@ -162,6 +164,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   const today = zoneDay(zone, now);
   /** A custom range that cannot be sent leaves the range sections saying so, not loading forever. */
   const blocked = range?.error ? 'Choose a valid range to see these figures.' : null;
+  const freshness = blocked ? null : rangeFreshness(activity, zone);
 
   return (
     <section className={styles.root} aria-label="Campaign insights" data-testid="insights-panel">
@@ -232,6 +235,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
         {`Times in ${zone}${range?.zoneFallback ? ' (the campaign’s time zone is not recognised)' : ''} · roster and allocation are as of now; calls, agents, trends and health follow the range (${range?.label ?? 'Lifetime'}).`}
       </p>
       {range?.error ? <p className={styles.rangeError} role="alert">{range.error}</p> : null}
+      {freshness ? <p className={styles.rangeNote} data-testid="insights-freshness">{freshness}</p> : null}
 
       <CampaignMeta summary={summary} />
 

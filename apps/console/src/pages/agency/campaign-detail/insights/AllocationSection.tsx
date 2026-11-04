@@ -7,7 +7,7 @@ import {
   ASSIGNMENT_MODE_LABELS,
   formatZoned,
 } from '../../../../utils/agency/insights/copy';
-import { attemptsLink, contactsLink, type InsightsContactsFilter } from '../../../../utils/agency/insights/links';
+import { allocationLink, contactsLink } from '../../../../utils/agency/insights/links';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import {
   CountLink,
@@ -29,47 +29,37 @@ type CountKey = { [K in keyof Counts]: Counts[K] extends number ? K : never }[ke
 interface CountColumn {
   key: CountKey;
   header: string;
-  /** The contacts filter behind the number; the owner is added per row. */
-  contacts?: InsightsContactsFilter;
-  /** Or the attempts filter behind it (agent rows only: the pool places no dials). */
-  attempts?: { redial?: boolean; agent_reopened?: boolean; agent_manual?: boolean };
 }
 
+/**
+ * Which columns link, and to what, is `allocationLink` (`links.ts`), the builder the drill-down
+ * table checks against the server. Not linked: `callbacks_due_today` (due before the campaign's
+ * local midnight, which no contacts filter selects), `callbacks_overdue`, `reached`, `successes`,
+ * `not_reached`, `overrides_used`.
+ */
 const COUNT_COLUMNS: CountColumn[] = [
-  { key: 'allocated', header: 'Allocated', contacts: {} },
-  { key: 'attempted', header: 'Attempted', contacts: { attempted: true } },
-  { key: 'not_attempted', header: 'Not yet', contacts: { attempted: false } },
-  { key: 'due_now', header: 'Due now', contacts: { state: ['pending'], waiting: 'due_now' } },
-  { key: 'waiting_retry', header: 'Waiting for retry', contacts: { state: ['pending'], waiting: 'retry' } },
-  { key: 'callbacks_due_today', header: 'Callbacks today', contacts: { state: ['pending'], waiting: 'callback' } },
+  { key: 'allocated', header: 'Allocated' },
+  { key: 'attempted', header: 'Attempted' },
+  { key: 'not_attempted', header: 'Not yet' },
+  { key: 'due_now', header: 'Due now' },
+  { key: 'waiting_retry', header: 'Waiting for retry' },
+  { key: 'callbacks_due_today', header: 'Callbacks today' },
   { key: 'callbacks_overdue', header: 'Callbacks overdue' },
   { key: 'reached', header: 'Reached' },
   { key: 'successes', header: 'Successes' },
   { key: 'not_reached', header: 'Not reached' },
-  { key: 'exhausted', header: 'Exhausted', contacts: { state: ['exhausted'] } },
-  { key: 'dnc', header: 'Do Not Call', contacts: { state: ['suppressed'], suppressed_reason: ['dnc'] } },
-  { key: 'redials', header: 'Redials', attempts: { redial: true } },
-  { key: 'retries_reopened', header: 'Retries reopened', attempts: { agent_reopened: true } },
-  { key: 'retries_manual', header: 'Retries dialled by hand', attempts: { agent_manual: true } },
+  { key: 'exhausted', header: 'Exhausted' },
+  { key: 'dnc', header: 'Do Not Call' },
+  { key: 'redials', header: 'Redials' },
+  { key: 'retries_reopened', header: 'Retries reopened' },
+  { key: 'retries_manual', header: 'Retries dialled by hand' },
   { key: 'overrides_used', header: 'Overrides used' },
 ];
 
 /** `owner`: an agent id, `null` for the pool, `undefined` for the whole campaign. */
 function countCell(campaignId: string, column: CountColumn, value: number, owner: string | null | undefined): ReactNode {
-  if (column.contacts) {
-    const filter: InsightsContactsFilter = { ...column.contacts, ...(owner !== undefined ? { assigned_to: owner } : {}) };
-    return <CountLink to={contactsLink(campaignId, filter)} value={value} label={column.header.toLowerCase()} />;
-  }
-  if (column.attempts && owner !== null) {
-    return (
-      <CountLink
-        to={attemptsLink(campaignId, { ...column.attempts, ...(owner ? { agent_user_id: owner } : {}) })}
-        value={value}
-        label={column.header.toLowerCase()}
-      />
-    );
-  }
-  return formatCount(value);
+  const to = allocationLink(campaignId, column.key, owner);
+  return to ? <CountLink to={to} value={value} label={column.header.toLowerCase()} /> : formatCount(value);
 }
 
 function humanKind(kind: string): string {

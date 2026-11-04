@@ -112,7 +112,8 @@ export async function oracleAgents(pool: pg.Pool, r: OracleRange) {
     [r.campaignId, r.from, r.to],
   );
   return Object.fromEntries(rows.map((x) => [String(x['agent_user_id']), {
-    dials: Number(x['attempts']), connected: Number(x['connected_stats']), successes: Number(x['successes']),
+    // AGENCY_ATTEMPT_METRICS_SQL's `connected` is one per conversation (the totals' `conversations`).
+    dials: Number(x['attempts']), connected: Number(x['connected_stats']), conversations: Number(x['connected']), successes: Number(x['successes']),
     talk_seconds: round6(Number(x['talk_seconds'])), wrapup_seconds: round6(Number(x['wrapup_seconds'])),
     wrapup_measured: Number(x['wrapup_measured']), redials: Number(x['redials']), retries: Number(x['retries']),
     overrides: Number(x['overrides']),

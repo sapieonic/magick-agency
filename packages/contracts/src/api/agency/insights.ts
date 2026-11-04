@@ -22,9 +22,22 @@
  * - **Every breakdown reconciles, and says so.** Each section that splits a total carries a
  *   `reconciliation` block computed by the server in the same statement as the counts, so
  *   the page can show "states add up" as a fact rather than assume it.
- * - **Ranges are half-open `[from, to)`**, ISO-8601 instants, at most
- *   {@link AGENCY_INSIGHTS_MAX_RANGE_DAYS} days. Omitting both means lifetime (the campaign's
- *   first dial to now). Day buckets are calendar days in the campaign's time zone.
+ * - **Ranges are half-open `[from, to)`**, ISO-8601 instants with a zone (`Z` or an offset), at
+ *   most {@link AGENCY_INSIGHTS_MAX_RANGE_DAYS} calendar days. Omitting both means lifetime (the
+ *   campaign's `created_at` to now; never refused for its length); one bound alone keeps the
+ *   other's default. The server rounds `from` down and `to` up to the 15-minute bucket the
+ *   rollup is kept in, and echoes the range it served (`range`). Day buckets are calendar days
+ *   in the campaign's time zone. A malformed, inverted or too-wide range, an unknown parameter,
+ *   or a `bucket` outside {@link AGENCY_INSIGHTS_BUCKETS} (or on a read that takes none) is a
+ *   `400` with code {@link AGENCY_INSIGHTS_QUERY_ERROR_CODE}.
+ * - **Freshness.** The range reads come from a rollup a background job recomputes every few
+ *   seconds: `as_of` is the newest attempt change folded in, and `pending_buckets` how many
+ *   15-minute buckets of this campaign are marked changed and not yet recomputed (0 = caught up;
+ *   above 0 the page says "updating").
+ * - **"Connected" has two counts**, the dashboard's own: `connected` is `/stats`'
+ *   `attempts_connected` (outcome `connected`, wrap-up redials excluded), the CONNECT rate's
+ *   numerator over `dials`; `conversations` counts each conversation once (a redial chain is
+ *   one), the SUCCESS rate's denominator under `successes`.
  * - Access: `agency.supervise` on every read (account admin and up; tenant owners pass;
  *   agents never). Account scoping and the ownership probe as on every campaign route.
  * - Wire codes stay as the dialer spells them (`canceled`); console copy is British English.
@@ -46,6 +59,9 @@ export const AGENCY_INSIGHTS_MAX_RANGE_DAYS = 92;
 
 /** A callback dialled within this many minutes of its booked time is "on time" (decision 4). */
 export const AGENCY_INSIGHTS_CALLBACK_ON_TIME_MINUTES = 15;
+
+/** The 400 `code` of a range read whose query the server refuses (body `{ error, code, message }`). */
+export const AGENCY_INSIGHTS_QUERY_ERROR_CODE = 'invalid_insights_query';
 
 /** Trend bucket widths. `quarter_hour` exists because UTC+05:30 hours do not align to UTC hours. */
 export type AgencyInsightsBucket = 'quarter_hour' | 'hour' | 'day';
@@ -134,7 +150,8 @@ export interface AgencyInsightsHeadline {
   running: null | {
     agents_by_state: Record<AgencyAgentState, number>;
     calls_live: number;
-    concurrency_in_use: number;
+    /** The account's live calls by the distributed counter; null when Redis did not answer. */
+    concurrency_in_use: number | null;
     concurrency_limit: number | null;
     /** Dials placed in the last 15 minutes, scaled to per hour. Null before any dial. */
     dials_per_hour: number | null;
@@ -304,23 +321,30 @@ export interface AgencyInsightsAllocation {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface AgencyInsightsRange {
-  /** Inclusive start; for lifetime, the first dial (or created_at when none). */
+  /** Inclusive start, on a 15-minute boundary; for lifetime, `created_at` rounded down. */
   from: string;
-  /** Exclusive end. */
+  /** Exclusive end, on a 15-minute boundary (the request's rounded up; now's for lifetime). */
   to: string;
   lifetime: boolean;
+  /** The campaign's zone, the one day buckets are cut in (UTC when it is not one the server knows). */
   timezone: string;
 }
 
 export interface AgencyInsightsCalls {
   /** Every placed dial (`dialed_at` in range), wrap-up redials included. */
   dials: number;
+  /** `/stats` `attempts_connected`: outcome `connected`, not a wrap-up redial. Connect rate = connected / dials. */
   connected: number;
+  /** One per conversation (a redial chain once). Success rate = successes / conversations. */
+  conversations: number;
+  /** Conversations whose disposition is a success code of the campaign's CURRENT catalog. */
+  successes: number;
   /** Placed dials by outcome; `null_outcome` is still live or unrecorded. Sums to `dials`. */
   by_outcome: Record<AgencyAttemptOutcome, number> & { null_outcome: number };
+  /** `refused_at_limit` is the pacing history's (0 before it was recorded). */
   redials: { placed: number; connected: number; chains_at_limit: number; refused_at_limit: number };
   agent_retries: { reopened_dials: number; reopened_connected: number; manual_dials: number; manual_connected: number };
-  /** Soft-phone calls tagged to this campaign; outside every other count here. */
+  /** Soft-phone calls tagged to this campaign and placed, `created_at` in range; outside every other count here. */
   softphone_calls: number;
   talk_seconds: number;
   wrapup_seconds: number;
@@ -328,26 +352,39 @@ export interface AgencyInsightsCalls {
   wrapup_measured: number;
 }
 
+/** Conversations by disposition code, largest first; the rows sum to `calls.conversations`. */
 export interface AgencyInsightsOutcomeRow {
-  /** Disposition code; null groups the connected calls closed without one. */
+  /** Disposition code; null groups the conversations closed without one. */
   code: string | null;
   label: string | null;
   is_success: boolean;
   count: number;
 }
 
+/**
+ * Callbacks (decision IN4). `booked` counts bookings by the booking dial's time. The timing
+ * classes count the callbacks whose BOOKED time (`callback_at`) is in range, each once, by the
+ * contact's next placed dial after the booking:
+ *  - `kept_on_time`: that dial came no later than `callback_at` + 15 minutes (an early one counts);
+ *  - `kept_late`: it came after that;
+ *  - `missed`: no dial, and either the time has passed with the contact closed (completed,
+ *    exhausted, suppressed) or the campaign has ended (completed, stopped);
+ *  - `pending_future`: no dial yet, `callback_at` still ahead;
+ *  - `pending_due`: no dial yet, `callback_at` passed, the contact open, the campaign not ended
+ *    (overdue).
+ */
 export interface AgencyInsightsCallbacks {
   /** Callbacks booked in range. */
   booked: number;
-  /** As of now. */
+  /** As of now, whatever the range: the allocation's totals (`callbacks_due_today`, `callbacks_overdue`). */
   open_due_today: number;
   open_overdue: number;
-  /** Booked callbacks whose time fell in range, by how the follow-up went (decision 4). */
   kept_on_time: number;
   kept_late: number;
   missed: number;
-  /** Still in the future or not yet resolved. */
-  pending: number;
+  pending_future: number;
+  pending_due: number;
+  /** The pending ones (`pending_future` + `pending_due`) by the contact's owner now; null = the pool. */
   by_owner: Array<{ agent_user_id: string | null; open: number; overdue: number }>;
 }
 
@@ -355,22 +392,29 @@ export interface AgencyInsightsOverrideRow {
   code: string;
   granted: number;
   used: number;
-  by_agent: Array<{ agent_user_id: string; granted: number; used: number }>;
+  /** `agent_user_id` null: dials with no reserved agent session. */
+  by_agent: Array<{ agent_user_id: string | null; granted: number; used: number }>;
 }
 
+/**
+ * One agent's activity. `agent_user_id` null is the "no agent" row: placed dials with no
+ * reserved agent session, kept so the rows sum to the totals (`agents_dials_vs_dials`).
+ */
 export interface AgencyInsightsAgentActivityRow {
-  agent_user_id: string;
+  agent_user_id: string | null;
   agent_name: string | null;
   online_seconds: number;
   /** Seconds per state; `break` split by reason, soft phone under `soft_phone`. */
   state_seconds: { available: number; on_call: number; wrapup: number; break_by_reason: Record<string, number> };
   dials: number;
   connected: number;
+  conversations: number;
   successes: number;
   talk_seconds: number;
   wrapup_seconds: number;
   wrapup_measured: number;
   redials: number;
+  /** Agent retries: reopened plus manual dials. */
   retries: number;
   overrides: number;
 }
@@ -384,13 +428,17 @@ export interface AgencyInsightsActivity {
   overrides: AgencyInsightsOverrideRow[];
   /** Connected calls closed with no outcome (lapsed wrap-ups), by how wrap-up ended. */
   no_outcome: { total: number; by_resolution: Record<string, number> };
+  /** Do Not Call entries agents wrote scoped to this campaign in range, by who wrote them (a tenant-wide escalation names no campaign). */
   dnc_marked: { total: number; by_agent: Array<{ user_id: string | null; count: number }> };
   agents: AgencyInsightsAgentActivityRow[];
   /** Staffed agents with no session on the campaign in range. */
   never_joined: string[];
+  /** From the rollup read's one snapshot (`outcomes_vs_dials`, `agents_dials_vs_dials`, ...). */
   reconciliation: AgencyInsightsReconciliation[];
   /** Rollup freshness: the newest attempt change folded in. Null when the rollup is empty. */
   as_of: string | null;
+  /** The campaign's buckets marked changed and not yet recomputed (0 = caught up). */
+  pending_buckets: number;
   generated_at: string;
 }
 
@@ -402,7 +450,10 @@ export interface AgencyInsightsTrendBucket {
   /** Instant (ISO-8601) for sub-day buckets; `YYYY-MM-DD` in the campaign zone for `day`. */
   bucket_start: string;
   dials: number;
+  /** `/stats` `attempts_connected` (connect rate over `dials`). */
   connected: number;
+  /** Conversations (the success rate's denominator). */
+  conversations: number;
   successes: number;
   abandoned: number;
   answered: number;
@@ -419,6 +470,7 @@ export interface AgencyInsightsTrends {
   /** Connect counts by hour of day in each CONTACT's time zone (campaign zone when unset), 0–23. */
   best_hours: Array<{ hour: number; dials: number; connected: number }>;
   as_of: string | null;
+  pending_buckets: number;
   generated_at: string;
 }
 
@@ -455,17 +507,31 @@ export interface AgencyInsightsHealth {
   campaign_id: string;
   range: AgencyInsightsRange;
   abandonment: {
+    /** The guardrail's window, whatever the range: ended calls answered in the last 24 h, and the abandoned among them. */
     rolling_24h: { abandoned: number; answered: number };
     ceiling_pct: number;
+    /** The guardrail's auto-pauses in range, oldest first (at most 200). */
     auto_pauses: Array<{ at: string; measured_pct: number | null; ceiling_pct: number | null }>;
   };
+  /** From the pacing history: contacts suppressed at the pre-dial gate, and dials held for calling hours. */
   predial_blocks: { dnc: number; invalid: number; outside_calling_hours_deferrals: number };
   caller_ids: Array<{ caller_id: string; dials: number; connected: number }>;
   concurrency_limit_minutes: number;
   carrier_failures: number;
   our_fault_retired: number;
-  stalls: { minutes_by_reason: Record<AgencyPacingIdleReason | 'outside_calling_hours', number>; episodes: AgencyInsightsStallEpisode[] };
+  stalls: {
+    minutes_by_reason: Record<AgencyPacingIdleReason | 'outside_calling_hours', number>;
+    /** Oldest first; the newest 500 when there are more. */
+    episodes: AgencyInsightsStallEpisode[];
+    /** True when older episodes in range were left out by that cap. */
+    episodes_truncated: boolean;
+  };
   recording: { connected: number; recorded: number };
+  /**
+   * Null when not served: always today, since no index-driven read of a campaign's analysed
+   * calls over a range exists yet (docs/insights.md "API (range reads)"); the console says the
+   * figures are not available rather than that analysis is off.
+   */
   analysis: null | {
     analysed: number;
     sentiment: { positive: number; neutral: number; negative: number };
@@ -474,6 +540,7 @@ export interface AgencyInsightsHealth {
   /** Pacing history is recorded from the day it shipped; earlier minutes are absent, not zero. */
   pacing_history_since: string | null;
   as_of: string | null;
+  pending_buckets: number;
   generated_at: string;
 }
 

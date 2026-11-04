@@ -252,6 +252,8 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
     calls: {
       dials: 1240,
       connected: 400,
+      conversations: 400,
+      successes: 200,
       by_outcome: {
         connected: 400,
         no_answer: 500,
@@ -286,7 +288,8 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
       kept_on_time: 40,
       kept_late: 10,
       missed: 6,
-      pending: 24,
+      pending_future: 18,
+      pending_due: 6,
       by_owner: [
         { agent_user_id: 'usr_priya', open: 8, overdue: 2 },
         { agent_user_id: null, open: 6, overdue: 2 },
@@ -303,6 +306,7 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
         state_seconds: { available: 6000, on_call: 10_000, wrapup: 2000, break_by_reason: { lunch: 1800, training: 200 } },
         dials: 700,
         connected: 240,
+        conversations: 240,
         successes: 90,
         talk_seconds: 240 * 180,
         wrapup_seconds: 230 * 40,
@@ -318,6 +322,7 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
         state_seconds: { available: 8000, on_call: 8000, wrapup: 2000, break_by_reason: {} },
         dials: 540,
         connected: 160,
+        conversations: 160,
         successes: 110,
         talk_seconds: 160 * 170,
         wrapup_seconds: 150 * 45,
@@ -330,9 +335,10 @@ export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsi
     never_joined: ['usr_meera'],
     reconciliation: [
       { check: 'outcomes_vs_dials', expected: 1240, actual: 1240, ok: true },
-      { check: 'dispositions_vs_connected', expected: 400, actual: 400, ok: true },
+      { check: 'outcome_codes_vs_conversations', expected: 400, actual: 400, ok: true },
     ],
     as_of: '2026-11-04T10:12:00.000Z',
+    pending_buckets: 0,
     generated_at: '2026-11-04T10:12:08.000Z',
     ...over,
   };
@@ -344,11 +350,11 @@ export function trends(over: Partial<AgencyInsightsTrends> = {}): AgencyInsights
     range: LIFETIME_RANGE,
     bucket: 'day',
     buckets: [
-      { bucket_start: '2026-10-31', dials: 300, connected: 90, successes: 40, abandoned: 2, answered: 120, agents_online_peak: 4 },
-      { bucket_start: '2026-11-01', dials: 10, connected: 3, successes: 1, abandoned: 0, answered: 4, agents_online_peak: 1 },
-      { bucket_start: '2026-11-02', dials: 0, connected: 0, successes: 0, abandoned: 0, answered: 0, agents_online_peak: 0 },
-      { bucket_start: '2026-11-03', dials: 500, connected: 160, successes: 90, abandoned: 5, answered: 200, agents_online_peak: 6 },
-      { bucket_start: '2026-11-04', dials: 430, connected: 147, successes: 69, abandoned: 3, answered: 180, agents_online_peak: 5 },
+      { bucket_start: '2026-10-31', dials: 300, connected: 90, conversations: 90, successes: 40, abandoned: 2, answered: 120, agents_online_peak: 4 },
+      { bucket_start: '2026-11-01', dials: 10, connected: 3, conversations: 3, successes: 1, abandoned: 0, answered: 4, agents_online_peak: 1 },
+      { bucket_start: '2026-11-02', dials: 0, connected: 0, conversations: 0, successes: 0, abandoned: 0, answered: 0, agents_online_peak: 0 },
+      { bucket_start: '2026-11-03', dials: 500, connected: 160, conversations: 160, successes: 90, abandoned: 5, answered: 200, agents_online_peak: 6 },
+      { bucket_start: '2026-11-04', dials: 430, connected: 147, conversations: 147, successes: 69, abandoned: 3, answered: 180, agents_online_peak: 5 },
     ],
     best_hours: [
       { hour: 10, dials: 200, connected: 50 },
@@ -356,6 +362,7 @@ export function trends(over: Partial<AgencyInsightsTrends> = {}): AgencyInsights
       { hour: 21, dials: 10, connected: 9 },
     ],
     as_of: '2026-11-04T10:12:00.000Z',
+    pending_buckets: 0,
     generated_at: '2026-11-04T10:12:08.000Z',
     ...over,
   };
@@ -391,11 +398,13 @@ export function health(over: Partial<AgencyInsightsHealth> = {}): AgencyInsights
       episodes: [
         { reason: 'no_agents', started_at: '2026-11-04T04:00:00.000Z', ended_at: '2026-11-04T04:22:00.000Z', minutes: 22 },
       ],
+      episodes_truncated: false,
     },
     recording: { connected: 400, recorded: 396 },
     analysis: null,
     pacing_history_since: '2026-11-04T00:00:00.000Z',
     as_of: '2026-11-04T10:12:00.000Z',
+    pending_buckets: 0,
     generated_at: '2026-11-04T10:12:08.000Z',
     ...over,
   };

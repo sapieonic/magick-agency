@@ -11,7 +11,7 @@ import {
   rateValue,
   successRate,
 } from '../../../../utils/agency/insights/rates';
-import { agentLink, attemptsLink } from '../../../../utils/agency/insights/links';
+import { agentLink, attemptsLink, type InsightsAttemptsFilter } from '../../../../utils/agency/insights/links';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import { CountLink, CsvButton, InsightsTable, Panel, tableCsv, type InsightsColumn } from './InsightsParts';
 import type { RangeSectionContext } from './ActivitySections';
@@ -28,6 +28,14 @@ function breakTitle(row: Row): string | undefined {
     .filter(([, n]) => n > 0)
     .map(([reason, n]) => `${reason.replace(/_/g, ' ')} ${durationWords(n)}`);
   return parts.length ? parts.join(', ') : undefined;
+}
+
+/** The "no agent" row (dials placed with no reserved agent session) is named, never linked. */
+export const NO_AGENT_LABEL = 'No agent (dials with no agent session)';
+
+function agentLabel(row: Row, ctx: RangeSectionContext): string {
+  if (row.agent_user_id === null) return NO_AGENT_LABEL;
+  return row.agent_name ?? ctx.agentName(row.agent_user_id);
 }
 
 function handleSeconds(row: Row): number | null {
@@ -53,6 +61,10 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
   const rows = ranked ? leaderboard(activity.agents) : activity.agents;
   const rank = new Map(leaderboard(activity.agents).map((row, index) => [row.agent_user_id, index + 1]));
   const { campaignId, range } = ctx;
+  /** An agent's count, linked to their dials; the no-agent row has no list to open (no filter selects it). */
+  const agentCount = (row: Row, filter: InsightsAttemptsFilter, value: number, label: string) => (row.agent_user_id === null
+    ? formatCount(value)
+    : <CountLink to={attemptsLink(campaignId, { ...filter, agent_user_id: row.agent_user_id })} value={value} label={label} />);
 
   const columns: InsightsColumn<Row>[] = [
     {
@@ -61,10 +73,12 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
       render: (row) => (
         <>
           {ranked ? <span className={styles.muted}>{`${rank.get(row.agent_user_id)}. `}</span> : null}
-          <Link to={agentLink(campaignId, row.agent_user_id)}>{row.agent_name ?? ctx.agentName(row.agent_user_id)}</Link>
+          {row.agent_user_id === null
+            ? agentLabel(row, ctx)
+            : <Link to={agentLink(campaignId, row.agent_user_id)}>{agentLabel(row, ctx)}</Link>}
         </>
       ),
-      csv: (row) => row.agent_name ?? ctx.agentName(row.agent_user_id),
+      csv: (row) => agentLabel(row, ctx),
     },
     { key: 'online', header: 'Online', numeric: true, render: (r) => durationWords(r.online_seconds), csv: (r) => r.online_seconds },
     { key: 'available', header: 'Available', numeric: true, render: (r) => durationWords(r.state_seconds.available), csv: (r) => r.state_seconds.available },
@@ -91,14 +105,14 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
       key: 'dials',
       header: 'Dials',
       numeric: true,
-      render: (r) => <CountLink to={attemptsLink(campaignId, { ...range, agent_user_id: r.agent_user_id })} value={r.dials} label="dials" />,
+      render: (r) => agentCount(r, { ...range }, r.dials, 'dials'),
       csv: (r) => r.dials,
     },
     {
       key: 'connected',
       header: 'Connected',
       numeric: true,
-      render: (r) => <CountLink to={attemptsLink(campaignId, { ...range, agent_user_id: r.agent_user_id, outcome: 'connected' })} value={r.connected} label="connected calls" />,
+      render: (r) => agentCount(r, { ...range, outcome: 'connected', redial: false }, r.connected, 'connected calls'),
       csv: (r) => r.connected,
     },
     { key: 'connect_rate', header: 'Connect rate', numeric: true, render: (r) => rateText(connectRate(r)), csv: (r) => rateValue(connectRate(r)) },
@@ -107,8 +121,8 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
       key: 'success_rate',
       header: 'Success rate',
       numeric: true,
-      render: (r) => rateText(successRate(r.successes, r.connected)),
-      csv: (r) => rateValue(successRate(r.successes, r.connected)),
+      render: (r) => rateText(successRate(r.successes, r.conversations)),
+      csv: (r) => rateValue(successRate(r.successes, r.conversations)),
     },
     {
       key: 'aht',
@@ -124,7 +138,7 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
       key: 'redials',
       header: 'Redials',
       numeric: true,
-      render: (r) => <CountLink to={attemptsLink(campaignId, { ...range, agent_user_id: r.agent_user_id, redial: true })} value={r.redials} label="redials" />,
+      render: (r) => agentCount(r, { ...range, redial: true }, r.redials, 'redials'),
       csv: (r) => r.redials,
     },
     { key: 'retries', header: 'Retries', numeric: true, render: (r) => formatCount(r.retries), csv: (r) => r.retries },
@@ -156,7 +170,7 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
           caption={ranked ? 'Agents ranked by successes' : 'Agents on this campaign'}
           columns={columns}
           rows={rows}
-          rowKey={(r) => r.agent_user_id}
+          rowKey={(r) => r.agent_user_id ?? 'no-agent'}
           sortable={!ranked}
           testId="agents-table"
         />

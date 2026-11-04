@@ -110,9 +110,13 @@ const CHECK_LABELS: Record<string, string> = {
   waiting_vs_pending: 'Waiting adds up to the pending contacts',
   allocated_plus_unassigned_vs_total: 'Allocated and unassigned add up to the roster',
   agent_buckets_vs_allocated: 'Each agent’s states add up to their allocation',
+  // activity (the rollup read's one snapshot, docs/insights.md "API (range reads)")
   outcomes_vs_dials: 'Outcomes add up to dials',
-  dispositions_vs_connected: 'Dispositions add up to connected calls',
-  agents_vs_total: 'Agents add up to the total',
+  agents_dials_vs_dials: 'Agents’ dials add up to dials',
+  agents_connected_vs_connected: 'Agents’ connected calls add up to connected',
+  outcome_codes_vs_conversations: 'Dispositions add up to conversations',
+  agents_overrides_vs_overrides_used: 'Agents’ overrides add up to overrides used',
+  no_outcome_vs_unclassified_codes: 'Calls with no outcome add up by how wrap-up ended',
 };
 
 /** A server reconciliation as a reader sees it. Unknown check names are spaced out, not hidden. */

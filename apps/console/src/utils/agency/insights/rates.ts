@@ -73,7 +73,11 @@ export function average(total: number, count: number): number | null {
 
 // ── Named rates, so a panel never divides inline ────────────────────────────
 
-/** Connected over every placed dial (redials included, decision IN6). */
+/**
+ * Connected over every placed dial (redials included in the dials, decision IN6). `connected` is
+ * `/stats`' `attempts_connected`: outcome connected, a wrap-up redial NOT counted again (it
+ * continues a call already counted). The contract's header names both "connected" counts.
+ */
 export function connectRate(calls: Pick<AgencyInsightsCalls, 'dials' | 'connected'>): InsightsRate {
   return insightsRate(calls.connected, calls.dials);
 }
@@ -107,12 +111,16 @@ export function averageAttempts(roster: Pick<AgencyInsightsRoster, 'dials_placed
   return average(roster.dials_placed, roster.attempted);
 }
 
-/** Successes over connected calls: how many conversations counted. */
-export function successRate(successes: number, connected: number): InsightsRate {
-  return insightsRate(successes, connected);
+/**
+ * Successes over CONVERSATIONS (each conversation once, a redial chain once): the denominator
+ * the success count is a subset of. Not `connected`, which is the connect rate's numerator and a
+ * different count (`calls.conversations`, `row.conversations`, `bucket.conversations`).
+ */
+export function successRate(successes: number, conversations: number): InsightsRate {
+  return insightsRate(successes, conversations);
 }
 
-/** Average handle time (talk + wrap-up) per connected call, in seconds. */
+/** Average handle time (talk + wrap-up) per connected call, in seconds (talk is summed over `connected` calls' legs). */
 export function averageHandleSeconds(calls: Pick<AgencyInsightsCalls, 'talk_seconds' | 'wrapup_seconds' | 'connected' | 'wrapup_measured'>): {
   talk: number | null;
   wrapup: number | null;

@@ -162,9 +162,11 @@ async function statusHeadline(campaign: AgencyCampaignRecord, roster: RosterCoun
         running: {
           agents_by_state: { offline: 0, available: 0, reserved: 0, on_call: 0, wrapup: 0, break: 0, ...(stats?.agents_by_state ?? {}) },
           calls_live: callsLive,
-          // The account's distributed count when Redis answered; this campaign's live calls when
-          // it did not (the strip's `null`, which this field has no room for).
-          concurrency_in_use: stats?.concurrency_in_use ?? callsLive,
+          // The account's distributed count when Redis answered, else null (the strip's own
+          // `null`). Not this campaign's live calls: that is a different number (one campaign, not
+          // the account), and set beside the account's limit it would read as headroom that is
+          // not there.
+          concurrency_in_use: typeof stats?.concurrency_in_use === 'number' ? stats.concurrency_in_use : null,
           concurrency_limit: limit,
           ...pace({ dials15m: dial.dials_15m, finished1h: dial.finished_1h, open: roster.pending, everDialled: roster.dials_placed > 0 }),
           stall: stats?.stall ?? null,

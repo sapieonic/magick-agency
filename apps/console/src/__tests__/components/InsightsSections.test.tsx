@@ -210,9 +210,15 @@ describe('callbacks', () => {
     show(<CallbacksSection ctx={ctx} activity={activity()} />);
     expect(screen.getByTestId('kpi-callbacks-on-time').textContent).toContain('71.4% of those due');
     expect(screen.getByTestId('kpi-callbacks-missed-range').textContent).toContain('6');
+    expect(screen.getByTestId('kpi-callbacks-pending').textContent).toContain('24');
+    expect(screen.getByTestId('kpi-callbacks-pending').textContent).toContain('18 still to come · 6 overdue');
     const table = screen.getByTestId('callbacks-table');
-    expect(hrefOf(table, '6 open callbacks')).toBe('/agency/campaigns/camp-1/contacts?state=pending&waiting=callback&assigned_to=unassigned');
     expect(within(table).getByText('Priya Nair')).toBeTruthy();
+    // Not links: the open-by-owner counts are callbacks BOOKED in range (due ones included), and
+    // "due today" is due before local midnight; no contacts filter lists either set, so a link
+    // would open a list whose total is another number.
+    expect(within(table).queryAllByRole('link')).toEqual([]);
+    expect(within(screen.getByTestId('kpi-callbacks-open')).queryAllByRole('link')).toEqual([]);
   });
 });
 

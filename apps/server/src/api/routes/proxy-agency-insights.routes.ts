@@ -2,8 +2,9 @@ import type { FastifyInstance } from 'fastify';
 import { sessionMiddleware } from '../../auth/session.middleware.js';
 import { tenantContextMiddleware } from '../middleware/tenant-context.middleware.js';
 import { registerInsightsAsOfNowRoutes } from './proxy-agency-insights/as-of-now.js';
+import { registerInsightsRangeRoutes } from './proxy-agency-insights/range.js';
 
-export { registerInsightsAsOfNowRoutes };
+export { registerInsightsAsOfNowRoutes, registerInsightsRangeRoutes };
 
 /**
  * The campaign insights page (docs/insights.md; the wire is
@@ -16,8 +17,10 @@ export { registerInsightsAsOfNowRoutes };
  *  - As of now (`./proxy-agency-insights/as-of-now.ts`): `summary`, `readiness`, `allocation`,
  *    `uploads`. `summary` and `allocation` are polled by the console and share a few seconds of
  *    cache per campaign (`agency/insights/cache.ts`).
- *  - The range reads (`activity`, `trends`, `health`) are not served yet: they read the rollup
- *    and the pacing history being built in parallel (docs/insights.md, workstreams B, C, E).
+ *  - Over a range (`./proxy-agency-insights/range.ts`): `activity`, `trends`, `health`, from the
+ *    insights rollup and the pacing history. `from` / `to` / `bucket` are validated after the
+ *    guards and refused `400 invalid_insights_query`; the served range (rounded to the rollup's
+ *    15-minute buckets) is echoed and is part of the cache key.
  *
  * Guards, in this order, on every route: session and tenant context (the hooks below);
  * `agency.supervise` (account admin and up; tenant owners pass; agents and viewers get the RBAC
@@ -31,4 +34,5 @@ export async function proxyAgencyInsightsRoutes(app: FastifyInstance): Promise<v
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
   await registerInsightsAsOfNowRoutes(app);
+  await registerInsightsRangeRoutes(app);
 }

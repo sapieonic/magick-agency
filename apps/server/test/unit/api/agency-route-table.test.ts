@@ -53,11 +53,8 @@ const FIXTURE = JSON.parse(
  * after it is served fails the "pending is really pending" case below.
  */
 const PENDING: ReadonlyMap<string, string> = new Map([
-  // The insights range reads (docs/insights.md, workstream E after B's rollup and C's pacing
-  // history, 2026-11-04): the console's Insights tab already calls them.
-  ['GET /proxy/agency/campaigns/:_/insights/activity', 'insights range read, waits on the rollup (WS B)'],
-  ['GET /proxy/agency/campaigns/:_/insights/trends', 'insights range read, waits on the rollup (WS B)'],
-  ['GET /proxy/agency/campaigns/:_/insights/health', 'insights range read, waits on the rollup and pacing history (WS B, C)'],
+  // Empty: the insights range reads (activity, trends, health) were the last, served since
+  // workstream E2 (docs/insights.md "API (range reads)").
 ]);
 
 /**

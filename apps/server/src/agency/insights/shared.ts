@@ -18,6 +18,16 @@ export function successCodes(catalog: readonly AgencyDisposition[] | null | unde
     .map((d) => d.code);
 }
 
+/** Whether a catalog entry grants an outcome override (the settings block's `override_outcomes`). */
+export function grantsOverride(d: AgencyDisposition | null | undefined): d is AgencyDisposition {
+  return !!d && typeof d === 'object' && typeof d.code === 'string' && !!d.override && typeof d.override === 'object';
+}
+
+/** The catalog's override-granting codes (the rollup's overrides read filters by them). */
+export function overrideCodes(catalog: readonly AgencyDisposition[] | null | undefined): string[] {
+  return Array.isArray(catalog) ? catalog.filter(grantsOverride).map((d) => d.code) : [];
+}
+
 /**
  * A user id out of a stored actor reference: a bare UUID, or `user:<uuid>`. Anything else (a
  * system label such as `system:api`, an email, NULL) is not a user and answers null.
@@ -58,3 +68,14 @@ export function reconcile(check: string, expected: number, actual: number): Agen
 
 export const iso = (d: Date | string | null | undefined): string | null =>
   d === null || d === undefined ? null : (d instanceof Date ? d : new Date(d)).toISOString();
+
+/**
+ * A range read found no campaign for the tenant: it left between the route's ownership probe and
+ * the read (deleted mid-request). The route has already proved ownership, so this is a 500, not a
+ * 404 that would race the probe.
+ */
+export class InsightsCampaignGone extends Error {
+  constructor() {
+    super('insights: campaign not found for its tenant after the ownership probe');
+  }
+}

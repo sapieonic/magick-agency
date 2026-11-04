@@ -17,7 +17,7 @@ import { AGENCY_UNASSIGNED_FILTER } from '@magick-agency/contracts/api/agency/ag
  *    (an agent id, or `unassigned` for the pool), `waiting=due_now|retry|callback`
  *    (the roster's waiting buckets), `attempted=1|0` (a dial placed, or none).
  *  - Call attempts: `outcome`, `disposition_code`, `agent_user_id` (through the
- *    attempt's session), `caller_id`, `redial=1`, `agent_manual=1`,
+ *    attempt's session), `caller_id`, `redial=1|0`, `agent_manual=1`,
  *    `agent_reopened=1`, and `placed=1` plus `dialed_from` / `dialed_to`.
  *
  * ── Every attempts link is a placed-dial link ───────────────────────────────
@@ -52,6 +52,7 @@ export interface InsightsAttemptsFilter {
   disposition?: string;
   agent_user_id?: string;
   caller_id?: string;
+  /** `true`: wrap-up redials only (`redial=1`); `false`: none (`redial=0`, what `connected` counts). */
   redial?: boolean;
   agent_manual?: boolean;
   agent_reopened?: boolean;
@@ -91,7 +92,7 @@ export function attemptsLink(campaignId: string, filter: InsightsAttemptsFilter 
   if (filter.disposition) params.set('disposition_code', filter.disposition);
   if (filter.agent_user_id) params.set('agent_user_id', filter.agent_user_id);
   if (filter.caller_id) params.set('caller_id', filter.caller_id);
-  if (filter.redial) params.set('redial', '1');
+  if (filter.redial !== undefined) params.set('redial', filter.redial ? '1' : '0');
   if (filter.agent_manual) params.set('agent_manual', '1');
   if (filter.agent_reopened) params.set('agent_reopened', '1');
   params.set('placed', '1');
@@ -157,4 +158,39 @@ const ROSTER_FILTERS: Record<RosterBucket, InsightsContactsFilter> = {
 /** The contacts list behind one roster number. */
 export function rosterBucketLink(campaignId: string, bucket: RosterBucket): string {
   return contactsLink(campaignId, ROSTER_FILTERS[bucket]);
+}
+
+// ── The allocation table ─────────────────────────────────────────────────────
+
+type AllocationLinkSpec = { contacts: InsightsContactsFilter } | { attempts: InsightsAttemptsFilter };
+
+/** The allocation columns that open a list, and the filter behind each (the owner is added per row). */
+export const ALLOCATION_LINK_FILTERS: Readonly<Record<string, AllocationLinkSpec>> = {
+  allocated: { contacts: {} },
+  attempted: { contacts: { attempted: true } },
+  not_attempted: { contacts: { attempted: false } },
+  due_now: { contacts: { state: ['pending'], waiting: 'due_now' } },
+  waiting_retry: { contacts: { state: ['pending'], waiting: 'retry' } },
+  exhausted: { contacts: { state: ['exhausted'] } },
+  dnc: { contacts: { state: ['suppressed'], suppressed_reason: ['dnc'] } },
+  // The dial counters are the DIALLING agent's (the server's rollup attribution), so they open
+  // that agent's dials; the Unassigned row's (dials with no agent session) has no list.
+  redials: { attempts: { redial: true } },
+  retries_reopened: { attempts: { agent_reopened: true } },
+  retries_manual: { attempts: { agent_manual: true } },
+};
+
+/**
+ * The list behind one allocation cell, or null when it has none. `owner`: an agent's user id,
+ * `null` for the Unassigned row, `undefined` for the Total row. Contacts columns filter by owner
+ * (`assigned_to`); the dial counters by the dialling agent, and the Unassigned row's have none.
+ */
+export function allocationLink(campaignId: string, column: string, owner: string | null | undefined): string | null {
+  const spec = Object.hasOwn(ALLOCATION_LINK_FILTERS, column) ? ALLOCATION_LINK_FILTERS[column] : undefined;
+  if (!spec) return null;
+  if ('contacts' in spec) {
+    return contactsLink(campaignId, { ...spec.contacts, ...(owner !== undefined ? { assigned_to: owner } : {}) });
+  }
+  if (owner === null) return null;
+  return attemptsLink(campaignId, { ...spec.attempts, ...(owner ? { agent_user_id: owner } : {}) });
 }

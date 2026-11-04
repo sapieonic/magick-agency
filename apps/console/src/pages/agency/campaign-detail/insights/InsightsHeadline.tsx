@@ -147,6 +147,15 @@ export function DraftHeadline({
 
 const ONLINE_STATES: AgencyAgentState[] = ['available', 'reserved', 'on_call', 'wrapup', 'break'];
 
+/**
+ * The lines in use against the account's limit. `inUse` is null when the server could not read
+ * the account's live count (Redis did not answer): said as such, never guessed.
+ */
+export function concurrencyText(inUse: number | null, limit: number | null): string {
+  if (inUse === null) return limit === null ? 'Lines in use not known right now, no account limit' : `Lines in use not known right now, limit ${formatCount(limit)}`;
+  return limit === null ? `${formatCount(inUse)} lines in use, no account limit` : `Concurrency ${formatCount(inUse)} of ${formatCount(limit)}`;
+}
+
 export function RunningHeadline({
   summary,
   live,
@@ -174,9 +183,7 @@ export function RunningHeadline({
         <Kpi
           label="Calls on the line"
           value={formatCount(live.calls_live)}
-          sub={live.concurrency_limit === null
-            ? `${formatCount(live.concurrency_in_use)} lines in use, no account limit`
-            : `Concurrency ${formatCount(live.concurrency_in_use)} of ${formatCount(live.concurrency_limit)}`}
+          sub={concurrencyText(live.concurrency_in_use, live.concurrency_limit)}
           testId="kpi-calls-live"
         />
         <Kpi

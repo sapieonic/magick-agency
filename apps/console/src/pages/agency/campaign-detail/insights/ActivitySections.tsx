@@ -12,10 +12,11 @@ import {
   averageHandleSeconds,
   connectRate,
   insightsRate,
+  successRate,
   rateText,
   rateValue,
 } from '../../../../utils/agency/insights/rates';
-import { attemptsLink, contactsLink } from '../../../../utils/agency/insights/links';
+import { attemptsLink } from '../../../../utils/agency/insights/links';
 import { insightsCsvFilename } from '../../../../utils/agency/insights/csv';
 import {
   CountLink,
@@ -79,6 +80,7 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
   const { campaignId, range } = ctx;
   const { calls } = activity;
   const connect = rateFigure(connectRate(calls));
+  const success = rateFigure(successRate(calls.successes, calls.conversations));
   const handle = averageHandleSeconds(calls);
   const lines = outcomeLines(activity);
 
@@ -94,7 +96,6 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
     { key: 'share', header: 'Share of dials', numeric: true, render: (l) => rateText(insightsRate(l.count, calls.dials)), csv: (l) => rateValue(insightsRate(l.count, calls.dials)) },
   ];
 
-  const connectedWithDisposition = activity.outcomes.reduce((sum, row) => sum + row.count, 0);
   const dispositionColumns: InsightsColumn<AgencyInsightsOutcomeRow>[] = [
     {
       key: 'label',
@@ -118,10 +119,10 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
     },
     {
       key: 'share',
-      header: 'Share of connected',
+      header: 'Share of conversations',
       numeric: true,
-      render: (row) => rateText(insightsRate(row.count, connectedWithDisposition)),
-      csv: (row) => rateValue(insightsRate(row.count, connectedWithDisposition)),
+      render: (row) => rateText(insightsRate(row.count, calls.conversations)),
+      csv: (row) => rateValue(insightsRate(row.count, calls.conversations)),
     },
   ];
   const dispositions = activity.outcomes.slice().sort((a, b) => b.count - a.count);
@@ -148,9 +149,15 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
         />
         <Kpi
           label="Connected"
-          value={<CountLink to={attemptsLink(campaignId, { ...range, outcome: 'connected' })} value={calls.connected} label="connected calls" />}
+          value={<CountLink to={attemptsLink(campaignId, { ...range, outcome: 'connected', redial: false })} value={calls.connected} label="connected calls" />}
           sub={`Connect rate ${connect.value}`}
           testId="kpi-connected"
+        />
+        <Kpi
+          label="Successes"
+          value={formatCount(calls.successes)}
+          sub={`Success rate ${success.value} of ${formatCount(calls.conversations)} conversations`}
+          testId="kpi-successes"
         />
         <Kpi
           label="Wrap-up redials"
@@ -189,11 +196,11 @@ export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; acti
       <h4 className={styles.subTitle}>By outcome</h4>
       <InsightsTable caption="Placed dials by outcome" columns={outcomeColumns} rows={lines} rowKey={(l) => l.outcome ?? 'null'} testId="outcomes-table" />
 
-      <h4 className={styles.subTitle}>Connected calls by disposition</h4>
+      <h4 className={styles.subTitle}>Conversations by disposition</h4>
       {dispositions.length === 0 ? (
-        <p className={styles.muted}>No connected calls in this range.</p>
+        <p className={styles.muted}>No conversations in this range.</p>
       ) : (
-        <InsightsTable caption="Connected calls by disposition, successes marked" columns={dispositionColumns} rows={dispositions} rowKey={(row) => row.code ?? 'none'} testId="dispositions-table" />
+        <InsightsTable caption="Conversations by disposition, successes marked" columns={dispositionColumns} rows={dispositions} rowKey={(row) => row.code ?? 'none'} testId="dispositions-table" />
       )}
 
       {activity.no_outcome.total > 0 ? (
@@ -227,7 +234,10 @@ export function CallbacksSection({ ctx, activity }: { ctx: RangeSectionContext; 
       key: 'open',
       header: 'Open',
       numeric: true,
-      render: (row) => <CountLink to={contactsLink(ctx.campaignId, { state: ['pending'], waiting: 'callback', assigned_to: row.agent_user_id })} value={row.open} label="open callbacks" />,
+      // Not a link: these are the callbacks BOOKED for a time in this range that are still open,
+      // due ones included, and no contacts filter selects that set (a link would open a list
+      // whose total is a different number).
+      render: (row) => formatCount(row.open),
       csv: (row) => row.open,
     },
     { key: 'overdue', header: 'Overdue', numeric: true, render: (row) => formatCount(row.overdue), csv: (row) => row.overdue },
@@ -244,11 +254,18 @@ export function CallbacksSection({ ctx, activity }: { ctx: RangeSectionContext; 
         <Kpi label="Kept on time" value={formatCount(cb.kept_on_time)} sub={`${onTime.value} of those due`} testId="kpi-callbacks-on-time" />
         <Kpi label="Late" value={formatCount(cb.kept_late)} testId="kpi-callbacks-late" />
         <Kpi label="Missed" value={formatCount(cb.missed)} sub="Never dialled, or the contact closed first" testId="kpi-callbacks-missed-range" />
-        <Kpi label="Still to come" value={formatCount(cb.pending)} testId="kpi-callbacks-pending" />
+        <Kpi
+          label="Still open"
+          value={formatCount(cb.pending_future + cb.pending_due)}
+          sub={`${formatCount(cb.pending_future)} still to come · ${formatCount(cb.pending_due)} overdue`}
+          testId="kpi-callbacks-pending"
+        />
         <Kpi
           label="Open now"
-          value={<CountLink to={contactsLink(ctx.campaignId, { state: ['pending'], waiting: 'callback' })} value={cb.open_due_today} label="callbacks due today" />}
-          sub={`Due today · ${formatCount(cb.open_overdue)} overdue`}
+          // Not a link: due before local midnight, which no contacts filter selects (the
+          // Callbacks waiting filter is every later callback, a different number).
+          value={formatCount(cb.open_due_today)}
+          sub={`Due today · ${formatCount(cb.open_overdue)} overdue · whatever the range`}
           testId="kpi-callbacks-open"
         />
       </div>
@@ -273,14 +290,16 @@ export function OverridesSection({
   settings: AgencyInsightsSettings;
 }) {
   const labels = new Map(settings.override_outcomes.map((o) => [o.code, o.label]));
-  type Line = { code: string; agent: string | null; granted: number; used: number };
+  // `total` is the outcome's own line; an agent line's `agent` is null for dials with no agent session.
+  type Line = { code: string; total: boolean; agent: string | null; granted: number; used: number };
   const lines: Line[] = activity.overrides.flatMap((row: AgencyInsightsOverrideRow) => [
-    { code: row.code, agent: null, granted: row.granted, used: row.used },
-    ...row.by_agent.map((a) => ({ code: row.code, agent: a.agent_user_id, granted: a.granted, used: a.used })),
+    { code: row.code, total: true, agent: null, granted: row.granted, used: row.used },
+    ...row.by_agent.map((a) => ({ code: row.code, total: false, agent: a.agent_user_id, granted: a.granted, used: a.used })),
   ]);
+  const who = (l: Line) => (l.total ? 'All agents' : l.agent === null ? 'No agent' : ctx.agentName(l.agent));
   const columns: InsightsColumn<Line>[] = [
-    { key: 'code', header: 'Outcome', render: (l) => (l.agent ? '' : labels.get(l.code) ?? l.code), csv: (l) => l.code },
-    { key: 'agent', header: 'Agent', render: (l) => (l.agent ? ctx.agentName(l.agent) : 'All agents'), csv: (l) => (l.agent ? ctx.agentName(l.agent) : 'All agents') },
+    { key: 'code', header: 'Outcome', render: (l) => (l.total ? labels.get(l.code) ?? l.code : ''), csv: (l) => l.code },
+    { key: 'agent', header: 'Agent', render: who, csv: who },
     { key: 'granted', header: 'Granted', numeric: true, render: (l) => formatCount(l.granted), csv: (l) => l.granted },
     { key: 'used', header: 'Used', numeric: true, render: (l) => formatCount(l.used), csv: (l) => l.used },
   ];
@@ -296,7 +315,7 @@ export function OverridesSection({
           {settings.override_outcomes.length === 0 ? 'No outcome on this campaign allows an override.' : 'No overrides were granted in this range.'}
         </p>
       ) : (
-        <InsightsTable caption="Overrides granted and used, by outcome and agent" columns={columns} rows={lines} rowKey={(l) => `${l.code}-${l.agent ?? 'all'}`} testId="overrides-table" />
+        <InsightsTable caption="Overrides granted and used, by outcome and agent" columns={columns} rows={lines} rowKey={(l) => `${l.code}-${l.total ? 'all' : l.agent ?? 'none'}`} testId="overrides-table" />
       )}
     </Panel>
   );

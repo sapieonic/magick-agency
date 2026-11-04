@@ -129,6 +129,9 @@ export function HealthSection({
       ) : (
         <InsightsTable caption="Minutes the dialler waited, by reason" columns={reasonColumns} rows={reasonRows} rowKey={(r) => r.reason} testId="stall-reasons-table" />
       )}
+      {health.stalls.episodes_truncated ? (
+        <p className={styles.muted} data-testid="stall-episodes-truncated">Showing the newest 500 stall episodes; older ones in this range are not listed (the minutes above count them all).</p>
+      ) : null}
       {health.stalls.episodes.length > 0 ? (
         <div className={styles.historyList}>
           <InsightsTable caption="Stall episodes" columns={episodeColumns} rows={health.stalls.episodes} rowKey={(e) => `${e.reason}-${e.started_at}`} testId="stall-episodes-table" />
@@ -178,7 +181,14 @@ export function RecordingSection({
             />
           </>
         ) : (
-          <Kpi label="Analysis" value="Off" withheld sub="No analysis profile on this campaign" testId="kpi-analysed" />
+          // Null is "not served": say off only when the campaign has no profile.
+          <Kpi
+            label="Analysis"
+            value={settings.analysis_profile ? 'Not available' : 'Off'}
+            withheld
+            sub={settings.analysis_profile ? 'Analysis figures are not on this page yet' : 'No analysis profile on this campaign'}
+            testId="kpi-analysed"
+          />
         )}
       </div>
       {analysis && analysis.top_topics.length > 0 ? (

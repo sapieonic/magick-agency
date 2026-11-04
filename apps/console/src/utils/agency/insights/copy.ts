@@ -190,3 +190,16 @@ export function readinessFix(code: AgencyReadinessCheckCode, campaignId: string)
       return { to: settingsLink(campaignId), label: 'Fix' };
   }
 }
+
+/**
+ * The range sections' freshness line, from a range read's `as_of` and `pending_buckets`: the
+ * rollup they read is recomputed every few seconds, so a call that just ended can be missing for
+ * a moment, and the page says so rather than presenting the numbers as final.
+ */
+export function rangeFreshness(read: { as_of: string | null; pending_buckets: number } | null | undefined, zone: string): string | null {
+  if (!read) return null;
+  const asOf = read.as_of ? `Calls counted up to ${formatZoned(read.as_of, zone)}` : 'No calls counted yet';
+  return read.pending_buckets > 0
+    ? `${asOf} · updating (${plural(read.pending_buckets, 'recent period')} still being counted)`
+    : asOf;
+}

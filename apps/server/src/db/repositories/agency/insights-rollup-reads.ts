@@ -71,6 +71,8 @@ export interface InsightsActivityAgentRow {
   agent_user_id: string | null;
   dials: number;
   connected: number;
+  /** Conversations (the success rate's denominator). */
+  conversations: number;
   successes: number;
   talk_seconds: number;
   wrapup_seconds: number;
@@ -151,7 +153,7 @@ const SECONDS_NAME: Record<string, string> = { talk_us: 'talk_seconds', wrapup_u
 const sumOf = (columns: readonly string[]) => columns.map((c) => `COALESCE(SUM(r.${c}), 0) AS ${c}`).join(',\n                ');
 const SUM_MEASURES = sumOf(INSIGHTS_MEASURE_COLUMNS);
 /** The measures the per-agent rows read (the agents table is the largest the activity read sums). */
-const AGENT_MEASURES = sumOf(['dials', 'connected', 'talk_us', 'wrapup_us', 'wrapup_measured', 'redials_placed',
+const AGENT_MEASURES = sumOf(['dials', 'connected', 'conversations', 'talk_us', 'wrapup_us', 'wrapup_measured', 'redials_placed',
   'reopened_dials', 'manual_dials', 'overrides_used']);
 
 function readMeasures(row: Record<string, unknown> | null | undefined): InsightsMeasures {
@@ -300,6 +302,7 @@ export async function insightsActivity(
       agent_user_id: agentUserId,
       dials: m.dials,
       connected: m.connected,
+      conversations: m.conversations,
       successes: successesByAgent.get(agentUserId) ?? 0,
       talk_seconds: m.talk_seconds,
       wrapup_seconds: m.wrapup_seconds,
