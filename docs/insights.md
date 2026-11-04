@@ -56,7 +56,7 @@ the idle reason with the most ticks. Consecutive minutes stalled for the same re
 episode, cut at the range edges, open (`ended_at` null) while its last minute is the newest and
 current. `concurrency_limit_minutes` counts the minutes with any `no_slots` tick, stalled or not.
 The read returns at most the 500 newest episodes and says when it cut older ones
-(`episodes_truncated`, not in the wire contract yet).
+(`stalls.episodes_truncated`).
 
 ## The rollup (migration 0012)
 
@@ -186,7 +186,7 @@ definition, `insights-sql.ts`, for the summary and the contacts list's drill-dow
 | `GET /proxy/agency/campaigns/:id/insights/allocation` | per-agent allocation, imbalance, at risk, history | yes |
 | `GET /proxy/agency/campaigns/:id/insights/uploads` | committed uploads, newest first (at most 200) | no |
 
-`activity`, `trends` and `health` are not served yet (they read the rollup and the pacing history).
+The range reads (`activity`, `trends`, `health`) are the next section.
 
 **Guards, in order:** session and tenant context; `agency.supervise` (account admin and up; agents
 and viewers get the RBAC 403); the dialer flag `agency_dialer_enabled` (`403 feature_disabled`, the
@@ -212,6 +212,18 @@ vs `count(*)`), `attempts_per_contact_vs_attempted` (1 + 2 + 3 + 4+ vs attempted
 `allocated_plus_unassigned_vs_total` (the agent rows and the pool, as served, vs the statement's
 total), `agent_buckets_vs_allocated` (every owner's roster partition vs their allocation).
 
+**Allocation dial counters** (`redials`, `retries_reopened`, `retries_manual`, `overrides_used`,
+`last_activity_at`) are the rollup's per-agent rows over the campaign's lifetime
+(`allocationCountersStatement`), attributed to the agent who PLACED the dial: the rollup's attribution and
+the Call attempts list's `agent_user_id` filter, so each opens a list of exactly its dials. The contact
+columns are by owner; in strict mode owners dial their own contacts and the two agree (the old per-attempt
+query, by owner, is kept in `insights-reads.test.ts` as the oracle they were checked equal against). The
+Unassigned row's dial counters are the dials with no reserved session; an agent who dialled without being
+staffed or an owner gets a row (allocated 0), so the Total row is every dial. `last_activity_at` is the
+agent's newest placed dial, exact to the dial and as fresh as the rollup: the newest bucket the rollup
+holds for the agent, then the newest `dialed_at` among that one bucket's dials
+(`idx_agency_attempts_campaign_dialed`, walked backwards).
+
 **Readiness `detail` keys:** `roster_uploaded` `{ rejected, duplicates, dedupe_column }` (the
 latest completed non-dry-run upload; nulls without one); `phone_column_mapped` `{ phone_column }`;
 `outcomes_configured` `{ overrides }` (catalog entries carrying one); `calling_hours_set`
@@ -226,7 +238,8 @@ warn above 0.
 **Cost, measured** (1M-contact campaign in a 1.2M table, 900k attempts, 200k DNC entries; shared
 dev host, warm cache): roster statement 0.56–0.9 s (the planner's parallel seq scan; a 200k
 campaign is a Parallel Index Only Scan on `idx_agency_contacts_insights`, 0.12 s); allocation
-statement 0.8 s; `allocationAttemptCounters` 1.1 s (reads every attempt; the rollup replaces it);
+statement 0.8 s; `allocationAttemptCounters` 1.1 s when it read every attempt (it now reads the rollup: "API (range
+reads)", "Cost");
 contacts on DNC 0.3 s; dial pace 0.04 s (`idx_agency_attempts_campaign_dialed`); the stats strip's
 repository half 1.6–2.0 s. End to end: summary running 2.9 s, paused 0.8 s, stopped 1.3 s;
 allocation 1.8 s; readiness 0.8 s. The retry preview itself (fingerprint DISTINCT) takes 5.0 s, so
@@ -238,3 +251,118 @@ single flight, keyed by section, campaign id, status and `updated_at` (a transit
 edit misses), fresh for 5 s or four times the answer's compute time when longer (so one campaign's
 insights keep the database busy at most a quarter of the time; a 1M running summary is reused for
 ~12 s), at most 500 entries. The guards run on every request before it is consulted.
+
+## API (range reads)
+
+Served by the same family (`proxy-agency-insights/range.ts`), assembled in
+`apps/server/src/agency/insights/{activity,trends,health}.ts`, the query parsed by
+`agency/insights/range.ts`.
+
+| Route | Params | What | Cached |
+|---|---|---|---|
+| `GET /proxy/agency/campaigns/:id/insights/activity` | `from`, `to` | calls, outcomes, callbacks, overrides, no-outcome, DNC marks, per agent | yes |
+| `GET /proxy/agency/campaigns/:id/insights/trends` | `from`, `to`, `bucket` | the series (zeros included) with the online peak, best hours | yes |
+| `GET /proxy/agency/campaigns/:id/insights/health` | `from`, `to` | abandonment, pre-dial blocks, caller IDs, stalls, concurrency minutes, carrier failures, recording | yes |
+
+**Guards** are the as-of-now routes' chain, in the same order; the query is parsed AFTER it, so a
+caller who may not read the campaign learns nothing from a 400.
+
+**The range.** `from` / `to` are ISO-8601 instants with a zone (`Z` or `±HH:MM`), half-open. Both
+absent is the lifetime: `created_at` to now, never refused for its length. One alone keeps the
+other's default. Both ends are rounded OUT to the rollup's 15-minute bucket (`from` down, `to` up:
+the rollup cannot cut inside a bucket, and the bucket a mid-bucket `to` falls in is counted anyway),
+`to` never past the bucket now falls in, and the served range is echoed in `range`. Every zone's
+offset is a multiple of 15 minutes, so a local-day range from the console is served exactly as
+asked. `range.timezone` is the campaign's zone (trends: the zone Postgres resolved).
+
+**`bucket`** (trends only): `quarter_hour | hour | day`; absent, `hour` up to 48 h and `day` beyond
+(the console's default). A series is at most 92 days of quarter hours (8,832 buckets).
+
+**Refused** `400 { error: 'Bad Request', code: 'invalid_insights_query', message }`
+(`AGENCY_INSIGHTS_QUERY_ERROR_CODE`): a malformed instant (a bare date, a wall-clock time, a day
+that does not exist), `from` not before `to`, a range starting in the future, a range wider than 92
+calendar days (92 × 24 h plus the hour a clock change adds), an unknown or repeated parameter, a
+`bucket` outside the list or on a read that takes none, a series over the bucket limit.
+
+**Cache:** `insights/cache.ts`, keyed as the as-of-now sections plus the served range and bucket (a
+"today" whose `to` is now hits the same entry for the rest of its 15 minutes). The range reads are
+not polled; the cache shares one computation between supervisors and Refresh clicks, fresh for 5 s
+or four times its compute time.
+
+**Where each block comes from:**
+
+| Block | Source |
+|---|---|
+| `activity.calls`, `outcomes`, `overrides`, `no_outcome`, the agents' dial columns, `reconciliation`, `as_of` | the rollup's `activity` read: ONE `REPEATABLE READ` snapshot, so every reconciliation is checked against the numbers served beside it |
+| `calls.redials.refused_at_limit` | the pacing history |
+| `calls.softphone_calls` | `agency_manual_calls` tagged to the campaign, placed, `created_at` in range (`idx_agency_manual_calls_campaign`) |
+| `callbacks.booked` | the rollup (by the booking dial's time) |
+| `callbacks` timing classes, `by_owner` | `callbackTiming` (IN4), the callbacks whose booked time is in range |
+| `callbacks.open_due_today`, `open_overdue` | as of now: the allocation's totals, through the cache under the allocation's own key (the polled allocation and this read share one computation) |
+| `activity.agents` state seconds, `never_joined` | `agentStateSeconds` (the occupancy intervals); never joined = staffed with neither state time nor a dial in range |
+| `dnc_marked` | agent DNC entries scoped to the campaign, created in range (`idx_dnc_entries_tenant_created`) |
+| `trends.buckets`, `best_hours` | the rollup's `trends` read; `agents_online_peak` from `agentsOnlinePeak`, joined on the bucket label |
+| `health.abandonment.rolling_24h` | the guardrail's window for this campaign (`abandonmentWindowStatement`: ended, answered in the last 24 h; read as a day of the campaign's dials) |
+| `health.abandonment.auto_pauses` | the guardrail's `agency_campaign.auto_paused` audit rows in range (at most 200) |
+| `predial_blocks`, `concurrency_limit_minutes`, `our_fault_retired`, `stalls`, `pacing_history_since` | `pacingHistory` |
+| `caller_ids`, `carrier_failures`, `recording` | the rollup |
+| `health.analysis` | null: not served (no index-driven read of a range's analysed calls exists; a rollup facet or an index on `agency_calls (campaign_id, created_at)` would make one) |
+| `pending_buckets` (all three) | the rollup's `asOf` |
+
+Success and override-granting codes are the campaign's CURRENT catalog (`successCodes`,
+`overrideCodes` in `insights/shared.ts`), so a catalog edit re-labels history.
+
+**Activity reconciliation identifiers:** `outcomes_vs_dials`, `agents_dials_vs_dials`,
+`agents_connected_vs_connected`, `outcome_codes_vs_conversations`,
+`agents_overrides_vs_overrides_used`, `no_outcome_vs_unclassified_codes`.
+
+**Contract changes made with these routes:**
+
+- `running.concurrency_in_use: number | null`: null when Redis did not answer. E1's fallback (this
+  campaign's live calls) is gone: a different number (one campaign, not the account) that, beside
+  the account's limit, read as headroom that was not there.
+- `stalls.episodes_truncated` (the newest 500 are served).
+- Agent ids nullable: `activity.agents[].agent_user_id` and `overrides[].by_agent[].agent_user_id` are
+  `string | null`, null being the dials with no reserved session. Null rather than a sentinel "no
+  agent" row: a sentinel id would be sent as an `agent_user_id` filter (and refused as not a UUID),
+  null is how `callbacks.by_owner` and `dnc_marked.by_agent` already spell "nobody", and keeping the
+  row keeps `agents_dials_vs_dials` true.
+- Callbacks: `pending` replaced by `pending_future` and `pending_due`, with IN4's definitions on the type.
+- Freshness: `pending_buckets` beside `as_of` on all three; the page says "updating" above 0.
+- "Connected": `calls.conversations`, `agents[].conversations`, `buckets[].conversations` added.
+  `connected` is `/stats`' `attempts_connected` (outcome connected, not a redial), the CONNECT rate's
+  numerator over dials; `conversations` (a redial chain once) is the SUCCESS rate's denominator. The
+  console's `successRate` takes conversations. `calls.successes` added.
+
+**Drill-downs, end to end.** `apps/server/test/fixtures/insights-drilldowns.json` lists every number
+that opens a list, the list, and its params. `test/integration/api/agency-insights-drilldowns.test.ts`
+seeds a campaign in every bucket, runs the rollup job, reads the sections through `buildApp` and checks
+each list's `include_total=1` total equals its number; the console's `insightsDrilldowns.test.tsx`
+checks its builders send exactly those params and the sections, rendered from that run's real
+responses (`insights-responses.json`), carry the link. The "Connected" links send `redial=0`. Numbers
+with no list whose total is theirs are not linked: callbacks due today (due before local midnight),
+the callbacks' open-by-owner counts (booked in range, due ones included), the Unassigned row's dial
+counters (dials with no session).
+
+**Cost, measured** (`test/integration/load/insights-range-routes-scale.test.ts`,
+`INSIGHTS_RANGE_SCALE=1 LOAD_SCALE=20`: one strict campaign, 1,000,000 attempts over 30 days by 50
+agents on 200,000 owned contacts, ~60,000 callbacks, a state change every ten minutes per agent;
+tables ANALYZEd as autovacuum leaves them; cold cache, best of three, shared dev host,
+2026-11-04). The assembly below the guards, every read in parallel:
+
+| Read | Lifetime (30 d) | Last 7 days | Its slow part |
+|---|---|---|---|
+| `activity` | 1.19 s | 0.70 s | callback timing 0.94 s / 0.28 s; agent state seconds 0.43 s / 0.43 s; the rollup read 0.11 s / 0.05 s |
+| `trends` (day) | 0.97 s | 0.53 s | the online peak 1.05 s / 0.49 s (the rollup series ~0.2 s beside it) |
+| `health` | 18 ms | 9 ms | none: rollup, pacing history (primary key), a day of dials |
+| `allocation` | 108 ms | | the dial counters 32 ms (they replaced a 1.1 s read of every attempt) |
+
+Every route is under 1.5 s at 1M over the lifetime, so nothing is narrowed: the slow reads run in
+parallel with the rest and the answer is cached for four times its cost. They are the ones that
+scale with the range (callbacks and state changes in it); over 92 days of a large floor they are
+what grows. The campaign variant of the occupancy intervals plans as hash joins on analysed
+tables (a seq scan of the events when one campaign is the whole table, `idx_agency_session_events_campaign_at`
+among several, 0.40 s at 216,000 state changes): the nested-loop plan B saw on unanalysed tables
+does not appear once statistics exist. The allocation counters' plan: the campaign's rollup agent
+rows, then per agent one bucket of `idx_agency_attempts_campaign_dialed` walked backwards
+(`insights-reads.test.ts` pins it).
