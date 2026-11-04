@@ -4,13 +4,16 @@
  *
  * ── Where each column comes from ─────────────────────────────────────────────
  *  - The contact columns: ONE statement grouped by owner (`allocationStatement`). `reached`,
- *    `not_reached` and `exhausted` are the owner's buckets (`contactBucketSql`), and `due_now` is
- *    open and `next_attempt_at <= now()`: both exactly what the supervisor's progress read
- *    (`GET …/assignments/progress`) serves, so the two screens agree. `attempted` is the
+ *    `not_reached` and `exhausted` are the owner's buckets (`contactBucketSql`), exactly what the
+ *    supervisor's progress read (`GET …/assignments/progress`) serves. `due_now`,
+ *    `waiting_retry` and the callbacks follow the roster's waiting rule (`insights-sql.ts`:
+ *    `pending` and `next_attempt_at <= now()`), which is progress's "due now" (open, i.e. pending
+ *    and not DNC) for every row but a `pending` row frozen DNC, a pre-fix leftover the claim
+ *    refuses. `attempted` is the
  *    roster's (`dials_placed > 0`, decision IN6), not progress's `attempt_count > 0`: a contact
  *    whose only dial ended on our fault, or whose first call is still ringing, is attempted here
- *    and on the roster. `waiting_retry` is the roster's retry bucket; `callbacks_due_today` is an
- *    open callback due in `[now, local midnight)` in the campaign's zone, `callbacks_overdue` one
+ *    and on the roster. `callbacks_due_today` is a
+ *    pending callback due in `[now, local midnight)` in the campaign's zone, `callbacks_overdue` one
  *    due before now. `successes` = latest disposition is an `is_success` code; `dnc` =
  *    `suppressed_reason = 'dnc'`.
  *  - Staffing, `live`, `last_seen_at` and `due_while_absent`: the progress read's own reads and

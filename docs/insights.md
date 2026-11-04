@@ -114,18 +114,20 @@ unknown id); the ownership probe (tenant and account, its 404 forwarded). The co
 flag is not checked: pacing reads the stored `assignment_mode` and owners whatever the flag says
 (CA9), so the allocation shows them as stored.
 
-**Roster buckets** (a partition; each its own predicate): due now = open (`pending`, not DNC) and
-`next_attempt_at <= now()`, a callback whose time has come included (the progress read's "due
-now"); callback = open, `next_attempt_at > now()`, latest disposition a callback code that is still
-the latest outcome (`isCallbackSql`); retry = open, later, not a callback; on a call = `in_flight`;
-in wrap-up = `connected`; completed; exhausted; suppressed DNC (a `suppressed` row, or a `pending`
-row frozen DNC), invalid, other. `attempted` = `dials_placed > 0` (decision IN6: a ringing first
-dial and an our-fault dial count). `eta_seconds` is dialling time: open contacts ÷ contacts dialled
-in the last hour that are now finished × 3600, so the clock stops while the calling window is shut.
+**Roster buckets** (a partition; each its own predicate, `insights-sql.ts`; the principal's rule,
+which WS F's drill-down filters, `drilldown-sql.ts`, also follow): due now = `pending` and
+`next_attempt_at <= now()`, a callback whose time has come included; callback = `pending`,
+`next_attempt_at > now()`, latest disposition a callback code that is still the latest outcome
+(`isCallbackSql`); retry = `pending`, later, not a callback (`COALESCE`d, so a connected contact
+with no write-up is a retry). The three sum to the pending count. On a call = `in_flight`; in
+wrap-up = `connected`; completed; exhausted; suppressed (`state = 'suppressed'`) by reason: DNC,
+invalid, other. `attempted` = `dials_placed > 0` (decision IN6: a ringing first dial and an
+our-fault dial count). `eta_seconds` is dialling time: pending contacts ÷ contacts dialled in the
+last hour that are now finished × 3600, so the clock stops while the calling window is shut.
 
 **Reconciliation identifiers** (`check`): summary roster `contact_states_vs_total` (the ten buckets
 vs `count(*)`), `attempts_per_contact_vs_attempted` (1 + 2 + 3 + 4+ vs attempted),
-`waiting_vs_open` (due now + retry + callback vs open contacts); allocation
+`waiting_vs_pending` (due now + retry + callback vs pending contacts); allocation
 `allocated_plus_unassigned_vs_total` (the agent rows and the pool, as served, vs the statement's
 total), `agent_buckets_vs_allocated` (every owner's roster partition vs their allocation).
 

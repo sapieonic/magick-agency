@@ -97,7 +97,7 @@ describe('roster and progress', () => {
   it('labels every reconciliation the server sends (docs/insights.md "API")', () => {
     expect(reconciliationLabel('contact_states_vs_total')).toBe('States add up to the roster');
     expect(reconciliationLabel('attempts_per_contact_vs_attempted')).toBe('Attempts per contact add up to the attempted');
-    expect(reconciliationLabel('waiting_vs_open')).toBe('Waiting adds up to the open contacts');
+    expect(reconciliationLabel('waiting_vs_pending')).toBe('Waiting adds up to the pending contacts');
     expect(reconciliationLabel('allocated_plus_unassigned_vs_total')).toBe('Allocated and unassigned add up to the roster');
     expect(reconciliationLabel('agent_buckets_vs_allocated')).toBe('Each agent’s states add up to their allocation');
   });

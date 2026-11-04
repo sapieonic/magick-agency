@@ -100,7 +100,7 @@ export type {
 } from './agency/insights-reads.repository.js';
 export {
   attemptedSql,
-  openCallbackSql,
+  pendingCallbackSql,
   ROSTER_BUCKETS,
   rosterBucketPredicates,
   suppressedDncSql,
@@ -109,6 +109,7 @@ export {
   waitingCallbackSql,
   waitingDueNowSql,
   waitingRetrySql,
+  waitingSql,
 } from './agency/insights-sql.js';
 export type { RosterBucket } from './agency/insights-sql.js';
 export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';

@@ -107,7 +107,7 @@ export function SectionBody<T>({
 const CHECK_LABELS: Record<string, string> = {
   contact_states_vs_total: 'States add up to the roster',
   attempts_per_contact_vs_attempted: 'Attempts per contact add up to the attempted',
-  waiting_vs_open: 'Waiting adds up to the open contacts',
+  waiting_vs_pending: 'Waiting adds up to the pending contacts',
   allocated_plus_unassigned_vs_total: 'Allocated and unassigned add up to the roster',
   agent_buckets_vs_allocated: 'Each agent’s states add up to their allocation',
   outcomes_vs_dials: 'Outcomes add up to dials',

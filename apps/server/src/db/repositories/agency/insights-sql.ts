@@ -11,18 +11,18 @@
  * summary's `contact_states_vs_total` reconciliation sums their counts against `count(*)` in the
  * same statement, so a gap or an overlap is a visible `ok: false`, never an assumption.
  *
- *  - Waiting = open (`openContactSql`: `pending` and not DNC-suppressed, a contact something will
- *    still dial), split by `next_attempt_at`:
- *    - due now: `next_attempt_at <= now()`, a callback whose time has come included. The same
- *      "due now" as the supervisor's progress read (`assignment-reads.repository.ts`), so the
- *      roster's due-now count and the allocation table's agree;
- *    - callback: in the future, and the latest disposition booked a callback (`isCallbackSql`:
- *      a callback code AND that call is still the latest outcome);
- *    - retry: in the future and not a callback.
+ *  - Waiting = `pending` (every pending contact, whatever `suppressed_reason` says), split by
+ *    `next_attempt_at` (the principal's rule, the drill-down filters' `waitingContactSql` in
+ *    WS F's `drilldown-sql.ts`; the three sum to the pending count):
+ *    - due now: `next_attempt_at <= now()`, a callback whose time has come included;
+ *    - callback: `next_attempt_at > now()`, and the latest disposition booked a callback
+ *      (`isCallbackSql`: a callback code AND that call is still the latest outcome);
+ *    - retry: `next_attempt_at > now()` and not a callback (`COALESCE`d, so a connected contact
+ *      with no write-up is a retry).
  *  - on a call = `in_flight`; in wrap-up = `connected`; `completed`; `exhausted`.
- *  - suppressed, by reason: `dnc` (a `suppressed` row, or a `pending` row DNC-frozen before the
- *    fix the claim refuses, which is not open), `invalid`, and every other reason
- *    (`max_attempts`, `manual`, none).
+ *  - suppressed (`state = 'suppressed'`), by reason: `dnc`, `invalid`, and every other reason
+ *    (`max_attempts`, `manual`, none). A `pending` row frozen DNC before the claim refused them
+ *    is waiting here, as it is in the contacts list's `state=pending` filter.
  *
  * `attempted` (penetration's numerator) is `dials_placed > 0`: a contact we placed a dial to,
  * whoever's fault the call ended on (an our-fault redial charges `our_fault_attempts`, never
@@ -36,7 +36,7 @@
  * `now()` is the statement's (the transaction's) instant: every bucket of one statement is cut at
  * the same moment.
  */
-import { isCallbackSql, openContactSql } from './assignment-sql.js';
+import { isCallbackSql } from './assignment-sql.js';
 
 /** The roster buckets, in the contract's order. */
 export const ROSTER_BUCKETS = [
@@ -53,30 +53,35 @@ export const ROSTER_BUCKETS = [
 ] as const;
 export type RosterBucket = (typeof ROSTER_BUCKETS)[number];
 
-/** Open and due now (callbacks whose time has come included). Parenthesised. */
+/** Waiting, any of the three. Parenthesised. */
+export function waitingSql(alias: string): string {
+  return `(${alias}.state = 'pending')`;
+}
+
+/** Pending and due now (callbacks whose time has come included). Parenthesised. */
 export function waitingDueNowSql(alias: string): string {
-  return `(${openContactSql(alias)} AND ${alias}.next_attempt_at <= now())`;
+  return `(${alias}.state = 'pending' AND ${alias}.next_attempt_at <= now())`;
 }
 
-/** Open, scheduled for later, and waiting on a booked callback. Parenthesised. */
+/** Pending, scheduled for later, and waiting on a booked callback. Parenthesised. */
 export function waitingCallbackSql(alias: string, callbackCodesParam: string): string {
-  return `(${openContactSql(alias)} AND ${alias}.next_attempt_at > now() AND ${isCallbackSql(alias, callbackCodesParam)})`;
+  return `(${alias}.state = 'pending' AND ${alias}.next_attempt_at > now() AND ${isCallbackSql(alias, callbackCodesParam)})`;
 }
 
-/** Open, scheduled for later, and not a callback (a retry's delay). Parenthesised. */
+/** Pending, scheduled for later, and not a callback (a retry's delay). Parenthesised. */
 export function waitingRetrySql(alias: string, callbackCodesParam: string): string {
-  return `(${openContactSql(alias)} AND ${alias}.next_attempt_at > now()
+  return `(${alias}.state = 'pending' AND ${alias}.next_attempt_at > now()
            AND NOT COALESCE(${isCallbackSql(alias, callbackCodesParam)}, false))`;
 }
 
-/** Any open contact that is waiting on a callback, due or not. Parenthesised. */
-export function openCallbackSql(alias: string, callbackCodesParam: string): string {
-  return `(${openContactSql(alias)} AND ${isCallbackSql(alias, callbackCodesParam)})`;
+/** Any pending contact waiting on a callback, due or not (overdue, missed, due today). Parenthesised. */
+export function pendingCallbackSql(alias: string, callbackCodesParam: string): string {
+  return `(${alias}.state = 'pending' AND ${isCallbackSql(alias, callbackCodesParam)})`;
 }
 
-/** DNC: suppressed for it, or a `pending` row frozen DNC (not open). Parenthesised. */
+/** Suppressed for DNC. Parenthesised. */
 export function suppressedDncSql(alias: string): string {
-  return `(${alias}.state IN ('suppressed', 'pending') AND ${alias}.suppressed_reason = 'dnc')`;
+  return `(${alias}.state = 'suppressed' AND ${alias}.suppressed_reason = 'dnc')`;
 }
 
 /** Suppressed as an invalid number. Parenthesised. */

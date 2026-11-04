@@ -16,7 +16,7 @@ import { reconcile, successCodes } from './shared.js';
 export const ROSTER_CHECKS = {
   states: 'contact_states_vs_total',
   attempts: 'attempts_per_contact_vs_attempted',
-  waiting: 'waiting_vs_open',
+  waiting: 'waiting_vs_pending',
 } as const;
 
 /** The campaign's roster counts as of now; `pausedAt` / `windowEndAt` feed the paused headline. */
@@ -37,7 +37,7 @@ export function readRoster(
  * The wire roster. Three checks, each against counts of the same statement:
  *  - `contact_states_vs_total`: the ten buckets (each its own predicate) sum to `count(*)`;
  *  - `attempts_per_contact_vs_attempted`: 1 + 2 + 3 + 4+ dials sum to the attempted contacts;
- *  - `waiting_vs_open`: due now + retry + callback sum to the open contacts (counted on their own).
+ *  - `waiting_vs_pending`: due now + retry + callback sum to the pending contacts (counted on their own).
  */
 export function rosterWire(r: RosterCounts): AgencyInsightsRoster {
   const b = r.buckets;
@@ -61,7 +61,7 @@ export function rosterWire(r: RosterCounts): AgencyInsightsRoster {
     reconciliation: [
       reconcile(ROSTER_CHECKS.states, r.total, bucketSum),
       reconcile(ROSTER_CHECKS.attempts, r.attempted, attemptsSum),
-      reconcile(ROSTER_CHECKS.waiting, r.open, b.waiting_due_now + b.waiting_retry + b.waiting_callback),
+      reconcile(ROSTER_CHECKS.waiting, r.pending, b.waiting_due_now + b.waiting_retry + b.waiting_callback),
     ],
   };
 }

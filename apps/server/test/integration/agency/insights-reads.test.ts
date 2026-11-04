@@ -78,15 +78,16 @@ async function seedEveryBucket(id: string, owner: string | null = null): Promise
   // Finished.
   await contact(id, { ...a, state: 'completed', attempt_count: 1, dials_placed: 1, last_outcome: 'connected', last_disposition: 'interested' });
   await contact(id, { ...a, state: 'exhausted', attempt_count: 3, dials_placed: 5, last_outcome: 'no_answer' });
-  // Suppressed: DNC (and a pending row frozen DNC), invalid, attempt limit, manual.
+  // Suppressed: DNC, invalid, attempt limit, manual. A pending row frozen DNC (a pre-fix
+  // leftover) is still pending: due now, as the contacts list's `state=pending` shows it.
   await contact(id, { ...a, state: 'suppressed', suppressed_reason: 'dnc', attempt_count: 1, dials_placed: 1 });
   await contact(id, { ...a, state: 'pending', suppressed_reason: 'dnc', next_attempt_at: at(-HOUR) });
   await contact(id, { ...a, state: 'suppressed', suppressed_reason: 'invalid' });
   await contact(id, { ...a, state: 'suppressed', suppressed_reason: 'max_attempts', attempt_count: 4, dials_placed: 4 });
   await contact(id, { ...a, state: 'suppressed', suppressed_reason: 'manual' });
   return {
-    waiting_due_now: 3, waiting_retry: 2, waiting_callback: 1, on_call: 1, in_wrapup: 1, completed: 1,
-    exhausted: 1, suppressed_dnc: 2, suppressed_invalid: 1, suppressed_other: 2,
+    waiting_due_now: 4, waiting_retry: 2, waiting_callback: 1, on_call: 1, in_wrapup: 1, completed: 1,
+    exhausted: 1, suppressed_dnc: 1, suppressed_invalid: 1, suppressed_other: 2,
   };
 }
 
@@ -119,10 +120,12 @@ describe('the roster partition (insights-sql.ts)', () => {
     expect(r.attempted).toBe(11);
     expect(r.attempts).toEqual({ one: 7, two: 1, three: 1, four_plus: 2 });
     expect(r.dials_placed).toBe(1 + 2 + 1 + 3 + 1 + 1 + 1 + 1 + 5 + 1 + 4);
-    expect(r.open).toBe(6);
-    expect(r.open_callbacks).toBe(2);
+    // The three waiting buckets sum to the pending count (the principal's rule).
+    expect(r.pending).toBe(7);
+    expect(r.buckets.waiting_due_now + r.buckets.waiting_retry + r.buckets.waiting_callback).toBe(r.pending);
+    expect(r.pending_callbacks).toBe(2);
     expect(r.successes).toBe(1);
-    expect(r.unassigned_open).toBe(6);
+    expect(r.unassigned_open).toBe(6); // open = pending and not DNC: what the claims dial
   });
 
   it('callbacks missed while paused and due before the window ends, cut at the given instants', async () => {
@@ -206,7 +209,7 @@ describe('the allocation per owner', () => {
     expect(pool.callbacks_due_today).toBe(seededToday);
     // Overdue: the seeded callback whose time came (open, due before now).
     expect(mine.callbacks_overdue).toBe(1);
-    expect(mine).toMatchObject({ due_now: 3, waiting_retry: 2, reached: 1, exhausted: 1, successes: 1, dnc: 2 });
+    expect(mine).toMatchObject({ due_now: 4, waiting_retry: 2, reached: 1, exhausted: 1, successes: 1, dnc: 2 });
   });
 
   it('localDayEnd: the local day across the UTC midnight boundary (Asia/Kolkata)', () => {

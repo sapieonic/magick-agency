@@ -9,7 +9,7 @@
  *    re-derived here; and the pace from the last hour of dials (`dialPace`):
  *    - `dials_per_hour` = dials placed in the last 15 min × 4; null before the campaign's first
  *      dial (none placed on the whole roster), 0 when it has dialled before but not lately;
- *    - `eta_seconds` = open contacts ÷ contacts finished in the last hour × 3600: hours of
+ *    - `eta_seconds` = pending contacts ÷ contacts finished in the last hour × 3600: hours of
  *      DIALLING at the current pace, i.e. calling-hours time (the clock stops while the window is
  *      shut; the console says "inside calling hours"). "Finished" = dialled in the last hour and
  *      now completed, exhausted or suppressed. Null when none finished (rate 0 or unknown).
@@ -19,11 +19,11 @@
  *    today's calling window closes (`windowEndToday`).
  *  - **stopping**: when Stop was pressed (its transition, else the row's `updated_at`), who, and
  *    the live attempts still draining.
- *  - **stopped**: `ended_at`, who pressed Stop (`stopping → stopped` keeps that actor), the open
+ *  - **stopped**: `ended_at`, who pressed Stop (`stopping → stopped` keeps that actor), the pending
  *    contacts left, the future callbacks (the roster's `waiting_callback`), the contacts never
  *    dialled, and what the console's default retry selector would pick up.
  *  - **completed**: `ended_at`, start to end, reached (`completed`), successes, not reached
- *    (exhausted + open attempted and not connected), DNC, and the retry selector's count.
+ *    (exhausted + pending attempted and not connected), DNC, and the retry selector's count.
  *  - **draft**: `ready` from the readiness checks.
  *
  * `retry_matched` is what the console's `DEFAULT_RETRY_SELECTOR`
@@ -166,7 +166,7 @@ async function statusHeadline(campaign: AgencyCampaignRecord, roster: RosterCoun
           // it did not (the strip's `null`, which this field has no room for).
           concurrency_in_use: stats?.concurrency_in_use ?? callsLive,
           concurrency_limit: limit,
-          ...pace({ dials15m: dial.dials_15m, finished1h: dial.finished_1h, open: roster.open, everDialled: roster.dials_placed > 0 }),
+          ...pace({ dials15m: dial.dials_15m, finished1h: dial.finished_1h, open: roster.pending, everDialled: roster.dials_placed > 0 }),
           stall: stats?.stall ?? null,
           other_stalls: stats?.other_stalls ?? [],
           abandonment_rate_24h: { abandoned: stats?.abandoned_24h ?? 0, answered: stats?.answered_24h ?? 0 },
@@ -199,7 +199,7 @@ async function statusHeadline(campaign: AgencyCampaignRecord, roster: RosterCoun
         stopped: {
           stopped_at: iso(campaign.ended_at ?? campaign.updated_at)!,
           actor: null,
-          pending: roster.open,
+          pending: roster.pending,
           callbacks_scheduled: b.waiting_callback,
           never_attempted: roster.total - roster.attempted,
           retry_matched: await retryMatched(campaign.id),

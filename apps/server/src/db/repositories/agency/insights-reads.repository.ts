@@ -28,11 +28,12 @@ import type { AgencyMyContactBucket } from '@magick-agency/contracts/api/agency/
 import { contactBucketSql, openContactSql } from './assignment-sql.js';
 import {
   attemptedSql,
-  openCallbackSql,
+  pendingCallbackSql,
   rosterBucketPredicates,
   ROSTER_BUCKETS,
   waitingDueNowSql,
   waitingRetrySql,
+  waitingSql,
   type RosterBucket,
 } from './insights-sql.js';
 import { neverSeededSuppressionSql, params, retrySelectionConditions } from './query-builders.js';
@@ -64,10 +65,10 @@ export interface RosterCounts {
   attempted: number;
   attempts: { one: number; two: number; three: number; four_plus: number };
   dials_placed: number;
-  /** Open and DNC-free: the waiting buckets' sum, counted independently. */
-  open: number;
-  /** Open callbacks, due or not. */
-  open_callbacks: number;
+  /** Pending: the three waiting buckets' sum, counted on its own. */
+  pending: number;
+  /** Pending callbacks, due or not. */
+  pending_callbacks: number;
   /** The owner's `not_reached` bucket (`contactBucketSql`). */
   not_reached: number;
   /** Latest disposition is a success code. */
@@ -87,7 +88,7 @@ export function rosterStatement(input: RosterCountsInput): InsightsStatement {
   const pausedAt = bind.add(input.pausedAt);
   const windowEnd = bind.add(input.windowEndAt);
   const buckets = rosterBucketPredicates('c', codes);
-  const callback = openCallbackSql('c', codes);
+  const callback = pendingCallbackSql('c', codes);
   const text = `
     SELECT count(*)::int AS total,
            ${ROSTER_BUCKETS.map((b) => `(count(*) FILTER (WHERE ${buckets[b]}))::int AS ${b}`).join(',\n           ')},
@@ -97,8 +98,8 @@ export function rosterStatement(input: RosterCountsInput): InsightsStatement {
            (count(*) FILTER (WHERE c.dials_placed = 3))::int AS three,
            (count(*) FILTER (WHERE c.dials_placed >= 4))::int AS four_plus,
            COALESCE(sum(c.dials_placed), 0)::bigint AS dials_placed,
-           (count(*) FILTER (WHERE ${openContactSql('c')}))::int AS open,
-           (count(*) FILTER (WHERE ${callback}))::int AS open_callbacks,
+           (count(*) FILTER (WHERE ${waitingSql('c')}))::int AS pending,
+           (count(*) FILTER (WHERE ${callback}))::int AS pending_callbacks,
            (count(*) FILTER (WHERE ${contactBucketSql('c', codes)} = 'not_reached'))::int AS not_reached,
            (count(*) FILTER (WHERE c.last_disposition = ANY(${success}::text[])))::int AS successes,
            (count(*) FILTER (WHERE ${callback} AND c.next_attempt_at >= ${pausedAt}::timestamptz
@@ -150,7 +151,7 @@ export function allocationStatement(input: AllocationCountsInput): InsightsState
   const dayEnd = bind.add(input.dayEndAt);
   const bucket = (b: AgencyMyContactBucket) => `${contactBucketSql('c', codes)} = '${b}'`;
   const buckets = rosterBucketPredicates('c', codes);
-  const callback = openCallbackSql('c', codes);
+  const callback = pendingCallbackSql('c', codes);
   const text = `
     SELECT c.assigned_user_id::text AS uid,
            count(*)::int AS allocated,
@@ -277,8 +278,8 @@ export class AgencyInsightsReadRepository {
       attempted: n('attempted'),
       attempts: { one: n('one'), two: n('two'), three: n('three'), four_plus: n('four_plus') },
       dials_placed: n('dials_placed'),
-      open: n('open'),
-      open_callbacks: n('open_callbacks'),
+      pending: n('pending'),
+      pending_callbacks: n('pending_callbacks'),
       not_reached: n('not_reached'),
       successes: n('successes'),
       callbacks_missed_while_paused: n('callbacks_missed_while_paused'),

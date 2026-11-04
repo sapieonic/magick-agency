@@ -173,7 +173,7 @@ describe('summary', () => {
     expect(r.reconciliation).toEqual([
       { check: 'contact_states_vs_total', expected: 60, actual: 60, ok: true },
       { check: 'attempts_per_contact_vs_attempted', expected: r.attempted, actual: r.attempted, ok: true },
-      { check: 'waiting_vs_open', expected: expect.any(Number), actual: expect.any(Number), ok: true },
+      { check: 'waiting_vs_pending', expected: 24, actual: 24, ok: true },
     ]);
     expect(r.waiting_due_now + r.waiting_retry + r.waiting_callback + r.on_call + r.in_wrapup + r.completed
       + r.exhausted + r.suppressed_dnc + r.suppressed_invalid + r.suppressed_other).toBe(60);
