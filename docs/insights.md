@@ -58,6 +58,87 @@ current. `concurrency_limit_minutes` counts the minutes with any `no_slots` tick
 The read returns at most the 500 newest episodes and says when it cut older ones
 (`episodes_truncated`, not in the wire contract yet).
 
+## The rollup (migration 0012)
+
+**Tables.** Every row is keyed by campaign and a 15-minute UTC bucket of `dialed_at`
+(`agency_insights_bucket()`, `date_bin` from 2000-01-01; `INSIGHTS_BUCKET_MINUTES` in the server).
+Every measure is a count or a sum, so a range is the SUM of its buckets.
+
+| Table | Key | Holds |
+|---|---|---|
+| `agency_insights_rollup_buckets` | campaign, bucket | the bucket's totals (every measure below), `source_updated_at` (the newest attempt `updated_at` folded in: "as of"), and the row the job locks |
+| `agency_insights_rollup_agents` | + agent (`agency_agent_sessions.agent_user_id` of the reserved session; NULL without one) | every measure, per agent |
+| `agency_insights_rollup_codes` | + agent, disposition code | conversations and dials per code, so successes and override grants are filtered by the caller's current code lists at read time |
+| `agency_insights_rollup_facets` | + facet, key (+ agent for `override`) | `outcome` (dials), `caller_id` and `local_hour` (dials, connected), `no_outcome` (by wrap-up resolution), `override` (dials that spent an override, by the granting code) |
+| `agency_insights_rollup_dirty` | append-only marks | "this bucket changed", written by triggers, deleted by the job |
+
+**Measures** (`insights-rollup-sql.ts`), each spelled from `/stats`' definition and held to it by
+`insights-rollup-oracle.test.ts`, which computes every read from the attempts with `/stats`'
+own expressions:
+
+| Measure | Definition |
+|---|---|
+| `dials` | every placed attempt (`dialed_at` in the bucket), wrap-up redials included |
+| `connected` | `/stats` `attempts_connected`: `outcome = 'connected' AND redial_number = 0` |
+| `conversations` | `CONVERSATION_ATTEMPT_SQL` (a redial chain once): the series' `connected` and the success denominator |
+| successes | conversations whose code is in the caller's `successCodes` (the `successDispositionSql` predicate, with the catalog read by the caller) |
+| `abandoned` / `answered` | `ABANDONED_ATTEMPT_PREDICATE_SQL` / `state = 'ended' AND answered_at IS NOT NULL` |
+| talk, wrap-up, measured | `AGENCY_ATTEMPT_METRICS_SQL`'s: `ended_at - bridged_at` without orphans; measured wrap-up (`WRAPUP_MEASURED_RESOLUTIONS_SQL`), and how many; stored in microseconds |
+| redials | placed (`redial_number > 0`), connected, chains at `AGENCY_WRAPUP_REDIAL_LIMIT` |
+| agent retries | `agent_reopened` and `agent_manual` dials, and their connected |
+| overrides used | `override_applied` non-empty; the granting code is the contact's latest dispositioned attempt before the dial |
+| recorded | `connected` calls whose `agency_calls` row (`webrtc_call_id`) has a `recording_url` |
+| callbacks booked | `callback_at` set, at the booking dial's bucket |
+| human connects | conversations coded neither `voicemail` nor `no_disposition` (`/stats` `human_connects`) |
+| no outcome | conversations coded NULL or `no_disposition` (`/stats` `unclassified_connects`), by wrap-up resolution |
+| local hour | `dialed_at` in the contact's zone, else the campaign's, else UTC (an unresolvable name falls through) |
+
+**Marking.** Statement triggers on `agency_call_attempts` (INSERT, UPDATE, DELETE) mark the old
+and new bucket of every placed attempt the statement touched, once per bucket; row triggers with
+WHEN clauses mark on `agency_calls.recording_url`, `agency_contacts.timezone` and
+`agency_campaigns.default_timezone`. Marks are appended, never upserted (0012's header: an upsert
+either loses a write or queues the dialler on one row lock). The overhead is ~85 µs per
+single-row attempt UPDATE (BASELINE.md).
+
+**The job** (`agency/insights-rollup-job.ts`, started by `bootstrap/agency.ts` in the main
+process only): every `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS` (15 s) it claims up to
+`AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200) marks oldest first (`MATERIALIZED` + `SKIP LOCKED`),
+collapses every other mark of those buckets, locks their header rows in key order, deletes and
+rebuilds their rows from the attempts in one statement, and commits; it keeps batching while
+batches are full, for at most half an interval. A failed batch rolls back with its marks. Two
+jobs would only share the work. Metrics: `agency_insights_rollup_dirty_buckets`,
+`_oldest_dirty_seconds`, `_recompute_seconds`, `_buckets_total`, `_failures_total`. Backfill is the
+migration marking every bucket that has a placed attempt.
+
+**Reads** (`agencyInsightsRollupRepository`, from the `agency.repository.ts` barrel). Each takes
+`campaignId`, `tenantId` and a half-open `[from, to)` of bucket starts: pass 15-minute-aligned
+instants (an unaligned `from` drops the bucket it falls in, an unaligned `to` keeps it). Each
+returns null (or `[]`) for a campaign outside the tenant.
+
+| Method | Returns | For |
+|---|---|---|
+| `activity({ successCodes, overrideCodes })` | calls (dials, connected, conversations, human connects, successes, by outcome with `null_outcome`, redials, agent retries, talk, wrap-up, measured, callbacks booked, recorded), outcomes by code, overrides by granting code and agent, no outcome by resolution, per agent, `reconciliation`, `as_of` | `activity` |
+| `trends({ bucket, timezone, successCodes })` | every bucket zero-filled (dials, connected, conversations, successes, abandoned, answered; ISO instants, `YYYY-MM-DD` for day; hour and day in `timezone`, DST-aware), `best_hours` 0–23, the resolved zone, `as_of` | `trends` |
+| `abandonmentTrend`, `callerIds`, `recording`, `carrierFailures` | per bucket abandoned/answered; dials/connected per caller ID; connected/recorded; `failed` dials | `health` |
+| `asOf` | `as_of` and `pending_buckets` (marked, not yet recomputed) | every range section |
+| `agentStateSeconds` | per agent: online, available (reserved folded in), on call, wrap-up, break by reason | `activity.agents` (not rollup: events) |
+| `agentsOnlinePeak({ bucket, timezone })` | peak agents online per trend bucket, zero-filled | `trends` (not rollup: events) |
+| `callbackTiming({ now })` | for callbacks whose booked time is in range: on time (follow-up dial by `callback_at` + 15 min, early included), late, missed, pending future and pending due, open and overdue by owner | `activity.callbacks` (not rollup: the callback index) |
+
+**At scale** (`test/integration/load/insights-rollup-scale.test.ts`, `LOAD_SCALE=20`: one
+campaign, 1,000,000 attempts over 30 days, 50 agents with a state change every 10 minutes; shared
+dev host, best of three, 2026-11-04). The backfill marked 2,880 buckets in 0.8–1.0 s; the job drained
+them in 62 s (15 batches of 200, the slowest 8.1 s); the rollup holds 2,880 headers, 143,856 agent
+rows, 245,325 code rows and 41,672 facet rows. Lifetime reads: activity 250 ms, trends 241 ms
+(quarter hour), 182 ms (hour), 155 ms (day), caller IDs 13 ms, recording 7 ms, carrier failures
+9 ms, as-of 2 ms: each under the 300 ms budget, which the test asserts. With one campaign in the
+tables the plans are parallel sequential scans; among several campaigns each read is a range of
+its table's unique index (pinned in `insights-rollup-oracle.test.ts`). The reads that are not the
+rollup scale with what they read: callback timing over a lifetime of 60,000 callbacks 1.6 s,
+agent state seconds over 216,000 state changes 0.8 s, the online peak by day 1.9 s. Over the
+page's usual ranges (a day, a week) they read a thirtieth or a quarter of that; over 92 days of
+a large floor they are the slow sections.
+
 ## Workstreams and ownership
 
 Each runs in its own git worktree with its own `.test-env.local.json`. Migration numbers are
