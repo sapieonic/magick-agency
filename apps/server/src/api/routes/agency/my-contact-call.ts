@@ -79,7 +79,7 @@ export async function registerMyContactCallRoutes(sub: FastifyInstance, runtime:
       {
         tenantId: getTenantId(request),
         accountId: getAccountId(request),
-        sessionId: session.id,
+        session,
         actorUserId: session.agent_user_id,
         campaignId: body.campaign_id,
         contactId: body.contact_id,
