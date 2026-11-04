@@ -6,8 +6,19 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { PROVEN_CAMPAIGN_HEADER, provenCampaignProof } from '../../middleware/headers.js';
-import { agencyAttemptRepository, agencyContactRepository } from '../../../db/repositories/agency.repository.js';
-import { clampLimit, parseAttemptFilters, parseContactFilters } from '../../../agency/spine-filters.js';
+import {
+  agencyAttemptRepository,
+  agencyCampaignRepository,
+  agencyContactRepository,
+} from '../../../db/repositories/agency.repository.js';
+import { callbackCodes } from '../../../db/repositories/agency/assignment-sql.js';
+import {
+  clampLimit,
+  parseAttemptFilters,
+  parseContactFilters,
+  parseIncludeTotal,
+} from '../../../agency/spine-filters.js';
+import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { AgencyAttemptRow } from '@magick-agency/contracts/agency';
 // The agency-native call read. The `webrtc_calls` repository takes a scope, and
 // this plugin reads under `'agency'`.
@@ -64,32 +75,48 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
    * header), and a page read for exactly that campaign under this request's own tenant
    * and account skips the flag read and the campaign read it would otherwise repeat on
    * every page. Any other request — no header, or a header naming a different campaign,
-   * tenant or account — takes the ordinary path. Returns the campaign id to read, or
-   * `null` once it has replied.
+   * tenant or account — takes the ordinary path. Returns the campaign id to read (with the
+   * campaign row when the ordinary path read it), or `null` once it has replied.
    */
-  async function spinePageCampaignId(
+  async function spinePageCampaign(
     request: FastifyRequest<{ Params: { id: string } }>,
     reply: FastifyReply,
-  ): Promise<string | null> {
+  ): Promise<{ id: string; campaign: AgencyCampaignRecord | null } | null> {
     const proven = request.headers[PROVEN_CAMPAIGN_HEADER];
     if (
       typeof proven === 'string'
       && proven === provenCampaignProof(getTenantId(request), getAccountId(request), request.params.id)
-    ) return request.params.id;
+    ) return { id: request.params.id, campaign: null };
     if (!(await gate(request, reply))) return null;
     const campaign = await requireOwned(request, reply);
-    return campaign ? campaign.id : null;
+    return campaign ? { id: campaign.id, campaign } : null;
+  }
+
+  /**
+   * `?include_total=1`, refused in the parser's own 400 shape when malformed. Returns the
+   * flag, or `null` once it has replied.
+   */
+  function includeTotalOr400(request: FastifyRequest, reply: FastifyReply): boolean | null {
+    const parsed = parseIncludeTotal((request.query ?? {}) as Record<string, unknown>);
+    if (!parsed.ok) {
+      replyValidationFailed(reply, parsed.issues);
+      return null;
+    }
+    return parsed.filters;
   }
 
   // ── GET /api/v1/agency-campaigns/:id/attempts ────────────────────────────
   app.get<{ Params: { id: string } }>('/:id/attempts', async (request, reply) => {
-    const campaignId = await spinePageCampaignId(request, reply);
-    if (!campaignId) return reply;
+    const owned = await spinePageCampaign(request, reply);
+    if (!owned) return reply;
+    const campaignId = owned.id;
 
     const parsed = parseAttemptFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
       return replyValidationFailed(reply, parsed.issues);
     }
+    const includeTotal = includeTotalOr400(request, reply);
+    if (includeTotal === null) return reply;
     /*
      * `?agent_user_id=` is shape-checked here. `agency_agent_sessions.agent_user_id`
      * is typed `UUID`, so a non-UUID value would reach `listForCampaign`'s
@@ -104,13 +131,20 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
-    const page = await agencyAttemptRepository.listForCampaign({
-      campaignId,
-      filters: parsed.filters,
-      ...(cursor ? { after: cursor } : {}),
-      limit: clampLimit((request.query as { limit?: unknown } | undefined)?.limit),
-    });
-    return reply.send(page);
+    // The total is the size of the whole filtered list (no cursor), counted with the page's
+    // own WHERE terms; the two reads run side by side.
+    const [page, total] = await Promise.all([
+      agencyAttemptRepository.listForCampaign({
+        campaignId,
+        filters: parsed.filters,
+        ...(cursor ? { after: cursor } : {}),
+        limit: clampLimit((request.query as { limit?: unknown } | undefined)?.limit),
+      }),
+      includeTotal
+        ? agencyAttemptRepository.countListed({ campaignId, filters: parsed.filters })
+        : Promise.resolve(null),
+    ]);
+    return reply.send(total === null ? page : { ...page, total });
   });
 
   // ── The agency-native call read ──────────────────────────────
@@ -320,23 +354,45 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   //
   // The read of what the roster ingest writes.
   app.get<{ Params: { id: string } }>('/:id/contacts', async (request, reply) => {
-    const campaignId = await spinePageCampaignId(request, reply);
-    if (!campaignId) return reply;
+    const owned = await spinePageCampaign(request, reply);
+    if (!owned) return reply;
+    const campaignId = owned.id;
 
     const parsed = parseContactFilters((request.query ?? {}) as Record<string, unknown>);
     if (!parsed.ok) {
       return replyValidationFailed(reply, parsed.issues);
     }
+    const includeTotal = includeTotalOr400(request, reply);
+    if (includeTotal === null) return reply;
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
 
-    const page = await agencyContactRepository.listForCampaign({
-      campaignId,
-      filters: parsed.filters,
-      ...(cursor ? { after: cursor } : {}),
-      limit: clampLimit((request.query as { limit?: unknown } | undefined)?.limit),
-    });
-    return reply.send(page);
+    /*
+     * `waiting=retry|callback` reads the campaign's callback codes (its catalog's
+     * `requires_datetime` entries, `callbackCodes`). The ordinary path already holds the
+     * campaign; the export's proven fast path skipped that read, so it is made here, once per
+     * page and only for these two buckets (a primary-key read).
+     */
+    const needsCodes = parsed.filters.waiting === 'retry' || parsed.filters.waiting === 'callback';
+    let codes: string[] | undefined;
+    if (needsCodes) {
+      const campaign = owned.campaign ?? await agencyCampaignRepository.findById(campaignId);
+      if (!campaign) {
+        return reply.code(404).send({ error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found' });
+      }
+      codes = callbackCodes(campaign.disposition_catalog);
+    }
+    const query = { campaignId, filters: parsed.filters, ...(codes ? { callbackCodes: codes } : {}) };
+
+    const [page, total] = await Promise.all([
+      agencyContactRepository.listForCampaign({
+        ...query,
+        ...(cursor ? { after: cursor } : {}),
+        limit: clampLimit((request.query as { limit?: unknown } | undefined)?.limit),
+      }),
+      includeTotal ? agencyContactRepository.countListed(query) : Promise.resolve(null),
+    ]);
+    return reply.send(total === null ? page : { ...page, total });
   });
 
   /**

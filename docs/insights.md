@@ -72,3 +72,21 @@ assigned here so parallel work never collides.
 | D console | the Insights tab, redirects, drill-down links, CSV, print stylesheet | none |
 | E insights API | `proxy-agency-insights.routes.ts`, summary, readiness, allocation, uploads; then activity, trends, health on B and C | none |
 | F drill-downs | list filters and totals so every number opens a list whose count matches | none |
+
+## Drill-downs (WS F)
+
+Every number links to the Contacts or Call attempts list (`apps/console/src/utils/agency/insights/links.ts`),
+and both lists take `?include_total=1` (an exact `total`, counted with the list's own predicate), so the
+list says "N contacts" / "N attempts" and that is the number clicked. The predicates are defined once, in
+`apps/server/src/db/repositories/agency/drilldown-sql.ts` (re-exported from the repository barrel), and the
+insights reads import them rather than respelling them:
+
+- Contacts `waiting=due_now|retry|callback` (`waitingContactSql`), a partition of `pending`: due now is
+  `next_attempt_at <= now()` (a due callback included); callback is later and waiting on a callback
+  (`isCallbackSql`, the campaign's `callbackCodes`); retry is later and not a callback.
+  `attempted=1|0` is `dials_placed > 0` (`attemptedContactSql`).
+- Call attempts: `placed=1`, `dialed_from` / `dialed_to` (half-open on `dialed_at`, placed dials only,
+  `dialedRangeSql`), `redial`, `agent_manual`, `agent_reopened`, `caller_id`, `outcome`,
+  `disposition_code`, `agent_user_id` (through the attempt's session, `attemptAgentUserSql`). The list's
+  own `from` / `to` stay inclusive on `created_at`; every insights link uses the `dialed_*` pair and
+  `placed=1`.

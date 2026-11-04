@@ -189,7 +189,9 @@ export interface AgencyContactDetail extends AgencyContactRow {
  *
  * There is deliberately **no `total`**. Counting the filtered set is a second
  * scan of up to a million rows on every page, for a number that is stale before
- * it renders on a live campaign.
+ * it renders on a live campaign. The campaign spine lists add one only on request
+ * (`?include_total=1`); the console declares it on its own page type
+ * (`api/agency/agency-spine.ts`, `AgencySpineListPage`).
  */
 export interface AgencyKeysetPage<TRow> {
   rows: TRow[];

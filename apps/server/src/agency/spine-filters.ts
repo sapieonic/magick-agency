@@ -17,6 +17,7 @@ import type {
 } from '@magick-agency/contracts/agency';
 import { RETRY_NO_OUTCOME } from '@magick-agency/contracts/agency';
 import { BUILT_IN_DISPOSITION_CODES } from './disposition-policy.js';
+import type { AgencyContactWaiting as ContactWaitingBucket } from '@magick-agency/contracts/api/agency/agency-spine';
 
 export { RETRY_NO_OUTCOME };
 
@@ -99,9 +100,33 @@ export interface AgencyAttemptFilters {
   agentUserId?: string;
   contactId?: string;
   phone?: PhoneFilter;
+  /** INCLUSIVE bounds on `created_at` (the list's own convention; see `attemptFilterConditions`). */
   from?: Date;
   to?: Date;
+  /** `caller_id`: the number the dial was presented from, matched exactly. */
+  callerId?: string;
+  /** `redial=1|0`: a wrap-up redial (`redialAttemptSql`) or not. */
+  redial?: boolean;
+  /** `agent_manual=1|0`: dialled by an agent from their own contact list, or not. */
+  agentManual?: boolean;
+  /** `agent_reopened=1|0`: from an agent-led reopen placed through pacing (0011), or not. */
+  agentReopened?: boolean;
+  /** `placed=1|0`: a dial was placed (`dialed_at` set), or the attempt never left the building. */
+  placed?: boolean;
+  /**
+   * `dialed_from` / `dialed_to`: the HALF-OPEN window `[from, to)` on `dialed_at`, placed dials
+   * only (`dialedRangeSql`). The insights range convention, so a drill-down from a range count
+   * lists exactly the dials it counted. Beside `from`/`to`, not instead of them: those keep
+   * their meaning (inclusive, on `created_at`) for the date pickers that rely on it.
+   */
+  dialedFrom?: Date;
+  dialedTo?: Date;
 }
+
+/** `?waiting=`: the insights roster's waiting buckets (`waitingContactSql`). */
+export const CONTACT_WAITING_BUCKETS = vocabulary<ContactWaitingBucket>({
+  due_now: true, retry: true, callback: true,
+});
 
 export interface AgencyContactFilters {
   states?: AgencyContactState[];
@@ -135,6 +160,14 @@ export interface AgencyContactFilters {
   phone?: PhoneFilter;
   from?: Date;
   to?: Date;
+  /**
+   * `?waiting=due_now|retry|callback`: one of the insights roster's waiting buckets, each a
+   * subset of `pending` (`waitingContactSql`). A list filter only, never a retry-selector
+   * dimension, like `assignedTo`.
+   */
+  waiting?: ContactWaitingBucket;
+  /** `?attempted=1|0`: at least one dial placed (`dials_placed > 0`), or none. List filter only. */
+  attempted?: boolean;
 }
 
 /** `?assigned_to=`: owners to match (lower-cased ids) and whether the pool matches too. */
@@ -460,6 +493,37 @@ function checkRange(from: Date | undefined, to: Date | undefined, issues: Filter
   }
 }
 
+/**
+ * A drill-down flag: `1`/`true` or `0`/`false`. Anything else is refused rather than coerced:
+ * `?redial=yes` read as either answer is a list of rows nobody asked for, presented as the
+ * ones they did. Blank is absent (what a cleared control posts).
+ */
+export function parseFlagParam(param: string, raw: unknown, issues: FilterIssue[]): boolean | undefined {
+  const value = singleParam(raw);
+  if (value === undefined) return undefined;
+  if (value === '1' || value === 'true') return true;
+  if (value === '0' || value === 'false') return false;
+  issues.push({ param, message: `must be 1 or 0, not '${value}'` });
+  return undefined;
+}
+
+/**
+ * `?include_total=1` on the two spine lists: also count every row the filters match.
+ *
+ * Opt-in because the count is a second scan of the filtered set (index-driven, but up to a
+ * million entries on a large campaign), and a keyset page needs none. The total ignores the
+ * cursor: it is the size of the filtered list, not of the rest of it.
+ */
+export function parseIncludeTotal(query: Record<string, unknown>): FilterParse<boolean> {
+  const issues: FilterIssue[] = [];
+  const value = parseFlagParam('include_total', query['include_total'], issues);
+  if (issues.length > 0) return { ok: false, issues };
+  return { ok: true, filters: value === true };
+}
+
+/** A caller ID as stored (`caller_id VARCHAR(20)`): digits, optionally after a `+`. */
+const CALLER_ID_RE = /^\+?\d{1,19}$/;
+
 export function parseAttemptFilters(query: Record<string, unknown>): FilterParse<AgencyAttemptFilters> {
   const issues: FilterIssue[] = [];
   const states = validateEnum('state', multiParam(query['state']), ATTEMPT_STATES, issues);
@@ -480,6 +544,27 @@ export function parseAttemptFilters(query: Record<string, unknown>): FilterParse
   if (contactId !== undefined && !UUID_RE.test(contactId)) {
     issues.push({ param: 'contact_id', message: 'must be a contact id' });
   }
+  // Matched exactly against the stored value, so it is shape-checked rather than normalised:
+  // a caller ID is one of the campaign's own numbers, copied off the insights page, not typed.
+  const callerId = singleParam(query['caller_id']);
+  if (callerId !== undefined && !CALLER_ID_RE.test(callerId)) {
+    issues.push({ param: 'caller_id', message: 'must be a phone number (digits, optionally after a +)' });
+  }
+  const redial = parseFlagParam('redial', query['redial'], issues);
+  const agentManual = parseFlagParam('agent_manual', query['agent_manual'], issues);
+  const agentReopened = parseFlagParam('agent_reopened', query['agent_reopened'], issues);
+  const placed = parseFlagParam('placed', query['placed'], issues);
+  const dialedFrom = parseFilterDate('dialed_from', query['dialed_from'], issues);
+  const dialedTo = parseFilterDate('dialed_to', query['dialed_to'], issues);
+  // Half-open, so equality is refused as well as inversion: `[t, t)` matches nothing, and an
+  // empty list reads as a fact about the campaign rather than about the request.
+  if (dialedFrom && dialedTo && dialedFrom.getTime() >= dialedTo.getTime()) {
+    issues.push({ param: 'dialed_from', message: '`dialed_from` must be earlier than `dialed_to` (the window is half-open)' });
+  }
+  // A dialled window is placed dials by definition; `placed=0` beside it matches nothing.
+  if (placed === false && (dialedFrom || dialedTo)) {
+    issues.push({ param: 'placed', message: 'placed=0 cannot be combined with dialed_from / dialed_to' });
+  }
   if (issues.length > 0) return { ok: false, issues };
 
   const agentUserId = singleParam(query['agent_user_id']);
@@ -494,6 +579,13 @@ export function parseAttemptFilters(query: Record<string, unknown>): FilterParse
       ...(phone ? { phone } : {}),
       ...(from ? { from } : {}),
       ...(to ? { to } : {}),
+      ...(callerId ? { callerId } : {}),
+      ...(redial !== undefined ? { redial } : {}),
+      ...(agentManual !== undefined ? { agentManual } : {}),
+      ...(agentReopened !== undefined ? { agentReopened } : {}),
+      ...(placed !== undefined ? { placed } : {}),
+      ...(dialedFrom ? { dialedFrom } : {}),
+      ...(dialedTo ? { dialedTo } : {}),
     },
   };
 }
@@ -518,11 +610,20 @@ export function parseContactFilters(query: Record<string, unknown>): FilterParse
   const to = parseFilterDate('to', query['to'], issues);
   checkRange(from, to, issues);
   const phone = readPhoneFilter(query['phone'], issues);
+  const waiting = singleEnum('waiting', singleParam(query['waiting']), CONTACT_WAITING_BUCKETS, issues);
+  // Every waiting bucket is a subset of `pending`, so naming states that exclude it is two
+  // filters that jointly match nothing: refused, not emptied.
+  if (waiting && states && !states.includes('pending')) {
+    issues.push({ param: 'waiting', message: 'waiting contacts are pending: add state=pending or drop the state filter' });
+  }
+  const attempted = parseFlagParam('attempted', query['attempted'], issues);
   if (issues.length > 0) return { ok: false, issues };
 
   return {
     ok: true,
     filters: {
+      ...(waiting ? { waiting } : {}),
+      ...(attempted !== undefined ? { attempted } : {}),
       ...(states ? { states } : {}),
       ...(suppressedReasons ? { suppressedReasons } : {}),
       ...(lastOutcomes ? { lastOutcomes } : {}),

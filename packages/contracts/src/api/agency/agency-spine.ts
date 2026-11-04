@@ -59,6 +59,27 @@ export interface AgencyAttempt extends Core.AgencyAttemptRow {
   agent_name?: string | null;
 }
 
+/**
+ * A page of one of the two spine lists, as the console reads it: the dialer contract's keyset
+ * page plus the opt-in `total`.
+ *
+ * `total` is present only when the request carried `?include_total=1`: the exact number of
+ * rows the filters match (the whole filtered list, not what is left after the cursor),
+ * counted with the same predicate as the rows. Off by default, so a keyset page stays one
+ * index range scan; the dialer contract's `AgencyKeysetPage` header says why the page itself
+ * never carries one. A drill-down from the Insights tab asks for it, so the list can say
+ * "N calls" and the number can be checked against the one that was clicked.
+ */
+export interface AgencySpineListPage<TRow> extends AgencyKeysetPage<TRow> {
+  total?: number;
+}
+
+export type AgencyAttemptsListPage = AgencySpineListPage<AgencyAttempt>;
+export type AgencyRosterContactsPage = AgencySpineListPage<AgencyRosterContact>;
+
+/** A flag filter on the wire: `1` (only these) or `0` (all but these). */
+export type AgencyListFlag = '1' | '0';
+
 export interface AgencyAttemptFilters {
   outcome?: string[];
   state?: string[];
@@ -66,9 +87,35 @@ export interface AgencyAttemptFilters {
   agent_user_id?: string;
   contact_id?: string;
   phone?: string;
+  /** INCLUSIVE bounds on when the attempt was CREATED (an attempt that never dialled still lists). */
   from?: string;
   to?: string;
+  /** The number the dial was presented from, matched exactly. */
+  caller_id?: string;
+  /** Wrap-up redials (`redial_number > 0`). */
+  redial?: AgencyListFlag;
+  /** Dialled by an agent from their own contact list. */
+  agent_manual?: AgencyListFlag;
+  /** From an agent-led reopen ("Retry not reached") placed through pacing. */
+  agent_reopened?: AgencyListFlag;
+  /** A dial was placed (`dialed_at` set). */
+  placed?: AgencyListFlag;
+  /**
+   * HALF-OPEN `[dialed_from, dialed_to)` on when the dial was PLACED, placed dials only: the
+   * insights range convention, so a drill-down lists exactly the dials a range count counted.
+   * Not the same window as `from`/`to`, which stay inclusive on `created_at`.
+   */
+  dialed_from?: string;
+  dialed_to?: string;
 }
+
+/**
+ * The insights roster's waiting buckets (`?waiting=`), each a subset of `pending` and together
+ * a partition of it: `due_now` (next attempt at or before now, a due callback included),
+ * `callback` (a callback booked for later), `retry` (a retry scheduled for later).
+ */
+export type AgencyContactWaiting = 'due_now' | 'retry' | 'callback';
+export const AGENCY_CONTACT_WAITING = ['due_now', 'retry', 'callback'] as const;
 
 export interface AgencyContactFilters {
   state?: string[];
@@ -99,6 +146,10 @@ export interface AgencyContactFilters {
   phone?: string;
   from?: string;
   to?: string;
+  /** One waiting bucket of the insights roster ({@link AgencyContactWaiting}). Not a retry dimension. */
+  waiting?: AgencyContactWaiting;
+  /** At least one dial placed (`1`) or none (`0`). Not a retry dimension. */
+  attempted?: AgencyListFlag;
 }
 
 /** The `assigned_to` filter value that selects contacts in the shared pool (no owner). */

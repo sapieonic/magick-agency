@@ -73,6 +73,12 @@ export const NON_SELECTOR_CONTACT_FILTERS = {
   // Contact assignment: who owns a contact is not a retry dimension. A retry campaign keeps
   // (or drops) the owners with its own "Keep the parent's assignments" choice instead.
   assigned_to: true,
+  // The insights roster's buckets (Insights tab links). `waiting` is "when is it next due",
+  // a fact that moves by the minute, not a cohort; `attempted` counts placed dials, which
+  // is not the selector's `never_attempted` (the retry allowance, `attempt_count`). Both
+  // are dropped loudly rather than translated into something that means a different set.
+  waiting: true,
+  attempted: true,
 } as const satisfies Record<Exclude<keyof AgencyContactFilters, RetrySelectorKey>, true>;
 
 export type NonSelectorContactFilter = keyof typeof NON_SELECTOR_CONTACT_FILTERS;
@@ -98,6 +104,8 @@ const DROPPED_FILTER_LABEL: Record<NonSelectorContactFilter, string> = {
   assigned_to: 'the “Assigned to” filter',
   from: 'the “from” date',
   to: 'the “to” date',
+  waiting: 'the “Waiting” filter',
+  attempted: 'the “Attempted” filter',
 };
 
 /**

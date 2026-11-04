@@ -80,3 +80,17 @@ export {
 export type { MyContactsTally, OwnerTally, ProgressRaw } from './agency/assignment-reads.repository.js';
 export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';
 export type { AgencyManualCallJoinedRow } from './agency/projections.js';
+// The drill-down predicates: one definition of each roster bucket and attempt slice, read by
+// the Contacts / Call attempts lists and their totals and by the insights reads.
+export {
+  agentManualAttemptSql,
+  agentReopenedAttemptSql,
+  attemptAgentUserSql,
+  attemptedContactSql,
+  dialedRangeSql,
+  placedDialSql,
+  redialAttemptSql,
+  waitingContactSql,
+} from './agency/drilldown-sql.js';
+export type { ContactWaitingBucket } from './agency/drilldown-sql.js';
+export { contactListFilterConditions } from './agency/query-builders.js';

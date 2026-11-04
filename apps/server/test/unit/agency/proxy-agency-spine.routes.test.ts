@@ -795,3 +795,91 @@ describe('the CSV exports', () => {
     await app.close();
   });
 });
+
+describe('the insights drill-down filters and the opt-in total (WS F)', () => {
+  const ATTEMPT_DRILLDOWN = 'caller_id=%2B919000000001&redial=1&agent_manual=1&agent_reopened=1&placed=1'
+    + '&dialed_from=2026-10-01T00:00:00Z&dialed_to=2026-10-02T00:00:00Z';
+
+  it('forwards every new attempt key, and include_total, on the JSON list', async () => {
+    mocks.proxyToCore.mockResolvedValue({ ...page([ATTEMPT]), body: { ...page([ATTEMPT]).body, total: 1 } });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts?${ATTEMPT_DRILLDOWN}&include_total=1`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.proxyToCore.mock.calls[0]![0].query).toEqual({
+      caller_id: '+919000000001', redial: '1', agent_manual: '1', agent_reopened: '1', placed: '1',
+      dialed_from: '2026-10-01T00:00:00Z', dialed_to: '2026-10-02T00:00:00Z', include_total: '1',
+    });
+    // The agent-name enrichment spreads the body, so the handler's total survives it.
+    expect(res.json().total).toBe(1);
+    expect(res.json().rows[0].agent_name).toBe('Ravi Menon');
+    await app.close();
+  });
+
+  it('forwards waiting, attempted and include_total on the contacts list', async () => {
+    mocks.proxyToCore.mockResolvedValue({ ...page([CONTACT]), body: { ...page([CONTACT]).body, total: 1 } });
+    const app = await buildApp();
+    const res = await app.inject({
+      method: 'GET',
+      url: `${PREFIX}/campaigns/${CAMPAIGN}/contacts?state=pending&waiting=callback&attempted=1&include_total=1`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mocks.proxyToCore.mock.calls[0]![0].query).toEqual({
+      state: 'pending', waiting: 'callback', attempted: '1', include_total: '1',
+    });
+    expect(res.json().total).toBe(1);
+    await app.close();
+  });
+
+  it('carries the new keys into both exports and their preambles', async () => {
+    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(page([ATTEMPT]));
+    const app = await buildApp();
+    const a = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/attempts.csv?${ATTEMPT_DRILLDOWN}` });
+    expect(a.statusCode).toBe(200);
+    expect(mocks.proxyToCore.mock.calls[1]![0].query).toEqual(expect.objectContaining({
+      redial: '1', dialed_from: '2026-10-01T00:00:00Z', dialed_to: '2026-10-02T00:00:00Z', caller_id: '+919000000001',
+    }));
+    expect(a.body).toContain('# Filter — dialed_to: 2026-10-02T00:00:00Z');
+
+    mocks.proxyToCore.mockReset();
+    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(page([CONTACT]));
+    const c = await app.inject({
+      method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/contacts.csv?waiting=retry&attempted=0`,
+    });
+    expect(c.statusCode).toBe(200);
+    expect(mocks.proxyToCore.mock.calls[1]![0].query).toEqual(expect.objectContaining({ waiting: 'retry', attempted: '0' }));
+    expect(c.body).toContain('# Filter — waiting: retry');
+    await app.close();
+  });
+
+  it('refuses include_total on the exports: they count their own rows', async () => {
+    const app = await buildApp();
+    for (const path of ['attempts.csv', 'contacts.csv']) {
+      const res = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/${path}?include_total=1` });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toMatchObject({ code: 'unknown_query_params', details: { unknown: ['include_total'] } });
+    }
+    expect(mocks.proxyToCore).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('forwards the handler\'s 400 for a bad value unchanged, list and export alike', async () => {
+    const refusal = {
+      status: 400,
+      body: { error: 'Validation failed', details: [{ param: 'waiting', message: 'unknown waiting: later' }] },
+      headers: new Headers(),
+    };
+    mocks.proxyToCore.mockResolvedValueOnce(refusal);
+    const app = await buildApp();
+    const list = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/contacts?waiting=later` });
+    expect(list.statusCode).toBe(400);
+    expect(list.json()).toEqual(refusal.body);
+
+    mocks.proxyToCore.mockResolvedValueOnce(CAMPAIGN_BODY).mockResolvedValueOnce(refusal);
+    const csv = await app.inject({ method: 'GET', url: `${PREFIX}/campaigns/${CAMPAIGN}/contacts.csv?waiting=later` });
+    expect(csv.statusCode).toBe(400);
+    expect(csv.json()).toEqual(refusal.body);
+    await app.close();
+  });
+});

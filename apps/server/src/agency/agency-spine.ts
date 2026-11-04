@@ -24,6 +24,10 @@ import { preambleLine, sanitizePreambleValue, toCsvLine } from './agency-csv.js'
  */
 export const ATTEMPT_QUERY_PARAMS = [
   'outcome', 'state', 'disposition_code', 'agent_user_id', 'contact_id', 'phone', 'from', 'to',
+  // The insights drill-downs (docs/insights.md, WS F). `dialed_from` / `dialed_to` are the
+  // HALF-OPEN window on `dialed_at` the insights counts use; `from` / `to` above keep their
+  // inclusive `created_at` meaning for the date pickers that rely on it.
+  'caller_id', 'redial', 'agent_manual', 'agent_reopened', 'placed', 'dialed_from', 'dialed_to',
 ] as const;
 
 /**
@@ -44,9 +48,17 @@ export const ATTEMPT_QUERY_PARAMS = [
  */
 export const CONTACT_QUERY_PARAMS = [
   'state', 'suppressed_reason', 'last_outcome', 'last_disposition', 'assigned_to', 'phone', 'from', 'to',
+  // The insights roster's buckets (WS F): one waiting bucket, and attempted (dials_placed > 0).
+  'waiting', 'attempted',
 ] as const;
 
 export const PAGING_QUERY_PARAMS = ['cursor', 'limit'] as const;
+
+/**
+ * `?include_total=1`: the two JSON lists' opt-in exact `total`. On the lists only, like the
+ * paging params: an export counts its own rows (`X-Export-Rows`) and would 400 it.
+ */
+export const TOTAL_QUERY_PARAMS = ['include_total'] as const;
 
 /**
  * Read by the CSV handlers and deliberately never forwarded, so it has to
