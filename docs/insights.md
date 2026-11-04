@@ -12,7 +12,7 @@ eight decisions (IN1–IN8 below) were signed off by Manas on 2026-11-04. The wi
 | IN1 | Insights is a tab of the campaign shell at `/agency/campaigns/:id/insights` and replaces Overview and Performance; their URLs redirect to it. Agents, Contacts, Call attempts, Activity and Settings stay. |
 | IN2 | Pacing history that was Prometheus-only (idle reasons, calling-hours deferrals, concurrency hits) is persisted per campaign per minute. |
 | IN3 | No target date in v1; "pace vs needed pace" is dropped. |
-| IN4 | A callback is kept on time when the follow-up dial is within 15 min of `callback_at`, late when after that, missed when never dialled or the contact closed first. |
+| IN4 | A callback is kept on time when the follow-up dial is by `callback_at` + 15 min (inclusive; an early dial counts as on time), late when after that, missed when never dialled and the contact has closed (any state but pending, in flight or in wrap-up) whatever `callback_at` says, or `callback_at` has passed, or the campaign has ended. |
 | IN5 | One minimum-sample floor, 25, for every rate on the page. |
 | IN6 | Attempts per contact counts every dial, wrap-up redials included (attempt rows). |
 | IN7 | The launch checklist warns while calling hours are still the 09:00–20:00 default. |
@@ -123,11 +123,11 @@ returns null (or `[]`) for a campaign outside the tenant.
 |---|---|---|
 | `activity({ successCodes, overrideCodes })` | calls (dials, connected, conversations, human connects, successes, by outcome with `null_outcome`, redials, agent retries, talk, wrap-up, measured, callbacks booked, recorded), outcomes by code, overrides by granting code and agent, no outcome by resolution, per agent, `reconciliation`, `as_of` | `activity` |
 | `trends({ bucket, timezone, successCodes })` | every bucket zero-filled (dials, connected, conversations, successes, abandoned, answered; ISO instants, `YYYY-MM-DD` for day; hour and day in `timezone`, DST-aware), `best_hours` 0–23, the resolved zone, `as_of` | `trends` |
-| `abandonmentTrend`, `callerIds`, `recording`, `carrierFailures` | per bucket abandoned/answered; dials/connected per caller ID; connected/recorded; `failed` dials | `health` |
+| `callerIds`, `recording`, `carrierFailures` | dials/first dials/connected per caller ID; connected/recorded; `failed` dials, in total and by `agency_calls.error_code` (`by_code`, 0014) | `health` (the abandonment series is the trend buckets' abandoned/answered) |
 | `asOf` | `as_of` and `pending_buckets` (marked, not yet recomputed) | every range section |
 | `agentStateSeconds` | per agent: online, available (reserved folded in), on call, wrap-up, break by reason | `activity.agents` (not rollup: events) |
 | `agentsOnlinePeak({ bucket, timezone })` | peak agents online per trend bucket, zero-filled | `trends` (not rollup: events) |
-| `callbackTiming({ now })` | for callbacks whose booked time is in range: on time (follow-up dial by `callback_at` + 15 min, early included), late, missed, pending future and pending due, open and overdue by owner | `activity.callbacks` (not rollup: the callback index) |
+| `callbackTiming({ now })` | for callbacks whose booked time is in range: on time (follow-up dial by `callback_at` + 15 min, early included), late, missed (never dialled and the contact closed first, or `callback_at` passed, or the campaign ended), pending future and pending due, open and overdue by owner (a closed contact's callback is never open) | `activity.callbacks` (not rollup: the callback index) |
 
 **At scale** (`test/integration/load/insights-rollup-scale.test.ts`, `LOAD_SCALE=20`: one
 campaign, 1,000,000 attempts over 30 days, 50 agents with a state change every 10 minutes; shared
@@ -135,7 +135,8 @@ dev host, best of three, 2026-11-04). The backfill marked 2,880 buckets in 0.8�
 them in 62 s (15 batches of 200, the slowest 8.1 s); the rollup holds 2,880 headers, 143,856 agent
 rows, 245,325 code rows and 41,672 facet rows. Lifetime reads: activity 250 ms, trends 241 ms
 (quarter hour), 182 ms (hour), 155 ms (day), caller IDs 13 ms, recording 7 ms, carrier failures
-9 ms, as-of 2 ms: each under the 300 ms budget, which the test asserts. With one campaign in the
+9 ms, as-of 2 ms: each under the 300 ms budget, which the test asserts only in a `LOAD_SCALE` > 1 soak
+(at the default scale it checks correctness). With one campaign in the
 tables the plans are parallel sequential scans; among several campaigns each read is a range of
 its table's unique index (pinned in `insights-rollup-oracle.test.ts`). The reads that are not the
 rollup scale with what they read: callback timing over a lifetime of 60,000 callbacks 1.6 s,
@@ -172,7 +173,9 @@ insights reads import them rather than respelling them:
   `attempted=1|0` is `dials_placed > 0` (`attemptedContactSql`).
 - Call attempts: `placed=1`, `dialed_from` / `dialed_to` (half-open on `dialed_at`, placed dials only,
   `dialedRangeSql`), `redial`, `agent_manual`, `agent_reopened`, `caller_id`, `outcome`,
-  `disposition_code`, `agent_user_id` (through the attempt's session, `attemptAgentUserSql`). The list's
+  `disposition_code`, `agent_user_id` (through the attempt's session, `attemptAgentUserSql`),
+  `override_applied=1|0` (`overrideAppliedAttemptSql`; the agents table's and the allocation's
+  overrides link to it). The list's
   own `from` / `to` stay inclusive on `created_at`; every insights link uses the `dialed_*` pair and
   `placed=1`.
 
@@ -272,7 +275,9 @@ Served by the same family (`proxy-agency-insights/range.ts`), assembled in
 caller who may not read the campaign learns nothing from a 400.
 
 **The range.** `from` / `to` are ISO-8601 instants with a zone (`Z` or `±HH:MM`), half-open. Both
-absent is the lifetime: `created_at` to now, never refused for its length. One alone keeps the
+absent is the lifetime: `created_at` to now when that is at most 92 days, else the last 92 × 24 h
+ending at the served `to`, with `range.clamped: true` (decision IN12); the console labels it "Last 92
+days" and its links carry that window. An explicit range over 92 days is refused. One alone keeps the
 other's default. Both ends are rounded OUT to the rollup's 15-minute bucket (`from` down, `to` up:
 the rollup cannot cut inside a bucket, and the bucket a mid-bucket `to` falls in is counted anyway),
 `to` never past the bucket now falls in, and the served range is echoed in `range`. Every zone's
@@ -346,7 +351,17 @@ checks its builders send exactly those params and the sections, rendered from th
 responses (`insights-responses.json`), carry the link. The "Connected" links send `redial=0`. Numbers
 with no list whose total is theirs are not linked: callbacks due today (due before local midnight),
 the callbacks' open-by-owner counts (booked in range, due ones included), the Unassigned row's dial
-counters (dials with no session).
+counters (dials with no session), overrides by outcome (counted by the granting outcome, which no
+filter selects) and carrier failures by error code (the Call attempts list has no error-code filter).
+The table includes disposition rows (a redial chain carries its code only on its last attempt, so
+the code's conversations and its placed attempts are the same set), caller IDs, carrier failures,
+`held_by_absent` due, and the agents' and allocation's overrides. Roster "suppressed, other" sends
+`suppressed_reason=max_attempts,manual,none` (`none` is a NULL reason; never stored, refused by retry
+selectors). Allocation `dnc` counts `suppressedDncSql` (suppressed AND dnc), the roster's rule.
+
+Drill-down totals at 1M attempts in one campaign, with no window and one filter (`outcome`,
+`disposition_code`, `caller_id`, `redial`, `agent_manual`, `agent_reopened`, `override_applied`):
+0.10–0.25 s warm or from the OS cache, so no further index is needed.
 
 **Cost, measured** (`test/integration/load/insights-range-routes-scale.test.ts`,
 `INSIGHTS_RANGE_SCALE=1 LOAD_SCALE=20`: one strict campaign, 1,000,000 attempts over 30 days by 50

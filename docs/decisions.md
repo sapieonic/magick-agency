@@ -323,7 +323,7 @@ a definition open.
 | IN1 | Where it lives | A tab of the campaign shell at `/agency/campaigns/:id/insights`, gated on `agency.supervise`; it replaces Overview and Performance, whose URLs redirect to it. Agents, Contacts, Call attempts, Activity and Settings stay | **Decided** |
 | IN2 | Pacing history | What was Prometheus-only (idle reasons, calling-hours deferrals, concurrency hits, pre-dial suppressions, our-fault retirements, redials refused at the limit) is persisted per campaign per minute (`agency_campaign_pacing_minutes`); it starts the day it ships | **Decided** |
 | IN3 | Target date | None in v1; "pace vs needed pace" is dropped | **Decided** |
-| IN4 | Callback timing | On time: the follow-up dial is within 15 min of `callback_at`; late: after that; missed: never dialled and `callback_at` passed, or the contact closed first, or the campaign ended | **Decided** |
+| IN4 | Callback timing | On time: the follow-up dial is by `callback_at` + 15 min (inclusive; an early dial is on time); late: after that; missed: never dialled and the contact closed first (whatever `callback_at` says), or `callback_at` passed, or the campaign ended. A closed contact's callback is never an owner's open callback | **Decided** |
 | IN5 | Small samples | One minimum-sample floor, 25, for every rate on the page (`AGENCY_INSIGHTS_MIN_RATE_DENOMINATOR`) | **Decided** |
 | IN6 | Attempts per contact | Counts every placed dial, wrap-up redials included (`agency_contacts.dials_placed`, kept by 0011's trigger) | **Decided** |
 | IN7 | Calling hours | The launch checklist warns while the window and days are still the column defaults (09:00–20:00, Mon–Fri) | **Decided** |
