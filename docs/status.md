@@ -770,7 +770,14 @@ build's own calls, defaults pending Manas (`decisions.md` §4).
   the agent page's per-campaign connect rate and the Performance card's fraction (their wire rows,
   under `contracts/src/agency/`, need first dials; needs the Dart toolchain to change); Grafana
   rules applied with the rest of `grafana/` (never applied); the summary's cost on a 1M running
-  campaign (2.5–2.9 s, cached) if the page is kept open on many campaigns at once.
+  campaign (2.5–2.9 s, cached) if the page is kept open on many campaigns at once.; the agent app still
+  computes its own per-campaign connect rate as connected ÷ attempts
+  (`apps/mobile/lib/features/performance/logic/readouts.dart` `rowConnectRate`, and the comment in
+  `agency_wire/lib/src/reads.dart:259`), not IN10's, which needs the Dart toolchain to change; the
+  console's analytics floor `RATE_MIN_ATTEMPTS` still floors `attempts_total`, not the connect
+  rate's placed first dials, because `/stats` does not serve them; and at a window edge a cell's
+  `success_rate_reportable` can hold while `rates_reportable` does not (a redial's conversation in
+  the window, its first dial before it), so a cell should gate on both.
 
 ## Test counts
 
