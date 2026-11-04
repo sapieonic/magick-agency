@@ -172,6 +172,8 @@ Columns: `id`, `session_id`, `tenant_id`, `account_id`, `campaign_id`, `agent_us
 
 **`agency_call_attempts`**. One row per dial: reserved agent, state, outcome, disposition, callback, `dialed_at` / `answered_at` / `bridged_at` / `ended_at`, talk and wrap-up seconds. One live attempt per contact (`uq_agency_attempt_live`). 0008 adds `redial_of_attempt_id` and `redial_number` (the wrap-up redial chain, one redial per attempt by `uq_agency_attempt_redial_of`) and `redialed` to `ck_agency_wrapup_resolution` (see below). 0011 adds `agent_reopened` (see below).
 
+`outcome` has no CHECK; its vocabulary is `AgencyAttemptOutcome` (`packages/contracts/src/agency/enums.ts`): `connected`, `no_answer`, `busy`, `failed`, `machine`, `invalid`, `abandoned`, `agent_disconnected`, `orphaned`, `canceled`. **The trailing comment on the column in `0001_baseline.sql` is stale** (`connected|no_answer|busy|failed|machine|invalid|abandoned`): it omits `agent_disconnected`, `orphaned` and `canceled`, all produced, and lists `machine`, which nothing produces while answering-machine detection is out of scope. The migration is applied and is not edited; this paragraph and the union are the vocabulary.
+
 Columns: `id`, `campaign_id`, `contact_id`, `tenant_id`, `account_id`, `attempt_number`, `webrtc_call_id`, `caller_id`, `reserved_agent_id`, `state`, `outcome`, `disposition_code`, `notes`, `callback_at`, `dialed_at`, `answered_at`, `bridged_at`, `ended_at`, `talk_seconds`, `wrapup_seconds`, `created_at`, `updated_at`, `dispositioned_by_user_id`, `dispositioned_at`, `dispositioned_on_behalf`, `wrapup_started_at`, `wrapup_ended_at`, `wrapup_resolution`, `abandon_reason`, `wrapup_resolution`.
 
 **`agency_ingest_chunks`**. Idempotent roster chunks applied by an ingest job.

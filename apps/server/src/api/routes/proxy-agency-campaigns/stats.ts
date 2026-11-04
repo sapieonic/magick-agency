@@ -101,7 +101,8 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance): Promise
    * `enrichAgencyCampaignStats` is a spread over the handler's body, never a
    * reconstruction, so everything else — including fields the handler adds
    * later — arrives byte-identical. It also never throws: a failed lookup
-   * degrades the enrichment, because the console polls this every 5 seconds.
+   * degrades the enrichment, because the console polls this every 10 seconds
+   * (`REFRESH_MS` in the console's `useAgencyCampaignDetail.ts`).
    */
   app.get<{ Params: { id: string } }>('/campaigns/:id/stats', {
     preHandler: requirePermission('agency.campaigns.read'),
