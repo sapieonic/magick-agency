@@ -206,6 +206,11 @@ describe('copy', () => {
     const byCode = Object.fromEntries(readiness().checks.map((c) => [c.code, c]));
     expect(readinessDetail(byCode['roster_uploaded']!, 'strict')).toBe('1,000 contacts · last upload: 212 rejected, 96 duplicates on Loan No');
     expect(readinessDetail(byCode['calling_hours_set']!, 'strict')).toBe('Still on the 09:00–20:00 default');
+    // The server's detail for a set window: `window` and the campaign's `timezone`.
+    expect(readinessDetail({ code: 'calling_hours_set', result: 'pass', count: null, detail: { window: '08:00–17:30', timezone: 'Asia/Kolkata' } }, 'strict'))
+      .toBe('Set to 08:00–17:30 (Asia/Kolkata)');
+    expect(readinessDetail({ code: 'calling_hours_set', result: 'pass', count: null, detail: { window: '08:00–17:30' } }, 'strict'))
+      .toBe('Set to 08:00–17:30');
     expect(readinessDetail(byCode['contacts_allocated']!, 'strict')).toBe('Strict mode: 1,410 unassigned will never be dialled');
     expect(readinessDetail(byCode['contacts_allocated']!, 'pool')).toBe('1,410 unassigned will be dialled from the shared pool');
     expect(readinessDetail(byCode['abandonment_clip']!, 'strict')).toBe('None: abandoned calls hang up silently');

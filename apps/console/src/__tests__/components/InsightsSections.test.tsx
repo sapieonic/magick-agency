@@ -25,6 +25,7 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 }));
 
 import { RosterSection } from '../../pages/agency/campaign-detail/insights/RosterSection';
+import { reconciliationLabel } from '../../pages/agency/campaign-detail/insights/InsightsParts';
 import { AllocationSection } from '../../pages/agency/campaign-detail/insights/AllocationSection';
 import {
   CallbacksSection,
@@ -91,6 +92,14 @@ describe('roster and progress', () => {
     const chip = within(screen.getByTestId('reconciliation')).getByText(/States add up/);
     expect(chip.getAttribute('data-ok')).toBe('false');
     expect(chip.textContent).toContain('998 of 1,000');
+  });
+
+  it('labels every reconciliation the server sends (docs/insights.md "API")', () => {
+    expect(reconciliationLabel('contact_states_vs_total')).toBe('States add up to the roster');
+    expect(reconciliationLabel('attempts_per_contact_vs_attempted')).toBe('Attempts per contact add up to the attempted');
+    expect(reconciliationLabel('waiting_vs_open')).toBe('Waiting adds up to the open contacts');
+    expect(reconciliationLabel('allocated_plus_unassigned_vs_total')).toBe('Allocated and unassigned add up to the roster');
+    expect(reconciliationLabel('agent_buckets_vs_allocated')).toBe('Each agent’s states add up to their allocation');
   });
 
   it('exports the funnel with raw numbers', () => {

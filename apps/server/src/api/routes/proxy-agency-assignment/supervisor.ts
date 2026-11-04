@@ -16,6 +16,7 @@ import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import { agencyCampaignAgentRepository } from '@magick-agency/db/repositories/agency-campaign-agent.repository';
 import {
+  agentAbsent,
   agencyAssignmentReadRepository,
   agencyAssignmentRepository,
   emptyBucketCounts,
@@ -171,7 +172,7 @@ export async function registerAssignmentSupervisorRoutes(app: FastifyInstance): 
       const s = raw.sessions.get(id);
       const live = s?.live ?? false;
       const lastSeen = s?.last_seen_at ?? null;
-      const absent = !live && (lastSeen === null || now - new Date(lastSeen).getTime() > absentAfter * 60_000);
+      const absent = agentAbsent(s, now, absentAfter);
       const last = raw.lastActivity.get(id) ?? null;
       return {
         agent_user_id: id,

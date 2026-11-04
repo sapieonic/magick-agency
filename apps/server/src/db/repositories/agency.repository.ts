@@ -78,6 +78,39 @@ export {
   heroColumns,
 } from './agency/assignment-reads.repository.js';
 export type { MyContactsTally, OwnerTally, ProgressRaw } from './agency/assignment-reads.repository.js';
+export { agentAbsent } from './agency/assignment-reads.repository.js';
+export {
+  AgencyInsightsReadRepository,
+  agencyInsightsReadRepository,
+  allocationStatement,
+  contactsOnDncStatement,
+  dialPaceStatement,
+  INSIGHTS_UPLOADS_LIMIT,
+  rosterStatement,
+} from './agency/insights-reads.repository.js';
+export type {
+  AllocationCountsInput,
+  DialPace,
+  InsightsStatement,
+  InsightsUploadRow,
+  OwnerAttemptCounters,
+  OwnerCounts,
+  RosterCounts,
+  RosterCountsInput,
+} from './agency/insights-reads.repository.js';
+export {
+  attemptedSql,
+  openCallbackSql,
+  ROSTER_BUCKETS,
+  rosterBucketPredicates,
+  suppressedDncSql,
+  suppressedInvalidSql,
+  suppressedOtherSql,
+  waitingCallbackSql,
+  waitingDueNowSql,
+  waitingRetrySql,
+} from './agency/insights-sql.js';
+export type { RosterBucket } from './agency/insights-sql.js';
 export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';
 export type { AgencyManualCallJoinedRow } from './agency/projections.js';
 // The drill-down predicates: one definition of each roster bucket and attempt slice, read by

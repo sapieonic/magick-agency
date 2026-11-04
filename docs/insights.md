@@ -90,3 +90,68 @@ insights reads import them rather than respelling them:
   `disposition_code`, `agent_user_id` (through the attempt's session, `attemptAgentUserSql`). The list's
   own `from` / `to` stay inclusive on `created_at`; every insights link uses the `dialed_*` pair and
   `placed=1`.
+
+## API (as-of-now reads)
+
+Served by `apps/server/src/api/routes/proxy-agency-insights.routes.ts` (routes in
+`proxy-agency-insights/`), assembled in `apps/server/src/agency/insights/` from
+`apps/server/src/db/repositories/agency/insights-reads.repository.ts`. The roster buckets are one
+definition, `insights-sql.ts`, for the summary and the contacts list's drill-down filters alike.
+
+| Route | What | Cached |
+|---|---|---|
+| `GET /proxy/agency/campaigns/:id/insights/summary` | header, settings, status headline, roster | yes |
+| `GET /proxy/agency/campaigns/:id/insights/readiness` | the draft checklist | no |
+| `GET /proxy/agency/campaigns/:id/insights/allocation` | per-agent allocation, imbalance, at risk, history | yes |
+| `GET /proxy/agency/campaigns/:id/insights/uploads` | committed uploads, newest first (at most 200) | no |
+
+`activity`, `trends` and `health` are not served yet (they read the rollup and the pacing history).
+
+**Guards, in order:** session and tenant context; `agency.supervise` (account admin and up; agents
+and viewers get the RBAC 403); the dialer flag `agency_dialer_enabled` (`403 feature_disabled`, the
+internal handlers' body); the id is a UUID (else `404 campaign_not_found`, the same body as an
+unknown id); the ownership probe (tenant and account, its 404 forwarded). The contact-assignment
+flag is not checked: pacing reads the stored `assignment_mode` and owners whatever the flag says
+(CA9), so the allocation shows them as stored.
+
+**Roster buckets** (a partition; each its own predicate): due now = open (`pending`, not DNC) and
+`next_attempt_at <= now()`, a callback whose time has come included (the progress read's "due
+now"); callback = open, `next_attempt_at > now()`, latest disposition a callback code that is still
+the latest outcome (`isCallbackSql`); retry = open, later, not a callback; on a call = `in_flight`;
+in wrap-up = `connected`; completed; exhausted; suppressed DNC (a `suppressed` row, or a `pending`
+row frozen DNC), invalid, other. `attempted` = `dials_placed > 0` (decision IN6: a ringing first
+dial and an our-fault dial count). `eta_seconds` is dialling time: open contacts ÷ contacts dialled
+in the last hour that are now finished × 3600, so the clock stops while the calling window is shut.
+
+**Reconciliation identifiers** (`check`): summary roster `contact_states_vs_total` (the ten buckets
+vs `count(*)`), `attempts_per_contact_vs_attempted` (1 + 2 + 3 + 4+ vs attempted),
+`waiting_vs_open` (due now + retry + callback vs open contacts); allocation
+`allocated_plus_unassigned_vs_total` (the agent rows and the pool, as served, vs the statement's
+total), `agent_buckets_vs_allocated` (every owner's roster partition vs their allocation).
+
+**Readiness `detail` keys:** `roster_uploaded` `{ rejected, duplicates, dedupe_column }` (the
+latest completed non-dry-run upload; nulls without one); `phone_column_mapped` `{ phone_column }`;
+`outcomes_configured` `{ overrides }` (catalog entries carrying one); `calling_hours_set`
+`{ window: 'HH:MM–HH:MM', timezone }`; every other check `{}`. Results: roster, phone column,
+outcomes, caller IDs and staffed agents fail at none; calling hours warn while the window and the
+days are still 0001's column defaults (09:00–20:00, Mon–Fri; IN7);
+`contacts_allocated` passes in pool mode (count null), else counts open unassigned contacts and
+fails in strict, warns in preferred; the abandonment clip warns when absent or retired; contacts on
+DNC (pending contacts on a tenant-wide, account or campaign entry, the pre-dial gate's predicate)
+warn above 0.
+
+**Cost, measured** (1M-contact campaign in a 1.2M table, 900k attempts, 200k DNC entries; shared
+dev host, warm cache): roster statement 0.56–0.9 s (the planner's parallel seq scan; a 200k
+campaign is a Parallel Index Only Scan on `idx_agency_contacts_insights`, 0.12 s); allocation
+statement 0.8 s; `allocationAttemptCounters` 1.1 s (reads every attempt; the rollup replaces it);
+contacts on DNC 0.3 s; dial pace 0.04 s (`idx_agency_attempts_campaign_dialed`); the stats strip's
+repository half 1.6–2.0 s. End to end: summary running 2.9 s, paused 0.8 s, stopped 1.3 s;
+allocation 1.8 s; readiness 0.8 s. The retry preview itself (fingerprint DISTINCT) takes 5.0 s, so
+`retry_matched` counts the same selection without it (0.3 s, the same answer; they differ only for
+legacy rows with no stored fingerprint that duplicate one another).
+
+**Cache** (`agency/insights/cache.ts`): in process (HTTP is served by one process, `scaling.md`),
+single flight, keyed by section, campaign id, status and `updated_at` (a transition or a settings
+edit misses), fresh for 5 s or four times the answer's compute time when longer (so one campaign's
+insights keep the database busy at most a quarter of the time; a 1M running summary is reused for
+~12 s), at most 500 entries. The guards run on every request before it is consulted.

@@ -154,7 +154,8 @@ export function readinessDetail(check: AgencyReadinessCheck, assignmentMode: Age
       return count ? plural(count, 'number') : 'No caller IDs: the dialler has nothing to call from';
     case 'calling_hours_set': {
       const window = str(detail, 'window');
-      if (result === 'pass') return window ? `Set to ${window}` : 'Set';
+      const zone = str(detail, 'timezone');
+      if (result === 'pass') return window ? `Set to ${window}${zone ? ` (${zone})` : ''}` : 'Set';
       return 'Still on the 09:00–20:00 default';
     }
     case 'agents_staffed':

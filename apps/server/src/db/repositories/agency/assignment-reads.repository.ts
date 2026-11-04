@@ -101,6 +101,20 @@ interface MyContactRaw {
   cursor_at: string;
 }
 
+/**
+ * Whether an agent is away for `due_while_absent`: no present session, and last seen longer than
+ * `absentAfterMinutes` ago (or never). The progress read's rule and the insights allocation's.
+ */
+export function agentAbsent(
+  session: { live: boolean; last_seen_at: Date | null } | undefined,
+  nowMs: number,
+  absentAfterMinutes: number,
+): boolean {
+  const lastSeen = session?.last_seen_at ?? null;
+  return !(session?.live ?? false)
+    && (lastSeen === null || nowMs - new Date(lastSeen).getTime() > absentAfterMinutes * 60_000);
+}
+
 function emptyTally(): OwnerTally {
   return { total: 0, counts: emptyBucketCounts(), attempted: 0, due_now: 0 };
 }
@@ -123,14 +137,7 @@ export class AgencyAssignmentReadRepository {
           GROUP BY 1, 2`,
         bind.values,
       ),
-      pool.query<{ uid: string; live: boolean; last_seen_at: Date | null }>(
-        `SELECT s.agent_user_id::text AS uid, bool_or(${presentSessionSql('s')}) AS live,
-                max(GREATEST(s.last_heartbeat, COALESCE(s.left_at, s.last_heartbeat))) AS last_seen_at
-           FROM agency_agent_sessions s
-          WHERE s.campaign_id = $1::uuid
-          GROUP BY 1`,
-        [campaign.id],
-      ),
+      this.presence(campaign.id),
       pool.query<{ uid: string; last: Date }>(
         `SELECT c.assigned_user_id::text AS uid, max(a.created_at) AS last
            FROM agency_contacts c JOIN agency_call_attempts a ON a.contact_id = c.id
@@ -155,9 +162,25 @@ export class AgencyAssignmentReadRepository {
     return {
       owners,
       pool: poolTally,
-      sessions: new Map(sessions.rows.map((r) => [r.uid, { live: r.live, last_seen_at: r.last_seen_at }])),
+      sessions,
       lastActivity: new Map(activity.rows.map((r) => [r.uid, r.last])),
     };
+  }
+
+  /**
+   * Per agent with a session on the campaign: whether one is present (`presentSessionSql`) and
+   * when last seen. The progress read's `live` / `last_seen_at`, and the insights allocation's.
+   */
+  async presence(campaignId: string): Promise<ProgressRaw['sessions']> {
+    const { rows } = await getPool().query<{ uid: string; live: boolean; last_seen_at: Date | null }>(
+      `SELECT s.agent_user_id::text AS uid, bool_or(${presentSessionSql('s')}) AS live,
+              max(GREATEST(s.last_heartbeat, COALESCE(s.left_at, s.last_heartbeat))) AS last_seen_at
+         FROM agency_agent_sessions s
+        WHERE s.campaign_id = $1::uuid
+        GROUP BY 1`,
+      [campaignId],
+    );
+    return new Map(rows.map((r) => [r.uid, { live: r.live, last_seen_at: r.last_seen_at }]));
   }
 
   /**

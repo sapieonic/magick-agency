@@ -387,3 +387,37 @@ export function scheduleCallbackInWindow(window: CallingWindow, requestedAt: Dat
   if (callingWindowState(window, requestedAt) === 'open') return requestedAt;
   return nextWindowOpen(window, requestedAt) ?? requestedAt;
 }
+
+/**
+ * The instant the local calendar day holding `now` ends in `timezone` (the next local midnight),
+ * or null when the zone is unusable. "Today" on the insights page (callbacks due today) is
+ * `[now, localDayEnd)`, so a day in Asia/Kolkata ends at 18:30 UTC.
+ */
+export function localDayEnd(timezone: string, now: Date): Date | null {
+  if (!isUsableTimezone(timezone)) return null;
+  const p = localParts(timezone, now);
+  if (!p) return null;
+  return instantForLocalTime(timezone, p.year, p.month, p.day + 1, 0);
+}
+
+/**
+ * When today's calling window closes: for a same-day window on a calling day, the end of the
+ * window on the local date; for an overnight window, the end of the stretch open now (the small
+ * hours belong to yesterday's window), else tomorrow morning's end of the window opening today.
+ * Null when today has no window (not a calling day, an empty or unreadable window). The insights
+ * paused headline counts callbacks due in `[now, windowEndToday)`; a result in the past (the
+ * window already closed today) counts nothing.
+ */
+export function windowEndToday(window: CallingWindow, now: Date): Date | null {
+  const w = validate(window);
+  if (!w || w.days.length === 0 || w.start === w.end) return null;
+  const p = localParts(w.timezone, now);
+  if (!p) return null;
+  if (w.start < w.end) {
+    return w.days.includes(p.isoDow) ? instantForLocalTime(w.timezone, p.year, p.month, p.day, w.end) : null;
+  }
+  const t = p.hour * 3600 + p.minute * 60 + p.second;
+  const yesterday = p.isoDow === 1 ? 7 : p.isoDow - 1;
+  if (t < w.end && w.days.includes(yesterday)) return instantForLocalTime(w.timezone, p.year, p.month, p.day, w.end);
+  return w.days.includes(p.isoDow) ? instantForLocalTime(w.timezone, p.year, p.month, p.day + 1, w.end) : null;
+}
