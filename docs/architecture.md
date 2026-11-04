@@ -109,7 +109,7 @@ unique.
 6. `app.listen`, only after the bootstraps, so no request lands before the startup reap.
 
 Shutdown closes HTTP first (`app.close()`), then runs the stops in reverse: analysis; agency
-(pacing stops first, waiting up to 5 s for ticks in flight; then reaper, sweeps, dialer and wrap-up
+(pacing stops first, waiting up to 5 s for ticks and owner sweeps in flight; then reaper, sweeps, dialer and wrap-up
 timers; completion notices drained up to 30 s); voice (the bridge ends live calls, then the guard host, then the PostHog flush); platform
 (both audit buffers flushed last). Then Redis and the pool close. Pinned by
 `apps/server/test/integration/agency/runtime-boot-order.test.ts`.
@@ -343,7 +343,10 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   with the join bootstrap, `ready` and the My contacts summary; after a `ready` the next tick
   sends the frame again, so a reconnect cannot keep a stale or missing queue); the leader sweeps due callbacks
   whose owner is away past the grace back to the pool, and the open contacts of owners no longer
-  staffed on the campaign (`pacing/callback-fallback.ts`). *Agent*:
+  staffed on the campaign (`pacing/callback-fallback.ts`), every 30 s per campaign, in the
+  background: the tick starts the sweep and plans without waiting for it, one sweep per campaign
+  runs at a time, a move wakes the campaign (`contacts_changed`), and `stop()` waits for one in
+  flight within the tick drain bound. *Agent*:
   the My contacts reads, the set-based reopen of not-reached contacts
   (`agent-retry.repository.ts`) and the per-contact call, which runs in the process holding the
   station (`agency/my-contact-call.ts`, `session_param`) on the campaign's normal dial path with
