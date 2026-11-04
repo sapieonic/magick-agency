@@ -18,10 +18,10 @@
 -- scan a million-row roster (the index below leads with `campaign_id`). A contact assigned to a
 -- user who no longer exists reads as assigned to a former member and can be reassigned.
 --
--- `idx_agency_contacts_assignee` serves the per-agent claim ("next due contact for agent X":
--- campaign, owner, `pending`, then `next_attempt_at` order), the pool claim in preferred mode
--- (`assigned_user_id IS NULL`), and the per-agent counts (campaign, owner, state). The pool-mode
--- claim keeps `idx_agency_contacts_dialable`.
+-- `idx_agency_contacts_assignee` (built by 0010; see Locking) serves the per-agent claim ("next
+-- due contact for agent X": campaign, owner, `pending`, then `next_attempt_at` order), the pool
+-- claim in preferred mode (`assigned_user_id IS NULL`), and the per-agent counts (campaign,
+-- owner, state). The pool-mode claim keeps `idx_agency_contacts_dialable`.
 --
 -- `agency_contact_assignment_events` is the history: one row per contact per move, so the
 -- supervisor can see who held a contact and when. `batch_id` groups the rows one operation
@@ -52,9 +52,29 @@
 -- `override_applied` / `override_note` record which overrides the dial spent.
 --
 -- ── Locking ───────────────────────────────────────────────────────────────────
--- ADD COLUMN with a constant default does not rewrite the table (Postgres 11+). CREATE INDEX
--- (not CONCURRENTLY: one transaction) blocks writes to agency_contacts while it builds; migrations
--- run at container start, before the server listens (docker/entrypoint.sh).
+-- Every ALTER TABLE here takes ACCESS EXCLUSIVE (no reads, no writes) and holds it until this
+-- file commits, so this file does no work that grows with the roster: it changes the catalog only.
+--
+--  - ADD COLUMN with a constant default does not rewrite the table (Postgres 11+).
+--  - The CHECKs on agency_contacts and agency_call_attempts are added NOT VALID: Postgres
+--    enforces them on every row written from here on, but does not scan the existing rows. Each
+--    existing row satisfies them through the column defaults (no owner, 0 rounds, 0 extra
+--    attempts, no overrides applied, no note). 0010 validates them in its own transaction,
+--    holding only SHARE UPDATE EXCLUSIVE (reads and writes proceed).
+--  - idx_agency_contacts_assignee is built by 0010 too: a build here would run under this file's
+--    ACCESS EXCLUSIVE and block reads of agency_contacts as well as writes.
+--  - The agency_campaigns CHECKs are validated here: one row per campaign, a scan of nothing.
+--  - The history table's FKs to agency_campaigns and agency_contacts scan nothing (the new table
+--    is empty). assigned_user_id has no FK (above).
+--
+-- Measured on 1M contacts with 1M attempts: this file takes ~25 ms; with the two scans and the
+-- index build in it, it took ~2 s, all of it under ACCESS EXCLUSIVE. The image's runner commits each file on its own (apps/server/src/
+-- migrate.ts), so 0010 runs after this file's locks are released. `pnpm migrate:up` (the
+-- node-pg-migrate CLI) puts every pending file in ONE transaction by default, which holds this
+-- file's ACCESS EXCLUSIVE through 0010: pass `--no-single-transaction` to it on a large roster.
+-- Migrations run at container start, before the server listens (docker/entrypoint.sh), so on a
+-- stop-then-start deploy the outage is the run's total time; the split matters when the
+-- migrations are applied to a live database ahead of the deploy.
 --
 -- Runs as one node-pg-migrate SQL migration in one transaction; split on the up/down marker
 -- comments (see 0001_baseline.sql's header for the regex).
@@ -108,12 +128,13 @@ ALTER TABLE agency_contacts
   ADD COLUMN override_calling_hours BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN override_granted_at TIMESTAMPTZ,
   -- An owner is stamped with when it was given; the pool has neither.
+  -- NOT VALID: enforced on new writes; 0010 validates the existing rows (see Locking).
   ADD CONSTRAINT ck_agency_contact_assigned_at
-    CHECK (assigned_user_id IS NULL OR assigned_at IS NOT NULL),
+    CHECK (assigned_user_id IS NULL OR assigned_at IS NOT NULL) NOT VALID,
   ADD CONSTRAINT ck_agency_contact_agent_retry_rounds_used
-    CHECK (agent_retry_rounds_used >= 0),
+    CHECK (agent_retry_rounds_used >= 0) NOT VALID,
   ADD CONSTRAINT ck_agency_contact_override_extra_attempts
-    CHECK (override_extra_attempts BETWEEN 0 AND 5);
+    CHECK (override_extra_attempts BETWEEN 0 AND 5) NOT VALID;
 
 COMMENT ON COLUMN agency_contacts.assigned_user_id IS
   'The agent (user id) who owns this contact. NULL: the shared pool. Read by pacing per agency_campaigns.assignment_mode.';
@@ -127,12 +148,6 @@ COMMENT ON COLUMN agency_contacts.override_retry_delay IS
   'The agent may dial before the next scheduled time, once (granted by override_disposition).';
 COMMENT ON COLUMN agency_contacts.override_calling_hours IS
   'The agent may dial outside calling hours, once, with a note (granted by override_disposition).';
-
-CREATE INDEX idx_agency_contacts_assignee
-  ON agency_contacts (campaign_id, assigned_user_id, state, next_attempt_at);
-
-COMMENT ON INDEX idx_agency_contacts_assignee IS
-  'Per-agent claim (strict/preferred), the preferred-mode pool claim (assigned_user_id IS NULL) and per-agent counts.';
 
 CREATE TABLE agency_contact_assignment_events (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -168,10 +183,11 @@ ALTER TABLE agency_call_attempts
   ADD COLUMN agent_manual BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN override_applied TEXT[] NOT NULL DEFAULT '{}',
   ADD COLUMN override_note TEXT,
+  -- NOT VALID: enforced on new writes; 0010 validates the existing rows (see Locking).
   ADD CONSTRAINT ck_agency_attempt_override_applied
-    CHECK (override_applied <@ ARRAY['extra_attempts', 'retry_delay', 'calling_hours']::text[]),
+    CHECK (override_applied <@ ARRAY['extra_attempts', 'retry_delay', 'calling_hours']::text[]) NOT VALID,
   ADD CONSTRAINT ck_agency_attempt_override_note
-    CHECK (override_note IS NULL OR char_length(override_note) BETWEEN 10 AND 500);
+    CHECK (override_note IS NULL OR char_length(override_note) BETWEEN 10 AND 500) NOT VALID;
 
 COMMENT ON COLUMN agency_call_attempts.agent_manual IS
   'An agent dialled this contact from their own contact list (agent retry), not the pacing engine.';
@@ -190,8 +206,6 @@ ALTER TABLE agency_call_attempts
   DROP COLUMN IF EXISTS agent_manual;
 
 DROP TABLE IF EXISTS agency_contact_assignment_events;
-
-DROP INDEX IF EXISTS idx_agency_contacts_assignee;
 
 ALTER TABLE agency_contacts
   DROP CONSTRAINT IF EXISTS ck_agency_contact_override_extra_attempts,

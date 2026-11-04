@@ -566,7 +566,8 @@ a rate-limit key and never an auth input.
   and the attempt's `redial_of_attempt_id` / `redial_number`; 0009: contact assignment, the
   campaign's assignment and agent-retry settings, the contact's owner and override columns,
   `agency_contact_assignment_events`, and the attempt's `agent_manual` / `override_applied` /
-  `override_note`),
+  `override_note`; 0010: validates 0009's contact and attempt CHECKs and builds the assignee
+  index, outside 0009's ACCESS EXCLUSIVE),
   all inventoried in `packages/db/BASELINE.md`. Tenant, account and user ids are UUIDs.
 - Repositories use raw `pg` (`packages/db/src/repositories/`, plus the agency repository in
   `apps/server/src/db/repositories/`: `agency.repository.ts`, a barrel over `agency/`). Repository

@@ -583,10 +583,12 @@ the ask; inbound routing out of scope). Behind `agency_contact_assignment_enable
 decisions CA1–CA15 in [`decisions.md`](decisions.md) §4, "Contact assignment". Console and agent
 app.
 
-- Migration `0009_contact_assignment.sql` (seven campaign settings, the contact's owner, retry
-  rounds and override columns, `idx_agency_contacts_assignee`, the history table
-  `agency_contact_assignment_events`, the attempt's `agent_manual` / `override_applied` /
-  `override_note`), inventoried in `packages/db/BASELINE.md` and tested down and up. Contracts:
+- Migrations `0009_contact_assignment.sql` (seven campaign settings, the contact's owner, retry
+  rounds and override columns, the history table `agency_contact_assignment_events`, the
+  attempt's `agent_manual` / `override_applied` / `override_note`; catalog changes only, its
+  contact and attempt CHECKs added `NOT VALID`) and `0010_contact_assignment_index_and_checks.sql`
+  (validates those CHECKs and builds `idx_agency_contacts_assignee` in its own transaction, outside
+  0009's ACCESS EXCLUSIVE), inventoried in `packages/db/BASELINE.md` and tested down and up. Contracts:
   `agency/assignment.ts`, `api/agency/assignment.ts` (eight routes, both refusal unions), the
   `queue` station frame, the disposition `override`, the roster's `assigned_to` filter, the flag,
   the permission `agency.contacts.own`, agent fixtures and Dart literals.

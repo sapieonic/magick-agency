@@ -1,4 +1,6 @@
-// Real Postgres: migrations/0009_contact_assignment.sql. globalSetup has applied every migration.
+// Real Postgres: migrations/0009_contact_assignment.sql and 0010_contact_assignment_index_and_checks.sql
+// (0010 validates 0009's NOT VALID CHECKs and builds the assignee index). globalSetup has
+// applied every migration.
 // The server writes and reads these columns (pacing's per-agent claim, the assignment
 // operations, agent retry, outcome overrides); this pins their shape and the invariants the
 // database owns: every setting defaults to today's behaviour, an owner carries its stamp, the
@@ -93,7 +95,23 @@ describe('0009 — contact assignment, agent retry, outcome overrides', () => {
       .rejects.toMatchObject({ code: '23514', constraint: 'ck_agency_contact_agent_retry_rounds_used' });
   });
 
-  it('idx_agency_contacts_assignee serves the per-agent claim', async () => {
+  it('0010 has validated every CHECK 0009 added NOT VALID', async () => {
+    const { rows } = await pool().query<{ conname: string; convalidated: boolean }>(
+      `SELECT conname, convalidated FROM pg_constraint
+        WHERE conname LIKE 'ck_agency_contact_%' OR conname LIKE 'ck_agency_attempt_override_%'
+           OR conname LIKE 'ck_agency_campaign_%' OR conname LIKE 'ck_agency_assignment_event_%'`);
+    const byName = Object.fromEntries(rows.map((r) => [r.conname, r.convalidated]));
+    for (const name of [
+      'ck_agency_contact_assigned_at', 'ck_agency_contact_agent_retry_rounds_used',
+      'ck_agency_contact_override_extra_attempts', 'ck_agency_attempt_override_applied',
+      'ck_agency_attempt_override_note',
+    ]) {
+      expect(byName[name], name).toBe(true);
+    }
+    expect(rows.filter((r) => !r.convalidated).map((r) => r.conname)).toEqual([]);
+  });
+
+  it('idx_agency_contacts_assignee (built by 0010) serves the per-agent claim', async () => {
     const { rows } = await pool().query<{ indexdef: string }>(
       `SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_agency_contacts_assignee'`);
     expect(rows[0]?.indexdef).toMatch(/\(campaign_id, assigned_user_id, state, next_attempt_at\)/);
