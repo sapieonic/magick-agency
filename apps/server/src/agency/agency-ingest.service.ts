@@ -26,6 +26,7 @@ import {
 
 import { rejectedExportKey } from './agency-ingest-keys.js';
 import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
+import { auditRosterUploadEndedById } from './agency-ingest-audit.js';
 
 const log = createChildLogger({ component: 'agency-ingest-service' });
 
@@ -92,12 +93,35 @@ export interface StartIngestOptions {
 
 export class AgencyIngestService {
   /**
+   * Execute an ingest to completion, then record how it ended in the campaign's
+   * activity log (IN8: `agency_campaign.roster_upload_completed` / `_failed`).
+   *
+   * The outcome is read back from the job row once {@link runJob} has returned,
+   * rather than written at each of its terminal branches (complete, cancel and the
+   * five ways to fail): one write site cannot miss a branch a later change adds. A
+   * dry run writes no row (`agency-ingest-audit.ts`); the read is skipped for it.
+   */
+  async run(options: StartIngestOptions): Promise<void> {
+    const { job } = options;
+    try {
+      await this.runJob(options);
+    } finally {
+      if (!job.dry_run && job.campaign_id) {
+        await auditRosterUploadEndedById(
+          () => agencyIngestJobRepository.findById(job.id, job.tenant_id),
+          job.id,
+        );
+      }
+    }
+  }
+
+  /**
    * Execute an ingest to completion. Resolves when the job reaches a terminal
    * state; it never rejects, because every failure path is recorded on the job
    * row — a detached promise that throws is an unhandled rejection and, worse,
    * a job stuck in `running` forever.
    */
-  async run(options: StartIngestOptions): Promise<void> {
+  private async runJob(options: StartIngestOptions): Promise<void> {
     const { job } = options;
     const campaignId = options.campaignId ?? job.campaign_id ?? undefined;
 

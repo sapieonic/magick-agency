@@ -255,3 +255,52 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(await contactPhones()).toEqual([]);
   });
 });
+
+describe('the activity log records how a committed upload ended (IN8)', () => {
+  const uploadRows = async () => {
+    const { platformAuditLogger } = await import('../../../src/audit/platform/audit-logger.js');
+    await platformAuditLogger.shutdown();
+    return (await getTestPool().query<{ action: string; actor_type: string; user_id: string | null; details: Record<string, unknown> }>(
+      `SELECT action, actor_type, user_id, details FROM platform_audit_log
+        WHERE campaign_id = $1 AND action LIKE 'agency_campaign.roster_upload_%' ORDER BY created_at`,
+      [campaignId],
+    )).rows;
+  };
+
+  it('a completed import writes one completed row with its counts, from the system actor', async () => {
+    const job = await newJob();
+    await agencyIngestService.run({ job, campaignId });
+
+    expect(await uploadRows()).toEqual([{
+      action: 'agency_campaign.roster_upload_completed',
+      actor_type: 'system',
+      user_id: null,
+      details: {
+        campaign_id: campaignId, job_id: job.id, file_name: 'roster.csv', mode: 'append',
+        status: 'completed', rows_read: 9, accepted: 4, rejected: 5, duplicates: 1,
+      },
+    }]);
+  });
+
+  it('a failed import writes one failed row naming the failure', async () => {
+    const job = await newJob();
+    await getTestPool().query('ALTER TABLE dnc_entries RENAME TO dnc_entries_broken');
+    try {
+      await agencyIngestService.run({ job, campaignId });
+    } finally {
+      await getTestPool().query('ALTER TABLE dnc_entries_broken RENAME TO dnc_entries');
+    }
+
+    const rows = await uploadRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: 'agency_campaign.roster_upload_failed',
+      details: { job_id: job.id, status: 'failed', error_code: 'dnc_unavailable', accepted: 0 },
+    });
+  });
+
+  it('a dry run writes nothing', async () => {
+    await agencyIngestService.run({ job: await newJob({ dry_run: true }), campaignId });
+    expect(await uploadRows()).toEqual([]);
+  });
+});

@@ -549,6 +549,75 @@ describe('agency ingest routes', () => {
     await app.close();
   });
 
+  describe('the activity log (IN8)', () => {
+    const committed = {
+      s3_key: `agency-ingest/${TENANT}/u/roster.csv`,
+      file_name: 'roster.csv',
+      phone_column: 'Mobile',
+      campaign_id: '11111111-2222-3333-4444-555555555555',
+    };
+
+    it('a committed upload writes one started row: who, the file, the mode and the duplicate rule', async () => {
+      mocks.repo.create.mockResolvedValue(job({ status: 'pending', dedupe_column: 'Loan No', dedupe_phones: true }));
+      const app = await buildApp();
+      const res = await app.inject({ method: 'POST', url: `${PREFIX}/ingest/jobs`, payload: { ...committed, dedupe_column: 'Loan No' } });
+      expect(res.statusCode, res.body).toBe(202);
+
+      expect(mocks.auditLog).toHaveBeenCalledTimes(1);
+      expect(mocks.auditLog).toHaveBeenCalledWith({
+        actor_type: 'human', user_id: ACTING_USER,
+        tenant_id: TENANT, account_id: 'account-1',
+        action: 'agency_campaign.roster_upload_started',
+        resource_type: 'agency_campaign', resource_id: 'campaign-1', campaign_id: 'campaign-1',
+        details: {
+          campaign_id: 'campaign-1', job_id: '00000000-0000-4000-8000-000000000001',
+          file_name: 'roster.csv', mode: 'append', dedupe_column: 'Loan No', dedupe_phones: true,
+        },
+      });
+      await app.close();
+    });
+
+    it('a dry run writes no row', async () => {
+      mocks.repo.create.mockResolvedValue(job({ dry_run: true, campaign_id: null, status: 'pending' }));
+      const app = await buildApp();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/ingest/jobs`,
+        payload: { ...committed, campaign_id: undefined, dry_run: true },
+      });
+      expect(res.statusCode).toBe(202);
+      expect(mocks.auditLog).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('the job carries who ran it', async () => {
+      mocks.repo.findById.mockResolvedValue(job({ created_by: ACTING_USER }));
+      const app = await buildApp();
+      const body = (await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001` })).json();
+      expect(body.created_by).toBe(ACTING_USER);
+
+      mocks.repo.findById.mockResolvedValue(job());
+      const legacy = (await app.inject({ method: 'GET', url: `${PREFIX}/ingest/jobs/00000000-0000-4000-8000-000000000001` })).json();
+      expect(legacy.created_by).toBeNull();
+      await app.close();
+    });
+
+    it('a roster clear writes a cleared row with the count', async () => {
+      mocks.config.agency.rosterReplaceEnabled = true;
+      mocks.supersedeRoster.mockResolvedValue({ superseded: 12, retained: 0, contacts_total: 0, already_applied: false });
+      const app = await buildApp();
+      const res = await app.inject({
+        method: 'POST', url: `${PREFIX}/campaigns/c1/roster/clear`, payload: { expected_contacts_total: 12 },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+        actor_type: 'human', user_id: ACTING_USER,
+        action: 'agency_campaign.roster_cleared', campaign_id: 'c1',
+        details: { campaign_id: 'c1', roster_state: 'cleared', cleared: 12 },
+      }));
+      await app.close();
+    });
+  });
+
   describe('dedupe_column', () => {
     const base = {
       s3_key: `agency-ingest/${TENANT}/u/roster.csv`,

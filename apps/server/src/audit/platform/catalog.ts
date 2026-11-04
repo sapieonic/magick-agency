@@ -36,6 +36,16 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // fields, changes }`: every changed field's name, and `{ from, to }` for the small
   // ones (scalars, short lists). JSON fields (retry policy, catalog) are names only.
   'agency_campaign.config_changed',
+  // The roster upload (IN8, `agency/agency-ingest-audit.ts`): a committed upload job was
+  // created (the uploader; details: job, file name, mode, duplicate rule), and it ended
+  // (the system actor; details: status, rows read, accepted, rejected, duplicates, error
+  // code). `_failed` covers a cancelled job too (`details.status`). A dry run writes none.
+  'agency_campaign.roster_upload_started',
+  'agency_campaign.roster_upload_completed',
+  'agency_campaign.roster_upload_failed',
+  // The roster-clear route retired the roster, or could not confirm whether it had
+  // (`details.roster_state`). Only reachable with `AGENCY_ROSTER_REPLACE_ENABLED` (B15).
+  'agency_campaign.roster_cleared',
   'agency_session.joined',
   'agency_session.left',
   'agency_session.break_started',

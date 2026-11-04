@@ -233,6 +233,45 @@ export function activityDetailSummary(row: ActivityRow): string | null {
 
   if (row.action === 'agency_campaign.config_changed') return configChangedSummary(detail);
 
+  if (row.action === 'agency_campaign.roster_upload_started') {
+    const file = str(detail['file_name']);
+    if (!file) return null;
+    const mode = detail['mode'] === 'replace' ? 'replacing the roster' : 'adding to the roster';
+    const dedupe = str(detail['dedupe_column']);
+    const rule = dedupe
+      ? `duplicates found on “${dedupe}”`
+      : detail['dedupe_phones'] === false ? 'no duplicate check' : 'duplicates found on the phone number';
+    return `Uploaded “${file}”, ${mode}, ${rule}.`;
+  }
+
+  if (
+    row.action === 'agency_campaign.roster_upload_completed'
+    || row.action === 'agency_campaign.roster_upload_failed'
+  ) {
+    const read = num(detail['rows_read']);
+    const accepted = num(detail['accepted']);
+    const rejected = num(detail['rejected']);
+    const duplicates = num(detail['duplicates']);
+    const counts = read !== null && accepted !== null && rejected !== null
+      ? `${read.toLocaleString()} rows read: ${accepted.toLocaleString()} accepted, `
+        + `${rejected.toLocaleString()} rejected`
+        + (duplicates ? ` (${duplicates.toLocaleString()} duplicates)` : '') + '.'
+      : null;
+    if (row.action === 'agency_campaign.roster_upload_completed') return counts;
+    const how = detail['status'] === 'cancelled'
+      ? 'Cancelled.'
+      : str(detail['error_code']) ? `Failed: ${str(detail['error_code'])}.` : 'Failed.';
+    return counts ? `${how} ${counts}` : how;
+  }
+
+  if (row.action === 'agency_campaign.roster_cleared') {
+    const cleared = num(detail['cleared']);
+    if (detail['roster_state'] === 'unconfirmed' || cleared === null) {
+      return 'Clearing the roster was asked for, and whether it happened could not be confirmed.';
+    }
+    return `${cleared.toLocaleString()} ${cleared === 1 ? 'contact' : 'contacts'} removed from the roster.`;
+  }
+
   if (row.action === 'dnc_entry.created' || row.action === 'dnc_entry.deleted') {
     const scope = str(detail['scope']);
     const verb = row.action === 'dnc_entry.created' ? 'Suppressed' : 'Un-suppressed';

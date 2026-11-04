@@ -187,6 +187,35 @@ describe('activityDetailSummary', () => {
     expect(activityDetailSummary({ ...changed, detail: { fields: [] } })).toBeNull();
   });
 
+  it('reads out a roster upload: the file and its rule, then how it ended (IN8)', () => {
+    const started = row({
+      source: 'master',
+      action: 'agency_campaign.roster_upload_started',
+      detail: { file_name: 'may.csv', mode: 'append', dedupe_column: 'Loan No', dedupe_phones: true },
+    });
+    expect(activityDetailSummary(started))
+      .toBe('Uploaded “may.csv”, adding to the roster, duplicates found on “Loan No”.');
+    expect(activityDetailSummary({ ...started, detail: { file_name: 'may.csv', mode: 'replace', dedupe_column: null } }))
+      .toBe('Uploaded “may.csv”, replacing the roster, duplicates found on the phone number.');
+
+    const counts = { rows_read: 1200, accepted: 1150, rejected: 50, duplicates: 20 };
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_upload_completed', detail: { status: 'completed', ...counts } })))
+      .toBe('1,200 rows read: 1,150 accepted, 50 rejected (20 duplicates).');
+    expect(activityDetailSummary(row({
+      action: 'agency_campaign.roster_upload_failed',
+      detail: { status: 'failed', error_code: 'dnc_unavailable', rows_read: 0, accepted: 0, rejected: 0, duplicates: 0 },
+    }))).toBe('Failed: dnc_unavailable. 0 rows read: 0 accepted, 0 rejected.');
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_upload_failed', detail: { status: 'cancelled' } })))
+      .toBe('Cancelled.');
+  });
+
+  it('says how many contacts a roster clear removed, or that it could not tell', () => {
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_cleared', detail: { roster_state: 'cleared', cleared: 4210 } })))
+      .toBe('4,210 contacts removed from the roster.');
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_cleared', detail: { roster_state: 'unconfirmed', cleared: null } })))
+      .toMatch(/could not be confirmed/);
+  });
+
   it('renders a status transition generically', () => {
     expect(activityDetailSummary(row({ action: 'agency_campaign.stopped', detail: { from: 'running', to: 'stopping' } })))
       .toBe('running → stopping');

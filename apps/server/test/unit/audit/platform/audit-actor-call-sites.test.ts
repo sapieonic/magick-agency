@@ -182,7 +182,12 @@ describe('every auditLogger.log call site derives its actor', () => {
 
     // The pacing leader's callback grace/fallback sweep (contact assignment, CA5): no request,
     // no person; the owner stayed away and the campaign's setting moved the callbacks.
-    expect([...new Set(systemSites)].sort()).toEqual(['agency/pacing/callback-fallback.ts']);
+    // The roster upload's outcome row (IN8): written when the detached ingest run ends, read
+    // back from the job row. No request is in flight by then; the started row names the uploader.
+    expect([...new Set(systemSites)].sort()).toEqual([
+      'agency/agency-ingest-audit.ts',
+      'agency/pacing/callback-fallback.ts',
+    ]);
   });
 
   /**

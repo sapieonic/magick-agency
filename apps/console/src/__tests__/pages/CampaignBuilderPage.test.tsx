@@ -107,6 +107,7 @@ function job(over: Partial<AgencyIngestJob> = {}): AgencyIngestJob {
     rejected_truncated: false,
     error_code: null,
     error_message: null,
+    created_by: '11111111-2222-4333-8444-555555555555',
     created_at: '2026-08-11T10:00:00.000Z',
     started_at: '2026-08-11T10:00:01.000Z',
     finished_at: '2026-08-11T10:04:00.000Z',
