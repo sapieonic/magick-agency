@@ -1,4 +1,8 @@
 import {
+  AGENCY_ASSIGNMENT_COLUMN_NAME_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX,
+  AGENCY_ASSIGNMENT_COUNT_MAX,
   AGENCY_ASSIGNMENT_RANGE_MAX,
   type AgencyAssignmentContactFilter,
   type AgencyAssignmentKind,
@@ -69,28 +73,19 @@ export type BuiltOperation =
   | { ok: false; reason: string };
 
 /*
- * The server's bounds on an operation (`apps/server/src/agency/assignment/operation.ts`,
- * its zod schema), mirrored so the form says so before a round trip. The contract
- * exports only the range bound; these are not on the wire, so they live here.
+ * The server's bounds on an operation come from the contract (`AGENCY_ASSIGNMENT_*_MAX`, the
+ * same constants its zod schema reads), so the form says so before a round trip.
  */
-/** `count` on `count` / `reassign` / `unassign`: 1 to this (`ASSIGNMENT_MAX_COUNT`). */
-export const ASSIGNMENT_COUNT_MAX = 1_000_000;
-/** A `filter` operation's column name, after trimming. */
-export const ASSIGNMENT_COLUMN_NAME_MAX = 200;
-/** A `filter` operation's column values: at most this many. */
-export const ASSIGNMENT_COLUMN_VALUES_MAX = 100;
-/** ...each at most this many characters. */
-export const ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX = 500;
 
-/** A whole number from 1 to {@link ASSIGNMENT_COUNT_MAX} typed in a box, or null. */
+/** A whole number from 1 to {@link AGENCY_ASSIGNMENT_COUNT_MAX} typed in a box, or null. */
 function positiveCount(raw: string): number | null {
   const trimmed = raw.trim();
   if (!/^\d+$/.test(trimmed)) return null;
   const n = Number(trimmed);
-  return Number.isSafeInteger(n) && n >= 1 && n <= ASSIGNMENT_COUNT_MAX ? n : null;
+  return Number.isSafeInteger(n) && n >= 1 && n <= AGENCY_ASSIGNMENT_COUNT_MAX ? n : null;
 }
 
-const COUNT_RANGE = `a whole number from 1 to ${formatCount(ASSIGNMENT_COUNT_MAX)}`;
+const COUNT_RANGE = `a whole number from 1 to ${formatCount(AGENCY_ASSIGNMENT_COUNT_MAX)}`;
 
 /** `North, East` or one per line → `['North', 'East']`, trimmed, blanks and repeats dropped. */
 export function splitValues(raw: string): string[] {
@@ -137,17 +132,17 @@ export function buildOperation(draft: AssignmentDraft, selectedIds: readonly str
       if (columnName || columnValues.length > 0) {
         if (!columnName) return { ok: false, reason: 'Name the column the values are in.' };
         if (columnValues.length === 0) return { ok: false, reason: `Enter at least one value for ${columnName}.` };
-        if (columnName.length > ASSIGNMENT_COLUMN_NAME_MAX) {
-          return { ok: false, reason: `A column name is at most ${ASSIGNMENT_COLUMN_NAME_MAX} characters.` };
+        if (columnName.length > AGENCY_ASSIGNMENT_COLUMN_NAME_MAX) {
+          return { ok: false, reason: `A column name is at most ${AGENCY_ASSIGNMENT_COLUMN_NAME_MAX} characters.` };
         }
-        if (columnValues.length > ASSIGNMENT_COLUMN_VALUES_MAX) {
+        if (columnValues.length > AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX) {
           return {
             ok: false,
-            reason: `Enter at most ${ASSIGNMENT_COLUMN_VALUES_MAX} values at a time (you have ${columnValues.length}).`,
+            reason: `Enter at most ${AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX} values at a time (you have ${columnValues.length}).`,
           };
         }
-        if (columnValues.some((value) => value.length > ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX)) {
-          return { ok: false, reason: `Each value is at most ${ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX} characters.` };
+        if (columnValues.some((value) => value.length > AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX)) {
+          return { ok: false, reason: `Each value is at most ${AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX} characters.` };
         }
         filter.column = { name: columnName, values: columnValues };
       }
@@ -256,7 +251,6 @@ export function operationAgentCount(operation: AgencyAssignmentOperation): numbe
       return operation.agent_user_ids.length;
     case 'count':
     case 'range':
-      return 1;
     case 'reassign':
       return 1;
     case 'unassign':

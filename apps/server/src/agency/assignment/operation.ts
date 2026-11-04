@@ -17,6 +17,11 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import {
+  AGENCY_ASSIGNMENT_AGENTS_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_NAME_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX,
+  AGENCY_ASSIGNMENT_COUNT_MAX,
   AGENCY_ASSIGNMENT_RANGE_MAX,
   type AgencyAssignmentKind,
   type AgencyAssignmentOperation,
@@ -25,17 +30,15 @@ import type { AgencyContactState } from '@magick-agency/contracts/agency';
 import { UUID_RE } from '../../utils/uuid.js';
 import { CONTACT_STATES } from '../spine-filters.js';
 
-/** At most this many agents named in one operation. */
-export const ASSIGNMENT_MAX_AGENTS = 200;
-/** `count` on `count` / `reassign` / `unassign`: at most a million-row roster. */
-export const ASSIGNMENT_MAX_COUNT = 1_000_000;
+// The operation bounds are the contract's (`AGENCY_ASSIGNMENT_*_MAX`): the console's form checks
+// the same constants before a round trip.
 const SEED_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 const uuid = z.string().regex(UUID_RE, 'must be a UUID');
-const agentList = z.array(uuid).min(1).max(ASSIGNMENT_MAX_AGENTS)
+const agentList = z.array(uuid).min(1).max(AGENCY_ASSIGNMENT_AGENTS_MAX)
   .refine((ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length, 'must not repeat an agent');
 const contactIds = z.array(uuid).min(1).max(AGENCY_ASSIGNMENT_RANGE_MAX);
-const count = z.number().int().min(1).max(ASSIGNMENT_MAX_COUNT);
+const count = z.number().int().min(1).max(AGENCY_ASSIGNMENT_COUNT_MAX);
 const seed = z.string().regex(SEED_RE, 'must be 1-64 letters, digits, - or _');
 const grouping = { group_same_number: z.boolean().optional() };
 
@@ -43,8 +46,8 @@ const contactFilter = z.object({
   states: z.array(z.enum(CONTACT_STATES as unknown as [AgencyContactState, ...AgencyContactState[]])).min(1).max(6).optional(),
   last_dispositions: z.array(z.string().min(1).max(50)).min(1).max(50).optional(),
   column: z.object({
-    name: z.string().trim().min(1).max(200),
-    values: z.array(z.string().max(500)).min(1).max(100),
+    name: z.string().trim().min(1).max(AGENCY_ASSIGNMENT_COLUMN_NAME_MAX),
+    values: z.array(z.string().max(AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX)).min(1).max(AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX),
   }).strict().optional(),
 }).strict().refine((f) => f.states !== undefined || f.last_dispositions !== undefined || f.column !== undefined, {
   message: 'set at least one of states, last_dispositions, column',
