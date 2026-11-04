@@ -435,14 +435,17 @@ class MyContactsController extends Notifier<MyContactsState> {
     final request = selectedOnly
         ? AgentRetryRequest.selected(campaignId: campaignId, contactIds: ids)
         : AgentRetryRequest.all(campaignId: campaignId);
-    final requested = selectedOnly ? ids.length : (s.summary?.retry.eligible ?? 0);
+    // The console's property set exactly (`EventCatalog` in apps/console/src/analytics/events.ts).
+    final event = <String, Object?>{
+      'campaign_id': campaignId,
+      'scope': selectedOnly ? 'selected' : 'all',
+      'requested': selectedOnly ? ids.length : (s.summary?.retry.eligible ?? 0),
+    };
     state = s.copyWith(retrying: true);
     try {
       final response = await _api.retry(request);
       Telemetry.event('agency_agent_retry_requested', {
-        'campaign_id': campaignId,
-        'scope': selectedOnly ? 'selected' : 'all',
-        'requested': requested,
+        ...event,
         'outcome': 'reopened',
         'reopened': response.reopened,
         'skipped_total': response.skippedTotal,
@@ -454,9 +457,7 @@ class MyContactsController extends Notifier<MyContactsState> {
       return RetryResult(ok: true, message: MyContactsCopy.retryDone(response));
     } on Exception catch (e) {
       Telemetry.event('agency_agent_retry_requested', {
-        'campaign_id': campaignId,
-        'scope': selectedOnly ? 'selected' : 'all',
-        'requested': requested,
+        ...event,
         'outcome': 'refused',
         'reopened': 0,
         'skipped_total': 0,
