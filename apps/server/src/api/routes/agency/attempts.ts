@@ -18,6 +18,7 @@ import {
   overrideGrantOf,
 } from '../../../agency/contact-overrides.js';
 import { markDnc } from '../../../agency/dnc-mark.js';
+import { ownerModeOf } from '../../../agency/pacing/agent-queue.js';
 import type { AgencyRuntime } from '../../../agency/runtime.js';
 import type {
   AgencyDisposition,
@@ -267,7 +268,7 @@ export async function registerAttemptRoutes(sub: FastifyInstance, runtime: Agenc
       : null;
     const callbackOwner = decision.reason === 'callback_scheduled'
       && resolved.entry.requires_datetime === true
-      && (campaign.assignment_mode === 'strict' || campaign.assignment_mode === 'preferred')
+      && ownerModeOf(campaign) !== null
       && reservedUserId
       ? { userId: reservedUserId }
       : null;
