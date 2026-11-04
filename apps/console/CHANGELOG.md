@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/sapieonic/magick-agency/compare/console-v0.6.0...console-v0.7.0) (2026-11-04)
+
+
+### Features
+
+* **server:** serve the API on its own host ([#36](https://github.com/sapieonic/magick-agency/issues/36)) ([1beb73c](https://github.com/sapieonic/magick-agency/commit/1beb73c7e9cee6e3dbeefdf767f883493cf9b654))
+
 ## [0.6.0](https://github.com/sapieonic/magick-agency/compare/console-v0.5.0...console-v0.6.0) (2026-11-04)
 
 

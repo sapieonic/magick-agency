@@ -1,6 +1,6 @@
 {
-  "apps/server": "0.6.0",
-  "apps/console": "0.6.0",
+  "apps/server": "0.7.0",
+  "apps/console": "0.7.0",
   "apps/super-admin": "0.2.4",
   "packages/contracts": "0.6.0",
   "packages/db": "0.6.0",
