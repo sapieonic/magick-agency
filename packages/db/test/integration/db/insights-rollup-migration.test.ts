@@ -3,6 +3,7 @@
 // change what a bucket holds marks exactly the buckets it touched (and that writes which cannot
 // mark nothing), the backfill, and down then up. The recompute and the reads are the server's
 // (apps/server/test/integration/agency/insights-rollup-*.test.ts).
+import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../../../src/migrations-dir.js';
@@ -165,7 +166,9 @@ describe('0012 — insights rollup', () => {
   });
 
   it('down drops everything; up re-applies and backfills a mark per bucket with a placed attempt', async () => {
-    await migrate('down', 1);
+    // Down through 0012, whatever migrations came after it (each later one's down first).
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    await migrate('down', files.length - files.indexOf('0012_insights_rollup.sql'));
     const campaign = await insertCampaign();
     const c = campaign['id'] as string;
     const a = await insertContact(c);
