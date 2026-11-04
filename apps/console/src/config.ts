@@ -171,27 +171,14 @@ export const ENDPOINTS = {
       /** The agent's full staffing history, ENDED assignments included. */
       myCampaigns: `${API_BASE}/proxy/agency/my-campaigns`,
       /**
-       * ONE CAMPAIGN, cut by day — the supervisor twin of `myStats`' buckets.
-       *
-       * The only campaign-scoped route in this block, and it is here rather than
-       * built from `agencyCampaigns.ts`' local `AGENCY_BASE` because it is new:
-       * the rule is that `ENDPOINTS` owns URL construction, and the migration
-       * note above describes the routes that predate it, not a licence for the
-       * next one.
-       *
-       * Floored at `agency.supervise`, matching every other campaign-scoped
-       * supervisor read and matching the two sections the charts live on. There
-       * is deliberately NO `my-` twin: an agent has no campaign-wide view, and
-       * the pair only exists where the same question has two subjects.
+       * The Insights tab's seven section reads (decision IN1), all floored at
+       * `agency.supervise`. Campaign-scoped, and here rather than built from
+       * `agencyCampaigns.ts`' local `AGENCY_BASE` because it is new: the rule is
+       * that `ENDPOINTS` owns URL construction. One builder for the family, so
+       * a section name is the only thing that differs between them. There is
+       * deliberately NO `my-` twin: an agent has no campaign-wide view.
        *
        * `campaignId` is encoded for the same reason `userId` is above.
-       */
-      campaignStatsSeries: (campaignId: string) =>
-        `${API_BASE}/proxy/agency/campaigns/${encodeURIComponent(campaignId)}/stats/series`,
-      /**
-       * The Insights tab's seven section reads (decision IN1), all floored at
-       * `agency.supervise`. One builder for the family, so a section name is
-       * the only thing that differs between them.
        */
       campaignInsights: (campaignId: string, section: string) =>
         `${API_BASE}/proxy/agency/campaigns/${encodeURIComponent(campaignId)}/insights/${section}`,

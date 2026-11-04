@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
@@ -11,14 +11,12 @@ import { ConfirmDialog } from '@magick-agency/web-ui/components/ConfirmDialog';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { CampaignHealthStrip } from '../../components/agency/CampaignHealthStrip';
-import { CampaignPerformance } from '../../components/agency/CampaignPerformance';
 import { AgentFloor } from '../../components/agency/AgentFloor';
 import { CampaignAgentAssignments } from '../../components/agency/CampaignAgentAssignments';
 import { CampaignAssignmentProgress } from '../../components/agency/CampaignAssignmentProgress';
 import { useFeatureFlagEnabled } from '../../hooks/useFeatureFlagEnabled';
 import { CONTACT_ASSIGNMENT_FLAG } from '../../utils/agencyAssignmentCopy';
 import { CampaignTabs } from '../../components/agency/CampaignTabs';
-import { CampaignSeriesSection } from '../../components/agency/CampaignSeriesSection';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_RETRY_SELECTOR, retryCreatedToast } from '../../utils/agencyRetrySelector';
 import { campaignPanelFromPath } from '../../utils/agencyCampaignTabs';
@@ -38,7 +36,7 @@ import {
 } from '../../utils/agencyCampaignControls';
 import { campaignTimeline } from '../../utils/agencyCampaignOverview';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
-import { CampaignOverviewPanel } from './campaign-detail/CampaignOverviewPanel';
+import { InsightsPanel } from './campaign-detail/insights/InsightsPanel';
 import { useAgencyCampaignDetail } from './campaign-detail/useAgencyCampaignDetail';
 import styles from './AgencyCampaignDetailPage.module.css';
 
@@ -60,10 +58,10 @@ export function AgencyCampaignDetailPage() {
   const { showToast, showErrorToast } = useToast();
 
   /*
-    Which of this page's three panels is on screen, read from the URL rather
-    than held in state: `…/campaigns/:id`, `…/performance` and `…/agents` all
-    mount this component, so a section survives a refresh and can be sent to a
-    colleague. See `campaignPanelFromPath`.
+    Which of this page's two panels is on screen, read from the URL rather
+    than held in state: `…/insights` and `…/agents` both mount this component,
+    so a section survives a refresh and can be sent to a colleague. See
+    `campaignPanelFromPath`.
   */
   const panel = campaignPanelFromPath(pathname);
 
@@ -82,8 +80,8 @@ export function AgencyCampaignDetailPage() {
   const [busy, setBusy] = useState<Action | null>(null);
   const [confirming, setConfirming] = useState<Action | null>(null);
   const [retryOpen, setRetryOpen] = useState(false);
-  /** Bumped by the Refresh control so the chart sections re-read too. */
-  const [seriesRefresh, setSeriesRefresh] = useState(0);
+  /** Bumped by the Refresh control so the Insights sections re-read too. */
+  const [insightsRefresh, setInsightsRefresh] = useState(0);
 
   /**
    * Synchronous with the click. `setBusy` is a render, so two Start clicks in
@@ -305,13 +303,13 @@ export function AgencyCampaignDetailPage() {
         onRefresh={() => {
           void load();
           /*
-            The charts fetch separately and deliberately do not poll, so
-            without this Refresh moved the counters and the "Updated" stamp
-            while the day-by-day charts silently kept showing the older
-            read. Bumped only here — never on the 10s poll, which must not
-            re-request up to 92 buckets every tick.
+            The Insights range sections fetch separately and deliberately do
+            not poll, so without this Refresh moved the counters and the
+            "Updated" stamp while those sections silently kept showing the
+            older read. Bumped only here — never on the 10s poll, which must
+            not re-read up to 92 days every tick.
           */
-          setSeriesRefresh((n) => n + 1);
+          setInsightsRefresh((n) => n + 1);
         }}
       />
 
@@ -369,49 +367,25 @@ export function AgencyCampaignDetailPage() {
         campaignStatus={campaign.status}
       />
 
-      {panel === 'overview' && (
-        <CampaignOverviewPanel
-          campaign={campaign}
-          stats={stats}
-          ending={ending}
-          now={now}
-          role={role}
-          seriesRefresh={seriesRefresh}
-        />
-      )}
-
       {/*
-'s derived figures on their own section. They are read at a
-        different moment from the counters — "is this campaign healthy" rather
-        than "where has the list got to" — and putting them under the counters
-        meant a supervisor scrolled past four numbers with denominators and
-        exclusions on the way to the floor.
+        Insights (decision IN1): the one analytic surface, which replaced
+        Overview and Performance. Its reads are floored at `agency.supervise`, so
+        a role below it that arrives on the URL by hand is sent to Agents rather
+        than shown a panel of 403s.
       */}
-      {panel === 'performance' && (
-        <section className={styles.panelBody} aria-label="Campaign performance">
-          <CampaignPerformance stats={stats} wrapupSeconds={campaign.wrapup_seconds} />
-
-          {/*
-            The rate trend is a SIBLING of the card above, not a section inside
-            it, and the reason is that `CampaignPerformance` has a second
-            caller: `AgencyAnalyticsPage` renders it once per campaign down a
-            list. A fetch inside that component would be one series request per
-            row on a page that never asked the question — so the component stays
-            a pure function of the stats it is handed, and the screen that DOES
-            want the trend mounts it beside it.
-
-            It answers what the readouts above cannot: every one of them is a
-            lifetime average, which cannot tell a campaign that fell off this
-            morning from one that has been steady all week.
-          */}
-          <CampaignSeriesSection
-            campaignId={campaign.id}
-            campaign={campaign}
-            chart="rates"
-            reloadToken={seriesRefresh}
-          />
-        </section>
-      )}
+      {panel === 'insights' && (canControl ? (
+        <InsightsPanel
+          campaignId={campaign.id}
+          canRetry={canRetry}
+          onRetry={() => setRetryOpen(true)}
+          refreshToken={insightsRefresh}
+          shellStatus={campaign.status}
+        />
+      ) : role === undefined ? (
+        <LoadingSpinner />
+      ) : (
+        <Navigate to={`/agency/campaigns/${campaign.id}/agents`} replace />
+      ))}
 
       {/*
         The floor and the roster together, because the question they answer is a

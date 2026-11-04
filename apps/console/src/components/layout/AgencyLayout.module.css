@@ -135,3 +135,26 @@
     z-index: 99;
   }
 }
+
+/*
+  Print (the campaign Insights tab's Print button, or the browser's own): the
+  page without the shell. No sidebar, no top bar, and the fixed-height,
+  overflow-hidden frame released so the content runs onto as many pages as it
+  needs instead of being clipped to one screen.
+*/
+@media print {
+  .sidebar,
+  .topbar,
+  .overlay {
+    display: none !important;
+  }
+
+  .layout,
+  .main,
+  .content {
+    display: block;
+    height: auto;
+    overflow: visible;
+    margin-left: 0;
+  }
+}

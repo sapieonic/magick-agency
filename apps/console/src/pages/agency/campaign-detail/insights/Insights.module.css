@@ -1,0 +1,701 @@
+/*
+  The Insights tab. Built on the console's own tokens (`packages/web-ui/src/global.css`)
+  and the detail page's card language: one bordered surface per panel, a display
+  heading, a muted caption, tabular figures. Status colours (`--success`,
+  `--warning`, `--danger`) mean good / watch / bad and nothing else.
+*/
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ── Toolbar: range, stamp, refresh, print ─────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+
+.rangeGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.segment {
+  min-height: 32px;
+  padding: 6px 12px;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.segment:last-child {
+  border-right: none;
+}
+
+.segment[aria-pressed='true'] {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.customRange {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.dateInput {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.toolbarRight {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.stamp {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.rangeNote {
+  margin-top: -8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.rangeError {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* ── Panels ────────────────────────────────────────────────────────────── */
+
+.grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.panelHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.panelTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.panelSub {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.panelActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.subTitle {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.sectionState {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.sectionError {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* ── KPIs ──────────────────────────────────────────────────────────────── */
+
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+}
+
+.kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+}
+
+.kpiLabel {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.kpiValue {
+  color: var(--text-primary);
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.kpiValue[data-withheld='true'] {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.kpiSub {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* A number that opens its list. Underlined on hover only: a page of underlines
+   reads as a page of warnings. */
+.numLink {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted var(--border-strong);
+}
+
+.numLink:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Progress and funnel ───────────────────────────────────────────────── */
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.track {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+
+.seg {
+  height: 100%;
+}
+
+.segCompleted { background: var(--success); }
+.segExhausted { background: var(--orange); }
+.segSuppressed { background: var(--danger); }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--text-muted);
+}
+
+.funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.funnelRow {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) minmax(0, 2fr) minmax(64px, auto);
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.funnelLabel {
+  color: var(--text-secondary);
+}
+
+.funnelRow[data-indent='true'] .funnelLabel {
+  padding-left: 14px;
+  color: var(--text-muted);
+}
+
+.funnelBar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  overflow: hidden;
+}
+
+.funnelFill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.funnelRow[data-indent='true'] .funnelFill {
+  opacity: 0.55;
+}
+
+.funnelValue {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Reconciliation chips and callouts ─────────────────────────────────── */
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.chip[data-ok='true'] {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.chip[data-ok='false'] {
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.callouts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.callout {
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.callout[data-tone='warn'] {
+  border-left-color: var(--warning);
+  background: var(--warning-subtle);
+}
+
+.callout[data-tone='bad'] {
+  border-left-color: var(--danger);
+  background: var(--danger-subtle);
+}
+
+.callout[data-tone='ok'] {
+  border-left-color: var(--success);
+  background: var(--success-subtle);
+}
+
+/* ── Draft checklist ───────────────────────────────────────────────────── */
+
+.checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-tertiary);
+  font-size: 13px;
+}
+
+.checkIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.checkIcon[data-result='pass'] { background: var(--success-subtle); color: var(--success); }
+.checkIcon[data-result='warn'] { background: var(--warning-subtle); color: var(--warning); }
+.checkIcon[data-result='fail'] { background: var(--danger-subtle); color: var(--danger); }
+
+.checkTitle {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.checkDetail {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.fixLink {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── Tables ────────────────────────────────────────────────────────────── */
+
+.tableWrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.table th,
+.table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-light);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table thead th {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.table [data-num='true'] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.table tbody tr:hover {
+  background: var(--bg-tertiary);
+}
+
+.table tr[data-kind='unassigned'] th,
+.table tr[data-kind='unassigned'] td {
+  color: var(--text-muted);
+}
+
+.table tr[data-kind='total'] th,
+.table tr[data-kind='total'] td {
+  border-top: 2px solid var(--border);
+  font-weight: 700;
+}
+
+.sortButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.flag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.stateDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.stateDot[data-state='on_call'] { background: var(--ember); }
+.stateDot[data-state='wrapup'] { background: var(--info); }
+.stateDot[data-state='available'],
+.stateDot[data-state='reserved'] { background: var(--success); }
+.stateDot[data-state='break'] { background: var(--warning); }
+
+.success {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.historyList {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* ── Charts ────────────────────────────────────────────────────────────── */
+
+.chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plot {
+  overflow-x: auto;
+}
+
+.svg {
+  display: block;
+  max-width: 100%;
+  min-width: 320px;
+  height: auto;
+}
+
+.grid { stroke: var(--border-light); stroke-width: 1; }
+.axis { stroke: var(--border); stroke-width: 1; }
+
+.tick {
+  fill: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.bar { fill: var(--accent); opacity: 0.6; }
+.line { fill: none; stroke: var(--ember); stroke-width: 2; }
+.dot { fill: var(--ember); }
+.ceiling { stroke: var(--danger); stroke-width: 1.5; stroke-dasharray: 4 3; }
+
+.swatchBar { background: var(--accent); opacity: 0.6; }
+.swatchLine { background: var(--ember); }
+.swatchCeiling { background: var(--danger); }
+
+.meter {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+}
+
+.meterFill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--success);
+}
+
+.meterFill[data-over='true'] {
+  background: var(--danger);
+}
+
+.chartControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.disclosure {
+  align-self: flex-start;
+  min-height: 0;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* ── Print ─────────────────────────────────────────────────────────────── */
+
+@media print {
+  /* The breadcrumb trail above the page is navigation too. */
+  :global(nav[aria-label='Breadcrumb']) {
+    display: none !important;
+  }
+
+  /* No controls: the printout is the numbers, not the buttons that move them. */
+  .toolbarRight,
+  .segmented,
+  .customRange,
+  .panelActions,
+  .fixLink,
+  .disclosure,
+  .chartControls,
+  .sortButton svg {
+    display: none !important;
+  }
+
+  .panel {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none;
+  }
+
+  .grid2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tableWrap,
+  .plot,
+  .historyList {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .numLink {
+    border-bottom: none;
+  }
+}

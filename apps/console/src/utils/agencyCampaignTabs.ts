@@ -18,10 +18,18 @@ import type { Role } from '../types/auth';
  *
  * ── Sections are URLs, not component state ──────────────────────────────────
  * Every tab is a real path, so a section survives a refresh, can be sent to a
- * colleague, and answers the browser's back button. Three of them
- * (`overview`, `performance`, `agents`) are panels of the detail page itself;
- * the other four are the standalone screens that already existed at their own
- * routes and are unchanged apart from growing this bar.
+ * colleague, and answers the browser's back button. Two of them (`insights`,
+ * `agents`) are panels of the detail page itself; the others are the
+ * standalone screens that already existed at their own routes and are
+ * unchanged apart from growing this bar.
+ *
+ * ── Insights replaced Overview and Performance (decision IN1) ──────────────
+ * One analytic surface, so two screens can no longer disagree about the same
+ * campaign. Its reads are floored at `agency.supervise`, so the tab is too:
+ * the old Overview and Performance were ungated and their chart 403'd for a
+ * viewer or operator. Their URLs (`/agency/campaigns/:id` and `…/performance`)
+ * redirect to Insights for a supervisor and to Agents, the one panel every
+ * campaign reader can open, for everyone else (`campaignLandingPath`).
  *
  * ── The permission on each tab is the one the API enforces ───────────────────
  * Not a looser proxy for it. A tab that renders and then 403s on arrival is a
@@ -29,8 +37,7 @@ import type { Role } from '../types/auth';
  * follow.
  */
 export type CampaignTabId =
-  | 'overview'
-  | 'performance'
+  | 'insights'
   | 'agents'
   | 'contacts'
   | 'attempts'
@@ -38,8 +45,8 @@ export type CampaignTabId =
   | 'activity'
   | 'settings';
 
-/** The three tabs the detail page renders itself, in tab order. */
-export const CAMPAIGN_PANEL_IDS = ['overview', 'performance', 'agents'] as const;
+/** The two tabs the detail page renders itself, in tab order. */
+export const CAMPAIGN_PANEL_IDS = ['insights', 'agents'] as const;
 export type CampaignPanelId = (typeof CAMPAIGN_PANEL_IDS)[number];
 
 export interface CampaignTabDefinition {
@@ -60,18 +67,12 @@ export interface CampaignTabDefinition {
 
 export const CAMPAIGN_TABS: CampaignTabDefinition[] = [
   {
-    id: 'overview',
-    label: 'Overview',
-    hint: 'How the contact list is moving, and the account limits around it',
-    permission: null,
-    path: (id) => `/agency/campaigns/${id}`,
-  },
-  {
-    id: 'performance',
-    label: 'Performance',
-    hint: 'Connect rate, handle time and where the connected calls went',
-    permission: null,
-    path: (id) => `/agency/campaigns/${id}/performance`,
+    id: 'insights',
+    label: 'Insights',
+    hint: 'The whole campaign in one place: progress, allocation, calls, agents, trends and health',
+    // Every `…/insights/*` read is floored at `agency.supervise`.
+    permission: 'agency.supervise',
+    path: (id) => `/agency/campaigns/${id}/insights`,
   },
   {
     id: 'agents',
@@ -147,23 +148,33 @@ export function visibleCampaignTabs(
 }
 
 /**
+ * Where `/agency/campaigns/:id` (and the retired `…/performance`) lands a role:
+ * Insights when its reads would answer, else the Agents panel, which every role
+ * that can open a campaign can read. Never a tab that would 403 on arrival.
+ */
+export function campaignLandingPath(campaignId: string, role: Role | undefined): string {
+  const insights = CAMPAIGN_TABS.find((tab) => tab.id === 'insights');
+  const canInsights = insights?.permission ? hasPermission(role, insights.permission) : true;
+  return canInsights ? `/agency/campaigns/${campaignId}/insights` : `/agency/campaigns/${campaignId}/agents`;
+}
+
+/**
  * Which panel of the detail page a path is asking for.
  *
- * Derived from the URL rather than passed in as a route prop so that a single
- * route registration (`campaigns/:id`) and the two panel routes share one
- * source of truth — and so a test that mounts only the base route still lands
- * on `overview` instead of rendering nothing.
+ * Derived from the URL rather than passed in as a route prop so that the two
+ * panel routes share one source of truth.
  *
  * ── Read by POSITION, never by the last segment ─────────────────────────────
  * The panel is the segment that follows the campaign id — `agency/campaigns/
  * <id>/<panel>` — and nothing else. Matching the tail of the path instead
  * ("does it end in `agents`?") conflates a campaign id with a panel keyword:
  * a campaign whose id is literally `agents` would render the Agents panel on
- * its own overview URL, and highlight the wrong tab while doing it. The server owns
+ * the wrong URL, and highlight the wrong tab while doing it. The server owns
  * the id format and this repo cannot see it, so the id is treated as opaque.
  *
- * Anything unrecognised — a hand-edited URL, a future panel this build does
- * not have — falls back to the overview rather than rendering nothing.
+ * Anything unrecognised falls back to Agents, the one panel every campaign
+ * reader can open, rather than rendering nothing. (The bare campaign path never
+ * reaches the page: the router redirects it with `campaignLandingPath`.)
  */
 export function campaignPanelFromPath(pathname: string): CampaignPanelId {
   const segments = pathname.split('/').filter(Boolean);
@@ -172,7 +183,7 @@ export function campaignPanelFromPath(pathname: string): CampaignPanelId {
   const anchor = segments.findIndex(
     (segment, i) => segment === 'campaigns' && segments[i - 1] === 'agency',
   );
-  if (anchor === -1) return 'overview';
+  if (anchor === -1) return 'agents';
   const panel = segments[anchor + 2];
-  return CAMPAIGN_PANEL_IDS.find((id) => id === panel) ?? 'overview';
+  return CAMPAIGN_PANEL_IDS.find((id) => id === panel) ?? 'agents';
 }

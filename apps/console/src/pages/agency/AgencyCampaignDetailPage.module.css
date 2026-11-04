@@ -846,3 +846,10 @@ a.actionButton {
     transition: none;
   }
 }
+
+/* Print: the controls that change the campaign are not part of a printout of it. */
+@media print {
+  .actions {
+    display: none !important;
+  }
+}
