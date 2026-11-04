@@ -493,9 +493,7 @@ outcome-granted overrides.
 - **`agency_contacts.override_*`**: the latest override-granting outcome (`override_disposition`),
   what is left of it (`override_extra_attempts` 0–5, `override_retry_delay`,
   `override_calling_hours`) and `override_granted_at`. DNC has no column: never overridable.
-- **Index `idx_agency_contacts_assignee`** `(campaign_id, assigned_user_id, state,
-  next_attempt_at)`: the per-agent claim, the preferred-mode pool claim (`assigned_user_id IS
-  NULL`) and per-agent counts. `idx_agency_contacts_dialable` still serves the pool-mode claim.
+- **Index `idx_agency_contacts_assignee`**: built by 0010 (below), not here.
 - **`agency_contact_assignment_events`**: one row per contact per owner change (`from_user_id`,
   `to_user_id`, NULL = pool; `actor_user_id`, NULL = system; `reason`, CHECKed; `batch_id`
   shared by one operation, whose `platform_audit_log` row carries the same id). Cascades from the
@@ -505,12 +503,41 @@ outcome-granted overrides.
   `override_note` (10–500 characters, the calling-hours note).
 - The bucket and retry-eligibility rules every read uses are SQL fragments in
   `apps/server/src/db/repositories/agency/assignment-sql.ts`.
+- **Locking.** Catalog changes only, so its ACCESS EXCLUSIVE on `agency_contacts`,
+  `agency_call_attempts` and `agency_campaigns` lasts milliseconds (~25 ms on 1M contacts with 1M
+  attempts, against ~2 s with the scans and the index build in it). The five CHECKs on
+  `agency_contacts` and `agency_call_attempts` (`ck_agency_contact_assigned_at`,
+  `ck_agency_contact_agent_retry_rounds_used`, `ck_agency_contact_override_extra_attempts`,
+  `ck_agency_attempt_override_applied`, `ck_agency_attempt_override_note`) are added `NOT
+  VALID`: enforced on every new write, the existing rows satisfying them through the column
+  defaults. The `agency_campaigns` CHECKs are validated here (one row per campaign).
 
-**Down** drops the three attempt columns and their CHECKs, the history table, the assignee index,
-the contact columns and the campaign settings with their CHECKs; contacts and their attempts
-survive, unowned. **Tests**: `test/integration/db/contact-assignment-migration.test.ts` and the
-down → up suite (`test/integration/baseline-down-up.test.ts`, including a Down with assigned
-contacts and their history present).
+**Down** drops the three attempt columns and their CHECKs, the history table, the contact columns
+and the campaign settings with their CHECKs; contacts and their attempts survive, unowned.
+**Tests**: `test/integration/db/contact-assignment-migration.test.ts` and the down → up suite
+(`test/integration/baseline-down-up.test.ts`, including a Down with assigned contacts and their
+history present, and 0009 applied alone: the five CHECKs not validated yet refusing bad writes).
+
+### 0010 — `migrations/0010_contact_assignment_index_and_checks.sql`
+
+The work over contact assignment's existing rows, kept out of 0009's ACCESS EXCLUSIVE. Its own
+transaction: the image's runner (`apps/server/src/migrate.ts`) commits each file separately. The
+node-pg-migrate CLI (`pnpm migrate:up`) puts every pending file in one transaction by default;
+pass `--no-single-transaction` to it on a large roster.
+
+- **`VALIDATE CONSTRAINT`** for the five `NOT VALID` CHECKs of 0009. Each scans its table under
+  SHARE UPDATE EXCLUSIVE (reads and writes proceed); afterwards `pg_constraint.convalidated` is
+  true for all. Cannot fail: rows written since 0009 were checked, older rows hold the defaults.
+- **Index `idx_agency_contacts_assignee`** `(campaign_id, assigned_user_id, state,
+  next_attempt_at)`: the per-agent claim, the preferred-mode pool claim (`assigned_user_id IS
+  NULL`) and per-agent counts. `idx_agency_contacts_dialable` still serves the pool-mode claim.
+  Plain `CREATE INDEX`, as 0003's: SHARE on `agency_contacts` while it builds (reads proceed,
+  writes wait). ~0.6 s on 1M contacts, plus ~0.12–0.18 s per VALIDATE.
+
+**Down** drops the index. The CHECKs stay validated (a constraint cannot be marked `NOT VALID`
+again; 0009's Down drops them). **Tests**: `test/integration/db/contact-assignment-migration.test.ts`
+(every 0009 CHECK validated, the index definition) and the down → up suite (0009 alone, then 0010
+over rows that predate both).
 
 
 ## Tests

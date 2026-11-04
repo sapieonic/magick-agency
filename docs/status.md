@@ -583,10 +583,12 @@ the ask; inbound routing out of scope). Behind `agency_contact_assignment_enable
 decisions CA1–CA15 in [`decisions.md`](decisions.md) §4, "Contact assignment". Console and agent
 app.
 
-- Migration `0009_contact_assignment.sql` (seven campaign settings, the contact's owner, retry
-  rounds and override columns, `idx_agency_contacts_assignee`, the history table
-  `agency_contact_assignment_events`, the attempt's `agent_manual` / `override_applied` /
-  `override_note`), inventoried in `packages/db/BASELINE.md` and tested down and up. Contracts:
+- Migrations `0009_contact_assignment.sql` (seven campaign settings, the contact's owner, retry
+  rounds and override columns, the history table `agency_contact_assignment_events`, the
+  attempt's `agent_manual` / `override_applied` / `override_note`; catalog changes only, its
+  contact and attempt CHECKs added `NOT VALID`) and `0010_contact_assignment_index_and_checks.sql`
+  (validates those CHECKs and builds `idx_agency_contacts_assignee` in its own transaction, outside
+  0009's ACCESS EXCLUSIVE), inventoried in `packages/db/BASELINE.md` and tested down and up. Contracts:
   `agency/assignment.ts`, `api/agency/assignment.ts` (eight routes, both refusal unions), the
   `queue` station frame, the disposition `override`, the roster's `assigned_to` filter, the flag,
   the permission `agency.contacts.own`, agent fixtures and Dart literals.
@@ -735,6 +737,12 @@ inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
 | `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean, `contracts-literals --check` up to date | — |
+
+After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
+assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest
+lane 1743 passed + 9 expected fail + 1 failed (185 files), the one failure being the scale test
+below timing out at 20 s (alone: 18 passed, that test in ~1.1 s); `pnpm lint` clean,
+`pnpm test:release` 10 pass.
 
 **Open: one scale test times out in some full runs.** `assignment-repository.test.ts` "splits
 10,000 contacts across 5 agents" takes about 1.1 s alone, but in 2 of 4 full rest-lane runs on

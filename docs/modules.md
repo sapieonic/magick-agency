@@ -1207,17 +1207,18 @@ Files: `single-flight.ts`, `sql-update.ts`, `transaction.ts`, `ttl-cache.ts`
 ### Cross-cutting tests (`packages/db`)
 
 Scenario, flow, guard and setup tests that span several modules. The migrations themselves are SQL
-files in `packages/db/migrations/`, `0001_baseline.sql` to `0009_contact_assignment.sql` (contact
-assignment's; tested by `db/contact-assignment-migration.test.ts`; `0008_wrapup_redial.sql`, the
-wrap-up redial's, by `db/wrapup-redial-migration.test.ts`).
+files in `packages/db/migrations/`, `0001_baseline.sql` to
+`0010_contact_assignment_index_and_checks.sql` (0009 and 0010 are contact assignment's; tested by
+`db/contact-assignment-migration.test.ts`; `0008_wrapup_redial.sql`, the wrap-up redial's, by
+`db/wrapup-redial-migration.test.ts`).
 
 | Test file | Cases |
 |---|---|
 | `packages/db/test/integration/agency/webrtc-call-scope-isolation.test.ts` | ~14 |
 | `packages/db/test/integration/db/attempt-indexes-migration.test.ts` | 4 |
-| `packages/db/test/integration/baseline-down-up.test.ts` | 7 |
+| `packages/db/test/integration/baseline-down-up.test.ts` | 8 |
 | `packages/db/test/integration/baseline.test.ts` | ~55 |
-| `packages/db/test/integration/db/contact-assignment-migration.test.ts` | 14 |
+| `packages/db/test/integration/db/contact-assignment-migration.test.ts` | 15 |
 | `packages/db/test/integration/db/contacts-in-flight-index-migration.test.ts` | 1 |
 | `packages/db/test/integration/db/softphone-migration.test.ts` | 16 |
 | `packages/db/test/integration/db/agent-session-client-kind-migration.test.ts` | 2 |

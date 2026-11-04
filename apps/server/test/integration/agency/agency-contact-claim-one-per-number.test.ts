@@ -65,7 +65,7 @@ describe('agencyContactRepository.claimDialable: one live call per number', () =
 
     const claimed = await agencyContactRepository.claimDialable(campaign.id, 3);
     // Which contacts, not their order: `UPDATE … RETURNING` promises none, and the order follows
-    // heap placement (seen to flip in a combined run once 0009's index served the busy probe).
+    // heap placement (seen to flip in a combined run once idx_agency_contacts_assignee served the busy probe).
     expect(claimed.map((c) => c.id).sort()).toEqual([a!.id, b!.id].sort());
 
     const { rows } = await getTestPool().query<{ state: string }>(
