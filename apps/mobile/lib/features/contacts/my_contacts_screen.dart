@@ -15,6 +15,7 @@ import '../../ui/primitives.dart';
 import '../calls/logic/debouncer.dart';
 import '../campaigns/assignment_entry.dart' show campaignDisplayName;
 import '../campaigns/campaigns_providers.dart';
+import '../performance/logic/en_in_format.dart';
 import '../performance/performance_controller.dart' show statsClockProvider;
 import '../station/logic/format.dart' show formatDueAt, formatPhone;
 import '../station/station_copy.dart';
@@ -375,8 +376,8 @@ class _SummaryCard extends StatelessWidget {
               spacing: Space.md,
               runSpacing: Space.xs,
               children: [
-                Text('${MyContactsCopy.total}: ${s.total}', key: const Key('summary-total'), style: text.titleSmall),
-                Text('${MyContactsCopy.dueNow}: ${s.dueNow}', key: const Key('summary-due'), style: text.titleSmall),
+                Text('${MyContactsCopy.total}: ${EnIn.count(s.total)}', key: const Key('summary-total'), style: text.titleSmall),
+                Text('${MyContactsCopy.dueNow}: ${EnIn.count(s.dueNow)}', key: const Key('summary-due'), style: text.titleSmall),
               ],
             ),
             if (!queue.due && s.assignmentMode.hasOwnQueue) ...[
@@ -396,7 +397,7 @@ class _SummaryCard extends StatelessWidget {
                 for (final b in [...shown, if (s.counts[MyContactBucket.inProgress] > 0) MyContactBucket.inProgress])
                   FilterChip(
                     key: Key('count-${b.wire}'),
-                    label: Text('${MyContactsCopy.bucketLabel(b)} ${s.counts[b]}'),
+                    label: Text('${MyContactsCopy.bucketLabel(b)} ${EnIn.count(s.counts[b])}'),
                     selected: filters.buckets.contains(b),
                     showCheckmark: false,
                     onSelected: (_) => onBucket(b),
