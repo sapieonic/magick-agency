@@ -2,8 +2,11 @@
 // (50,000 attempts by default; LOAD_SCALE=20 is the 1M-attempt run), 50 agents with a state
 // change every ten minutes each, seeded with generate_series; the migration's backfill
 // statement marks every bucket; the job drains the backlog; then every range read for the
-// campaign's LIFETIME, best of three, must finish within the page's budget. Prints the timings
-// and each read's plan (EXPLAIN ANALYZE) for docs/insights.md and BASELINE.md.
+// campaign's LIFETIME, best of three, is checked for correctness and timed. The page's budget is
+// asserted only in a deliberate soak (`LOAD_SCALE` > 1): in the ordinary integration lane the
+// timings are a shared CI host's and a wall-clock budget there is a flake, not a check (the other
+// load suites assert nothing on speed at the default size either). Prints the timings and each
+// read's plan (EXPLAIN ANALYZE) for docs/insights.md and BASELINE.md.
 //
 // Seeding runs with the user triggers on agency_call_attempts DISABLED (the dials_placed counter
 // would otherwise update a contact per attempt), so the backfill is what marks the buckets, as it
@@ -15,7 +18,7 @@ import { appendFileSync } from 'node:fs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS } from '../setup/factories.js';
-import { scaled } from '../../helpers/load-scale.js';
+import { LOAD_SCALE, scaled } from '../../helpers/load-scale.js';
 
 await vi.hoisted(async () => {
   process.env['LOG_LEVEL'] ??= 'warn';
@@ -50,8 +53,10 @@ const AGENTS = 50;
 const DAYS = 30;
 const BASE = new Date('2026-09-01T00:00:00Z');
 const END = new Date(BASE.getTime() + DAYS * 86_400_000);
-/** The page's budget for one lifetime read. */
+/** The page's budget for one lifetime read, asserted only when {@link ASSERT_BUDGET}. */
 const BUDGET_MS = 300;
+/** A deliberate soak (`LOAD_SCALE` > 1) asserts the budget; the default lane times and reports. */
+const ASSERT_BUDGET = LOAD_SCALE > 1;
 
 const pool = () => getTestPool();
 let campaignId = '';
@@ -166,7 +171,7 @@ afterAll(async () => {
 }, 600_000);
 
 describe(`insights rollup at scale (${ATTEMPTS} attempts, one campaign)`, () => {
-  it('backfills, drains, and serves every lifetime read within budget', async () => {
+  it(`backfills, drains, and serves every lifetime read${ASSERT_BUDGET ? ' within budget' : ' (timed; the budget is the soak\'s)'}`, async () => {
     let t0 = performance.now();
     // The migration's backfill statement, for this campaign.
     await pool().query(
@@ -231,7 +236,9 @@ async function timedReads(): Promise<void> {
     await bestOf3('carrier_failures_ms', () => repo.carrierFailures(q));
     await bestOf3('as_of_ms', () => repo.asOf(q));
     const rollupReads = ['activity_ms', 'trends_quarter_hour_ms', 'trends_hour_ms', 'trends_day_ms', 'caller_ids_ms', 'recording_ms', 'carrier_failures_ms', 'as_of_ms'];
-    for (const name of rollupReads) expect(timings[name], name).toBeLessThan(BUDGET_MS);
+    if (ASSERT_BUDGET) for (const name of rollupReads) expect(timings[name], name).toBeLessThan(BUDGET_MS);
+    // At the default size: every read ran and was timed (the report carries the numbers).
+    else for (const name of rollupReads) expect(Number.isFinite(timings[name]), name).toBe(true);
 
     // Not rollup reads: they scale with the range's events and callbacks. Timed and reported.
     await bestOf3('callback_timing_ms', () => repo.callbackTiming({ ...q, now: END }));
