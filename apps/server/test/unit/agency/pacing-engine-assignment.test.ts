@@ -60,7 +60,8 @@ vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn
 const { fallback } = vi.hoisted(() => ({
   fallback: { sweep: vi.fn().mockResolvedValue(0), unstaffed: vi.fn().mockResolvedValue(0) },
 }));
-vi.mock('../../../src/agency/pacing/callback-fallback.js', () => ({
+vi.mock('../../../src/agency/pacing/callback-fallback.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/agency/pacing/callback-fallback.js')>()),
   CALLBACK_FALLBACK_SWEEP_MS: 30_000,
   sweepCallbackFallback: fallback.sweep,
   sweepUnstaffedOwners: fallback.unstaffed,

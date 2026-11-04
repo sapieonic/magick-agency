@@ -27,6 +27,7 @@ import { agencyAssignmentRepository, agencyContactRepository } from '../../db/re
 import { callbackCodes } from '../../db/repositories/agency/assignment-sql.js';
 import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
 import { SYSTEM_AUDIT_ACTOR } from '../../audit/platform/audit-actor.js';
+import type { PlatformAuditAction } from '../../audit/platform/catalog.js';
 import { ownerModeOf } from './agent-queue.js';
 
 const log = createChildLogger({ component: 'agency-callback-fallback' });
@@ -38,21 +39,35 @@ export const CALLBACK_FALLBACK_SWEEP_MS = 30_000;
 export const CALLBACK_FALLBACK_BATCH_LIMIT = 1_000;
 
 /**
- * Sweep one campaign. Returns how many callbacks went to the pool (0 for a `pool` campaign,
- * `wait`, or a campaign that is not running).
+ * Whether {@link sweepCallbackFallback} applies to this campaign: running, owner mode, and
+ * `callback_fallback = 'pool'`.
  */
-export async function sweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<number> {
-  if (campaign.status !== 'running' || !ownerModeOf(campaign) || campaign.callback_fallback !== 'pool') return 0;
-  const codes = callbackCodes(campaign.disposition_catalog);
-  if (codes.length === 0) return 0;
+export function callbackFallbackApplies(campaign: AgencyCampaignRecord): boolean {
+  return campaign.status === 'running' && ownerModeOf(campaign) !== null && campaign.callback_fallback === 'pool';
+}
+
+/**
+ * Whether {@link sweepUnstaffedOwners} applies to this campaign: running, owner mode, and
+ * `on_unstaff = 'return_to_pool'`.
+ */
+export function unstaffedOwnersSweepApplies(campaign: AgencyCampaignRecord): boolean {
+  return campaign.status === 'running' && ownerModeOf(campaign) !== null && campaign.on_unstaff === 'return_to_pool';
+}
+
+/**
+ * One owner sweep's batch: `move` takes contacts to the pool under a fresh batch id; when any
+ * moved, the batch gets one `platform_audit_log` row (the system actor) whose `details` are the
+ * batch id followed by `details(moved, perAgent)`. Returns how many moved.
+ */
+async function returnBatchToPool(
+  campaign: AgencyCampaignRecord,
+  action: PlatformAuditAction,
+  move: (batchId: string) => Promise<readonly { fromUserId: string }[]>,
+  details: (moved: number, perAgent: Record<string, number>) => Record<string, unknown>,
+  message: string,
+): Promise<number> {
   const batchId = randomUUID();
-  const moves = await agencyContactRepository.fallBackOverdueCallbacks({
-    campaignId: campaign.id,
-    graceMinutes: campaign.callback_owner_grace_minutes,
-    callbackCodes: codes,
-    batchId,
-    limit: CALLBACK_FALLBACK_BATCH_LIMIT,
-  });
+  const moves = await move(batchId);
   if (moves.length === 0) return 0;
   const perAgent: Record<string, number> = {};
   for (const m of moves) perAgent[m.fromUserId] = (perAgent[m.fromUserId] ?? 0) + 1;
@@ -60,20 +75,37 @@ export async function sweepCallbackFallback(campaign: AgencyCampaignRecord): Pro
     ...SYSTEM_AUDIT_ACTOR,
     tenant_id: campaign.tenant_id,
     account_id: campaign.account_id,
-    action: 'agency_contacts.callback_fallback',
+    action,
     resource_type: 'agency_campaign',
     resource_id: campaign.id,
     campaign_id: campaign.id,
-    details: {
-      batch_id: batchId,
-      moved: moves.length,
-      grace_minutes: campaign.callback_owner_grace_minutes,
-      per_agent: perAgent,
-    },
+    details: { batch_id: batchId, ...details(moves.length, perAgent) },
   });
-  log.info({ campaignId: campaign.id, batchId, moved: moves.length },
-    'Overdue callbacks whose owner is not on the campaign went to the pool');
+  log.info({ campaignId: campaign.id, batchId, moved: moves.length }, message);
   return moves.length;
+}
+
+/**
+ * Sweep one campaign. Returns how many callbacks went to the pool (0 for a `pool` campaign,
+ * `wait`, or a campaign that is not running).
+ */
+export async function sweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<number> {
+  if (!callbackFallbackApplies(campaign)) return 0;
+  const codes = callbackCodes(campaign.disposition_catalog);
+  if (codes.length === 0) return 0;
+  return returnBatchToPool(
+    campaign,
+    'agency_contacts.callback_fallback',
+    (batchId) => agencyContactRepository.fallBackOverdueCallbacks({
+      campaignId: campaign.id,
+      graceMinutes: campaign.callback_owner_grace_minutes,
+      callbackCodes: codes,
+      batchId,
+      limit: CALLBACK_FALLBACK_BATCH_LIMIT,
+    }),
+    (moved, perAgent) => ({ moved, grace_minutes: campaign.callback_owner_grace_minutes, per_agent: perAgent }),
+    'Overdue callbacks whose owner is not on the campaign went to the pool',
+  );
 }
 
 /** The most contacts one unstaffed-owner sweep moves; the rest go on the next sweep. */
@@ -88,31 +120,14 @@ export const UNSTAFFED_RETURN_BATCH_LIMIT = 1_000;
  * campaign, `keep`, or a campaign that is not running).
  */
 export async function sweepUnstaffedOwners(campaign: AgencyCampaignRecord): Promise<number> {
-  if (campaign.status !== 'running' || !ownerModeOf(campaign) || campaign.on_unstaff !== 'return_to_pool') return 0;
-  const batchId = randomUUID();
-  const moves = await agencyAssignmentRepository.returnUnstaffedOwners({
-    campaignId: campaign.id, batchId, limit: UNSTAFFED_RETURN_BATCH_LIMIT,
-  });
-  if (moves.length === 0) return 0;
-  const perAgent: Record<string, number> = {};
-  for (const m of moves) perAgent[m.fromUserId] = (perAgent[m.fromUserId] ?? 0) + 1;
-  platformAuditLogger.log({
-    ...SYSTEM_AUDIT_ACTOR,
-    tenant_id: campaign.tenant_id,
-    account_id: campaign.account_id,
-    action: 'agency_contacts.unassigned_on_unstaff',
-    resource_type: 'agency_campaign',
-    resource_id: campaign.id,
-    campaign_id: campaign.id,
-    details: {
-      batch_id: batchId,
-      on_unstaff: 'return_to_pool',
-      moved: moves.length,
-      per_agent: perAgent,
-      cause: 'sweep',
-    },
-  });
-  log.info({ campaignId: campaign.id, batchId, moved: moves.length },
-    'Open contacts of agents no longer staffed on the campaign went to the pool');
-  return moves.length;
+  if (!unstaffedOwnersSweepApplies(campaign)) return 0;
+  return returnBatchToPool(
+    campaign,
+    'agency_contacts.unassigned_on_unstaff',
+    (batchId) => agencyAssignmentRepository.returnUnstaffedOwners({
+      campaignId: campaign.id, batchId, limit: UNSTAFFED_RETURN_BATCH_LIMIT,
+    }),
+    (moved, perAgent) => ({ on_unstaff: 'return_to_pool', moved, per_agent: perAgent, cause: 'sweep' }),
+    'Open contacts of agents no longer staffed on the campaign went to the pool',
+  );
 }

@@ -75,9 +75,29 @@ import { PacingRound, accountKeyOf } from './pacing/round.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { ownerModeOf, queueStateKey, readAgentQueues, type AgentQueueReading } from './pacing/agent-queue.js';
-import { CALLBACK_FALLBACK_SWEEP_MS, sweepCallbackFallback, sweepUnstaffedOwners } from './pacing/callback-fallback.js';
+import {
+  CALLBACK_FALLBACK_SWEEP_MS,
+  callbackFallbackApplies,
+  sweepCallbackFallback,
+  sweepUnstaffedOwners,
+  unstaffedOwnersSweepApplies,
+} from './pacing/callback-fallback.js';
 
 const log = createChildLogger({ component: 'agency-pacing-engine' });
+
+/** The owner sweeps, in the order the leader runs them, each with the line its failure logs. */
+const OWNER_SWEEPS = [
+  {
+    applies: unstaffedOwnersSweepApplies,
+    run: sweepUnstaffedOwners,
+    failure: 'Unstaffed-owner sweep failed — retried on a later tick',
+  },
+  {
+    applies: callbackFallbackApplies,
+    run: sweepCallbackFallback,
+    failure: 'Callback fallback sweep failed — retried on a later tick',
+  },
+] as const;
 
 /** How often the leader evaluates a campaign (one ROUND over every campaign it leads). */
 export const TICK_INTERVAL_MS = 250;
@@ -1351,30 +1371,21 @@ export class PacingEngine {
    * `callback_fallback = 'pool'`), at most every {@link CALLBACK_FALLBACK_SWEEP_MS} per
    * campaign. A move wakes the campaign (and any other replica's view of it) as new contacts
    * would. A failure is logged and costs the tick nothing; one sweep's failure does not skip
-   * the other.
+   * the other. Serial, in {@link OWNER_SWEEPS} order.
    */
   private async maybeSweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<void> {
-    if (!ownerModeOf(campaign)) return;
-    const returnUnstaffed = campaign.on_unstaff === 'return_to_pool';
-    const fallBack = campaign.callback_fallback === 'pool';
-    if (!returnUnstaffed && !fallBack) return;
+    const due = OWNER_SWEEPS.filter((sweep) => sweep.applies(campaign));
+    if (due.length === 0) return;
     const now = this.now();
     const last = this.fallbackSweptAt.get(campaign.id);
     if (last !== undefined && now - last < CALLBACK_FALLBACK_SWEEP_MS) return;
     this.fallbackSweptAt.set(campaign.id, now);
     let moved = 0;
-    if (returnUnstaffed) {
+    for (const sweep of due) {
       try {
-        moved += await sweepUnstaffedOwners(campaign);
+        moved += await sweep.run(campaign);
       } catch (err) {
-        log.error({ err, campaignId: campaign.id }, 'Unstaffed-owner sweep failed — retried on a later tick');
-      }
-    }
-    if (fallBack) {
-      try {
-        moved += await sweepCallbackFallback(campaign);
-      } catch (err) {
-        log.error({ err, campaignId: campaign.id }, 'Callback fallback sweep failed — retried on a later tick');
+        log.error({ err, campaignId: campaign.id }, sweep.failure);
       }
     }
     if (moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
