@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentOrder,
+  assignmentCommitSchema,
+  zodDetails,
   decodePreviewToken,
   encodePreviewToken,
   parseAssignmentOperation,
@@ -85,6 +88,25 @@ describe('parseAssignmentOperation', () => {
     expect(receivingAgents(ok({ kind: 'reassign', from_user_id: A, to_user_id: B }))).toEqual([B]);
     expect(receivingAgents(ok({ kind: 'unassign', from_user_id: A }))).toEqual([]);
     expect(receivingAgents(ok({ kind: 'random_split', agent_user_ids: [A, B, C] }))).toEqual([A, B, C]);
+  });
+
+  it('keys details by field path, the first message per path, and a root issue by the root key', () => {
+    const bad = assignmentCommitSchema.safeParse({ extra: 1, preview_token: '' });
+    if (bad.success) throw new Error('expected a refusal');
+    const out = zodDetails(bad.error, 'body');
+    expect(Object.keys(out).sort()).toEqual(['body', 'preview_token']);
+    expect(zodDetails(bad.error)).toHaveProperty('operation');
+  });
+
+  it('orders `per_agent` by the operation\'s own agents, givers included', () => {
+    expect(agentOrder(ok({ kind: 'random_split', agent_user_ids: [B, A] }))).toEqual([B, A]);
+    expect(agentOrder(ok({ kind: 'filter', agent_user_ids: [C], filter: { states: ['pending'] } }))).toEqual([C]);
+    expect(agentOrder(ok({ kind: 'rebalance', agent_user_ids: [A, C] }))).toEqual([A, C]);
+    expect(agentOrder(ok({ kind: 'count', agent_user_id: A, count: 3 }))).toEqual([A]);
+    expect(agentOrder(ok({ kind: 'range', agent_user_id: B, contact_ids: [C] }))).toEqual([B]);
+    expect(agentOrder(ok({ kind: 'reassign', from_user_id: A, to_user_id: B }))).toEqual([A, B]);
+    expect(agentOrder(ok({ kind: 'unassign', from_user_id: C }))).toEqual([C]);
+    expect(agentOrder(ok({ kind: 'unassign', contact_ids: [A] }))).toEqual([]);
   });
 });
 

@@ -108,11 +108,14 @@ export function newSeed(): string {
 const lower = (id: string) => id.toLowerCase();
 const uniqSorted = <T extends string>(xs: readonly T[]) => [...new Set(xs)].sort();
 
-/** Zod issues → `{ "field.path": message }`, the `assignment_invalid` details. */
-function zodDetails(error: z.ZodError): Record<string, string> {
+/**
+ * Zod issues → `{ "field.path": message }` (the first message per path), the
+ * `assignment_invalid` details. An issue on the root is keyed `rootKey`.
+ */
+export function zodDetails(error: z.ZodError, rootKey = 'operation'): Record<string, string> {
   const out: Record<string, string> = {};
   for (const issue of error.issues) {
-    const key = issue.path.length ? issue.path.join('.') : 'operation';
+    const key = issue.path.length ? issue.path.join('.') : rootKey;
     out[key] ??= issue.message;
   }
   return out;
@@ -201,19 +204,9 @@ export function seedOf(op: CanonicalAssignment): string | null {
 
 /** The order `per_agent` lists agents in: the operation's own agents first, then by id. */
 export function agentOrder(op: CanonicalAssignment): string[] {
-  switch (op.kind) {
-    case 'random_split':
-    case 'filter':
-    case 'rebalance':
-      return op.agents;
-    case 'count':
-    case 'range':
-      return [op.agent];
-    case 'reassign':
-      return [op.from, op.to];
-    case 'unassign':
-      return op.from ? [op.from] : [];
-  }
+  if (op.kind === 'reassign') return [op.from, op.to];
+  if (op.kind === 'unassign') return op.from ? [op.from] : [];
+  return receivingAgents(op);
 }
 
 // ─── The plan fingerprint and the token ─────────────────────────────────────

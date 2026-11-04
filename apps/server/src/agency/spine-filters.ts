@@ -370,14 +370,15 @@ export function parsePhoneFilter(raw: unknown): PhoneFilter | 'unusable' | undef
   return exact ? { mode: 'exact', value: `+${digits}` } : { mode: 'suffix', value: digits };
 }
 
+/** The field message for a `phone` filter {@link parsePhoneFilter} answers `'unusable'`. */
+export const PHONE_FILTER_UNUSABLE_MESSAGE =
+  'must contain at least one digit — search by the whole number or its last few digits';
+
 /** Fold {@link parsePhoneFilter}'s third outcome into the issue list. */
 function readPhoneFilter(raw: unknown, issues: FilterIssue[]): PhoneFilter | undefined {
   const parsed = parsePhoneFilter(raw);
   if (parsed === 'unusable') {
-    issues.push({
-      param: 'phone',
-      message: 'must contain at least one digit — search by the whole number or its last few digits',
-    });
+    issues.push({ param: 'phone', message: PHONE_FILTER_UNUSABLE_MESSAGE });
     return undefined;
   }
   return parsed;

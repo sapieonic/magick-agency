@@ -28,6 +28,7 @@ import {
   assignmentCommitSchema,
   parseAssignmentOperation,
   receivingAgents,
+  zodDetails,
   type CanonicalAssignment,
 } from '../../../agency/assignment/operation.js';
 import { isUuid, refuse, requireAssignmentEnabled, supervisedCampaign } from './shared.js';
@@ -90,11 +91,7 @@ export async function registerAssignmentSupervisorRoutes(app: FastifyInstance): 
     const campaign = await guardCampaign(request, reply);
     if (!campaign) return reply;
     const body = assignmentCommitSchema.safeParse(request.body);
-    if (!body.success) {
-      const details: Record<string, string> = {};
-      for (const issue of body.error.issues) details[issue.path.join('.') || 'body'] ??= issue.message;
-      return invalid(reply, details);
-    }
+    if (!body.success) return invalid(reply, zodDetails(body.error, 'body'));
     const parsed = parseAssignmentOperation(body.data.operation, 'commit');
     if (!parsed.ok) {
       return invalid(reply, Object.fromEntries(Object.entries(parsed.details).map(([k, v]) => [`operation.${k}`, v])));

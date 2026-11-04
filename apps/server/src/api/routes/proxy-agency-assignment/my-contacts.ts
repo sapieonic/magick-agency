@@ -19,7 +19,7 @@ import {
 } from '@magick-agency/contracts/api/agency/assignment';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { agencyAssignmentReadRepository } from '../../../db/repositories/agency.repository.js';
-import { clampLimit, multiParam, parsePhoneFilter } from '../../../agency/spine-filters.js';
+import { clampLimit, multiParam, parsePhoneFilter, PHONE_FILTER_UNUSABLE_MESSAGE } from '../../../agency/spine-filters.js';
 import { poolModeQueueState, readAgentQueueState } from '../../../agency/pacing/agent-queue.js';
 import { UUID_RE } from '../../../utils/uuid.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
@@ -97,7 +97,7 @@ export async function registerMyContactRoutes(app: FastifyInstance): Promise<voi
     if (!query) return reply;
     const phone = parsePhoneFilter(query.data.phone);
     if (phone === 'unusable') {
-      return fieldError(reply, 'phone', 'must contain at least one digit — search by the whole number or its last few digits');
+      return fieldError(reply, 'phone', PHONE_FILTER_UNUSABLE_MESSAGE);
     }
     const cursor = readKeysetCursor(request, reply);
     if (cursor === null) return reply;
