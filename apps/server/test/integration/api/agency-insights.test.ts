@@ -69,6 +69,23 @@ async function seedRoster(campaignId: string, f: TenantFloor, owners: Array<stri
   await q('UPDATE agency_campaigns SET contacts_total = 60 WHERE id = $1', [campaignId]);
 }
 
+let sibling: string | null = null;
+/** A campaign of a second account in tenant 0 (a copy of C(0) under another account), made once. */
+async function siblingAccountCampaign(): Promise<string> {
+  if (sibling) return sibling;
+  const account = randomUUID();
+  await q(`INSERT INTO accounts (id, tenant_id, name, slug, settings, status) VALUES ($1, $2, 'Sibling', $3, '{}'::jsonb, 'active')`,
+    [account, floor.tenant, `sibling-${account.slice(0, 8)}`]);
+  const id = randomUUID();
+  await q(
+    `INSERT INTO agency_campaigns
+     SELECT (jsonb_populate_record(c, jsonb_build_object('id', $2::uuid, 'account_id', $3::uuid, 'name', 'Sibling campaign'))).*
+       FROM agency_campaigns c WHERE c.id = $1`,
+    [C(0), id, account]);
+  sibling = id;
+  return id;
+}
+
 async function status(campaignId: string, set: Record<string, unknown>): Promise<void> {
   const keys = Object.keys(set);
   await q(`UPDATE agency_campaigns SET ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} WHERE id = $1`,
@@ -140,6 +157,24 @@ describe('guards', () => {
       expect(unknown.statusCode).toBe(404);
     }
   });
+
+  /**
+   * The ownership probe is the only guard that tells two accounts of ONE tenant apart: the
+   * campaign row's tenant check passes for a sibling account's campaign. An account-scoped admin
+   * (`X-Account-Id` their own account) asking for a sibling account's campaign is the probe's
+   * `404 campaign_not_found`, on every route, as and range alike.
+   */
+  it.each(['summary', 'readiness', 'allocation', 'uploads', 'activity', 'trends', 'health'])(
+    '404 for a sibling account\'s campaign in the same tenant (the ownership probe): %s',
+    async (section) => {
+      const sibling = await siblingAccountCampaign();
+      const res = await get(section, sibling);
+      expect(res.statusCode, res.body).toBe(404);
+      expect(res.json()).toEqual({ error: 'Not Found', code: 'campaign_not_found', message: 'Campaign not found' });
+      // The same supervisor reads its own account's campaign: the refusal is the account, not the route.
+      expect((await get(section, C(0))).statusCode).toBe(200);
+    },
+  );
 
   it('403 feature_disabled while the dialer flag is off for the tenant', async () => {
     const off = floors[2]!;
