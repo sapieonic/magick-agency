@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api/api_error.dart';
 import '../../core/auth/app_gate.dart';
+import '../../core/softphone/overrides.dart' show OverrideNoteBlock, overrideNoteBlock;
 import '../../core/station/station_view.dart';
 import '../../core/telemetry/telemetry.dart';
 import '../performance/performance_controller.dart' show statsClockProvider;
@@ -220,12 +221,12 @@ bool canCallContact(MyContact c, DateTime now) {
 
 /// Whether [note] is a calling-hours override note the server takes
 /// (trimmed, [overrideNoteMin]–[overrideNoteMax] characters), or why not.
-String? overrideNoteProblem(String note) {
-  final n = note.trim().runes.length;
-  if (n < overrideNoteMin) return MyContactsCopy.noteTooShort;
-  if (n > overrideNoteMax) return MyContactsCopy.noteTooLong;
-  return null;
-}
+/// The soft phone's rule ([overrideNoteBlock]) in this screen's words.
+String? overrideNoteProblem(String note) => switch (overrideNoteBlock(note)) {
+      OverrideNoteBlock.tooShort => MyContactsCopy.noteTooShort,
+      OverrideNoteBlock.tooLong => MyContactsCopy.noteTooLong,
+      null => null,
+    };
 
 /// How a call request ended.
 sealed class ContactCallResult {
@@ -354,7 +355,7 @@ class MyContactsController extends Notifier<MyContactsState> {
     try {
       final page = await _api.list(filters.toQuery(campaignId));
       if (!ref.mounted || mine != _generation) return;
-      final visible = {for (final r in page.rows) r.id};
+      final eligible = {for (final r in page.rows) if (r.retry.eligible) r.id};
       state = state.copyWith(
         status: MyContactsStatus.ready,
         rows: page.rows,
@@ -363,10 +364,7 @@ class MyContactsController extends Notifier<MyContactsState> {
         clearError: true,
         refreshing: false,
         // A refresh keeps only picks that are still on screen and still eligible.
-        selected: {
-          for (final id in state.selected)
-            if (visible.contains(id) && page.rows.any((r) => r.id == id && r.retry.eligible)) id,
-        },
+        selected: state.selected.where(eligible.contains).toSet(),
       );
     } on Exception catch (e) {
       if (!ref.mounted || mine != _generation) return;
@@ -437,14 +435,17 @@ class MyContactsController extends Notifier<MyContactsState> {
     final request = selectedOnly
         ? AgentRetryRequest.selected(campaignId: campaignId, contactIds: ids)
         : AgentRetryRequest.all(campaignId: campaignId);
-    final requested = selectedOnly ? ids.length : (s.summary?.retry.eligible ?? 0);
+    // The console's property set exactly (`EventCatalog` in apps/console/src/analytics/events.ts).
+    final event = <String, Object?>{
+      'campaign_id': campaignId,
+      'scope': selectedOnly ? 'selected' : 'all',
+      'requested': selectedOnly ? ids.length : (s.summary?.retry.eligible ?? 0),
+    };
     state = s.copyWith(retrying: true);
     try {
       final response = await _api.retry(request);
       Telemetry.event('agency_agent_retry_requested', {
-        'campaign_id': campaignId,
-        'scope': selectedOnly ? 'selected' : 'all',
-        'requested': requested,
+        ...event,
         'outcome': 'reopened',
         'reopened': response.reopened,
         'skipped_total': response.skippedTotal,
@@ -456,9 +457,7 @@ class MyContactsController extends Notifier<MyContactsState> {
       return RetryResult(ok: true, message: MyContactsCopy.retryDone(response));
     } on Exception catch (e) {
       Telemetry.event('agency_agent_retry_requested', {
-        'campaign_id': campaignId,
-        'scope': selectedOnly ? 'selected' : 'all',
-        'requested': requested,
+        ...event,
         'outcome': 'refused',
         'reopened': 0,
         'skipped_total': 0,
