@@ -34,7 +34,7 @@ import {
   showsPauseInFlightNote,
   type AgencyCampaignAction as Action,
 } from '../../utils/agencyCampaignControls';
-import { campaignTimeline } from '../../utils/agencyCampaignOverview';
+import { campaignTimeline } from '../../utils/agency/overview/lifecycle';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
 import { InsightsPanel } from './campaign-detail/insights/InsightsPanel';
 import { useAgencyCampaignDetail } from './campaign-detail/useAgencyCampaignDetail';
@@ -334,12 +334,10 @@ export function AgencyCampaignDetailPage() {
         A blocker stays above every metric AND above the tab bar. It is the one
         thing on this screen that is worth reading before choosing what to read:
         a diagnosis that only appeared on the section you happened to be on
-        would be invisible to the supervisor who opened Agents first. Capacity
-        read-outs stay in the operational rail beside the agents they describe.
+        would be invisible to the supervisor who opened Agents first.
       */}
       <CampaignHealthStrip
         stats={stats}
-        mode="diagnosis"
         campaignId={campaign.id}
         campaignStatus={campaign.status}
         role={role}

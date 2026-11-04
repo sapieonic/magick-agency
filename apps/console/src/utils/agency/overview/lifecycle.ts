@@ -9,57 +9,9 @@ import { dateFormatter, formatClockTime } from '../../format/date';
 import { DASH } from './figure';
 
 /*
-  How the campaign ran and ended: its own settings restated, when it started,
-  how long it ran and who stopped it. Out of `agencyCampaignOverview.ts`, which
-  re-exports everything here.
+  The campaign's lifecycle line on the detail page header (`AgencyCampaignDetailPage`): when it
+  started, how long it ran and who stopped it.
 */
-
-export interface HowItRanLine {
-  label: string;
-  value: string;
-}
-
-/**
- * The campaign's own settings, restated on the panel that asks what happened.
- *
- * These are the three that explain a number above them: a campaign that looks
- * idle at 7pm was outside its calling window, and a wrap-up allowance is the
- * difference between an agent being free and being on shift. They come off
- * `AgencyCampaign`, not off the stats payload, so they survive a terminal
- * campaign — which is the case this block was added for.
- *
- * A line whose field is absent is **omitted**, never rendered with a dash: the
- * campaign genuinely may not set a calling window, and "Calling window —" reads
- * as a failed read rather than as "dials at any hour".
- */
-export function howItRanLines(campaign: AgencyCampaign | null): HowItRanLine[] {
-  if (!campaign) return [];
-  const lines: HowItRanLine[] = [];
-
-  const start = campaign.calling_window_start;
-  const end = campaign.calling_window_end;
-  if (start && end) {
-    lines.push({ label: 'Calling window', value: `${start}–${end}` });
-  }
-
-  if (campaign.default_timezone) {
-    lines.push({ label: 'Timezone', value: campaign.default_timezone });
-  }
-
-  const wrapup = campaign.wrapup_seconds;
-  if (typeof wrapup === 'number') {
-    lines.push({ label: 'Wrap-up allowed', value: wrapupLabel(wrapup) });
-  }
-
-  return lines;
-}
-
-function wrapupLabel(seconds: number): string {
-  if (seconds <= 0) return 'None';
-  if (seconds < 60) return plural(seconds, 'second');
-  const minutes = seconds / 60;
-  return plural(Number(minutes.toFixed(1)), 'minute');
-}
 
 // ── The lifecycle: when it started, how long it ran, who stopped it ─────────
 //
@@ -70,9 +22,8 @@ function wrapupLabel(seconds: number): string {
 //
 // Every function below tolerates all three being absent, because they are new on
 // the campaign row and this console talks to whatever API is deployed. An
-// absent line is OMITTED rather than dashed, for the reason `howItRanLines`
-// states: "Started —" reads as a failed read, and on a campaign that genuinely
-// never started it reads as a wrong one.
+// absent line is OMITTED rather than dashed: "Started —" reads as a failed read,
+// and on a campaign that genuinely never started it reads as a wrong one.
 
 /** A parsed instant, or `null` for absent, null, or unparseable. */
 function instant(raw: string | null | undefined): Date | null {

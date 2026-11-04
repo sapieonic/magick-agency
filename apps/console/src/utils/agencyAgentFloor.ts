@@ -346,14 +346,11 @@ const STATE_SUMMARY_ORDER: readonly AgencyAgentLiveState[] = [
 /**
  * The states that count as being ON SHIFT — every one but `offline`.
  *
- * ── The same rule the Overview rail applies, for the same reason ───────────
- * `agencyCampaignOverview`'s `FLOOR_BAR_ORDER` excludes `offline` because an
- * agent who signed out is not on shift — the server's own `shift_seconds` excludes it
- * (`foldOccupancy`), so including it here diluted every share by signed-out
- * time. This tab was doing the opposite: `offline` landed in the stacked bar and
- * in the total every other state's share was taken of, so a supervisor could
- * read "3 of 9 free" on Overview, open Agents, and find a different denominator
- * and an Offline band the rail never drew.
+ * ── The server's rule ────────────────────────────────────────────────────────
+ * An agent who signed out is not on shift — the server's own `shift_seconds` excludes
+ * `offline` (`foldOccupancy`), so including it here diluted every share by signed-out
+ * time. This tab used to do the opposite: `offline` landed in the stacked bar and in
+ * the total every other state's share was taken of.
  *
  * A signed-out agent is still a ROW in the table below — this governs the bar
  * and the readouts, which are about the floor as it stands.
@@ -463,8 +460,8 @@ export interface FloorTotals {
 export function floorTotals(agents: readonly AgencySupervisorAgent[]): FloorTotals {
   /*
     Everyone but the signed-out — `agents.length` counted an `offline` row still
-    sitting in the roster, so this readout and the Overview rail's "N on shift"
-    disagreed about the same payload. See `ON_SHIFT_STATES`.
+    sitting in the roster, so this readout's "N on shift" disagreed with the
+    server's shift for the same payload. See `ON_SHIFT_STATES`.
 
     `handled` and `busiest` deliberately still range over EVERY agent: calls a
     person took before they logged out are calls they took, and dropping them

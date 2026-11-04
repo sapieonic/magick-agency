@@ -19,7 +19,7 @@ import styles from './CampaignPerformance.module.css';
  * where the connected calls went, and what one handled call costs.
  *
  * ── Why these are not tiles ─────────────────────────────────────────────────
- * The eleven counters on the Overview section are observations: the API counted
+ * The campaign's counters (contacts, attempts) are observations: the API counted
  * rows and the console prints them, and an absent one can only mean the read
  * failed. Every figure here is a *derivation* with a denominator, a set of
  * exclusions, and at least one way to be absent that is a fact about the
@@ -50,17 +50,9 @@ import styles from './CampaignPerformance.module.css';
  * computes a share, substitutes a zero, or decides what an absent field means.
  *
  * ── Placement ───────────────────────────────────────────────────────────────
- * Its own section of the campaign workspace, between Overview and
- * Agents in the tab order. It used to sit inline beneath the counters and
- * above the floor, on the argument that handle time is what the floor's "on a
- * call too long" warning is measured against, so the `2:14` should be readable
- * from the same screen as the `4:50`.
- *
- * That adjacency is gone — the two are sibling tabs now, and reaching one from
- * the other is a click. It was paid for by putting four derived figures in the
- * scroll path of every supervisor who opened the page to answer a different
- * question, which is the cost the split was made to stop. The tab order keeps
- * them neighbours, which is the most that survives.
+ * The Analytics page's card for each live campaign. It was the campaign
+ * workspace's Performance tab until the Insights tab replaced that tab and the
+ * Overview (IN1); the campaign detail page no longer renders it.
  *
  * ── It fetches nothing, and has no trend of its own ─────────────────────────
  * "Are the rates holding?" is the question these four figures structurally

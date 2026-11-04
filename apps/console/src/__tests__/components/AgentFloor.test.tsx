@@ -502,9 +502,9 @@ describe('the floor as a table', () => {
      * ── Rows and "on shift" are deliberately DIFFERENT numbers ──────────────
      * A signed-out agent is still a row — they worked this shift and their
      * handled calls are real — but they are not ON it. `offline` is excluded
-     * from the readout and the bar for the reason `agencyCampaignOverview`'s
-     * rail excludes it and the server's own `shift_seconds` does: otherwise Overview
-     * and this tab report different denominators for one payload.
+     * from the readout and the bar because the server's own `shift_seconds`
+     * excludes it: otherwise this tab and the server report different
+     * denominators for one payload.
      */
     const roster = [
       agent({ session_id: 'a', agent_name: 'Ann', state: 'on_call', state_since: ago(30), calls_handled: 14 }),

@@ -569,9 +569,7 @@ export function AgencyCampaignRosterPage() {
             concluded two thirds of the list was never worked.
 
             So the tip now says the reason is per-contact and that some were
-            worked first, which covers both populations. Paired with the Overview
-            funnel's Suppressed hint, which stopped saying "Skipped" for the same
-            reason.
+            worked first, which covers both populations.
           */
           'Suppressed contacts are listed with the reason — some were never dialed, others were '
           + 'worked first and then closed.',

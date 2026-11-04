@@ -66,24 +66,25 @@ export const SUPERVISOR_SOURCES = [
   'src/components/agency/AgentFloor.tsx',
   'src/components/agency/AgentFloorDrawer.tsx',
   'src/utils/agencyHealthStrip.ts',
-  'src/utils/agency/overview/funnel.ts',
   'src/utils/agency/overview/pulse.ts',
-  'src/utils/agency/overview/lifecycle.ts',
   'src/utils/agencyCampaignPerformance.ts',
   'src/utils/agencyAgentFloor.ts',
+  'src/pages/agency/AgencyAnalyticsPage.tsx',
 ] as const;
 
 export type SupervisorSource = (typeof SUPERVISOR_SOURCES)[number];
 
 /*
   The file named is where the field is READ OFF THE PAYLOAD, which is not always
-  where it is rendered. `agencyHealthStrip.ts` composes most of the strip's copy
-  but takes primitives, so `abandonment_rate_24h_pct` never appears in it — the
-  component above it does the reading. Naming the renderer would make the guard
+  where it is rendered. `agencyHealthStrip.ts` composes the strip's copy but is
+  handed the stall itself, so `stats.stall` never appears in it — the component
+  above it does the reading. Naming the renderer would make the guard
   pass on a file that has no idea the field exists.
 */
-const FUNNEL = 'src/utils/agency/overview/funnel.ts';
-const PULSE = 'src/utils/agency/overview/pulse.ts';
+/** The campaigns home's list-worked ring. */
+const RING = 'src/utils/agency/overview/pulse.ts';
+/** The campaigns home's live card. */
+const CARD = 'src/pages/agency/campaigns-home/ActiveCampaignCard.tsx';
 const STRIP = 'src/components/agency/CampaignHealthStrip.tsx';
 const PERFORMANCE = 'src/utils/agencyCampaignPerformance.ts';
 const FLOOR = 'src/components/agency/AgentFloor.tsx';
@@ -108,42 +109,78 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
 
   // ── the campaign counters ────────────────────────────────────────────────────────
   //
-  // These moved off the page and into `agencyCampaignOverview` (now split into
-  // `agency/overview/{funnel,pulse,lifecycle}.ts`): the
-  // Overview panel no longer renders one tile per field, so every one of them
-  // is now read by a derivation — the funnel's proportions, the "list worked"
-  // ring, or a cell of the pulse strip — rather than by a `formatMetric` call
-  // in JSX. The reader moving is exactly the staleness this map is here to
-  // catch, so the entries move with it.
-  contacts_total: { consumedIn: FUNNEL },
-  contacts_pending: { consumedIn: FUNNEL },
-  contacts_in_flight: { consumedIn: FUNNEL },
-  contacts_connected: { consumedIn: FUNNEL },
-  contacts_completed: { consumedIn: FUNNEL },
-  contacts_suppressed: { consumedIn: FUNNEL },
-  contacts_exhausted: { consumedIn: FUNNEL },
-  retries_pending: { consumedIn: FUNNEL },
-  attempts_total: { consumedIn: PULSE },
-  attempts_connected: { consumedIn: PULSE },
-  // Two readers, and the guard needs only one: the pulse strip renders it, and
-  // the page's poll predicate reads it to decide whether the numbers are still
-  // moving.
-  attempts_live: { consumedIn: PULSE },
+  // The Overview panel's derivations (the contact funnel, the pulse strip) were the
+  // readers of most of these. The Insights tab replaced that panel (IN1) and they were
+  // deleted, so each entry now names a live reader — the campaigns home's list-worked
+  // ring and live card, the Analytics page's Performance card — or says it is unread.
+  contacts_total: { consumedIn: RING },
+  contacts_pending: { consumedIn: CARD },
+  contacts_in_flight: {
+    unconsumed:
+      'Read only by the Overview contact funnel, deleted with the panel. The Insights tab '
+      + 'shows contacts on a call from its own summary read (`summary.roster.on_call`).',
+  },
+  contacts_connected: {
+    unconsumed:
+      'Read only by the Overview contact funnel, deleted with the panel. The Insights tab '
+      + 'shows contacts in wrap-up from its own summary read (`summary.roster.in_wrapup`).',
+  },
+  contacts_completed: { consumedIn: RING },
+  contacts_suppressed: { consumedIn: RING },
+  contacts_exhausted: { consumedIn: RING },
+  retries_pending: {
+    unconsumed:
+      'Read only by the Overview funnel\'s retries note, deleted with the panel. The Insights '
+      + 'tab shows contacts waiting for a retry from its own read (`summary.roster.waiting_retry`).',
+  },
+  attempts_total: { consumedIn: PERFORMANCE },
+  attempts_connected: { consumedIn: PERFORMANCE },
+  // Two readers, and the guard needs only one: the live card renders it, and
+  // `agencyCampaignsHome.ts` reads it to decide whether a campaign is still live.
+  attempts_live: { consumedIn: CARD },
   // Two readers, and the guard needs only one: the floor uses it to distinguish
-  // “the roster did not load” from “nobody is on this campaign”, and the
-  // Overview rail falls back to it when `agents_by_state` is absent — a total
-  // with no breakdown, which draws no bar and claims nothing about who is free.
+  // “the roster did not load” from “nobody is on this campaign”, and the live card
+  // on the campaigns home shows it.
   agents_live: { consumedIn: FLOOR },
 
   // ── the health strip ────────────────────────────────────────────────────
+  //
+  // The strip is the diagnosis alone now. Its concurrency and abandonment read-outs
+  // rendered only in the Overview panel's `mode="readouts"` instance, deleted with
+  // the panel (IN1), so the six fields they read are unread here: the Insights tab
+  // serves the same figures from its own reads.
   stall: { consumedIn: STRIP },
   other_stalls: { consumedIn: STRIP },
-  concurrency_limit: { consumedIn: STRIP },
-  concurrency_in_use: { consumedIn: STRIP },
-  abandonment_rate_24h_pct: { consumedIn: STRIP },
-  abandonment_ceiling_pct: { consumedIn: STRIP },
-  abandoned_24h: { consumedIn: STRIP },
-  answered_24h: { consumedIn: STRIP },
+  concurrency_limit: {
+    unconsumed:
+      'Read only by the health strip\'s concurrency read-out, deleted with the Overview panel. The '
+      + 'Insights headline shows the line limit from its own read (`headline.running.concurrency_limit`).',
+  },
+  concurrency_in_use: {
+    unconsumed:
+      'Read only by the health strip\'s concurrency read-out, deleted with the Overview panel. The '
+      + 'Insights headline shows lines in use from its own read (`headline.running.concurrency_in_use`).',
+  },
+  abandonment_rate_24h_pct: {
+    unconsumed:
+      'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '
+      + 'Insights tab shows the rolling rate from its own reads (`health.abandonment.rolling_24h`).',
+  },
+  abandonment_ceiling_pct: {
+    unconsumed:
+      'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '
+      + 'Insights tab shows the ceiling from its own reads (`settings.abandonment_ceiling_pct`).',
+  },
+  abandoned_24h: {
+    unconsumed:
+      'Read only by the health strip\'s abandonment sample, deleted with the Overview panel. The '
+      + 'Insights tab divides its own counts (`health.abandonment.rolling_24h.abandoned`).',
+  },
+  answered_24h: {
+    unconsumed:
+      'Read only by the health strip\'s abandonment sample, deleted with the Overview panel. The '
+      + 'Insights tab divides its own counts (`health.abandonment.rolling_24h.answered`).',
+  },
 
   // ── the derived figures ─────────────────────────────────────────────────
   connect_rate_pct: { consumedIn: PERFORMANCE },
@@ -169,17 +206,17 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
 
   // ── the workspace redesign's two nice-to-have fields ─────────────
   //
-  // Both are read by a derivation in the Overview module rather than by a
-  // `formatMetric` call in JSX, which is the pattern every campaign counter moved to
-  // — and the reason those entries moved with their readers.
-  //
-  // Neither has a fallback and neither needs one: an absent field drops the one
-  // sentence it fills. That is what let them ship as the lower-priority half of
-  // the contract, and it is also why this map is the only thing standing between
-  // "the server sends it" and "nobody notices it stopped arriving".
-  attempts_retried: { consumedIn: PULSE },
-  // Beside the retries under the dial count: the wrap-up redials the dials include.
-  attempts_redialed: { consumedIn: PULSE },
+  // Both filled a sub-line of the Overview pulse strip, deleted with the panel.
+  attempts_retried: {
+    unconsumed:
+      'Read only by the Overview pulse strip\'s dial sub-line, deleted with the panel. The '
+      + 'Insights tab serves agent retries from its own activity read (`calls.agent_retries`).',
+  },
+  attempts_redialed: {
+    unconsumed:
+      'Read only by the Overview pulse strip\'s dial sub-line, deleted with the panel. The '
+      + 'Insights tab serves wrap-up redials from its own activity read (`calls.redials.placed`).',
+  },
   agents_peak: {
     unconsumed:
       'No producer on `/stats` (the contract declares it optional and the server never '

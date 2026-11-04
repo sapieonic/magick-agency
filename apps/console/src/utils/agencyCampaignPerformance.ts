@@ -272,9 +272,8 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     2,104 people answered and that 1,509 did. A supervisor either stops trusting
     the panel or quotes the wrong number into a review.
 
-    This is the rule `agencyCampaignOverview` states for the pulse strip —
-    a percentage must sit with its own numerator — applied to the card that
-    was breaking it.
+    The rule: a percentage must sit with its own numerator, applied to the card
+    that was breaking it.
   */
   const humans = stats?.human_connects;
 

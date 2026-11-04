@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, TriangleAlert } from 'lucide-react';
 import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import { formatDate } from '@magick-agency/web-ui/format';
-import { listWorkedRing } from '../../../utils/agencyCampaignOverview';
+import { listWorkedRing } from '../../../utils/agency/overview/pulse';
 import { stallCopy } from '../../../utils/agencyHealthStrip';
 import { formatCount } from '../../../utils/format/number';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
