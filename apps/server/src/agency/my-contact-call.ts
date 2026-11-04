@@ -29,8 +29,9 @@
  *
  * Every failure after step 5 undoes what was written, as the tick's release paths do: the agent
  * back to the pool (or their queued break), the contact back to the state and due time the claim
- * found with what it spent given back (`releaseAgentDialClaim`), an attempt that exists ended
- * `failed`.
+ * found with what it spent given back (`releaseAgentDialClaim`; for an attempt insert a unique
+ * index refused, `releaseRefusedAgentDialClaim`, guarded by the claim's row version since the
+ * attempt that refused it is live), an attempt that exists ended `failed`.
  *
  * ── Which process, with media workers ────────────────────────────────────────
  * The internal route is `session_param` (`api/core-owners.ts`), so this runs in the worker that
@@ -289,8 +290,11 @@ export async function startMyContactCall(
     throw err;
   }
   if (!attempt) {
-    // The duplicate-dial backstop: something holds a live attempt on this contact.
-    await giveBack();
+    // The duplicate-dial backstop: something holds a live attempt on this contact. That
+    // attempt is not this claim's, so `giveBack`'s live-attempt guard would keep the contact
+    // `in_flight` with its spends lost; the undo here is guarded by the claim's row version.
+    await agencyAgentRetryRepository.releaseRefusedAgentDialClaim(contactId, claim).catch((err) =>
+      log.error({ err, contactId }, 'Could not give back a refused agent dial claim — the stranded-contact sweep requeues it'));
     await returnAgent();
     return refuse(409, 'contact_in_flight');
   }

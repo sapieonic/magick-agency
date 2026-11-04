@@ -43,6 +43,28 @@ export interface AgentDialClaim {
   contact: AgencyContactRecord;
   prior: { state: AgencyContactState; nextAttemptAt: Date };
   spent: { round: boolean; retryDelay: boolean; callingHours: boolean };
+  /**
+   * The row version the claim wrote (the contact row's `xmin`): any later write to the row,
+   * by anyone, changes it. {@link AgencyAgentRetryRepository.releaseRefusedAgentDialClaim}
+   * undoes the claim only while it still matches.
+   */
+  rowVersion: string;
+}
+
+/** The exact undo's SET: the state and due time the claim found, and what it spent, given back. */
+const UNDO_AGENT_DIAL_CLAIM_SET = `
+          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $2::varchar END,
+              next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at ELSE $3::timestamptz END,
+              agent_retry_rounds_used = GREATEST(0, c.agent_retry_rounds_used - $4::int),
+              override_retry_delay = c.override_retry_delay OR $5::boolean,
+              override_calling_hours = c.override_calling_hours OR $6::boolean,
+              updated_at = now()`;
+
+function undoValues(contactId: string, claim: Pick<AgentDialClaim, 'prior' | 'spent'>): unknown[] {
+  return [
+    contactId, claim.prior.state, claim.prior.nextAttemptAt,
+    claim.spent.round ? 1 : 0, claim.spent.retryDelay, claim.spent.callingHours,
+  ];
 }
 
 export class AgencyAgentRetryRepository {
@@ -218,6 +240,7 @@ export class AgencyAgentRetryRepository {
     const { rows } = await getPool().query<AgencyContactRecord & {
       prior_state: AgencyContactState; prior_next_attempt_at: Date;
       spent_round: boolean; spent_retry_delay: boolean; spent_calling_hours: boolean;
+      row_version: string;
     }>(
       `WITH target AS MATERIALIZED (
          SELECT c.id, c.state AS prior_state, c.next_attempt_at AS prior_next_attempt_at,
@@ -254,7 +277,8 @@ export class AgencyAgentRetryRepository {
                 (${basis}::text = 'retry_round') AS spent_round,
                 (t.prior_retry_delay AND (${basis}::text = 'retry_delay'
                   OR (${basis}::text = 'retry_round' AND t.cooling))) AS spent_retry_delay,
-                ${hours}::boolean AS spent_calling_hours`,
+                ${hours}::boolean AS spent_calling_hours,
+                c.xmin::text AS row_version`,
       p.values,
     );
     const row = rows[0];
@@ -262,18 +286,20 @@ export class AgencyAgentRetryRepository {
     const {
       prior_state: priorState, prior_next_attempt_at: priorNext,
       spent_round: round, spent_retry_delay: retryDelay, spent_calling_hours: callingHours,
+      row_version: rowVersion,
       ...contact
     } = row;
     return {
       contact: contact as AgencyContactRecord,
       prior: { state: priorState, nextAttemptAt: priorNext },
       spent: { round, retryDelay, callingHours },
+      rowVersion,
     };
   }
 
   /**
-   * Undo an agent dial's claim that placed no call (a refusal after the claim, a failed
-   * dispatch): the contact goes back to the state and due time the claim found, and what the
+   * Undo an agent dial's claim that placed no call (an attempt INSERT that threw, a failed
+   * dispatch; a REFUSED insert is {@link releaseRefusedAgentDialClaim}): the contact goes back to the state and due time the claim found, and what the
    * claim spent is given back (the round, the overrides). Only while the claim still holds it:
    * `in_flight` with no live attempt (the caller ends its attempt, if any, first), so a contact
    * something else moved since is left alone. The DNC freeze holds (`markState`'s rule): a row
@@ -287,22 +313,43 @@ export class AgencyAgentRetryRepository {
     deps: { client?: Pick<PoolClient, 'query'> } = {},
   ): Promise<boolean> {
     const { rowCount } = await (deps.client ?? getPool()).query(
-      `UPDATE agency_contacts c
-          SET state = CASE WHEN c.suppressed_reason = 'dnc' THEN 'suppressed' ELSE $2::varchar END,
-              next_attempt_at = CASE WHEN c.suppressed_reason = 'dnc' THEN c.next_attempt_at ELSE $3::timestamptz END,
-              agent_retry_rounds_used = GREATEST(0, c.agent_retry_rounds_used - $4::int),
-              override_retry_delay = c.override_retry_delay OR $5::boolean,
-              override_calling_hours = c.override_calling_hours OR $6::boolean,
-              updated_at = now()
+      `UPDATE agency_contacts c${UNDO_AGENT_DIAL_CLAIM_SET}
         WHERE c.id = $1::uuid
           AND c.state = 'in_flight'
           AND NOT EXISTS (
                 SELECT 1 FROM agency_call_attempts a
                  WHERE a.contact_id = c.id AND a.state <> 'ended')`,
-      [
-        contactId, claim.prior.state, claim.prior.nextAttemptAt,
-        claim.spent.round ? 1 : 0, claim.spent.retryDelay, claim.spent.callingHours,
-      ],
+      undoValues(contactId, claim),
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Undo an agent dial's claim whose attempt INSERT was refused (`uq_agency_attempt_live` or
+   * `uq_agency_attempt_number`: another attempt on the contact is live, or won the number).
+   * {@link releaseAgentDialClaim} cannot: its live-attempt guard sees that OTHER attempt and
+   * would leave the contact `in_flight`, its round and overrides spent and its prior state
+   * lost, for the stranded-contact sweep to requeue as `pending`.
+   *
+   * The live attempt is not this claim's, and it did not put the contact `in_flight`: the claim
+   * took it from `pending` / `exhausted`. So the guard here is the claim's own row version
+   * instead ({@link AgentDialClaim.rowVersion}): the contact is put back only while NOTHING has
+   * written the row since the claim. If that other attempt settled the contact meanwhile, or a
+   * pacing tick or soft-phone claim then took it with an attempt of its own, or a DNC mark
+   * landed, the row version moved and this leaves the row to them (and to the sweeps).
+   *
+   * Returns whether it was released.
+   */
+  async releaseRefusedAgentDialClaim(
+    contactId: string,
+    claim: Pick<AgentDialClaim, 'prior' | 'spent' | 'rowVersion'>,
+  ): Promise<boolean> {
+    const { rowCount } = await getPool().query(
+      `UPDATE agency_contacts c${UNDO_AGENT_DIAL_CLAIM_SET}
+        WHERE c.id = $1::uuid
+          AND c.state = 'in_flight'
+          AND c.xmin = $7::text::xid`,
+      [...undoValues(contactId, claim), claim.rowVersion],
     );
     return (rowCount ?? 0) > 0;
   }

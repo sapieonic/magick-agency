@@ -19,7 +19,9 @@ const { agencyAgentRetryRepository } = await import('../../../src/db/repositorie
  * lock) reds "foreign ids"; dropping it from the claim reds "another agent's contact";
  * removing the re-evaluated `agentRetryBlockSql IS NULL` from the reopen's UPDATE reds the
  * concurrency case; removing the cooldown arm of `agentRetryBlockSql` reds the cooldown
- * cases; removing the same-number probe from the claim reds "one live call per number".
+ * cases; removing the same-number probe from the claim reds "one live call per number";
+ * dropping the row-version check from `releaseRefusedAgentDialClaim` reds "touched since the
+ * claim", and putting the live-attempt guard in it reds "ignores the OTHER live attempt".
  */
 
 const AGENT = randomUUID();
@@ -308,5 +310,37 @@ describe('AgencyAgentRetryRepository.claimForAgentDial / releaseAgentDialClaim',
     await getTestPool().query(`UPDATE agency_contacts SET suppressed_reason = 'dnc' WHERE id = $1`, [c.id]);
     expect(await agencyAgentRetryRepository.releaseAgentDialClaim(c.id, got!)).toBe(true);
     expect((await row(c.id)).state).toBe('suppressed');
+  });
+
+  it('a refused attempt insert: the undo ignores the OTHER live attempt and gives back the state, the round and the overrides', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const c = await owned(campaign.id, { ...notReached, override_calling_hours: true });
+    await attemptedAgo(campaign.id, c.id, 60);
+    const got = await claim(campaign.id, c.id, 'retry_round', { spendCallingHours: true });
+    expect(got?.spent).toMatchObject({ round: true, callingHours: true });
+    // Something else holds a live attempt on the contact: the claim's attempt insert is refused.
+    await insertAgencyAttempt(campaign.id, c.id, { attempt_number: 2, state: 'dialing' });
+    expect(await agencyAgentRetryRepository.releaseAgentDialClaim(c.id, got!)).toBe(false);
+    expect(await agencyAgentRetryRepository.releaseRefusedAgentDialClaim(c.id, got!)).toBe(true);
+    expect(await row(c.id)).toMatchObject({ state: 'exhausted', agent_retry_rounds_used: 0, override_calling_hours: true });
+    // Once: the row version has moved, so a second undo finds nothing.
+    expect(await agencyAgentRetryRepository.releaseRefusedAgentDialClaim(c.id, got!)).toBe(false);
+  });
+
+  it('a refused attempt insert: the undo leaves a contact any writer has touched since the claim', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const c = await owned(campaign.id, notReached);
+    await attemptedAgo(campaign.id, c.id, 60);
+    const got = await claim(campaign.id, c.id, 'retry_round');
+    // The other attempt settled the contact, and a pacing tick took it again for an attempt of
+    // its own: `in_flight` once more, but not this claim's to undo.
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'pending' WHERE id = $1`, [c.id]);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'in_flight' WHERE id = $1`, [c.id]);
+    expect(await agencyAgentRetryRepository.releaseRefusedAgentDialClaim(c.id, got!)).toBe(false);
+    expect(await row(c.id)).toMatchObject({ state: 'in_flight', agent_retry_rounds_used: 1 });
+    // A write that leaves every column as it was (a DNC freeze re-asserted) moves the version too.
+    const again = await claim(campaign.id, (await owned(campaign.id, { state: 'pending' })).id, 'due');
+    await getTestPool().query(`UPDATE agency_contacts SET state = state WHERE id = $1`, [again!.contact.id]);
+    expect(await agencyAgentRetryRepository.releaseRefusedAgentDialClaim(again!.contact.id, again!)).toBe(false);
   });
 });

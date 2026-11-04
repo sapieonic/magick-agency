@@ -100,7 +100,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agency-stats-enrichment.test.ts` | ~16 |
 | `apps/server/test/integration/agency/agent-grouped-read.test.ts` | ~14 |
 | `apps/server/test/integration/agency/agent-multi-session.test.ts` | ~7 |
-| `apps/server/test/integration/agency/agent-retry-repository.test.ts` | 17 |
+| `apps/server/test/integration/agency/agent-retry-repository.test.ts` | 19 |
 | `apps/server/test/integration/agency/agent-session-client-kind.test.ts` | 5 |
 | `apps/server/test/integration/agency/agent-occupancy-carried-bound.test.ts` | 2 |
 | `apps/server/test/integration/agency/agent-occupancy-window.test.ts` | ~8 |
@@ -130,6 +130,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/contact-park-for-write-up.test.ts` | 5 |
 | `apps/server/test/integration/agency/dnc-registry.test.ts` | ~17 |
 | `apps/server/test/integration/agency/my-contact-call-e2e.test.ts` | 2 |
+| `apps/server/test/integration/agency/my-contact-call-refused-insert.test.ts` | 1 |
 | `apps/server/test/integration/agency/repository-sql-coverage.test.ts` | 12 |
 | `apps/server/test/integration/agency/runtime-boot-order.test.ts` | ~3 |
 | `apps/server/test/integration/agency/runtime-e2e.test.ts` | ~1 |
