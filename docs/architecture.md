@@ -336,7 +336,9 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   kind; the commit locks the rows, re-plans and writes only when the plan still matches the token,
   else `409 preview_stale`), and reads progress per agent and a contact's owner history. *Pacing*:
   on a `strict` or `preferred` campaign, the tick pairs by agent (`claimForAgents`, one statement,
-  a `LATERAL ... LIMIT 1` per agent), never reserves an agent with nothing due, and tells the
+  a `LATERAL ... LIMIT 1` per agent), never reserves an agent with nothing due (in `preferred`
+  mode the pool's due contacts count for as many agents without own work, longest idle first,
+  as there are such contacts), and tells the
   station why with a `queue` frame on a change (`pacing/agent-queue.ts`, the one reading shared
   with the join bootstrap, `ready` and the My contacts summary; after a `ready` the next tick
   sends the frame again, so a reconnect cannot keep a stale or missing queue); the leader sweeps due callbacks

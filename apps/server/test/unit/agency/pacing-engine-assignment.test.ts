@@ -356,6 +356,32 @@ describe('the `queue` frame: sent to the agent only when it changes (CA3)', () =
     expect(queueFrames(send)).toHaveLength(4);
   });
 
+  // FALSIFIED: with every agent reading the pool's due count (the reading before this fix:
+  // `queueStateFrom` without `poolDueTaken`), s2 and s3 are told `due: true` and this reds.
+  it('preferred: only the agents a due pool contact goes to are told due, longest idle first', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'preferred' });
+    // One due pool contact, nothing of their own; the probe answers in its own order.
+    repos.contact.probeAgentQueues.mockResolvedValue({
+      agents: ['u3', 'u2', 'u1'].map((u) => ({ agentUserId: u, ownDue: false, ownNextAt: null, ownHasNonCallback: null })),
+      pool: { dueCount: 1, nextAt: new Date(Date.now() - 5_000), hasNonCallback: null },
+    });
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const agents = makeAgents({ s1: 'available', s2: 'available', s3: 'available' });
+    const { e } = engine(makeStations(['s1', 's2', 's3'], send), agents);
+
+    await e.tickOnce('camp-1');
+
+    // The frames say what the tick did: s1 (longest idle) is reserved for the pool contact,
+    // s2 and s3 are not, and are not told they are due.
+    expect(agents.reserve.mock.calls.map((c) => c[0])).toEqual(['s1']);
+    const notDue = { event: 'queue', campaign_id: 'camp-1', due: false, reason: 'waiting_for_retry', next_due_at: null };
+    expect(queueFrames(send)).toEqual([
+      ['s1', { event: 'queue', campaign_id: 'camp-1', due: true, reason: null, next_due_at: null }],
+      ['s2', notDue],
+      ['s3', notDue],
+    ]);
+  });
+
   // A reconnect's `ready` carries a queue read before it is sent: a frame this engine sent in
   // between is overwritten on the station by the older reading, and a failed read sends none
   // (the clients then clear their queue). The attach publishes `station_ready` after `ready`.

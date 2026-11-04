@@ -1313,7 +1313,9 @@ export class PacingEngine {
   /**
    * The available agents worth reserving on an owner-mode campaign, in fairness order: those
    * with an own contact due, and (`preferred`) as many of the rest as the pool has due
-   * contacts. Sends each candidate's `queue` frame on a change, from the same read.
+   * contacts, longest idle first. That choice is the readings' own (`state.due`,
+   * `readAgentQueues`), so each candidate's `queue` frame, sent on a change from the same read,
+   * says due exactly when this tick reserves them.
    * `openPendingSeen`: a reading carried a `next_due_at` (an open contact existed at the probe).
    */
   private async agentsWithWorkDue(
@@ -1330,20 +1332,11 @@ export class PacingEngine {
       return true;
     });
     if (agents.length === 0) return { picked: [], openPendingSeen: false };
-    const { agents: readings, poolDue } = await readAgentQueues(
+    const { agents: readings } = await readAgentQueues(
       campaign, mode, agents.map((c) => c.agentUserId), new Date(), agents.length,
     );
     this.sendQueueFrames(campaign.id, agents, readings);
-    let poolLeft = mode === 'preferred' ? poolDue : 0;
-    const out: AgentCandidate[] = [];
-    for (const c of agents) {
-      if (readings.get(c.agentUserId)?.ownDue) {
-        out.push(c);
-      } else if (poolLeft > 0) {
-        out.push(c);
-        poolLeft--;
-      }
-    }
+    const out = agents.filter((c) => readings.get(c.agentUserId)?.state.due === true);
     let openPendingSeen = false;
     for (const reading of readings.values()) if (reading.state.next_due_at !== null) openPendingSeen = true;
     return { picked: out, openPendingSeen };
