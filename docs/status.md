@@ -673,20 +673,64 @@ app.
   `agency_contact_assignment_events` row each, in the replace transaction, under one batch id.
   That needs a new reason (e.g. `superseded`), which is a CHECK change
   (`ck_agency_assignment_event_reason`) in a new migration.
+- **Cleanup pass 2026-11-04 (behaviour unchanged).**
+  - **Shared SQL.** The "open contact", "number is live" and phone-digits terms are each
+    defined once (`assignment-sql.ts`, `sql-fragments.ts`), and so are the agent-retry settings
+    and their binding. Both owner sweeps share one return-to-pool statement, one audit and log
+    helper, and one loop in the pacing engine.
+  - **Server routes and reads.** One refusal-body helper (`api/routes/helpers/refusal.ts`).
+    Reads that don't depend on each other now run together: agent scope, supervisor scope, the
+    My contacts summary, the session bootstrap, station connect and start-call. The retry route
+    reads the parent campaign once (`ownedCoreCampaignOnce`).
+  - **Database work.** My contacts reads each page row's last attempt once. A `nothing_due`
+    tick that saw an open contact skips the completion count.
+  - **Contract.** The operation limits are exported from the contract and used by the server
+    and the console. The assignment override-note limits are aliases of the soft phone's, and
+    one note check serves both.
+  - **Clients.** The console uses `useDialogFocus`, `formatCount`/`plural`, `errorBody` and
+    `useAsyncResource`. It no longer re-reads the summary on a filter change or staffing after
+    a commit. The mobile app shares the soft phone's note check, `EnIn.count` and
+    `humaniseCode`.
+- **Left as found by that pass (each would change behaviour or reach well past the feature):**
+  - **DNC rows can be moved.** Reassign, unassign, the unstaff return and both owner sweeps move
+    any `pending` contact, including a DNC-marked one. Count and range moves take open rows only.
+    Whether a DNC row should keep or change its owner is undecided.
+  - **Wrap-up redial and the kill switch.** Redial (`wrapup-redial-rules.ts`) checks only that
+    the campaign is `running`, not `agency_dialer_enabled`. This predates this feature. The fix
+    is one `campaignMayDial` rule shared with pacing and start-call.
+  - **Where CA9 compares stored values.** The public layer reads the stored campaign to compare
+    the request against it. The internal PATCH handler already has that row, so the compare and
+    the mode-change audit belong there; that also removes a race against the write.
+  - **CA7 call gate on the clients.** The console (`contactCallGate`) and the app
+    (`canCallContact`) each re-derive the call gate from row fields. The server could send the
+    call basis on each row instead.
+  - **"Note required" has no code of its own.** The server signals it with
+    `400 override_note_invalid`, and both clients detect it as that code plus no note sent. A
+    separate `override_note_required` would be a wire change.
+  - **Roster holder names.** The roster takes holder names from the full progress read. A
+    lightweight holders read would be cheaper.
+  - **Hero columns.** The server's hero-column rule (`heroColumns`) ignores case and spacing
+    differences that the console's `resolveContextFields` handles. One rule in
+    `packages/domain` would fix it.
+  - **Idle pacing ticks.** A `nothing_due` tick never goes idle. The engine could sleep until
+    the probe's earliest `next_due_at`, which is a change to the wake logic.
+  - **Extra-attempt spend guards.** CA8's spend has two idempotency guards in
+    `contact.repository.ts`: a SQL `NOT … = ANY` versus a pre-read with `FOR UPDATE`.
+  - **`returnOnUnstaff` is unlike the sweeps.** It does not set `updated_at`; the sweeps do.
 
 ## Test counts
 
-Latest run, 2026-11-03, the contact assignment branch after the review fixes (`3b90b99`), from
+Latest run, 2026-11-04, the contact assignment branch after the cleanup pass (`87be111`), from
 inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
 `pnpm test:release` 10 pass):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7883 passed + 42 skipped (393 files) | rest lane 1744 passed + 9 expected fail (185 files); wall-clock lane 15 (3 files) |
+| `apps/server` | 7889 passed + 42 skipped (394 files) | rest lane 1744 passed + 9 expected fail (185 files); wall-clock lane 15 (3 files) |
 | `packages/db` | 427 (25 files) | 534 (49 files) |
-| `apps/console` | 5154 (268 files) | — |
+| `apps/console` | 5159 (268 files) | — |
 | `apps/super-admin` | 436 | — |
-| `packages/contracts` | 280 | — |
+| `packages/contracts` | 281 | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
