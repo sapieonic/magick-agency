@@ -35,8 +35,8 @@ afterAll(closeTestPool);
 /**
  * Every table the migrations own (partitions excluded): the baseline's, plus the two
  * tenant carrier credential tables from 0002_telephony_credentials.sql, the two
- * soft-phone tables from 0005_softphone.sql and the contact owner history from
- * 0009_contact_assignment.sql.
+ * soft-phone tables from 0005_softphone.sql, the contact owner history from
+ * 0009_contact_assignment.sql and the pacing history from 0013_insights_pacing_history.sql.
  */
 const EXPECTED_TABLES = [
   // identity
@@ -65,6 +65,8 @@ const EXPECTED_TABLES = [
   'agency_manual_calls', 'agency_softphone_settings',
   // contact assignment's owner history (0009)
   'agency_contact_assignment_events',
+  // pacing history per campaign per minute (0013, IN2)
+  'agency_campaign_pacing_minutes',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [

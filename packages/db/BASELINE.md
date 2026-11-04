@@ -603,6 +603,36 @@ increment per placed dial including a wrap-up redial, counting leaving `updated_
 roster count as an Index Only Scan, the range plans, the backfill keeping `updated_at`, down then
 up), the trigger list in `baseline.test.ts`, and the down → up suite.
 
+### 0013 — `migrations/0013_insights_pacing_history.sql`
+
+Pacing history (IN2, `docs/insights.md`) and the reopen marker. 0012 is the rollup's (another
+workstream); this file does not depend on it.
+
+- **`agency_campaign_pacing_minutes`**, primary key `(campaign_id, minute_start)`, `tenant_id`
+  `UUID NOT NULL`, FK `campaign_id → agency_campaigns(id) ON DELETE CASCADE`. Fifteen additive
+  `INTEGER NOT NULL DEFAULT 0` counters per campaign per UTC minute: `ticks` (pacing ticks, full or
+  skipped, on a `running` campaign), `outside_hours_ticks` (of those, the campaign's own window was
+  closed), `idle_no_agents | idle_no_slots | idle_no_contacts | idle_no_reservations |
+  idle_no_caller_ids | idle_nothing_due` (`agency_tick_idle_total`'s reasons; one per tick, so
+  their sum is at most `ticks`), `calling_hours_deferrals`, `dnc_unavailable_halts`,
+  `dials_placed` (paced dials handed to the dialer), `predial_dnc_suppressed`,
+  `predial_invalid_suppressed`, `our_fault_retired`, `redials_refused_at_limit`. CHECKs
+  `ck_agency_pacing_minute_whole` (a whole UTC minute) and `ck_agency_pacing_minute_counts` (no
+  negative counter). Written only by additive upserts (`ON CONFLICT … DO UPDATE SET x = t.x +
+  EXCLUDED.x`): the pacing leader's batch every ~15 s, and single-row upserts outside the tick.
+  A minute with no row was not recorded (absent, not zero). The primary key serves both reads (a
+  range of one campaign's minutes; its first minute, `history_since`).
+- **`agency_contacts.agent_reopen_pending`** `BOOLEAN NOT NULL DEFAULT false`: set by an agent's
+  reopen, consumed by the first paced attempt insert (which is stamped `agent_reopened`, 0011),
+  cleared by the agent's own dial of the contact, restored when a paced attempt is abandoned before
+  its dial.
+- **Locking.** A new table and one constant-default ADD COLUMN: catalog only.
+
+**Down** drops the column and the table. **Tests**:
+`test/integration/db/insights-pacing-history-migration.test.ts` (columns, key, CHECKs, the additive
+upsert, the cascade, both read plans on the primary key, the marker's default, down then up), the
+table list in `baseline.test.ts`, and the down → up suite.
+
 
 ## Tests
 

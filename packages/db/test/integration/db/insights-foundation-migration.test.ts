@@ -2,6 +2,7 @@
 // Pins the reopen flag, the dials-placed counter (its default, its CHECK, the two triggers that
 // keep it: exactly one per placed dial, IN6), the backfill, and the four insights read indexes by
 // definition and by the planner using them for the read they exist for.
+import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';
 import type { PoolClient } from 'pg';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
@@ -215,7 +216,9 @@ describe('0011 — insights foundation', () => {
   });
 
   it('down drops everything; up re-applies and backfills dials_placed from the placed attempts', async () => {
-    await migrate('down', 1);
+    // Down through 0011, whatever migrations came after it (each later one's down first).
+    const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    await migrate('down', files.length - files.indexOf('0011_insights_foundation.sql'));
     // Seeded under 0010 (no counter, no triggers), backdated at insert (an UPDATE would be
     // re-stamped by the updated_at trigger), so the backfill's effect on updated_at shows.
     const old = { updated_at: new Date('2000-01-01T00:00:00Z') };
