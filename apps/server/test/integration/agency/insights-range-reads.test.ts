@@ -150,11 +150,21 @@ describe('callbackTiming', () => {
     try {
       await client.query('BEGIN');
       await client.query('SET LOCAL enable_seqscan = off');
+      await client.query('SET LOCAL enable_bitmapscan = off');
+      // This seed's statistics, discarded by the ROLLBACK (never what an earlier file left).
+      await client.query('ANALYZE agency_call_attempts');
       const { rows } = await client.query<{ 'QUERY PLAN': string }>(
         `EXPLAIN (COSTS OFF) SELECT b.id FROM agency_call_attempts b
           WHERE b.campaign_id = $1 AND b.callback_at IS NOT NULL AND b.callback_at >= $2 AND b.callback_at < $3`,
         [campaign.id, t('00:00'), t('00:00', '2026-10-03')]);
-      expect(rows.map((r) => r['QUERY PLAN']).join('\n')).toMatch(/idx_agency_attempts_campaign_callback/);
+      const shown = rows.map((r) => r['QUERY PLAN']).join('\n');
+      // The shape, not a name: the booked-time range under the campaign is the index condition
+      // (only idx_agency_attempts_campaign_callback can make it one), never a filter over a scan.
+      expect(shown, shown).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+      const cond = shown.split('\n').find((l) => l.includes('Index Cond:')) ?? '';
+      expect(cond, shown).toMatch(/campaign_id = /);
+      expect(cond, shown).toMatch(/callback_at >= /);
+      expect(cond, shown).toMatch(/callback_at < /);
     } finally {
       await client.query('ROLLBACK');
       client.release();

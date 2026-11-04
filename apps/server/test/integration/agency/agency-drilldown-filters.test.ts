@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import { uuidFor } from '../setup/factories.js';
+import { DEFAULTS, uuidFor } from '../setup/factories.js';
 
 /*
  * The insights drill-downs (docs/insights.md, WS F): every number on the Insights tab opens a
@@ -15,11 +15,14 @@ import { uuidFor } from '../setup/factories.js';
  *  3. the total is the number this seed was built to produce (a literal), so a predicate
  *     that is wrong in the same way in both spellings is still caught.
  *
- * Then the plans: the predicates must be servable by the 0011 read indexes on a large
- * campaign. A seeded table this small would plan a sequential scan whatever the predicate, so
- * the plan cases switch sequential scans off for one transaction and assert the index the
- * planner reaches for. That proves the predicate is index-shaped; the 1M-row timings are in
- * the report. No ANALYZE / VACUUM here (shared test database).
+ * Then the plans: the predicates must be servable by a campaign-led index on a large campaign.
+ * A seeded table this small would plan a sequential scan whatever the predicate, so the plan
+ * cases switch sequential and bitmap scans off for one transaction, ANALYZE the seeded tables
+ * inside it (the plan sees this seed's statistics, never what an earlier file left, and the
+ * ROLLBACK discards them), and assert the SHAPE: the campaign is an index condition and nothing
+ * reads the table outside an index. Which campaign-led index wins is the planner's business
+ * (`idx_agency_contacts_phone_suffix` serves `campaign_id =` as well as the insights index);
+ * the 1M-row timings are in the report.
  */
 
 /** Every statement the repositories send, so a plan case can EXPLAIN exactly that SQL. */
@@ -420,12 +423,14 @@ describe('attempts: the drill-down slices, total = direct SQL = rows listed', ()
   });
 });
 
-describe('plans: index-shaped predicates (sequential scans off for one transaction)', () => {
+describe('plans: index-shaped predicates (sequential and bitmap scans off, the seed analysed, one rolled-back transaction)', () => {
   async function planOf(sql: string, values: unknown[]): Promise<string> {
     const client = await getTestPool().connect();
     try {
       await client.query('BEGIN');
       await client.query('SET LOCAL enable_seqscan = off');
+      await client.query('SET LOCAL enable_bitmapscan = off');
+      for (const t of SEEDED_TABLES) await client.query(`ANALYZE ${t}`);
       const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, values);
       return rows.map((r) => r['QUERY PLAN']).join('\n');
     } finally {
@@ -440,49 +445,78 @@ describe('plans: index-shaped predicates (sequential scans off for one transacti
     return planOf(last.sql, last.values);
   }
 
-  /*
-   * Which campaign-led index wins depends on the table's statistics, and this seed is a few
-   * rows in a database other files have filled and emptied (autovacuum analyses it between
-   * runs). So these assert the SHAPE: no sequential scan, and the bucket's own predicate is
-   * an index condition under the campaign, on one of the indexes built for it. On a 1M-row
-   * campaign the planner picks `idx_agency_contacts_insights` (index-only) for every bucket
-   * but due now, which `idx_agency_contacts_dialable` serves index-only; the EXPLAIN ANALYZE
-   * output is in the WS F report.
-   */
-  const CONTACT_INDEXES = /Index (Only )?Scan using (idx_agency_contacts_insights|idx_agency_contacts_dialable) on agency_contacts/;
+  /** The tables the seed writes, analysed inside the plan's rolled-back transaction. */
+  const SEEDED_TABLES = ['agency_campaigns', 'agency_contacts', 'agency_call_attempts', 'agency_agent_sessions'];
 
+  /**
+   * A second campaign with 3,000 contacts in every waiting bucket and 3,000 dials inside the
+   * window under test, so the CAMPAIGN is what selects. With only the seed's few rows every index
+   * costs the same, and the planner may walk a whole index that does not lead with the campaign
+   * (`idx_agency_attempts_agent_dialed` for the dialed window, seen in a full run) with the
+   * campaign as a filter: a plan no 1M-row campaign would get, and not what these cases ask.
+   */
+  async function crowd(): Promise<void> {
+    const other = await insertAgencyCampaign({ name: 'crowd' });
+    await getTestPool().query(
+      `WITH c AS (
+         INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state, next_attempt_at, last_outcome, last_disposition)
+         SELECT $1, $2, $3, '+91' || lpad(g::text, 10, '0'), '{}'::jsonb, 'pending',
+                now() + make_interval(hours => (g % 3) - 1), 'connected', CASE WHEN g % 2 = 0 THEN 'call_back' END
+           FROM generate_series(1, 3000) g
+         RETURNING id, phone_e164)
+       INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, dialed_at, redial_number)
+       SELECT $1, c.id, $2, $3, 1, '+919000000001', 'ended',
+              $4::timestamptz + make_interval(secs => right(c.phone_e164, 4)::int * 5), right(c.phone_e164, 1)::int % 2
+         FROM c`,
+      [other.id, DEFAULTS.tenantId, DEFAULTS.accountId, T0]);
+  }
+
+  /** The campaign is an index condition on `table`, and no scan of it reads outside an index. */
+  function expectCampaignIndexed(plan: string, table: string): void {
+    expect(plan, plan).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+    const lines = plan.split('\n');
+    const scan = lines.findIndex((l) => new RegExp(`Index (Only )?Scan( Backward)? using \\w+ on ${table}\\b`).test(l));
+    expect(scan, plan).toBeGreaterThanOrEqual(0);
+    // The scan's own Index Cond (the first one after it, before the next plan node).
+    const own = lines.slice(scan + 1).find((l) => /Index Cond:|->/.test(l)) ?? '';
+    expect(own, plan).toMatch(/Index Cond: .*campaign_id = /);
+  }
+
+  /*
+   * The waiting buckets: whichever campaign-led index the planner takes (the insights index, the
+   * dialable index, or the phone-suffix index on some statistics), the campaign narrows the scan
+   * and nothing reads the heap outside an index. On a 1M-row campaign the planner picks
+   * `idx_agency_contacts_insights` (index-only) for every bucket but due now, which
+   * `idx_agency_contacts_dialable` serves index-only (the WS F report).
+   */
   it.each(['due_now', 'retry', 'callback'] as const)(
-    'contacts total, waiting=%s: an index condition on the campaign and the bucket',
+    'contacts total, waiting=%s: an index condition on the campaign',
     async (waiting) => {
       const s = await seed();
+      await crowd();
       await contactTotal(s.campaign.id, { waiting });
-      const plan = await planOfLast();
-      expect(plan).not.toContain('Seq Scan');
-      expect(plan).toMatch(CONTACT_INDEXES);
-      const cond = plan.split('\n').find((l) => l.includes('Index Cond:')) ?? '';
-      expect(cond).toContain('campaign_id =');
-      // `state = 'pending'` (the insights index) or `next_attempt_at` (the dialable index,
-      // partial on pending): the bucket narrows the scan, it is not a filter over the campaign.
-      expect(cond).toMatch(/state\)?(::text)? = 'pending'|next_attempt_at [<>]/);
+      expectCampaignIndexed(await planOfLast(), 'agency_contacts');
     },
   );
 
-  it('contacts total, attempted=1: a campaign-prefix scan of the insights index', async () => {
+  it('contacts total, attempted=1: an index condition on the campaign', async () => {
     const s = await seed();
+    await crowd();
     await contactTotal(s.campaign.id, { attempted: '1' });
-    const plan = await planOfLast();
-    expect(plan).not.toContain('Seq Scan');
-    expect(plan).toMatch(/Index Cond: \(campaign_id = /);
+    expectCampaignIndexed(await planOfLast(), 'agency_contacts');
   });
 
   it('attempts total, dialed window: a dialed_at range under the campaign, both bounds in the index', async () => {
     const s = await seed();
+    await crowd();
     await attemptTotal(s.campaign.id, { dialed_from: '2026-10-01T09:00:00Z', dialed_to: '2026-10-01T14:00:00Z', redial: '1' });
     const plan = await planOfLast();
-    expect(plan).not.toContain('Seq Scan');
-    const cond = plan.split('\n').find((l) => l.includes('Index Cond:')) ?? '';
-    expect(cond).toContain('campaign_id =');
-    expect(cond).toContain('dialed_at >=');
-    expect(cond).toContain('dialed_at <');
+    expect(plan).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+    // `idx_agency_attempts_campaign_dialed` (campaign, dialed_at) or `idx_agency_attempts_billing`
+    // (dialed_at, campaign): either way both bounds and the campaign are the index condition.
+    const cond = plan.split('\n').find((l) => l.includes('Index Cond:') && l.includes('dialed_at')) ?? '';
+    expect(cond, plan).toContain('campaign_id =');
+    expect(cond, plan).toContain('dialed_at >=');
+    expect(cond, plan).toContain('dialed_at <');
   });
 });

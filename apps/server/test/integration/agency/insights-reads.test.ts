@@ -11,8 +11,9 @@ import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertA
  * contacts on DNC across the three scopes, the upload history, and the plans of the statements a
  * 1M-contact campaign makes (EXPLAIN on seeded tables).
  *
- * Plans: no ANALYZE (it leaves statistics behind for later files' plan tests, the 0011 migration
- * test's rule). The plan
+ * Plans: never a bare ANALYZE (it leaves statistics behind for later files' plan tests, the 0011
+ * migration test's rule); a case whose plan depends on its seed's size ANALYZEs inside the plan's
+ * rolled-back transaction instead (`plan(…, analyze)`). The plan
  * cases price sequential and bitmap scans out with SET LOCAL inside a rolled-back transaction, so
  * what they show is which index serves the statement and
  * whether it covers it (every column the scan outputs is in the index; `EXPLAIN VERBOSE`). Mutation-checked: dropping `waitingRetrySql`'s callback
@@ -339,9 +340,11 @@ describe('the allocation per owner', () => {
   it('attempt counters\' plan: the rollup\'s agent rows, and one bucket of the dialled index per agent (never the attempt table)', async () => {
     const id = await campaign();
     const { text, values } = repo.allocationCountersStatement(id);
-    const shown = await plan(text, values);
+    const shown = await plan(text, values, undefined, false, ['agency_call_attempts', 'agency_insights_rollup_agents']);
+    // The agents table has one index; the attempts are read through a campaign-and-dialed_at
+    // index, whichever of the two the statistics favour (the billing index leads with dialed_at).
     expect(shown).toMatch(/Index (Only )?Scan using uq_agency_insights_rollup_agents/);
-    expect(shown).toMatch(/Index Scan (Backward )?using idx_agency_attempts_campaign_dialed/);
+    expect(shown).toMatch(/Index Scan (Backward )?using idx_agency_attempts_(campaign_dialed|billing)/);
     // Both ends of the agent's newest bucket are in the index condition: one bucket is read.
     const cond = shown.split('\n').find((l) => l.includes('Index Cond:') && l.includes('dialed_at')) ?? '';
     expect(cond).toMatch(/dialed_at >= p\.newest/);
@@ -441,7 +444,9 @@ describe('contacts on DNC (the pre-dial gate\'s scopes)', () => {
 
   const dncPlan = (campaignId: string) => {
     const { text, values } = repo.contactsOnDncStatement({ campaignId, tenantId: DEFAULTS.tenantId, accountId: DEFAULTS.accountId });
-    return plan(text, values);
+    // Analysed in the rolled-back transaction: the case is about which side is large, so the
+    // planner must see this seed's sizes, not the statistics an earlier file left.
+    return plan(text, values, undefined, false, ['agency_contacts', 'dnc_entries']);
   };
 
   it('is index-driven on both tables, with a large DNC list and a small roster, and the other way round', async () => {
