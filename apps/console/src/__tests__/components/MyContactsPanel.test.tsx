@@ -281,6 +281,23 @@ describe('Call', () => {
   });
 });
 
+describe('Escape', () => {
+  it('closes the panel, but not while a call is being placed', async () => {
+    let settle: (value: unknown) => void = () => {};
+    mocks.callMyContact.mockReturnValueOnce(new Promise((resolve) => { settle = resolve; }));
+    renderPanel();
+    fireEvent.click(await screen.findByTestId('my-call-c-due'));
+    await waitFor(() => expect(mocks.callMyContact).toHaveBeenCalled());
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+
+    settle({ attempt_id: 'att-1', contact_id: 'c-due', override_applied: [], retry_round_spent: false });
+    await waitFor(() => expect(onCalled).toHaveBeenCalled());
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+  });
+});
+
 describe('the header lock', () => {
   it('is refused, with the reason, while a call is reserved, live or in wrap-up', () => {
     expect(myContactsLockReason('reserved', true)).toBe('Finish this call first.');

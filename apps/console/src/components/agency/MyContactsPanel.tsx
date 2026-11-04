@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { PhoneOutgoing, RotateCcw, Search, X } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useModalFocus } from '../../hooks/useModalFocus';
+import { useDialogFocus } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import { getMyContactsSummary, listMyContacts } from '../../api/agencyAssignment';
 import { callMyContact, retryMyContacts } from '../../api/agencyMyContacts';
 import { errorCode } from '../../utils/agencyErrors';
@@ -101,7 +101,6 @@ export function MyContactsPanel({
 }: MyContactsPanelProps) {
   const { tenantId, accountId } = useTenant();
   const panelRef = useRef<HTMLDivElement>(null);
-  useModalFocus(true, panelRef);
 
   const [summary, setSummary] = useState<AgencyMyContactsSummary | null>(null);
   const [rows, setRows] = useState<AgencyMyContact[]>([]);
@@ -122,6 +121,8 @@ export function MyContactsPanel({
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [confirmRetry, setConfirmRetry] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // Escape closes the panel, except while a call or retry is in flight.
+  useDialogFocus({ open: true, dialogRef: panelRef, onEscape: () => { if (busy === null) onClose(); } });
   const [notePrompt, setNotePrompt] = useState<NotePrompt | null>(null);
   const [note, setNote] = useState('');
   const seq = useRef(0);
@@ -185,14 +186,6 @@ export function MyContactsPanel({
       setLoadingMore(false);
     }
   }, [cursor, campaignId, tenantId, accountId, applied]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && busy === null) onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [busy, onClose]);
 
   const onSearch = (event: FormEvent) => {
     event.preventDefault();

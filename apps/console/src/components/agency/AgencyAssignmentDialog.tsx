@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { commitAssignment, previewAssignment } from '../../api/agencyAssignment';
 import { useTenant } from '../../contexts/TenantContext';
-import { useModalFocus } from '../../hooks/useModalFocus';
+import { useDialogFocus } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode } from '../../utils/agencyErrors';
 import {
@@ -141,15 +141,8 @@ export function AgencyAssignmentDialog({
     setError(null);
   }, []);
 
-  useModalFocus(true, dialogRef);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !busy) onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [busy, onClose]);
+  // Escape closes the dialog, except while a preview or commit is in flight.
+  useDialogFocus({ open: true, dialogRef, onEscape: () => { if (!busy) onClose(); } });
 
   const onPreview = useCallback(async () => {
     if (!built.ok || !tenantId || !accountId) return;

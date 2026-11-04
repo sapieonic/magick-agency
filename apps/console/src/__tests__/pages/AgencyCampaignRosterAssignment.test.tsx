@@ -270,6 +270,21 @@ describe('preview, then commit', () => {
     expect(mocks.getCampaignContacts).toHaveBeenCalledTimes(2);
   });
 
+  it('Escape closes the dialog, but not while a preview is in flight', async () => {
+    let settle: (value: AgencyAssignmentPreview) => void = () => {};
+    mocks.previewAssignment.mockReturnValueOnce(new Promise((resolve) => { settle = resolve; }));
+    const dialog = await openRangeDialog();
+    fireEvent.click(within(dialog).getByTestId('assign-preview'));
+    await waitFor(() => expect(mocks.previewAssignment).toHaveBeenCalled());
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByTestId('assignment-dialog')).not.toBeNull();
+
+    settle(PREVIEW);
+    await within(dialog).findByTestId('assign-preview-result');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('assignment-dialog')).toBeNull());
+  });
+
   it('sends "Keep same number together" off when unticked, and an edit drops the preview', async () => {
     const dialog = await openRangeDialog();
     fireEvent.click(within(dialog).getByTestId('assign-preview'));
