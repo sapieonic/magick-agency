@@ -1,6 +1,7 @@
 import {
   AGENCY_INSIGHTS_MAX_RANGE_DAYS,
   type AgencyInsightsBucket,
+  type AgencyInsightsRange,
 } from '../../../types/agency-insights';
 import { zoneFormatter, zonedParts } from '../../format/zone';
 import { DISPLAY_LOCALE } from '../../format/number';
@@ -33,6 +34,14 @@ import { DISPLAY_LOCALE } from '../../format/number';
  * A range that would run past now ends at now: the server would otherwise answer
  * "every bucket in range, zeros included" with a row of future zeros that reads
  * as a campaign that stopped dialling.
+ *
+ * ── The lifetime is the server's to cut ─────────────────────────────────────
+ * "Lifetime" sends no instants. The server serves the campaign from its
+ * `created_at` to now, or, when that is longer than 92 days, the last 92 days
+ * ending now with `range.clamped` (the contract's `AgencyInsightsRange`).
+ * {@link servedRangeView} turns the served range into what the page says and
+ * what its drill-downs send: "Last 92 days" and that window, never "Lifetime"
+ * over numbers that are not the lifetime's.
  */
 
 export type InsightsRangePreset = 'lifetime' | 'today' | 'yesterday' | 'last_7_days' | 'custom';
@@ -247,11 +256,34 @@ export function insightsRangeQuery(range: InsightsResolvedRange): { from?: strin
   return range.lifetime ? {} : { from: range.from, to: range.to };
 }
 
-/** The range's span in hours, using `lifetimeStart` for the lifetime; null when unknown. */
+/** "Last 92 days": the label of a lifetime the server clamped. */
+export const CLAMPED_LIFETIME_LABEL = `Last ${AGENCY_INSIGHTS_MAX_RANGE_DAYS} days`;
+
+/**
+ * What the page says about the range and what its drill-downs send, once the
+ * server has said what it served. A lifetime the server clamped is labelled
+ * {@link CLAMPED_LIFETIME_LABEL} and its links carry the served `[from, to)`, so
+ * a number opens the list of exactly the dials it counts; otherwise the label is
+ * the choice's and the query is {@link insightsRangeQuery}'s.
+ */
+export function servedRangeView(
+  range: InsightsResolvedRange | null,
+  served: Pick<AgencyInsightsRange, 'from' | 'to' | 'lifetime' | 'clamped'> | null | undefined,
+): { label: string; query: { from?: string; to?: string } } {
+  if (range?.lifetime && served?.lifetime && served.clamped) {
+    return { label: CLAMPED_LIFETIME_LABEL, query: { from: served.from, to: served.to } };
+  }
+  return { label: range?.label ?? 'Lifetime', query: range ? insightsRangeQuery(range) : {} };
+}
+
+/** The widest lifetime the server serves, in hours (longer is clamped to it). */
+const LIFETIME_MAX_HOURS = AGENCY_INSIGHTS_MAX_RANGE_DAYS * 24;
+
+/** The range's span in hours, using `lifetimeStart` for the lifetime (clamped as the server clamps it); null when unknown. */
 function spanHours(range: InsightsResolvedRange, lifetimeStart: string | null, now: Date): number | null {
   if (range.lifetime) {
     if (!lifetimeStart) return null;
-    return (now.getTime() - Date.parse(lifetimeStart)) / 3_600_000;
+    return Math.min(LIFETIME_MAX_HOURS, (now.getTime() - Date.parse(lifetimeStart)) / 3_600_000);
   }
   if (!range.from || !range.to) return null;
   return (Date.parse(range.to) - Date.parse(range.from)) / 3_600_000;

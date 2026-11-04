@@ -7,6 +7,7 @@ import {
   rangeChoiceFromParams,
   rangeChoiceToParams,
   resolveInsightsRange,
+  servedRangeView,
   zoneDay,
   zoneDayStart,
 } from '../../utils/agency/insights/range';
@@ -144,6 +145,28 @@ describe('bucket widths', () => {
     const lifetime = resolveInsightsRange({ preset: 'lifetime' }, KOLKATA, NOW);
     expect(allowedBuckets(lifetime, null, NOW)).toEqual(['day']);
     expect(allowedBuckets(lifetime, '2026-11-03T20:00:00.000Z', NOW)).toEqual(['quarter_hour', 'hour', 'day']);
+  });
+});
+
+describe('the lifetime the server served', () => {
+  const lifetime = resolveInsightsRange({ preset: 'lifetime' }, KOLKATA, NOW);
+  const served = { from: '2026-08-04T01:00:00.000Z', to: '2026-11-04T01:00:00.000Z', lifetime: true };
+
+  it('a clamped lifetime is "Last 92 days" and sends its window; an unclamped one stays "Lifetime" and sends none', () => {
+    expect(servedRangeView(lifetime, { ...served, clamped: true })).toEqual({ label: 'Last 92 days', query: { from: served.from, to: served.to } });
+    expect(servedRangeView(lifetime, { ...served, clamped: false })).toEqual({ label: 'Lifetime', query: {} });
+    // Before the range reads answer, the choice's own label.
+    expect(servedRangeView(lifetime, null)).toEqual({ label: 'Lifetime', query: {} });
+  });
+
+  it('an explicit range keeps its own label and instants whatever the answer says', () => {
+    const today = resolveInsightsRange({ preset: 'today' }, KOLKATA, NOW);
+    expect(servedRangeView(today, { ...served, lifetime: false, clamped: false })).toEqual({ label: 'Today', query: insightsRangeQuery(today) });
+  });
+
+  it('measures an old campaign\'s lifetime as the 92 days the server serves', () => {
+    expect(defaultBucket(lifetime, '2025-01-01T00:00:00.000Z', NOW)).toBe('day');
+    expect(allowedBuckets(lifetime, '2025-01-01T00:00:00.000Z', NOW)).toEqual(['day']);
   });
 });
 

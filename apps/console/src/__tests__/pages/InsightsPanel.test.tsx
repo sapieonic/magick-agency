@@ -162,6 +162,28 @@ describe('Insights — the range', () => {
     expect(api.getInsightsActivity).not.toHaveBeenCalled();
   });
 
+  it('a lifetime the server clamped to 92 days says so, and its numbers link to that window', async () => {
+    const clamped = { from: '2026-08-04T10:15:00.000Z', to: '2026-11-04T10:15:00.000Z', lifetime: true, clamped: true, timezone: 'Asia/Kolkata' };
+    api.getInsightsActivity.mockResolvedValue(activity({ range: clamped }));
+    api.getInsightsTrends.mockResolvedValue(trends({ range: clamped }));
+    api.getInsightsHealth.mockResolvedValue(health({ range: clamped }));
+    renderPanel();
+    expect(await screen.findByText(/follow the range \(Last 92 days\)/)).toBeTruthy();
+    // Still asked as the lifetime: the server decides the window.
+    expect(api.getInsightsActivity).toHaveBeenCalledWith('camp-1', {}, 'tenant-1', 'account-1');
+    const link = await waitFor(() => within(screen.getByTestId('insights-calls')).getAllByRole('link', { name: /connected calls$/ })[0]!);
+    const params = new URLSearchParams(link.getAttribute('href')!.split('?')[1]);
+    expect(params.get('dialed_from')).toBe(clamped.from);
+    expect(params.get('dialed_to')).toBe(clamped.to);
+  });
+
+  it('a lifetime the server served whole stays "Lifetime", its links unwindowed', async () => {
+    renderPanel();
+    expect(await screen.findByText(/follow the range \(Lifetime\)/)).toBeTruthy();
+    const link = await waitFor(() => within(screen.getByTestId('insights-calls')).getAllByRole('link', { name: /connected calls$/ })[0]!);
+    expect(link.getAttribute('href')).not.toContain('dialed_from');
+  });
+
   it('labels the roster as of now and the rest as following the range', async () => {
     renderPanel('?range=yesterday');
     expect(await screen.findByText(/roster and allocation are as of now; calls, agents, trends and health follow the range \(Yesterday\)/)).toBeTruthy();

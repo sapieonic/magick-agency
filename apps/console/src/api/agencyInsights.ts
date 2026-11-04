@@ -21,7 +21,9 @@ import type {
  * (and deliberately not the inclusive `to` the attempt LIST uses;
  * `agencyAttemptFilters.ts` states both and why). `insightsRangeQuery` (`utils/agency/insights/range.ts`) is the only
  * place that turns the page's chosen range into those instants. A lifetime range
- * sends neither key, which the server reads as "first dial to now".
+ * sends neither key, which the server reads as the campaign's `created_at` to now,
+ * or the last 92 days ending now when that is longer (`range.clamped` on the
+ * answer; `servedRangeView` labels it).
  *
  * ── `agency.supervise`, and the caller has checked ─────────────────────────
  * Every read is floored there on the server. The only caller is the Insights

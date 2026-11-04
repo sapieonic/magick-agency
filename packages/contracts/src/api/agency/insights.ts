@@ -24,8 +24,9 @@
  *   the page can show "states add up" as a fact rather than assume it.
  * - **Ranges are half-open `[from, to)`**, ISO-8601 instants with a zone (`Z` or an offset), at
  *   most {@link AGENCY_INSIGHTS_MAX_RANGE_DAYS} calendar days. Omitting both means lifetime (the
- *   campaign's `created_at` to now; never refused for its length); one bound alone keeps the
- *   other's default. The server rounds `from` down and `to` up to the 15-minute bucket the
+ *   campaign's `created_at` to now; never refused for its length, but when that is longer than
+ *   {@link AGENCY_INSIGHTS_MAX_RANGE_DAYS} days it is served as the last 92 days ending now, with
+ *   `range.clamped`); one bound alone keeps the other's default. The server rounds `from` down and `to` up to the 15-minute bucket the
  *   rollup is kept in, and echoes the range it served (`range`). Day buckets are calendar days
  *   in the campaign's time zone. A malformed, inverted or too-wide range, an unknown parameter,
  *   or a `bucket` outside {@link AGENCY_INSIGHTS_BUCKETS} (or on a read that takes none) is a
@@ -321,11 +322,21 @@ export interface AgencyInsightsAllocation {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface AgencyInsightsRange {
-  /** Inclusive start, on a 15-minute boundary; for lifetime, `created_at` rounded down. */
+  /**
+   * Inclusive start, on a 15-minute boundary; for lifetime, `created_at` rounded down, or when
+   * `clamped`, `to` minus {@link AGENCY_INSIGHTS_MAX_RANGE_DAYS} × 24 h.
+   */
   from: string;
   /** Exclusive end, on a 15-minute boundary (the request's rounded up; now's for lifetime). */
   to: string;
+  /** Neither bound was asked for. */
   lifetime: boolean;
+  /**
+   * A lifetime longer than {@link AGENCY_INSIGHTS_MAX_RANGE_DAYS} days, served as its last 92
+   * days (`from`/`to` say which): the page labels it "Last 92 days", not "Lifetime", and its
+   * drill-downs send this window. Always false for an explicit range.
+   */
+  clamped: boolean;
   /** The campaign's zone, the one day buckets are cut in (UTC when it is not one the server knows). */
   timezone: string;
 }

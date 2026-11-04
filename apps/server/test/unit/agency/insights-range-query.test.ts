@@ -19,7 +19,7 @@ const parse = (query: Record<string, unknown>, bucket = false) => parseInsightsR
 const served = (query: Record<string, unknown>, bucket = false) => {
   const r = parse(query, bucket);
   if (!r.ok) throw new Error(r.message);
-  return { from: r.range.from.toISOString(), to: r.range.to.toISOString(), lifetime: r.range.lifetime, bucket: r.range.bucket };
+  return { from: r.range.from.toISOString(), to: r.range.to.toISOString(), lifetime: r.range.lifetime, clamped: r.range.clamped, bucket: r.range.bucket };
 };
 const refused = (query: Record<string, unknown>, bucket = false) => {
   const r = parse(query, bucket);
@@ -50,12 +50,12 @@ describe('bucket rounding', () => {
 
 describe('parseInsightsRange', () => {
   it('lifetime: created_at rounded down to the bucket now falls in', () => {
-    expect(served({})).toEqual({ from: '2026-10-20T08:00:00.000Z', to: '2026-11-04T10:15:00.000Z', lifetime: true, bucket: null });
+    expect(served({})).toEqual({ from: '2026-10-20T08:00:00.000Z', to: '2026-11-04T10:15:00.000Z', lifetime: true, clamped: false, bucket: null });
   });
 
   it('rounds an asked range out to whole buckets and echoes it', () => {
     expect(served({ from: '2026-11-03T18:37:00Z', to: '2026-11-04T09:01:00Z' }))
-      .toEqual({ from: '2026-11-03T18:30:00.000Z', to: '2026-11-04T09:15:00.000Z', lifetime: false, bucket: null });
+      .toEqual({ from: '2026-11-03T18:30:00.000Z', to: '2026-11-04T09:15:00.000Z', lifetime: false, clamped: false, bucket: null });
   });
 
   it('a range reaching past now ends at the bucket now falls in (no future zeros)', () => {
@@ -79,9 +79,30 @@ describe('parseInsightsRange', () => {
     expect(refused({ from: '2026-08-01T00:00:00Z', to: '2026-11-02T00:00:00Z' })).toBe('A range can cover at most 92 days.');
   });
 
-  it('the lifetime is never refused for its length', () => {
+  it('the lifetime is never refused for its length: past 92 days it is the last 92 days, flagged clamped', () => {
     const old = parseInsightsRange({}, { createdAt: new Date('2025-01-01T00:00:00Z'), now: NOW, bucket: true });
-    expect(old.ok && old.range.bucket).toBe('day');
+    if (!old.ok) throw new Error(old.message);
+    expect(old.range).toMatchObject({ lifetime: true, clamped: true, bucket: 'day' });
+    expect(old.range.to.toISOString()).toBe('2026-11-04T10:15:00.000Z');
+    expect(old.range.to.getTime() - old.range.from.getTime()).toBe(92 * 86_400_000);
+    expect(old.range.from.toISOString()).toBe('2026-08-04T10:15:00.000Z');
+  });
+
+  it('a lifetime of exactly 92 days is served whole; one bucket more is clamped', () => {
+    const to = '2026-11-04T10:15:00.000Z';
+    const at92 = parseInsightsRange({}, { createdAt: new Date('2026-08-04T10:15:00Z'), now: NOW, bucket: false });
+    expect(at92.ok && [at92.range.from.toISOString(), at92.range.to.toISOString(), at92.range.clamped])
+      .toEqual(['2026-08-04T10:15:00.000Z', to, false]);
+    const over = parseInsightsRange({}, { createdAt: new Date('2026-08-04T10:14:59Z'), now: NOW, bucket: false });
+    expect(over.ok && [over.range.from.toISOString(), over.range.to.toISOString(), over.range.clamped])
+      .toEqual(['2026-08-04T10:15:00.000Z', to, true]);
+  });
+
+  it('an explicit range keeps the 92-day limit (never clamped), and one bound alone is not a lifetime', () => {
+    expect(refused({ from: '2026-08-01T00:00:00Z', to: '2026-11-02T00:00:00Z' })).toBe('A range can cover at most 92 days.');
+    const longAgo = parseInsightsRange({ to: '2026-11-04T00:00:00Z' }, { createdAt: new Date('2025-01-01T00:00:00Z'), now: NOW, bucket: false });
+    expect(longAgo.ok ? 'served' : longAgo.message).toBe('A range can cover at most 92 days.');
+    expect(served({ from: '2026-11-01T00:00:00Z' })).toMatchObject({ lifetime: false, clamped: false });
   });
 
   it('refuses unknown and repeated keys, and a bucket on a read that takes none', () => {
@@ -98,11 +119,14 @@ describe('parseInsightsRange', () => {
     expect(refused({ bucket: 'week' }, true)).toBe('bucket must be one of quarter_hour, hour, day.');
   });
 
-  it('refuses a series longer than 92 days of quarter hours', () => {
-    const year = parseInsightsRange({ bucket: 'quarter_hour' }, { createdAt: new Date('2025-11-01T00:00:00Z'), now: NOW, bucket: true });
-    expect(year.ok).toBe(false);
-    expect(year.ok ? '' : year.message).toBe(`That range has more than ${INSIGHTS_MAX_TREND_BUCKETS} quarter hour buckets: choose a wider bucket.`);
+  it('refuses a series longer than 92 days of quarter hours; a clamped lifetime is exactly the limit', () => {
+    const wide = parse({ from: '2026-08-04T10:00:00Z', to: '2026-11-04T10:15:00Z', bucket: 'quarter_hour' }, true);
+    expect(wide.ok).toBe(false);
+    expect(wide.ok ? '' : wide.message).toBe(`That range has more than ${INSIGHTS_MAX_TREND_BUCKETS} quarter hour buckets: choose a wider bucket.`);
     expect(parse({ from: '2026-08-04T10:15:00Z', bucket: 'quarter_hour' }, true).ok).toBe(true);
+    // A year-old campaign's lifetime is its last 92 days: 8,832 quarter hours, served.
+    const year = parseInsightsRange({ bucket: 'quarter_hour' }, { createdAt: new Date('2025-11-01T00:00:00Z'), now: NOW, bucket: true });
+    expect(year.ok && year.range.clamped).toBe(true);
   });
 
   it('a lifetime read the instant a campaign is made still serves one bucket', () => {

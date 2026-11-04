@@ -455,10 +455,26 @@ describe('the range reads\' guards and refusals', () => {
 
   it('lifetime: no range given is the campaign\'s created_at to now, with a default bucket', async () => {
     const t = await ok(insights('trends'));
-    expect(t.range).toMatchObject({ from: at(-120).toISOString(), lifetime: true });
+    expect(t.range).toMatchObject({ from: at(-120).toISOString(), lifetime: true, clamped: false });
     expect(t.bucket).toBe('hour');
     const a = await ok(insights('activity'));
     // The lifetime includes the dials before the range.
     expect(a.calls.dials).toBeGreaterThan((responses['activity'] as any).calls.dials);
+  });
+
+  it('lifetime: a campaign older than 92 days is served its last 92 days, flagged clamped, on every range read', async () => {
+    const createdAt = (await q('SELECT created_at FROM agency_campaigns WHERE id = $1', [campaignId])).rows[0]!.created_at as Date;
+    await q(`UPDATE agency_campaigns SET created_at = now() - interval '200 days' WHERE id = $1`, [campaignId]);
+    try {
+      for (const section of ['activity', 'trends', 'health']) {
+        insightsCache.clear();
+        const body = await ok(insights(section));
+        expect(body.range, section).toMatchObject({ lifetime: true, clamped: true });
+        expect(Date.parse(body.range.to) - Date.parse(body.range.from), section).toBe(92 * 86_400_000);
+        expect(Date.parse(body.range.to), section).toBeGreaterThanOrEqual(Date.now() - 15 * 60_000);
+      }
+    } finally {
+      await q('UPDATE agency_campaigns SET created_at = $2 WHERE id = $1', [campaignId, createdAt]);
+    }
   });
 });

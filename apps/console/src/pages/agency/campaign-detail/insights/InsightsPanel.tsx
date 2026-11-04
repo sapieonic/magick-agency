@@ -12,7 +12,7 @@ import {
   allowedBuckets,
   defaultBucket,
   INSIGHTS_RANGE_PRESETS,
-  insightsRangeQuery,
+  servedRangeView,
   rangeChoiceFromParams,
   rangeChoiceKey,
   rangeChoiceToParams,
@@ -152,11 +152,13 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
   }
 
   const now = new Date();
+  // What the server served: a lifetime past 92 days comes back clamped, labelled and linked as such.
+  const served = servedRangeView(range, activity?.range ?? rangeData.trends.data?.range ?? rangeData.health.data?.range);
   const ctx: RangeSectionContext = {
     campaignId,
     campaignName: summary.name,
-    range: range ? insightsRangeQuery(range) : {},
-    rangeLabel: range?.label ?? 'Lifetime',
+    range: served.query,
+    rangeLabel: served.label,
     agentName,
   };
   const staffedAgents = allocation ? allocation.agents.filter((a) => a.staffed).length : null;
@@ -232,7 +234,7 @@ export function InsightsPanel({ campaignId, canRetry, onRetry, refreshToken, she
         </div>
       </div>
       <p className={styles.rangeNote}>
-        {`Times in ${zone}${range?.zoneFallback ? ' (the campaign’s time zone is not recognised)' : ''} · roster and allocation are as of now; calls, agents, trends and health follow the range (${range?.label ?? 'Lifetime'}).`}
+        {`Times in ${zone}${range?.zoneFallback ? ' (the campaign’s time zone is not recognised)' : ''} · roster and allocation are as of now; calls, agents, trends and health follow the range (${served.label}).`}
       </p>
       {range?.error ? <p className={styles.rangeError} role="alert">{range.error}</p> : null}
       {freshness ? <p className={styles.rangeNote} data-testid="insights-freshness">{freshness}</p> : null}

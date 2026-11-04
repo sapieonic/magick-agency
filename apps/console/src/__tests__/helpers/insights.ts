@@ -243,7 +243,7 @@ export function allocation(over: Partial<AgencyInsightsAllocation> = {}): Agency
   };
 }
 
-const LIFETIME_RANGE = { from: '2026-10-31T03:32:00.000Z', to: '2026-11-04T10:12:00.000Z', lifetime: true, timezone: ZONE };
+const LIFETIME_RANGE = { from: '2026-10-31T03:30:00.000Z', to: '2026-11-04T10:15:00.000Z', lifetime: true, clamped: false, timezone: ZONE };
 
 export function activity(over: Partial<AgencyInsightsActivity> = {}): AgencyInsightsActivity {
   return {

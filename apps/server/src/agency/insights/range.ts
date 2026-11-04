@@ -6,8 +6,8 @@
  * ── What is accepted ─────────────────────────────────────────────────────────
  *  - `from`, `to`: ISO-8601 instants WITH a zone (`Z` or `±HH:MM`), half-open `[from, to)`. A
  *    bare date or a wall-clock time has no instant until a zone is chosen, and the server will not
- *    guess one, so they are refused. Both absent: the lifetime. One alone: the other keeps its
- *    default (`from` the campaign's `created_at`, `to` now).
+ *    guess one, so they are refused. Both absent: the lifetime (below). One alone: the other keeps
+ *    its default (`from` the campaign's `created_at`, `to` now).
  *  - `bucket` (trends only): one of `AGENCY_INSIGHTS_BUCKETS`; absent, `hour` for a range of up
  *    to {@link HOURLY_DEFAULT_MAX_HOURS} hours and `day` beyond (the console's own default).
  *  - Nothing else. An unknown key, a repeated key, a `bucket` on a read that takes none, an
@@ -26,9 +26,16 @@
  *
  * The width limit is checked on the range as ASKED: 92 calendar days in a zone that changes its
  * clocks in them are 92 × 24 h plus or minus an hour, so the limit allows that hour
- * ({@link RANGE_LIMIT_MS}). The lifetime is never refused for its length: it is the page's
- * default, and a campaign older than 92 days still has one. Its cost is the rollup's (a sum of
- * buckets) plus the reads that are not the rollup, which scale with what happened in it.
+ * ({@link RANGE_LIMIT_MS}).
+ *
+ * ── The lifetime ─────────────────────────────────────────────────────────────
+ * The page's default, never refused: `created_at` to now when that span (as served, in whole
+ * buckets) is at most `AGENCY_INSIGHTS_MAX_RANGE_DAYS` days; otherwise the last 92 × 24 h ending
+ * at the served `to` (a whole number of buckets, so a quarter-hour series is exactly the bucket
+ * limit), served with `clamped: true` so the page says "Last 92 days" rather than "Lifetime" and
+ * its drill-downs send that window. The reads that are not the rollup (callback timing, agent
+ * state time, the online peak) scale with the range, so an old campaign's default must not be
+ * its whole history.
  */
 import {
   AGENCY_INSIGHTS_BUCKETS,
@@ -46,6 +53,9 @@ export const INSIGHTS_BUCKET_MS = INSIGHTS_BUCKET_MINUTES * MINUTE_MS;
 /** The widest range asked for: the contract's days, plus the hour a clock change can add to them. */
 export const RANGE_LIMIT_MS = AGENCY_INSIGHTS_MAX_RANGE_DAYS * DAY_MS + HOUR_MS;
 
+/** The widest lifetime served: 92 × 24 h, a whole number of buckets. Longer is clamped to it. */
+export const LIFETIME_LIMIT_MS = AGENCY_INSIGHTS_MAX_RANGE_DAYS * DAY_MS;
+
 /** The longest trend series: the widest range in the narrowest bucket (92 days of quarter hours). */
 export const INSIGHTS_MAX_TREND_BUCKETS = AGENCY_INSIGHTS_MAX_RANGE_DAYS * (DAY_MS / INSIGHTS_BUCKET_MS);
 
@@ -62,6 +72,8 @@ export interface ServedInsightsRange {
   to: Date;
   /** Neither bound was given. */
   lifetime: boolean;
+  /** A lifetime longer than {@link LIFETIME_LIMIT_MS}, served as its last 92 days. False otherwise. */
+  clamped: boolean;
   /** The trend bucket (`trends` only; null for the other reads). */
   bucket: AgencyInsightsBucket | null;
 }
@@ -154,13 +166,15 @@ export function parseInsightsRange(
     }
   }
 
-  const servedFrom = floorToBucket(askedFrom);
+  let servedFrom = floorToBucket(askedFrom);
   const ceiled = ceilToBucket(askedTo);
   // At least one bucket: a lifetime read the instant a campaign is created still has one.
   const servedTo = new Date(Math.max(
     Math.min(ceiled.getTime(), nowBucketEnd.getTime()),
     servedFrom.getTime() + INSIGHTS_BUCKET_MS,
   ));
+  const clamped = lifetime && servedTo.getTime() - servedFrom.getTime() > LIFETIME_LIMIT_MS;
+  if (clamped) servedFrom = new Date(servedTo.getTime() - LIFETIME_LIMIT_MS);
   const span = servedTo.getTime() - servedFrom.getTime();
 
   let bucket: AgencyInsightsBucket | null = null;
@@ -174,7 +188,7 @@ export function parseInsightsRange(
       return { ok: false, message: `That range has more than ${INSIGHTS_MAX_TREND_BUCKETS} ${bucket.replace('_', ' ')} buckets: choose a wider bucket.` };
     }
   }
-  return { ok: true, range: { from: servedFrom, to: servedTo, lifetime, bucket } };
+  return { ok: true, range: { from: servedFrom, to: servedTo, lifetime, clamped, bucket } };
 }
 
 /** The cache key suffix that names a served range (and bucket). */
@@ -198,5 +212,5 @@ export function campaignZone(zone: string | null | undefined): string {
 
 /** The wire's `range`. */
 export function rangeWire(range: ServedInsightsRange, timezone: string): AgencyInsightsRange {
-  return { from: range.from.toISOString(), to: range.to.toISOString(), lifetime: range.lifetime, timezone };
+  return { from: range.from.toISOString(), to: range.to.toISOString(), lifetime: range.lifetime, clamped: range.clamped, timezone };
 }
