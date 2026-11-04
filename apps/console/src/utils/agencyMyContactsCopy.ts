@@ -137,16 +137,6 @@ export function contactCallGate(
   return { ok: false, reason: blocked ? RETRY_BLOCK_COPY[blocked] : RETRY_BLOCK_COPY.not_retryable };
 }
 
-/** The calling-hours note, trimmed and counted in code points as the server counts it. */
-export function overrideNoteLength(note: string): number {
-  return [...note.trim()].length;
-}
-
-export function overrideNoteValid(note: string): boolean {
-  const length = overrideNoteLength(note);
-  return length >= AGENCY_OVERRIDE_NOTE_MIN && length <= AGENCY_OVERRIDE_NOTE_MAX;
-}
-
 /** "Retry not reached (N)" is offered when nothing is due and there is something to retry. */
 export function showRetryNotReached(summary: {
   due_now: number;

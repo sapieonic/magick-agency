@@ -36,9 +36,9 @@ import {
   agentRetryRefusal,
   contactCallGate,
   overrideBadge,
-  overrideNoteValid,
   showRetryNotReached,
 } from '../../utils/agencyMyContactsCopy';
+import { overrideNoteBlock } from '../../utils/softphone/overrides';
 import { ApiError } from '../../api/client';
 import type { AgencyMyContact } from '@magick-agency/contracts/api/agency/assignment';
 
@@ -185,9 +185,10 @@ describe('overrides and retry offer', () => {
   });
 
   it('holds the calling-hours note to 10–500 characters, trimmed', () => {
-    expect(overrideNoteValid('   short   ')).toBe(false);
-    expect(overrideNoteValid('Customer asked for 9pm')).toBe(true);
-    expect(overrideNoteValid('x'.repeat(501))).toBe(false);
+    // The soft phone's note check: the my-contacts note shares its bounds.
+    expect(overrideNoteBlock('   short   ')).toBe('too_short');
+    expect(overrideNoteBlock('Customer asked for 9pm')).toBeNull();
+    expect(overrideNoteBlock('x'.repeat(501))).toBe('too_long');
   });
 
   it('offers "Retry not reached" only when allowed, nothing is due and something is eligible', () => {

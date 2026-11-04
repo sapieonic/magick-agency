@@ -13,10 +13,9 @@ import {
   contactCallGate,
   type CallGate,
   overrideBadge,
-  overrideNoteLength,
-  overrideNoteValid,
   showRetryNotReached,
 } from '../../utils/agencyMyContactsCopy';
+import { overrideNoteBlock, overrideNoteLength } from '../../utils/softphone/overrides';
 import {
   trackAgencyAgentRetry,
   trackAgencyMyContactCall,
@@ -467,7 +466,7 @@ export function MyContactsPanel({
                 type="button"
                 className="btn-primary"
                 onClick={() => void placeCall(notePrompt.contact, note)}
-                disabled={!overrideNoteValid(note) || busy !== null}
+                disabled={overrideNoteBlock(note) !== null || busy !== null}
                 data-testid="my-note-call"
               >
                 Call with this note
