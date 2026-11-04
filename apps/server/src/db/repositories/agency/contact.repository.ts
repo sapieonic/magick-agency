@@ -201,8 +201,8 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
        pool_locked AS MATERIALIZED (
          SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
-          WHERE c.campaign_id = $1 AND c.assigned_user_id IS NULL
-            AND ${dueAndNotBusySql('c', '$1')}
+          WHERE c.campaign_id = $1::uuid AND c.assigned_user_id IS NULL
+            AND ${dueAndNotBusySql('c', '$1::uuid')}
           ORDER BY c.next_attempt_at
           LIMIT ((SELECT count(*) FROM agents) - (SELECT count(*) FROM own)) * $3::int
             FOR UPDATE OF c SKIP LOCKED
@@ -238,8 +238,8 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
           CROSS JOIN LATERAL (
             SELECT c.id, ${contactPhoneDigitsSql('c')} AS digits
               FROM agency_contacts c
-             WHERE c.campaign_id = $1 AND c.assigned_user_id = a.agent_user_id
-               AND ${dueAndNotBusySql('c', '$1')}
+             WHERE c.campaign_id = $1::uuid AND c.assigned_user_id = a.agent_user_id
+               AND ${dueAndNotBusySql('c', '$1::uuid')}
              ORDER BY c.next_attempt_at
              LIMIT 1
                FOR UPDATE OF c SKIP LOCKED
@@ -568,14 +568,14 @@ export class AgencyContactRepository {
       `WITH due AS MATERIALIZED (
          SELECT c.id, c.assigned_user_id
            FROM agency_contacts c
-          WHERE c.campaign_id = $1
+          WHERE c.campaign_id = $1::uuid
             AND c.state = 'pending'
             AND c.assigned_user_id IS NOT NULL
             AND c.next_attempt_at <= now() - make_interval(mins => $2::int)
             AND ${contactBucketSql('c', '$3')} = 'callback'
             AND NOT EXISTS (
               SELECT 1 FROM agency_agent_sessions s
-               WHERE s.campaign_id = $1 AND s.agent_user_id = c.assigned_user_id
+               WHERE s.campaign_id = $1::uuid AND s.agent_user_id = c.assigned_user_id
                  AND ${presentSessionSql('s')})
           ORDER BY c.next_attempt_at
           LIMIT $5
@@ -1417,7 +1417,7 @@ export class AgencyContactRepository {
         await client.query(
           `INSERT INTO agency_contact_assignment_events
              (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
-           VALUES ($1, $2, $3, NULL, $4, $4, 'callback', gen_random_uuid())`,
+           VALUES ($1, $2, $3, NULL, $4::uuid, $4::uuid, 'callback', gen_random_uuid())`,
           [locked.tenant_id, locked.campaign_id, opts.contactId, assignTo],
         );
       }
