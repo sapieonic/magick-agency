@@ -18,9 +18,13 @@
  *  - {@link contactsOnDncStatement}: the campaign's `pending` contacts semi-joined to the DNC
  *    entries in scope; the planner drives from whichever side is smaller, each probe indexed
  *    (`idx_agency_contacts_phone` / `idx_dnc_entries_tenant_phone`).
- *  - {@link allocationAttemptCounters} reads EVERY attempt of the campaign (joined to the
- *    contact for its owner). Correct, and the brief allowed it for now: the rollup workstream
- *    replaces it, which is why it is one function the route calls and nothing else reads.
+ *  - {@link allocationCountersStatement}: the campaign's rows of `agency_insights_rollup_agents`
+ *    (a lifetime is one campaign prefix of its unique index), plus one 15-minute range of
+ *    `idx_agency_attempts_campaign_dialed` per agent for `last_activity_at`. Never the whole
+ *    attempt table (it replaced a read of every attempt: 1.1 s at 1M).
+ *  - The range reads' extras: {@link softphoneCallsStatement} (`idx_agency_manual_calls_campaign`),
+ *    {@link dncMarkedStatement} (`idx_dnc_entries_tenant_created`), {@link abandonmentWindowStatement}
+ *    (a day of `idx_agency_attempts_campaign_dialed`).
  *  - {@link listUploads}: `idx_agency_ingest_jobs_campaign`.
  */
 import { getPool } from '@magick-agency/db';
@@ -37,7 +41,9 @@ import {
   type RosterBucket,
 } from './insights-sql.js';
 import { neverSeededSuppressionSql, params, retrySelectionConditions } from './query-builders.js';
+import { INSIGHTS_BUCKET_SQL_INTERVAL } from './insights-rollup-sql.js';
 import type { AgencyRetrySelector } from '@magick-agency/contracts/agency';
+import { ABANDONED_ATTEMPT_PREDICATE_SQL, ABANDONMENT_WINDOW_HOURS } from '@magick-agency/domain/abandonment-predicate';
 
 /** A statement and its values, exported so a test can `EXPLAIN` exactly what runs. */
 export interface InsightsStatement {
@@ -174,13 +180,133 @@ export function allocationStatement(input: AllocationCountsInput): InsightsState
   return { text, values: bind.values };
 }
 
-/** Per owner: dials and activity, from the campaign's attempts. */
+/** Per agent who dialled (null: dials with no reserved session): the allocation's dial counters. */
 export interface OwnerAttemptCounters {
   redials: number;
   retries_reopened: number;
   retries_manual: number;
   overrides_used: number;
   last_activity_at: Date | null;
+}
+
+/**
+ * The allocation's dial counters over the campaign's lifetime, per agent, from the rollup's
+ * per-agent rows (`agency_insights_rollup_agents`, migration 0012), never the attempt table:
+ * placed wrap-up redials, placed agent reopens, placed hand dials, placed dials that spent an
+ * override. Attributed to the agent who PLACED the dial (the reserved session's user), as the
+ * rollup attributes every measure and as the Call attempts list's `agent_user_id` filter selects
+ * (`attemptAgentUserSql`), so a per-agent number and the list it opens are one set.
+ *
+ * `last_activity_at`: the agent's newest placed dial, found in two indexed steps: the newest
+ * bucket the rollup holds for the agent (read in the same scan as the sums), then the newest
+ * `dialed_at` among the campaign's dials in that one 15-minute bucket
+ * (`idx_agency_attempts_campaign_dialed`, a bucket's worth of rows) whose session is the agent's
+ * (joined by primary key). Exact to the dial, as fresh as the rollup (a dial in a bucket the job
+ * has not recomputed yet shows when it has, seconds later). Exported for its plan test.
+ */
+export function allocationCountersStatement(campaignId: string): InsightsStatement {
+  return {
+    text: `
+      WITH per_agent AS (
+        SELECT r.agent_user_id AS uid,
+               COALESCE(SUM(r.redials_placed), 0)::int AS redials,
+               COALESCE(SUM(r.reopened_dials), 0)::int AS reopened,
+               COALESCE(SUM(r.manual_dials), 0)::int AS manual,
+               COALESCE(SUM(r.overrides_used), 0)::int AS overrides,
+               MAX(r.bucket_start) FILTER (WHERE r.dials > 0) AS newest
+          FROM agency_insights_rollup_agents r
+         WHERE r.campaign_id = $1::uuid
+         GROUP BY r.agent_user_id
+      )
+      SELECT p.uid::text AS uid, p.redials, p.reopened, p.manual, p.overrides,
+             -- ORDER BY … LIMIT 1 rather than max(): the shape of the index's own order, so the
+             -- planner walks idx_agency_attempts_campaign_dialed backwards from the bucket's end
+             -- and stops at the agent's newest dial.
+             (SELECT a.dialed_at
+                FROM agency_call_attempts a
+                LEFT JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id
+               WHERE a.campaign_id = $1::uuid
+                 AND a.dialed_at IS NOT NULL
+                 AND a.dialed_at >= p.newest
+                 AND a.dialed_at < p.newest + ${INSIGHTS_BUCKET_SQL_INTERVAL}
+                 AND s.agent_user_id IS NOT DISTINCT FROM p.uid
+               ORDER BY a.dialed_at DESC
+               LIMIT 1) AS last
+        FROM per_agent p`,
+    values: [campaignId],
+  };
+}
+
+// ─── Range reads that are neither the rollup nor the pacing history ────────
+
+/**
+ * Soft-phone calls tagged to the campaign and PLACED (`dialed_at` set), created in `[from, to)`:
+ * a range of `idx_agency_manual_calls_campaign (campaign_id, created_at DESC) WHERE campaign_id IS
+ * NOT NULL`. On `created_at` because that is the column the tag's index orders (a call is placed
+ * seconds after it is created); tenant-checked because the tag carries no foreign key.
+ */
+export function softphoneCallsStatement(q: { campaignId: string; tenantId: string; from: Date; to: Date }): InsightsStatement {
+  return {
+    text: `
+      SELECT count(*)::int AS n
+        FROM agency_manual_calls m
+       WHERE m.campaign_id = $1::uuid
+         AND m.created_at >= $2::timestamptz AND m.created_at < $3::timestamptz
+         AND m.tenant_id = $4::uuid
+         AND m.dialed_at IS NOT NULL`,
+    values: [q.campaignId, q.from, q.to, q.tenantId],
+  };
+}
+
+/**
+ * Do Not Call entries agents wrote SCOPED TO THIS CAMPAIGN in `[from, to)`, by who wrote them
+ * (`added_by`). A range of the tenant's entries on `idx_dnc_entries_tenant_created (tenant_id,
+ * created_at DESC)`: it reads the tenant's entries of the range (imports included) and keeps the
+ * campaign's agent marks, so its cost is the tenant's DNC writes in the range, not the campaign's
+ * size. An agent's tenant-wide escalation names no campaign and is not counted here.
+ */
+export function dncMarkedStatement(q: { campaignId: string; tenantId: string; from: Date; to: Date }): InsightsStatement {
+  return {
+    text: `
+      SELECT d.added_by, count(*)::int AS n
+        FROM dnc_entries d
+       WHERE d.tenant_id = $1::uuid
+         AND d.created_at >= $2::timestamptz AND d.created_at < $3::timestamptz
+         AND d.campaign_id = $4::uuid
+         AND d.source = 'agent'
+       GROUP BY d.added_by`,
+    values: [q.tenantId, q.from, q.to, q.campaignId],
+  };
+}
+
+/**
+ * How far before its answer an answered attempt can have been dialled, at most. A call rings for
+ * seconds (the carrier's ring timeout, then the reaper's orphan sweep); an hour is a bound no
+ * attempt reaches, and it lets the window be a range of the campaign's dials.
+ */
+export const ANSWER_AFTER_DIAL_MAX_HOURS = 1;
+
+/**
+ * The abandonment guardrail's window for ONE campaign (`AgencyAbandonmentRepository.window24h`'s
+ * predicate: ended, answered in the last `ABANDONMENT_WINDOW_HOURS`, and the abandoned among
+ * them), read as a range of the campaign's dials on `idx_agency_attempts_campaign_dialed` (dialled
+ * within the window plus {@link ANSWER_AFTER_DIAL_MAX_HOURS}), so it reads a day of one
+ * campaign, not the fleet's day on the global `answered_at` index.
+ */
+export function abandonmentWindowStatement(campaignId: string): InsightsStatement {
+  return {
+    text: `
+      SELECT (count(*))::int AS answered,
+             (count(*) FILTER (WHERE ${ABANDONED_ATTEMPT_PREDICATE_SQL}))::int AS abandoned
+        FROM agency_call_attempts
+       WHERE campaign_id = $1::uuid
+         AND dialed_at IS NOT NULL
+         AND dialed_at > now() - make_interval(hours => $2::int + ${ANSWER_AFTER_DIAL_MAX_HOURS})
+         AND state = 'ended'
+         AND answered_at IS NOT NULL
+         AND answered_at > now() - make_interval(hours => $2::int)`,
+    values: [campaignId, ABANDONMENT_WINDOW_HOURS],
+  };
 }
 
 // ─── Headline ───────────────────────────────────────────────────────────────
@@ -355,30 +481,15 @@ export class AgencyInsightsReadRepository {
   }
 
   /**
-   * Per owner of the contact (its CURRENT owner, the attribution `last_activity_at` has on the
-   * progress read; the pool under `null`): placed wrap-up redials, placed agent reopens
-   * (`agent_reopened`), placed agent dials of their own contacts (`agent_manual`), dials that spent
-   * an outcome override, and the latest attempt.
-   *
-   * Reads EVERY attempt of the campaign. The rollup workstream replaces this function; nothing but
-   * the allocation route calls it.
+   * {@link allocationCountersStatement}: per agent who placed the dials (null: dials with no
+   * reserved session), over the campaign's lifetime, from the rollup. Nothing but the allocation
+   * route calls it.
    */
   async allocationAttemptCounters(campaignId: string): Promise<Map<string | null, OwnerAttemptCounters>> {
+    const { text, values } = allocationCountersStatement(campaignId);
     const { rows } = await getPool().query<{
       uid: string | null; redials: number; reopened: number; manual: number; overrides: number; last: Date | null;
-    }>(
-      `SELECT c.assigned_user_id::text AS uid,
-              (count(*) FILTER (WHERE a.redial_number > 0 AND a.dialed_at IS NOT NULL))::int AS redials,
-              (count(*) FILTER (WHERE a.agent_reopened AND a.dialed_at IS NOT NULL))::int AS reopened,
-              (count(*) FILTER (WHERE a.agent_manual AND a.dialed_at IS NOT NULL))::int AS manual,
-              (count(*) FILTER (WHERE cardinality(a.override_applied) > 0))::int AS overrides,
-              max(a.created_at) AS last
-         FROM agency_call_attempts a
-         JOIN agency_contacts c ON c.id = a.contact_id
-        WHERE a.campaign_id = $1::uuid
-        GROUP BY 1`,
-      [campaignId],
-    );
+    }>(text, values);
     return new Map(rows.map((r) => [r.uid, {
       redials: num(r.redials),
       retries_reopened: num(r.reopened),
@@ -386,6 +497,28 @@ export class AgencyInsightsReadRepository {
       overrides_used: num(r.overrides),
       last_activity_at: r.last,
     }]));
+  }
+
+  /** {@link softphoneCallsStatement}'s count. */
+  async softphoneCalls(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<number> {
+    const { text, values } = softphoneCallsStatement(q);
+    const { rows } = await getPool().query<{ n: number }>(text, values);
+    return num(rows[0]?.n);
+  }
+
+  /** {@link dncMarkedStatement}'s rows, most first; `added_by` as stored. */
+  async dncMarked(q: { campaignId: string; tenantId: string; from: Date; to: Date }): Promise<Array<{ added_by: string | null; count: number }>> {
+    const { text, values } = dncMarkedStatement(q);
+    const { rows } = await getPool().query<{ added_by: string | null; n: number }>(text, values);
+    return rows.map((r) => ({ added_by: r.added_by, count: num(r.n) }))
+      .sort((a, b) => b.count - a.count || String(a.added_by).localeCompare(String(b.added_by)));
+  }
+
+  /** {@link abandonmentWindowStatement}'s pair. */
+  async abandonmentWindow(campaignId: string): Promise<{ abandoned: number; answered: number }> {
+    const { text, values } = abandonmentWindowStatement(campaignId);
+    const { rows } = await getPool().query<{ answered: number; abandoned: number }>(text, values);
+    return { abandoned: num(rows[0]?.abandoned), answered: num(rows[0]?.answered) };
   }
 
   /** Per agent with a session on the campaign: the state of the joined session, if any. */

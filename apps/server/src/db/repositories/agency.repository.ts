@@ -82,9 +82,13 @@ export { agentAbsent } from './agency/assignment-reads.repository.js';
 export {
   AgencyInsightsReadRepository,
   agencyInsightsReadRepository,
+  abandonmentWindowStatement,
+  allocationCountersStatement,
   allocationStatement,
   contactsOnDncStatement,
   dialPaceStatement,
+  dncMarkedStatement,
+  softphoneCallsStatement,
   INSIGHTS_UPLOADS_LIMIT,
   rosterStatement,
 } from './agency/insights-reads.repository.js';

@@ -20,8 +20,13 @@
  *    rule (`listActiveForCampaign`, `presence`, `agentAbsent`). `state`: the agent's joined
  *    session's state, `offline` when none.
  *  - `redials`, `retries_reopened`, `retries_manual`, `overrides_used`, `last_activity_at`:
- *    `allocationAttemptCounters`, by the contact's CURRENT owner (the attribution progress gives
- *    `last_activity_at`). It reads the campaign's attempts; the rollup workstream replaces it.
+ *    `allocationAttemptCounters`, over the campaign's lifetime from the insights rollup, by the
+ *    agent who PLACED the dial (the rollup's attribution, and the Call attempts list's
+ *    `agent_user_id` filter, so each number opens a list of exactly its dials). The contact
+ *    columns are by owner; in strict mode, where owners dial their own contacts, the two agree.
+ *    The pool row's dial counters are the dials placed with no reserved session. An agent who
+ *    dialled and is neither staffed nor an owner still gets a row (allocated 0), so the Total
+ *    row is every dial. `last_activity_at` is the agent's newest placed dial.
  *
  * Owners are reported as stored, whatever `agency_contact_assignment_enabled` says: pacing reads
  * the stored `assignment_mode` and owners regardless of the flag (CA9 gates the surface, never the
@@ -183,8 +188,9 @@ export async function computeAllocation(campaign: AgencyCampaignRecord): Promise
   const byOwner = new Map(owners.filter((o) => o.uid !== null).map((o) => [o.uid!, o]));
   const pool = owners.find((o) => o.uid === null) ?? emptyCounts(null);
   const staffed = new Set(staffing.map((s) => s.user_id));
-  // The progress read's order: the staffed agents, then any other owner.
-  const ids = [...new Set([...staffing.map((s) => s.user_id), ...[...byOwner.keys()].sort()])];
+  // The progress read's order: the staffed agents, then any other owner, then anyone else who dialled.
+  const dialled = [...counters.keys()].filter((k): k is string => k !== null).sort();
+  const ids = [...new Set([...staffing.map((s) => s.user_id), ...[...byOwner.keys()].sort(), ...dialled])];
   const names = await namesIn(ids, campaign.tenant_id);
   const nowMs = now.getTime();
 

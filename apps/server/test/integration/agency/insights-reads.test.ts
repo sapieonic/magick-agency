@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, OTHER_ACCOUNT, OTHER_TENANT, insertAccount, insertTenant } from '../setup/factories.js';
-import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
+import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession } from './agency-factories.js';
 
 /**
  * The insights as-of-now reads (`insights-reads.repository.ts`, `insights-sql.ts`) on real
@@ -249,23 +249,104 @@ describe('the allocation per owner', () => {
     expect(localDayEnd('Not/AZone', new Date())).toBeNull();
   });
 
-  it('attempt counters by the contact\'s owner: redials, reopens, manual dials, overrides, last activity', async () => {
+  /** Drain the rollup's dirty marks (the job's batch, run until the backlog is empty). */
+  async function drainRollup(): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      const r = await repo.agencyInsightsRollupRepository.recomputeBatch(200);
+      if (r.picked < 200) return;
+    }
+  }
+
+  /**
+   * The counters as E1 read them before the rollup replaced the query (every attempt of the
+   * campaign, by the contact's CURRENT owner), kept here as the oracle the rollup's numbers were
+   * checked against. Placed-only on every column (the old overrides column counted an unplaced
+   * attempt too; no attempt spends an override before it is placed), newest dial as last activity.
+   */
+  async function oldCounters(campaignId: string) {
+    const { rows } = await getTestPool().query<{ uid: string | null; redials: number; reopened: number; manual: number; overrides: number; last: Date | null }>(
+      `SELECT c.assigned_user_id::text AS uid,
+              (count(*) FILTER (WHERE a.redial_number > 0 AND a.dialed_at IS NOT NULL))::int AS redials,
+              (count(*) FILTER (WHERE a.agent_reopened AND a.dialed_at IS NOT NULL))::int AS reopened,
+              (count(*) FILTER (WHERE a.agent_manual AND a.dialed_at IS NOT NULL))::int AS manual,
+              (count(*) FILTER (WHERE cardinality(a.override_applied) > 0 AND a.dialed_at IS NOT NULL))::int AS overrides,
+              max(a.dialed_at) AS last
+         FROM agency_call_attempts a
+         JOIN agency_contacts c ON c.id = a.contact_id
+        WHERE a.campaign_id = $1::uuid
+        GROUP BY 1`, [campaignId]);
+    return new Map(rows.map((r) => [r.uid, { redials: r.redials, retries_reopened: r.reopened, retries_manual: r.manual, overrides_used: r.overrides, last_activity_at: r.last }]));
+  }
+
+  it('attempt counters from the rollup equal the old per-attempt read where owners dial their own contacts', async () => {
+    const id = await campaign({ assignment_mode: 'strict' });
+    const agents = [randomUUID(), randomUUID(), randomUUID()];
+    // Past shifts (one live session per agent per tenant), and a second shift of agent 0: its dials are agent 0's too.
+    const shift = (u: string | undefined) => insertAgentSession(id, { agent_user_id: u, state: 'offline', left_at: new Date() });
+    const sessions = await Promise.all(agents.map((u) => shift(u)));
+    sessions.push(await shift(agents[0]));
+    let minute = 0;
+    for (let i = 0; i < 30; i++) {
+      const owner = i % agents.length;
+      const c = await contact(id, { assigned_user_id: agents[owner], state: 'exhausted' });
+      const session = i % 7 === 0 && owner === 0 ? sessions[3]! : sessions[owner]!;
+      for (let n = 1; n <= 1 + (i % 4); n++) {
+        const t = at(-(40 * 60_000) + (minute++) * 17_000);
+        await insertAgencyAttempt(id, c.id, {
+          attempt_number: n, state: 'ended', outcome: 'no_answer', dialed_at: t, created_at: t, reserved_agent_id: session.id,
+          redial_number: n === 2 && i % 2 === 0 ? 1 : 0,
+          agent_reopened: n === 3, agent_manual: n === 4 || i % 5 === 0,
+          override_applied: i % 3 === 0 && n === 1 ? ['extra_attempts'] : [],
+        });
+      }
+      // A queued attempt never placed: no counter counts it.
+      await insertAgencyAttempt(id, c.id, { attempt_number: 9, state: 'queued', redial_number: 1, agent_manual: true, reserved_agent_id: session.id });
+    }
+    await drainRollup();
+
+    const fresh = await repo.agencyInsightsReadRepository.allocationAttemptCounters(id);
+    const old = await oldCounters(id);
+    expect([...fresh.keys()].sort()).toEqual([...old.keys()].sort());
+    for (const [uid, want] of old) {
+      expect(fresh.get(uid), String(uid)).toEqual(want);
+    }
+    // Not vacuous: every counter is non-zero for someone.
+    const sums = [...fresh.values()].reduce((s, c) => ({
+      r: s.r + c.redials, o: s.o + c.retries_reopened, m: s.m + c.retries_manual, v: s.v + c.overrides_used,
+    }), { r: 0, o: 0, m: 0, v: 0 });
+    expect(Math.min(sums.r, sums.o, sums.m, sums.v)).toBeGreaterThan(0);
+  });
+
+  it('attempt counters are the DIALLING agent\'s (the attempts list\'s agent filter), the pool row the dials with no session', async () => {
     const id = await campaign();
-    const agent = randomUUID();
-    const c1 = await contact(id, { assigned_user_id: agent, state: 'exhausted' });
+    const dialler = randomUUID();
+    const s = await insertAgentSession(id, { agent_user_id: dialler });
+    // A pool contact (no owner) dialled by an agent, and one dialled with no session.
+    const c1 = await contact(id, {});
     const c2 = await contact(id, {});
     const t = at(-HOUR);
-    await insertAgencyAttempt(id, c1.id, { attempt_number: 1, state: 'ended', dialed_at: t, created_at: t });
-    await insertAgencyAttempt(id, c1.id, { attempt_number: 2, state: 'ended', dialed_at: t, redial_number: 1, created_at: t });
-    await insertAgencyAttempt(id, c1.id, { attempt_number: 3, state: 'ended', dialed_at: t, agent_reopened: true, created_at: t });
-    await insertAgencyAttempt(id, c1.id, { attempt_number: 4, state: 'ended', dialed_at: t, agent_manual: true, override_applied: ['retry_delay'], created_at: at(-60_000) });
-    await insertAgencyAttempt(id, c1.id, { attempt_number: 5, state: 'ended', redial_number: 1 }); // never placed
-    await insertAgencyAttempt(id, c2.id, { attempt_number: 1, state: 'ended', dialed_at: t, created_at: t });
+    const t2 = new Date(t.getTime() + 1000);
+    await insertAgencyAttempt(id, c1.id, { attempt_number: 1, state: 'ended', dialed_at: t, reserved_agent_id: s.id, agent_manual: true });
+    await insertAgencyAttempt(id, c1.id, { attempt_number: 2, state: 'ended', dialed_at: t2, reserved_agent_id: s.id, redial_number: 1 });
+    await insertAgencyAttempt(id, c2.id, { attempt_number: 1, state: 'ended', dialed_at: t, agent_reopened: true });
+    await drainRollup();
 
     const counters = await repo.agencyInsightsReadRepository.allocationAttemptCounters(id);
-    expect(counters.get(agent)).toMatchObject({ redials: 1, retries_reopened: 1, retries_manual: 1, overrides_used: 1 });
-    expect(counters.get(agent)!.last_activity_at!.getTime()).toBeGreaterThan(t.getTime());
-    expect(counters.get(null)).toMatchObject({ redials: 0, retries_reopened: 0, retries_manual: 0, overrides_used: 0 });
+    expect(counters.get(dialler)).toEqual({ redials: 1, retries_reopened: 0, retries_manual: 1, overrides_used: 0, last_activity_at: t2 });
+    expect(counters.get(null)).toEqual({ redials: 0, retries_reopened: 1, retries_manual: 0, overrides_used: 0, last_activity_at: t });
+  });
+
+  it('attempt counters\' plan: the rollup\'s agent rows, and one bucket of the dialled index per agent (never the attempt table)', async () => {
+    const id = await campaign();
+    const { text, values } = repo.allocationCountersStatement(id);
+    const shown = await plan(text, values);
+    expect(shown).toMatch(/Index (Only )?Scan using uq_agency_insights_rollup_agents/);
+    expect(shown).toMatch(/Index Scan (Backward )?using idx_agency_attempts_campaign_dialed/);
+    // Both ends of the agent's newest bucket are in the index condition: one bucket is read.
+    const cond = shown.split('\n').find((l) => l.includes('Index Cond:') && l.includes('dialed_at')) ?? '';
+    expect(cond).toMatch(/dialed_at >= p\.newest/);
+    expect(cond).toMatch(/dialed_at < \(p\.newest \+/);
+    expect(shown).not.toMatch(/Seq Scan on agency_call_attempts/);
   });
 });
 
