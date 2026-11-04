@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
 import { DEFAULTS, insertAccount, insertTenant, insertUser } from '../setup/factories.js';
-import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact } from './agency-factories.js';
+import { insertAgencyAttempt, insertAgencyCampaign, insertAgencyContact, insertAgentSession } from './agency-factories.js';
 
 vi.mock('@magick-agency/db', async (orig) => ({
   ...(await orig<typeof import('@magick-agency/db')>()),
@@ -450,5 +450,36 @@ describe('progress', () => {
         WHERE c.campaign_id = $1 AND c.assigned_user_id = $3 GROUP BY 1`,
       [campaign.id, ['callback'], a]);
     for (const r of rows) expect(mine.counts[r.bucket as keyof typeof mine.counts]).toBe(r.n);
+  });
+
+  it('live is the callback fallback\'s rule: a joined session whose station closed (offline) is not live', async () => {
+    const [onBreak, closed, left, both] = agents as [string, string, string, string];
+    await insertAgentSession(campaign.id, { agent_user_id: onBreak, state: 'break' });
+    // `releaseStationOnClose` and the reapers: `offline`, still joined (no `left_at`).
+    await insertAgentSession(campaign.id, { agent_user_id: closed, state: 'offline' });
+    await insertAgentSession(campaign.id, { agent_user_id: left, state: 'offline', left_at: new Date() });
+    // An earlier closed session and a present one: present.
+    await insertAgentSession(campaign.id, { agent_user_id: both, state: 'offline', left_at: new Date(Date.now() - 60_000) });
+    await insertAgentSession(campaign.id, { agent_user_id: both, state: 'available' });
+
+    const raw = await repo.agencyAssignmentReadRepository.progress({ id: campaign.id, disposition_catalog: CATALOG as never });
+    expect(raw.sessions.get(onBreak)?.live).toBe(true);
+    expect(raw.sessions.get(closed)?.live).toBe(false);
+    expect(raw.sessions.get(left)?.live).toBe(false);
+    expect(raw.sessions.get(both)?.live).toBe(true);
+
+    // The same agents, judged by the fallback: the closed station's callbacks fall back, the
+    // agent on break keeps theirs.
+    const ids = await seed(2);
+    await getTestPool().query(
+      `UPDATE agency_contacts SET assigned_user_id = CASE WHEN id = $1 THEN $3::uuid ELSE $4::uuid END, assigned_at = now(),
+              attempt_count = 1, last_outcome = 'connected', last_disposition = 'callback',
+              next_attempt_at = now() - interval '1 hour'
+        WHERE id = ANY(ARRAY[$1, $2]::uuid[])`,
+      [ids[0], ids[1], onBreak, closed]);
+    const moved = await repo.agencyContactRepository.fallBackOverdueCallbacks({
+      campaignId: campaign.id, graceMinutes: 30, callbackCodes: ['callback'], batchId: randomUUID(), limit: 10,
+    });
+    expect(moved).toEqual([{ contactId: ids[1], fromUserId: closed }]);
   });
 });

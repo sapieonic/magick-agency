@@ -29,6 +29,7 @@ import {
   callbackCodes,
   contactBucketSql,
   openContactSql,
+  presentSessionSql,
 } from './assignment-sql.js';
 import { iso } from './projections.js';
 import { params, phoneCondition, toKeysetPage } from './query-builders.js';
@@ -57,7 +58,10 @@ export interface ProgressRaw {
   /** Keyed by owner user id; the pool is `null`'s entry, under `pool`. */
   owners: Map<string, OwnerTally>;
   pool: OwnerTally;
-  /** Per agent: whether a live campaign session exists, and when last seen. */
+  /**
+   * Per agent: whether a session is present on the campaign (`presentSessionSql`, the rule the
+   * callback fallback reads: a closed station's `offline` row is not present), and when last seen.
+   */
   sessions: Map<string, { live: boolean; last_seen_at: Date | null }>;
   /** Per agent: the latest attempt on one of their contacts. */
   lastActivity: Map<string, Date>;
@@ -120,7 +124,7 @@ export class AgencyAssignmentReadRepository {
         bind.values,
       ),
       pool.query<{ uid: string; live: boolean; last_seen_at: Date | null }>(
-        `SELECT s.agent_user_id::text AS uid, bool_or(s.left_at IS NULL) AS live,
+        `SELECT s.agent_user_id::text AS uid, bool_or(${presentSessionSql('s')}) AS live,
                 max(GREATEST(s.last_heartbeat, COALESCE(s.left_at, s.last_heartbeat))) AS last_seen_at
            FROM agency_agent_sessions s
           WHERE s.campaign_id = $1::uuid

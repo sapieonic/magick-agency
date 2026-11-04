@@ -108,7 +108,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/integration/agency/agent-stats-timezone-buckets.test.ts` | ~13 |
 | `apps/server/test/integration/agency/agent-transition-ordering.test.ts` | ~11 |
 | `apps/server/test/integration/agency/agent-window-boundaries.test.ts` | ~11 |
-| `apps/server/test/integration/agency/assignment-repository.test.ts` | 18 |
+| `apps/server/test/integration/agency/assignment-repository.test.ts` | 19 |
 | `apps/server/test/integration/agency/assignment-sql.test.ts` | 19 |
 | `apps/server/test/integration/agency/campaign-assignment-settings.test.ts` | 18 |
 | `apps/server/test/integration/agency/campaign-behavioral-settings.test.ts` | ~4 |

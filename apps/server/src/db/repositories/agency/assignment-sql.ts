@@ -28,6 +28,18 @@ export function openContactSql(alias: string): string {
 }
 
 /**
+ * Whether agent session `s` is present on its campaign: joined (`left_at IS NULL`) and not
+ * `offline`. A station that closed writes its row `offline` (`releaseStationOnClose`), and so do
+ * the startup reaper and a dead media worker's reap, while the session stays joined until the
+ * agent leaves. An agent on break or in a call is present; one whose station is gone is not.
+ * The ONE rule the callback fallback (CA5) and the supervisor's progress (`live`,
+ * `due_while_absent`) read, so the two never disagree about the same agent. Parenthesised.
+ */
+export function presentSessionSql(alias: string): string {
+  return `(${alias}.left_at IS NULL AND ${alias}.state <> 'offline')`;
+}
+
+/**
  * Whether contact `c`'s number is live on its campaign: some contact of `campaignSql` (a
  * parameter or a column) on the same digits (`CONTACT_PHONE_DIGITS_SQL`, one
  * `idx_agency_contacts_campaign_phone_digits` probe) is `in_flight` or `connected`, `c` itself

@@ -34,7 +34,7 @@ import {
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
-import { contactBucketSql, numberLiveSql, openContactSql, returnToPoolSql } from './assignment-sql.js';
+import { contactBucketSql, numberLiveSql, openContactSql, presentSessionSql, returnToPoolSql } from './assignment-sql.js';
 import {
   applyExtraAttemptOverride,
   type OverrideGrant,
@@ -549,10 +549,8 @@ export class AgencyContactRepository {
    * `agency_contact_assignment_events` row (`callback_fallback`, actor NULL: the system) under
    * `batchId`. Both in one statement, so a move without its history row cannot exist.
    *
-   * "Live session" is a joined session (`left_at IS NULL`) that is not `offline`: a station
-   * that closed writes its row `offline` (`releaseStationOnClose`), and so do the startup reaper
-   * and a dead media worker's reap, while the session stays joined until the agent leaves. An
-   * agent on break or in a call is present; one whose station is gone is not.
+   * "Live session" is `presentSessionSql`: joined (`left_at IS NULL`) and not `offline` (a
+   * station that closed, or a reaped one), the rule the supervisor's progress reads too.
    *
    * Never a live contact: only `pending` rows are picked, under `FOR UPDATE SKIP LOCKED` in a
    * MATERIALIZED pick (a row a tick is claiming is skipped, not waited on), and the UPDATE
@@ -578,7 +576,7 @@ export class AgencyContactRepository {
             AND NOT EXISTS (
               SELECT 1 FROM agency_agent_sessions s
                WHERE s.campaign_id = $1 AND s.agent_user_id = c.assigned_user_id
-                 AND s.left_at IS NULL AND s.state <> 'offline')
+                 AND ${presentSessionSql('s')})
           ORDER BY c.next_attempt_at
           LIMIT $5
             FOR UPDATE OF c SKIP LOCKED
