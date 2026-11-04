@@ -68,7 +68,11 @@ vi.mock('../../../src/agency/pacing/callback-fallback.js', async (importOriginal
 }));
 
 import { PacingEngine, type PacingTickObservation } from '../../../src/agency/pacing-engine.js';
-import { getPacingInvalidationBus, type PacingInvalidationEvent } from '../../../src/agency/pacing/invalidation-bus.js';
+import {
+  getPacingInvalidationBus,
+  InProcessPacingInvalidationBus,
+  type PacingInvalidationEvent,
+} from '../../../src/agency/pacing/invalidation-bus.js';
 
 const CAMPAIGN = {
   id: 'camp-1', name: 'Q3', tenant_id: 't1', account_id: 'a1',
@@ -352,6 +356,72 @@ describe('the `queue` frame: sent to the agent only when it changes (CA3)', () =
     expect(queueFrames(send)).toHaveLength(4);
   });
 
+  // FALSIFIED: with every agent reading the pool's due count (the reading before this fix:
+  // `queueStateFrom` without `poolDueTaken`), s2 and s3 are told `due: true` and this reds.
+  it('preferred: only the agents a due pool contact goes to are told due, longest idle first', async () => {
+    repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'preferred' });
+    // One due pool contact, nothing of their own; the probe answers in its own order.
+    repos.contact.probeAgentQueues.mockResolvedValue({
+      agents: ['u3', 'u2', 'u1'].map((u) => ({ agentUserId: u, ownDue: false, ownNextAt: null, ownHasNonCallback: null })),
+      pool: { dueCount: 1, nextAt: new Date(Date.now() - 5_000), hasNonCallback: null },
+    });
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    const agents = makeAgents({ s1: 'available', s2: 'available', s3: 'available' });
+    const { e } = engine(makeStations(['s1', 's2', 's3'], send), agents);
+
+    await e.tickOnce('camp-1');
+
+    // The frames say what the tick did: s1 (longest idle) is reserved for the pool contact,
+    // s2 and s3 are not, and are not told they are due.
+    expect(agents.reserve.mock.calls.map((c) => c[0])).toEqual(['s1']);
+    const notDue = { event: 'queue', campaign_id: 'camp-1', due: false, reason: 'waiting_for_retry', next_due_at: null };
+    expect(queueFrames(send)).toEqual([
+      ['s1', { event: 'queue', campaign_id: 'camp-1', due: true, reason: null, next_due_at: null }],
+      ['s2', notDue],
+      ['s3', notDue],
+    ]);
+  });
+
+  // A reconnect's `ready` carries a queue read before it is sent: a frame this engine sent in
+  // between is overwritten on the station by the older reading, and a failed read sends none
+  // (the clients then clear their queue). The attach publishes `station_ready` after `ready`.
+  // FALSIFIED: with the engine's `station_ready` case not dropping the entry, the resend reds.
+  it("sends an agent's queue again after their station was sent `ready` (station_ready), and only theirs", async () => {
+    const send = vi.fn((_id: string, _frame: unknown) => true);
+    repos.contact.probeAgentQueues.mockResolvedValue(probe([], { all: ['u1', 'u2'] }));
+    const bus = new InProcessPacingInvalidationBus();
+    const e = new PacingEngine(
+      null, '', 'r1', makeStations(['s1', 's2'], send) as any, makeAgents({ s1: 'available', s2: 'available' }) as any,
+      { dispatch: vi.fn() } as any, { check: vi.fn().mockResolvedValue('clear') } as any, { bus },
+    );
+    e.setAutoRounds(false);
+    const ticks: PacingTickObservation[] = [];
+    e.registerTickObserver((o) => ticks.push(o));
+    (e as any).beginLeading(CAMPAIGN);
+    try {
+      await e.runRound();
+      expect(queueFrames(send)).toHaveLength(2);
+      send.mockClear();
+      await e.tickOnce('camp-1');
+      expect(queueFrames(send)).toHaveLength(0);
+
+      // s1's station reconnected and was sent `ready`: the reading is unchanged, but s1 is told
+      // again on the next tick, and s2 is not.
+      bus.publish({ type: 'station_ready', sessionId: 's1', campaignId: 'camp-1' });
+      ticks.length = 0;
+      await e.runRound();
+      expect(ticks[0]).toMatchObject({ mode: 'full', cause: 'event' });
+      expect(queueFrames(send)).toEqual([['s1', expect.objectContaining({ event: 'queue', reason: 'waiting_for_retry' })]]);
+
+      // Once told, unchanged again.
+      send.mockClear();
+      await e.tickOnce('camp-1');
+      expect(queueFrames(send)).toHaveLength(0);
+    } finally {
+      await e.stop();
+    }
+  });
+
   it('pool mode: claimDialable with N, no probe and no queue frame (the tick as it was)', async () => {
     repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, assignment_mode: 'pool' });
     const send = vi.fn((_id: string, _frame: unknown) => true);
@@ -368,7 +438,14 @@ describe('the `queue` frame: sent to the agent only when it changes (CA3)', () =
   });
 });
 
-describe('the callback grace/fallback sweep runs from the leader, throttled (CA5)', () => {
+/** A promise the test settles. */
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
+}
+
+describe('the owner sweeps run from the leader, throttled, beside the tick (CA5, CA6)', () => {
   it('sweeps an owner-mode campaign at most every 30 s, and wakes it when callbacks moved', async () => {
     const clock = { t: 5_000_000 };
     repos.contact.probeAgentQueues.mockResolvedValue(probe([]));
@@ -379,17 +456,92 @@ describe('the callback grace/fallback sweep runs from the leader, throttled (CA5
 
       await e.tickOnce('camp-1');
       await e.tickOnce('camp-1');
+      await e.drainSweeps();
       expect(fallback.sweep).toHaveBeenCalledTimes(1);
       expect(events).toEqual([]);
 
       clock.t += 30_000;
       fallback.sweep.mockResolvedValueOnce(2);
       await e.tickOnce('camp-1');
+      await e.drainSweeps();
       expect(fallback.sweep).toHaveBeenCalledTimes(2);
       expect(events).toContainEqual({ type: 'contacts_changed', campaignId: 'camp-1' });
     } finally {
       unsubscribe();
     }
+  });
+
+  // FALSIFIED: with the tick awaiting the sweep again, the dial waits on it and the first
+  // expectation on `dispatch` reds; without the in-flight guard the second sweep starts and
+  // `toHaveBeenCalledTimes(1)` reds.
+  it('runs beside the tick: the tick dials without waiting, and one campaign never has two sweeps at once', async () => {
+    const clock = { t: 5_000_000 };
+    repos.contact.probeAgentQueues.mockResolvedValue(probe(['u1'], { all: ['u1'] }));
+    repos.contact.claimForAgents.mockResolvedValue([{ agentUserId: 'u1', contact: contact('c1', 'u1') }]);
+    const held = deferred<number>();
+    fallback.sweep.mockReturnValueOnce(held.promise);
+    const events: PacingInvalidationEvent[] = [];
+    const unsubscribe = getPacingInvalidationBus().subscribe((ev) => { events.push(ev); });
+    const { e, dispatch } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }), undefined, () => clock.t);
+    try {
+      await e.tickOnce('camp-1');
+      // The sweep is still running and the tick has already dialled.
+      expect(fallback.sweep).toHaveBeenCalledTimes(1);
+      expect(dispatch).toHaveBeenCalledTimes(1);
+
+      // Past the throttle, with the first sweep still in flight: no second one.
+      clock.t += 30_000;
+      await e.tickOnce('camp-1');
+      expect(fallback.sweep).toHaveBeenCalledTimes(1);
+      expect(events).toEqual([]);
+
+      // It finishes, having moved rows: the campaign is woken.
+      held.resolve(2);
+      await e.drainSweeps();
+      expect(events).toEqual([{ type: 'contacts_changed', campaignId: 'camp-1' }]);
+
+      // And the next tick past the throttle sweeps again.
+      clock.t += 30_000;
+      await e.tickOnce('camp-1');
+      expect(fallback.sweep).toHaveBeenCalledTimes(2);
+    } finally {
+      held.resolve(0);
+      unsubscribe();
+      await e.stop();
+    }
+  });
+
+  // FALSIFIED: with `halt()` not draining `inFlightSweeps`, `stop()` resolves while the sweep
+  // runs and the first expectation reds.
+  it('stop waits for a sweep in flight (bounded), and none starts once stopping', async () => {
+    const clock = { t: 5_000_000 };
+    repos.contact.probeAgentQueues.mockResolvedValue(probe([]));
+    const held = deferred<number>();
+    fallback.sweep.mockReturnValueOnce(held.promise);
+    const { e } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }), undefined, () => clock.t);
+    await e.tickOnce('camp-1');
+    expect(fallback.sweep).toHaveBeenCalledTimes(1);
+
+    let stopped = false;
+    const stopping = e.stop().then(() => { stopped = true; });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(stopped).toBe(false);
+    held.resolve(0);
+    await stopping;
+    expect(stopped).toBe(true);
+
+    // Stopped: a tick (a straggler, or a forced one) past the throttle starts no sweep.
+    clock.t += 30_000;
+    await e.tickOnce('camp-1');
+    expect(fallback.sweep).toHaveBeenCalledTimes(1);
+
+    // A sweep that never settles is abandoned at the bound.
+    const second = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+    second.e.tickDrainTimeoutMs = 20;
+    fallback.sweep.mockReturnValueOnce(new Promise<number>(() => {}));
+    await second.e.tickOnce('camp-1');
+    expect(fallback.sweep).toHaveBeenCalledTimes(2);
+    await second.e.stop();
   });
 
   it('does not sweep `wait`, and a failing sweep costs the tick nothing', async () => {
@@ -404,6 +556,7 @@ describe('the callback grace/fallback sweep runs from the leader, throttled (CA5
     fallback.sweep.mockRejectedValueOnce(new Error('db blip'));
     const second = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
     await second.e.tickOnce('camp-1');
+    await second.e.drainSweeps();
     expect(fallback.sweep).toHaveBeenCalledTimes(1);
     expect(second.dispatch).toHaveBeenCalledTimes(1);
   });
@@ -413,21 +566,27 @@ describe('the callback grace/fallback sweep runs from the leader, throttled (CA5
     const events: PacingInvalidationEvent[] = [];
     const unsubscribe = getPacingInvalidationBus().subscribe((ev) => { events.push(ev); });
     try {
+      /** One tick on a fresh engine, its background sweeps settled. */
+      const tickAndSweep = async () => {
+        const { e } = engine(makeStations(['s1']), makeAgents({ s1: 'available' }));
+        await e.tickOnce('camp-1');
+        await e.drainSweeps();
+      };
       repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, on_unstaff: 'keep' });
-      await engine(makeStations(['s1']), makeAgents({ s1: 'available' })).e.tickOnce('camp-1');
+      await tickAndSweep();
       expect(fallback.unstaffed).not.toHaveBeenCalled();
       fallback.sweep.mockClear();
 
       repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, on_unstaff: 'return_to_pool', callback_fallback: 'wait' });
       fallback.unstaffed.mockResolvedValueOnce(3);
-      await engine(makeStations(['s1']), makeAgents({ s1: 'available' })).e.tickOnce('camp-1');
+      await tickAndSweep();
       expect(fallback.unstaffed).toHaveBeenCalledTimes(1);
       expect(fallback.sweep).not.toHaveBeenCalled();
       expect(events).toContainEqual({ type: 'contacts_changed', campaignId: 'camp-1' });
 
       repos.campaign.findById.mockResolvedValue({ ...CAMPAIGN, on_unstaff: 'return_to_pool' });
       fallback.unstaffed.mockRejectedValueOnce(new Error('db blip'));
-      await engine(makeStations(['s1']), makeAgents({ s1: 'available' })).e.tickOnce('camp-1');
+      await tickAndSweep();
       expect(fallback.unstaffed).toHaveBeenCalledTimes(2);
       expect(fallback.sweep).toHaveBeenCalledTimes(1);
     } finally {

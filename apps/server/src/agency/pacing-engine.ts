@@ -462,6 +462,26 @@ export class PacingEngine {
   }
 
   /**
+   * Owner sweeps started but not yet settled ({@link maybeStartOwnerSweeps}). The tick does
+   * not wait for them, so `halt()` does, bounded by {@link tickDrainTimeoutMs}: a sweep is at
+   * most two statements, and one that outlives the bound is abandoned (logged; each statement
+   * is one transaction, so an abandoned one commits whole or not at all).
+   */
+  private readonly inFlightSweeps = new InFlight();
+
+  /** Campaigns with an owner sweep in flight: never two at once for one campaign. */
+  private readonly sweeping = new Set<string>();
+
+  /** Settle the owner sweeps started so far, bounded by {@link tickDrainTimeoutMs} (tests too). */
+  async drainSweeps(): Promise<void> {
+    if (await this.inFlightSweeps.settle(this.tickDrainTimeoutMs)) return;
+    log.error(
+      { pending: this.inFlightSweeps.size, timeoutMs: this.tickDrainTimeoutMs },
+      'Owner sweeps did not settle before shutdown — continuing without them; they run again under the next leader',
+    );
+  }
+
+  /**
    * May a tick for this campaign still place a call? False once leadership was
    * given up (`revoked`) or the engine is stopping. Asked at every await boundary
    * a dial could follow, and handed to the dispatcher so the dialer can ask it
@@ -518,8 +538,9 @@ export class PacingEngine {
   }
 
   /**
-   * The first half of {@link stop}: no new tick, every lease given up, and (bounded) the
-   * ticks already in flight waited for. After it no dial is prepared or sent. With media
+   * The first half of {@link stop}: no new tick or owner sweep, every lease given up, and
+   * (bounded) the ticks and owner sweeps already in flight waited for. After it no dial is
+   * prepared or sent, and no sweep statement is left running against a pool about to close. With media
    * workers the primary halts pacing, then drains the notices beside the workers'
    * shutdown (`docs/scaling.md` §6.4); `stop()` afterwards finds both done. Idempotent.
    */
@@ -532,8 +553,9 @@ export class PacingEngine {
       this.superviseTimer = null;
       for (const campaignId of [...this.led.keys()]) await this.relinquish(campaignId);
       this.disarmRounds();
-      // Wait (bounded) for any tick already in flight — see `inFlightTicks`.
-      await this.drainTicks();
+      // Wait (bounded) for any tick and owner sweep already in flight — see `inFlightTicks`
+      // and `inFlightSweeps`. Together: neither waits on the other.
+      await Promise.all([this.drainTicks(), this.drainSweeps()]);
     })();
     return this.halted;
   }
@@ -962,6 +984,12 @@ export class PacingEngine {
       case 'contacts_changed':
         this.markDirty(event.campaignId);
         return;
+      case 'station_ready':
+        // The station's `ready` now holds its queue (or none, if the read failed), whatever
+        // frame this engine sent it before, so the next tick sends it again (`queueSent`).
+        this.queueSent.get(event.campaignId)?.delete(event.sessionId);
+        this.markDirty(event.campaignId);
+        return;
       case 'account_limit_changed': {
         const key = accountKeyOf(event.tenantId, event.accountId);
         this.limitCache.invalidate(key);
@@ -1091,9 +1119,10 @@ export class PacingEngine {
       let willBeQuiescent = true;
       let openPendingSeen = false;
       if (campaign.status === 'running' && !this.drainOnly.has(campaignId)) {
-        // Owner-mode campaigns: hand overdue callbacks of absent owners to the pool first, so
-        // a `preferred` agent can be given one on this very tick (throttled, never throws).
-        await this.maybeSweepCallbackFallback(campaign);
+        // Owner-mode campaigns: hand overdue callbacks of absent owners, and the open contacts
+        // of owners no longer staffed, to the pool. Started here, never awaited: the sweep
+        // runs beside the dialing, and a move wakes the campaign for the next round.
+        this.maybeStartOwnerSweeps(campaign);
         const plan = await this.planTick(campaign, round);
         planned = plan;
         if (plan.idle) this.recordIdle(campaign.id, plan.idle);
@@ -1289,7 +1318,9 @@ export class PacingEngine {
   /**
    * The available agents worth reserving on an owner-mode campaign, in fairness order: those
    * with an own contact due, and (`preferred`) as many of the rest as the pool has due
-   * contacts. Sends each candidate's `queue` frame on a change, from the same read.
+   * contacts, longest idle first. That choice is the readings' own (`state.due`,
+   * `readAgentQueues`), so each candidate's `queue` frame, sent on a change from the same read,
+   * says due exactly when this tick reserves them.
    * `openPendingSeen`: a reading carried a `next_due_at` (an open contact existed at the probe).
    */
   private async agentsWithWorkDue(
@@ -1306,20 +1337,11 @@ export class PacingEngine {
       return true;
     });
     if (agents.length === 0) return { picked: [], openPendingSeen: false };
-    const { agents: readings, poolDue } = await readAgentQueues(
+    const { agents: readings } = await readAgentQueues(
       campaign, mode, agents.map((c) => c.agentUserId), new Date(), agents.length,
     );
     this.sendQueueFrames(campaign.id, agents, readings);
-    let poolLeft = mode === 'preferred' ? poolDue : 0;
-    const out: AgentCandidate[] = [];
-    for (const c of agents) {
-      if (readings.get(c.agentUserId)?.ownDue) {
-        out.push(c);
-      } else if (poolLeft > 0) {
-        out.push(c);
-        poolLeft--;
-      }
-    }
+    const out = agents.filter((c) => readings.get(c.agentUserId)?.state.due === true);
     let openPendingSeen = false;
     for (const reading of readings.values()) if (reading.state.next_due_at !== null) openPendingSeen = true;
     return { picked: out, openPendingSeen };
@@ -1366,29 +1388,47 @@ export class PacingEngine {
   }
 
   /**
-   * The owner sweeps (`pacing/callback-fallback.ts`): the unstaffed-owner return (CA6, with
-   * `on_unstaff = 'return_to_pool'`) and the callback grace/fallback (CA5, with
+   * Start the owner sweeps (`pacing/callback-fallback.ts`): the unstaffed-owner return (CA6,
+   * with `on_unstaff = 'return_to_pool'`) and the callback grace/fallback (CA5, with
    * `callback_fallback = 'pool'`), at most every {@link CALLBACK_FALLBACK_SWEEP_MS} per
-   * campaign. A move wakes the campaign (and any other replica's view of it) as new contacts
-   * would. A failure is logged and costs the tick nothing; one sweep's failure does not skip
-   * the other. Serial, in {@link OWNER_SWEEPS} order.
+   * campaign, in the BACKGROUND: each moves up to 1000 rows, and the tick that starts them goes
+   * on to plan and dial without waiting. At most one run per campaign at a time
+   * (`sweeping`), none once leadership is given up or the engine is stopping, and `halt()`
+   * waits for a run in flight (`inFlightSweeps`). Never throws.
    */
-  private async maybeSweepCallbackFallback(campaign: AgencyCampaignRecord): Promise<void> {
+  private maybeStartOwnerSweeps(campaign: AgencyCampaignRecord): void {
+    if (!this.mayDial(campaign.id) || this.sweeping.has(campaign.id)) return;
     const due = OWNER_SWEEPS.filter((sweep) => sweep.applies(campaign));
     if (due.length === 0) return;
     const now = this.now();
     const last = this.fallbackSweptAt.get(campaign.id);
     if (last !== undefined && now - last < CALLBACK_FALLBACK_SWEEP_MS) return;
     this.fallbackSweptAt.set(campaign.id, now);
+    this.sweeping.add(campaign.id);
+    void this.inFlightSweeps.track(this.runOwnerSweeps(campaign, due));
+  }
+
+  /**
+   * One background run of the owner sweeps, serial, in {@link OWNER_SWEEPS} order. A move wakes
+   * the campaign (and any other replica's view of it) as new contacts would. A failure is logged
+   * and does not skip the other sweep; a sweep is not started once this engine no longer leads
+   * the campaign (the sweeps are the leader's work). Never rejects.
+   */
+  private async runOwnerSweeps(campaign: AgencyCampaignRecord, sweeps: readonly (typeof OWNER_SWEEPS)[number][]): Promise<void> {
     let moved = 0;
-    for (const sweep of due) {
-      try {
-        moved += await sweep.run(campaign);
-      } catch (err) {
-        log.error({ err, campaignId: campaign.id }, sweep.failure);
+    try {
+      for (const sweep of sweeps) {
+        if (!this.mayDial(campaign.id)) break;
+        try {
+          moved += await sweep.run(campaign);
+        } catch (err) {
+          log.error({ err, campaignId: campaign.id }, sweep.failure);
+        }
       }
+      if (moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
+    } finally {
+      this.sweeping.delete(campaign.id);
     }
-    if (moved > 0) publishPacingInvalidation({ type: 'contacts_changed', campaignId: campaign.id });
   }
 
   /** `max_concurrent_calls`: cached between scheduled rounds, read through on a forced one. */
@@ -1904,8 +1944,12 @@ export class PacingEngine {
    * The last `queue` frame each agent was sent, per campaign (`queueStateKey`), so a frame
    * goes out only on a change (contact assignment, CA3). An entry is dropped when its session
    * is no longer live on the campaign (left), and the campaign's map when the campaign is
-   * `pool` or its leadership is given up. A `ready` frame or the bootstrap carries the state
-   * at (re)connect, so a reconnect needs no resend.
+   * `pool` or its leadership is given up. The bootstrap carries the state at join, before any
+   * frame. A `ready` frame carries it at every (re)connect, read before it is sent, so a frame
+   * this engine sent in between is overwritten on the station by an older reading, and a
+   * failed read sends none: the station attach therefore publishes `station_ready` after
+   * `ready`, which drops the session's entry here, and the next tick sends the agent's queue
+   * again (at most one repeated frame per reconnect).
    */
   private readonly queueSent = new Map<string, Map<string, string>>();
 

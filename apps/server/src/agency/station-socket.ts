@@ -14,7 +14,8 @@ import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/con
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
 import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
-import { readAgentQueueState } from './pacing/agent-queue.js';
+import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
+import { publishPacingInvalidation } from './pacing/invalidation-bus.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -490,9 +491,11 @@ export async function handleStationSocket(
   // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
   // change, so a reconnecting station cannot wait for one). Read here, before the fence
   // below, so no await sits between the fence and the side effects. Best effort: a failed
-  // read omits the field and the station keeps the reconnect.
+  // read omits the field and the station keeps the reconnect. The mode comes with the
+  // session read, so a `pool` campaign (no per-agent queue) costs no campaign read.
   const campaignId = session.campaign_id;
-  const queueRead = campaignId
+  const ownerMode = ownerModeOf({ assignment_mode: session.campaign_assignment_mode ?? 'pool' });
+  const queueRead = campaignId && ownerMode
     ? Promise.resolve()
       .then(() => agencyCampaignRepository.findById(campaignId))
       .then((campaign) => (campaign ? readAgentQueueState(campaign, session.agent_user_id) : undefined))
@@ -543,7 +546,7 @@ export async function handleStationSocket(
   // The break's code beside the state, so a client that lost the `agent_state` frame
   // naming it (the mobile app relaunched after the OS killed it while paused) can say why.
   const breakReason = breakReasonFor(resumedState, session);
-  runtime.stations.send(sessionId, {
+  const readySent = runtime.stations.send(sessionId, {
     event: 'ready',
     session_id: sessionId,
     state: resumedState,
@@ -565,6 +568,13 @@ export async function handleStationSocket(
     // its own is strictly worse than delivering it to nobody — the replacement
     // has already sent, or is about to send, a `ready` of its own.
   }, socket);
+  // Contact assignment (CA3): the station's queue is now this frame's (or none, when the read
+  // failed), whatever `queue` frame pacing sent it before, including one sent while this run
+  // was reading. Told to the pacing leader, which forgets what it last sent this session and
+  // sends the agent's queue again on its next tick. After the send, never before it.
+  if (readySent && campaignId && ownerMode) {
+    publishPacingInvalidation({ type: 'station_ready', sessionId, campaignId });
+  }
 
   // The gate the message listener above waits on. Opened after `ready` rather
   // than immediately after `attach`, so a ping can never interleave with the

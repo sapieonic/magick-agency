@@ -147,6 +147,19 @@ describe('the agent queue (strict / preferred)', () => {
     expect(agents.get(C)!.state.due).toBe(true);
     expect(poolDue).toBe(3);
 
+    // In the order given (pacing's fairness order), each agent without own work due takes one
+    // of the pool's due contacts (two, by the cap); the agent after them is not due.
+    const D = randomUUID();
+    const { agents: four } = await readAgentQueues(c, 'preferred', [A, C, D, B], new Date(), 2);
+    expect(four.get(A)!.state.due).toBe(true);
+    expect(four.get(C)!.state.due).toBe(true);
+    expect(four.get(D)!.state.due).toBe(true);
+    // B's next is its own retry, never the pool's earliest (already due, and going to C and D).
+    const bRetry = (await getTestPool().query<{ next_attempt_at: Date }>(
+      'SELECT next_attempt_at FROM agency_contacts WHERE assigned_user_id = $1', [B],
+    )).rows[0]!.next_attempt_at;
+    expect(four.get(B)!.state).toEqual({ due: false, reason: 'waiting_for_retry', next_due_at: bRetry.toISOString() });
+
     const probe = await agencyContactRepository.probeAgentQueues(c.id, [A, B, C], { callbackCodes: ['call_back'] });
     expect(probe.pool).toBeNull();
     expect(probe.agents.find((r) => r.agentUserId === C)).toEqual({

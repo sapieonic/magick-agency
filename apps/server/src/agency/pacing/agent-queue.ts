@@ -5,17 +5,23 @@
  * on a change); the session bootstrap, the station's `ready` frame and the agent's My contacts
  * summary read it for one agent. One reading for all four, so they cannot disagree.
  *
- * The rule, for an agent with nothing due (a due agent is `{ due: true, reason: null,
- * next_due_at: null }`):
+ * An agent is due when an own open contact is due, or (`preferred`) one of the pool's due
+ * contacts is theirs: pacing gives the pool's due contacts to the agents without own work in its
+ * fairness order (longest idle first), one each, so with k due pool contacts only the first k
+ * such agents are due ({@link readAgentQueues}); the reading is exactly who pacing reserves.
+ * A due agent is `{ due: true, reason: null, next_due_at: null }`. For an agent with nothing due:
  *
  *  1. `outside_calling_hours`: the campaign's calling window (its default timezone) is closed now;
  *  2. `queue_empty`: no open contact is theirs (`preferred`: and the pool has none);
  *  3. `callbacks_later`: every open contact they can be given is a callback (`contactBucketSql`);
- *  4. `waiting_for_retry`: otherwise (the retry policy scheduled them later).
+ *  4. `waiting_for_retry`: otherwise (the retry policy scheduled them later, or, `preferred`, the
+ *     pool's due contacts all went to agents ahead of them this tick).
  *
  * `next_due_at` is the earliest `next_attempt_at` among the open contacts they can be given
- * (own, plus the pool in `preferred` mode), or null when there are none. A due agent carries
- * null, so the state does not change (and no frame is sent) while they stay due.
+ * (own, plus the pool in `preferred` mode), or null when there are none. A pool whose due
+ * contacts all went to agents ahead adds no time: its earliest is one of those (already past),
+ * and the probe does not read the next one. A due agent carries null, so the state does not
+ * change (and no frame is sent) while they stay due.
  *
  * "Due" wins over a closed window: a due contact in its own timezone's window is dialled, and
  * one outside it is deferred by the pre-dial gate to its window's opening, after which the
@@ -59,16 +65,22 @@ function earliest(a: Date | null, b: Date | null): Date | null {
   return a.getTime() <= b.getTime() ? a : b;
 }
 
-/** The state of one agent from the probe (pure; `pool` is null in `strict` mode). */
+/**
+ * The state of one agent from the probe (pure; `pool` is null in `strict` mode).
+ * `poolDueTaken`: the pool's due contacts all went to agents ahead of this one
+ * ({@link readAgentQueues}), so none is theirs; the pool still has open contacts.
+ */
 export function queueStateFrom(
   own: Pick<AgencyAgentQueueProbeRow, 'ownDue' | 'ownNextAt' | 'ownHasNonCallback'>,
   pool: AgencyPoolQueueProbe | null,
   windowClosed: boolean,
+  poolDueTaken = false,
 ): AgencyQueueState {
-  if (own.ownDue || (pool !== null && pool.dueCount > 0)) return { due: true, reason: null, next_due_at: null };
+  const poolDue = pool !== null && pool.dueCount > 0 && !poolDueTaken;
+  if (own.ownDue || poolDue) return { due: true, reason: null, next_due_at: null };
   const ownOpen = own.ownNextAt !== null;
   const poolOpen = pool !== null && pool.nextAt !== null;
-  const next = earliest(own.ownNextAt, pool?.nextAt ?? null);
+  const next = earliest(own.ownNextAt, poolDueTaken ? null : pool?.nextAt ?? null);
   const nextIso = next ? next.toISOString() : null;
   if (windowClosed) return { due: false, reason: 'outside_calling_hours', next_due_at: nextIso };
   if (!ownOpen && !poolOpen) return { due: false, reason: 'queue_empty', next_due_at: null };
@@ -106,9 +118,12 @@ export function queueStateKey(s: AgencyQueueState): string {
 }
 
 /**
- * Read the queues of `agentUserIds` on an owner-mode campaign in one statement. `poolDueCap`
- * bounds the pool's due count (`preferred`): pacing passes its candidate count, since it never
- * reserves more agents for the pool than that.
+ * Read the queues of `agentUserIds` on an owner-mode campaign in one statement. `agentUserIds`
+ * is pacing's fairness order (longest idle first): in `preferred` mode the pool's due contacts
+ * go, one each, to the agents in that order who have nothing of their own due, and only those
+ * read due (`state.due` is "pacing reserves this agent"), so a `queue` frame never says due to
+ * an agent the tick then leaves idle. `poolDueCap` bounds the pool's due count: pacing passes
+ * its candidate count, since it never reserves more agents for the pool than that.
  */
 export async function readAgentQueues(
   campaign: AgencyCampaignRecord,
@@ -122,16 +137,27 @@ export async function readAgentQueues(
     ...(mode === 'preferred' ? { pool: { dueCap: Math.max(1, poolDueCap) } } : {}),
   });
   const closed = campaignWindowClosed(campaign, now);
+  const rows = new Map(probe.agents.map((row) => [row.agentUserId, row]));
   const agents = new Map<string, AgentQueueReading>();
-  for (const row of probe.agents) {
-    agents.set(row.agentUserId, { ownDue: row.ownDue, state: queueStateFrom(row, probe.pool, closed) });
+  let poolLeft = probe.pool?.dueCount ?? 0;
+  for (const agentUserId of agentUserIds) {
+    const row = rows.get(agentUserId);
+    if (!row || agents.has(agentUserId)) continue;
+    // In fairness order: an agent without own work due takes one of the pool's due contacts
+    // while any is left; the ones after them read the pool as taken.
+    const poolDueTaken = !row.ownDue && poolLeft === 0 && (probe.pool?.dueCount ?? 0) > 0;
+    if (!row.ownDue && poolLeft > 0) poolLeft--;
+    agents.set(agentUserId, { ownDue: row.ownDue, state: queueStateFrom(row, probe.pool, closed, poolDueTaken) });
   }
   return { agents, poolDue: probe.pool?.dueCount ?? 0 };
 }
 
 /**
- * One agent's queue on `campaign` (the bootstrap and `ready`), or undefined for a `pool`
- * campaign, which has no per-agent queue.
+ * One agent's queue on `campaign` (the bootstrap, `ready` and the My contacts summary), or
+ * undefined for a `pool` campaign, which has no per-agent queue. Read for this agent alone, so
+ * in `preferred` mode a due pool contact is theirs: the answer pacing gives the agent first in
+ * its fairness order. When colleagues ahead of them take every due pool contact, the station's
+ * next `queue` frame says so (after a `ready` the leader sends the frame again).
  */
 export async function readAgentQueueState(
   campaign: AgencyCampaignRecord,

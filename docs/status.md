@@ -603,7 +603,9 @@ app.
   roster selection or the filter, progress on the campaign page.
 - Pacing: `strict` / `preferred` pair by agent in one statement; an agent with nothing due is not
   reserved and is told why (`queue` frame, bootstrap, `ready`, the My contacts summary: one
-  reading); due callbacks whose owner is away past the grace fall back to the pool (leader sweep).
+  reading; in `preferred` a due pool contact reads due only for the agent pacing gives it to, and
+  the frame is sent again after every `ready`); due callbacks whose owner is away past the grace
+  fall back to the pool (leader sweep, run beside the tick, never awaited by it).
 - Agent: My contacts on the console (a panel from the station header) and the app (a page from
   the campaign card and the waiting screen): counts, "Retry not reached (N)", the contacts in due
   order with bucket and number filters, and Call, which places the call on the campaign's normal
