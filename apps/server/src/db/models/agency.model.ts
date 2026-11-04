@@ -404,6 +404,15 @@ export interface AgencyAgentSessionRecord {
   updated_at: Date;
 }
 
+/**
+ * The station attach's session read (`readForStationAttach`): the session row, plus its
+ * campaign's `assignment_mode` (null for a soft-phone session, which has no campaign), so the
+ * attach reads the campaign row only when the mode needs it (contact assignment, CA3).
+ */
+export type AgencyStationAttachRecord = AgencyAgentSessionRecord & {
+  campaign_assignment_mode: AgencyAssignmentMode | null;
+};
+
 /** A session on a campaign: the kind every campaign-scoped path works with. */
 export type AgencyCampaignSessionRecord = AgencyAgentSessionRecord & { kind: 'campaign'; campaign_id: string };
 

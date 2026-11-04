@@ -83,6 +83,8 @@ import { BreakRegistry } from '@magick-agency/domain/break-manager';
 const SESSION = {
   id: 'sess-1', agent_user_id: 'u-agent', campaign_id: 'camp-1',
   tenant_id: 't1', account_id: 'a1', state: 'wrapup', left_at: null,
+  // The attach read joins the campaign's mode (`readForStationAttach`).
+  campaign_assignment_mode: 'pool',
 };
 
 const WRAPUP_STATE = {
@@ -305,6 +307,7 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
   };
 
   it('carries `queue` on a strict campaign, read for this agent', async () => {
+    repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'strict' });
     repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'strict', disposition_catalog: [], ...ALL_DAY });
     const later = new Date(Date.now() + 600_000);
     repos.contact.probeAgentQueues.mockResolvedValue({
@@ -318,17 +321,24 @@ describe("a reconnect on an owner-mode campaign is told the agent's queue", () =
     expect(repos.contact.probeAgentQueues).toHaveBeenCalledWith('camp-1', ['u-agent'], expect.anything());
   });
 
-  it('omits it on a pool campaign, on a soft-phone session, and when the read fails', async () => {
+  // FALSIFIED: with the attach's mode gate removed (the campaign read for every campaign
+  // session), the first expectation on `findById` reds.
+  it('omits it on a pool campaign without reading the campaign, on a soft-phone session, and when the read fails', async () => {
     repos.campaign.findById.mockResolvedValue({ id: 'camp-1', assignment_mode: 'pool', ...ALL_DAY });
     expect('queue' in (await ready(h))).toBe(false);
+    // The mode came with the session read: a pool campaign's attach reads no campaign row.
+    expect(repos.campaign.findById).not.toHaveBeenCalled();
     expect(repos.contact.probeAgentQueues).not.toHaveBeenCalled();
 
     h.sent.length = 0;
-    repos.session.findById.mockResolvedValue({ ...SESSION, kind: 'softphone', campaign_id: null, state: 'break', break_reason: null });
+    repos.session.findById.mockResolvedValue({
+      ...SESSION, kind: 'softphone', campaign_id: null, state: 'break', break_reason: null, campaign_assignment_mode: null,
+    });
     expect('queue' in (await ready(h))).toBe(false);
+    expect(repos.campaign.findById).not.toHaveBeenCalled();
 
     h.sent.length = 0;
-    repos.session.findById.mockResolvedValue(SESSION);
+    repos.session.findById.mockResolvedValue({ ...SESSION, campaign_assignment_mode: 'preferred' });
     repos.campaign.findById.mockRejectedValue(new Error('db down'));
     const frame = await ready(h);
     expect(frame.event).toBe('ready');

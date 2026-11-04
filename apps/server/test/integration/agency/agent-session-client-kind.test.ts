@@ -47,7 +47,8 @@ describe('AgencyAgentSessionRepository.readForStationAttach', () => {
     const before = await row(session.id);
 
     const read = await repo.readForStationAttach(session.id, 'mobile');
-    expect(read).toEqual(await repo.findById(session.id));
+    // `findById`'s row, plus the campaign's mode (the factory's default, `pool`).
+    expect(read).toEqual({ ...(await repo.findById(session.id)), campaign_assignment_mode: 'pool' });
     const after = await row(session.id);
     // xmin moves on any UPDATE, even one to the same value.
     expect(after.xmin).toBe(before.xmin);
@@ -65,6 +66,13 @@ describe('AgencyAgentSessionRepository.readForStationAttach', () => {
     expect((await row(session.id)).xmin).toBe(before.xmin);
   });
 
+  it("carries the campaign's assignment mode, on the written row and on the unchanged one", async () => {
+    const campaign = await insertAgencyCampaign({ assignment_mode: 'strict' });
+    const session = await insertAgentSession(campaign.id);
+    expect((await repo.readForStationAttach(session.id, 'mobile'))?.campaign_assignment_mode).toBe('strict');
+    expect((await repo.readForStationAttach(session.id, 'mobile'))?.campaign_assignment_mode).toBe('strict');
+  });
+
   it('answers null for no such session', async () => {
     expect(await repo.readForStationAttach(randomUUID(), 'mobile')).toBeNull();
   });
@@ -73,7 +81,10 @@ describe('AgencyAgentSessionRepository.readForStationAttach', () => {
     const session = await insertAgentSession(null as unknown as string, {
       kind: 'softphone', campaign_id: null, state: 'break', break_reason: 'soft_phone',
     });
-    expect((await repo.readForStationAttach(session.id, 'mobile'))?.client_kind).toBe('mobile');
+    const read = await repo.readForStationAttach(session.id, 'mobile');
+    expect(read?.client_kind).toBe('mobile');
+    // No campaign, so no mode.
+    expect(read?.campaign_assignment_mode).toBeNull();
     // Leave nothing behind for 0005's Down (the db suite's down → up).
     await getTestPool().query('DELETE FROM agency_agent_sessions WHERE id = $1', [session.id]);
   });

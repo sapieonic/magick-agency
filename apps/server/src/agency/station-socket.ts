@@ -14,7 +14,7 @@ import { AGENCY_STATION_CLOSE, SOFTPHONE_BREAK_REASON } from '@magick-agency/con
 import type { AgencyAgentSessionRecord } from '../db/models/agency.model.js';
 import { setBrowserLegMediaFormat } from '../core/bridge/browser-leg-media.js';
 import { DEFAULT_STATION_UPGRADE, parseStationUpgradeQuery, type StationUpgradeQuery } from './station-upgrade.js';
-import { readAgentQueueState } from './pacing/agent-queue.js';
+import { ownerModeOf, readAgentQueueState } from './pacing/agent-queue.js';
 
 /**
  * The agent's station WebSocket: {@link handleStationSocket}, in this runtime-owned
@@ -490,9 +490,11 @@ export async function handleStationSocket(
   // reconnect shows "nothing due, and why" at once (pacing's `queue` frame is sent only on a
   // change, so a reconnecting station cannot wait for one). Read here, before the fence
   // below, so no await sits between the fence and the side effects. Best effort: a failed
-  // read omits the field and the station keeps the reconnect.
+  // read omits the field and the station keeps the reconnect. The mode comes with the
+  // session read, so a `pool` campaign (no per-agent queue) costs no campaign read.
   const campaignId = session.campaign_id;
-  const queueRead = campaignId
+  const ownerMode = ownerModeOf({ assignment_mode: session.campaign_assignment_mode ?? 'pool' });
+  const queueRead = campaignId && ownerMode
     ? Promise.resolve()
       .then(() => agencyCampaignRepository.findById(campaignId))
       .then((campaign) => (campaign ? readAgentQueueState(campaign, session.agent_user_id) : undefined))
