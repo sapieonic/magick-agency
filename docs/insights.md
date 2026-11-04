@@ -52,8 +52,9 @@ assigned here so parallel work never collides.
 
 | WS | Owns | Migration |
 |---|---|---|
-| A defects and start-recording | stats `contacts_connected`, `created_by` from the actor, config-change and upload audit, upload list route, stale comments | 0011 if needed |
-| B rollup | `agency_insights_rollup`, the dirty-bucket trigger and job, backfill, covering indexes, the range read functions | 0012 |
+| 0 foundation | `agent_reopened` on attempts, `dials_placed` on contacts and its trigger, the read indexes | 0011 |
+| A defects and start-recording | stats `contacts_connected`, `created_by` from the actor, config-change and upload audit, stale comments | none |
+| B rollup | the rollup tables, the dirty-bucket trigger and job, backfill, the range read functions | 0012 |
 | C pacing history | `agency_campaign_pacing_minutes`, the pacing writer, redial-limit refusals, the reopen flag on attempts | 0013 |
 | D console | the Insights tab, redirects, drill-down links, CSV, print stylesheet | none |
 | E insights API | `proxy-agency-insights.routes.ts`, summary, readiness, allocation, uploads; then activity, trends, health on B and C | none |
