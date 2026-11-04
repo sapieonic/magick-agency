@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { commitAssignment, previewAssignment } from '../../api/agencyAssignment';
 import { useTenant } from '../../contexts/TenantContext';
-import { useModalFocus } from '../../hooks/useModalFocus';
+import { useDialogFocus } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { errorCode } from '../../utils/agencyErrors';
 import {
@@ -26,7 +26,7 @@ import {
   type AssignmentDraft,
 } from '../../utils/agencyAssignmentOps';
 import { CONTACT_STATE_LABELS } from '../../types/agency-spine';
-import { formatCount } from '../../utils/format/number';
+import { formatCount, plural } from '../../utils/format/number';
 import type {
   AgencyAssignmentErrorCode,
   AgencyAssignmentKind,
@@ -141,15 +141,8 @@ export function AgencyAssignmentDialog({
     setError(null);
   }, []);
 
-  useModalFocus(true, dialogRef);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !busy) onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [busy, onClose]);
+  // Escape closes the dialog, except while a preview or commit is in flight.
+  useDialogFocus({ open: true, dialogRef, onEscape: () => { if (!busy) onClose(); } });
 
   const onPreview = useCallback(async () => {
     if (!built.ok || !tenantId || !accountId) return;
@@ -326,7 +319,7 @@ export function AgencyAssignmentDialog({
           {draft.kind === 'range' ? (
             <>
               <p className={frame.cohort} data-testid="assign-selected-count">
-                {`${formatCount(selectedIds.length)} selected row${selectedIds.length === 1 ? '' : 's'}.`}
+                {`${plural(selectedIds.length, 'selected row')}.`}
               </p>
               {agentPicker('Give them to', draft.agentId, (agentId) => update({ agentId }), agents, 'assign-agent')}
             </>
@@ -438,7 +431,7 @@ export function AgencyAssignmentDialog({
                     onChange={() => update({ unassignSource: 'selected' })}
                     disabled={selectedIds.length === 0}
                   />
-                  {`The ${formatCount(selectedIds.length)} selected row${selectedIds.length === 1 ? '' : 's'}`}
+                  {`The ${plural(selectedIds.length, 'selected row')}`}
                 </label>
               </fieldset>
               {draft.unassignSource === 'agent' ? (

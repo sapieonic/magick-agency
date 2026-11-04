@@ -10,8 +10,14 @@ import {
 import {
   AGENCY_AGENT_RETRY_BLOCKS,
   AGENCY_AGENT_RETRY_ERROR_CODES,
+  AGENCY_ASSIGNMENT_AGENTS_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_NAME_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX,
+  AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX,
+  AGENCY_ASSIGNMENT_COUNT_MAX,
   AGENCY_ASSIGNMENT_ERROR_CODES,
   AGENCY_ASSIGNMENT_KINDS,
+  AGENCY_ASSIGNMENT_RANGE_MAX,
   AGENCY_MY_CONTACT_BUCKETS,
 } from '../src/api/agency/assignment';
 
@@ -73,5 +79,16 @@ describe('contact assignment vocabularies', () => {
       'feature_disabled',
     ]);
     expect(new Set(AGENCY_AGENT_RETRY_ERROR_CODES).size).toBe(AGENCY_AGENT_RETRY_ERROR_CODES.length);
+  });
+
+  it('operation bounds: the server validator and the console form read these', () => {
+    expect({
+      range: AGENCY_ASSIGNMENT_RANGE_MAX,
+      agents: AGENCY_ASSIGNMENT_AGENTS_MAX,
+      count: AGENCY_ASSIGNMENT_COUNT_MAX,
+      columnName: AGENCY_ASSIGNMENT_COLUMN_NAME_MAX,
+      columnValues: AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX,
+      columnValueLength: AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX,
+    }).toEqual({ range: 500, agents: 200, count: 1_000_000, columnName: 200, columnValues: 100, columnValueLength: 500 });
   });
 });

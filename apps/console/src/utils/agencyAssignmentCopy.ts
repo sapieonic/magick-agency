@@ -11,7 +11,7 @@ import type {
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyCampaignStatus } from '../types/agency-campaign';
 import type { ClientExposedAgencyFlagKey } from '@magick-agency/contracts/flags';
-import { formatCount } from './format/number';
+import { formatCount, plural } from './format/number';
 
 /**
  * The words for contact assignment on the supervisor's side: the campaign
@@ -188,14 +188,13 @@ export function assigneeLabel(
 export function previewSentence(preview: AgencyAssignmentPreview): string {
   if (preview.matched === 0) return 'No contacts match. Nothing will change.';
   const parts: string[] = [];
-  const s = (n: number) => (n === 1 ? '' : 's');
   parts.push(
     preview.moving === 0
-      ? `${formatCount(preview.matched)} contact${s(preview.matched)} matched, and none will move.`
-      : `${formatCount(preview.moving)} of ${formatCount(preview.matched)} contact${s(preview.matched)} will move.`,
+      ? `${plural(preview.matched, 'contact')} matched, and none will move.`
+      : `${formatCount(preview.moving)} of ${plural(preview.matched, 'contact')} will move.`,
   );
   if (preview.to_pool > 0) {
-    parts.push(`${formatCount(preview.to_pool)} go${preview.to_pool === 1 ? 'es' : ''} back to the pool.`);
+    parts.push(`${plural(preview.to_pool, 'goes', 'go')} back to the pool.`);
   }
   if (preview.unchanged > 0) {
     parts.push(`${formatCount(preview.unchanged)} already with that agent.`);
@@ -208,11 +207,10 @@ export function previewSentence(preview: AgencyAssignmentPreview): string {
 
 /** The toast after a commit: what moved, and what did not. */
 export function assignmentResultToast(result: AgencyAssignmentResult): string {
-  const s = (n: number) => (n === 1 ? '' : 's');
   const parts = [
     result.to_pool > 0 && result.moved === result.to_pool
-      ? `Returned ${formatCount(result.moved)} contact${s(result.moved)} to the pool.`
-      : `Moved ${formatCount(result.moved)} contact${s(result.moved)}.`,
+      ? `Returned ${plural(result.moved, 'contact')} to the pool.`
+      : `Moved ${plural(result.moved, 'contact')}.`,
   ];
   if (result.skipped_live > 0) {
     parts.push(`${formatCount(result.skipped_live)} on a call didn’t move.`);
@@ -222,7 +220,7 @@ export function assignmentResultToast(result: AgencyAssignmentResult): string {
 
 /** Strict mode: open contacts nobody owns, which are never dialled. */
 export function unassignedOpenWarning(count: number): string {
-  return `${formatCount(count)} open contact${count === 1 ? ' is' : 's are'} unassigned and will not be dialled.`;
+  return `${plural(count, 'open contact is', 'open contacts are')} unassigned and will not be dialled.`;
 }
 
 /** An agent away while their contacts fall due. */

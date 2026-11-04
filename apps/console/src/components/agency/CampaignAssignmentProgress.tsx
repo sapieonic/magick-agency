@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
-import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { useAsyncResource } from '@magick-agency/web-ui/hooks/useAsyncResource';
 import { getAssignmentProgress } from '../../api/agencyAssignment';
 import {
   BUCKET_ROSTER_STATES,
@@ -62,27 +62,16 @@ const BUCKET_COLUMNS: ReadonlyArray<{ bucket: AgencyMyContactBucket; label: stri
 export function CampaignAssignmentProgress({ campaignId }: { campaignId: string }) {
   const { tenantId, accountId } = useTenant();
   const { showToast } = useToast();
-  const [progress, setProgress] = useState<AgencyAssignmentProgress | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [reassignFrom, setReassignFrom] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!tenantId || !accountId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      setProgress(await getAssignmentProgress(campaignId, {}, tenantId, accountId));
-    } catch (err: unknown) {
-      setError(getErrorMessage(err, 'Could not load each agent’s progress.'));
-    } finally {
-      setLoading(false);
-    }
-  }, [campaignId, tenantId, accountId]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const fetchProgress = useCallback(
+    () => getAssignmentProgress(campaignId, {}, tenantId!, accountId!),
+    [campaignId, tenantId, accountId],
+  );
+  const { data: progress, loading, error, reload: load } = useAsyncResource<AgencyAssignmentProgress | null>(
+    fetchProgress,
+    { initialData: null, errorMessage: 'Could not load each agent’s progress.', enabled: Boolean(tenantId && accountId) },
+  );
 
   const nameOf = useCallback(
     (row: Pick<AgencyAssignmentProgressRow, 'agent_name'>) => row.agent_name ?? FORMER_MEMBER_LABEL,

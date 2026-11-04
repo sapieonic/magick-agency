@@ -10,6 +10,7 @@ import type { AgencyActionErrorResponse } from './actions';
 import type { AgencyAgentState, AgencyCampaignStatus } from './enums';
 import type { AgencyClientKind, AgencyQueueState } from './station';
 import type { AgencyAssignmentMode } from './assignment';
+import { SOFTPHONE_OVERRIDE_NOTE_MAX, SOFTPHONE_OVERRIDE_NOTE_MIN } from './softphone';
 
 // ─── Campaign-derived config the agent console needs ────────────────────────
 
@@ -74,9 +75,12 @@ export interface AgencyDispositionOverride {
 export const AGENCY_OVERRIDE_KINDS = ['extra_attempts', 'retry_delay', 'calling_hours'] as const;
 export type AgencyOverrideKind = (typeof AGENCY_OVERRIDE_KINDS)[number];
 
-/** Bounds of the agent's note on a calling-hours override (trimmed, in code points). */
-export const AGENCY_OVERRIDE_NOTE_MIN = 10;
-export const AGENCY_OVERRIDE_NOTE_MAX = 500;
+/**
+ * Bounds of the agent's note on a calling-hours override (trimmed, in code points): the soft
+ * phone's override note bounds, one source of truth.
+ */
+export const AGENCY_OVERRIDE_NOTE_MIN = SOFTPHONE_OVERRIDE_NOTE_MIN;
+export const AGENCY_OVERRIDE_NOTE_MAX = SOFTPHONE_OVERRIDE_NOTE_MAX;
 
 /**
  * Which of a contact's arbitrary CSV columns matter, and in what order

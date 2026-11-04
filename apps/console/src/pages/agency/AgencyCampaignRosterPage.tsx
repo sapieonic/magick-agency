@@ -19,6 +19,7 @@ import {
 } from '../../utils/agencyAssignmentCopy';
 import {
   EMPTY_SELECTION,
+  isPageTicked,
   selectedInOrder,
   togglePage,
   toggleRow,
@@ -50,6 +51,7 @@ import { FiltersCard } from '../../components/agency/FiltersCard';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_DISPOSITIONS } from '../../utils/agencyCampaignConfigForm';
 import { retryCreatedToast, selectorFromContactFilters } from '../../utils/agencyRetrySelector';
+import { formatCount } from '../../utils/format/number';
 import {
   isRosterFiltered,
   rosterFilterGroupCount,
@@ -199,7 +201,7 @@ export function AgencyCampaignRosterPage() {
   const [holders, setHolders] = useState<AgencyAssignmentProgressRow[]>([]);
   const [selection, setSelection] = useState<RowSelection>(EMPTY_SELECTION);
   const [assignKind, setAssignKind] = useState<AgencyAssignmentKind | null>(null);
-  const [reloadAgents, setReloadAgents] = useState(0);
+  const [reloadHolders, setReloadHolders] = useState(0);
 
   /** Applied filters → the URL. The single writer. */
   const applyToUrl = useCallback(
@@ -250,12 +252,19 @@ export function AgencyCampaignRosterPage() {
     listCampaignAgents(id, tenantId, accountId)
       .then((result) => { if (live) setAgents(result.agents); })
       .catch(() => { if (live) setAgents([]); });
-    // A failure leaves only the staffed agents as owners, as before.
+    return () => { live = false; };
+  }, [canAssign, id, tenantId, accountId]);
+
+  // Who holds contacts: read again after a commit, which can change the holders
+  // but never the staffing. A failure leaves only the staffed agents as owners.
+  useEffect(() => {
+    if (!canAssign || !id || !tenantId || !accountId) return;
+    let live = true;
     getAssignmentProgress(id, {}, tenantId, accountId)
       .then((result) => { if (live) setHolders(result.agents); })
       .catch(() => { if (live) setHolders([]); });
     return () => { live = false; };
-  }, [canAssign, id, tenantId, accountId, reloadAgents]);
+  }, [canAssign, id, tenantId, accountId, reloadHolders]);
 
   const agentOptions = useMemo((): AssignmentAgentOption[] => agents.map((agent) => ({
     user_id: agent.user_id,
@@ -305,7 +314,7 @@ export function AgencyCampaignRosterPage() {
   const rowIds = useMemo(() => rows.map((row) => row.id), [rows]);
   const selectedIds = useMemo(() => selectedInOrder(selection, rowIds), [selection, rowIds]);
   const reachable = Math.min(rowIds.length, AGENCY_ASSIGNMENT_RANGE_MAX);
-  const pageTicked = reachable > 0 && rowIds.slice(0, reachable).every((rowId) => selection.selected.has(rowId));
+  const pageTicked = isPageTicked(selection, rowIds);
 
   /*
     A link arriving with filters already on it has to fill the draft controls,
@@ -690,7 +699,7 @@ export function AgencyCampaignRosterPage() {
         <div className={styles.assignBar} role="toolbar" aria-label="Assign contacts" data-testid="assign-toolbar">
           <span className={styles.assignCount} data-testid="assign-selection-count" aria-live="polite">
             {selectedIds.length > 0
-              ? `${selectedIds.length.toLocaleString()} selected`
+              ? `${formatCount(selectedIds.length)} selected`
               : 'Tick rows, or assign by rule'}
           </span>
           {selectedIds.length > 0 && (
@@ -744,7 +753,7 @@ export function AgencyCampaignRosterPage() {
                     <th className={styles.selectCell}>
                       <input
                         type="checkbox"
-                        aria-label={`Select the first ${reachable.toLocaleString()} rows`}
+                        aria-label={`Select the first ${formatCount(reachable)} rows`}
                         title={rowIds.length > AGENCY_ASSIGNMENT_RANGE_MAX
                           ? `Selects the first ${AGENCY_ASSIGNMENT_RANGE_MAX} — one operation takes at most that many`
                           : 'Select every row shown'}
@@ -894,7 +903,7 @@ export function AgencyCampaignRosterPage() {
             setAssignKind(null);
             showToast(assignmentResultToast(result), 'success');
             void load(filters);
-            setReloadAgents((n) => n + 1);
+            setReloadHolders((n) => n + 1);
           }}
         />
       )}

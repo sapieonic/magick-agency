@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { PhoneOutgoing, RotateCcw, Search, X } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
-import { useModalFocus } from '../../hooks/useModalFocus';
+import { useDialogFocus } from '@magick-agency/web-ui/hooks/useDialogFocus';
 import { getMyContactsSummary, listMyContacts } from '../../api/agencyAssignment';
 import { callMyContact, retryMyContacts } from '../../api/agencyMyContacts';
 import { errorCode } from '../../utils/agencyErrors';
@@ -13,10 +13,10 @@ import {
   contactCallGate,
   type CallGate,
   overrideBadge,
-  overrideNoteLength,
-  overrideNoteValid,
   showRetryNotReached,
 } from '../../utils/agencyMyContactsCopy';
+import { overrideNoteBlock, overrideNoteLength } from '../../utils/softphone/overrides';
+import { formatCount, plural } from '../../utils/format/number';
 import {
   trackAgencyAgentRetry,
   trackAgencyMyContactCall,
@@ -29,6 +29,7 @@ import type {
   AgencyAssignmentMode,
   AgencyMyContact,
   AgencyMyContactBucket,
+  AgencyMyContactsQuery,
   AgencyMyContactsSummary,
 } from '@magick-agency/contracts/api/agency/assignment';
 import styles from './MyContactsPanel.module.css';
@@ -56,6 +57,25 @@ import styles from './MyContactsPanel.module.css';
  */
 
 const PAGE_SIZE = 25;
+
+/** The search the list shows: what the filter form held when Search (or a count) was pressed. */
+interface AppliedFilters {
+  bucket: AgencyMyContactBucket | '';
+  phone: string;
+  q: string;
+}
+
+/** The list read for `applied`; with `cursor`, the page after it. */
+function queryOf(campaignId: string, applied: AppliedFilters, cursor?: string): AgencyMyContactsQuery {
+  return {
+    campaign_id: campaignId,
+    ...(applied.bucket ? { bucket: [applied.bucket] } : {}),
+    ...(applied.phone ? { phone: applied.phone } : {}),
+    ...(applied.q ? { q: applied.q } : {}),
+    ...(cursor ? { cursor } : {}),
+    limit: PAGE_SIZE,
+  };
+}
 
 export interface MyContactsPanelProps {
   campaignId: string;
@@ -102,7 +122,6 @@ export function MyContactsPanel({
 }: MyContactsPanelProps) {
   const { tenantId, accountId } = useTenant();
   const panelRef = useRef<HTMLDivElement>(null);
-  useModalFocus(true, panelRef);
 
   const [summary, setSummary] = useState<AgencyMyContactsSummary | null>(null);
   const [rows, setRows] = useState<AgencyMyContact[]>([]);
@@ -116,13 +135,13 @@ export function MyContactsPanel({
   const [bucket, setBucket] = useState<AgencyMyContactBucket | ''>('');
   const [phone, setPhone] = useState('');
   const [text, setText] = useState('');
-  const [applied, setApplied] = useState<{ bucket: AgencyMyContactBucket | ''; phone: string; q: string }>(
-    { bucket: '', phone: '', q: '' },
-  );
+  const [applied, setApplied] = useState<AppliedFilters>({ bucket: '', phone: '', q: '' });
 
   const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
   const [confirmRetry, setConfirmRetry] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // Escape closes the panel, except while a call or retry is in flight.
+  useDialogFocus({ open: true, dialogRef: panelRef, onEscape: () => { if (busy === null) onClose(); } });
   const [notePrompt, setNotePrompt] = useState<NotePrompt | null>(null);
   const [note, setNote] = useState('');
   const seq = useRef(0);
@@ -131,24 +150,33 @@ export function MyContactsPanel({
     trackAgencyMyContactsOpened({ campaign_id: campaignId, assignment_mode: assignmentMode });
   }, [campaignId, assignmentMode]);
 
+  /*
+    The summary counts do not depend on the search, so a search reads only the
+    list. The summary is read with it on open, when the campaign changes, after a
+    retry, and on the next load after one that did not land (failed, or was
+    overtaken by a newer search), so a failed summary is retried as before.
+  */
+  const needsSummary = useRef(true);
+  useEffect(() => {
+    needsSummary.current = true;
+  }, [campaignId, tenantId, accountId]);
+
   const load = useCallback(async () => {
     if (!tenantId || !accountId) return;
     const mine = ++seq.current;
+    const withSummary = needsSummary.current;
     setLoading(true);
     setError(null);
     try {
       const [nextSummary, page] = await Promise.all([
-        getMyContactsSummary(campaignId, tenantId, accountId),
-        listMyContacts({
-          campaign_id: campaignId,
-          ...(applied.bucket ? { bucket: [applied.bucket] } : {}),
-          ...(applied.phone ? { phone: applied.phone } : {}),
-          ...(applied.q ? { q: applied.q } : {}),
-          limit: PAGE_SIZE,
-        }, tenantId, accountId),
+        withSummary ? getMyContactsSummary(campaignId, tenantId, accountId) : null,
+        listMyContacts(queryOf(campaignId, applied), tenantId, accountId),
       ]);
       if (mine !== seq.current) return;
-      setSummary(nextSummary);
+      if (nextSummary) {
+        setSummary(nextSummary);
+        needsSummary.current = false;
+      }
       setRows(page.rows);
       setCursor(page.next_cursor);
       setPicked(new Set());
@@ -169,14 +197,7 @@ export function MyContactsPanel({
     const mine = seq.current;
     setLoadingMore(true);
     try {
-      const page = await listMyContacts({
-        campaign_id: campaignId,
-        ...(applied.bucket ? { bucket: [applied.bucket] } : {}),
-        ...(applied.phone ? { phone: applied.phone } : {}),
-        ...(applied.q ? { q: applied.q } : {}),
-        cursor,
-        limit: PAGE_SIZE,
-      }, tenantId, accountId);
+      const page = await listMyContacts(queryOf(campaignId, applied, cursor), tenantId, accountId);
       if (mine !== seq.current) return;
       setRows((current) => [...current, ...page.rows]);
       setCursor(page.next_cursor);
@@ -186,14 +207,6 @@ export function MyContactsPanel({
       setLoadingMore(false);
     }
   }, [cursor, campaignId, tenantId, accountId, applied]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && busy === null) onClose();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [busy, onClose]);
 
   const onSearch = (event: FormEvent) => {
     event.preventDefault();
@@ -215,6 +228,7 @@ export function MyContactsPanel({
     setBusy('retry');
     setNotice(null);
     const ids = [...picked];
+    const event = { campaign_id: campaignId, scope: retryScope, requested: retryCount };
     try {
       const result = await retryMyContacts(
         { campaign_id: campaignId, ...(ids.length > 0 ? { contact_ids: ids } : { all: true }) },
@@ -222,29 +236,25 @@ export function MyContactsPanel({
         accountId,
       );
       trackAgencyAgentRetry({
-        campaign_id: campaignId,
-        scope: retryScope,
-        requested: retryCount,
+        ...event,
         outcome: 'reopened',
         reopened: result.reopened,
         skipped_total: result.skipped_total,
         code: null,
       });
-      const s = (n: number) => (n === 1 ? '' : 's');
       setNotice({
         tone: 'ok',
-        text: `${result.reopened.toLocaleString()} contact${s(result.reopened)} back in your queue — they’ll be dialled as they come up.`
+        text: `${plural(result.reopened, 'contact')} back in your queue — they’ll be dialled as they come up.`
           + (result.skipped_total > 0
-            ? ` ${result.skipped_total.toLocaleString()} couldn’t be retried.`
+            ? ` ${formatCount(result.skipped_total)} couldn’t be retried.`
             : ''),
       });
       setConfirmRetry(false);
+      needsSummary.current = true;
       await load();
     } catch (err: unknown) {
       trackAgencyAgentRetry({
-        campaign_id: campaignId,
-        scope: retryScope,
-        requested: retryCount,
+        ...event,
         outcome: 'refused',
         reopened: 0,
         skipped_total: 0,
@@ -262,6 +272,7 @@ export function MyContactsPanel({
     if (!tenantId || !accountId || !sessionId) return;
     setBusy(contact.id);
     setNotice(null);
+    const event = { campaign_id: campaignId, bucket: contact.bucket, with_override_note: overrideNote !== undefined };
     try {
       const result = await callMyContact(
         contact.id,
@@ -274,9 +285,7 @@ export function MyContactsPanel({
         accountId,
       );
       trackAgencyMyContactCall({
-        campaign_id: campaignId,
-        bucket: contact.bucket,
-        with_override_note: overrideNote !== undefined,
+        ...event,
         outcome: 'placed',
         code: null,
         override_applied_count: result.override_applied.length,
@@ -288,9 +297,7 @@ export function MyContactsPanel({
     } catch (err: unknown) {
       const code = errorCode(err) as AgencyAgentRetryErrorCode | null;
       trackAgencyMyContactCall({
-        campaign_id: campaignId,
-        bucket: contact.bucket,
-        with_override_note: overrideNote !== undefined,
+        ...event,
         outcome: 'refused',
         code,
         override_applied_count: 0,
@@ -338,7 +345,7 @@ export function MyContactsPanel({
       onClick={() => pickBucket(key)}
       data-testid={`my-count-${key}`}
     >
-      <span className={styles.countValue}>{(summary?.counts[key] ?? 0).toLocaleString()}</span>
+      <span className={styles.countValue}>{formatCount(summary?.counts[key] ?? 0)}</span>
       <span className={styles.countLabel}>{label}</span>
       {extra ? <span className={styles.countExtra}>{extra}</span> : null}
     </button>
@@ -387,7 +394,7 @@ export function MyContactsPanel({
             {confirmRetry ? (
               <div className={styles.confirm} role="group" aria-label="Confirm retry" data-testid="my-retry-confirm">
                 <p>
-                  {`Put ${retryCount.toLocaleString()} contact${retryCount === 1 ? '' : 's'} you didn’t reach back in your queue? They’re dialled as they come up, and each uses one of its ${summary.retry.rounds} retr${summary.retry.rounds === 1 ? 'y' : 'ies'}.`}
+                  {`Put ${plural(retryCount, 'contact')} you didn’t reach back in your queue? They’re dialled as they come up, and each uses one of its ${plural(summary.retry.rounds, 'retry', 'retries')}.`}
                 </p>
                 <button
                   type="button"
@@ -412,8 +419,8 @@ export function MyContactsPanel({
               >
                 <RotateCcw size={14} aria-hidden="true" />
                 {retryScope === 'selected'
-                  ? `Retry selected (${retryCount.toLocaleString()})`
-                  : `Retry not reached (${retryCount.toLocaleString()})`}
+                  ? `Retry selected (${formatCount(retryCount)})`
+                  : `Retry not reached (${formatCount(retryCount)})`}
               </button>
             )}
           </div>
@@ -467,7 +474,7 @@ export function MyContactsPanel({
                 type="button"
                 className="btn-primary"
                 onClick={() => void placeCall(notePrompt.contact, note)}
-                disabled={!overrideNoteValid(note) || busy !== null}
+                disabled={overrideNoteBlock(note) !== null || busy !== null}
                 data-testid="my-note-call"
               >
                 Call with this note

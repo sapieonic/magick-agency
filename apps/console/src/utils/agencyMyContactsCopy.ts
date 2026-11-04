@@ -7,8 +7,10 @@ import type {
   AgencyMyContactBucket,
 } from '@magick-agency/contracts/api/agency/assignment';
 import type { AgencyAgentState } from '../types/agency';
-import { errorCode } from './agencyErrors';
+import { getErrorMessage } from '@magick-agency/web-ui/errors';
+import { errorBody, errorCode } from './agencyErrors';
 import { formatSpineTimestamp } from './agencySpineCopy';
+import { plural } from './format/number';
 
 /**
  * The agent's own contacts: refusal copy for every code their routes answer,
@@ -53,7 +55,7 @@ export const RETRY_BLOCK_COPY: Record<AgencyAgentRetryBlock, string> = {
 export function agentRetryRefusal(err: unknown, fallback: string): string {
   const code = errorCode(err) as AgencyAgentRetryErrorCode | null;
   if (code === null || !(code in AGENT_RETRY_REFUSAL_COPY)) {
-    return err instanceof Error && err.message ? err.message : fallback;
+    return getErrorMessage(err, fallback);
   }
   const details = detailsOf(err);
   if (code === 'outside_calling_hours' && typeof details?.['next_open_at'] === 'string') {
@@ -72,11 +74,9 @@ export function agentRetryRefusal(err: unknown, fallback: string): string {
   return AGENT_RETRY_REFUSAL_COPY[code];
 }
 
+/** The refusal's own `details` object (`next_open_at`, `blocked`, ...), off the envelope. */
 function detailsOf(err: unknown): Record<string, unknown> | null {
-  if (!err || typeof err !== 'object') return null;
-  const body = (err as { details?: unknown }).details;
-  if (!body || typeof body !== 'object') return null;
-  const details = (body as { details?: unknown }).details;
+  const details = (errorBody(err) as { details?: unknown } | null)?.details;
   return details && typeof details === 'object' ? (details as Record<string, unknown>) : null;
 }
 
@@ -95,7 +95,7 @@ export function overrideBadge(override: AgencyContactOverride | null): string | 
   if (!override) return null;
   const parts: string[] = [];
   if (override.extra_attempts > 0) {
-    parts.push(`${override.extra_attempts} extra attempt${override.extra_attempts === 1 ? '' : 's'}`);
+    parts.push(plural(override.extra_attempts, 'extra attempt'));
   }
   if (override.retry_delay) parts.push('may call early');
   if (override.calling_hours) parts.push('may call outside hours');
@@ -135,16 +135,6 @@ export function contactCallGate(
     return { ok: false, reason: `${RETRY_BLOCK_COPY.cooldown} — until ${formatSpineTimestamp(contact.retry.available_at)}` };
   }
   return { ok: false, reason: blocked ? RETRY_BLOCK_COPY[blocked] : RETRY_BLOCK_COPY.not_retryable };
-}
-
-/** The calling-hours note, trimmed and counted in code points as the server counts it. */
-export function overrideNoteLength(note: string): number {
-  return [...note.trim()].length;
-}
-
-export function overrideNoteValid(note: string): boolean {
-  const length = overrideNoteLength(note);
-  return length >= AGENCY_OVERRIDE_NOTE_MIN && length <= AGENCY_OVERRIDE_NOTE_MAX;
 }
 
 /** "Retry not reached (N)" is offered when nothing is due and there is something to retry. */

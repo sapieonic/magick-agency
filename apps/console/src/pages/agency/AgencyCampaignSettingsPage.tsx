@@ -26,6 +26,7 @@ import {
   validateConfig,
   configFromCampaign,
   fieldErrorsFromResponse,
+  joinAnd,
   resetAssignmentConfig,
   storedAssignmentLeftovers,
   type AssignmentPayloadScope,
@@ -493,7 +494,7 @@ export function AgencyCampaignSettingsPage() {
       {assignmentLeftovers.length > 0 && (
         <div className={styles.liveNote} role="note" data-testid="assignment-off-notice">
           <p>
-            {`Contact assignment is turned off for this account, but this campaign still uses ${joinList(assignmentLeftovers)}. Dialling keeps following them until they are reset.`}
+            {`Contact assignment is turned off for this account, but this campaign still uses ${joinAnd(assignmentLeftovers)}. Dialling keeps following them until they are reset.`}
           </p>
           {modeResetBlocked && (
             <p data-testid="assignment-reset-pause">
@@ -550,12 +551,6 @@ export function AgencyCampaignSettingsPage() {
 }
 
 export default AgencyCampaignSettingsPage;
-
-/** `a`, `a and b`, `a, b and c`. */
-function joinList(items: readonly string[]): string {
-  if (items.length <= 1) return items.join('');
-  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
-}
 
 /** The assignment half of `agency_campaign_config_saved`: enum labels and counts only. */
 function assignmentAnalytics(config: CampaignConfigState) {

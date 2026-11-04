@@ -82,6 +82,16 @@ export const AGENCY_ASSIGNMENT_KINDS = [
 
 /** At most this many ids in one `range` operation (a few visible pages). */
 export const AGENCY_ASSIGNMENT_RANGE_MAX = 500;
+/** At most this many agents named in one operation (`agent_user_ids`). */
+export const AGENCY_ASSIGNMENT_AGENTS_MAX = 200;
+/** `count` on `count` / `reassign` / `unassign`: 1 to this (a million-row roster). */
+export const AGENCY_ASSIGNMENT_COUNT_MAX = 1_000_000;
+/** A `filter` operation's column name: at most this many characters, after trimming. */
+export const AGENCY_ASSIGNMENT_COLUMN_NAME_MAX = 200;
+/** A `filter` operation's column values: at most this many. */
+export const AGENCY_ASSIGNMENT_COLUMN_VALUES_MAX = 100;
+/** ...each at most this many characters. */
+export const AGENCY_ASSIGNMENT_COLUMN_VALUE_LENGTH_MAX = 500;
 
 interface AgencyAssignmentGrouping {
   /** Keep contacts with the same normalised number with one agent. Default `true`. */

@@ -4,6 +4,7 @@ import {
   EMPTY_SELECTION,
   buildOperation,
   emptyDraft,
+  isPageTicked,
   operationAgentCount,
   rosterLinkFor,
   selectedInOrder,
@@ -236,5 +237,12 @@ describe('row selection', () => {
     const page = togglePage(EMPTY_SELECTION, ids, 4);
     expect(selectedInOrder(page, ids)).toEqual(['r1', 'r2', 'r3', 'r4']);
     expect(togglePage(page, ids, 4).selected.size).toBe(0);
+  });
+
+  it('the page reads as ticked only when every reachable row is, and never with no rows', () => {
+    const page = togglePage(EMPTY_SELECTION, ids, 4);
+    expect(isPageTicked(page, ids, 4)).toBe(true);
+    expect(isPageTicked(page, ids, 5)).toBe(false);
+    expect(isPageTicked(EMPTY_SELECTION, [], 4)).toBe(false);
   });
 });
