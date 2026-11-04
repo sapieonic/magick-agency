@@ -277,6 +277,25 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   supervise pass. `tickOnce` is a forced full tick that reads everything fresh. Measured by
   `test/integration/load/pacing-statements.test.ts`; `agency_pacing_ticks_total` and
   `agency_pacing_missed_wakeups_total` show the skip ratio and any wake-up the bus missed.
+- **Pacing history** (`pacing/pacing-history.ts`, `agency_campaign_pacing_minutes`, 0013; IN2,
+  `docs/insights.md`). Why a campaign did or did not dial, kept per campaign per UTC minute for the
+  insights page. The engine counts into an in-memory accumulator next to every
+  `agency_tick_idle_total` and `agency_predial_gate_total` increment (pinned together by
+  `pacing-history-pin.test.ts`), every tick on a running campaign (full or skipped; also whether
+  the campaign's own window was closed) and every paced dial, and flushes one additive upsert
+  (`x = t.x + EXCLUDED.x`) every 15 s, when it gives a campaign up and on `halt()` (bounded, 3 s).
+  Best effort: a failed flush is kept for the next one, and beyond 10,000 unwritten minutes the
+  oldest are dropped (`agency_pacing_history_dropped_total`); a write never fails a tick. Events
+  outside the tick are one single-row upsert each, from whichever process has them: a wrap-up
+  redial refused at the limit (the media worker holding the station) and every our-fault
+  retirement (`countOurFaultRetirement`, beside `agency_our_fault_retirement_total`). The read
+  and its stall rule are `AgencyInsightsPacingRepository.pacingHistory`.
+- **The reopen flag.** An agent's reopen ("Retry not reached") sets
+  `agency_contacts.agent_reopen_pending`; the pacing tick's attempt insert consumes it in the same
+  statement and stamps that attempt `agent_reopened`, so exactly the first paced dial after a
+  reopen carries it. The agent's own dial of the contact clears it (its undo gives it back), and a
+  paced attempt abandoned before its dial (dispatch refused, lease lost after the insert) restores
+  it with the contact.
 - **Dialer** (`agency-dialer.ts`, `dial-dispatcher.ts`, with `dialer/`: live-attempt record, contact
   settlement). Reserves the agent before the dial, re-asserts the lease and asks the pacing engine
   (`stillAuthorised`) right before `createBridgedCall`, registers the lifecycle listener before

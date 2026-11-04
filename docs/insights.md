@@ -43,7 +43,20 @@ drifts the first time one path forgets it. Backfill is marking every bucket dirt
 the `as_of` field on each range read.
 
 **Pacing history** is aggregated in memory by the pacing leader per campaign per minute and
-upserted once a minute. It starts the day it ships; `pacing_history_since` tells the page.
+flushed as one additive upsert every 15 s (and when a campaign is given up, and at shutdown); the
+events outside the tick (a wrap-up redial refused at the limit, an our-fault retirement) are one
+single-row upsert each (`agency/pacing/pacing-history.ts`). It starts the day it ships;
+`pacing_history_since` tells the page.
+
+**Stalls** (`health.stalls`), computed from those minutes by
+`AgencyInsightsPacingRepository.pacingHistory` (the rule is its module header): a minute is
+stalled when at least half of its ticks on a running campaign dialled nothing; its reason is
+`outside_calling_hours` when the campaign's own window was closed for at least half of them, else
+the idle reason with the most ticks. Consecutive minutes stalled for the same reason are one
+episode, cut at the range edges, open (`ended_at` null) while its last minute is the newest and
+current. `concurrency_limit_minutes` counts the minutes with any `no_slots` tick, stalled or not.
+The read returns at most the 500 newest episodes and says when it cut older ones
+(`episodes_truncated`, not in the wire contract yet).
 
 ## Workstreams and ownership
 
