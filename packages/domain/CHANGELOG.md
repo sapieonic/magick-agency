@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.3.0...domain-v0.4.0) (2026-11-04)
+
+
+### Features
+
+* **server,console,mobile,contracts,db,domain:** contact assignment, My contacts and agent retry ([#33](https://github.com/sapieonic/magick-agency/issues/33)) ([38aea1b](https://github.com/sapieonic/magick-agency/commit/38aea1b1d660a56c2f9d25885511f391dbd4905c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.6.0
+
 ## [0.3.0](https://github.com/sapieonic/magick-agency/compare/domain-v0.2.2...domain-v0.3.0) (2026-11-03)
 
 
