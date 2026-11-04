@@ -26,7 +26,7 @@
  * it. Plans: `test/integration/agency/agency-drilldown-filters.test.ts`.
  */
 import type { AgencyContactWaiting } from '@magick-agency/contracts/api/agency/agency-spine';
-import { isCallbackSql } from './assignment-sql.js';
+import { attemptedSql, waitingCallbackSql, waitingDueNowSql, waitingRetrySql } from './insights-sql.js';
 
 // ─── Contacts ───────────────────────────────────────────────────────────────
 
@@ -37,19 +37,20 @@ export type ContactWaitingBucket = AgencyContactWaiting;
  * Whether contact `alias` is in waiting bucket `bucket`, as of `now()` (the statement's
  * transaction start, so every bucket in one statement is cut at one instant).
  *
- * The three buckets PARTITION the pending contacts, so `waiting_due_now + waiting_retry +
+ * Delegates to the roster predicates of `insights-sql.ts`, which the insights summary and
+ * allocation count with. The three buckets PARTITION the pending contacts, so `waiting_due_now + waiting_retry +
  * waiting_callback` is the pending count and the roster's reconciliation holds:
  *
  *  - `due_now`:  pending ∧ `next_attempt_at <= now()`. Every pending contact the dialler may
  *    take now, a callback whose time has come included (it is due; pacing dials it). The same
  *    "due now" as the assignment reads (`assignment-reads.repository.ts`).
  *  - `callback`: pending ∧ `next_attempt_at > now()` ∧ waiting on a callback
- *    ({@link isCallbackSql}: the latest disposition booked one and that call is still the
+ *    (`isCallbackSql` in `assignment-sql.ts`: the latest disposition booked one and that call is still the
  *    latest outcome). A callback booked for later.
  *  - `retry`:    pending ∧ `next_attempt_at > now()` ∧ NOT waiting on a callback. Scheduled
  *    for a later retry.
  *
- * `isCallbackSql` is NULL when `last_disposition` is NULL, so it is COALESCEd: under `NOT` a
+ * `isCallbackSql` is NULL when `last_disposition` is NULL, so retry COALESCEs it: under `NOT` a
  * NULL would reject every contact that was never written up, which is most of the retry
  * bucket (the NULL trap `neverSeededSuppressionSql` documents).
  *
@@ -61,15 +62,15 @@ export function waitingContactSql(
   alias: string,
   callbackCodesParam?: string,
 ): string {
-  const c = alias;
-  if (bucket === 'due_now') return `(${c}.state = 'pending' AND ${c}.next_attempt_at <= now())`;
+  // The roster's own predicates (`insights-sql.ts`): the list filter and the insights count are
+  // one definition, so a number on the page and the list it opens cannot disagree.
+  if (bucket === 'due_now') return waitingDueNowSql(alias);
   if (!callbackCodesParam) {
     throw new Error(`waitingContactSql(${bucket}) needs the campaign's callback codes`);
   }
-  const callback = `COALESCE(${isCallbackSql(c, callbackCodesParam)}, false)`;
   return bucket === 'callback'
-    ? `(${c}.state = 'pending' AND ${c}.next_attempt_at > now() AND ${callback})`
-    : `(${c}.state = 'pending' AND ${c}.next_attempt_at > now() AND NOT ${callback})`;
+    ? waitingCallbackSql(alias, callbackCodesParam)
+    : waitingRetrySql(alias, callbackCodesParam);
 }
 
 /**
@@ -83,7 +84,7 @@ export function waitingContactSql(
  * (queued, then orphaned) does not make a contact attempted.
  */
 export function attemptedContactSql(attempted: boolean, alias: string): string {
-  return attempted ? `${alias}.dials_placed > 0` : `${alias}.dials_placed = 0`;
+  return attempted ? attemptedSql(alias) : `(${alias}.dials_placed = 0)`;
 }
 
 // ─── Call attempts ──────────────────────────────────────────────────────────

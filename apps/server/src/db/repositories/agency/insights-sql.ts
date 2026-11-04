@@ -1,8 +1,9 @@
 /**
  * The campaign insights page's roster buckets (`AgencyInsightsRoster`, docs/insights.md): THE one
  * definition of where a contact stands "as of now", as SQL predicates over an `agency_contacts`
- * alias. The insights summary counts with them, and the contacts list's drill-down filters
- * (`waiting=due_now|retry|callback`, `attempted=0|1`) are meant to filter with them, so a number on
+ * alias. The insights summary and allocation count with them, and the contacts list's drill-down
+ * filters (`waiting=due_now|retry|callback`, `attempted=0|1`) filter with them through
+ * `drilldown-sql.ts`'s `waitingContactSql` / `attemptedContactSql`, so a number on
  * the page and the list it opens cannot disagree (the single-definition rule `assignment-sql.ts`
  * follows for the owner's buckets).
  *
@@ -12,8 +13,7 @@
  * same statement, so a gap or an overlap is a visible `ok: false`, never an assumption.
  *
  *  - Waiting = `pending` (every pending contact, whatever `suppressed_reason` says), split by
- *    `next_attempt_at` (the principal's rule, the drill-down filters' `waitingContactSql` in
- *    WS F's `drilldown-sql.ts`; the three sum to the pending count):
+ *    `next_attempt_at` (the three sum to the pending count):
  *    - due now: `next_attempt_at <= now()`, a callback whose time has come included;
  *    - callback: `next_attempt_at > now()`, and the latest disposition booked a callback
  *      (`isCallbackSql`: a callback code AND that call is still the latest outcome);
