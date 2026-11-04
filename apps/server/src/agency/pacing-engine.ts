@@ -1640,6 +1640,9 @@ export class PacingEngine {
         accountId: campaign.account_id,
         callerId,
         reservedAgentId: sessionId,
+        // The first paced dial after an agent's reopen carries `agent_reopened` (IN2): the
+        // insert consumes the contact's marker in the same statement.
+        consumeAgentReopen: true,
       });
 
       if (!attempt) {
@@ -1658,7 +1661,14 @@ export class PacingEngine {
         await agencyAttemptRepository.setState(attempt.id, 'ended', {
           outcome: 'orphaned', ended_at: new Date(),
         }).catch((err) => log.error({ err, attemptId: attempt.id }, 'Failed to end an undialed attempt'));
-        await this.abortRemainder(contacts.slice(index), sessions.slice(index));
+        // No dial went out, so a reopen marker this attempt consumed goes back with the contact.
+        if (attempt.agent_reopened) {
+          await this.returnReserved(sessionId);
+          await agencyContactRepository.unclaim(contact.id, new Date(), { restoreAgentReopen: true });
+          await this.abortRemainder(contacts.slice(index + 1), sessions.slice(index + 1));
+        } else {
+          await this.abortRemainder(contacts.slice(index), sessions.slice(index));
+        }
         log.warn(
           { campaignId: campaign.id, attemptId: attempt.id, abandoned: contacts.length - index },
           'Agency campaign stopped or lost its lease after the attempt insert — returning the remainder undialed',
@@ -1692,7 +1702,8 @@ export class PacingEngine {
         await agencyAttemptRepository.setState(attempt.id, 'ended', {
           outcome: 'failed', ended_at: new Date(),
         });
-        await this.returnPair(sessionId, contact.id, new Date());
+        // The dial never went out: a reopen marker the attempt consumed goes back.
+        await this.returnPair(sessionId, contact.id, new Date(), 'available', { restoreAgentReopen: attempt.agent_reopened === true });
       }
     }
     return dialed;
@@ -1766,10 +1777,12 @@ export class PacingEngine {
     contactId: string,
     nextAttemptAt: Date,
     agentState: 'available' | 'offline' = 'available',
+    opts: { restoreAgentReopen?: boolean } = {},
   ): Promise<void> {
     if (agentState === 'available') await this.returnReserved(sessionId);
     else await this.agents.set(sessionId, agentState);
-    await agencyContactRepository.unclaim(contactId, nextAttemptAt);
+    if (opts.restoreAgentReopen) await agencyContactRepository.unclaim(contactId, nextAttemptAt, opts);
+    else await agencyContactRepository.unclaim(contactId, nextAttemptAt);
   }
 
   /**

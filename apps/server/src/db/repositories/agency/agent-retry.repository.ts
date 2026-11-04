@@ -42,7 +42,12 @@ export interface AgentRetryReopenResult {
 export interface AgentDialClaim {
   contact: AgencyContactRecord;
   prior: { state: AgencyContactState; nextAttemptAt: Date };
-  spent: { round: boolean; retryDelay: boolean; callingHours: boolean };
+  /**
+   * `agentReopen`: the claim cleared a pending reopen marker (`agent_reopen_pending`, 0013): the
+   * agent's own dial is the reopen's follow-up, so no paced dial after it is flagged
+   * `agent_reopened`. Given back by the undo, like the rest.
+   */
+  spent: { round: boolean; retryDelay: boolean; callingHours: boolean; agentReopen: boolean };
   /**
    * The row version the claim wrote (the contact row's `xmin`): any later write to the row,
    * by anyone, changes it. {@link AgencyAgentRetryRepository.releaseRefusedAgentDialClaim}
@@ -58,19 +63,22 @@ const UNDO_AGENT_DIAL_CLAIM_SET = `
               agent_retry_rounds_used = GREATEST(0, c.agent_retry_rounds_used - $4::int),
               override_retry_delay = c.override_retry_delay OR $5::boolean,
               override_calling_hours = c.override_calling_hours OR $6::boolean,
+              agent_reopen_pending = c.agent_reopen_pending OR $7::boolean,
               updated_at = now()`;
 
 function undoValues(contactId: string, claim: Pick<AgentDialClaim, 'prior' | 'spent'>): unknown[] {
   return [
     contactId, claim.prior.state, claim.prior.nextAttemptAt,
-    claim.spent.round ? 1 : 0, claim.spent.retryDelay, claim.spent.callingHours,
+    claim.spent.round ? 1 : 0, claim.spent.retryDelay, claim.spent.callingHours, claim.spent.agentReopen,
   ];
 }
 
 export class AgencyAgentRetryRepository {
   /**
    * Reopen the caller's not-reached contacts on a campaign: `pending`, due now
-   * (`next_attempt_at = now()`), one agent retry round spent (`agent_retry_rounds_used + 1`).
+   * (`next_attempt_at = now()`), one agent retry round spent (`agent_retry_rounds_used + 1`),
+   * and marked `agent_reopen_pending` so the first paced dial of each is stamped
+   * `agent_reopened` (`AgencyAttemptRepository.create`, `consumeAgentReopen`; IN2).
    * A contact whose cooldown is still running is reopened only through a held retry-delay
    * override (`agentRetryBlockSql`), and the reopen spends it.
    *
@@ -128,6 +136,7 @@ export class AgencyAgentRetryRepository {
               SET state = 'pending',
                   next_attempt_at = now(),
                   agent_retry_rounds_used = c.agent_retry_rounds_used + 1,
+                  agent_reopen_pending = true,
                   -- Spent only when it is what let the reopen through a running cooldown.
                   override_retry_delay = CASE
                     WHEN c.override_retry_delay AND ${agentRetryCoolingSql('c', s.cooldownMinutes)} THEN false
@@ -240,11 +249,12 @@ export class AgencyAgentRetryRepository {
     const { rows } = await getPool().query<AgencyContactRecord & {
       prior_state: AgencyContactState; prior_next_attempt_at: Date;
       spent_round: boolean; spent_retry_delay: boolean; spent_calling_hours: boolean;
-      row_version: string;
+      spent_agent_reopen: boolean; row_version: string;
     }>(
       `WITH target AS MATERIALIZED (
          SELECT c.id, c.state AS prior_state, c.next_attempt_at AS prior_next_attempt_at,
                 c.override_retry_delay AS prior_retry_delay,
+                c.agent_reopen_pending AS prior_reopen_pending,
                 ${agentRetryCoolingSql('c', s.cooldownMinutes)} AS cooling
            FROM agency_contacts c
           WHERE c.id = ${id}::uuid AND c.campaign_id = ${campaign}::uuid
@@ -263,6 +273,7 @@ export class AgencyAgentRetryRepository {
                 WHEN ${basis}::text = 'retry_round' AND t.cooling THEN false
                 ELSE c.override_retry_delay END,
               override_calling_hours = CASE WHEN ${hours}::boolean THEN false ELSE c.override_calling_hours END,
+              agent_reopen_pending = false,
               updated_at = now()
          FROM target t
         WHERE c.id = t.id
@@ -278,6 +289,7 @@ export class AgencyAgentRetryRepository {
                 (t.prior_retry_delay AND (${basis}::text = 'retry_delay'
                   OR (${basis}::text = 'retry_round' AND t.cooling))) AS spent_retry_delay,
                 ${hours}::boolean AS spent_calling_hours,
+                t.prior_reopen_pending AS spent_agent_reopen,
                 c.xmin::text AS row_version`,
       p.values,
     );
@@ -286,13 +298,13 @@ export class AgencyAgentRetryRepository {
     const {
       prior_state: priorState, prior_next_attempt_at: priorNext,
       spent_round: round, spent_retry_delay: retryDelay, spent_calling_hours: callingHours,
-      row_version: rowVersion,
+      spent_agent_reopen: agentReopen, row_version: rowVersion,
       ...contact
     } = row;
     return {
       contact: contact as AgencyContactRecord,
       prior: { state: priorState, nextAttemptAt: priorNext },
-      spent: { round, retryDelay, callingHours },
+      spent: { round, retryDelay, callingHours, agentReopen },
       rowVersion,
     };
   }
@@ -348,7 +360,7 @@ export class AgencyAgentRetryRepository {
       `UPDATE agency_contacts c${UNDO_AGENT_DIAL_CLAIM_SET}
         WHERE c.id = $1::uuid
           AND c.state = 'in_flight'
-          AND c.xmin = $7::text::xid`,
+          AND c.xmin = $8::text::xid`,
       [...undoValues(contactId, claim), claim.rowVersion],
     );
     return (rowCount ?? 0) > 0;

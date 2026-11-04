@@ -595,13 +595,20 @@ export class AgencyContactRepository {
    * calling window is re-claimed on the very next tick, and a campaign whose
    * contacts are all out of hours spins at 4 claims/second all night burning agent
    * reservations on calls it will never place.
+   *
+   * `restoreAgentReopen`: the contact's paced attempt consumed a reopen marker
+   * (`agent_reopened`) and was abandoned before its dial (the dispatcher refused it, or the
+   * tick lost its lease after the insert): the marker goes back, so the dial that does happen
+   * carries the flag.
    */
-  async unclaim(contactId: string, nextAttemptAt: Date): Promise<void> {
+  async unclaim(contactId: string, nextAttemptAt: Date, opts: { restoreAgentReopen?: boolean } = {}): Promise<void> {
     await getPool().query(
       `UPDATE agency_contacts
-          SET state = 'pending', next_attempt_at = $2, updated_at = now()
+          SET state = 'pending', next_attempt_at = $2,
+              agent_reopen_pending = agent_reopen_pending OR $3::boolean,
+              updated_at = now()
         WHERE id = $1 AND state = 'in_flight'`,
-      [contactId, nextAttemptAt],
+      [contactId, nextAttemptAt, opts.restoreAgentReopen === true],
     );
   }
 

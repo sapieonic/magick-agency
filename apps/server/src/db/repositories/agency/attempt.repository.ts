@@ -123,16 +123,36 @@ export class AgencyAttemptRepository {
      * defaults: `false`, `{}`, NULL).
      */
     agentManual?: { overrideApplied: readonly AgencyOverrideKind[]; overrideNote: string | null };
+    /**
+     * A paced dial (the pacing tick): consume the contact's pending reopen marker
+     * (`agent_reopen_pending`, set by an agent's "Retry not reached") and stamp this attempt
+     * `agent_reopened` when there was one, in this statement. So exactly the first paced
+     * attempt after a reopen carries the flag.
+     *
+     * Race-safe without a lock of its own: the contact is `in_flight`, held by the tick's claim,
+     * and a reopen only touches `pending` / `exhausted` rows under their row lock, so nothing
+     * can set the marker between the claim and this insert. The marker's UPDATE is a CTE of the
+     * INSERT, one statement: an insert refused by a unique index (null below) rolls the
+     * consumption back with it. A contact with no marker writes nothing (no `updated_at` bump).
+     */
+    consumeAgentReopen?: boolean;
   }): Promise<AgencyCallAttemptRecord | null> {
     try {
       const { rows } = await getPool().query<AgencyCallAttemptRecord>(
-        `INSERT INTO agency_call_attempts
+        `WITH reopen AS (
+           UPDATE agency_contacts
+              SET agent_reopen_pending = false
+            WHERE id = $2 AND agent_reopen_pending AND $10::boolean
+           RETURNING id
+         )
+         INSERT INTO agency_call_attempts
            (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, reserved_agent_id, state,
-            agent_manual, override_applied, override_note)
+            agent_manual, override_applied, override_note, agent_reopened)
          SELECT $1, $2, $3, $4,
                 COALESCE(MAX(attempt_number), 0) + 1,
                 $5, $6, 'queued',
-                $7::boolean, $8::text[], $9::text
+                $7::boolean, $8::text[], $9::text,
+                EXISTS (SELECT 1 FROM reopen)
            FROM agency_call_attempts
           WHERE contact_id = $2
          RETURNING *`,
@@ -141,6 +161,7 @@ export class AgencyAttemptRepository {
           input.callerId, input.reservedAgentId,
           input.agentManual !== undefined, [...(input.agentManual?.overrideApplied ?? [])],
           input.agentManual?.overrideNote ?? null,
+          input.consumeAgentReopen === true && input.agentManual === undefined,
         ],
       );
       return rows[0] ?? null;

@@ -359,6 +359,11 @@ export interface AgencyContactRecord {
   assigned_by_user_id: string | null;
   /** Agent-led retry (0009): reopens an agent spent on this contact. */
   agent_retry_rounds_used: number;
+  /**
+   * Insights (0013): an agent reopened this contact and no paced dial has followed yet; the
+   * next paced attempt consumes it and is stamped `agent_reopened`.
+   */
+  agent_reopen_pending: boolean;
   /** Outcome override (0009): the code that granted the `override_*` columns, or null. */
   override_disposition: string | null;
   /** Outcome override (0009): dials still allowed past `max_attempts`. */
@@ -485,6 +490,8 @@ export interface AgencyCallAttemptRecord {
   redial_number: number;
   /** Agent-led retry (0009): the agent dialled this contact from their own list. */
   agent_manual: boolean;
+  /** Insights (0011, written since 0013): the first paced dial after an agent's reopen. */
+  agent_reopened: boolean;
   /** Outcome override (0009): the overrides this dial spent. */
   override_applied: AgencyOverrideKind[];
   /** Outcome override (0009): the agent's calling-hours note, or null. */
