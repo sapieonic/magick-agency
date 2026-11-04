@@ -355,7 +355,7 @@ class MyContactsController extends Notifier<MyContactsState> {
     try {
       final page = await _api.list(filters.toQuery(campaignId));
       if (!ref.mounted || mine != _generation) return;
-      final visible = {for (final r in page.rows) r.id};
+      final eligible = {for (final r in page.rows) if (r.retry.eligible) r.id};
       state = state.copyWith(
         status: MyContactsStatus.ready,
         rows: page.rows,
@@ -364,10 +364,7 @@ class MyContactsController extends Notifier<MyContactsState> {
         clearError: true,
         refreshing: false,
         // A refresh keeps only picks that are still on screen and still eligible.
-        selected: {
-          for (final id in state.selected)
-            if (visible.contains(id) && page.rows.any((r) => r.id == id && r.retry.eligible)) id,
-        },
+        selected: state.selected.where(eligible.contains).toSet(),
       );
     } on Exception catch (e) {
       if (!ref.mounted || mine != _generation) return;
