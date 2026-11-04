@@ -74,25 +74,56 @@ export function average(total: number, count: number): number | null {
 // ── Named rates, so a panel never divides inline ────────────────────────────
 
 /**
- * Connected over every placed dial (redials included in the dials, decision IN6). `connected` is
- * `/stats`' `attempts_connected`: outcome connected, a wrap-up redial NOT counted again (it
- * continues a call already counted). The contract's header names both "connected" counts.
+ * The connect rate, one definition for the whole page and the same as `/stats`'
+ * `connect_rate_pct`: CONNECTED over FIRST DIALS, wrap-up redials out of both.
+ *
+ *  - numerator `connected`: `/stats`' `attempts_connected`, outcome connected and not a wrap-up
+ *    redial (a redial continues a call already counted);
+ *  - denominator `first_dials`: the placed dials that were not a wrap-up redial. A redial is not
+ *    another try at reaching someone, so counting it below a numerator that leaves it out would
+ *    pull the rate down for every conversation an agent redialled.
+ *
+ * Trend buckets, best hours and caller IDs carry `first_dials`; the calls block and the agent
+ * rows carry the dials and the redials they placed ({@link callsConnectRate},
+ * {@link agentConnectRate}).
  */
-export function connectRate(calls: Pick<AgencyInsightsCalls, 'dials' | 'connected'>): InsightsRate {
-  return insightsRate(calls.connected, calls.dials);
+export function connectRate(sample: { connected: number; first_dials: number }): InsightsRate {
+  return insightsRate(sample.connected, sample.first_dials);
 }
 
-/** Abandoned over answered: the guardrail's own definition (`abandoned_24h / answered_24h`). */
+/**
+ * The calls block's first dials: every placed dial minus the wrap-up redials placed. Exact: both
+ * are counts of the same placed dials in the same rollup snapshot (`redial_number > 0` and `= 0`
+ * partition them), so no second count is served for it.
+ */
+export function firstDials(calls: Pick<AgencyInsightsCalls, 'dials' | 'redials'>): number {
+  return calls.dials - calls.redials.placed;
+}
+
+/** {@link connectRate} over the calls block. */
+export function callsConnectRate(calls: Pick<AgencyInsightsCalls, 'dials' | 'connected' | 'redials'>): InsightsRate {
+  return connectRate({ connected: calls.connected, first_dials: firstDials(calls) });
+}
+
+/** {@link connectRate} over an agent row: its dials minus the redials it placed. */
+export function agentConnectRate(row: Pick<AgencyInsightsAgentActivityRow, 'dials' | 'connected' | 'redials'>): InsightsRate {
+  return connectRate({ connected: row.connected, first_dials: row.dials - row.redials });
+}
+
+/**
+ * Abandoned over answered: the guardrail's own definition (`abandoned_24h / answered_24h`).
+ * Both count every attempt, redials included (an abandoned redial is an abandoned call).
+ */
 export function abandonmentRate(sample: { abandoned: number; answered: number }): InsightsRate {
   return insightsRate(sample.abandoned, sample.answered);
 }
 
-/** Contacts attempted at least once, over the roster. */
+/** Contacts attempted at least once (`attempted`), over the roster (`total`). Contacts, not dials. */
 export function penetrationRate(roster: Pick<AgencyInsightsRoster, 'attempted' | 'total'>): InsightsRate {
   return insightsRate(roster.attempted, roster.total);
 }
 
-/** Contacts completed, over the roster. */
+/** Contacts completed (`completed`), over the roster (`total`). */
 export function completionRate(roster: Pick<AgencyInsightsRoster, 'completed' | 'total'>): InsightsRate {
   return insightsRate(roster.completed, roster.total);
 }
@@ -102,6 +133,7 @@ export function finishedCount(roster: AgencyInsightsRoster): number {
   return roster.completed + roster.exhausted + roster.suppressed_dnc + roster.suppressed_invalid + roster.suppressed_other;
 }
 
+/** {@link finishedCount} over the roster (`total`). */
 export function finishedRate(roster: AgencyInsightsRoster): InsightsRate {
   return insightsRate(finishedCount(roster), roster.total);
 }
@@ -113,14 +145,20 @@ export function averageAttempts(roster: Pick<AgencyInsightsRoster, 'dials_placed
 
 /**
  * Successes over CONVERSATIONS (each conversation once, a redial chain once): the denominator
- * the success count is a subset of. Not `connected`, which is the connect rate's numerator and a
- * different count (`calls.conversations`, `row.conversations`, `bucket.conversations`).
+ * the success count is a subset of, so a redial chain is one conversation in both. Not
+ * `connected`, which is the connect rate's numerator and a different count
+ * (`calls.conversations`, `row.conversations`, `bucket.conversations`).
  */
 export function successRate(successes: number, conversations: number): InsightsRate {
   return insightsRate(successes, conversations);
 }
 
-/** Average handle time (talk + wrap-up) per connected call, in seconds (talk is summed over `connected` calls' legs). */
+/**
+ * Average handle time (talk + wrap-up) per connected call, in seconds. Averages, not rates:
+ * talk is `talk_seconds` (every bridged leg's agent time, a redial's leg included) over
+ * `connected`; wrap-up is `wrapup_seconds` over `wrapup_measured` (the calls whose wrap-up was
+ * measured, the sum's own population).
+ */
 export function averageHandleSeconds(calls: Pick<AgencyInsightsCalls, 'talk_seconds' | 'wrapup_seconds' | 'connected' | 'wrapup_measured'>): {
   talk: number | null;
   wrapup: number | null;
@@ -131,7 +169,7 @@ export function averageHandleSeconds(calls: Pick<AgencyInsightsCalls, 'talk_seco
   return { talk, wrapup, handle: talk === null ? null : talk + (wrapup ?? 0) };
 }
 
-/** An agent's occupancy: time on a call or in wrap-up over time online. */
+/** An agent's occupancy: time on a call or in wrap-up over time online (a time share, {@link timeShare}). */
 export function occupancy(row: Pick<AgencyInsightsAgentActivityRow, 'online_seconds' | 'state_seconds'>): number | null {
   return timeShare(row.state_seconds.on_call + row.state_seconds.wrapup, row.online_seconds);
 }

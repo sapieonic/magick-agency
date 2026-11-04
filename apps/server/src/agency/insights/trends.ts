@@ -3,13 +3,15 @@
  * `src/agency/insights/` (docs/insights.md "API (range reads)").
  *
  *  - Every bucket of the range, zeros included, from the rollup's trend read
- *    (`agencyInsightsRollupRepository.trends`): dials, connected, conversations, successes (the
+ *    (`agencyInsightsRollupRepository.trends`): dials, first dials (the connect rate's
+ *    denominator: dials that were not a wrap-up redial), connected, conversations, successes (the
  *    campaign's CURRENT success codes), abandoned, answered. `hour` and `day` are cut in the
  *    campaign's zone as Postgres resolves it (UTC when it cannot), which `range.timezone` echoes.
  *  - `agents_online_peak` per bucket from `agentsOnlinePeak` (the session events; not the rollup),
  *    labelled by the same label function, joined on the label. A bucket the peak read has no row
  *    for is 0.
- *  - `best_hours`: dials and connected by the CONTACT's local hour (the rollup's `local_hour`).
+ *  - `best_hours`: dials, first dials and connected by the CONTACT's local hour (the rollup's
+ *    `local_hour`).
  *  - `as_of` from the trend read, `pending_buckets` from `asOf`.
  */
 import type { AgencyInsightsTrends } from '@magick-agency/contracts/api/agency/insights';
@@ -40,6 +42,7 @@ export async function computeTrends(
     buckets: series.buckets.map((b) => ({
       bucket_start: b.bucket_start,
       dials: b.dials,
+      first_dials: b.first_dials,
       connected: b.connected,
       conversations: b.conversations,
       successes: b.successes,

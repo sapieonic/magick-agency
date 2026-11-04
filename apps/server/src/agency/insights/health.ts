@@ -11,7 +11,8 @@
  *  - `predial_blocks`, `concurrency_limit_minutes`, `our_fault_retired`, `stalls`,
  *    `pacing_history_since`: `pacingHistory` (the stall rule is its module header). It starts the
  *    day the pacing history shipped; `pacing_history_since` says when.
- *  - `caller_ids`, `carrier_failures`, `recording`: the rollup.
+ *  - `caller_ids` (dials, first dials, connected), `carrier_failures` and
+ *    `carrier_failures_by_code` (the `carrier_error` facet, 0014), `recording`: the rollup.
  *  - `analysis`: null (not served yet: no index-driven read of a range's analysed calls exists).
  *  - `as_of` / `pending_buckets`: the rollup's `asOf`.
  */
@@ -69,7 +70,7 @@ export async function computeHealth(
     agencyInsightsRollupRepository.recording(q),
     agencyInsightsRollupRepository.asOf(q),
   ]);
-  if (!callerIds || carrierFailures === null || !recording || !freshness) throw new InsightsCampaignGone();
+  if (!callerIds || !carrierFailures || !recording || !freshness) throw new InsightsCampaignGone();
   return {
     campaign_id: campaign.id,
     range: rangeWire(range, campaignZone(campaign.default_timezone)),
@@ -81,7 +82,8 @@ export async function computeHealth(
     },
     caller_ids: callerIds,
     concurrency_limit_minutes: pacing.concurrency_limit_minutes,
-    carrier_failures: carrierFailures,
+    carrier_failures: carrierFailures.failed,
+    carrier_failures_by_code: carrierFailures.by_code,
     our_fault_retired: pacing.our_fault_retired,
     stalls: { minutes_by_reason: pacing.minutes_by_reason, episodes: pacing.episodes, episodes_truncated: pacing.episodes_truncated },
     recording,

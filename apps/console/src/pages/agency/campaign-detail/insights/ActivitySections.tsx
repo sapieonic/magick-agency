@@ -10,7 +10,7 @@ import { formatCount } from '../../../../utils/format/number';
 import { durationWords } from '../../../../utils/format/duration';
 import {
   averageHandleSeconds,
-  connectRate,
+  callsConnectRate,
   insightsRate,
   successRate,
   rateText,
@@ -79,7 +79,7 @@ export function outcomeLines(activity: AgencyInsightsActivity): OutcomeLine[] {
 export function CallsSection({ ctx, activity }: { ctx: RangeSectionContext; activity: AgencyInsightsActivity }) {
   const { campaignId, range } = ctx;
   const { calls } = activity;
-  const connect = rateFigure(connectRate(calls));
+  const connect = rateFigure(callsConnectRate(calls));
   const success = rateFigure(successRate(calls.successes, calls.conversations));
   const handle = averageHandleSeconds(calls);
   const lines = outcomeLines(activity);

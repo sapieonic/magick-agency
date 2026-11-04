@@ -1,5 +1,5 @@
 /**
- * The campaign insights rollup (migration 0012, `docs/insights.md` "Shape"): the job's batch
+ * The campaign insights rollup (migrations 0012 and 0014, `docs/insights.md` "Shape"): the job's batch
  * (claim marks, recompute their buckets, commit) and the page's range reads. The SQL is in
  * `insights-rollup-sql.ts`; the reads delegate to `insights-rollup-reads.ts` (rollup) and
  * `insights-range-reads.ts` (agent state time, online peak, callback timing).
@@ -15,7 +15,6 @@ import {
   INSIGHTS_RECOMPUTE_SQL,
 } from './insights-rollup-sql.js';
 import {
-  insightsAbandonmentTrend,
   insightsActivity,
   insightsAsOf,
   insightsCallerIds,
@@ -90,12 +89,7 @@ export class AgencyInsightsRollupRepository {
     return insightsTrends(...args);
   }
 
-  /** Abandoned and answered per trend bucket; see {@link insightsAbandonmentTrend}. */
-  async abandonmentTrend(...args: Parameters<typeof insightsAbandonmentTrend>): ReturnType<typeof insightsAbandonmentTrend> {
-    return insightsAbandonmentTrend(...args);
-  }
-
-  /** Dials and connected per caller ID; see {@link insightsCallerIds}. */
+  /** Dials, first dials and connected per caller ID; see {@link insightsCallerIds}. */
   async callerIds(...args: Parameters<typeof insightsCallerIds>): ReturnType<typeof insightsCallerIds> {
     return insightsCallerIds(...args);
   }
@@ -105,7 +99,7 @@ export class AgencyInsightsRollupRepository {
     return insightsRecording(...args);
   }
 
-  /** Dials with outcome `failed`; see {@link insightsCarrierFailures}. */
+  /** Dials with outcome `failed`, and by the call's error code; see {@link insightsCarrierFailures}. */
   async carrierFailures(...args: Parameters<typeof insightsCarrierFailures>): ReturnType<typeof insightsCarrierFailures> {
     return insightsCarrierFailures(...args);
   }

@@ -4,7 +4,10 @@ import {
   average,
   averageAttempts,
   averageHandleSeconds,
+  agentConnectRate,
+  callsConnectRate,
   connectRate,
+  firstDials,
   finishedCount,
   insightsRate,
   NOT_ENOUGH_CALLS,
@@ -26,7 +29,7 @@ import { csvFromColumns, insightsCsvFilename, toCsv } from '../../utils/agency/i
 import { insightsShouldPoll } from '../../utils/agency/insights/polling';
 import { longDuration, readinessDetail, readinessFix, actorName } from '../../utils/agency/insights/copy';
 import { AGENCY_INSIGHTS_MIN_RATE_DENOMINATOR } from '../../types/agency-insights';
-import { headlineFor, readiness, roster } from '../helpers/insights';
+import { activity, headlineFor, readiness, roster } from '../helpers/insights';
 
 describe('insights rates (decision IN5)', () => {
   it('is none on a zero denominator, never 0%', () => {
@@ -45,7 +48,11 @@ describe('insights rates (decision IN5)', () => {
   });
 
   it('derives the named rates from the counts the wire carries', () => {
-    expect(rateText(connectRate({ dials: 1240, connected: 400 }))).toBe('32.3%');
+    // Connected over FIRST dials (/stats connect_rate_pct): 400 of 1,240 dials less 41 redials.
+    expect(rateText(connectRate({ first_dials: 1199, connected: 400 }))).toBe('33.4%');
+    expect(rateText(callsConnectRate(activity().calls))).toBe('33.4%');
+    expect(firstDials(activity().calls)).toBe(1240 - 41);
+    expect(rateText(agentConnectRate({ dials: 125, redials: 25, connected: 40 }))).toBe('40%');
     expect(rateText(abandonmentRate({ abandoned: 21, answered: 1000 }))).toBe('2.1%');
     expect(rateText(penetrationRate(roster()), 'contacts')).toBe('62%');
     expect(finishedCount(roster())).toBe(545);

@@ -5,7 +5,7 @@ import { formatCount, pct } from '../../../../utils/format/number';
 import { durationWords } from '../../../../utils/format/duration';
 import {
   average,
-  connectRate,
+  agentConnectRate,
   occupancy,
   rateText,
   rateValue,
@@ -51,7 +51,7 @@ function handleSeconds(row: Row): number | null {
 export function leaderboard(rows: Row[]): Row[] {
   return rows.slice().sort((a, b) =>
     b.successes - a.successes
-    || (rateValue(connectRate(b)) ?? -1) - (rateValue(connectRate(a)) ?? -1)
+    || (rateValue(agentConnectRate(b)) ?? -1) - (rateValue(agentConnectRate(a)) ?? -1)
     || b.dials - a.dials,
   );
 }
@@ -115,7 +115,7 @@ export function AgentsSection({ ctx, activity }: { ctx: RangeSectionContext; act
       render: (r) => agentCount(r, { ...range, outcome: 'connected', redial: false }, r.connected, 'connected calls'),
       csv: (r) => r.connected,
     },
-    { key: 'connect_rate', header: 'Connect rate', numeric: true, render: (r) => rateText(connectRate(r)), csv: (r) => rateValue(connectRate(r)) },
+    { key: 'connect_rate', header: 'Connect rate', numeric: true, render: (r) => rateText(agentConnectRate(r)), csv: (r) => rateValue(agentConnectRate(r)) },
     { key: 'successes', header: 'Successes', numeric: true, render: (r) => formatCount(r.successes), csv: (r) => r.successes },
     {
       key: 'success_rate',

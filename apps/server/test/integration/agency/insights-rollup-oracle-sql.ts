@@ -26,7 +26,6 @@ export async function oracleTotals(pool: pg.Pool, r: OracleRange, overrideCodes:
   const { rows } = await pool.query<Record<string, string>>(
     `SELECT ${AGENCY_ATTEMPT_METRICS_SQL},
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected_stats,
-            COUNT(*) FILTER (WHERE a.bridged_at IS NOT NULL)::text AS bridged,
             COUNT(*) FILTER (WHERE ${ABANDONED_ATTEMPT_PREDICATE_SQL})::text AS abandoned,
             COUNT(*) FILTER (WHERE a.state = 'ended' AND a.answered_at IS NOT NULL)::text AS answered,
             COUNT(*) FILTER (WHERE ${MEASURED})::text AS wrapup_measured,
@@ -41,8 +40,6 @@ export async function oracleTotals(pool: pg.Pool, r: OracleRange, overrideCodes:
             COUNT(*) FILTER (WHERE a.callback_at IS NOT NULL)::text AS callbacks_booked,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0
                                AND EXISTS (SELECT 1 FROM agency_calls k WHERE k.id = a.webrtc_call_id AND k.recording_url IS NOT NULL))::text AS recorded_connected,
-            COUNT(*) FILTER (WHERE ${CONVERSATION_ATTEMPT_SQL} AND a.disposition_code IS NOT NULL
-                               AND a.disposition_code <> 'voicemail' AND a.disposition_code <> 'no_disposition')::text AS human_connects,
             COUNT(*) FILTER (WHERE a.outcome = 'failed')::text AS failed,
             MAX(a.updated_at) AS as_of
        FROM agency_call_attempts a JOIN agency_campaigns c ON c.id = a.campaign_id
@@ -63,16 +60,17 @@ export async function oracleTotals(pool: pg.Pool, r: OracleRange, overrideCodes:
       WHERE ${RANGE} AND ${CONVERSATION_ATTEMPT_SQL} AND (a.disposition_code IS NULL OR a.disposition_code = 'no_disposition')
       GROUP BY 1`, [r.campaignId, r.from, r.to]);
   const overrides = await oracleOverrides(pool, r, overrideCodes);
+  // Carrier failures by the call row's error code (no call row: null).
+  const errors = await pool.query<{ code: string | null; n: string }>(
+    `SELECT k.error_code AS code, COUNT(*)::text AS n FROM agency_call_attempts a
+       LEFT JOIN agency_calls k ON k.id = a.webrtc_call_id
+      WHERE ${RANGE} AND a.outcome = 'failed' GROUP BY 1`, [r.campaignId, r.from, r.to]);
   return {
     calls: {
       dials: n('attempts'),
       connected: n('connected_stats'),
       conversations: n('connected'),
-      human_connects: n('human_connects'),
       successes: n('successes'),
-      bridged: n('bridged'),
-      abandoned: n('abandoned'),
-      answered: n('answered'),
       talk_seconds: round6(n('talk_seconds')),
       wrapup_seconds: round6(n('wrapup_seconds')),
       wrapup_measured: n('wrapup_measured'),
@@ -85,6 +83,9 @@ export async function oracleTotals(pool: pg.Pool, r: OracleRange, overrideCodes:
       recorded_connected: n('recorded_connected'),
     },
     failed: n('failed'),
+    failed_by_code: Object.fromEntries(errors.rows.map((e) => [String(e.code), Number(e.n)])),
+    abandoned: n('abandoned'),
+    answered: n('answered'),
     by_outcome: byOutcome,
     outcomes: Object.fromEntries(codes.rows.map((c) => [String(c.code), Number(c.n)])),
     no_outcome: Object.fromEntries(noOutcome.rows.map((c) => [c.k ?? 'none', Number(c.n)])),
@@ -153,16 +154,18 @@ async function oracleOverrides(pool: pg.Pool, r: OracleRange, overrideCodes: str
 
 /** Caller IDs, best hours (each contact's zone, else the campaign's, else UTC). */
 export async function oracleFacets(pool: pg.Pool, r: OracleRange) {
-  const ids = await pool.query<{ k: string; dials: string; connected: string }>(
+  const ids = await pool.query<{ k: string; dials: string; first_dials: string; connected: string }>(
     `SELECT a.caller_id AS k, COUNT(*)::text AS dials,
+            COUNT(*) FILTER (WHERE a.redial_number = 0)::text AS first_dials,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected
        FROM agency_call_attempts a WHERE ${RANGE} GROUP BY 1`, [r.campaignId, r.from, r.to]);
-  const hours = await pool.query<{ k: number; dials: string; connected: string }>(
+  const hours = await pool.query<{ k: number; dials: string; first_dials: string; connected: string }>(
     `SELECT EXTRACT(HOUR FROM a.dialed_at AT TIME ZONE COALESCE(
                (SELECT z.name FROM pg_timezone_names z WHERE lower(z.name) = lower(ct.timezone) LIMIT 1),
                (SELECT z.name FROM pg_timezone_names z WHERE lower(z.name) = lower(c.default_timezone) LIMIT 1),
                'UTC'))::int AS k,
             COUNT(*)::text AS dials,
+            COUNT(*) FILTER (WHERE a.redial_number = 0)::text AS first_dials,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected
        FROM agency_call_attempts a
        JOIN agency_contacts ct ON ct.id = a.contact_id
@@ -170,9 +173,10 @@ export async function oracleFacets(pool: pg.Pool, r: OracleRange) {
       WHERE ${RANGE} GROUP BY 1`, [r.campaignId, r.from, r.to]);
   const byHour = new Map(hours.rows.map((h) => [Number(h.k), h]));
   return {
-    caller_ids: Object.fromEntries(ids.rows.map((i) => [i.k, { dials: Number(i.dials), connected: Number(i.connected) }])),
+    caller_ids: Object.fromEntries(ids.rows.map((i) => [i.k, { dials: Number(i.dials), first_dials: Number(i.first_dials), connected: Number(i.connected) }])),
     best_hours: Array.from({ length: 24 }, (_, hour) => ({
-      hour, dials: Number(byHour.get(hour)?.dials ?? 0), connected: Number(byHour.get(hour)?.connected ?? 0),
+      hour, dials: Number(byHour.get(hour)?.dials ?? 0), first_dials: Number(byHour.get(hour)?.first_dials ?? 0),
+      connected: Number(byHour.get(hour)?.connected ?? 0),
     })),
   };
 }
@@ -193,6 +197,7 @@ export async function oracleTrend(pool: pg.Pool, r: OracleRange, bucket: 'quarte
       : `to_char(a.dialed_at AT TIME ZONE $4::text, 'YYYY-MM-DD')`;
   const { rows } = await pool.query<Record<string, string>>(
     `SELECT ${label} AS label, ${AGENCY_ATTEMPT_METRICS_SQL},
+            COUNT(*) FILTER (WHERE a.redial_number = 0)::text AS first_dials,
             COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)::text AS connected_stats,
             COUNT(*) FILTER (WHERE ${ABANDONED_ATTEMPT_PREDICATE_SQL})::text AS abandoned,
             COUNT(*) FILTER (WHERE a.state = 'ended' AND a.answered_at IS NOT NULL)::text AS answered
@@ -201,7 +206,7 @@ export async function oracleTrend(pool: pg.Pool, r: OracleRange, bucket: 'quarte
     [r.campaignId, r.from, r.to, zone],
   );
   return Object.fromEntries(rows.map((x) => [x['label']!, {
-    dials: Number(x['attempts']), connected: Number(x['connected_stats']), conversations: Number(x['connected']),
+    dials: Number(x['attempts']), first_dials: Number(x['first_dials']), connected: Number(x['connected_stats']), conversations: Number(x['connected']),
     successes: Number(x['successes']), abandoned: Number(x['abandoned']), answered: Number(x['answered']),
   }]));
 }

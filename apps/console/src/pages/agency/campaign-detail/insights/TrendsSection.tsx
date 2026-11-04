@@ -27,11 +27,11 @@ export function hourSpan(hour: number): string {
   return `${pad(hour)}–${pad(hour + 1)}`;
 }
 
-/** The hour with the best connect rate among those with enough dials, or null. */
+/** The hour with the best connect rate (connected over first dials) among those with enough first dials, or null. */
 export function bestHour(rows: AgencyInsightsTrends['best_hours']): { hour: number; rate: number } | null {
   let best: { hour: number; rate: number } | null = null;
   for (const row of rows) {
-    const rate = rateValue(insightsRate(row.connected, row.dials));
+    const rate = rateValue(connectRate(row));
     if (rate !== null && (best === null || rate > best.rate)) best = { hour: row.hour, rate };
   }
   return best;
@@ -78,7 +78,7 @@ export function TrendsSection({
     label: String(h.hour).padStart(2, '0'),
     title: hourSpan(h.hour),
     bar: h.dials,
-    line: rateValue(insightsRate(h.connected, h.dials)),
+    line: rateValue(connectRate(h)),
   }));
   const best = bestHour(trends.best_hours);
 
@@ -86,6 +86,7 @@ export function TrendsSection({
   const columns: InsightsColumn<Labelled>[] = [
     { key: 'bucket', header: width === 'day' ? 'Day' : 'Starting', render: (b) => b.title, csv: (b) => b.bucket_start },
     { key: 'dials', header: 'Dials', numeric: true, render: (b) => formatCount(b.dials), csv: (b) => b.dials },
+    { key: 'first_dials', header: 'First dials', numeric: true, render: (b) => formatCount(b.first_dials), csv: (b) => b.first_dials },
     { key: 'connected', header: 'Connected', numeric: true, render: (b) => formatCount(b.connected), csv: (b) => b.connected },
     { key: 'connect_rate', header: 'Connect rate', numeric: true, render: (b) => rateText(connectRate(b)), csv: (b) => rateValue(connectRate(b)) },
     { key: 'successes', header: 'Successes', numeric: true, render: (b) => formatCount(b.successes), csv: (b) => b.successes },
@@ -98,8 +99,9 @@ export function TrendsSection({
   const hourColumns: InsightsColumn<Hour>[] = [
     { key: 'hour', header: 'Hour of day', render: (h) => hourSpan(h.hour), csv: (h) => h.hour },
     { key: 'dials', header: 'Dials', numeric: true, render: (h) => formatCount(h.dials), csv: (h) => h.dials },
+    { key: 'first_dials', header: 'First dials', numeric: true, render: (h) => formatCount(h.first_dials), csv: (h) => h.first_dials },
     { key: 'connected', header: 'Connected', numeric: true, render: (h) => formatCount(h.connected), csv: (h) => h.connected },
-    { key: 'rate', header: 'Connect rate', numeric: true, render: (h) => rateText(insightsRate(h.connected, h.dials)), csv: (h) => rateValue(insightsRate(h.connected, h.dials)) },
+    { key: 'rate', header: 'Connect rate', numeric: true, render: (h) => rateText(connectRate(h)), csv: (h) => rateValue(connectRate(h)) },
   ];
 
   return (

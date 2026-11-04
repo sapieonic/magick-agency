@@ -156,6 +156,19 @@ export async function seedWorld(pool: pg.Pool, opts: { campaigns: number; contac
               id: callId, tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId, caller_id: row['caller_id'],
               destination_phone: contact.phone_e164, provider: 'voicelink', status: 'completed', metadata: {},
               campaign_id: id, recording_url: rng.chance(0.6) ? `https://recording.example/${callId}.mp3` : null,
+              error_code: null,
+            });
+          } else if (row['outcome'] === 'failed' && number % 4 !== 0) {
+            // A carrier failure with a call row and (mostly) its error code; every fourth has no
+            // call row at all. Chosen from the attempt number, not the rng, so the rest of the
+            // world is the seed it always was.
+            const callId = randomUUID();
+            row['webrtc_call_id'] = callId;
+            calls.push({
+              id: callId, tenant_id: DEFAULTS.tenantId, account_id: DEFAULTS.accountId, caller_id: row['caller_id'],
+              destination_phone: contact.phone_e164, provider: 'voicelink', status: 'failed', metadata: {},
+              campaign_id: id, recording_url: null,
+              error_code: [null, 'TELEPHONY_ERROR', 'TELEPHONY_INIT_FAILED'][number % 3],
             });
           }
           // A wrap-up redial: this call is closed `redialed` and the next attempt continues it.
@@ -176,6 +189,7 @@ export async function seedWorld(pool: pg.Pool, opts: { campaigns: number; contac
   await bulkInsert(pool, 'agency_calls', [
     ['id', 'uuid'], ['tenant_id', 'uuid'], ['account_id', 'uuid'], ['caller_id', 'text'], ['destination_phone', 'text'],
     ['provider', 'text'], ['status', 'text'], ['metadata', 'jsonb'], ['campaign_id', 'uuid'], ['recording_url', 'text'],
+    ['error_code', 'text'],
   ], calls);
   await bulkInsert(pool, 'agency_call_attempts', ATTEMPT_COLUMNS, attempts);
   return { campaigns, attempts: attempts.length };

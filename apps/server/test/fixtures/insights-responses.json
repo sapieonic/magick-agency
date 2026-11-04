@@ -3,8 +3,8 @@
   "placeholders": {
     "campaign": "00000000-0000-4000-8000-0000000000c1",
     "agent": "00000000-0000-4000-8000-0000000000a0",
-    "from": "2026-11-04T12:15:00.000Z",
-    "to": "2026-11-04T16:30:00.000Z"
+    "from": "2026-11-04T12:30:00.000Z",
+    "to": "2026-11-04T16:45:00.000Z"
   },
   "summary": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
@@ -14,14 +14,14 @@
       "id": "00000000-0000-4000-8000-000000000005",
       "name": "Load Account 0"
     },
-    "created_at": "2026-11-04T10:15:00.000Z",
+    "created_at": "2026-11-04T10:30:00.000Z",
     "created_by": null,
-    "started_at": "2026-11-04T11:15:00.000Z",
+    "started_at": "2026-11-04T11:30:00.000Z",
     "ended_at": null,
     "transitions": [
       {
         "to_status": "paused",
-        "at": "2026-11-04T13:25:00.000Z",
+        "at": "2026-11-04T13:40:00.000Z",
         "reason": "abandonment_ceiling",
         "actor": null
       }
@@ -129,35 +129,35 @@
         }
       ]
     },
-    "generated_at": "2026-11-04T16:20:52.186Z"
+    "generated_at": "2026-11-04T16:36:13.442Z"
   },
   "allocation": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "assignment_mode": "strict",
     "agents": [
       {
-        "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
-        "agent_name": "agent 0.1",
+        "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+        "agent_name": "agent 0.0",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T16:20:51.854Z",
+        "last_seen_at": "2026-11-04T16:36:13.257Z",
         "allocated": 24,
         "attempted": 16,
         "not_attempted": 8,
         "due_now": 4,
         "waiting_retry": 2,
-        "callbacks_due_today": 2,
+        "callbacks_due_today": 0,
         "callbacks_overdue": 0,
         "reached": 2,
         "successes": 2,
         "not_reached": 0,
         "exhausted": 2,
         "dnc": 2,
-        "redials": 4,
+        "redials": 1,
         "retries_reopened": 6,
-        "retries_manual": 8,
+        "retries_manual": 9,
         "overrides_used": 3,
-        "last_activity_at": "2026-11-04T15:13:18.000Z",
+        "last_activity_at": "2026-11-04T14:50:46.000Z",
         "due_while_absent": 0
       },
       {
@@ -165,7 +165,7 @@
         "agent_name": "agent 0.2",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T16:20:51.882Z",
+        "last_seen_at": "2026-11-04T16:36:13.279Z",
         "allocated": 0,
         "attempted": 0,
         "not_attempted": 0,
@@ -182,32 +182,32 @@
         "retries_reopened": 3,
         "retries_manual": 1,
         "overrides_used": 1,
-        "last_activity_at": "2026-11-04T13:59:34.000Z",
+        "last_activity_at": "2026-11-04T14:14:34.000Z",
         "due_while_absent": 0
       },
       {
-        "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
-        "agent_name": "agent 0.0",
+        "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+        "agent_name": "agent 0.1",
         "staffed": true,
         "state": "offline",
-        "last_seen_at": "2026-11-04T16:20:51.828Z",
+        "last_seen_at": "2026-11-04T16:36:13.272Z",
         "allocated": 24,
         "attempted": 16,
         "not_attempted": 8,
         "due_now": 4,
         "waiting_retry": 2,
-        "callbacks_due_today": 2,
+        "callbacks_due_today": 0,
         "callbacks_overdue": 0,
         "reached": 2,
         "successes": 2,
         "not_reached": 0,
         "exhausted": 2,
         "dnc": 2,
-        "redials": 1,
+        "redials": 4,
         "retries_reopened": 6,
-        "retries_manual": 9,
+        "retries_manual": 8,
         "overrides_used": 3,
-        "last_activity_at": "2026-11-04T14:35:46.000Z",
+        "last_activity_at": "2026-11-04T15:28:18.000Z",
         "due_while_absent": 0
       }
     ],
@@ -217,7 +217,7 @@
       "not_attempted": 4,
       "due_now": 2,
       "waiting_retry": 1,
-      "callbacks_due_today": 1,
+      "callbacks_due_today": 0,
       "callbacks_overdue": 0,
       "reached": 1,
       "successes": 1,
@@ -228,7 +228,7 @@
       "retries_reopened": 0,
       "retries_manual": 3,
       "overrides_used": 1,
-      "last_activity_at": "2026-11-04T13:50:31.000Z"
+      "last_activity_at": "2026-11-04T14:05:31.000Z"
     },
     "totals": {
       "allocated": 60,
@@ -236,7 +236,7 @@
       "not_attempted": 20,
       "due_now": 10,
       "waiting_retry": 5,
-      "callbacks_due_today": 5,
+      "callbacks_due_today": 0,
       "callbacks_overdue": 0,
       "reached": 5,
       "successes": 5,
@@ -247,16 +247,16 @@
       "retries_reopened": 15,
       "retries_manual": 21,
       "overrides_used": 8,
-      "last_activity_at": "2026-11-04T15:13:18.000Z"
+      "last_activity_at": "2026-11-04T15:28:18.000Z"
     },
     "imbalance": {
       "high": [
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
           "factor": 1.5
         },
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
           "factor": 1.5
         }
       ],
@@ -284,13 +284,13 @@
         "ok": true
       }
     ],
-    "generated_at": "2026-11-04T16:20:52.319Z"
+    "generated_at": "2026-11-04T16:36:13.523Z"
   },
   "activity": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T12:15:00.000Z",
-      "to": "2026-11-04T16:30:00.000Z",
+      "from": "2026-11-04T12:30:00.000Z",
+      "to": "2026-11-04T16:45:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -352,7 +352,7 @@
     ],
     "callbacks": {
       "booked": 4,
-      "open_due_today": 5,
+      "open_due_today": 0,
       "open_overdue": 0,
       "kept_on_time": 0,
       "kept_late": 0,
@@ -361,12 +361,12 @@
       "pending_due": 3,
       "by_owner": [
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
           "open": 1,
           "overdue": 1
         },
         {
-          "agent_user_id": "00000000-0000-4000-8000-0000000000a0",
+          "agent_user_id": "00000000-0000-4000-8000-0000000000a1",
           "open": 1,
           "overdue": 1
         },
@@ -522,15 +522,15 @@
         "ok": true
       }
     ],
-    "as_of": "2026-11-04T16:20:51.917Z",
+    "as_of": "2026-11-04T16:36:13.294Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:20:52.385Z"
+    "generated_at": "2026-11-04T16:36:13.545Z"
   },
   "trends": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T12:15:00.000Z",
-      "to": "2026-11-04T16:30:00.000Z",
+      "from": "2026-11-04T12:30:00.000Z",
+      "to": "2026-11-04T16:45:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -538,187 +538,216 @@
     "bucket": "hour",
     "buckets": [
       {
-        "bucket_start": "2026-11-04T11:30:00.000Z",
-        "dials": 7,
-        "connected": 3,
-        "conversations": 3,
-        "successes": 0,
-        "abandoned": 1,
-        "answered": 4,
-        "agents_online_peak": 3
-      },
-      {
         "bucket_start": "2026-11-04T12:30:00.000Z",
-        "dials": 26,
-        "connected": 7,
-        "conversations": 7,
-        "successes": 5,
+        "dials": 30,
+        "first_dials": 29,
+        "connected": 10,
+        "conversations": 9,
+        "successes": 4,
         "abandoned": 4,
-        "answered": 13,
+        "answered": 15,
         "agents_online_peak": 3
       },
       {
         "bucket_start": "2026-11-04T13:30:00.000Z",
-        "dials": 30,
-        "connected": 8,
-        "conversations": 8,
-        "successes": 4,
-        "abandoned": 6,
-        "answered": 16,
+        "dials": 26,
+        "first_dials": 23,
+        "connected": 6,
+        "conversations": 7,
+        "successes": 3,
+        "abandoned": 5,
+        "answered": 14,
         "agents_online_peak": 3
       },
       {
         "bucket_start": "2026-11-04T14:30:00.000Z",
-        "dials": 19,
-        "connected": 4,
-        "conversations": 4,
-        "successes": 3,
-        "abandoned": 2,
-        "answered": 8,
+        "dials": 26,
+        "first_dials": 24,
+        "connected": 6,
+        "conversations": 6,
+        "successes": 5,
+        "abandoned": 4,
+        "answered": 12,
         "agents_online_peak": 3
       },
       {
         "bucket_start": "2026-11-04T15:30:00.000Z",
         "dials": 0,
+        "first_dials": 0,
         "connected": 0,
         "conversations": 0,
         "successes": 0,
         "abandoned": 0,
         "answered": 0,
         "agents_online_peak": 3
+      },
+      {
+        "bucket_start": "2026-11-04T16:30:00.000Z",
+        "dials": 0,
+        "first_dials": 0,
+        "connected": 0,
+        "conversations": 0,
+        "successes": 0,
+        "abandoned": 0,
+        "answered": 0,
+        "agents_online_peak": 0
       }
     ],
     "best_hours": [
       {
         "hour": 0,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 1,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 2,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 3,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 4,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 5,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 6,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 7,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 8,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 9,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 10,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 11,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 12,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 13,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 14,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 15,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 16,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 17,
-        "dials": 7,
-        "connected": 3
+        "dials": 0,
+        "first_dials": 0,
+        "connected": 0
       },
       {
         "hour": 18,
-        "dials": 26,
-        "connected": 7
+        "dials": 30,
+        "first_dials": 29,
+        "connected": 10
       },
       {
         "hour": 19,
-        "dials": 30,
-        "connected": 8
+        "dials": 26,
+        "first_dials": 23,
+        "connected": 6
       },
       {
         "hour": 20,
-        "dials": 19,
-        "connected": 4
+        "dials": 26,
+        "first_dials": 24,
+        "connected": 6
       },
       {
         "hour": 21,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 22,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       },
       {
         "hour": 23,
         "dials": 0,
+        "first_dials": 0,
         "connected": 0
       }
     ],
-    "as_of": "2026-11-04T16:20:51.917Z",
+    "as_of": "2026-11-04T16:36:13.294Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:20:52.412Z"
+    "generated_at": "2026-11-04T16:36:13.574Z"
   },
   "health": {
     "campaign_id": "00000000-0000-4000-8000-0000000000c1",
     "range": {
-      "from": "2026-11-04T12:15:00.000Z",
-      "to": "2026-11-04T16:30:00.000Z",
+      "from": "2026-11-04T12:30:00.000Z",
+      "to": "2026-11-04T16:45:00.000Z",
       "lifetime": false,
       "clamped": false,
       "timezone": "Asia/Kolkata"
@@ -731,7 +760,7 @@
       "ceiling_pct": 3,
       "auto_pauses": [
         {
-          "at": "2026-11-04T13:25:00.000Z",
+          "at": "2026-11-04T13:40:00.000Z",
           "measured_pct": 3.4,
           "ceiling_pct": 3
         }
@@ -746,16 +775,24 @@
       {
         "caller_id": "+919000000002",
         "dials": 42,
+        "first_dials": 40,
         "connected": 11
       },
       {
         "caller_id": "+919000000001",
         "dials": 40,
+        "first_dials": 36,
         "connected": 11
       }
     ],
     "concurrency_limit_minutes": 1,
     "carrier_failures": 13,
+    "carrier_failures_by_code": [
+      {
+        "error_code": null,
+        "count": 13
+      }
+    ],
     "our_fault_retired": 0,
     "stalls": {
       "minutes_by_reason": {
@@ -770,8 +807,8 @@
       "episodes": [
         {
           "reason": "no_agents",
-          "started_at": "2026-11-04T13:55:00.000Z",
-          "ended_at": "2026-11-04T13:58:00.000Z",
+          "started_at": "2026-11-04T14:10:00.000Z",
+          "ended_at": "2026-11-04T14:13:00.000Z",
           "minutes": 3
         }
       ],
@@ -782,9 +819,9 @@
       "recorded": 0
     },
     "analysis": null,
-    "pacing_history_since": "2026-11-04T13:05:00.000Z",
-    "as_of": "2026-11-04T16:20:51.917Z",
+    "pacing_history_since": "2026-11-04T13:20:00.000Z",
+    "as_of": "2026-11-04T16:36:13.294Z",
     "pending_buckets": 0,
-    "generated_at": "2026-11-04T16:20:52.453Z"
+    "generated_at": "2026-11-04T16:36:13.609Z"
   }
 }

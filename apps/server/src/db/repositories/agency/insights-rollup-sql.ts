@@ -79,8 +79,8 @@ function WRAPUP_MEASURED_SQL(): string {
 
 export const INSIGHTS_MEASURE_COLUMNS = INSIGHTS_MEASURES.map(([column]) => column);
 
-/** The facets of `agency_insights_rollup_facets` (its CHECK). */
-export const INSIGHTS_FACETS = ['outcome', 'caller_id', 'local_hour', 'no_outcome', 'override'] as const;
+/** The facets of `agency_insights_rollup_facets` (its CHECK; `carrier_error` from 0014). */
+export const INSIGHTS_FACETS = ['outcome', 'caller_id', 'local_hour', 'no_outcome', 'override', 'carrier_error'] as const;
 export type InsightsFacet = (typeof INSIGHTS_FACETS)[number];
 
 /**
@@ -166,7 +166,14 @@ const MEASURE_SELECT = INSIGHTS_MEASURES.map(([column, agg]) => `${agg} AS ${col
  *    for the rare dial whose `override_applied` is non-empty. It reads an attempt that can sit in
  *    another bucket, so a re-disposition of that attempt after the override was spent does not
  *    re-mark this bucket; the overrides read can lag that one edit until the bucket is next written.
- *  - `recorded`: the call row (`webrtc_call_id`) carries a recording.
+ *  - `recorded`: the call row (`webrtc_call_id`) carries a recording; `call_error_code` is that
+ *    row's `error_code` (the `carrier_error` facet, 0014).
+ *
+ * Facet columns: `n` the key's dials (conversations for `no_outcome`); `connected` `/stats`'
+ * `attempts_connected` for `caller_id` and `local_hour`; `first_dials` (0014) the key's dials
+ * that were not a wrap-up redial, the connect rate's denominator (`redial_number = 0`, the
+ * numerator's own condition), for those two facets. Both are 0 on the facets that do not read
+ * them.
  */
 export const INSIGHTS_RECOMPUTE_SQL = `WITH k AS (${KEYS_SQL}),
        zones AS MATERIALIZED (
@@ -188,6 +195,7 @@ export const INSIGHTS_RECOMPUTE_SQL = `WITH k AS (${KEYS_SQL}),
                    ORDER BY p.attempt_number DESC LIMIT 1)
                 END AS override_code,
                 (call.recording_url IS NOT NULL) AS recorded,
+                call.error_code AS call_error_code,
                 (${CONVERSATION_ATTEMPT_SQL}) AS is_conversation
            FROM k
            -- LATERAL, so each bucket is its own range scan of
@@ -224,30 +232,38 @@ export const INSIGHTS_RECOMPUTE_SQL = `WITH k AS (${KEYS_SQL}),
           WHERE a.disposition_code IS NOT NULL OR a.is_conversation
           GROUP BY a.campaign_id, a.bucket_start, a.agent_user_id, a.disposition_code
        ), ins_facets AS (
-         INSERT INTO agency_insights_rollup_facets (campaign_id, bucket_start, facet, key, agent_user_id, n, connected)
-         SELECT a.campaign_id, a.bucket_start, 'outcome', a.outcome, NULL::uuid, COUNT(*), 0
+         INSERT INTO agency_insights_rollup_facets (campaign_id, bucket_start, facet, key, agent_user_id, n, connected, first_dials)
+         SELECT a.campaign_id, a.bucket_start, 'outcome', a.outcome, NULL::uuid, COUNT(*), 0, 0
            FROM src a GROUP BY a.campaign_id, a.bucket_start, a.outcome
          UNION ALL
          SELECT a.campaign_id, a.bucket_start, 'caller_id', a.caller_id, NULL::uuid, COUNT(*),
-                COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)
+                COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0),
+                COUNT(*) FILTER (WHERE a.redial_number = 0)
            FROM src a GROUP BY a.campaign_id, a.bucket_start, a.caller_id
          UNION ALL
          SELECT a.campaign_id, a.bucket_start, 'local_hour', a.local_hour::text, NULL::uuid, COUNT(*),
-                COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0)
+                COUNT(*) FILTER (WHERE a.outcome = 'connected' AND a.redial_number = 0),
+                COUNT(*) FILTER (WHERE a.redial_number = 0)
            FROM src a GROUP BY a.campaign_id, a.bucket_start, a.local_hour
          UNION ALL
          -- Connected calls closed with no outcome: a conversation whose code is absent or the
          -- reaper's auto-stamp (/stats' unclassified_connects), by how its wrap-up ended.
-         SELECT a.campaign_id, a.bucket_start, 'no_outcome', a.wrapup_resolution, NULL::uuid, COUNT(*), 0
+         SELECT a.campaign_id, a.bucket_start, 'no_outcome', a.wrapup_resolution, NULL::uuid, COUNT(*), 0, 0
            FROM src a
           WHERE a.is_conversation
             AND (a.disposition_code IS NULL OR a.disposition_code = '${AUTO_DISPOSITION_CODE}')
           GROUP BY a.campaign_id, a.bucket_start, a.wrapup_resolution
          UNION ALL
-         SELECT a.campaign_id, a.bucket_start, 'override', a.override_code, a.agent_user_id, COUNT(*), 0
+         SELECT a.campaign_id, a.bucket_start, 'override', a.override_code, a.agent_user_id, COUNT(*), 0, 0
            FROM src a
           WHERE cardinality(a.override_applied) > 0
           GROUP BY a.campaign_id, a.bucket_start, a.override_code, a.agent_user_id
+         UNION ALL
+         -- Carrier failures (outcome failed) by the call row's error code (0014).
+         SELECT a.campaign_id, a.bucket_start, 'carrier_error', a.call_error_code, NULL::uuid, COUNT(*), 0, 0
+           FROM src a
+          WHERE a.outcome = 'failed'
+          GROUP BY a.campaign_id, a.bucket_start, a.call_error_code
        ), totals AS (
          SELECT a.campaign_id, a.bucket_start, MAX(a.updated_at) AS source_updated_at,
               ${MEASURE_SELECT}

@@ -17,6 +17,11 @@ function minutes(n: number): string {
   return durationWords(n * 60);
 }
 
+/** "TELEPHONY_ERROR 12 · no code 3", most first; empty when nothing failed. */
+export function carrierCodesText(rows: AgencyInsightsHealth['carrier_failures_by_code']): string {
+  return rows.map((r) => `${r.error_code ?? 'no code'} ${formatCount(r.count)}`).join(' · ');
+}
+
 export function HealthSection({
   ctx,
   health,
@@ -30,9 +35,11 @@ export function HealthSection({
   const abandonment = abandonmentRate(health.abandonment.rolling_24h);
   const ceiling = health.abandonment.ceiling_pct;
   const over = abandonment.kind === 'value' && abandonment.pct >= ceiling;
-  const campaignDials = health.caller_ids.reduce((s, c) => s + c.dials, 0);
-  const campaignConnected = health.caller_ids.reduce((s, c) => s + c.connected, 0);
-  const average = rateFigure(insightsRate(campaignConnected, campaignDials));
+  // The campaign's connect rate over the same rows (connected over first dials, connectRate).
+  const average = rateFigure(connectRate({
+    connected: health.caller_ids.reduce((s, c) => s + c.connected, 0),
+    first_dials: health.caller_ids.reduce((s, c) => s + c.first_dials, 0),
+  }));
 
   type CallerRow = AgencyInsightsHealth['caller_ids'][number];
   const callerColumns: InsightsColumn<CallerRow>[] = [
@@ -44,6 +51,7 @@ export function HealthSection({
       render: (r) => <CountLink to={attemptsLink(campaignId, { ...range, caller_id: r.caller_id })} value={r.dials} label={`dials from ${r.caller_id}`} />,
       csv: (r) => r.dials,
     },
+    { key: 'first_dials', header: 'First dials', numeric: true, render: (r) => formatCount(r.first_dials), csv: (r) => r.first_dials },
     { key: 'connected', header: 'Connected', numeric: true, render: (r) => formatCount(r.connected), csv: (r) => r.connected },
     { key: 'rate', header: 'Connect rate', numeric: true, render: (r) => rateText(connectRate(r)), csv: (r) => rateValue(connectRate(r)) },
   ];
@@ -103,6 +111,9 @@ export function HealthSection({
         <Kpi
           label="Carrier failures"
           value={<CountLink to={attemptsLink(campaignId, { ...range, outcome: 'failed' })} value={health.carrier_failures} label="failed dials" />}
+          // By the call's error code. Not linked: the Call attempts list has no error-code filter,
+          // so no list's total would be these counts.
+          sub={carrierCodesText(health.carrier_failures_by_code)}
           testId="kpi-carrier-failures"
         />
         <Kpi label="Retired by our faults" value={formatCount(health.our_fault_retired)} sub="Contacts closed after repeated system faults" testId="kpi-our-fault" />

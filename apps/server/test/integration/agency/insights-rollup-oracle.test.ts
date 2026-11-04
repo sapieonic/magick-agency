@@ -1,9 +1,9 @@
-// Real Postgres: the insights rollup (migration 0012) against an oracle computed straight from
+// Real Postgres: the insights rollup (migrations 0012 and 0014) against an oracle computed straight from
 // agency_call_attempts with /stats' definitions (insights-rollup-oracle-sql.ts). A seeded random
 // history across campaigns in UTC, Asia/Kolkata (+05:30), Asia/Kathmandu (+05:45) and
 // America/New_York, contacts in five zones (one unresolvable), every attempt shape the rollup
 // reads; then the writes that make a rollup drift (late dispositions, the reaper's outcome
-// rewrite, a recording arriving, dialed_at moving bucket, a contact's and a campaign's zone, a
+// rewrite, a recording or a carrier error code arriving, dialed_at moving bucket, a contact's and a campaign's zone, a
 // deleted attempt), checked stale before the job and equal after it.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
@@ -85,8 +85,11 @@ async function assertMatchesOracle(): Promise<void> {
 
       const facets = await oracleFacets(pool(), r);
       const ids = (await repo.callerIds(scope))!;
-      expect(Object.fromEntries(ids.map((i) => [i.caller_id, { dials: i.dials, connected: i.connected }])), tag).toEqual(facets.caller_ids);
-      expect(await repo.carrierFailures(scope), tag).toBe(oracle.failed);
+      expect(Object.fromEntries(ids.map((i) => [i.caller_id, { dials: i.dials, first_dials: i.first_dials, connected: i.connected }])), tag).toEqual(facets.caller_ids);
+      const failures = (await repo.carrierFailures(scope))!;
+      expect(failures.failed, tag).toBe(oracle.failed);
+      expect(Object.fromEntries(failures.by_code.map((c) => [String(c.error_code), c.count])), tag).toEqual(oracle.failed_by_code);
+      expect(failures.by_code.reduce((sum, c) => sum + c.count, 0), tag).toBe(failures.failed);
       expect(await repo.recording(scope), tag).toEqual({ connected: oracle.calls.connected, recorded: oracle.calls.recorded_connected });
 
       for (const bucket of ['quarter_hour', 'hour', 'day'] as const) {
@@ -100,8 +103,6 @@ async function assertMatchesOracle(): Promise<void> {
         // Zero-filled: every bucket of the range, in order, none twice.
         expect(trends.buckets.map((b) => b.bucket_start), `${tag} ${bucket} spine`)
           .toEqual(expectedLabels(bucket, r.from, r.to, OFFSETS[campaign.zone]!));
-        const abandonment = (await repo.abandonmentTrend({ ...scope, bucket, timezone: campaign.zone }))!;
-        expect(abandonment.buckets).toEqual(trends.buckets.map((b) => ({ bucket_start: b.bucket_start, abandoned: b.abandoned, answered: b.answered })));
       }
     }
     // Freshness: the newest attempt change folded in, nothing pending.
@@ -191,6 +192,10 @@ describe('insights rollup — every read equals the attempts table', () => {
     await pool().query(
       `UPDATE agency_calls SET recording_url = 'https://recording.example/late.mp3'
         WHERE recording_url IS NULL AND id IN (SELECT webrtc_call_id FROM agency_call_attempts WHERE campaign_id = $1 AND outcome = 'connected')`, [c0.id]);
+    // A carrier error code lands on a failed call's row after the attempt settled (0014's trigger).
+    await pool().query(
+      `UPDATE agency_calls SET error_code = 'LATE_CARRIER_CODE'
+        WHERE error_code IS NULL AND id IN (SELECT webrtc_call_id FROM agency_call_attempts WHERE campaign_id = $1 AND outcome = 'failed')`, [c0.id]);
     // dialed_at moves bucket (20 minutes later, across a boundary).
     await pool().query(
       `UPDATE agency_call_attempts SET dialed_at = dialed_at + interval '20 minutes'

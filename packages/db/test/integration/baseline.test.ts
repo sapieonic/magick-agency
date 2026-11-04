@@ -112,6 +112,9 @@ const ALL_TRIGGERS: Array<[trigger: string, table: string]> = [
   ['trg_agency_calls_insights_recording_update', 'agency_calls'],
   ['trg_agency_contacts_insights_zone', 'agency_contacts'],
   ['trg_agency_campaigns_insights_zone', 'agency_campaigns'],
+  // insights rollup: a carrier error code on the call row (0014)
+  ['trg_agency_calls_insights_error_insert', 'agency_calls'],
+  ['trg_agency_calls_insights_error_update', 'agency_calls'],
 ];
 
 async function indexDef(name: string): Promise<string | undefined> {

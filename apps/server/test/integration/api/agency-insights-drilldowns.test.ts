@@ -380,6 +380,9 @@ describe('the range reads', () => {
     const a = (responses['activity'] as any).calls;
     expect(sum('dials')).toBe(a.dials);
     expect(sum('connected')).toBe(a.connected);
+    // The connect rate's denominator: the dials that were not a wrap-up redial.
+    expect(sum('first_dials')).toBe(a.dials - a.redials.placed);
+    expect(a.redials.placed).toBeGreaterThan(0);
     expect(sum('conversations')).toBe(a.conversations);
     expect(Math.max(...t.buckets.map((b: { agents_online_peak: number }) => b.agents_online_peak))).toBe(3);
   });
@@ -395,6 +398,9 @@ describe('the range reads', () => {
     expect(h.abandonment.rolling_24h.answered).toBeGreaterThan(h.abandonment.rolling_24h.abandoned);
     expect(h.caller_ids.reduce((s: number, c: { dials: number }) => s + c.dials, 0)).toBe((responses['activity'] as any).calls.dials);
     expect(h.carrier_failures).toBe((responses['activity'] as any).calls.by_outcome.failed);
+    expect(h.carrier_failures_by_code.reduce((s: number, c: { count: number }) => s + c.count, 0)).toBe(h.carrier_failures);
+    const calls = (responses['activity'] as any).calls;
+    expect(h.caller_ids.reduce((s: number, c: { first_dials: number }) => s + c.first_dials, 0)).toBe(calls.dials - calls.redials.placed);
     expect(h.analysis).toBeNull();
     expect(h.pacing_history_since).toBe(at(50).toISOString());
   });
