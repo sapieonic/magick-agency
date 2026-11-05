@@ -35,7 +35,7 @@ import type { UrlScope } from '../../utils/urlScope';
  */
 export function ScopeGate() {
   const { user, loading, tenants, pendingEmailVerification } = useAuth();
-  const { tenantId, accountId, accounts, accountResolution } = useTenant();
+  const { tenantId, accountId, accountResolution } = useTenant();
   const { scope, go } = useUrlScope();
 
   const decision = decide();
@@ -78,12 +78,12 @@ export function ScopeGate() {
       if (tenantId !== scope.tenantId) return { kind: 'wait' };
       if (accountResolution === 'loading') return { kind: 'wait' };
       if (accountResolution === 'error') return { kind: 'render' };
+      // The context derives the active account from the URL whenever the URL's
+      // account is listed, so a mismatch here means it is not one of theirs —
+      // never a render to wait out (waiting would swap the page for a spinner and
+      // remount it on every back/forward between accounts).
       if (accountId === scope.accountId) return { kind: 'render' };
-      // Listed but not yet adopted (the render before the context's effect), or
-      // not one of theirs at all.
-      return accounts.some((a) => a.id === scope.accountId)
-        ? { kind: 'wait' }
-        : { kind: 'denied', what: 'account' };
+      return { kind: 'denied', what: 'account' };
     }
 
     if (accountResolution === 'loading') return { kind: 'wait' };

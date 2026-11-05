@@ -125,7 +125,8 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     return null;
   });
 
-  const [activeAccountId, setActiveAccountIdState] = useState<string | null>(null);
+  /** The account chosen in state: by the switchers, the restore, or the fallback. */
+  const [selectedAccountId, setActiveAccountIdState] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<TenantAccount[]>([]);
   const [accountResolution, setAccountResolution] = useState<AccountResolution>('loading');
   const [accountError, setAccountError] = useState<string | null>(null);
@@ -133,10 +134,32 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   /** The tenant active NOW, for async work that started under another one. */
   const activeTenantRef = useRef<string | null>(activeTenantId);
   useEffect(() => { activeTenantRef.current = activeTenantId; }, [activeTenantId]);
-  const activeAccountRef = useRef<string | null>(activeAccountId);
-  activeAccountRef.current = activeAccountId;
-  const accountsRef = useRef<TenantAccount[]>(accounts);
-  accountsRef.current = accounts;
+
+  /**
+   * The active account is DERIVED, in render, from the URL whenever the URL names
+   * a listed account of the active tenant, and only otherwise from state.
+   *
+   * It used to be copied from the URL into state by an effect keyed on the URL's
+   * scope, and every gap between the two was a defect: an account switch followed
+   * by a `navigate()` in the same handler left state on one account and the URL on
+   * the other with no scope change for the effect to see, so `ScopeGate` waited
+   * forever; a retry that loaded the URL's account had nothing to adopt it; and
+   * back/forward between two accounts spent one render on the old account, which
+   * the gate covered with a spinner and so remounted every page. Deriving it
+   * leaves nothing to fall out of step: the address bar is the answer the moment
+   * it names an account this person has.
+   *
+   * State still matters when the URL is unscoped, or names an account that is not
+   * in the list (`ScopeGate` refuses that link; state is what "Go to my
+   * workspace" opens).
+   */
+  const urlAccountId =
+    urlScope &&
+    urlScope.tenantId === activeTenantId &&
+    accounts.some(a => a.id === urlScope.accountId)
+      ? urlScope.accountId
+      : null;
+  const activeAccountId = urlAccountId ?? selectedAccountId;
 
   /**
    * Resolve the tenant's accounts, **preferring the full list and falling back to
@@ -217,17 +240,21 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       setAccountResolution('loading');
       setAccountError(null);
       accountsLoadedForTenant.current = null;
-      return;
     }
-    if (
-      urlScope.accountId !== activeAccountRef.current &&
-      accountsRef.current.some(a => a.id === urlScope.accountId)
-    ) {
-      setActiveAccountIdState(urlScope.accountId);
-    }
-    // `tenants` is read for the membership check only: a scope that arrives before
-    // the session does is adopted, and `tenants` arriving later must not re-run this.
+    // The ACCOUNT needs no adopting: it is derived from the URL (see
+    // `activeAccountId`). `tenants` is read for the membership check only: a scope
+    // that arrives before the session does is adopted, and `tenants` arriving later
+    // must not re-run this.
   }, [urlScope]);
+
+  /**
+   * Keep the selection on the account the URL is showing, so that leaving the
+   * scope (a tenant switch, an unscoped bookmark) carries on from the account the
+   * user was last looking at rather than one they navigated away from.
+   */
+  useEffect(() => {
+    if (urlAccountId && urlAccountId !== selectedAccountId) setActiveAccountIdState(urlAccountId);
+  }, [urlAccountId, selectedAccountId]);
 
   // Load accounts when tenant changes, then validate/set accountId
   // Gate on `user` to ensure Firebase auth token is available for apiFetch
@@ -425,6 +452,20 @@ export function TenantProvider({ children }: { children: ReactNode }) {
               : 'Could not load the full account list.'
             : null,
         );
+        // The account the URL names, when the fresh list has it. This is the
+        // Retry behind "You can't open this account" for a narrowed list and
+        // behind `AccountUnavailable` after an outage: in both the link named an
+        // account, and opening the first one instead would break the promise the
+        // link made.
+        const scoped = urlScopeRef.current;
+        if (
+          scoped &&
+          scoped.tenantId === forTenant &&
+          fetched.some(a => a.id === scoped.accountId)
+        ) {
+          setActiveAccountIdState(scoped.accountId);
+          return;
+        }
         // If the currently active account was deleted — or was never resolved at
         // all — switch to the first available.
         if (!activeAccountId || !fetched.some(a => a.id === activeAccountId)) {

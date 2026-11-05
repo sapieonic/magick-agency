@@ -20,17 +20,17 @@ import { isUnscopedPagePath } from '../../utils/urlScope';
  * `?next=` itself, so nothing about where the visitor was going is lost.
  */
 export function ScopedRouter({ children }: { children: ReactNode }) {
-  const { history, location, action, prefix, go } = useUrlScope();
+  const { navigator, location, action, prefix, go } = useUrlScope();
   const strayed = prefix !== '' && isUnscopedPagePath(location.pathname);
 
   useLayoutEffect(() => {
     if (strayed) go(null, undefined, { replace: true });
   }, [strayed, go]);
 
-  if (!history || strayed) return null;
+  if (!navigator || strayed) return null;
 
   return (
-    <Router basename={prefix || '/'} location={location} navigationType={action} navigator={history}>
+    <Router basename={prefix || '/'} location={location} navigationType={action} navigator={navigator}>
       {children}
     </Router>
   );
