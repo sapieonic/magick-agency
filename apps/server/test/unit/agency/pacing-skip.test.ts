@@ -70,7 +70,6 @@ import {
   type PacingInvalidationEvent,
 } from '../../../src/agency/pacing/invalidation-bus.js';
 import { GenerationTtlCache } from '../../../src/agency/pacing/read-cache.js';
-import { PacingRound } from '../../../src/agency/pacing/round.js';
 import {
   agencyCampaignSlotsSnapshot,
   agencyPacingShareWithheldTotal,
@@ -286,35 +285,6 @@ describe('GenerationTtlCache', () => {
     expect(await c.getOrLoad('k', async () => 2)).toBe(1);
     expect(await c.getOrLoad('k', async () => 3, { fresh: true })).toBe(3);
     expect(c.get('k')).toBe(3);
-  });
-});
-
-// ─── The round's shared account reads ───────────────────────────────────────
-// The split itself (first come first served before MC1, now fewest-live-first behind a
-// barrier) is pinned in `pacing-round.test.ts`; here, the reads two campaigns share.
-
-describe('PacingRound', () => {
-  it('two campaigns of one account share one live-call read and one limit read', async () => {
-    const round = new PacingRound(false);
-    const load = vi.fn().mockResolvedValue(3);
-    const [a, b] = await Promise.all([round.liveCalls('t:a', load), round.liveCalls('t:a', load)]);
-    expect(load).toHaveBeenCalledTimes(1);
-    expect([a, b]).toEqual([3, 3]);
-    const limit = vi.fn().mockResolvedValue(10);
-    await Promise.all([round.limit('t:a', limit), round.limit('t:a', limit)]);
-    expect(limit).toHaveBeenCalledTimes(1);
-    // Another account reads its own.
-    await round.liveCalls('t:b', load);
-    expect(load).toHaveBeenCalledTimes(2);
-  });
-
-  it('with one campaign the grant is exactly MAX(0, MIN(limit − live, idle))', async () => {
-    for (const [limit, live, idle] of [[5, 0, 2], [5, 5, 3], [5, 7, 3], [2, 0, 9], [0, 0, 1]] as const) {
-      const round = new PacingRound(false);
-      round.join('k', 'c');
-      const { grant } = await round.submit('k', 'c', { demand: idle, ownLive: null, limit, live });
-      expect(grant).toBe(Math.max(0, Math.min(limit - live, idle)));
-    }
   });
 });
 
@@ -637,6 +607,26 @@ describe('PacingEngine rounds: per-account sharing (MC1, MC2)', () => {
     return t && t.mode === 'full' ? t : undefined;
   };
 
+  /** Hold camp-2's session reads until the returned release is called. */
+  function holdCamp2Read(): () => void {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const sessions = repos.session.findLiveForCampaign.getMockImplementation()!;
+    repos.session.findLiveForCampaign.mockImplementation(async (id: string) => {
+      if (id === 'camp-2') await gate;
+      return sessions(id);
+    });
+    return release;
+  }
+
+  /** camp-1's carrier hangs until the returned answer is called, so its tick outlives its round. */
+  function hangCarrier(r: Rig): () => void {
+    let answer!: () => void;
+    const carrier = new Promise<void>((resolve) => { answer = resolve; });
+    r.dispatch.mockImplementation(async (cmd: any) => { if (cmd.campaignId === 'camp-1') await carrier; });
+    return answer;
+  }
+
   it('two campaigns of one account read the account ONCE and split its headroom, never past the limit', async () => {
     settings.getMaxConcurrentCalls.mockResolvedValue(5);
     repos.attempt.countLiveForAccount.mockResolvedValue(2); // 3 slots left on the account
@@ -762,15 +752,7 @@ describe('PacingEngine rounds: per-account sharing (MC1, MC2)', () => {
     settings.getMaxConcurrentCalls.mockResolvedValue(4);
     repos.attempt.countLiveForAccount.mockResolvedValue(2); // 2 slots
     const r = twoCampaigns({ shareWaitMs: 30 });
-    let releaseSlow!: () => void;
-    const slow = new Promise<void>((resolve) => { releaseSlow = resolve; });
-    repos.session.findLiveForCampaign.mockImplementation(async (id: string) => {
-      if (id === 'camp-2') {
-        await slow;
-        return [{ id: 's3' }, { id: 's4' }];
-      }
-      return [{ id: 's1' }, { id: 's2' }];
-    });
+    const releaseSlow = holdCamp2Read();
     const done = r.e.runRound();
     await vi.waitFor(() => expect(planOf(r, 'camp-1')).toBeDefined());
     expect(planOf(r, 'camp-1')!.plan!.toDial).toBe(2);
@@ -830,9 +812,7 @@ describe('PacingEngine rounds: per-account sharing (MC1, MC2)', () => {
     claimsAll();
     const r = twoCampaigns({ agentsEach: 3 });
     // camp-1's carrier hangs on its first dial, so its tick outlives the round.
-    let answer!: () => void;
-    const carrier = new Promise<void>((resolve) => { answer = resolve; });
-    r.dispatch.mockImplementation(async (cmd: any) => { if (cmd.campaignId === 'camp-1') await carrier; });
+    const answer = hangCarrier(r);
 
     const first = r.e.runRound();
     await vi.waitFor(() => {
@@ -861,9 +841,7 @@ describe('PacingEngine rounds: per-account sharing (MC1, MC2)', () => {
     const live = insertsStayLive();
     claimsAll();
     const r = twoCampaigns({ agentsEach: 3 });
-    let answer!: () => void;
-    const carrier = new Promise<void>((resolve) => { answer = resolve; });
-    r.dispatch.mockImplementation(async (cmd: any) => { if (cmd.campaignId === 'camp-1') await carrier; });
+    const answer = hangCarrier(r);
 
     const first = r.e.runRound(); // 2 + 2; camp-1 hangs after its first insert, holding 1
     await vi.waitFor(() => {
@@ -946,19 +924,10 @@ describe('PacingEngine rounds: per-account sharing (MC1, MC2)', () => {
 
   // ─── One open split per account (MC2) ─────────────────────────────────────
 
-  /** Hold camp-2's first read until the returned release is called. */
-  function holdCamp2Read(): () => void {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const sessions = repos.session.findLiveForCampaign.getMockImplementation()!;
-    repos.session.findLiveForCampaign.mockImplementation(async (id: string) => {
-      if (id === 'camp-2') await gate;
-      return sessions(id);
-    });
-    return release;
-  }
   const camp1Reads = () => repos.session.findLiveForCampaign.mock.calls.filter((c) => c[0] === 'camp-1').length;
-  const openSplits = (r: Rig) => (r.e as any).openSplits as Map<string, unknown>;
+  /** The engine's open splits: its entries whose split is still open (a closed one is pruned next round). */
+  const openSplits = (r: Rig) => new Map([...((r.e as any).openSplits as Map<string, { round: { isOpen(k: string): boolean } }>)]
+    .filter(([k, o]) => o.round.isOpen(k)));
 
   it('a sibling slower than the wait: the split runs without it but stays open, so it gets the leftover, into the ledger', async () => {
     const r = twoCampaigns({ shareWaitMs: 30 }); // limit 5, nothing live: 5 slots

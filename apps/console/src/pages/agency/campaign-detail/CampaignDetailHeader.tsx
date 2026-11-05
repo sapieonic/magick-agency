@@ -15,8 +15,9 @@ import type {
   AgencyCampaignAction as Action,
   agencyCampaignControls,
 } from '../../../utils/agencyCampaignControls';
+import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { formatClockTime } from '../../../utils/format/date';
-import type { AgencyCampaign } from '../../../types/agency-campaign';
+import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../../types/agency-campaign';
 import styles from '../AgencyCampaignDetailPage.module.css';
 
 const ACTION_META: Record<Action, { label: string; icon: typeof Play; danger?: boolean }> = {
@@ -35,11 +36,11 @@ interface CampaignDetailHeaderProps {
   /** "Started …" / "Running for …", absent facts already dropped. */
   timelineParts: string[];
   /**
-   * The campaign's live calls against the account's lines (`concurrencyLine`), or
-   * `null` when the stats carry nothing to say (a draft, a finished campaign, an
-   * older server).
+   * The stats' `concurrency` block, said through `concurrencyLine` against
+   * `campaign.status` (the status the badge shows, not the stats' copy of it).
+   * Absent or `null` on a draft, a finished campaign or an older server.
    */
-  linesInUse: string | null;
+  concurrency: AgencyCampaignConcurrency | null | undefined;
   tenantId: string | null;
   accountId: string | null;
   /** `agency.supervise`: the lifecycle buttons and the secondary actions. */
@@ -66,7 +67,7 @@ export function CampaignDetailHeader({
   lastUpdatedAt,
   autoRefreshing,
   timelineParts,
-  linesInUse,
+  concurrency,
   tenantId,
   accountId,
   canControl,
@@ -79,6 +80,7 @@ export function CampaignDetailHeader({
   canJoinStation,
   onRefresh,
 }: CampaignDetailHeaderProps) {
+  const linesInUse = concurrencyLine(campaign.status, concurrency);
   return (
     <header className={styles.header}>
       <div className={styles.headerCopy}>

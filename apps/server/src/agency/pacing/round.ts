@@ -35,8 +35,8 @@
  *    a later round must not read the account while an earlier round's split of it can
  *    still grant. An account's split OPENS when its first participant joins and CLOSES
  *    when every participant has reported or withdrawn, or when the engine closes it at
- *    its deadline ({@link PacingRoundOptions.onSplitOpen}). The share wait running out
- *    does NOT close it (rule 4 below). While it is open, the engine starts no tick for
+ *    its deadline ({@link PacingRound.isOpen}, {@link PacingRound.close}). The share wait
+ *    running out does NOT close it (rule 4 below). While it is open, the engine starts no tick for
  *    any campaign of that account in a later round; they are picked up by the first
  *    round after it closes. Once closed it grants nothing more. So when a later round
  *    reads the account, every grant of every earlier split is already in the ledger
@@ -145,6 +145,11 @@ export interface ShareClaim {
 export function splitHeadroom(headroom: number, claims: readonly ShareClaim[], rotation = 0): Map<string, number> {
   const grants = new Map<string, number>();
   if (claims.length === 0) return grants;
+  if (claims.length === 1) {
+    // What the loop below grants a lone claim, without the sort and the slot copies.
+    const only = claims[0]!;
+    return grants.set(only.id, Math.max(0, Math.min(Math.floor(headroom), Math.floor(only.demand))));
+  }
   const sorted = [...claims].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const start = ((Math.trunc(rotation) % sorted.length) + sorted.length) % sorted.length;
   const slots = [...sorted.slice(start), ...sorted.slice(0, start)].map((c) => ({
@@ -181,7 +186,7 @@ export class ShareRotation {
   /** The offset for this split; advances the account's counter. */
   take(accountKey: string): number {
     const n = this.next.get(accountKey) ?? 0;
-    this.next.set(accountKey, n >= Number.MAX_SAFE_INTEGER - 1 ? 0 : n + 1);
+    this.next.set(accountKey, n + 1);
     return n;
   }
 
@@ -197,16 +202,12 @@ export class ShareRotation {
 
 /** What a participant was granted. */
 export interface ShareGrant {
-  /** New dials it may place this round. */
-  grant: number;
-  /** The account's headroom this round, `MAX(0, limit − live)`. */
-  headroom: number;
   /**
-   * It reported after the split RAN without it (MC2's wait ran out first) while the split
-   * was still OPEN: its grant is `MIN(demand, leftover)`, the leftover being what the split
-   * did not grant, first come first served among such reports.
+   * New dials it may place this round. A report after the split RAN without it (MC2's wait
+   * ran out first) while the split was still OPEN gets `MIN(demand, leftover)`, the leftover
+   * being what the split did not grant, first come first served among such reports.
    */
-  late: boolean;
+  grant: number;
   /**
    * It reported after the split CLOSED (the engine's deadline closed it, or it joined only
    * at its report after the close): its grant is 0, and it takes part in a later split.
@@ -225,15 +226,6 @@ export interface PacingRoundOptions {
    * waiting round never keeps the process alive (and fake timers drive it in tests).
    */
   schedule?: (fn: () => void, ms: number) => () => void;
-  /**
-   * Told when an account's split OPENS in this round (its first participant joins) and
-   * when it CLOSES (every member has reported or withdrawn, or {@link PacingRound.close}
-   * was called). Each is called at most once per account per round; the wait running out
-   * splits among those that reported but does NOT close the split while a member is still
-   * pending. The engine keeps no two splits of one account open at once with these.
-   */
-  onSplitOpen?: (accountKey: string) => void;
-  onSplitClose?: (accountKey: string) => void;
 }
 
 interface Waiting {
@@ -243,9 +235,7 @@ interface Waiting {
 
 /** One account's arbiter, for one round. */
 interface AccountShare {
-  /** Joined (or reported) and not withdrawn. */
-  members: Set<string>;
-  /** The members that count for {@link PacingRound.contended} (joined as dialling, or reported). */
+  /** The participants that count for {@link PacingRound.contended} (joined as dialling, or reported). */
   contenders: Set<string>;
   /** Joined, and neither reported nor withdrawn: the split waits for these. */
   pending: Set<string>;
@@ -278,15 +268,11 @@ export class PacingRound {
   private readonly shareWaitMs: number;
   private readonly rotation: ShareRotation;
   private readonly schedule: (fn: () => void, ms: number) => () => void;
-  private readonly onSplitOpen: ((accountKey: string) => void) | undefined;
-  private readonly onSplitClose: ((accountKey: string) => void) | undefined;
 
   constructor(readonly fresh: boolean, options: PacingRoundOptions = {}) {
     this.shareWaitMs = options.shareWaitMs ?? PACING_SHARE_WAIT_MS;
     this.rotation = options.rotation ?? new ShareRotation();
     this.schedule = options.schedule ?? defaultSchedule;
-    this.onSplitOpen = options.onSplitOpen;
-    this.onSplitClose = options.onSplitClose;
   }
 
   /** The account's limit for this round: loaded once, however many campaigns ask. */
@@ -321,7 +307,6 @@ export class PacingRound {
     if (previous !== undefined) this.withdraw(campaignId);
     const share = this.share(accountKey);
     this.accountOf.set(campaignId, accountKey);
-    share.members.add(campaignId);
     if (opts.contends !== false) share.contenders.add(campaignId);
     if (!share.closed) share.pending.add(campaignId);
   }
@@ -336,12 +321,10 @@ export class PacingRound {
     return (this.accounts.get(accountKey)?.contenders.size ?? 0) >= 2;
   }
 
-  /** How many participants the account has in this round, contending or not (tests). */
-  participants(accountKey: string): number {
-    return this.accounts.get(accountKey)?.members.size ?? 0;
-  }
-
-  /** Whether the account's split was opened in this round and has not closed (tests, the engine). */
+  /**
+   * Whether the account's split was opened in this round and has not closed: while it is,
+   * the engine starts no tick for the account's campaigns in a later round.
+   */
   isOpen(accountKey: string): boolean {
     const share = this.accounts.get(accountKey);
     return share !== undefined && !share.closed;
@@ -352,8 +335,8 @@ export class PacingRound {
    * and `live` are the account's (the memoised reads above). Resolves when every
    * participant of the account has reported or withdrawn, or `shareWaitMs` after the
    * account's first report (the wait is armed by that report); at once for a lone
-   * participant. Reporting after the split ran but while it is still open (`late`):
-   * at once, `MIN(demand, leftover)`, first come first served. Reporting after it closed
+   * participant. Reporting after the split ran but while it is still open: at once,
+   * `MIN(demand, leftover)`, first come first served. Reporting after it closed
    * (`closed`): at once, 0. A campaign that never joined (a forced tick) joins here.
    */
   submit(
@@ -366,13 +349,12 @@ export class PacingRound {
     share.pending.delete(campaignId);
     share.contenders.add(campaignId); // it states a demand: it dials after all
     if (share.headroom === null) share.headroom = Math.max(0, report.limit - report.live);
-    const headroom = share.headroom;
     const demand = Math.max(0, Math.floor(report.demand));
 
     if (share.closed) {
       // Closed (MC2): nothing now. A grant made after the close could reach the engine's
       // pending-dial ledger after a later round had read the account.
-      return Promise.resolve({ grant: 0, headroom, late: true, closed: true });
+      return Promise.resolve({ grant: 0, closed: true });
     }
     if (share.split) {
       // Late but open (MC2): the split ran without it. No later round has read the account
@@ -381,8 +363,8 @@ export class PacingRound {
       // even when this report is the one that closes the split.
       const grant = Math.min(demand, share.leftover);
       share.leftover -= grant;
-      if (share.pending.size === 0) this.closeShare(accountKey, share);
-      return Promise.resolve({ grant, headroom, late: true, closed: false });
+      if (share.pending.size === 0) this.closeShare(share);
+      return Promise.resolve({ grant, closed: false });
     }
 
     const promise = new Promise<ShareGrant>((resolve) => {
@@ -414,12 +396,11 @@ export class PacingRound {
     const share = this.accounts.get(accountKey);
     if (!share || !share.pending.has(campaignId)) return; // reported, or left already
     share.pending.delete(campaignId);
-    share.members.delete(campaignId);
     share.contenders.delete(campaignId);
     this.accountOf.delete(campaignId);
     if (share.pending.size > 0) return;
     if (!share.split) this.runSplit(accountKey, share); // closes it: nobody is pending
-    else this.closeShare(accountKey, share);
+    else this.closeShare(share);
   }
 
   /**
@@ -431,29 +412,27 @@ export class PacingRound {
     const share = this.accounts.get(accountKey);
     if (!share || share.closed) return;
     if (!share.split) this.runSplit(accountKey, share, true);
-    else this.closeShare(accountKey, share);
+    else this.closeShare(share);
   }
 
   private share(accountKey: string): AccountShare {
     let share = this.accounts.get(accountKey);
     if (!share) {
       share = {
-        members: new Set(), contenders: new Set(), pending: new Set(), waiting: new Map(),
+        contenders: new Set(), pending: new Set(), waiting: new Map(),
         headroom: null, split: false, leftover: 0, closed: false, cancelTimer: null,
       };
       this.accounts.set(accountKey, share);
-      this.onSplitOpen?.(accountKey);
     }
     return share;
   }
 
-  /** Mark the split closed (once) and say so. */
-  private closeShare(accountKey: string, share: AccountShare): void {
+  /** Mark the split closed (once). */
+  private closeShare(share: AccountShare): void {
     if (share.closed) return;
     share.closed = true;
     share.cancelTimer?.();
     share.cancelTimer = null;
-    this.onSplitClose?.(accountKey);
   }
 
   /**
@@ -477,8 +456,8 @@ export class PacingRound {
     share.leftover = Math.max(0, headroom - granted);
     // Closed before the grants resolve: their ticks put them in the engine's ledger in
     // microtasks after this, before anything can start a later split of the account.
-    if (forceClose || share.pending.size === 0) this.closeShare(accountKey, share);
-    for (const w of waiting) w.resolve({ grant: grants.get(w.claim.id) ?? 0, headroom, late: false, closed: false });
+    if (forceClose || share.pending.size === 0) this.closeShare(share);
+    for (const w of waiting) w.resolve({ grant: grants.get(w.claim.id) ?? 0, closed: false });
   }
 }
 

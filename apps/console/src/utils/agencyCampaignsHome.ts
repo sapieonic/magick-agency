@@ -62,26 +62,9 @@ export function needsPolling(
 
 /**
  * One line on where a campaign sits in its account's line limit, from the stats'
- * `concurrency` block (decisions MC7). Shared by the campaigns home's cards and the
- * campaign detail page, so the two say it the same way.
- *
- * Several campaigns may run at once, and pacing splits the account's lines between
- * the running ones: each free line goes to the running campaign with the fewest live
- * calls. So beside another running campaign, the useful sentence is this campaign's
- * calls against its equal share ("4 live calls · share 5 of 10 lines · 2 campaigns
- * running"). The share is a guide, neither a cap nor a guarantee: a campaign can sit
- * above it while the other leaves lines idle, which is why its own count is said first.
- * With more campaigns running than the account has lines the equal share rounds down
- * to 0, and "share 0 of 2 lines" would read as "this campaign gets nothing" when idle
- * lines still flow to it, so the share is left out ("4 live calls · 3 campaigns share
- * 2 lines"). Running
- * alone, it is the account's lines in use ("4 of 10 lines in use"), which counts
- * soft-phone calls and draining calls too. Paused or stopping, it holds no share,
- * so it is the lines in use and, when others run, how many ("6 of 10 lines in use ·
- * 1 campaign running"): those campaigns are why the lines are busy.
- *
- * `null` when there is nothing to say: no block (an older server, a draft or a
- * finished campaign, or a read that failed) or no line limit to measure against.
+ * `concurrency` block (decisions MC7), shared by the campaigns home's cards and the
+ * campaign detail header. The share is a guide, not a cap, so the campaign's own calls
+ * come first; a share that rounds down to 0 is left out. `null` with no block or limit.
  */
 export function concurrencyLine(
   status: string,
@@ -89,17 +72,17 @@ export function concurrencyLine(
 ): string | null {
   if (!concurrency || concurrency.account_limit <= 0) return null;
   const { campaign_live, fair_share, account_limit, account_live, running_campaigns } = concurrency;
-  const lines = account_limit === 1 ? 'line' : 'lines';
+  const lines = plural(account_limit, 'line');
   const running = `${plural(running_campaigns, 'campaign')} running`;
   if (fair_share !== null && fair_share >= 1) {
-    return `${plural(campaign_live, 'live call')} · share ${formatCount(fair_share)} of ${formatCount(account_limit)} ${lines} · ${running}`;
+    return `${plural(campaign_live, 'live call')} · share ${formatCount(fair_share)} of ${lines} · ${running}`;
   }
   if (fair_share !== null) {
-    // Fewer lines than running campaigns: no whole share to name.
-    const sharing = `${plural(running_campaigns, 'campaign')} ${running_campaigns === 1 ? 'shares' : 'share'}`;
-    return `${plural(campaign_live, 'live call')} · ${sharing} ${formatCount(account_limit)} ${lines}`;
+    // Fewer lines than running campaigns: no whole share to name. A share is only
+    // ever set beside another running campaign, so the count is at least 2.
+    return `${plural(campaign_live, 'live call')} · ${plural(running_campaigns, 'campaign')} share ${lines}`;
   }
-  const inUse = `${formatCount(account_live)} of ${formatCount(account_limit)} ${lines} in use`;
+  const inUse = `${formatCount(account_live)} of ${lines} in use`;
   // Running alone, the one running campaign is this one, and saying so adds nothing.
   return status !== 'running' && running_campaigns > 0 ? `${inUse} · ${running}` : inUse;
 }

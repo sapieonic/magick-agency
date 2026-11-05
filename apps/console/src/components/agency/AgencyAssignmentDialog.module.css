@@ -1,7 +1,8 @@
 /*
  * The assignment dialog's own pieces. The frame (overlay, header, body, footer,
  * count block, per-agent list) is `AgencyRetryDialog.module.css`, the product's
- * preview-then-commit modal; only the form controls it does not have are here.
+ * preview-then-commit modal; only the form controls and the warning note it does
+ * not have are here.
  */
 
 .fieldset {
@@ -58,4 +59,29 @@
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
+}
+
+/*
+ * The stale-preview warning (`assign-stale`). `--warning`, never `--danger`: nothing
+ * is lost. Danger weight here would train the reader to dismiss the weight where it
+ * means a refusal.
+ */
+.warningNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--warning-subtle);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+}
+
+.warningNote svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warning);
 }

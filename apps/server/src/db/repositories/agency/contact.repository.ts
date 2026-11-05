@@ -193,6 +193,19 @@ function dueAndNotBusySql(alias: string): string {
 }
 
 /**
+ * The pool claim's candidate window on `alias`: its campaign's {@link dueAndNotBusySql} rows,
+ * the first `limitParam` in `next_attempt_at` order. {@link AgencyContactRepository.claimDialable}
+ * locks it (its locking clause follows) and {@link AgencyContactRepository.countDialable} counts
+ * it, so the count cannot drift from what the claim reads.
+ */
+function claimWindowSql(alias: string, campaignParam: string, limitParam: string): string {
+  const c = alias;
+  return `WHERE ${c}.campaign_id = ${campaignParam} AND ${dueAndNotBusySql(c)}
+          ORDER BY ${c}.next_attempt_at
+          LIMIT ${limitParam}`;
+}
+
+/**
  * {@link AgencyContactRepository.claimForAgents}' statement. `$1` campaign, `$2` the agents' user
  * ids in reservation order, `$3` (preferred only) the pool candidate factor.
  */
@@ -373,10 +386,8 @@ export class AgencyContactRepository {
       `WITH locked AS MATERIALIZED (
          SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
-          WHERE c.campaign_id = $1 AND ${dueAndNotBusySql('c')}
-          ORDER BY c.next_attempt_at
+          ${claimWindowSql('c', '$1', '$3')}
             FOR UPDATE OF c SKIP LOCKED
-          LIMIT $3
        ),
        picked AS MATERIALIZED (
          SELECT id FROM (
@@ -402,9 +413,9 @@ export class AgencyContactRepository {
    * before it splits the account's headroom between them (decisions MC1, MC2), so a campaign
    * with agents ready but nothing to dial does not hold slots another campaign could use.
    *
-   * It reads exactly the claim's window, so it never promises more than one claim takes:
-   * the same terms (`dueAndNotBusySql`: open, due, not DNC, the number not live on the
-   * account), the same first `limit * CLAIM_CANDIDATE_FACTOR` due rows in `next_attempt_at`
+   * It reads exactly the claim's window (`claimWindowSql`), so it never promises more than one
+   * claim takes: the same terms (`dueAndNotBusySql`: open, due, not DNC, the number not live on
+   * the account), the same first `limit * CLAIM_CANDIDATE_FACTOR` due rows in `next_attempt_at`
    * order (one `idx_agency_contacts_dialable` range scan, bounded whatever the roster's size),
    * one per number (distinct digits, as the claim's `DISTINCT ON`), at most `limit`. A run of
    * one number at the head of the queue counts once, as the claim would take it once.
@@ -422,9 +433,7 @@ export class AgencyContactRepository {
          FROM (
            SELECT ${contactPhoneDigitsSql('c')} AS digits
              FROM agency_contacts c
-            WHERE c.campaign_id = $1::uuid AND ${dueAndNotBusySql('c')}
-            ORDER BY c.next_attempt_at
-            LIMIT $3::int
+            ${claimWindowSql('c', '$1::uuid', '$3::int')}
          ) w`,
       [campaignId, limit, limit * CLAIM_CANDIDATE_FACTOR],
     );

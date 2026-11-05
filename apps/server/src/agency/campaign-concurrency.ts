@@ -11,14 +11,18 @@
  * the equal share is what fewest-live-calls-first converges on when every running
  * campaign is busy.
  */
-import type { AgencyCampaignConcurrency } from '@magick-agency/contracts/agency';
+import type { AgencyCampaignConcurrency, AgencyCampaignStatus } from '@magick-agency/contracts/agency';
 
 /**
  * The statuses whose stats carry `concurrency`. A `stopping` or `paused` campaign holds
  * no share but can still have calls draining on the account's lines; a draft or a
  * finished campaign has nothing on them, so its block is `null`.
  */
-export const CAMPAIGN_CONCURRENCY_STATUSES: ReadonlySet<string> = new Set(['running', 'stopping', 'paused']);
+export const CAMPAIGN_CONCURRENCY_STATUSES: ReadonlySet<AgencyCampaignStatus> = new Set<AgencyCampaignStatus>([
+  'running',
+  'stopping',
+  'paused',
+]);
 
 export interface CampaignConcurrencyInput {
   status: string;
@@ -38,7 +42,7 @@ export interface CampaignConcurrencyInput {
  */
 export function campaignConcurrency(input: CampaignConcurrencyInput): AgencyCampaignConcurrency {
   const running = input.status === 'running';
-  const runningCampaigns = running ? Math.max(input.runningCampaigns, 1) : Math.max(input.runningCampaigns, 0);
+  const runningCampaigns = running ? Math.max(input.runningCampaigns, 1) : input.runningCampaigns;
   const accountLimit = Math.max(input.accountLimit, 0);
   return {
     campaign_live: input.campaignLive,

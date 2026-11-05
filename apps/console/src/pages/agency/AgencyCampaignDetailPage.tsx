@@ -35,7 +35,6 @@ import {
   type AgencyCampaignAction as Action,
 } from '../../utils/agencyCampaignControls';
 import { campaignTimeline } from '../../utils/agency/overview/lifecycle';
-import { concurrencyLine } from '../../utils/agencyCampaignsHome';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
 import { InsightsPanel } from './campaign-detail/insights/InsightsPanel';
 import { useAgencyCampaignDetail } from './campaign-detail/useAgencyCampaignDetail';
@@ -277,11 +276,6 @@ export function AgencyCampaignDetailPage() {
   const timelineParts = [timeline.started, timeline.ran].filter(
     (part): part is string => part !== null,
   );
-  /*
-    The campaign's place in the account's lines (decisions MC7). Read against
-    `campaign.status`, the status the badge shows, not the stats' copy of it.
-  */
-  const linesInUse = concurrencyLine(campaign.status, stats?.concurrency);
 
   return (
     <div className={styles.page}>
@@ -297,7 +291,7 @@ export function AgencyCampaignDetailPage() {
         lastUpdatedAt={lastUpdatedAt}
         autoRefreshing={shouldPoll}
         timelineParts={timelineParts}
-        linesInUse={linesInUse}
+        concurrency={stats?.concurrency}
         tenantId={tenantId}
         accountId={accountId}
         canControl={canControl}

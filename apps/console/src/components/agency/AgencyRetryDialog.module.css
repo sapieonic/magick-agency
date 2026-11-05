@@ -205,31 +205,6 @@
   color: var(--text-primary);
 }
 
-/*
- * A warning note, used by the assignment dialog (`assign-stale`). `--warning`,
- * never `--danger`: nothing is lost. Danger weight here would train the reader to
- * dismiss the weight where it means a refusal.
- */
-.parentRunning {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 0;
-  padding: 10px 12px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-primary);
-  background: var(--warning-subtle);
-  border: 1px solid var(--warning);
-  border-radius: var(--radius);
-}
-
-.parentRunning svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--warning);
-}
-
 .field {
   display: flex;
   flex-direction: column;
