@@ -90,9 +90,10 @@ export function redactInviteToken(value: string): string {
  * What replaces a signed-in page's `/t/<tenantId>/a/<accountId>` prefix.
  *
  * ── Why the scope comes out of every URL ───────────────────────────────────
- * Every signed-in page lives under that prefix (`utils/urlScope`), and posthog-js
- * copies the address into `$current_url`, `$pathname`, `$referrer`,
- * `$initial_current_url` and every link's `href` in an autocapture. Left alone,
+ * Every signed-in page lives under that prefix (`utils/urlScope`, decision
+ * B26), and posthog-js copies the address into `$current_url`, `$pathname`,
+ * `$referrer`, `$initial_current_url` and every link's `href` in an
+ * autocapture. Left alone,
  * one page becomes one path per tenant and account — no funnel or path report
  * groups across customers any more — and the ids ride in URL properties that were
  * never meant to carry them. They are not lost: the `tenant` and `account` groups

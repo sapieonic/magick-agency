@@ -667,6 +667,20 @@ a rate-limit key and never an auth input.
   Brand pack `brands/magick-agency/` (B17); a branding guard test
   (`src/__tests__/branding/noParentBrand.test.ts`). In dev, Vite proxies every API prefix to `:3021`
   (`vite.config.ts`), and `devProxyPrefixes.test.ts` fails for any API segment the proxy misses.
+- **Console URLs carry the tenant and account** (decision B26). Signed-in pages live under
+  `/t/:tenantId/a/:accountId/…`, so a copied link opens the same tenant and account for whoever
+  receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;
+  `ScopedRouter` (`components/routing/`) is a `<Router>` over it whose basename is that prefix, so
+  routes, links and `navigate()` are written without it and `useLocation()` reads the app path.
+  `TenantContext` takes the active tenant and account from the URL and moves the URL when the
+  switchers change them; the choice saved in `localStorage` is only the fallback for an unscoped
+  URL (an old bookmark, `/` after sign-in). `ScopeGate`, the layout route around every signed-in
+  route, scopes an unscoped URL to the active account and refuses a link to a tenant or account the
+  viewer cannot open rather than showing another one. Sign-in, invite and email-verification pages
+  stay unscoped (`isUnscopedPagePath` in `utils/urlScope.ts`). `/t` and `/a` because `/tenants` and
+  `/accounts` are API prefixes in nginx and the Vite proxy. PostHog sees the prefix as
+  `/t/:tenant/a/:account` (`analytics/redact.ts`); the ids travel as its `tenant` and `account`
+  groups.
 - **Super-admin console** (`apps/super-admin`). Tenants (and their accounts), users, admins, phone
   numbers, feature flags, usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
   branding guard.
