@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.2.7...super-admin-v0.3.0) (2026-11-05)
+
+
+### Features
+
+* **server,console,super-admin,contracts:** create accounts from the console and super-admin ([#46](https://github.com/sapieonic/magick-agency/issues/46)) ([853e1c2](https://github.com/sapieonic/magick-agency/commit/853e1c21bf62e3019bb85c80f305a1fe5e0b3400))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.10.0
+
 ## [0.2.7](https://github.com/sapieonic/magick-agency/compare/super-admin-v0.2.6...super-admin-v0.2.7) (2026-11-05)
 
 

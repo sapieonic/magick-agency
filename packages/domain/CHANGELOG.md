@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.4](https://github.com/sapieonic/magick-agency/compare/domain-v0.4.3...domain-v0.4.4) (2026-11-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.10.0
+
 ## [0.4.3](https://github.com/sapieonic/magick-agency/compare/domain-v0.4.2...domain-v0.4.3) (2026-11-05)
 
 
