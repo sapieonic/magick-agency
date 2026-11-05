@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.7.1](https://github.com/sapieonic/magick-agency/compare/db-v0.7.0...db-v0.7.1) (2026-11-05)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.8.0
+    * @magick-agency/domain bumped to 0.4.2
+
 ## [0.7.0](https://github.com/sapieonic/magick-agency/compare/db-v0.6.0...db-v0.7.0) (2026-11-05)
 
 

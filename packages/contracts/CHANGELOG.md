@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.7.0...contracts-v0.8.0) (2026-11-05)
+
+
+### Features
+
+* **console,contracts:** set the abandonment ceiling by dragging a line on the meter ([#42](https://github.com/sapieonic/magick-agency/issues/42)) ([1bd8002](https://github.com/sapieonic/magick-agency/commit/1bd80029b4c989c6c3afc43eafdbaf5f75f97bc1))
+
 ## [0.7.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.6.0...contracts-v0.7.0) (2026-11-05)
 
 
