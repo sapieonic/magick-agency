@@ -87,6 +87,9 @@ export async function computeHealth(
     our_fault_retired: pacing.our_fault_retired,
     stalls: { minutes_by_reason: pacing.minutes_by_reason, episodes: pacing.episodes, episodes_truncated: pacing.episodes_truncated },
     recording,
+    // TODO(insights): serve `analysis`. It needs an index-driven read of a range's analysed
+    // calls: a rollup facet, or an index on the analysis rows by campaign and time. Until
+    // then the page reads null as "not available", not as analysis being off.
     analysis: null,
     pacing_history_since: pacing.history_since,
     as_of: freshness.as_of,

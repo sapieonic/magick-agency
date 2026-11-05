@@ -48,6 +48,9 @@ export function rosterWire(r: RosterCounts): AgencyInsightsRoster {
     waiting_due_now: b.waiting_due_now,
     waiting_retry: b.waiting_retry,
     waiting_callback: b.waiting_callback,
+    // TODO(insights): the mapping's "waiting for calling hours" bucket (pending contacts that
+    // are due but outside their own calling window). It needs `timezone` in the covering
+    // index the roster reads, which means a concurrent index rebuild over the roster.
     on_call: b.on_call,
     in_wrapup: b.in_wrapup,
     completed: b.completed,
