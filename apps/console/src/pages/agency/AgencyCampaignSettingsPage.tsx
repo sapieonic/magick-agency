@@ -265,6 +265,7 @@ export function AgencyCampaignSettingsPage() {
         wrapup_seconds: config.wrapupSeconds,
         auto_return: config.autoReturn,
         wrapup_redial: config.allowWrapupRedial,
+        abandonment_ceiling_pct: config.abandonmentCeilingPct,
         ...(assignmentEnabled ? assignmentAnalytics(config) : {}),
         recording_enabled: recording.record,
         analysis_profile_set: resolveProfileId(recording.profileId) !== null,
@@ -531,6 +532,7 @@ export function AgencyCampaignSettingsPage() {
         onChange={setConfig}
         fieldErrors={fieldErrors}
         assignment={assignmentEnabled ? { modeLocked: assignmentModeLocked(campaign.status) } : undefined}
+        readOnly={!canEdit}
       />
 
       {canEdit && (

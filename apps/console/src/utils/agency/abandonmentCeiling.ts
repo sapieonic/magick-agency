@@ -8,12 +8,21 @@ import { pct } from '../format/number';
  * rounding and the same bounds, and every one of them is tested here rather than
  * through pointer events.
  *
- * ── One scale ───────────────────────────────────────────────────────────────
+ * ── One scale, and when it grows ────────────────────────────────────────────
  * The meter the supervisor drags in the builder and the meter Insights draws
- * against the measured rate are one component on one fixed scale,
+ * against the measured rate are one component on one scale,
  * {@link ABANDONMENT_SCALE_MAX_PCT}. So the line they place at 4% is the line
  * they later see the rate approach, at the same spot. An earlier meter was scaled
  * to the ceiling itself (full = the ceiling); that cannot show a line that moves.
+ *
+ * The editable meter never leaves 0–10%: it offers nothing above 10%, and a scale
+ * that moved under the pointer mid-drag would be a slider that fights back. A
+ * stored value above 10% (set through the API) pins its line at the right-hand end
+ * and its label still says what it is. Insights only reads, and there a fixed
+ * scale would lie: a 12% ceiling and an 11% rate would both draw at the end, a
+ * full bar touching the line. So Insights grows the scale to fit
+ * ({@link insightsScaleMaxPct}) only when one of the two is above 10%; every
+ * campaign in the offered range still reads on the builder's own scale.
  *
  * ── The range ───────────────────────────────────────────────────────────────
  * The server accepts `> 0` and `<= 100` (`validateAbandonmentCeiling`, the column
@@ -23,6 +32,13 @@ import { pct } from '../format/number';
  * guardrail. Above {@link ABANDONMENT_CEILING_REFERENCE_PCT} the field warns but
  * does not refuse: 3% is the limit most dropped-call rules set, and whether a
  * campaign falls under one is the account's call, not the form's.
+ *
+ * The range is what the console lets a supervisor CHOOSE, not what it will
+ * re-save. A campaign PATCHed through the API to 7.25 or 25 is legal on the
+ * server, and refusing it as stored would leave Save disabled for every other
+ * edit on the page (a calling-hours fix included) until the supervisor changed a
+ * number they never meant to touch. So {@link ceilingFieldError} accepts the
+ * stored value exactly as loaded, and only a new value has to land in the range.
  */
 
 /** The server's `DEFAULT_ABANDONMENT_CEILING_PCT` and the column's DEFAULT. */
@@ -31,19 +47,56 @@ export const DEFAULT_ABANDONMENT_CEILING_PCT = 3;
 export const ABANDONMENT_CEILING_REFERENCE_PCT = 3;
 export const ABANDONMENT_CEILING_MIN_PCT = 0.5;
 export const ABANDONMENT_CEILING_MAX_PCT = 10;
-/** One decimal place: what `pct()` prints, so a stored value is never shown rounded. */
+/** One decimal place: the step the slider, the keys and the box offer. */
 export const ABANDONMENT_CEILING_STEP_PCT = 0.1;
-/** The right-hand end of every abandonment meter. */
+/** The right-hand end of the editable meter, and of Insights' while nothing is above it. */
 export const ABANDONMENT_SCALE_MAX_PCT = 10;
-/** The labelled ticks under the meter. */
-export const ABANDONMENT_SCALE_TICKS: readonly number[] = [0, 2, 4, 6, 8, 10];
+/** How many labelled intervals the scale has: six ticks, 0 to the end. */
+const SCALE_INTERVALS = 5;
+
+/** The labelled ticks under a meter whose scale ends at `scaleMaxPct`: six, evenly spaced from 0. */
+export function abandonmentScaleTicks(scaleMaxPct: number = ABANDONMENT_SCALE_MAX_PCT): number[] {
+  return Array.from({ length: SCALE_INTERVALS + 1 }, (_, i) => (scaleMaxPct * i) / SCALE_INTERVALS);
+}
+
+/** The labelled ticks under the editable meter. */
+export const ABANDONMENT_SCALE_TICKS: readonly number[] = abandonmentScaleTicks();
+
+/**
+ * The right-hand end of the read-only Insights meter: the builder's 10% while the
+ * ceiling and the rate both fit on it, otherwise the next multiple of 5 at or above
+ * the larger of the two (12 → 15, 25 → 25, 30.1 → 35), so neither is pinned at the
+ * end and the gap between them is drawn to scale. Multiples of 5 keep the six ticks
+ * on whole percents. A missing or non-finite rate (withheld) does not count.
+ */
+export function insightsScaleMaxPct(ceilingPct: number, ratePct?: number): number {
+  const largest = Math.max(
+    Number.isFinite(ceilingPct) ? ceilingPct : 0,
+    ratePct !== undefined && Number.isFinite(ratePct) ? ratePct : 0,
+  );
+  if (largest <= ABANDONMENT_SCALE_MAX_PCT) return ABANDONMENT_SCALE_MAX_PCT;
+  return Math.ceil(largest / 5) * 5;
+}
 
 const round1 = (value: number) => Math.round(value * 10) / 10;
 
-/** Where a percentage sits on the meter, 0–100 (% of the track's width), clamped to the track. */
-export function meterPosition(valuePct: number): number {
-  if (!Number.isFinite(valuePct)) return 0;
-  return Math.min(100, Math.max(0, (valuePct / ABANDONMENT_SCALE_MAX_PCT) * 100));
+/**
+ * Where a percentage sits on a meter whose scale ends at `scaleMaxPct`, 0–100 (%
+ * of the track's width), clamped to the track.
+ */
+export function meterPosition(valuePct: number, scaleMaxPct: number = ABANDONMENT_SCALE_MAX_PCT): number {
+  if (!Number.isFinite(valuePct) || !(scaleMaxPct > 0)) return 0;
+  return Math.min(100, Math.max(0, (valuePct / scaleMaxPct) * 100));
+}
+
+/**
+ * The ceiling as text, to two decimals with trailing zeros trimmed: `3%`, `4.5%`,
+ * `7.25%`. Not `pct()`, which rounds to one: the console only offers tenths, but
+ * the server stores any decimal, and a ceiling of 7.25 printed as `7.3%` would
+ * name a limit the guardrail does not use. Measured RATES stay on `pct()`.
+ */
+export function ceilingPctText(valuePct: number): string {
+  return `${Number(valuePct.toFixed(2))}%`;
 }
 
 /**
@@ -76,13 +129,42 @@ export function ceilingFromTrackFraction(fraction: number): number {
 }
 
 /**
+ * The slider's `aria-valuemin` / `aria-valuemax`: the offered range, widened to
+ * take in a stored value outside it, so `aria-valuenow` is never outside its own
+ * bounds (25 with a maximum of 10 is an invalid slider). A cleared field claims
+ * no value and keeps the offered range.
+ */
+export function ceilingSliderBounds(valuePct: number): { min: number; max: number } {
+  if (!Number.isFinite(valuePct)) return { min: ABANDONMENT_CEILING_MIN_PCT, max: ABANDONMENT_CEILING_MAX_PCT };
+  return {
+    min: Math.min(ABANDONMENT_CEILING_MIN_PCT, valuePct),
+    max: Math.max(ABANDONMENT_CEILING_MAX_PCT, valuePct),
+  };
+}
+
+const INCREASE_KEYS = new Set(['ArrowRight', 'ArrowUp', 'PageUp', 'End']);
+const DECREASE_KEYS = new Set(['ArrowLeft', 'ArrowDown', 'PageDown', 'Home']);
+
+/**
  * The slider's keyboard, per the WAI-ARIA slider pattern: arrows move one step,
  * Page Up / Page Down one whole percent, Home / End to the bounds. `null` for any
  * other key, so the caller leaves it to the browser.
+ *
+ * A stored value outside the offered range (25, set through the API) is the
+ * slider's own bound: the meter widens `aria-valuemin`/`aria-valuemax` to take it
+ * in. So a key that would push further out leaves it where it is (ArrowUp on 25
+ * is not a drop to 10), and a step towards the range brings it in at the nearer
+ * bound (ArrowDown or Page Down on 25 lands on 10, ArrowUp or Page Up on 0.2 on
+ * 0.5); Home and End still go to the far bound.
  */
 export function ceilingAfterKey(valuePct: number, key: string): number | null {
-  // From an out-of-range stored value the first key brings it into range.
   const from = Number.isFinite(valuePct) ? valuePct : DEFAULT_ABANDONMENT_CEILING_PCT;
+  if (INCREASE_KEYS.has(key) && from >= ABANDONMENT_CEILING_MAX_PCT) return from;
+  if (DECREASE_KEYS.has(key) && from <= ABANDONMENT_CEILING_MIN_PCT) return from;
+  // A step (not Home/End) from outside the range enters it at the nearer bound,
+  // the same whether the step is a tenth or a whole percent.
+  if (key !== 'End' && INCREASE_KEYS.has(key) && from < ABANDONMENT_CEILING_MIN_PCT) return ABANDONMENT_CEILING_MIN_PCT;
+  if (key !== 'Home' && DECREASE_KEYS.has(key) && from > ABANDONMENT_CEILING_MAX_PCT) return ABANDONMENT_CEILING_MAX_PCT;
   switch (key) {
     case 'ArrowRight':
     case 'ArrowUp':
@@ -115,6 +197,18 @@ export function abandonmentCeilingError(valuePct: number): string | null {
   return null;
 }
 
+/**
+ * The field's error with the stored value taken as it was loaded: `null` when
+ * `valuePct` is the campaign's stored ceiling (`storedPct`, `null` for a campaign
+ * not yet saved), whatever it is, else {@link abandonmentCeilingError}. Compared
+ * with `Object.is`, the comparison the form uses everywhere else for this value,
+ * so moving the line away and back to 25 is "unchanged" again. See "The range".
+ */
+export function ceilingFieldError(valuePct: number, storedPct: number | null): string | null {
+  if (storedPct !== null && Object.is(valuePct, storedPct)) return null;
+  return abandonmentCeilingError(valuePct);
+}
+
 /** True when the ceiling is above the common regulatory limit, so the field warns. */
 export function ceilingAboveReference(valuePct: number): boolean {
   return Number.isFinite(valuePct) && valuePct > ABANDONMENT_CEILING_REFERENCE_PCT;
@@ -122,12 +216,12 @@ export function ceilingAboveReference(valuePct: number): boolean {
 
 /** One line for the builder's summary and review: `Pauses above 3%`. */
 export function ceilingSummary(valuePct: number): string {
-  return Number.isFinite(valuePct) ? `Pauses above ${pct(valuePct)}` : 'Not set';
+  return Number.isFinite(valuePct) ? `Pauses above ${ceilingPctText(valuePct)}` : 'Not set';
 }
 
 /** The slider's spoken value. */
 export function ceilingValueText(valuePct: number): string {
   return Number.isFinite(valuePct)
-    ? `${pct(valuePct)}: the campaign pauses when more than ${pct(valuePct)} of answered calls are abandoned`
+    ? `${ceilingPctText(valuePct)}: the campaign pauses when more than ${ceilingPctText(valuePct)} of answered calls are abandoned`
     : 'Not set';
 }

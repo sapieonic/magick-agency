@@ -87,6 +87,14 @@ export interface CampaignBehaviourSectionProps {
    * campaign is not draft or paused, so its mode cannot change now.
    */
   assignment?: { modeLocked: boolean };
+  /**
+   * The viewer cannot write campaigns (the settings page's `canEdit` is false, and
+   * Save is hidden). For now only the abandonment limit honours it, drawn as a
+   * picture with a disabled box: it is the one editor whose control is not a form
+   * input the browser already greys, and a draggable line with no Save reads as a
+   * setting that took effect. The other editors are unchanged.
+   */
+  readOnly?: boolean;
 }
 
 export function CampaignBehaviourSection({
@@ -97,6 +105,7 @@ export function CampaignBehaviourSection({
   layout = 'sections',
   include = ['hours', 'behaviour'],
   assignment,
+  readOnly = false,
 }: CampaignBehaviourSectionProps) {
   const errors = useConfigFieldErrors(fieldErrors);
   const showHours = include.includes('hours');
@@ -137,8 +146,10 @@ export function CampaignBehaviourSection({
       */}
       <AbandonmentCeilingFields
         ceilingPct={state.abandonmentCeilingPct}
+        storedPct={state.abandonmentCeilingStoredPct}
         onChange={(abandonmentCeilingPct) => onChange({ ...state, abandonmentCeilingPct })}
         errors={errors}
+        readOnly={readOnly}
       />
       {assignment ? (
         <AssignmentFields

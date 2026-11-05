@@ -12,7 +12,7 @@ import {
 import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
 import type { AssignmentConfigState, CampaignConfigState } from './configConstants';
 import { reservedDispositionCodeMessage } from '../systemDisposition';
-import { abandonmentCeilingError } from '../abandonmentCeiling';
+import { ceilingFieldError } from '../abandonmentCeiling';
 
 /*
   The campaign builder's validation: the client half of the rules the API
@@ -103,7 +103,9 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
     errors['wrapup_seconds'] = 'Wrap-up is 0–600 seconds. 0 means no wrap-up.';
   }
 
-  const ceiling = abandonmentCeilingError(state.abandonmentCeilingPct);
+  // Only a NEW value has to be in the offered range: the stored one is accepted as
+  // stored, or a campaign set to 25 through the API could not save any other edit.
+  const ceiling = ceilingFieldError(state.abandonmentCeilingPct, state.abandonmentCeilingStoredPct);
   if (ceiling !== null) errors['abandonment_ceiling_pct'] = ceiling;
 
   Object.assign(errors, validateAssignment(state.assignment));

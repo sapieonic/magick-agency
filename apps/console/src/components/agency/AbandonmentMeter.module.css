@@ -2,7 +2,7 @@
   The abandonment meter (`AbandonmentMeter.tsx`). The track and the ceiling line
   are the console's existing ceiling meter (`CampaignPerformance.module.css`
   `.meterTrack` / `.meterCeiling`); the fill is the Insights one (success, danger
-  when at or over). Tokens only, from `packages/web-ui/src/global.css`, so it reads
+  when above the ceiling). Tokens only, from `packages/web-ui/src/global.css`, so it reads
   in both themes. Everything is a `span` set to block: the read-only meter is drawn
   inside the Insights KPI's `sub`, which is itself a span.
 */
@@ -11,6 +11,9 @@
   display: block;
   position: relative;
   min-width: 0;
+  /* Sized by its parent, never by its content, so the scale can ask how wide the
+     meter is (the narrow rule at the end). */
+  container: abandonment-meter / inline-size;
 }
 
 /* ── The number beside the line ─────────────────────────────────────────── */
@@ -63,12 +66,17 @@
   user-select: none;
 }
 
+/* The inset ring is the track's edge wherever it is drawn: the builder's card is
+   `--bg-secondary`, but the Insights KPI tile is `--bg-tertiary` itself, and there
+   an unringed track was invisible (an empty stretch of tile with a line on it).
+   Inset, so it takes no layout; the fill and the tint paint over it. */
 .track {
   display: block;
   position: relative;
   height: 8px;
   border-radius: 999px;
   background: var(--bg-tertiary);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 /* Past the line: where a measured rate pauses the campaign. */
@@ -162,6 +170,15 @@
 
 .tick:last-child {
   transform: translateX(-100%);
+}
+
+/* Narrow (a 170px Insights tile leaves a ~146px track): six labels at 10px run
+   into each other ("8%10%"), so only the two ends are labelled. The middle ticks
+   keep their place, hidden, so the ends stay where they were. */
+@container abandonment-meter (max-width: 239px) {
+  .tick:not(:first-child):not(:last-child) {
+    visibility: hidden;
+  }
 }
 
 /* ── Motion ─────────────────────────────────────────────────────────────── */

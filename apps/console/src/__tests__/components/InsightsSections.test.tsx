@@ -37,6 +37,7 @@ import {
 import { AgentsSection } from '../../pages/agency/campaign-detail/insights/AgentsSection';
 import { TrendsSection, bestHour } from '../../pages/agency/campaign-detail/insights/TrendsSection';
 import { HealthSection, RecordingSection } from '../../pages/agency/campaign-detail/insights/HealthSection';
+import { CampaignSettingsPanel } from '../../pages/agency/campaign-detail/insights/CampaignFacts';
 import { UploadsSection } from '../../pages/agency/campaign-detail/insights/UploadsSection';
 
 const NAMES: Record<string, string> = { usr_priya: 'Priya Nair', usr_vikram: 'Vikram Rao', usr_meera: 'Meera Iyer' };
@@ -319,6 +320,15 @@ describe('trends', () => {
   });
 });
 
+describe('the settings panel', () => {
+  it('prints the abandonment ceiling as stored, two decimals included', () => {
+    const base = summary();
+    show(<CampaignSettingsPanel summary={{ ...base, settings: { ...base.settings, abandonment_ceiling_pct: 7.25 } }} />);
+    const row = screen.getByText('Abandonment ceiling').closest('div') as HTMLElement;
+    expect(row.textContent).toBe('Abandonment ceiling7.25%');
+  });
+});
+
 describe('health and compliance', () => {
   it('reads abandonment against the ceiling, auto-pauses and pre-dial blocks', () => {
     show(<HealthSection ctx={ctx} health={health()} timezone={ZONE} />);
@@ -340,18 +350,49 @@ describe('health and compliance', () => {
     expect(within(kpi).queryByRole('slider')).toBeNull();
   });
 
-  it('draws a 4% ceiling where the builder put it, and the rate red once at it', () => {
+  /** The Health section with the given ceiling and rolling-24h counts. */
+  function showAbandonment(ceilingPct: number, abandoned: number, answered = 1000) {
     const sample = health();
     show(
       <HealthSection
         ctx={ctx}
-        health={{ ...sample, abandonment: { ...sample.abandonment, ceiling_pct: 4, rolling_24h: { abandoned: 40, answered: 1000 } } }}
+        health={{ ...sample, abandonment: { ...sample.abandonment, ceiling_pct: ceilingPct, rolling_24h: { abandoned, answered } } }}
         timezone={ZONE}
       />,
     );
-    const kpi = screen.getByTestId('kpi-health-abandonment');
-    expect(within(kpi).getByTestId('abandonment-meter-ceiling').style.left).toBe('40%');
-    expect(within(kpi).getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('true');
+    return screen.getByTestId('kpi-health-abandonment');
+  }
+  const ticksOf = (kpi: HTMLElement) =>
+    Array.from(within(kpi).getByTestId('abandonment-meter-scale').children).map((t) => t.textContent);
+
+  it('draws a 4% ceiling where the builder put it, and the rate red only once above it', () => {
+    // The guardrail pauses only when the rate is above the ceiling: at it, it dials on.
+    const at = showAbandonment(4, 40);
+    expect(within(at).getByTestId('abandonment-meter-ceiling').style.left).toBe('40%');
+    expect(within(at).getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('false');
+    cleanup();
+
+    const above = showAbandonment(4, 41);
+    expect(within(above).getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('true');
+  });
+
+  it('grows the scale when the ceiling or the rate is above 10%, rather than pinning both at the end', () => {
+    // 12% ceiling, 11% rate: on 0–10% both would draw at the right-hand edge, a full bar
+    // touching the line. On 0–15% the gap between them is drawn to scale.
+    const kpi = showAbandonment(12, 110);
+    expect(within(kpi).getByTestId('abandonment-meter-ceiling').style.left).toBe('80%');
+    expect(parseFloat(within(kpi).getByTestId('abandonment-meter-rate').style.width)).toBeCloseTo((11 / 15) * 100, 6);
+    expect(ticksOf(kpi)).toEqual(['0%', '3%', '6%', '9%', '12%', '15%']);
+    cleanup();
+
+    // In the offered range the scale is the builder's own.
+    expect(ticksOf(showAbandonment(3, 21))).toEqual(['0%', '2%', '4%', '6%', '8%', '10%']);
+  });
+
+  it('names a two-decimal ceiling as stored, not rounded', () => {
+    const kpi = showAbandonment(7.25, 21);
+    expect(kpi.textContent).toContain('Abandonment vs 7.25% ceiling');
+    expect(within(kpi).getByTestId('abandonment-meter-value').textContent).toBe('7.25%');
   });
 
   it('lists caller IDs with their connect rate and a link to their dials', () => {

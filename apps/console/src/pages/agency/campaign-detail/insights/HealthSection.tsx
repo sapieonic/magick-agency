@@ -2,6 +2,7 @@ import type { AgencyInsightsHealth, AgencyInsightsSettings, AgencyInsightsStallE
 import { AGENCY_PACING_IDLE_REASONS } from '../../../../types/agency-insights';
 import { formatCount, pct } from '../../../../utils/format/number';
 import { AbandonmentMeter } from '../../../../components/agency/AbandonmentMeter';
+import { ceilingPctText, insightsScaleMaxPct } from '../../../../utils/agency/abandonmentCeiling';
 import { durationWords } from '../../../../utils/format/duration';
 import { abandonmentRate, connectRate, insightsRate, rateText, rateValue } from '../../../../utils/agency/insights/rates';
 import { formatZoned, IDLE_REASON_LABELS } from '../../../../utils/agency/insights/copy';
@@ -35,6 +36,7 @@ export function HealthSection({
   const { campaignId, range } = ctx;
   const abandonment = abandonmentRate(health.abandonment.rolling_24h);
   const ceiling = health.abandonment.ceiling_pct;
+  const ratePct = abandonment.kind === 'value' ? abandonment.pct : undefined;
   // The campaign's connect rate over the same rows (human connects over first dials, connectRate).
   const average = rateFigure(connectRate({
     human_connects: health.caller_ids.reduce((s, c) => s + c.human_connects, 0),
@@ -82,12 +84,14 @@ export function HealthSection({
     >
       <div className={styles.kpis}>
         <Kpi
-          label={`Abandonment vs ${pct(ceiling)} ceiling`}
+          label={`Abandonment vs ${ceilingPctText(ceiling)} ceiling`}
           value={rateText(abandonment)}
           withheld={abandonment.kind !== 'value'}
           // The builder's meter, read-only: the rate on the same 0–10% scale as the
-          // line the supervisor dragged, so the ceiling sits where they put it.
-          sub={<AbandonmentMeter ceilingPct={ceiling} ratePct={abandonment.kind === 'value' ? abandonment.pct : undefined} />}
+          // line the supervisor dragged, so the ceiling sits where they put it. The
+          // scale grows only when the ceiling or the rate is above 10%
+          // (`insightsScaleMaxPct`), where a 0–10% scale would pin both at the end.
+          sub={<AbandonmentMeter ceilingPct={ceiling} ratePct={ratePct} scaleMaxPct={insightsScaleMaxPct(ceiling, ratePct)} />}
           testId="kpi-health-abandonment"
         />
         <Kpi

@@ -6,8 +6,9 @@ import {
   ABANDONMENT_CEILING_REFERENCE_PCT,
   ABANDONMENT_CEILING_STEP_PCT,
   DEFAULT_ABANDONMENT_CEILING_PCT,
-  abandonmentCeilingError,
   ceilingAboveReference,
+  ceilingFieldError,
+  ceilingPctText,
 } from '../../../utils/agency/abandonmentCeiling';
 import { FieldError } from '../../../components/common/FieldError';
 import { pct } from '../../../utils/format/number';
@@ -27,11 +28,24 @@ import styles from './CampaignBehaviourSection.module.css';
   measured rate against, on the same scale.
 */
 
+const FIELD = 'abandonment_ceiling_pct';
+
 interface AbandonmentCeilingFieldsProps {
   /** `abandonmentCeilingPct`: `NaN` while the box is empty, so the validator names it. */
   ceilingPct: number;
+  /**
+   * `abandonmentCeilingStoredPct`: the campaign's stored value, accepted as stored
+   * even outside the offered range (AC1); `null` for a campaign not yet saved.
+   */
+  storedPct: number | null;
   onChange: (next: number) => void;
   errors: ConfigFieldErrors;
+  /**
+   * A user who cannot write campaigns: the meter is a picture (no slider, no
+   * pointer handlers) and the box is disabled. The value is still stated in the
+   * lead sentence and the box.
+   */
+  readOnly?: boolean;
 }
 
 /** The value the box shows for a value set elsewhere (a drag, a load): `3`, `4.5`. */
@@ -44,9 +58,16 @@ function valueOf(draft: string): number {
   return draft.trim() === '' ? Number.NaN : Number(draft);
 }
 
-export function AbandonmentCeilingFields({ ceilingPct, onChange, errors }: AbandonmentCeilingFieldsProps) {
+export function AbandonmentCeilingFields({
+  ceilingPct,
+  storedPct,
+  onChange,
+  errors,
+  readOnly = false,
+}: AbandonmentCeilingFieldsProps) {
   const inputId = useId();
-  const hintId = useId();
+  const leadId = useId();
+  const warningId = useId();
   const liveErrorId = useId();
 
   /*
@@ -65,31 +86,54 @@ export function AbandonmentCeilingFields({ ceilingPct, onChange, errors }: Aband
     if (!Object.is(valueOf(draft), ceilingPct)) setDraft(draftOf(ceilingPct));
   }
 
-  const limit = Number.isFinite(ceilingPct) ? pct(ceilingPct) : 'the limit you set';
   /*
-    The section's errors arrive only after a save attempt (the server's, or
-    `validateConfig`'s on a blocked submit). But Save is disabled while this value
-    is out of range, so a supervisor who typed 15 would read "Fix the highlighted
-    fields" with nothing highlighted. So this field names its own problem as soon
-    as the value has one, and defers to the section's message once there is one.
+    The section's error is about the value it was given for. It arrives after a
+    save attempt (the server's refusal, or `validateConfig`'s on a blocked submit)
+    and the page keeps it until the next save, so once the supervisor moves the
+    line it would describe a number no longer on screen: "Must be above 0" beside a
+    perfectly good 4%. So the value the error arrived with is remembered (the same
+    during-render adjustment as the draft, keyed on the message, which the pages
+    clear at the start of every save), and once the value differs the field falls
+    back to its own live check.
   */
-  const sectionError = errors.describedBy('abandonment_ceiling_pct');
-  const liveError = sectionError === undefined ? abandonmentCeilingError(ceilingPct) : null;
-  const errorIds = sectionError ?? (liveError !== null ? liveErrorId : undefined);
-  const describedBy = [hintId, errorIds].filter(Boolean).join(' ');
+  const sectionMessage = errors.message(FIELD);
+  const [arrival, setArrival] = useState<{ message: string | null; value: number }>(() => ({
+    message: sectionMessage,
+    value: ceilingPct,
+  }));
+  const arrivedWith = arrival.message === sectionMessage ? arrival.value : ceilingPct;
+  if (arrival.message !== sectionMessage) setArrival({ message: sectionMessage, value: ceilingPct });
+  const sectionCurrent = sectionMessage !== null && Object.is(arrivedWith, ceilingPct);
+
+  /*
+    Save is disabled while this value is out of range, so a supervisor who typed 15
+    would read "Fix the highlighted fields" with nothing highlighted if the field
+    waited for a save attempt. So it names its own problem as soon as the value has
+    one, by the validator's rule (the stored value is accepted as stored), and
+    defers to the section's message while that one is about the value on screen.
+  */
+  const liveError = sectionCurrent ? null : ceilingFieldError(ceilingPct, storedPct);
+  const errorIds = sectionCurrent ? errors.describedBy(FIELD) : liveError !== null ? liveErrorId : undefined;
+  const warn = ceilingAboveReference(ceilingPct);
+  const warningIds = warn ? warningId : undefined;
+  // The slider and the box describe one value alike: what it does (the lead), the
+  // amber note when it shows, and the error when there is one.
+  const describedBy = [leadId, warningIds, errorIds].filter(Boolean).join(' ');
+
+  const limit = Number.isFinite(ceilingPct) ? ceilingPctText(ceilingPct) : 'the limit you set';
 
   return (
     <>
       <h3 className={styles.subhead}>Abandonment limit</h3>
       <div className="form-group">
-        <p className={styles.sectionLead} id={hintId} data-testid="abandonment-ceiling-lead">
+        <p className={styles.sectionLead} id={leadId} data-testid="abandonment-ceiling-lead">
           {`The campaign pauses itself when more than ${limit} of the calls answered in the last 24 hours were abandoned: answered with no agent free to take them.`}
         </p>
         <div className={styles.ceilingRow}>
           <div className={styles.ceilingMeter}>
             <AbandonmentMeter
               ceilingPct={ceilingPct}
-              editable={{ onChange, label: 'Abandonment limit', describedBy }}
+              editable={readOnly ? undefined : { onChange, label: 'Abandonment limit', describedBy }}
             />
           </div>
           <div className={styles.ceilingInput}>
@@ -102,25 +146,28 @@ export function AbandonmentCeilingFields({ ceilingPct, onChange, errors }: Aband
               max={ABANDONMENT_CEILING_MAX_PCT}
               step={ABANDONMENT_CEILING_STEP_PCT}
               value={draft}
+              disabled={readOnly}
+              readOnly={readOnly}
               onChange={(event) => {
+                if (readOnly) return;
                 setDraft(event.target.value);
                 onChange(valueOf(event.target.value));
               }}
-              aria-describedby={errorIds}
+              aria-describedby={describedBy}
               aria-invalid={errorIds !== undefined ? true : undefined}
               data-testid="abandonment-ceiling-input"
             />
           </div>
         </div>
-        {sectionError !== undefined
-          ? errors.render('abandonment_ceiling_pct')
+        {sectionCurrent
+          ? errors.render(FIELD)
           : <FieldError id={liveErrorId} message={liveError} className="error-text" />}
         {/*
           A consequence, not an error: the save goes through. Whether a campaign
           falls under a dropped-call rule is the account's call, not the form's.
         */}
-        {ceilingAboveReference(ceilingPct) ? (
-          <p className={styles.ceilingWarning} data-testid="abandonment-ceiling-warning">
+        {warn ? (
+          <p className={styles.ceilingWarning} id={warningId} data-testid="abandonment-ceiling-warning">
             {`Above ${pct(ABANDONMENT_CEILING_REFERENCE_PCT)}, the limit most dropped-call rules set. Check the rules that apply to these calls before raising it.`}
           </p>
         ) : null}

@@ -41,7 +41,7 @@ beforeAll(() => {
 afterEach(cleanup);
 
 /** The section's behaviour group with the page's own validator feeding its errors live. */
-function Harness({ campaign }: { campaign?: Partial<AgencyCampaign> }) {
+function Harness({ campaign, readOnly }: { campaign?: Partial<AgencyCampaign>; readOnly?: boolean }) {
   const [state, setState] = useState<CampaignConfigState>(() =>
     configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft', ...campaign }),
   );
@@ -53,6 +53,7 @@ function Harness({ campaign }: { campaign?: Partial<AgencyCampaign> }) {
         fieldErrors={validateConfig(state)}
         layout="plain"
         include={['behaviour']}
+        readOnly={readOnly}
       />
       <output data-testid="state-ceiling">{String(state.abandonmentCeilingPct)}</output>
     </>
@@ -64,7 +65,7 @@ function Harness({ campaign }: { campaign?: Partial<AgencyCampaign> }) {
  * save attempt, and Save is disabled while the value is out of range, so the field
  * must name the problem on its own.
  */
-function PageHarness() {
+function PageHarness({ fieldErrors = {} }: { fieldErrors?: Record<string, string> }) {
   const [state, setState] = useState<CampaignConfigState>(() =>
     configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft' }),
   );
@@ -72,7 +73,7 @@ function PageHarness() {
     <CampaignBehaviourSection
       state={state}
       onChange={setState}
-      fieldErrors={{}}
+      fieldErrors={fieldErrors}
       layout="plain"
       include={['behaviour']}
     />
@@ -83,6 +84,12 @@ const slider = () => screen.getByRole('slider', { name: 'Abandonment limit' });
 const input = () => screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement;
 const stateValue = () => screen.getByTestId('state-ceiling').textContent;
 const lineLeft = () => (screen.getByTestId('abandonment-meter-ceiling') as HTMLElement).style.left;
+/** The ids an element's `aria-describedby` names. */
+const describedIds = (el: Element) => (el.getAttribute('aria-describedby') ?? '').split(' ').filter(Boolean);
+/** The text of everything an element's `aria-describedby` names, one entry per id. */
+const describedTexts = (el: Element) => describedIds(el).map((id) => document.getElementById(id)?.textContent ?? '');
+const LEAD_START = 'The campaign pauses itself when more than';
+const RANGE_ERROR = 'Set the limit between 0.5% and 10%.';
 
 /** Lay the track out at 200px wide from x = 100, so x = 100 + 20·p is p% on the scale. */
 function layOutTrack() {
@@ -157,19 +164,67 @@ describe('the pointer', () => {
     // The press hands the slider focus, so the keys carry on from where the drag left it.
     expect(document.activeElement).toBe(slider());
 
-    fireEvent.pointerMove(hit, { clientX: 152, pointerId: 1, pointerType: 'mouse' });
+    fireEvent.pointerMove(hit, { clientX: 152, pointerId: 1, pointerType: 'mouse', buttons: 1 });
     expect(stateValue()).toBe('2.6');
 
     // Past either end of the track the line holds at the bound.
-    fireEvent.pointerMove(hit, { clientX: 900, pointerId: 1, pointerType: 'mouse' });
+    fireEvent.pointerMove(hit, { clientX: 900, pointerId: 1, pointerType: 'mouse', buttons: 1 });
     expect(stateValue()).toBe('10');
-    fireEvent.pointerMove(hit, { clientX: -50, pointerId: 1, pointerType: 'mouse' });
+    fireEvent.pointerMove(hit, { clientX: -50, pointerId: 1, pointerType: 'mouse', buttons: 1 });
     expect(stateValue()).toBe('0.5');
 
     fireEvent.pointerUp(hit, { clientX: -50, pointerId: 1, pointerType: 'mouse' });
     // Released: a move no longer drags.
-    fireEvent.pointerMove(hit, { clientX: 260, pointerId: 1, pointerType: 'mouse' });
+    fireEvent.pointerMove(hit, { clientX: 260, pointerId: 1, pointerType: 'mouse', buttons: 1 });
     expect(stateValue()).toBe('0.5');
+  });
+
+  it('belongs to the pointer that started it: a second pointer neither moves the line nor ends the drag', () => {
+    render(<Harness />);
+    const hit = layOutTrack();
+
+    fireEvent.pointerDown(hit, { clientX: 190, pointerId: 1, pointerType: 'touch', button: 0 });
+    expect(stateValue()).toBe('4.5');
+
+    // A second finger lands, moves and lifts: none of it is the drag.
+    fireEvent.pointerDown(hit, { clientX: 280, pointerId: 2, pointerType: 'touch', button: 0 });
+    expect(stateValue()).toBe('4.5');
+    fireEvent.pointerMove(hit, { clientX: 260, pointerId: 2, pointerType: 'touch' });
+    expect(stateValue()).toBe('4.5');
+    fireEvent.pointerUp(hit, { clientX: 260, pointerId: 2, pointerType: 'touch' });
+    fireEvent.pointerCancel(hit, { clientX: 260, pointerId: 2, pointerType: 'touch' });
+
+    // The first finger is still dragging.
+    fireEvent.pointerMove(hit, { clientX: 152, pointerId: 1, pointerType: 'touch' });
+    expect(stateValue()).toBe('2.6');
+    fireEvent.pointerUp(hit, { clientX: 152, pointerId: 1, pointerType: 'touch' });
+    fireEvent.pointerMove(hit, { clientX: 200, pointerId: 1, pointerType: 'touch' });
+    expect(stateValue()).toBe('2.6');
+  });
+
+  it('ends the drag when the pointer capture is lost', () => {
+    render(<Harness />);
+    const hit = layOutTrack();
+
+    fireEvent.pointerDown(hit, { clientX: 190, pointerId: 1, pointerType: 'mouse', button: 0 });
+    expect(screen.getByTestId('abandonment-meter').getAttribute('data-dragging')).toBe('true');
+    // Another pointer's capture is not this drag's.
+    fireEvent.lostPointerCapture(hit, { pointerId: 2, pointerType: 'mouse' });
+    fireEvent.pointerMove(hit, { clientX: 152, pointerId: 1, pointerType: 'mouse', buttons: 1 });
+    expect(stateValue()).toBe('2.6');
+
+    fireEvent.lostPointerCapture(hit, { pointerId: 1, pointerType: 'mouse' });
+    expect(screen.getByTestId('abandonment-meter').getAttribute('data-dragging')).toBeNull();
+    fireEvent.pointerMove(hit, { clientX: 260, pointerId: 1, pointerType: 'mouse', buttons: 1 });
+    expect(stateValue()).toBe('2.6');
+  });
+
+  it('ignores a mouse move with no button held, as after a release the page never heard', () => {
+    render(<Harness />);
+    const hit = layOutTrack();
+    fireEvent.pointerDown(hit, { clientX: 190, pointerId: 1, pointerType: 'mouse', button: 0 });
+    fireEvent.pointerMove(hit, { clientX: 260, pointerId: 1, pointerType: 'mouse', buttons: 0 });
+    expect(stateValue()).toBe('4.5');
   });
 
   it('ignores a move with no press, and a right-click', () => {
@@ -200,15 +255,17 @@ describe('the number box', () => {
 
   it('names an out-of-range value on the field, with the validator’s own message', () => {
     render(<Harness />);
-    expect(input().getAttribute('aria-describedby')).toBeNull();
+    // The box is described by the lead sentence alone while the value is fine.
+    expect(describedTexts(input())).toHaveLength(1);
+    expect(describedTexts(input())[0]).toContain(LEAD_START);
+    expect(input().getAttribute('aria-invalid')).toBeNull();
 
     fireEvent.change(input(), { target: { value: '12' } });
-    const describedBy = input().getAttribute('aria-describedby');
-    expect(describedBy).toBeTruthy();
-    expect(document.getElementById(describedBy!)?.textContent).toBe('Set the limit between 0.5% and 10%.');
+    expect(describedTexts(input())).toContain(RANGE_ERROR);
+    expect(input().getAttribute('aria-invalid')).toBe('true');
     // The line holds at the end of the scale; the slider names the error too.
     expect(lineLeft()).toBe('100%');
-    expect(slider().getAttribute('aria-describedby')).toContain(describedBy!);
+    expect(describedTexts(slider())).toContain(RANGE_ERROR);
   });
 
   it('names an out-of-range value before any save, when the page has no field errors yet', () => {
@@ -216,14 +273,14 @@ describe('the number box', () => {
     expect(input().getAttribute('aria-invalid')).toBeNull();
 
     fireEvent.change(input(), { target: { value: '15' } });
-    const describedBy = input().getAttribute('aria-describedby');
-    expect(document.getElementById(describedBy!)?.textContent).toBe('Set the limit between 0.5% and 10%.');
+    expect(describedTexts(input())).toContain(RANGE_ERROR);
     expect(input().getAttribute('aria-invalid')).toBe('true');
-    expect(slider().getAttribute('aria-describedby')).toContain(describedBy!);
+    expect(describedTexts(slider())).toContain(RANGE_ERROR);
 
     fireEvent.change(input(), { target: { value: '4' } });
-    expect(input().getAttribute('aria-describedby')).toBeNull();
-    expect(screen.queryByText('Set the limit between 0.5% and 10%.')).toBeNull();
+    expect(input().getAttribute('aria-invalid')).toBeNull();
+    expect(describedTexts(input())).not.toContain(RANGE_ERROR);
+    expect(screen.queryByText(RANGE_ERROR)).toBeNull();
   });
 
   it('treats an emptied box as no value, not as 0, and keeps the box empty', () => {
@@ -231,8 +288,7 @@ describe('the number box', () => {
     fireEvent.change(input(), { target: { value: '' } });
     expect(input().value).toBe('');
     expect(stateValue()).toBe('NaN');
-    const describedBy = input().getAttribute('aria-describedby');
-    expect(document.getElementById(describedBy!)?.textContent).toBe('Enter a limit between 0.5% and 10%.');
+    expect(describedTexts(input())).toContain('Enter a limit between 0.5% and 10%.');
     expect(slider().getAttribute('aria-valuenow')).toBeNull();
     expect(slider().getAttribute('aria-valuetext')).toBe('Not set');
 
@@ -240,11 +296,115 @@ describe('the number box', () => {
     fireEvent.keyDown(slider(), { key: 'ArrowUp' });
     expect(input().value).toBe('3.1');
   });
+});
 
-  it('loads a stored value outside the offered range as stored, and names it', () => {
+describe('a stored value outside the offered range (AC1)', () => {
+  /*
+    The server takes any value above 0 and up to 100, with any decimals. A campaign
+    PATCHed to 25 or 7.25 through the API loads as stored and is accepted as stored:
+    refusing it would disable Save for every other edit on the page. Only a NEW
+    value has to land in 0.5–10 with one decimal.
+  */
+  it('loads 25 as stored, without an error, and refuses only a new out-of-range value', () => {
     render(<Harness campaign={{ abandonment_ceiling_pct: 25 }} />);
     expect(input().value).toBe('25');
-    expect(screen.getByText('Set the limit between 0.5% and 10%.')).toBeTruthy();
+    expect(screen.queryByText(RANGE_ERROR)).toBeNull();
+    expect(input().getAttribute('aria-invalid')).toBeNull();
+    // Pinned at the right-hand end of the fixed scale, its label still the stored value.
+    expect(lineLeft()).toBe('100%');
+    expect(screen.getByTestId('abandonment-meter-value').textContent).toBe('25%');
+
+    fireEvent.change(input(), { target: { value: '26' } });
+    expect(screen.getByText(RANGE_ERROR)).toBeTruthy();
+    // Back to the stored value: accepted again.
+    fireEvent.change(input(), { target: { value: '25' } });
+    expect(screen.queryByText(RANGE_ERROR)).toBeNull();
+  });
+
+  it('keeps the slider’s bounds around the stored value, and does not drop it on an increase key', () => {
+    render(<Harness campaign={{ abandonment_ceiling_pct: 25 }} />);
+    expect(slider().getAttribute('aria-valuenow')).toBe('25');
+    expect(slider().getAttribute('aria-valuemin')).toBe('0.5');
+    expect(slider().getAttribute('aria-valuemax')).toBe('25');
+
+    fireEvent.keyDown(slider(), { key: 'ArrowUp' });
+    expect(stateValue()).toBe('25');
+    fireEvent.keyDown(slider(), { key: 'End' });
+    expect(stateValue()).toBe('25');
+    // Towards the range: in at its top.
+    fireEvent.keyDown(slider(), { key: 'ArrowDown' });
+    expect(stateValue()).toBe('10');
+    expect(slider().getAttribute('aria-valuemax')).toBe('10');
+  });
+
+  it('widens the minimum for a stored value below the range', () => {
+    render(<Harness campaign={{ abandonment_ceiling_pct: 0.2 }} />);
+    expect(slider().getAttribute('aria-valuemin')).toBe('0.2');
+    expect(slider().getAttribute('aria-valuemax')).toBe('10');
+    fireEvent.keyDown(slider(), { key: 'ArrowDown' });
+    expect(stateValue()).toBe('0.2');
+    fireEvent.keyDown(slider(), { key: 'ArrowUp' });
+    expect(stateValue()).toBe('0.5');
+  });
+
+  it('prints a stored 7.25 as 7.25%, not rounded, and accepts it', () => {
+    render(<Harness campaign={{ abandonment_ceiling_pct: 7.25 }} />);
+    expect(input().value).toBe('7.25');
+    expect(screen.getByTestId('abandonment-meter-value').textContent).toBe('7.25%');
+    expect(screen.getByTestId('abandonment-ceiling-lead').textContent).toContain('more than 7.25% of the calls');
+    expect(slider().getAttribute('aria-valuetext')).toBe(
+      '7.25%: the campaign pauses when more than 7.25% of answered calls are abandoned',
+    );
+    expect(input().getAttribute('aria-invalid')).toBeNull();
+    // A new two-decimal value is refused.
+    fireEvent.change(input(), { target: { value: '7.15' } });
+    expect(screen.getByText('Use at most one decimal place, like 3.5.')).toBeTruthy();
+  });
+});
+
+describe('the section’s error', () => {
+  /*
+    The pages keep a save's field errors until the next save. A refusal is about the
+    value it was given for, so once the value changes the field stops showing it and
+    goes back to its own live check.
+  */
+  const SERVER = 'Must be above 0 and at most 100.';
+
+  it('shows the server’s message for the value it came with, and drops it once the value changes', () => {
+    render(<PageHarness fieldErrors={{ abandonment_ceiling_pct: SERVER }} />);
+    expect(describedTexts(input())).toContain(SERVER);
+    expect(input().getAttribute('aria-invalid')).toBe('true');
+
+    fireEvent.change(input(), { target: { value: '4' } });
+    expect(screen.queryByText(SERVER)).toBeNull();
+    expect(describedTexts(input())).not.toContain(SERVER);
+    expect(describedTexts(slider())).not.toContain(SERVER);
+    expect(input().getAttribute('aria-invalid')).toBeNull();
+
+    // The live check still names a value of its own that is out of range.
+    fireEvent.change(input(), { target: { value: '15' } });
+    expect(describedTexts(input())).toContain(RANGE_ERROR);
+    expect(screen.queryByText(SERVER)).toBeNull();
+  });
+});
+
+describe('a user who cannot write campaigns', () => {
+  it('sees the meter as a picture and the box disabled', () => {
+    render(<Harness campaign={{ abandonment_ceiling_pct: 4.5 }} readOnly />);
+    expect(screen.queryByRole('slider')).toBeNull();
+    expect(screen.getByTestId('abandonment-meter').getAttribute('aria-hidden')).toBe('true');
+    const box = screen.getByTestId('abandonment-ceiling-input') as HTMLInputElement;
+    expect(box.value).toBe('4.5');
+    expect(box.disabled).toBe(true);
+    expect(box.readOnly).toBe(true);
+    expect(screen.getByTestId('abandonment-meter-value').textContent).toBe('4.5%');
+
+    // No handlers: a press on the track moves nothing.
+    const hit = (screen.getByTestId('abandonment-meter-ceiling').parentElement as HTMLElement).parentElement as HTMLElement;
+    (hit.firstElementChild as HTMLElement).getBoundingClientRect = () =>
+      ({ left: 100, right: 300, width: 200, top: 0, bottom: 8, height: 8, x: 100, y: 0, toJSON: () => ({}) }) as DOMRect;
+    fireEvent.pointerDown(hit, { clientX: 190, pointerId: 1, pointerType: 'mouse', button: 0 });
+    expect(stateValue()).toBe('4.5');
   });
 });
 
@@ -254,13 +414,20 @@ describe('the reference warning', () => {
     expect(screen.queryByTestId('abandonment-ceiling-warning')).toBeNull();
 
     fireEvent.keyDown(slider(), { key: 'ArrowRight' }); // 3.1
-    expect(screen.getByTestId('abandonment-ceiling-warning').textContent).toBe(
+    const warning = screen.getByTestId('abandonment-ceiling-warning');
+    expect(warning.textContent).toBe(
       'Above 3%, the limit most dropped-call rules set. Check the rules that apply to these calls before raising it.',
     );
-    expect(input().getAttribute('aria-describedby')).toBeNull();
+    expect(input().getAttribute('aria-invalid')).toBeNull();
+    // Both controls are described by it, and the box by the lead sentence too.
+    expect(describedIds(slider())).toContain(warning.id);
+    expect(describedIds(input())).toContain(warning.id);
+    expect(describedTexts(input())[0]).toContain(LEAD_START);
 
     fireEvent.keyDown(slider(), { key: 'ArrowLeft' }); // back to 3
     expect(screen.queryByTestId('abandonment-ceiling-warning')).toBeNull();
+    expect(describedIds(input())).toHaveLength(1);
+    expect(describedIds(slider())).toHaveLength(1);
   });
 });
 
@@ -275,9 +442,27 @@ describe('the read-only meter', () => {
     expect(screen.getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('false');
   });
 
-  it('turns the rate red at the ceiling', () => {
-    render(<AbandonmentMeter ceilingPct={3} ratePct={3} />);
+  it('turns the rate red above the ceiling, not at it, as the guardrail pauses', () => {
+    // The guardrail continues while measured <= ceiling, and the copy says "more than".
+    const { rerender } = render(<AbandonmentMeter ceilingPct={3} ratePct={3} />);
+    expect(screen.getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('false');
+    rerender(<AbandonmentMeter ceilingPct={3} ratePct={3.1} />);
     expect(screen.getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('true');
+  });
+
+  it('draws on a wider scale when given one, with six ticks to its end', () => {
+    render(<AbandonmentMeter ceilingPct={12} ratePct={11} scaleMaxPct={15} />);
+    expect(screen.getByTestId('abandonment-meter-ceiling').style.left).toBe('80%');
+    expect(parseFloat(screen.getByTestId('abandonment-meter-rate').style.width)).toBeCloseTo((11 / 15) * 100, 6);
+    const ticks = Array.from(screen.getByTestId('abandonment-meter-scale').children).map((t) => t.textContent);
+    expect(ticks).toEqual(['0%', '3%', '6%', '9%', '12%', '15%']);
+  });
+
+  it('keeps the editable meter on 0–10% whatever scale is passed', () => {
+    render(<AbandonmentMeter ceilingPct={5} scaleMaxPct={25} editable={{ onChange: () => undefined, label: 'Abandonment limit' }} />);
+    expect(screen.getByTestId('abandonment-meter-ceiling').style.left).toBe('50%');
+    const ticks = Array.from(screen.getByTestId('abandonment-meter-scale').children).map((t) => t.textContent);
+    expect(ticks).toEqual(['0%', '2%', '4%', '6%', '8%', '10%']);
   });
 
   it('keeps the number over the track at either end of the scale', () => {

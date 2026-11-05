@@ -397,8 +397,14 @@ describe('the abandonment limit', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
 
     const box = await screen.findByRole('spinbutton', { name: 'Pause above (%)' });
-    const describedBy = box.getAttribute('aria-describedby');
-    expect(document.getElementById(describedBy!)?.textContent).toBe('Must be above 0 and at most 100.');
+    const described = (box.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent);
+    expect(described).toContain('Must be above 0 and at most 100.');
+    expect(box.getAttribute('aria-invalid')).toBe('true');
+
+    // A refusal is about the value it came with: moving the line retires it.
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Abandonment limit' }), { key: 'ArrowRight' });
+    expect(screen.queryByText('Must be above 0 and at most 100.')).toBeNull();
+    expect(box.getAttribute('aria-invalid')).toBeNull();
   });
 });
 
@@ -679,6 +685,8 @@ describe('the campaign a builder actually creates', () => {
       name: 'Collections',
       caller_ids: ['+912200000001'],
       telephony_provider: 'voicelink',
+      // The create carries the limit too (see the roster-first case in CampaignBuilderPage.test.tsx).
+      abandonment_ceiling_pct: 3,
     });
   });
 });

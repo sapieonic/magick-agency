@@ -798,6 +798,22 @@ create and PATCH, but the console only displayed it.
   an amber note above 3%. Sent on every config save; in the builder summary and review. Insights
   draws the same meter with the rolling 24-hour rate as the fill (`AbandonmentMeter`,
   `utils/agency/abandonmentCeiling.ts`). `AgencyCampaign` gains the field.
+- Review fixes, same day. A stored value outside the offered range (set through the API, e.g. 25
+  or 7.25) is kept as stored and no longer disables Save for other edits; only a change must land
+  in 0.5–10 with one decimal (AC1). The ceiling prints to two decimals wherever it is shown
+  (`ceilingPctText`: field, meter, summary, Insights KPI, trend and settings panel); rates stay on
+  `pct()`. Insights' read-only meter grows its scale to the next multiple of 5 when the ceiling or
+  the 24-hour rate is above 10% (`insightsScaleMaxPct`); the editable one stays on 0–10%. The
+  builder's create now carries the value when it is valid, so a draft created by an early roster
+  upload keeps the moved line. The fill, and the Insights headline's "bad" tone, turn red only
+  above the ceiling, as the guardrail pauses (`measured <= ceiling` continues); the headline's
+  80% warning no longer misses a rate of exactly 80% of the ceiling to floating point. Users without `agency.campaigns.write` see the meter as a
+  picture and the box disabled. Also: the slider's bounds take in an out-of-range stored value
+  and a key away from the range leaves it alone; one pointer owns a drag (lost capture ends it); a
+  server error on the field retires once the value changes; the amber note is in both controls'
+  `aria-describedby`; the track has an inset edge (visible on the Insights tile) and only the end
+  ticks are labelled on a narrow meter; `agency_campaign_config_saved` carries
+  `abandonment_ceiling_pct`.
 - No server code changed. Server tests now pin create and PATCH through the public routes,
   refused values, the `config_changed` row (`{ from: 3, to: 4.5 }`), the 403 for agent, viewer and
   operator, and the guardrail pausing at a supervisor-set ceiling end to end
@@ -805,8 +821,10 @@ create and PATCH, but the console only displayed it.
 - **Left open:** the public routes do not validate the field themselves; the internal handler's
   400 is forwarded unchanged (pinned in `campaign-config-route.test.ts`). The small-sample rule
   still pauses on 2 abandoned of 33 answered; a minimum-answered floor is a separate task if wanted.
-- Counts, 2026-11-05: `apps/console` 5173 (272 files), lint clean; `packages/contracts` 281,
-  `contracts-literals --check` up to date; `apps/server` lint clean, the two changed unit files 119,
+  The retry dialog offers no ceiling override (a retry inherits its parent's; the server would take
+  one in `config_overrides`).
+- Counts, 2026-11-05: `apps/console` 5209 (272 files) after the review fixes (5173 before), lint
+  clean; `packages/contracts` 281, `contracts-literals --check` up to date; `apps/server` lint clean, the two changed unit files 119,
   rest lane 1937 passed + 9 expected fail + 1 skipped (199 files + 1 skipped). The wall-clock lane,
   the full server unit suite and the Dart tests were not run (no file of theirs changed; Dart is
   not installed on the build container).

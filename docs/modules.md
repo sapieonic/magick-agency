@@ -1495,7 +1495,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/CallFieldsForm.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/CampaignAssignmentProgress.test.tsx` | 5 |
-| `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 15 |
+| `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 25 |
 | `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 8 |
@@ -1512,8 +1512,8 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 43 |
 | `apps/console/src/__tests__/components/HomeRedirect.test.tsx` | 8 |
-| `apps/console/src/__tests__/components/InsightsHeadline.test.tsx` | 20 |
-| `apps/console/src/__tests__/components/InsightsSections.test.tsx` | 32 |
+| `apps/console/src/__tests__/components/InsightsHeadline.test.tsx` | 24 |
+| `apps/console/src/__tests__/components/InsightsSections.test.tsx` | 35 |
 | `apps/console/src/__tests__/components/MyContactsPanel.test.tsx` | 16 |
 | `apps/console/src/__tests__/components/NotesField.test.tsx` | 22 |
 | `apps/console/src/__tests__/components/PageDescription.test.tsx` | 3 |
@@ -1618,7 +1618,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterAssignment.test.tsx` | 13 |
 | `apps/console/src/__tests__/pages/AgencyCampaignRosterPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyCampaignSettingsAssignment.test.tsx` | 11 |
-| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 39 |
+| `apps/console/src/__tests__/pages/AgencyCampaignSettingsPage.test.tsx` | 43 |
 | `apps/console/src/__tests__/pages/AgencyCampaignsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyContactDetailPage.test.tsx` | 29 |
 | `apps/console/src/__tests__/pages/AgencyHomeRedirect.test.tsx` | 7 |
@@ -1642,7 +1642,7 @@ Files: `AppHomeRedirect.tsx`, `agency/AgencyAnalyticsPage.module.css`, `agency/A
 | `apps/console/src/__tests__/pages/AppHomeRedirect.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.config.test.tsx` | 46 |
 | `apps/console/src/__tests__/pages/CampaignBuilderPage.flow.test.tsx` | 9 |
-| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 19 |
+| `apps/console/src/__tests__/pages/CampaignBuilderPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/ColumnMapper.dedupe.test.tsx` | 6 |
 | `apps/console/src/__tests__/pages/DncPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/InsightsPanel.test.tsx` | 12 |
@@ -1707,8 +1707,8 @@ Files: `agency/agentReadouts.ts`, `agency/abandonmentCeiling.ts`, `agency/agentW
 | `apps/console/src/__tests__/utils/agencyAttemptFilters.test.ts` | 30 |
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyBestHours.test.ts` | 45 |
-| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 84 |
-| `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 23 |
+| `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 86 |
+| `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/agencyCampaignContribution.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/agencyCampaignControls.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/agencyCampaignLineage.test.ts` | 11 |

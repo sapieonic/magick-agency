@@ -16,6 +16,8 @@ export interface ConfigFieldErrors {
   describedBy: (...fields: string[]) => string | undefined;
   /** The error for this field, rendered with its id — or nothing. */
   render: (field: string) => ReactNode;
+  /** The error's text for this field, or `null`: for a field that has to know when a new one arrives. */
+  message: (field: string) => string | null;
 }
 
 export function useConfigFieldErrors(fieldErrors: Record<string, string>): ConfigFieldErrors {
@@ -28,5 +30,6 @@ export function useConfigFieldErrors(fieldErrors: Record<string, string>): Confi
       return ids.length > 0 ? ids.join(' ') : undefined;
     },
     render: (field) => <FieldError id={errorId(field)} message={message(field)} className="error-text" />,
+    message,
   };
 }

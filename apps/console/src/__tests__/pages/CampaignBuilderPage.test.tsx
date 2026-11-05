@@ -172,6 +172,48 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe('the abandonment limit on a draft created by the roster upload', () => {
+  /*
+    A roster upload creates the draft before any config save. If the operator moved
+    the line and never saved the config, the PATCH that carries it never happens,
+    so the create has to: otherwise the draft keeps the server's 3%.
+  */
+  async function importWithCeiling(set: () => void) {
+    await renderPage();
+    fillBasics();
+    goToStep('How agents work');
+    set();
+    goToStep('Who to call');
+    const input = screen.getByLabelText('CSV file') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['Cust Mobile\n9820041772\n'], 'c.csv', { type: 'text/csv' })] } });
+    await screen.findByLabelText('Use Cust Mobile as');
+    fireEvent.click(screen.getByRole('button', { name: 'Import contacts' }));
+    await waitFor(() => expect(mocks.createAgencyCampaign).toHaveBeenCalled());
+    return mocks.createAgencyCampaign.mock.calls[0]![0] as Record<string, unknown>;
+  }
+  const slider = () => screen.getByRole('slider', { name: 'Abandonment limit' });
+  const box = () => screen.getByRole('spinbutton', { name: 'Pause above (%)' });
+
+  it('sends the value the line was moved to on the create', async () => {
+    const body = await importWithCeiling(() => {
+      fireEvent.keyDown(slider(), { key: 'PageUp' });
+      fireEvent.keyDown(slider(), { key: 'ArrowRight' });
+    });
+    expect(body.abandonment_ceiling_pct).toBe(4.1);
+    // And the import goes on into that draft.
+    await waitFor(() => expect(mocks.startRosterIngest).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an emptied box', ''],
+    ['an out-of-range value', '15'],
+  ])('leaves it off the create for %s, so the server default applies', async (_label, typed) => {
+    const body = await importWithCeiling(() => fireEvent.change(box(), { target: { value: typed } }));
+    expect(body).toEqual({ name: 'Collections', caller_ids: ['+912200000001'], telephony_provider: 'voicelink' });
+  });
+});
+
 describe('the page composes the mapper', () => {
   it('shows the real row limit from the API rather than a copied constant', async () => {
     await renderPage();

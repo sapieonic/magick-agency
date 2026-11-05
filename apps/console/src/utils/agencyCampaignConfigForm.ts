@@ -190,6 +190,7 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   autoReturn: true,
   allowWrapupRedial: false,
   abandonmentCeilingPct: DEFAULT_ABANDONMENT_CEILING_PCT,
+  abandonmentCeilingStoredPct: null,
   assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
 };
 
@@ -398,9 +399,13 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     autoReturn: campaign.wrapup_auto_return ?? EMPTY_CAMPAIGN_CONFIG.autoReturn,
     // Absent on a campaign read from a server that predates the setting: off.
     allowWrapupRedial: campaign.allow_wrapup_redial ?? EMPTY_CAMPAIGN_CONFIG.allowWrapupRedial,
-    // Loaded as stored, even outside the range the field offers: the validator then
-    // names it on the field rather than the form quietly saving a different number.
+    // Loaded as stored, even outside the range the field offers, and remembered as
+    // stored: the validator accepts that exact value (AC1), so a campaign PATCHed to
+    // 25 through the API saves its other edits and keeps its 25, rather than the
+    // form refusing every save or quietly writing a different number. Re-seeded
+    // from the response after each save, so the saved value becomes the stored one.
     abandonmentCeilingPct: campaign.abandonment_ceiling_pct ?? EMPTY_CAMPAIGN_CONFIG.abandonmentCeilingPct,
+    abandonmentCeilingStoredPct: campaign.abandonment_ceiling_pct ?? null,
     assignment: assignmentFromCampaign(campaign),
   };
 }
@@ -602,6 +607,7 @@ export function buildConfigPayload(
     // Sent on every save, the builder's first one included, so the value on screen
     // is the value the guardrail pauses at. A PATCH that changes it is written to the
     // campaign's activity with its old and new value (`agency_campaign.config_changed`).
+    // `abandonmentCeilingStoredPct` is the form's own bookkeeping and is not sent.
     abandonment_ceiling_pct: state.abandonmentCeilingPct,
   };
 }
