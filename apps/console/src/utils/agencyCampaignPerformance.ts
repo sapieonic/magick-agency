@@ -246,9 +246,9 @@ function volumeWithheldReadout(dials: number): PerformanceReadout {
 }
 
 /**
- * The connect rate — human answers over every call placed.
+ * The connect rate — human answers over every first dial placed.
  *
- * The denominator is `attempts_total`, not bridged calls, which is why this is
+ * The denominator is `first_dials_placed`, not bridged calls, which is why this is
  * low on a cold list and why it is the right number: a supervisor asking "is
  * this list working" is asking about dials, not about the subset that connected.
  */
@@ -276,6 +276,7 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     that was breaking it.
   */
   const humans = stats?.human_connects;
+  const firstDials = stats?.first_dials_placed;
 
   if (rate === undefined) {
     return {
@@ -328,13 +329,19 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     value: pct(rate),
     detail: 'Calls where a person answered, out of every first dial placed — including the ones nobody picked up. Wrap-up redials are not counted again.',
     caveat,
-    // The numerator alone. Its denominator, the placed first dials, is not on
-    // `/stats` (only `attempts_total`, which counts redials and never-placed queued
-    // rows), and "N of `attempts_total`" would be a fraction that is not this rate:
-    // the defect the note above describes, by the other half of the fraction.
+    // The rate as its own fraction: `human_connects` of `first_dials_placed`, the two
+    // counts the server divided. Never "of `attempts_total`", which also counts redials
+    // and never-placed queued rows: a fraction that is not this rate, the defect the
+    // note above describes by the other half. Without the denominator (an older server),
+    // the numerator alone.
     denominator:
       typeof humans === 'number'
-        ? { lead: formatCount(humans), rest: 'people answered' }
+        ? {
+          lead: formatCount(humans),
+          rest: typeof firstDials === 'number'
+            ? `people answered, of ${formatCount(firstDials)} first ${firstDials === 1 ? 'dial' : 'dials'} placed`
+            : 'people answered',
+        }
         : null,
     scale: { kind: 'fill', percent: clampPercent(rate), tone: 'accent' },
     known: true,

@@ -241,6 +241,20 @@ export interface AgencyAgentCampaignRow {
   successes: number;
   talk_seconds: number;
   wrapup_seconds: number;
+  /**
+   * The connect rate's numerator on this campaign: conversations coded neither voicemail nor
+   * `no_disposition` (the totals' own definition).
+   */
+  human_connects: number;
+  /** The connect rate's denominator on this campaign: placed dials that are not wrap-up redials. */
+  first_dials: number;
+  /**
+   * `human_connects / first_dials` (percent): the product's one connect rate, the same as
+   * {@link AgencyAgentStatsTotals.connect_rate_pct} over this campaign's rows. `null` when no
+   * first dial was placed. A consumer floors it on `first_dials`
+   * (`AGENCY_ROSTER_MIN_RATE_DENOMINATOR`), never on `attempts`.
+   */
+  connect_rate_pct: number | null;
 }
 
 /** The window totals. Every counter here is the exact sum of the buckets. */

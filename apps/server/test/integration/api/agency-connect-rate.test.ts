@@ -12,7 +12,8 @@ import { randomUUID } from 'node:crypto';
  *    console's `callsConnectRate` / `agentConnectRate` compute it (`human_connects` over `dials`
  *    minus the redials placed; `apps/console/src/utils/agency/insights/rates.ts`);
  *  - the agent record: the roster's per-agent `connect_rate_pct` over the same window and
- *    campaign, and the agent's own scorecard (`/agents/:id/stats`).
+ *    campaign, and the agent's own scorecard (`/agents/:id/stats`): its totals and its
+ *    per-campaign row (`by_campaign[]`, which the agent page and the mobile app render).
  *
  * The seed carries every case the definition has to get right: human, voicemail-coded,
  * auto-stamped (`no_disposition`) and unwritten connects; dials that never bridged; a wrap-up
@@ -153,6 +154,9 @@ describe('one connect rate: /stats, Insights and the agent record agree', () => 
     expect(insights).toBeCloseTo(expectedRate(all), 9);
     expect(stats.connect_rate_pct).toBeCloseTo(insights, 9);
     expect(stats.human_connects).toBe(activity.calls.human_connects);
+    // The rate's own denominator is served, so the card prints the rate as its fraction.
+    expect(stats.first_dials_placed).toBe(activity.calls.dials - activity.calls.redials.placed);
+    expect(stats.connect_rate_pct).toBeCloseTo((stats.human_connects / stats.first_dials_placed) * 100, 9);
   });
 
   it('per agent: the roster\'s and the scorecard\'s connect_rate_pct = the Insights agent row\'s', async () => {
@@ -170,6 +174,14 @@ describe('one connect rate: /stats, Insights and the agent record agree', () => 
       expect(rosterRow.connect_rate_pct, `agent ${i} roster`).toBeCloseTo(insights, 9);
       const scorecard = await get(`/proxy/agency/agents/${id}/stats?${window}&bucket=day`);
       expect(scorecard.totals.connect_rate_pct, `agent ${i} scorecard`).toBeCloseTo(insights, 9);
+      // The scorecard's per-campaign row: the same rate from its own two counts, not
+      // `connected / attempts` (the definition this replaces, which a client used to derive).
+      const campaignRow = (scorecard.by_campaign as Array<{ campaign_id: string; human_connects: number; first_dials: number;
+        connect_rate_pct: number | null; connected: number; attempts: number }>).find((r) => r.campaign_id === campaignId)!;
+      expect(campaignRow.human_connects, `agent ${i} by_campaign`).toBe(row.human_connects);
+      expect(campaignRow.first_dials, `agent ${i} by_campaign`).toBe(row.dials - row.redials);
+      expect(campaignRow.connect_rate_pct, `agent ${i} by_campaign`).toBeCloseTo(insights, 9);
+      expect(campaignRow.connect_rate_pct, `agent ${i} by_campaign`).not.toBeCloseTo((campaignRow.connected / campaignRow.attempts) * 100, 3);
     }
   });
 });

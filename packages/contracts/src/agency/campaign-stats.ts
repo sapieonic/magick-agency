@@ -446,6 +446,13 @@ export interface AgencyCampaignStats {
    * record and the Insights tab divide the same two counts.
    */
   connect_rate_pct: number | null;
+  /**
+   * The connect rate's denominator: PLACED FIRST dials (`dialed_at` set and not a wrap-up
+   * redial). Served so a reader can print the rate as its own fraction (`human_connects` of
+   * this) and floor it on its own denominator, never on {@link attempts_total} (which also
+   * counts redials and queued rows never placed).
+   */
+  first_dials_placed: number;
 
   /**
    * Bridged attempts whose disposition maps to a catalog entry flagged
@@ -645,6 +652,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   unclassified_connects: true,
   machine_connects_available: true,
   connect_rate_pct: true,
+  first_dials_placed: true,
   attempts_success: true,
   success_rate_pct: true,
   aht_seconds: true,

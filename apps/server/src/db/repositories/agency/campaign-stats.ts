@@ -461,6 +461,7 @@ export async function campaignStats(
     // connects over PLACED first dials. A wrap-up redial continues a conversation already
     // counted, and a queued attempt never placed is not a dial.
     connect_rate_pct: ratePct(humanConnects, num('first_dials_placed')),
+    first_dials_placed: num('first_dials_placed'),
     attempts_success: attemptsSuccess,
     // `null`, never `0`, when nothing has bridged — the same imported helper
     // `abandonment_rate_24h_pct` uses, and the same distinction: "nothing has

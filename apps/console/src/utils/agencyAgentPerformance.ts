@@ -2,6 +2,7 @@ import { ON_SHIFT_STATES, ratePct, stateShares } from './agency/metrics';
 import { assignmentEntry } from './agencyAssignmentEntry';
 import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import type { AgencyAgentLiveState } from '../types/agency-campaign';
+import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
 import type {
   AgencyAgentStats,
   AgencyOccupancy,
@@ -340,6 +341,26 @@ export function campaignNameMap(
 /** Talk time for one campaign row, so the table and the totals agree on format. */
 export function rowSeconds(value: number | undefined): string {
   return typeof value === 'number' ? agentSeconds(value) : '—';
+}
+
+/** A campaign row's connect rate, as served (`by_campaign[].connect_rate_pct`). */
+export function rowConnectRate(row: { first_dials: number; connect_rate_pct: number | null }): string {
+  /*
+    The server's rate, never one derived here: it is the totals' definition (human connects
+    over placed first dials) per campaign, and `connected / attempts` is a different number.
+
+    Zero first dials (or a null rate) is "not measured yet", as `connect_rate_pct: null` is on
+    the totals: printing `0%` for a campaign nobody has dialled would be a lie. And the
+    roster's floor, on the rate's own denominator: below AGENCY_ROSTER_MIN_RATE_DENOMINATOR
+    first dials the roster withholds this agent's connect rate (`rates_reportable`), so this
+    table does too, in the roster's words, rather than printing 100% for one dial.
+  */
+  // A row without the served counts (a server from before they were served) reads as not
+  // measured, never as a rate derived here.
+  if (typeof row.first_dials !== 'number' || typeof row.connect_rate_pct !== 'number') return '—';
+  if (row.first_dials <= 0) return '—';
+  if (row.first_dials < AGENCY_ROSTER_MIN_RATE_DENOMINATOR) return 'Not enough calls';
+  return agentPct(row.connect_rate_pct);
 }
 
 /** Whether a stats payload describes a range in which literally nothing happened. */

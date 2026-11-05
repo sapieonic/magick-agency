@@ -763,19 +763,23 @@ build's own calls, defaults pending Manas (`decisions.md` §4).
   last 92 days, IN12); four links untested and two whose lists did not match; the reaper's failed
   uploads unaudited; dead code; stale docs; no alerts on the new metrics. Every fix has a
   mutation-checked test.
+- **One connect rate on every surface, per campaign too:** `by_campaign[]` rows on the agent
+  record carry `human_connects`, `first_dials` and `connect_rate_pct`, and `/stats` serves
+  `first_dials_placed`. The console's agent page and the agent app's Performance screen print each
+  campaign's rate as served ("All campaigns" shows the overall rate in the headline and each
+  campaign's in the breakdown; a picked campaign shows its own), floored on first dials; the
+  campaign Performance card prints "N people answered, of M first dials placed". The app's decoder
+  takes rows without the counts (an older server) and shows a dash, never a derived rate.
 - **Left open:** `health.analysis` is not served (no index-driven read of a range's analysed calls;
-  needs a rollup facet or an index); the mapping's "waiting for calling hours" bucket (needs
-  `timezone` in the covering index, a concurrent rebuild over the roster); override notes in the
-  Call attempts list (the attempt row is mobile wire; the list filter `override_applied` exists);
-  the agent page's per-campaign connect rate and the Performance card's fraction (their wire rows,
-  under `contracts/src/agency/`, need first dials; needs the Dart toolchain to change); Grafana
-  rules applied with the rest of `grafana/` (never applied); the summary's cost on a 1M running
-  campaign (2.5–2.9 s, cached) if the page is kept open on many campaigns at once.; the agent app still
-  computes its own per-campaign connect rate as connected ÷ attempts
-  (`apps/mobile/lib/features/performance/logic/readouts.dart` `rowConnectRate`, and the comment in
-  `agency_wire/lib/src/reads.dart:259`), not IN10's, which needs the Dart toolchain to change; the
-  console's analytics floor `RATE_MIN_ATTEMPTS` still floors `attempts_total`, not the connect
-  rate's placed first dials, because `/stats` does not serve them; and at a window edge a cell's
+  needs a rollup facet or an index; a TODO in `insights/health.ts`); the mapping's "waiting for
+  calling hours" bucket (needs `timezone` in the covering index, a concurrent rebuild over the
+  roster; a TODO in `insights/roster.ts`); override notes in the Call attempts list (the attempt
+  row is mobile wire; the list filter `override_applied` exists; accepted as is); Grafana rules
+  applied with the rest of `grafana/` (never applied; Manas applies them by hand); the summary's
+  cost on a 1M running campaign (2.5–2.9 s, cached) if the page is kept open on many campaigns at
+  once; the console's analytics floor `RATE_MIN_ATTEMPTS` still floors `attempts_total`, not the connect
+  rate's placed first dials (`/stats` now serves `first_dials_placed`, so moving it is a small
+  change; not made here); and at a window edge a cell's
   `success_rate_reportable` can hold while `rates_reportable` does not (a redial's conversation in
   the window, its first dial before it), so a cell should gate on both.
 
@@ -790,13 +794,21 @@ Grafana and build again after merging `main` (#36):
 |---|---|---|
 | `apps/server` | 8036 passed + 42 skipped (404 files) | rest lane 1916 passed + 9 expected fail + 1 skipped (198 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
 | `packages/db` | 428 (25 files) | 562 (53 files) |
-| `apps/console` | 5117 (270 files) | — |
+| `apps/console` | 5122 (270 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 281, `contracts-literals --check` up to date | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean: the contact assignment branch's run, not repeated (no Dart toolchain on this branch's host; it changes no file under `apps/mobile` and no mobile wire shape) | — |
+| `apps/mobile` | `flutter test` 1404, `agency_wire` 399, `flutter analyze` and `dart analyze` (`agency_wire`) clean, Flutter 3.47.7 | — |
+
+After the per-campaign connect rate (`by_campaign[]` connect counts, `/stats` `first_dials_placed`,
+the console and the agent app reading them): `pnpm lint` clean in 8 packages; unit as in the table
+(`apps/server` 8036 + 42 skipped, `packages/contracts` 281, `contracts-literals --check` up to
+date); `packages/db` integration 562; `apps/server` wall-clock lane 15. The rest lane had one
+failure, `pacing-skip.test.ts` "the skip path was never exercised" (1915 passed + 9 expected fail +
+1 skipped beside it): the flake `main` fixed in #37, not yet merged into this branch; that file
+passed 3 of 3 alone on this head and 3 of 3 on the head before the change.
 
 After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
 assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest

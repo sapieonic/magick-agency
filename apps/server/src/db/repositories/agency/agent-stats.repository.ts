@@ -159,13 +159,21 @@ export class AgencyAgentStatsRepository {
       const campaign = campaigns.get(row.campaign_id) ?? {
         campaign_id: row.campaign_id,
         attempts: 0, connected: 0, successes: 0, talk_seconds: 0, wrapup_seconds: 0,
+        human_connects: 0, first_dials: 0, connect_rate_pct: null,
       };
       campaign.attempts += row.attempts;
       campaign.connected += row.connected;
       campaign.successes += row.successes;
       campaign.talk_seconds += row.talk_seconds;
       campaign.wrapup_seconds += row.wrapup_seconds;
+      campaign.human_connects += row.human_connects;
+      campaign.first_dials += row.first_dials;
       campaigns.set(row.campaign_id, campaign);
+    }
+    // Each campaign's connect rate, from its own two counts: the totals' definition per
+    // campaign, so a client never divides `connected` by `attempts` (a different number).
+    for (const campaign of campaigns.values()) {
+      campaign.connect_rate_pct = ratePct(campaign.human_connects, campaign.first_dials);
     }
 
     // A bucket that carries occupancy and no attempts is created here rather than

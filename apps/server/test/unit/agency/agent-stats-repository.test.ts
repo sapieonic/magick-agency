@@ -346,14 +346,20 @@ describe('two campaigns in different zones still sum exactly', () => {
       {
         campaign_id: 'camp-in',
         attempts: 70, connected: 19, successes: 7, talk_seconds: 5700, wrapup_seconds: 700,
+        human_connects: 19, first_dials: 70, connect_rate_pct: expect.closeTo((19 / 70) * 100),
       },
       {
         campaign_id: 'camp-us',
         attempts: 20, connected: 5, successes: 1, talk_seconds: 1500, wrapup_seconds: 200,
+        human_connects: 5, first_dials: 20, connect_rate_pct: 25,
       },
     ]);
     const total = byCampaign.reduce((acc, c) => acc + c.attempts, 0);
     expect(total).toBe(stats.totals.attempts);
+    // The connect rate's two counts fold the same way: the campaigns' sum is the totals' rate.
+    const human = byCampaign.reduce((acc, c) => acc + c.human_connects, 0);
+    const first = byCampaign.reduce((acc, c) => acc + c.first_dials, 0);
+    expect(stats.totals.connect_rate_pct).toBeCloseTo((human / first) * 100);
     expect(stats.totals.campaigns).toBe(2);
   });
 

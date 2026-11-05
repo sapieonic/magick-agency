@@ -52,7 +52,7 @@
     "totals": {
       "attempts": 212,
       "connected": 87,
-      "connect_rate_pct": 41.0377,
+      "connect_rate_pct": 36.8687,
       "successes": 19,
       "success_rate_pct": 21.8391,
       "talk_seconds": 15672.4,
@@ -118,7 +118,10 @@
         "connected": 75,
         "successes": 17,
         "talk_seconds": 13502.4,
-        "wrapup_seconds": 2250
+        "wrapup_seconds": 2250,
+        "human_connects": 64,
+        "first_dials": 168,
+        "connect_rate_pct": 38.0952
       },
       {
         "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
@@ -126,7 +129,10 @@
         "connected": 12,
         "successes": 2,
         "talk_seconds": 2170,
-        "wrapup_seconds": 360
+        "wrapup_seconds": 360,
+        "human_connects": 9,
+        "first_dials": 30,
+        "connect_rate_pct": 30
       }
     ]
   },

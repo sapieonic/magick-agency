@@ -114,7 +114,8 @@ function stats(over: Record<string, unknown> = {}) {
       { bucket_start: '2026-08-20', attempts: 22, connected: 9, successes: 2, talk_seconds: 900, wrapup_seconds: 120 },
     ],
     by_campaign: [
-      { campaign_id: 'camp-1', attempts: 42, connected: 17, successes: 4, talk_seconds: 1800, wrapup_seconds: 240 },
+      { campaign_id: 'camp-1', attempts: 42, connected: 17, successes: 4, talk_seconds: 1800, wrapup_seconds: 240,
+        human_connects: 15, first_dials: 40, connect_rate_pct: 37.5 },
     ],
     ...over,
   };
@@ -366,6 +367,16 @@ describe('AgentPerformancePage — the populated page', () => {
     renderPage();
     const row = await screen.findByTestId('campaign-row-camp-1');
     expect(within(row).getByText('Renewals')).toBeTruthy();
+  });
+
+  it('shows each campaign’s connect rate as served, not connected over dials', async () => {
+    // 15 human connects of 40 first dials = 37.5%, the totals' definition per campaign.
+    // Dividing the row's own `connected` by `attempts` would read 40.5%: a second
+    // "connect rate" beside the real one.
+    renderPage();
+    const row = await screen.findByTestId('campaign-row-camp-1');
+    expect(within(row).getByText('37.5%')).toBeTruthy();
+    expect(within(row).queryByText('40.5%')).toBeNull();
   });
 
   it('carries the agent nav, with THIS surface marked as current', async () => {

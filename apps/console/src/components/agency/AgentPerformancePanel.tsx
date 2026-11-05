@@ -12,6 +12,7 @@ import {
   isEmptyRange,
   occupancyBreakdown,
   occupancySegmentText,
+  rowConnectRate,
   rowSeconds,
   agentWrapupReadout,
   type AgentStatsWindow,
@@ -561,10 +562,7 @@ function CampaignBreakdown({
               <tr>
                 <th scope="col">Campaign</th>
                 <th scope="col">Dials</th>
-                {/* No connect rate per campaign. The product's one connect rate is human
-                    connects over placed first dials (the totals' `connect_rate_pct`), and
-                    `by_campaign[]` carries neither count, only `attempts` and `connected`;
-                    dividing those was a second, different "connect rate" beside the real one. */}
+                <th scope="col">Connect rate</th>
                 <th scope="col">Conversations</th>
                 <th scope="col">Counted</th>
                 <th scope="col">On calls</th>
@@ -575,6 +573,10 @@ function CampaignBreakdown({
                 <tr key={row.campaign_id} data-testid={`campaign-row-${row.campaign_id}`}>
                   <th scope="row">{campaignLabel(row.campaign_id, campaignNames)}</th>
                   <td>{agentCount(row.attempts)}</td>
+                  {/* Served per campaign (the totals' definition), floored on its own
+                      denominator: no first dials reads as an em dash, under the roster's
+                      floor as "Not enough calls". */}
+                  <td>{rowConnectRate(row)}</td>
                   <td>{agentCount(row.connected)}</td>
                   <td>{agentCount(row.successes)}</td>
                   <td>{rowSeconds(row.talk_seconds)}</td>

@@ -152,6 +152,8 @@ interface OldAgencyCampaignStats {
   aht_seconds_including_machine?: number | null;
   avg_wrapup_seconds?: number | null;
   connect_rate_pct?: number | null;
+  // Added deliberately (IN10): the connect rate's own denominator, for its fraction and floor.
+  first_dials_placed?: number;
   human_connects?: number;
   machine_connects?: number;
   unclassified_connects?: number;

@@ -21,7 +21,9 @@ import {
   windowRange,
   staffingSummary,
   agentWrapupReadout,
+  rowConnectRate,
 } from '../../utils/agencyAgentPerformance';
+import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../../types/agency-stats';
 import type {
   AgencyAgentStats,
   AgencyAgentStatsTotals,
@@ -363,6 +365,28 @@ describe('agentHandleTimeReadout and agentWrapupReadout', () => {
     const readout = agentWrapupReadout(totals({ wrapup_seconds: undefined as unknown as number }));
     expect(readout.value).toBe('—');
     expect(readout.known).toBe(false);
+  });
+});
+
+describe('rowConnectRate', () => {
+  it('prints the served rate, never connected over attempts', () => {
+    // The server's rate is the totals' definition per campaign; the helper never divides.
+    expect(rowConnectRate({ first_dials: 40, connect_rate_pct: 25 })).toBe('25%');
+    expect(rowConnectRate({ first_dials: 60, connect_rate_pct: 100 / 3 })).toBe('33.3%');
+  });
+
+  it('returns an em dash with no first dials, a null rate or none served, never 0%', () => {
+    expect(rowConnectRate({ first_dials: 0, connect_rate_pct: null })).toBe('—');
+    expect(rowConnectRate({ first_dials: 30, connect_rate_pct: null })).toBe('—');
+    // A server from before the counts were served.
+    expect(rowConnectRate({} as { first_dials: number; connect_rate_pct: number | null })).toBe('—');
+  });
+
+  it('withholds the rate under the roster’s floor, on the rate’s own denominator', () => {
+    expect(rowConnectRate({ first_dials: 1, connect_rate_pct: 100 })).toBe('Not enough calls');
+    expect(rowConnectRate({ first_dials: AGENCY_ROSTER_MIN_RATE_DENOMINATOR - 1, connect_rate_pct: 25 }))
+      .toBe('Not enough calls');
+    expect(rowConnectRate({ first_dials: AGENCY_ROSTER_MIN_RATE_DENOMINATOR, connect_rate_pct: 25 })).toBe('25%');
   });
 });
 

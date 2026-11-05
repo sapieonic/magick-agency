@@ -26,7 +26,7 @@ void main() {
       final s = AgentStats.fromJson(fixture('reads.json', 'my_stats'));
       expect(s.bucket, StatsBucketUnit.day);
       expect(s.totals.attempts, 212);
-      expect(s.totals.connectRatePct, closeTo(41.04, 0.01));
+      expect(s.totals.connectRatePct, closeTo(36.87, 0.01));
       expect(s.totals.successRatePct, closeTo(21.84, 0.01));
       expect(s.totals.talkSeconds, 15672.4);
       expect(s.totals.wrapupSeconds, 2610);
@@ -36,6 +36,13 @@ void main() {
       expect(s.buckets.map((b) => b.bucketStart.toString()), ['2026-10-27', '2026-10-28']);
       expect(s.buckets.first.bucketStart.toLocalDateTime(), DateTime(2026, 10, 27));
       expect(s.byCampaign.map((r) => r.attempts).reduce((a, b) => a + b), s.totals.attempts);
+      // Each campaign's connect rate is served, and folds to the totals' own.
+      expect(s.byCampaign.first.firstDials, 168);
+      expect(s.byCampaign.first.humanConnects, 64);
+      expect(s.byCampaign.first.connectRatePct, closeTo(38.10, 0.01));
+      final human = s.byCampaign.map((r) => r.humanConnects!).reduce((a, b) => a + b);
+      final first = s.byCampaign.map((r) => r.firstDials!).reduce((a, b) => a + b);
+      expect(s.totals.connectRatePct, closeTo(human / first * 100, 0.001));
       expect(s.isEmpty, isFalse);
     });
 
@@ -46,6 +53,18 @@ void main() {
       expect(s.totals.ahtSeconds, isNull);
       expect(s.totals.occupancy!.isUnmeasured, isTrue);
       expect(s.isEmpty, isTrue);
+    });
+
+    test('a campaign row may lack the connect counts (a server older than them)', () {
+      final json = fixture('reads.json', 'my_stats');
+      final rows = [
+        for (final r in json['by_campaign']! as List<Object?>)
+          Map.of(r! as Map<String, Object?>)..remove('human_connects')..remove('first_dials')..remove('connect_rate_pct'),
+      ];
+      final row = AgentStats.fromJson({...json, 'by_campaign': rows}).byCampaign.first;
+      expect(row.firstDials, isNull);
+      expect(row.humanConnects, isNull);
+      expect(row.connectRatePct, isNull);
     });
 
     test('occupancy may be absent (a server older than the event log)', () {

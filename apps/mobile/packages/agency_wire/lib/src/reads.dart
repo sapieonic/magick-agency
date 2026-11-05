@@ -256,7 +256,8 @@ final class AgentStatsTotals {
   /// Dials where media joined the agent to a person.
   final int connected;
 
-  /// `connected / attempts` (percent), null when nothing was dialled.
+  /// The product's one connect rate (percent): human connects over placed
+  /// first dials (not wrap-up redials). Null when no first dial was placed.
   final double? connectRatePct;
   final int successes;
 
@@ -367,6 +368,9 @@ final class AgentCampaignRow {
     required this.successes,
     required this.talkSeconds,
     required this.wrapupSeconds,
+    this.humanConnects,
+    this.firstDials,
+    this.connectRatePct,
   });
 
   factory AgentCampaignRow.fromJson(Map<String, Object?> j) => AgentCampaignRow(
@@ -376,6 +380,9 @@ final class AgentCampaignRow {
     successes: j.integer('successes'),
     talkSeconds: j.number('talk_seconds'),
     wrapupSeconds: j.number('wrapup_seconds'),
+    humanConnects: j.integerOrNull('human_connects'),
+    firstDials: j.integerOrNull('first_dials'),
+    connectRatePct: j.numberOrNull('connect_rate_pct'),
   );
 
   final String campaignId;
@@ -385,6 +392,21 @@ final class AgentCampaignRow {
   final double talkSeconds;
   final double wrapupSeconds;
 
+  /// The connect rate's numerator on this campaign (conversations coded
+  /// neither voicemail nor `no_disposition`). Null from a server older than
+  /// the field.
+  final int? humanConnects;
+
+  /// The connect rate's denominator on this campaign: placed dials that are
+  /// not wrap-up redials. Null from a server older than the field.
+  final int? firstDials;
+
+  /// `humanConnects / firstDials` (percent): the totals' connect rate on this
+  /// campaign. Null when no first dial was placed, or from an older server.
+  /// Never derive it from [connected] and [attempts]: that is a different
+  /// number.
+  final double? connectRatePct;
+
   @override
   bool operator ==(Object other) =>
       other is AgentCampaignRow &&
@@ -393,10 +415,23 @@ final class AgentCampaignRow {
       other.connected == connected &&
       other.successes == successes &&
       other.talkSeconds == talkSeconds &&
-      other.wrapupSeconds == wrapupSeconds;
+      other.wrapupSeconds == wrapupSeconds &&
+      other.humanConnects == humanConnects &&
+      other.firstDials == firstDials &&
+      other.connectRatePct == connectRatePct;
 
   @override
-  int get hashCode => Object.hash(campaignId, attempts, connected, successes, talkSeconds, wrapupSeconds);
+  int get hashCode => Object.hash(
+    campaignId,
+    attempts,
+    connected,
+    successes,
+    talkSeconds,
+    wrapupSeconds,
+    humanConnects,
+    firstDials,
+    connectRatePct,
+  );
 }
 
 /// The query of `GET /proxy/agency/my-stats`. The server takes only these
