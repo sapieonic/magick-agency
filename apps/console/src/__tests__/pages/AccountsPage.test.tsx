@@ -30,6 +30,7 @@ vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
 }));
 
 import AccountsPage, { accountCreateAccess } from '../../pages/accounts/AccountsPage';
+import type { Membership, Role } from '../../types/auth';
 
 const TENANT = 'tenant-1';
 
@@ -40,7 +41,7 @@ function account(id: string, name: string) {
   };
 }
 
-function membership(role: string, accountId: string | null, tenantId = TENANT) {
+function membership(role: Role, accountId: string | null, tenantId = TENANT): Membership {
   return {
     id: `m-${role}-${accountId}`, user_id: 'u-1', tenant_id: tenantId, account_id: accountId, role,
     status: 'active', invited_by: null, created_at: '', updated_at: '',
@@ -52,7 +53,7 @@ function setup({
   accounts = [account('acct-1', 'Default'), account('acct-2', 'Renewals')],
   activeAccountId = 'acct-1',
 }: {
-  memberships?: ReturnType<typeof membership>[];
+  memberships?: Membership[];
   accounts?: ReturnType<typeof account>[];
   activeAccountId?: string;
 } = {}) {
@@ -105,12 +106,12 @@ describe('AccountsPage — the list', () => {
 });
 
 describe('AccountsPage — who may create', () => {
-  it.each(['tenant_admin', 'tenant_owner'])('offers New account to a tenant-wide %s', (role) => {
+  it.each<Role>(['tenant_admin', 'tenant_owner'])('offers New account to a tenant-wide %s', (role) => {
     setup({ memberships: [membership(role, null)] });
     expect(screen.getByRole('button', { name: /New account/i })).toBeTruthy();
   });
 
-  it.each(['account_admin', 'operator', 'viewer'])('offers nothing to a %s', (role) => {
+  it.each<Role>(['account_admin', 'operator', 'viewer'])('offers nothing to a %s', (role) => {
     setup({ memberships: [membership(role, null)] });
     expect(screen.queryByRole('button', { name: /New account/i })).toBeNull();
     expect(screen.queryByTestId('accounts-scoped-note')).toBeNull();
