@@ -98,7 +98,7 @@ function stats() {
     buckets: [],
     by_campaign: [
       { campaign_id: 'camp-1', attempts: 30, connected: 11, successes: 3, talk_seconds: 900, wrapup_seconds: 120,
-        human_connects: 9, first_dials: 28, connect_rate_pct: (9 / 28) * 100 },
+        human_connects: 9, first_dials: 28, connect_rate_pct: (9 / 28) * 100, rates_reportable: true },
     ],
   };
 }

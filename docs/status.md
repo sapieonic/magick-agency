@@ -764,10 +764,12 @@ build's own calls, defaults pending Manas (`decisions.md` §4).
   uploads unaudited; dead code; stale docs; no alerts on the new metrics. Every fix has a
   mutation-checked test.
 - **One connect rate on every surface, per campaign too:** `by_campaign[]` rows on the agent
-  record carry `human_connects`, `first_dials` and `connect_rate_pct`, and `/stats` serves
+  record carry `human_connects`, `first_dials`, `connect_rate_pct` and `rates_reportable` (the
+  roster's floor on first dials, decided by the server), and `/stats` serves
   `first_dials_placed`. The console's agent page and the agent app's Performance screen print each
   campaign's rate as served ("All campaigns" shows the overall rate in the headline and each
-  campaign's in the breakdown; a picked campaign shows its own), floored on first dials; the
+  campaign's in the breakdown; a picked campaign shows its own), withheld where the row is not
+  reportable (neither client applies the threshold); the
   campaign Performance card prints "N people answered, of M first dials placed". The app's decoder
   takes rows without the counts (an older server) and shows a dash, never a derived rate.
 - **Left open:** `health.analysis` is not served (no index-driven read of a range's analysed calls;
@@ -802,13 +804,13 @@ Grafana and build again after merging `main` (#36):
 | `packages/observability` | 14 | — |
 | `apps/mobile` | `flutter test` 1404, `agency_wire` 399, `flutter analyze` and `dart analyze` (`agency_wire`) clean, Flutter 3.47.7 | — |
 
-After the per-campaign connect rate (`by_campaign[]` connect counts, `/stats` `first_dials_placed`,
-the console and the agent app reading them): `pnpm lint` clean in 8 packages; unit as in the table
-(`apps/server` 8036 + 42 skipped, `packages/contracts` 281, `contracts-literals --check` up to
-date); `packages/db` integration 562; `apps/server` wall-clock lane 15. The rest lane had one
-failure, `pacing-skip.test.ts` "the skip path was never exercised" (1915 passed + 9 expected fail +
-1 skipped beside it): the flake `main` fixed in #37, not yet merged into this branch; that file
-passed 3 of 3 alone on this head and 3 of 3 on the head before the change.
+After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
+`/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8
+packages; unit as in the table (`apps/server` 8036 + 42 skipped, `packages/contracts` 281,
+`contracts-literals --check` up to date); `apps/server` rest lane 1916 passed + 9 expected fail + 1
+skipped, wall-clock lane 15; `packages/db` integration 562. One earlier rest-lane run on this work
+failed `pacing-skip.test.ts` ("the skip path was never exercised"), the flake `main` fixed in #37,
+not yet merged here; it passed 3 of 3 alone, before and after the change.
 
 After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
 assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest

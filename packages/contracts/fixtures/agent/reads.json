@@ -121,7 +121,8 @@
         "wrapup_seconds": 2250,
         "human_connects": 64,
         "first_dials": 168,
-        "connect_rate_pct": 38.0952
+        "connect_rate_pct": 38.0952,
+        "rates_reportable": true
       },
       {
         "campaign_id": "0a1b2c3d-4e5f-4a6b-8c7d-8e9fa0b1c2d3",
@@ -132,7 +133,8 @@
         "wrapup_seconds": 360,
         "human_connects": 9,
         "first_dials": 30,
-        "connect_rate_pct": 30
+        "connect_rate_pct": 30,
+        "rates_reportable": true
       }
     ]
   },

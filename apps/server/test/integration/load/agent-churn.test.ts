@@ -161,7 +161,9 @@ describe('agent churn at floor scale (load)', () => {
     const departures = new Map<string, Array<{ round: number; at: Date }>>();
     const goAway = (sessionId: string, why: string) => {
       away.set(sessionId, why);
-      departures.set(sessionId, [...(departures.get(sessionId) ?? []), { round, at: new Date() }]);
+      const list = departures.get(sessionId) ?? [];
+      list.push({ round, at: new Date() });
+      departures.set(sessionId, list);
     };
     const churn = async () => {
       const present = world.agents.filter((a) => a.attached && !a.left && !away.has(a.sessionId) && !queuedBreak.has(a.sessionId));
@@ -358,14 +360,14 @@ describe('agent churn at floor scale (load)', () => {
     const callsPerAgent = new Map(byAgent.map((r) => [r.reserved_agent_id, r.n]));
     const stillDialing = (campaignId: string, fromRound: number) =>
       (pausedAt.get(campaignId) ?? Infinity) > fromRound + A_WHILE;
-    const nextDeparture = (r: { sessionId: string; at: Date }) =>
-      (departures.get(r.sessionId) ?? []).find((d) => d.at > r.at);
-    const checkable = returns.filter((r) => r.pending > 40 && stillDialing(r.campaignId, r.round)
-      && (nextDeparture(r)?.round ?? Infinity) > r.round + A_WHILE
-      && !world.agents.find((a) => a.sessionId === r.sessionId)!.left);
+    const checkable = returns
+      .map((r) => ({ ...r, next: (departures.get(r.sessionId) ?? []).find((d) => d.at > r.at) }))
+      .filter((r) => r.pending > 40 && stillDialing(r.campaignId, r.round)
+        && (r.next?.round ?? Infinity) > r.round + A_WHILE
+        && !world.agents.find((a) => a.sessionId === r.sessionId)!.left);
     expect(checkable.length, summary).toBeGreaterThan(10);
     for (const r of checkable) {
-      const until = nextDeparture(r)?.at;
+      const until = r.next?.at;
       const again = rows.some((x) => x.reserved_agent_id === r.sessionId && x.created_at > r.at
         && (until === undefined || x.created_at < until));
       expect(again, `${r.label} came back in round ${r.round} and was never reserved again — ${summary}`).toBe(true);

@@ -251,10 +251,16 @@ export interface AgencyAgentCampaignRow {
   /**
    * `human_connects / first_dials` (percent): the product's one connect rate, the same as
    * {@link AgencyAgentStatsTotals.connect_rate_pct} over this campaign's rows. `null` when no
-   * first dial was placed. A consumer floors it on `first_dials`
-   * (`AGENCY_ROSTER_MIN_RATE_DENOMINATOR`), never on `attempts`.
+   * first dial was placed.
    */
   connect_rate_pct: number | null;
+  /**
+   * `first_dials >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR`: enough first dials to quote
+   * {@link connect_rate_pct} as a number, the roster's own gate (`AgencyRosterAgentRow`). A
+   * consumer renders the rate as words when this is false and never applies the threshold
+   * itself.
+   */
+  rates_reportable: boolean;
 }
 
 /** The window totals. Every counter here is the exact sum of the buckets. */

@@ -159,6 +159,11 @@ describe('the scorecard\'s connect rate (human connects over placed first dials)
     expect(s.totals.connect_rate_pct).toBeCloseTo((10 / 40) * 100);
     expect(s.totals.attempts).toBe(50);
     expect(s.totals.connected).toBe(20);
+    // Per campaign, the same rate from its own counts, and the roster's floor on its first
+    // dials decided here (25 first dials quotable, 15 not), so no client applies it.
+    const byId = new Map(s.by_campaign.map((c) => [c.campaign_id, c]));
+    expect(byId.get('c1')).toMatchObject({ connect_rate_pct: (6 / 25) * 100, rates_reportable: true });
+    expect(byId.get('c2')).toMatchObject({ connect_rate_pct: (4 / 15) * 100, rates_reportable: false });
   });
 });
 
@@ -346,12 +351,12 @@ describe('two campaigns in different zones still sum exactly', () => {
       {
         campaign_id: 'camp-in',
         attempts: 70, connected: 19, successes: 7, talk_seconds: 5700, wrapup_seconds: 700,
-        human_connects: 19, first_dials: 70, connect_rate_pct: expect.closeTo((19 / 70) * 100),
+        human_connects: 19, first_dials: 70, connect_rate_pct: expect.closeTo((19 / 70) * 100), rates_reportable: true,
       },
       {
         campaign_id: 'camp-us',
         attempts: 20, connected: 5, successes: 1, talk_seconds: 1500, wrapup_seconds: 200,
-        human_connects: 5, first_dials: 20, connect_rate_pct: 25,
+        human_connects: 5, first_dials: 20, connect_rate_pct: 25, rates_reportable: true,
       },
     ]);
     const total = byCampaign.reduce((acc, c) => acc + c.attempts, 0);

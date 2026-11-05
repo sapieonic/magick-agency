@@ -2,7 +2,6 @@ import { ON_SHIFT_STATES, ratePct, stateShares } from './agency/metrics';
 import { assignmentEntry } from './agencyAssignmentEntry';
 import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import type { AgencyAgentLiveState } from '../types/agency-campaign';
-import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
 import type {
   AgencyAgentStats,
   AgencyOccupancy,
@@ -344,22 +343,18 @@ export function rowSeconds(value: number | undefined): string {
 }
 
 /** A campaign row's connect rate, as served (`by_campaign[].connect_rate_pct`). */
-export function rowConnectRate(row: { first_dials: number; connect_rate_pct: number | null }): string {
+export function rowConnectRate(row: { connect_rate_pct: number | null; rates_reportable: boolean }): string {
   /*
-    The server's rate, never one derived here: it is the totals' definition (human connects
-    over placed first dials) per campaign, and `connected / attempts` is a different number.
+    The server's rate and the server's floor, never derived here: the rate is the totals'
+    definition (human connects over placed first dials) per campaign, and `connected /
+    attempts` is a different number. `rates_reportable` is the roster's own gate over those
+    first dials, so this table withholds the rate where the roster does, in its words.
 
-    Zero first dials (or a null rate) is "not measured yet", as `connect_rate_pct: null` is on
-    the totals: printing `0%` for a campaign nobody has dialled would be a lie. And the
-    roster's floor, on the rate's own denominator: below AGENCY_ROSTER_MIN_RATE_DENOMINATOR
-    first dials the roster withholds this agent's connect rate (`rates_reportable`), so this
-    table does too, in the roster's words, rather than printing 100% for one dial.
+    No rate (none placed, or a server from before it was served) is "not measured yet": an
+    em dash, never `0%` for a campaign nobody has dialled.
   */
-  // A row without the served counts (a server from before they were served) reads as not
-  // measured, never as a rate derived here.
-  if (typeof row.first_dials !== 'number' || typeof row.connect_rate_pct !== 'number') return '—';
-  if (row.first_dials <= 0) return '—';
-  if (row.first_dials < AGENCY_ROSTER_MIN_RATE_DENOMINATOR) return 'Not enough calls';
+  if (typeof row.connect_rate_pct !== 'number') return '—';
+  if (row.rates_reportable !== true) return 'Not enough calls';
   return agentPct(row.connect_rate_pct);
 }
 

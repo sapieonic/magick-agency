@@ -325,6 +325,10 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
       + 'so they don’t count towards this rate.';
   }
 
+  const answeredOf = typeof firstDials === 'number'
+    ? `people answered, of ${plural(firstDials, 'first dial')} placed`
+    : 'people answered';
+
   return {
     value: pct(rate),
     detail: 'Calls where a person answered, out of every first dial placed — including the ones nobody picked up. Wrap-up redials are not counted again.',
@@ -336,12 +340,7 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     // the numerator alone.
     denominator:
       typeof humans === 'number'
-        ? {
-          lead: formatCount(humans),
-          rest: typeof firstDials === 'number'
-            ? `people answered, of ${formatCount(firstDials)} first ${firstDials === 1 ? 'dial' : 'dials'} placed`
-            : 'people answered',
-        }
+        ? { lead: formatCount(humans), rest: answeredOf }
         : null,
     scale: { kind: 'fill', percent: clampPercent(rate), tone: 'accent' },
     known: true,

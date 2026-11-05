@@ -371,6 +371,7 @@ final class AgentCampaignRow {
     this.humanConnects,
     this.firstDials,
     this.connectRatePct,
+    this.ratesReportable,
   });
 
   factory AgentCampaignRow.fromJson(Map<String, Object?> j) => AgentCampaignRow(
@@ -383,6 +384,7 @@ final class AgentCampaignRow {
     humanConnects: j.integerOrNull('human_connects'),
     firstDials: j.integerOrNull('first_dials'),
     connectRatePct: j.numberOrNull('connect_rate_pct'),
+    ratesReportable: j.boolOrNull('rates_reportable'),
   );
 
   final String campaignId;
@@ -407,6 +409,10 @@ final class AgentCampaignRow {
   /// number.
   final double? connectRatePct;
 
+  /// Enough first dials to quote [connectRatePct] as a number (the roster's
+  /// gate, decided by the server). Null from an older server.
+  final bool? ratesReportable;
+
   @override
   bool operator ==(Object other) =>
       other is AgentCampaignRow &&
@@ -418,7 +424,8 @@ final class AgentCampaignRow {
       other.wrapupSeconds == wrapupSeconds &&
       other.humanConnects == humanConnects &&
       other.firstDials == firstDials &&
-      other.connectRatePct == connectRatePct;
+      other.connectRatePct == connectRatePct &&
+      other.ratesReportable == ratesReportable;
 
   @override
   int get hashCode => Object.hash(
@@ -431,6 +438,7 @@ final class AgentCampaignRow {
     humanConnects,
     firstDials,
     connectRatePct,
+    ratesReportable,
   );
 }
 

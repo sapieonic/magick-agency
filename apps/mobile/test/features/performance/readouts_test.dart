@@ -5,20 +5,16 @@ import 'package:magick_agency_agent/features/performance/logic/readouts.dart';
 
 import 'support.dart';
 
-/// A campaign row with the served connect counts; [rate] defaults to
-/// `humanConnects / firstDials`, as the server computes it.
-AgentCampaignRow row({int attempts = 0, int connected = 0, int? firstDials, int? humanConnects, double? rate}) =>
-    AgentCampaignRow(
+/// A campaign row with the served connect rate and the server's floor.
+AgentCampaignRow row({int attempts = 0, int connected = 0, double? rate, bool? reportable}) => AgentCampaignRow(
       campaignId: 'c1',
       attempts: attempts,
       connected: connected,
       successes: 0,
       talkSeconds: 0,
       wrapupSeconds: 0,
-      humanConnects: humanConnects,
-      firstDials: firstDials,
-      connectRatePct: rate ??
-          (firstDials != null && humanConnects != null && firstDials > 0 ? humanConnects / firstDials * 100 : null),
+      connectRatePct: rate,
+      ratesReportable: reportable,
     );
 
 void main() {
@@ -137,24 +133,21 @@ void main() {
     });
   });
 
-  group('rowConnectRate (served, with the console\'s floor)', () {
-    test('no first dials, a null rate or none served is a dash, not 0%', () {
-      expect(rowConnectRate(row(firstDials: 0, humanConnects: 0)), '—');
-      expect(rowConnectRate(row(attempts: 30, connected: 12, firstDials: 30)), '—'); // rate null
+  group('rowConnectRate (served, with the server\'s floor)', () {
+    test('a null rate or none served is a dash, not 0%', () {
+      expect(rowConnectRate(row(reportable: false)), '—');
       // A server older than the field: never derived from connected / attempts.
       expect(rowConnectRate(row(attempts: 142, connected: 54)), '—');
     });
 
-    test('under 20 first dials the rate is withheld', () {
-      expect(rosterMinRateDenominator, 20);
-      expect(rowConnectRate(row(firstDials: 1, humanConnects: 1)), 'Not enough calls');
-      expect(rowConnectRate(row(attempts: 40, firstDials: 19, humanConnects: 10)), 'Not enough calls');
+    test('not reportable is withheld, in the roster\'s words', () {
+      expect(rowConnectRate(row(rate: 100, reportable: false)), 'Not enough calls');
     });
 
-    test('at the floor the served rate is shown, not connected over attempts', () {
-      expect(rowConnectRate(row(firstDials: 20, humanConnects: 7)), '35%');
-      // 54 / 142 would be 38%; the served rate (40 of 130 first dials) is 30.8%.
-      expect(rowConnectRate(row(attempts: 142, connected: 54, firstDials: 130, humanConnects: 40)), '30.8%');
+    test('reportable shows the served rate, not connected over attempts', () {
+      expect(rowConnectRate(row(rate: 35, reportable: true)), '35%');
+      // 54 / 142 would be 38%; the served rate is 30.8%.
+      expect(rowConnectRate(row(attempts: 142, connected: 54, rate: 40 / 130 * 100, reportable: true)), '30.8%');
     });
   });
 

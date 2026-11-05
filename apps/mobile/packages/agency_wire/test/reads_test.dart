@@ -40,6 +40,7 @@ void main() {
       expect(s.byCampaign.first.firstDials, 168);
       expect(s.byCampaign.first.humanConnects, 64);
       expect(s.byCampaign.first.connectRatePct, closeTo(38.10, 0.01));
+      expect(s.byCampaign.first.ratesReportable, isTrue);
       final human = s.byCampaign.map((r) => r.humanConnects!).reduce((a, b) => a + b);
       final first = s.byCampaign.map((r) => r.firstDials!).reduce((a, b) => a + b);
       expect(s.totals.connectRatePct, closeTo(human / first * 100, 0.001));
@@ -59,12 +60,13 @@ void main() {
       final json = fixture('reads.json', 'my_stats');
       final rows = [
         for (final r in json['by_campaign']! as List<Object?>)
-          Map.of(r! as Map<String, Object?>)..remove('human_connects')..remove('first_dials')..remove('connect_rate_pct'),
+          Map.of(r! as Map<String, Object?>)..remove('human_connects')..remove('first_dials')..remove('connect_rate_pct')..remove('rates_reportable'),
       ];
       final row = AgentStats.fromJson({...json, 'by_campaign': rows}).byCampaign.first;
       expect(row.firstDials, isNull);
       expect(row.humanConnects, isNull);
       expect(row.connectRatePct, isNull);
+      expect(row.ratesReportable, isNull);
     });
 
     test('occupancy may be absent (a server older than the event log)', () {

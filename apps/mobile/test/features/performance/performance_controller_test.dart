@@ -172,9 +172,9 @@ void main() {
       buckets: [bucket('2026-10-12', 40, 12), bucket('2026-10-14', 52, 22)],
       byCampaign: const [
         AgentCampaignRow(campaignId: 'c1', attempts: 130, connected: 50, successes: 11, talkSeconds: 9000, wrapupSeconds: 0,
-            humanConnects: 42, firstDials: 120, connectRatePct: 35),
+            humanConnects: 42, firstDials: 120, connectRatePct: 35, ratesReportable: true),
         AgentCampaignRow(campaignId: 'c2', attempts: 12, connected: 4, successes: 1, talkSeconds: 1390, wrapupSeconds: 0,
-            humanConnects: 3, firstDials: 12, connectRatePct: 25),
+            humanConnects: 3, firstDials: 12, connectRatePct: 25, ratesReportable: false),
       ],
     );
     final v = buildPerformanceView(

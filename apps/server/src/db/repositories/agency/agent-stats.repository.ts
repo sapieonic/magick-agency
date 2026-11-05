@@ -18,11 +18,12 @@ import {
   foldOccupancy,
   type AgentStatsParams,
 } from '../../../agency/agent-record.js';
-import type {
-  AgencyAgentOccupancy,
-  AgencyAgentStats,
-  AgencyAgentStatsBucket,
-  AgencyAgentCampaignRow,
+import {
+  AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+  type AgencyAgentOccupancy,
+  type AgencyAgentStats,
+  type AgencyAgentStatsBucket,
+  type AgencyAgentCampaignRow,
 } from '@magick-agency/contracts/agency';
 import {
   AGENCY_ATTEMPT_METRICS_SQL,
@@ -146,7 +147,8 @@ export class AgencyAgentStatsRepository {
       return fresh;
     };
 
-    const campaigns = new Map<string, AgencyAgentCampaignRow>();
+    // The served row less its two derived fields, which are set once the counts are final.
+    const campaigns = new Map<string, Omit<AgencyAgentCampaignRow, 'connect_rate_pct' | 'rates_reportable'>>();
 
     for (const row of attemptRows) {
       const bucket = bucketFor(row.bucket_start);
@@ -159,7 +161,7 @@ export class AgencyAgentStatsRepository {
       const campaign = campaigns.get(row.campaign_id) ?? {
         campaign_id: row.campaign_id,
         attempts: 0, connected: 0, successes: 0, talk_seconds: 0, wrapup_seconds: 0,
-        human_connects: 0, first_dials: 0, connect_rate_pct: null,
+        human_connects: 0, first_dials: 0,
       };
       campaign.attempts += row.attempts;
       campaign.connected += row.connected;
@@ -169,11 +171,6 @@ export class AgencyAgentStatsRepository {
       campaign.human_connects += row.human_connects;
       campaign.first_dials += row.first_dials;
       campaigns.set(row.campaign_id, campaign);
-    }
-    // Each campaign's connect rate, from its own two counts: the totals' definition per
-    // campaign, so a client never divides `connected` by `attempts` (a different number).
-    for (const campaign of campaigns.values()) {
-      campaign.connect_rate_pct = ratePct(campaign.human_connects, campaign.first_dials);
     }
 
     // A bucket that carries occupancy and no attempts is created here rather than
@@ -202,10 +199,21 @@ export class AgencyAgentStatsRepository {
       };
     });
 
-    // The connect rate's two counts (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL), summed over
-    // the same attempt rows the buckets fold; neither is on a bucket, only the rate is served.
-    const connect = attemptRows.reduce(
-      (acc, row) => ({ human: acc.human + row.human_connects, first: acc.first + row.first_dials }),
+    // Each campaign's connect rate, from its own two counts: the totals' definition per
+    // campaign, so a client never divides `connected` by `attempts` (a different number), and
+    // its floor on those first dials, decided here as the roster decides it.
+    const byCampaign: AgencyAgentCampaignRow[] = [...campaigns.values()].map((c) => ({
+      ...c,
+      connect_rate_pct: ratePct(c.human_connects, c.first_dials),
+      rates_reportable: c.first_dials >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+    }));
+    // The totals' two counts are the campaigns' sums (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL).
+    const connect = byCampaign.reduce(
+      (acc, c) => {
+        acc.human += c.human_connects;
+        acc.first += c.first_dials;
+        return acc;
+      },
       { human: 0, first: 0 },
     );
     const totals = wireBuckets.reduce(
@@ -251,7 +259,7 @@ export class AgencyAgentStatsRepository {
         occupancy,
       },
       buckets: wireBuckets,
-      by_campaign: [...campaigns.values()],
+      by_campaign: byCampaign,
     };
   }
 

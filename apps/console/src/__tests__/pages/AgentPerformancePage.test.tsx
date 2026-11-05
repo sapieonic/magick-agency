@@ -115,7 +115,7 @@ function stats(over: Record<string, unknown> = {}) {
     ],
     by_campaign: [
       { campaign_id: 'camp-1', attempts: 42, connected: 17, successes: 4, talk_seconds: 1800, wrapup_seconds: 240,
-        human_connects: 15, first_dials: 40, connect_rate_pct: 37.5 },
+        human_connects: 15, first_dials: 40, connect_rate_pct: 37.5, rates_reportable: true },
     ],
     ...over,
   };
