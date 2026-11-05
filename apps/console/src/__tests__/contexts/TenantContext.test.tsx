@@ -227,6 +227,34 @@ describe('setActiveTenantId', () => {
   });
 });
 
+describe('reloadAccounts across a tenant switch', () => {
+  it('drops a reload that lands after the switch, so the old tenant\'s accounts never reach the new one', async () => {
+    const ACCOUNT_B: Account = { ...ACCOUNT_DEFAULT, id: 'acct-b', tenant_id: 't-b', name: 'B Default' };
+    const ACCOUNT_A_NEW: Account = { ...ACCOUNT_DEFAULT, id: 'acct-a2', name: 'A Second' };
+    setupAuth([TENANT_A, TENANT_B], [TENANT_MEMBERSHIP, mem({ id: 'm-b', tenant_id: 't-b', role: 'tenant_admin' })]);
+
+    const { result } = renderHook(() => useTenant(), { wrapper });
+    await waitFor(() => expect(result.current.accountId).toBe('acct-1'));
+
+    // The Accounts page reloads after a create in tenant A; the request is slow.
+    let finishStaleReload!: (accounts: Account[]) => void;
+    mocks.listAccounts.mockImplementationOnce(() => new Promise<Account[]>((resolve) => { finishStaleReload = resolve; }));
+    act(() => { result.current.reloadAccounts(); });
+
+    // Meanwhile the person switches to tenant B, whose list arrives first.
+    mocks.listAccounts.mockResolvedValue([ACCOUNT_B]);
+    act(() => { result.current.setActiveTenantId('t-b'); });
+    await waitFor(() => expect(result.current.accountId).toBe('acct-b'));
+
+    // Now tenant A's reload answers.
+    await act(async () => { finishStaleReload([ACCOUNT_DEFAULT, ACCOUNT_A_NEW]); });
+
+    expect(result.current.tenantId).toBe('t-b');
+    expect(result.current.accounts).toEqual([ACCOUNT_B]);
+    expect(result.current.accountId).toBe('acct-b');
+  });
+});
+
 describe('setActiveAccountId', () => {
   it('sets the account id', async () => {
     setupAuth([TENANT_A], [TENANT_MEMBERSHIP, ACCOUNT_MEMBERSHIP]);

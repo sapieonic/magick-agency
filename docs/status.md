@@ -1142,6 +1142,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
+| Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
 
 ## Deployment invariants
 

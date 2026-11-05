@@ -5,6 +5,8 @@ import { AgencySidebar } from './AgencySidebar';
 import { TenantSwitcher } from './TenantSwitcher';
 import { AccountSwitcher } from './AccountSwitcher';
 import { useTenant } from '../../contexts/TenantContext';
+import { useAuth } from '../../contexts/AuthContext';
+import { accountCreateAccess } from '../../utils/accountCreateAccess';
 import { useProductSurface } from '../../analytics/useProductSurface';
 import styles from './AgencyLayout.module.css';
 
@@ -25,7 +27,9 @@ import styles from './AgencyLayout.module.css';
  */
 export function AgencyLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const { accountId, accounts } = useTenant();
+  const { accountId, accounts, tenantId } = useTenant();
+  const { memberships } = useAuth();
+  const canCreateAccount = accountCreateAccess(memberships, tenantId) === 'allowed';
   // Every event fired inside this workspace belongs to the agency product. Set
   // here for the same reason the shell exists: it is the one place that knows
   // this for everything mounted under it.
@@ -88,6 +92,11 @@ export function AgencyLayout() {
                   ? 'This workspace has no accounts yet. An account is where campaigns, contacts and the Do Not Call list live, so one has to exist before the Agency Dialer can be used.'
                   : 'Choose an account from the switcher above. Campaigns, rosters and dialing all belong to a single account.'}
               </p>
+              {accounts.length === 0 && canCreateAccount && (
+                <p>
+                  <Link to="/app/accounts" data-testid="agency-create-account-link">Create an account</Link>
+                </p>
+              )}
             </div>
           </main>
         ) : (

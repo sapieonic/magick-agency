@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../../contexts/FeatureFlagsContext', () => ({ useFeatureFlags: mocks.useFeatureFlags }));
 vi.mock('../../contexts/GovernanceContext', () => ({ useGovernance: mocks.useGovernance }));
+vi.mock('../../contexts/TenantContext', () => ({ useTenant: () => ({ role: 'account_admin' }) }));
 
 import { GlobalSearch } from '../../components/common/GlobalSearch';
 

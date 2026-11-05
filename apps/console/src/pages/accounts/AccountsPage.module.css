@@ -1,0 +1,83 @@
+/* ── Layout ───────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.loadingWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+}
+
+/* ── Table ───────────────────────────────────── */
+
+.tableCard {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+.tableWrap {
+  overflow-x: auto;
+}
+
+.nameCell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.currentBadge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.muted {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.actionsCell {
+  text-align: right;
+}
+
+/* ── Notes and modal ─────────────────────────── */
+
+.scopedNote {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 6px 0 0;
+}
+
+.modalFooter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}

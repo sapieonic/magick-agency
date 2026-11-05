@@ -29,11 +29,11 @@ const AGENCY_PERMISSIONS: Permission[] = [
 // (`proxy.contact_lists.*` → `agency.campaigns.*`, `proxy.prompts.*` →
 // `agency.analysis_profiles.*`, `proxy.phone_numbers.read` →
 // `agency.phone_numbers.read`). Permissions for AI, credits,
-// API keys, tenant/account administration and number management do not
-// exist here, so they have no `it.each` rows.
+// API keys, tenant administration, account update/delete and number management
+// do not exist here, so they have no `it.each` rows.
 const PRE_EXISTING_PERMISSIONS: Permission[] = [
   'tenant.read',
-  'account.read',
+  'account.read', 'account.create',
   'user.invite', 'user.update_role', 'user.remove',
   'agency.analysis_profiles.write', 'agency.analysis_profiles.read',
   'agency.campaigns.read', 'agency.campaigns.write',

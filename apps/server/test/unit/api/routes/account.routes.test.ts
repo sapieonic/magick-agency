@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 /**
- * Route-level tests for `GET /accounts/mine`: an `agent`-role user can never resolve their
+ * Route-level tests for the account routes: `GET /accounts` (its account-scope
+ * confinement), `GET /accounts/mine` and `POST /accounts`.
+ *
+ * `GET /accounts/mine`: an `agent`-role user can never resolve their
  * account via `GET /accounts` (floors at `account.read` = `viewer`, and
  * `agent` sits below `viewer` in ROLE_HIERARCHY by design), so the console's
  * `TenantContext` never sets an active account and the feature-flag context
@@ -23,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   membershipRepository: {
     findByUserAndTenant: vi.fn(),
   },
+  audit: { log: vi.fn() },
+  createTenantAccount: vi.fn(),
 }));
 
 // Auth/tenant-context stubbed — these tests are about the route's own
@@ -34,27 +39,23 @@ vi.mock('../../../../src/auth/session.middleware.js', () => ({
 vi.mock('../../../../src/api/middleware/tenant-context.middleware.js', () => ({
   tenantContextMiddleware: async () => {},
 }));
-vi.mock('../../../../src/rbac/rbac.middleware.js', () => ({
-  // Real behaviour, not a blanket stub: /accounts (GET, plain list) must
-  // still 403 an agent, which is the exact defect this fix works around
-  // rather than removes. Only /mine must reach the handler unconditionally.
-  requirePermission: (permission: string) => async (request: any, reply: any) => {
-    const role = request.membership?.role;
-    const floor: Record<string, number> = {
-      agent: 5, viewer: 10, operator: 20, account_admin: 30, tenant_admin: 40, tenant_owner: 50,
-    };
-    const requiredFloor: Record<string, number> = { 'account.read': 10, 'account.create': 40, 'account.update': 30, 'account.delete': 40 };
-    if (!role || (floor[role] ?? 0) < (requiredFloor[permission] ?? 0)) {
-      return reply.code(403).send({ error: 'Forbidden', message: `Requires ${permission}` });
-    }
-  },
-}));
-
+// RBAC is NOT mocked: `requirePermission` is pure (the membership's role against the
+// contract's PERMISSION_MATRIX), so every floor asserted here is the real one. An agent
+// must still be 403'd by the plain list route; only /mine skips the check.
 vi.mock('@magick-agency/db/repositories/account.repository', () => ({
   accountRepository: mocks.accountRepository,
 }));
 vi.mock('@magick-agency/db/repositories/membership.repository', () => ({
   membershipRepository: mocks.membershipRepository,
+}));
+vi.mock('../../../../src/audit/platform/audit-logger.js', () => ({
+  platformAuditLogger: mocks.audit,
+}));
+// The write itself (transaction, tenant lock, name rule, slug) is `createTenantAccount`'s,
+// covered on real Postgres in `test/integration/api/account.routes.test.ts`; here it is the
+// route's job that is pinned: who may call, what is validated, what each outcome answers.
+vi.mock('../../../../src/api/routes/helpers/create-account.js', () => ({
+  createTenantAccount: mocks.createTenantAccount,
 }));
 import Fastify from 'fastify';
 import { accountRoutes } from '../../../../src/api/routes/account.routes.js';
@@ -262,5 +263,134 @@ describe('account.routes — GET /accounts account-scope enforcement (sibling-ac
     expect(res.json().accounts).toHaveLength(2);
     expect(mocks.accountRepository.findByIdInTenant).not.toHaveBeenCalled();
     await app.close();
+  });
+});
+
+/** `POST /accounts`: a tenant admin adds an account. */
+describe('account.routes — POST /accounts', () => {
+  const created = account({ id: 'acct-new', name: 'East Coast Sales', slug: 'east-coast-sales' });
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.createTenantAccount.mockResolvedValue({ status: 'created', account: created });
+  });
+
+  async function post(membership: { role: string; account_id?: string | null } | undefined, body: unknown) {
+    const app = await buildApp(membership ? { membership } : {});
+    const res = await app.inject({ method: 'POST', url: '/accounts', payload: body as Record<string, unknown> });
+    await app.close();
+    return res;
+  }
+
+  it.each(['tenant_admin', 'tenant_owner'])('a tenant-wide %s creates it: 201 with the row, the name trimmed', async (role) => {
+    const res = await post({ role, account_id: null }, { name: '  East Coast Sales  ' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().account).toMatchObject({ id: 'acct-new', name: 'East Coast Sales', slug: 'east-coast-sales' });
+    expect(mocks.createTenantAccount).toHaveBeenCalledWith(TENANT, 'East Coast Sales', expect.anything());
+  });
+
+  it('starts the account at zero concurrent calls: capacity is a super-admin act (decision AA4)', async () => {
+    await post({ role: 'tenant_admin', account_id: null }, { name: 'Renewals' });
+
+    expect(mocks.createTenantAccount).toHaveBeenCalledWith(TENANT, 'Renewals', { initialMaxConcurrentCalls: 0 });
+  });
+
+  it('writes an account.created audit row filed under the new account', async () => {
+    const res = await post({ role: 'tenant_admin', account_id: null }, { name: 'East Coast Sales' });
+
+    expect(res.statusCode).toBe(201);
+    expect(mocks.audit.log).toHaveBeenCalledTimes(1);
+    expect(mocks.audit.log).toHaveBeenCalledWith(expect.objectContaining({
+      tenant_id: TENANT,
+      account_id: 'acct-new',
+      action: 'account.created',
+      resource_type: 'account',
+      resource_id: 'acct-new',
+      details: { name: 'East Coast Sales', slug: 'east-coast-sales' },
+      actor_type: 'human',
+      user_id: 'user-1',
+    }));
+  });
+
+  it.each(['account_admin', 'operator', 'viewer', 'agent'])('the real RBAC floor refuses a %s (403) and nothing is written', async (role) => {
+    const res = await post({ role, account_id: null }, { name: 'Renewals' });
+
+    expect(res.statusCode).toBe(403);
+    expect(mocks.createTenantAccount).not.toHaveBeenCalled();
+    expect(mocks.audit.log).not.toHaveBeenCalled();
+  });
+
+  it('refuses a request with no membership at all (403)', async () => {
+    const res = await post(undefined, { name: 'Renewals' });
+    expect(res.statusCode).toBe(403);
+    expect(mocks.createTenantAccount).not.toHaveBeenCalled();
+  });
+
+  it('refuses a tenant_admin whose seat is scoped to one account (403 tenant_wide_membership_required)', async () => {
+    const res = await post({ role: 'tenant_admin', account_id: 'acct-1' }, { name: 'Renewals' });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ code: 'tenant_wide_membership_required' });
+    expect(res.json().message).toMatch(/access to the whole workspace/);
+    expect(mocks.createTenantAccount).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a missing name', {}],
+    ['a blank name', { name: '   ' }],
+    ['a name over 100 characters', { name: 'x'.repeat(101) }],
+    ['a name with a newline', { name: 'Sales\nTeam' }],
+    ['a name with a zero-width space', { name: 'Sales\u200b' }],
+    ['a name with a bidi override', { name: '\u202eselaS' }],
+    ['a name with a line separator', { name: 'Sales\u2028Team' }],
+    ['a name with a C1 control', { name: 'Sales\u0085' }],
+    ['a non-string name', { name: 42 }],
+  ])('answers 400 for %s', async (_label, body) => {
+    const res = await post({ role: 'tenant_admin', account_id: null }, body);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe('Bad Request');
+    expect(mocks.createTenantAccount).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['exactly 100 characters', 'x'.repeat(100)],
+    ['accents', 'Crème Brûlée'],
+    ['another script', '営業チーム'],
+    ['inner punctuation and spaces', 'North & South — Renewals'],
+  ])('accepts a name with %s', async (_label, name) => {
+    const res = await post({ role: 'tenant_admin', account_id: null }, { name });
+    expect(res.statusCode).toBe(201);
+    expect(mocks.createTenantAccount).toHaveBeenCalledWith(TENANT, name, { initialMaxConcurrentCalls: 0 });
+  });
+
+  it('answers 409 account_name_taken when the helper reports the name taken, and audits nothing', async () => {
+    mocks.createTenantAccount.mockResolvedValue({ status: 'name_taken' });
+
+    const res = await post({ role: 'tenant_admin', account_id: null }, { name: 'Renewals' });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'Conflict', code: 'account_name_taken' });
+    expect(res.json().message).toContain('"Renewals"');
+    expect(mocks.audit.log).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 when the tenant was deleted under the request', async () => {
+    mocks.createTenantAccount.mockResolvedValue({ status: 'tenant_not_found' });
+
+    const res = await post({ role: 'tenant_admin', account_id: null }, { name: 'Renewals' });
+
+    expect(res.statusCode).toBe(404);
+    expect(mocks.audit.log).not.toHaveBeenCalled();
+  });
+
+  it('does not swallow a database error', async () => {
+    mocks.createTenantAccount.mockRejectedValue(Object.assign(new Error('boom'), { code: '23503' }));
+
+    const res = await post({ role: 'tenant_admin', account_id: null }, { name: 'Renewals' });
+
+    expect(res.statusCode).toBe(500);
+    expect(mocks.audit.log).not.toHaveBeenCalled();
   });
 });

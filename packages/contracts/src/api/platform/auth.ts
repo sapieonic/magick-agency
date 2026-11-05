@@ -71,6 +71,46 @@ export interface AccountsListResponse {
   accounts: Account[];
 }
 
+/** The longest account name either create route accepts (after trimming). */
+export const ACCOUNT_NAME_MAX_LENGTH = 100;
+
+/**
+ * `POST /accounts` (floor `account.create`, a tenant-wide membership) and
+ * `POST /super-admin/tenants/:id/accounts`: the same body on both.
+ *
+ * `name` is trimmed, then must be 1..{@link ACCOUNT_NAME_MAX_LENGTH} characters with
+ * no control or invisible format characters, and unlike every other live account's name
+ * in the tenant, ignoring case, repeated or surrounding spaces and Unicode compatibility
+ * forms (decision AA2). The slug is the server's: derived from the name, made unique in
+ * the tenant (AA3).
+ *
+ * An account a tenant admin creates starts at zero concurrent calls until a super admin
+ * sets its limit; one a super admin creates takes the platform default (AA4).
+ */
+export interface CreateAccountBody {
+  name: string;
+}
+
+/** The 201 body of both create routes: the new account row. */
+export interface CreateAccountResponse {
+  account: Account;
+}
+
+/**
+ * The `code` of a refused create, in `{ error, code, message }`:
+ *  - `account_name_taken` (409): a live account in the tenant already has this
+ *    name, ignoring case, repeated or surrounding spaces and Unicode compatibility
+ *    forms (decision AA2);
+ *  - `tenant_wide_membership_required` (403, `POST /accounts` only): the caller's
+ *    `tenant_admin` (or owner) seat is scoped to one account, so the account it
+ *    made would be one it cannot open.
+ */
+export const CREATE_ACCOUNT_ERROR_CODES = [
+  'account_name_taken',
+  'tenant_wide_membership_required',
+] as const;
+export type CreateAccountErrorCode = (typeof CREATE_ACCOUNT_ERROR_CODES)[number];
+
 /**
  * `GET /accounts/mine`. Authentication
  * only, NO permission check, membership-scoped (every account in the tenant for

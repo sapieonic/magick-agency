@@ -127,7 +127,7 @@ function openMenu() {
 
 beforeEach(() => {
   mocks.useAccounts.mockReturnValue({ accounts: [] });
-  mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'tenant_admin' });
+  mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'tenant_admin', accounts: [] });
   mocks.resendInvite.mockResolvedValue({ invite_email: { sent: true }, sign_in_url: null });
 });
 

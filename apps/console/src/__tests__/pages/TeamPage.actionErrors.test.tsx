@@ -83,7 +83,7 @@ beforeEach(() => {
   });
   mocks.useAccounts.mockReturnValue({ accounts: [] });
   mocks.usePermission.mockReturnValue(true);
-  mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'tenant_admin' });
+  mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'tenant_admin', accounts: [] });
 });
 
 afterEach(() => {

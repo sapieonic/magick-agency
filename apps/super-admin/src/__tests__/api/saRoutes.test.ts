@@ -44,6 +44,7 @@ const CALLS: Record<string, () => Promise<unknown>> = {
   revokeMembership: () => api.revokeMembership('t1', 'm1'),
   listAllUsers: () => api.listAllUsers(),
   getTenantAccounts: () => api.getTenantAccounts('t1'),
+  createTenantAccount: () => api.createTenantAccount('t1', 'Outbound'),
   updateAccountConcurrency: () => api.updateAccountConcurrency('t1', 'a1', 5),
   getAccountConcurrency: () => api.getAccountConcurrency('t1', 'a1'),
   updateProviderConcurrency: () => api.updateProviderConcurrency('t1', 'a1', {

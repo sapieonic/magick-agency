@@ -59,10 +59,22 @@ export function TenantServiceTab({ tenantId, accounts, accountsLoading, onReload
   // Re-seed the legacy-total inputs on every (re)load of the accounts, during
   // render rather than in an effect, so no edit can land between the new
   // accounts and the seeding (React's "adjust state on a prop change").
+  //
+  // An input the operator has changed and not saved survives the reload: a
+  // reload can come from elsewhere on the page (the header's "New account"), and
+  // reseeding everything would silently throw the typed total away. After a save,
+  // the reloaded value equals the edit, so keeping it changes nothing.
   const [seededFrom, setSeededFrom] = useState(accounts);
   if (seededFrom !== accounts) {
+    const before = legacyEdits(seededFrom);
     setSeededFrom(accounts);
-    setConcurrencyEdits(legacyEdits(accounts));
+    setConcurrencyEdits(prev => {
+      const next = legacyEdits(accounts);
+      for (const [id, value] of Object.entries(prev)) {
+        if (id in next && value !== before[id]) next[id] = value;
+      }
+      return next;
+    });
   }
 
   const accountOptions = accounts.map(a => ({ id: a.id, name: a.name }));

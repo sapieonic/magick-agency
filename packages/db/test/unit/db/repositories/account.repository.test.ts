@@ -69,6 +69,8 @@ describe('AccountRepository', () => {
       expect(result).toEqual([row]);
       const [sql, params] = mocks.pool.query.mock.calls[0]!;
       expect(sql).toContain('tenant_id = $1');
+      // Oldest first: the console lands a fresh sign-in on the first account.
+      expect(sql).toContain('ORDER BY created_at ASC, id ASC');
       expect(params).toEqual(['t-1']);
     });
 
@@ -89,6 +91,7 @@ describe('AccountRepository', () => {
       expect(sql).toContain('id = ANY($1)');
       expect(sql).toContain('tenant_id = $2');
       expect(sql).toContain("status != 'deleted'");
+      expect(sql).toContain('ORDER BY created_at ASC, id ASC');
       expect(params).toEqual([['acc-1'], 't-1']);
     });
 

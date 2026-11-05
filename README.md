@@ -10,8 +10,8 @@ decisions.
 apps/server/         one Fastify process: identity, tenancy, super-admin auth, API,
                      station WS, carrier webhooks + media WS, voice engine, guard,
                      pacing, analysis worker, sweeps, retention
-apps/console/        Vite + React: agent, supervisor, team, invites, settings
-apps/super-admin/    Vite + React: tenants, users, numbers, limits, settings, flags, usage
+apps/console/        Vite + React: agent, supervisor, team, invites, accounts, settings
+apps/super-admin/    Vite + React: tenants and accounts, users, numbers, limits, settings, flags, usage
 apps/mobile/         Flutter: the agent-only app for Android and iOS (sign in, take calls,
                      outcomes, own performance); its dev setup is apps/mobile/dev-setup.md
 packages/contracts/  wire contract shared by server and UIs (lead-owned)

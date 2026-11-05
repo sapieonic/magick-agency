@@ -31,6 +31,13 @@ const FeatureFlagsContext = createContext<FeatureFlagsContextValue | null>(null)
  */
 export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  /**
+   * Keyed on WHO is signed in, not on the user object. `refreshSession` (the Accounts
+   * page calls it after a create, so the new account's settings reach the governance
+   * map) replaces `user` with an equal copy; depending on the object reloaded the flag
+   * map and hid every flag-gated nav item until it came back.
+   */
+  const userId = user?.id ?? null;
   const { tenantId, accountId, accountResolution } = useTenant();
   const [flags, setFlags] = useState<FeatureFlagMap>({});
   const [status, setStatus] = useState<FeatureFlagStatus>('loading');
@@ -45,7 +52,7 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
     // Wait for accountId so we never fire a doomed request (which, being
     // fail-closed, would hide every flag-gated nav item). Stay in 'loading'
     // until then (fail-safe: gates stay off, never flicker on).
-    if (!tenantId || !accountId || !user) {
+    if (!tenantId || !accountId || !userId) {
       setFlags({});
       /**
        * **`'loading'` only while waiting is still honest.**
@@ -95,7 +102,7 @@ export function FeatureFlagsProvider({ children }: { children: ReactNode }) {
         setFlags({});
         setStatus('error');
       });
-  }, [tenantId, accountId, user, accountResolution]);
+  }, [tenantId, accountId, userId, accountResolution]);
 
   useEffect(() => { load(); }, [load]);
 

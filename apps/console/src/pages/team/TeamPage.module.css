@@ -81,7 +81,6 @@
 .account {
   font-size: 12px;
   color: var(--text-muted);
-  font-family: var(--font-mono);
 }
 
 /* The Invite cell when the server sent no `invite_state` at all — an older server,

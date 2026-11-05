@@ -60,6 +60,33 @@ describe('resolution + anti-flicker status contract', () => {
     expect(result.current.flags).toEqual({ whatsapp_personal: true });
   });
 
+  it('does not reload, or blank the gates, when the session hands back a new object for the same user', async () => {
+    // `refreshSession` (after an account is created) replaces `user` with an equal copy.
+    mockAuthAndTenant({ id: 'u1' }, 't1', 'a1');
+    vi.mocked(fetchFeatureFlags).mockResolvedValue({ agency_softphone_enabled: true });
+    const { result, rerender } = renderHook(() => useFeatureFlags(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    mockAuthAndTenant({ id: 'u1' }, 't1', 'a1');
+    rerender();
+
+    expect(result.current.status).toBe('ready');
+    expect(result.current.isEnabled('agency_softphone_enabled')).toBe(true);
+    expect(fetchFeatureFlags).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads for a different signed-in user', async () => {
+    mockAuthAndTenant({ id: 'u1' }, 't1', 'a1');
+    vi.mocked(fetchFeatureFlags).mockResolvedValue({});
+    const { result, rerender } = renderHook(() => useFeatureFlags(), { wrapper });
+    await waitFor(() => expect(result.current.status).toBe('ready'));
+
+    mockAuthAndTenant({ id: 'u2' }, 't1', 'a1');
+    rerender();
+
+    await waitFor(() => expect(fetchFeatureFlags).toHaveBeenCalledTimes(2));
+  });
+
   it('starts in loading; isEnabled is false while loading (no default-true)', () => {
     mockAuthAndTenant();
     vi.mocked(fetchFeatureFlags).mockImplementation(() => new Promise<FeatureFlagMap>(() => {}));

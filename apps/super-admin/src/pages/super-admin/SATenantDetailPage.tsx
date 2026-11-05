@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { Plus, Trash2, Phone } from 'lucide-react';
+import { Plus, Trash2, Phone, Briefcase } from 'lucide-react';
 import { useSuperAdminTenant } from '../../hooks/useSuperAdminTenant';
 import {
   getTenantPhoneNumbers, assignPhoneNumber, unassignPhoneNumber, listPhoneNumbers, getTenantAccounts,
@@ -24,6 +24,8 @@ import { TenantFeatureFlags } from '../../components/super-admin/TenantFeatureFl
 import { saStatusColor, saStatusLabel } from '../../utils/saStatus';
 import { TenantServiceTab } from './tenant-detail/TenantServiceTab';
 import { TenantMembersTab } from './tenant-detail/TenantMembersTab';
+import { CreateAccountModal } from './tenant-detail/CreateAccountModal';
+import { useToast } from '@magick-agency/web-ui/contexts/ToastContext';
 import styles from './SATenantDetailPage.module.css';
 
 type TenantTab = 'overview' | 'service' | 'flags' | 'members';
@@ -63,6 +65,9 @@ export default function SATenantDetailPage() {
   const [assigningPhone, setAssigningPhone] = useState(false);
   const [phoneError, setPhoneError] = useState<string | null>(null);
   const [unassignTarget, setUnassignTarget] = useState<TenantPhoneAssignment | null>(null);
+
+  const { showToast } = useToast();
+  const [showCreateAccount, setShowCreateAccount] = useState(false);
 
   // Accounts: the Service, Flags and Members tabs all read them.
   const [accounts, setAccounts] = useState<TenantAccountWithConcurrency[]>([]);
@@ -199,11 +204,18 @@ export default function SATenantDetailPage() {
         title={tenant.name}
         subtitle={tenant.slug}
         actions={
-          <StatusBadge
-            label={saStatusLabel(tenant.status)}
-            color={saStatusColor(tenant.status)}
-            status={tenant.status}
-          />
+          <div className={styles.headerBtns}>
+            <StatusBadge
+              label={saStatusLabel(tenant.status)}
+              color={saStatusColor(tenant.status)}
+              status={tenant.status}
+            />
+            {/* From every tab: the Service, Flags and Members tabs all list the
+                accounts, and each reloads with `loadAccounts`. */}
+            <button type="button" className="btn-primary" onClick={() => setShowCreateAccount(true)}>
+              <Briefcase size={14} /> New account
+            </button>
+          </div>
         }
       />
 
@@ -285,6 +297,19 @@ export default function SATenantDetailPage() {
           accounts={accountOptions}
           refreshError={refreshError}
           reload={reload}
+        />
+      )}
+
+      {showCreateAccount && (
+        <CreateAccountModal
+          tenantId={id!}
+          tenantName={tenant.name}
+          onClose={() => setShowCreateAccount(false)}
+          onCreated={account => {
+            setShowCreateAccount(false);
+            showToast(`Account "${account.name}" created`, 'success');
+            void loadAccounts();
+          }}
         />
       )}
 

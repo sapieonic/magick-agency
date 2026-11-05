@@ -7,8 +7,9 @@ import type { Role } from '../../types/auth';
  * The console's `hasPermission` is the contract's (`@magick-agency/contracts/rbac`,
  * the matrix the server enforces). The permission LISTS here cover the
  * permissions agency has, under agency names (`agency.analysis_profiles.*`).
- * There are no rows for credits, API keys or tenant/account administration,
- * because those permissions do not exist. The
+ * There are no rows for credits, API keys, tenant administration or account
+ * update/delete, because those permissions do not exist; `account.create` is
+ * the one account-administration permission. The
  * agency-specific floors are pinned in `agencyPermissionMirror.test.ts` and
  * `agentPermissions.test.ts`.
  */
@@ -17,6 +18,7 @@ import type { Role } from '../../types/auth';
 const ALL_PERMISSIONS: Permission[] = [
   'tenant.read',
   'account.read',
+  'account.create',
   'user.invite',
   'user.update_role',
   'user.remove',
@@ -107,6 +109,7 @@ const OPERATOR_NEW_PERMISSIONS: Permission[] = [
 ];
 
 const OPERATOR_DENIED_PERMISSIONS: Permission[] = [
+  'account.create',
   'user.invite',
   'user.update_role',
   'user.remove',
@@ -139,6 +142,7 @@ const ACCOUNT_ADMIN_NEW_PERMISSIONS: Permission[] = [
 ];
 
 const ACCOUNT_ADMIN_DENIED_PERMISSIONS: Permission[] = [
+  'account.create',
   'user.update_role',
   'user.remove',
 ];
@@ -162,6 +166,7 @@ describe('hasPermission — account_admin', () => {
 // ─── hasPermission — tenant_admin (level 40) ─────────────────────────────────
 
 const TENANT_ADMIN_NEW_PERMISSIONS: Permission[] = [
+  'account.create',
   'user.update_role',
   'user.remove',
 ];
@@ -224,6 +229,11 @@ describe('permission boundaries — exact thresholds', () => {
   it('account_admin cannot update roles; tenant_admin can', () => {
     expect(hasPermission('account_admin', 'user.update_role')).toBe(false);
     expect(hasPermission('tenant_admin', 'user.update_role')).toBe(true);
+  });
+  it('account_admin cannot create accounts; tenant_admin can (the server floor)', () => {
+    expect(hasPermission('account_admin', 'account.create')).toBe(false);
+    expect(hasPermission('tenant_admin', 'account.create')).toBe(true);
+    expect(PERMISSION_MIN_ROLE['account.create']).toBe('tenant_admin');
   });
   it('account_admin cannot remove users; tenant_admin can', () => {
     expect(hasPermission('account_admin', 'user.remove')).toBe(false);

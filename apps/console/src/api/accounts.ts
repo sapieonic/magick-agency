@@ -1,4 +1,5 @@
 import { ENDPOINTS } from '../config';
+import type { CreateAccountBody, CreateAccountResponse } from '@magick-agency/contracts/api/platform/auth';
 import type { Account, TenantAccount } from '../types/auth';
 import { apiFetch } from './client';
 
@@ -32,6 +33,25 @@ export async function listMyAccounts(tenantId: string): Promise<TenantAccount[]>
   return res.accounts;
 }
 
-// There is no `createAccount`, `updateAccount` or
-// `deleteAccount` (`POST|PUT|DELETE /accounts`): account administration is a super-admin act in agency, and the
-// contract has no `account.create|update|delete` permission.
+/**
+ * Add an account to the tenant (`POST /accounts`, `account.create`: tenant admins and
+ * owners with a tenant-wide seat).
+ *
+ * Sent with the tenant only, never the active account: with `X-Account-Id` the server
+ * would prefer a membership scoped to that account over the caller's tenant-wide one,
+ * and the tenant-wide seat is the one allowed to create. Refusals arrive as
+ * `ApiError` with the server's sentence as the message (409 `account_name_taken`,
+ * 403 `tenant_wide_membership_required`).
+ */
+export async function createAccount(tenantId: string, name: string): Promise<Account> {
+  const body: CreateAccountBody = { name };
+  const res = await apiFetch<CreateAccountResponse>(
+    ENDPOINTS.accounts.base,
+    { method: 'POST', body: JSON.stringify(body) },
+    tenantId,
+  );
+  return res.account;
+}
+
+// There is no `updateAccount` or `deleteAccount` (`PUT|DELETE /accounts/:id`): the
+// contract has no `account.update|delete` permission.

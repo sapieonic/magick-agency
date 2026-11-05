@@ -110,6 +110,21 @@ describe('accountRepository (integration)', () => {
       expect(results.every((r: any) => r.tenant_id === tenant.id)).toBe(true);
     });
 
+    it('lists oldest first, so the original account stays where a fresh sign-in lands', async () => {
+      const first = await insertAccount({ tenant_id: tenant.id, name: 'Default', slug: 'default' });
+      const second = await insertAccount({ tenant_id: tenant.id, name: 'Second', slug: 'second' });
+      const third = await insertAccount({ tenant_id: tenant.id, name: 'Third', slug: 'third' });
+      // Distinct, deliberately out-of-insert-order timestamps: the order must come from
+      // `created_at`, not from the heap.
+      await getTestPool().query(`UPDATE accounts SET created_at = $2 WHERE id = $1`, [first.id, '2026-01-01T00:00:00Z']);
+      await getTestPool().query(`UPDATE accounts SET created_at = $2 WHERE id = $1`, [second.id, '2026-03-01T00:00:00Z']);
+      await getTestPool().query(`UPDATE accounts SET created_at = $2 WHERE id = $1`, [third.id, '2026-02-01T00:00:00Z']);
+
+      expect((await accountRepository.findByTenantId(tenant.id)).map((a) => a.name)).toEqual(['Default', 'Third', 'Second']);
+      expect((await accountRepository.findByIds([second.id, third.id, first.id], tenant.id)).map((a) => a.name))
+        .toEqual(['Default', 'Third', 'Second']);
+    });
+
     it('excludes soft-deleted accounts', async () => {
       const a1 = await insertAccount({ tenant_id: tenant.id, name: 'Active', slug: 'active' });
       const a2 = await insertAccount({ tenant_id: tenant.id, name: 'Deleted', slug: 'deleted' });
