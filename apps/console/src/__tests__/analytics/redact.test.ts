@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  normaliseEncodedUrlScope,
   normaliseUrlScope,
   redactAnalyticsProperties,
   redactInviteToken,
@@ -189,6 +190,37 @@ describe('normaliseUrlScope', () => {
       $pathname: '/join/:token',
       stray: 'https://app.example.com/t/:tenant/a/:account/join/:token',
     });
+  });
+
+  /*
+    `RequireAuth` carries a scoped deep link through sign-in percent-encoded in
+    `?next=`, so the sign-in page's own URL would otherwise carry both ids.
+  */
+  it('normalises a scope percent-encoded in a query value (the sign-in page `next`)', () => {
+    const next = encodeURIComponent(`${SCOPE}/agency/campaigns?tab=insights`);
+    const out = redactAnalyticsProperties({
+      $current_url: `https://app.example.com/agency/login?next=${next}`,
+      bare: `/login?next=${encodeURIComponent(SCOPE)}&session=expired`,
+      lower: `/login?next=${encodeURIComponent(`${SCOPE}/dialer`).toLowerCase()}`,
+    });
+
+    expect(out).toEqual({
+      $current_url: `https://app.example.com/agency/login?next=${encodeURIComponent('/t/:tenant/a/:account/agency/campaigns?tab=insights')}`,
+      bare: `/login?next=${encodeURIComponent('/t/:tenant/a/:account')}&session=expired`,
+      lower: `/login?next=${encodeURIComponent('/t/:tenant/a/:account')}%2fdialer`,
+    });
+    expect(JSON.stringify(out)).not.toContain(TENANT);
+    expect(JSON.stringify(out)).not.toContain(ACCOUNT);
+  });
+
+  it('leaves an encoded value that is not a scope alone', () => {
+    for (const value of [
+      `/login?next=${encodeURIComponent('/agency/campaigns')}`,
+      '/login?q=%2Ftea%2Fand%2Fa%2Fbiscuit',
+      '/login?next=%2Ft%2F',
+    ]) {
+      expect(normaliseEncodedUrlScope(value)).toBe(value);
+    }
   });
 });
 

@@ -125,12 +125,29 @@ export function normaliseUrlScope(value: string): string {
   return prefix ? `${origin}${SCOPE_PLACEHOLDER}${path.slice(prefix.length)}` : value;
 }
 
+/**
+ * A scope prefix percent-encoded inside a query value — the sign-in page's
+ * `?next=%2Ft%2F<tenant>%2Fa%2F<account>%2F…`, which is how `RequireAuth` carries
+ * a scoped deep link through sign-in. Ended by an encoded `/`, `?` or `#`, or by
+ * the end of the parameter.
+ */
+const ENCODED_SCOPE_RE = /%2Ft%2F[^%/?#&]+%2Fa%2F[^%/?#&]+(?=%2F|%3F|%23|[&#]|$)/gi;
+const ENCODED_SCOPE_PLACEHOLDER = encodeURIComponent(SCOPE_PLACEHOLDER);
+
+/**
+ * {@link SCOPE_PLACEHOLDER} for every percent-encoded scope prefix in `value`, so
+ * the sign-in page's `?next=` does not carry the ids the path itself no longer does.
+ */
+export function normaliseEncodedUrlScope(value: string): string {
+  return value.includes('%') ? value.replace(ENCODED_SCOPE_RE, ENCODED_SCOPE_PLACEHOLDER) : value;
+}
+
 /** One string on its way to PostHog: scope normalised, invite token redacted. */
 function cleanString(value: string): string {
   const scoped = value.includes('href="')
     ? value.replace(CHAIN_HREF_RE, (_match, open: string, url: string) => `${open}${normaliseUrlScope(url)}`)
     : value;
-  return redactInviteToken(normaliseUrlScope(scoped));
+  return redactInviteToken(normaliseEncodedUrlScope(normaliseUrlScope(scoped)));
 }
 
 /**
