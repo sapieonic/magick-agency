@@ -1553,7 +1553,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/components/common/DateRangeFilter.test.tsx` | 25 |
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
 | `apps/console/src/components/common/Logo.test.tsx` | 5 |
-| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | — |
+| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 18 |
 
 ### `apps/console/src/components/softphone/`
 
@@ -1788,11 +1788,12 @@ Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` r
 | `apps/console/src/__tests__/utils/phone.test.ts` | 7 |
 | `apps/console/src/__tests__/utils/poll-backoff.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/returnPath.test.ts` | 81 |
+| `apps/console/src/__tests__/utils/returnPath.scoped.test.ts` | 13 |
 | `apps/console/src/__tests__/utils/sessionRefusal.test.ts` | 5 |
 | `apps/console/src/__tests__/utils/switcherFocus.test.ts` | 4 |
 | `apps/console/src/__tests__/utils/switcherSearch.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/systemDisposition.test.ts` | 4 |
-| `apps/console/src/__tests__/utils/urlScope.test.ts` | — |
+| `apps/console/src/__tests__/utils/urlScope.test.ts` | 33 |
 | `apps/console/src/__tests__/utils/vocabulary.analysis.test.ts` | 15 |
 | `apps/console/src/__tests__/utils/vocabulary.test.ts` | 16 |
 

@@ -10,7 +10,7 @@ import type { UrlScope } from '../../utils/urlScope';
 
 /**
  * Keeps every signed-in page's URL scoped to the tenant and account on screen,
- * `/t/:tenantId/a/:accountId/…` — the layout route around every route that needs a
+ * `/t/:tenantId/a/:accountId/…` (B26) — the layout route around every route that needs a
  * sign-in (`App.tsx`). What it decides, given the URL and `TenantContext`:
  *
  *  - **Unscoped URL** (an old `/dialer` bookmark, `/` after sign-in, a tenant

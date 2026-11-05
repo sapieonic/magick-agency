@@ -1,5 +1,5 @@
 /**
- * The tenant and account a console URL is scoped to: `/t/:tenantId/a/:accountId/…`.
+ * The tenant and account a console URL is scoped to: `/t/:tenantId/a/:accountId/…` (B26).
  *
  * Every signed-in page lives under this prefix, so a link copied from the address
  * bar opens the same tenant and the same account for whoever it is sent to, instead
