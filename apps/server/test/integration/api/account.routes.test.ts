@@ -34,6 +34,7 @@ vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
 
 const { accountRoutes } = await import('../../../src/api/routes/account.routes.js');
 const { platformAuditLogger } = await import('../../../src/audit/platform/audit-logger.js');
+const { accountRepository } = await import('@magick-agency/db/repositories/account.repository');
 
 describe('account routes (integration)', () => {
   let app: ReturnType<typeof Fastify>;
@@ -199,15 +200,38 @@ describe('account routes (integration)', () => {
       expect(res.json().account.slug).toBe('sales');
     });
 
-    it('two concurrent creates of one name end as one account and one 409', async () => {
-      const [a, b] = await Promise.all([create('Renewals'), create('Renewals')]);
+    /*
+     * A lost race, made deterministic: the name check's first read is stale (it
+     * misses a row another request has just committed), so the INSERT meets the real
+     * partial unique index. These two are what prove the helper recognises that
+     * index's violation by its real constraint name; two concurrent `inject`s do not
+     * interleave reliably enough to reach it.
+     */
+    it('a create that loses the slug race to the same name is a 409, not a second account', async () => {
+      await insertAccount({ tenant_id: tenant.id, name: 'Renewals', slug: 'renewals' });
+      const stale = vi.spyOn(accountRepository, 'findByTenantId').mockResolvedValueOnce([]);
 
-      expect([a.statusCode, b.statusCode].sort()).toEqual([201, 409]);
+      const res = await create('Renewals');
+      stale.mockRestore();
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('account_name_taken');
       const { rows } = await getTestPool().query(
         `SELECT name FROM accounts WHERE tenant_id = $1 AND status != 'deleted'`,
         [tenant.id],
       );
       expect(rows).toEqual([{ name: 'Renewals' }]);
+    });
+
+    it('a create that loses the slug race to a different name retries with a suffixed slug', async () => {
+      await insertAccount({ tenant_id: tenant.id, name: 'Renewals!', slug: 'renewals' });
+      const stale = vi.spyOn(accountRepository, 'findByTenantId').mockResolvedValueOnce([]);
+
+      const res = await create('Renewals');
+      stale.mockRestore();
+
+      expect(res.statusCode).toBe(201);
+      expect(res.json().account.slug).toMatch(/^renewals-[0-9a-f]{6}$/);
     });
 
     it('refuses an account-scoped seat (403) and writes nothing', async () => {
