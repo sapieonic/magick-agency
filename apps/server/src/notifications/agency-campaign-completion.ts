@@ -32,6 +32,11 @@ export const AGENCY_UUID_RE =
  * ── Where the link points ────────────────────────────────────────────────────
  * An agency campaign lives at `/agency/campaigns/:id`, inside the console's
  * `AgencyLayout`, with its attempts at `/agency/campaigns/:id/attempts/:attemptId`.
+ * The link names the campaign's tenant and account too,
+ * `/t/:tenantId/a/:accountId/agency/campaigns/:id` (decision B26): a supervisor
+ * who works in several accounts would otherwise open it in whichever one their
+ * browser last had open, where the campaign does not exist. See
+ * {@link agencyCampaignUrl}.
  * Mailing an agency supervisor a link into the `/app` shell instead would be a
  * link that crosses shells, which is a bug even when the data it lands on is
  * correct — and an email is the worst place for one, because a link in an inbox
@@ -324,7 +329,7 @@ export function renderAgencyCampaignCompletionEmail(
   const completedAt = completion.completedAt
     ? new Date(completion.completedAt).toUTCString()
     : 'N/A';
-  const campaignUrl = agencyCampaignUrl(completion.campaignId, appBaseUrl);
+  const campaignUrl = agencyCampaignUrl(completion, appBaseUrl);
 
   const subject = `[Sapionic] Campaign "${campaignName}" — ${statusLabel}`;
 
@@ -366,19 +371,50 @@ export function renderAgencyCampaignCompletionEmail(
   return { subject, textBody, htmlBody };
 }
 
+/** What {@link agencyCampaignUrl} needs to know about the campaign. */
+export type AgencyCampaignLinkTarget = Pick<
+  AgencyCampaignCompletion,
+  'tenantId' | 'accountId' | 'campaignId'
+>;
+
 /**
  * The one link in this file, and the reason the file exists.
  *
- * `/agency/campaigns/:id` — inside the agency shell, which is where the campaign
- * and its attempts live. **Not** `/app/...`: see the module header. Trailing
- * slashes are trimmed for the same reason `inviteSignInUrl` trims them — a
- * `CONSOLE_BASE_URL` with one produces a double slash that some routers 404.
+ * `/t/:tenantId/a/:accountId/agency/campaigns/:id` — inside the agency shell,
+ * which is where the campaign and its attempts live, and pinned to the campaign's
+ * own tenant and account. **Not** `/app/...`: see the module header.
+ *
+ * ── Why the tenant and account are in it (B26) ─────────────────────────────
+ * Every signed-in console URL carries its scope, and the console opens the
+ * tenant and account the URL names. Without them it opens whichever account the
+ * reader's browser last had open, and a supervisor of several accounts would
+ * follow "View campaign" to a campaign their screen says does not exist. A
+ * reader who cannot open that account is told so by the console rather than
+ * shown another one.
+ *
+ * With no usable account id the link is left unscoped — `/agency/campaigns/:id`,
+ * which the console still serves, under the reader's own active account — rather
+ * than pinned to a scope nobody can open. "Usable" is the uuid shape here; the
+ * send path also drops an account that does not resolve in the tenant before it
+ * renders (`sendAgencyCampaignCompletionEmail`).
+ *
+ * Trailing slashes are trimmed for the same reason `inviteSignInUrl` trims them —
+ * a `CONSOLE_BASE_URL` with one produces a double slash that some routers 404.
  *
  * Returns `null` with no configured origin rather than guessing one.
  */
-export function agencyCampaignUrl(campaignId: string, appBaseUrl?: string): string | null {
+export function agencyCampaignUrl(
+  target: AgencyCampaignLinkTarget,
+  appBaseUrl?: string,
+): string | null {
   if (!appBaseUrl) return null;
-  return `${appBaseUrl.replace(/\/+$/, '')}/agency/campaigns/${encodeURIComponent(campaignId)}`;
+  const origin = appBaseUrl.replace(/\/+$/, '');
+  const campaignPath = `/agency/campaigns/${encodeURIComponent(target.campaignId)}`;
+  const { tenantId, accountId } = target;
+  if (!tenantId || typeof accountId !== 'string' || !AGENCY_UUID_RE.test(accountId)) {
+    return `${origin}${campaignPath}`;
+  }
+  return `${origin}/t/${encodeURIComponent(tenantId)}/a/${encodeURIComponent(accountId)}${campaignPath}`;
 }
 
 /**
@@ -554,7 +590,10 @@ export async function sendAgencyCampaignCompletionEmail(
     }));
 
     const { subject, textBody, htmlBody } = renderAgencyCampaignCompletionEmail(
-      completion,
+      // An account that does not resolve in this tenant is left out of the link:
+      // a URL scoped to it would open on the console's "You can't open this
+      // account" screen for every recipient (all tenant-level, see above).
+      accountUnresolvable ? { ...completion, accountId: null } : completion,
       // The console's origin (`CONSOLE_BASE_URL`).
       config.consoleBaseUrl,
     );

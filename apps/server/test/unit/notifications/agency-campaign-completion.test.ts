@@ -12,7 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *     A link into `/app/…` in an email is the scope leak this whole scope
  *     isolation exists to remove, and worse than a leak in the SPA: an inbox
  *     outlives every redirect we would later add to cover for it. So the link is
- *     asserted positively (`/agency/campaigns/:id`) and negatively (no `/app/`,
+ *     asserted positively (`/agency/campaigns/:id`, under the campaign's own
+ *     `/t/:tenantId/a/:accountId` console scope, B26) and negatively (no `/app/`,
  *     no `/admin/`).
  *  2. **The audience.** The server holds no agency campaign row and the campaign
  *     carries no notification list, so the recipients are DERIVED from
@@ -126,10 +127,36 @@ beforeEach(() => {
   mocks.recordOutcome.mockResolvedValue(undefined);
 });
 
+/** The campaign's console URL under its own tenant and account (B26). */
+const SCOPED_PATH = `/t/${TENANT}/a/${ACCOUNT}/agency/campaigns/${CAMPAIGN}`;
+const LINK_TARGET = { tenantId: TENANT, accountId: ACCOUNT, campaignId: CAMPAIGN };
+
 describe('the deep link', () => {
   it('lands inside the agency shell, on the campaign the notice is about', () => {
-    expect(agencyCampaignUrl(CAMPAIGN, 'https://app.example.com'))
-      .toBe(`https://app.example.com/agency/campaigns/${CAMPAIGN}`);
+    expect(agencyCampaignUrl(LINK_TARGET, 'https://app.example.com'))
+      .toBe(`https://app.example.com${SCOPED_PATH}`);
+  });
+
+  /**
+   * B26: the console opens the tenant and account a URL names. A link without
+   * them opens the reader's last-used account, where a supervisor of several
+   * accounts would find no such campaign.
+   */
+  it("names the campaign's own tenant and account, so it opens there for every reader", () => {
+    const mail = renderAgencyCampaignCompletionEmail(completion, 'https://app.example.com');
+    for (const body of [mail.textBody, mail.htmlBody]) {
+      expect(body).toContain(`https://app.example.com${SCOPED_PATH}`);
+    }
+  });
+
+  it('falls back to the unscoped campaign path with no usable account id', () => {
+    const unscoped = `https://app.example.com/agency/campaigns/${CAMPAIGN}`;
+    expect(agencyCampaignUrl({ ...LINK_TARGET, accountId: null }, 'https://app.example.com'))
+      .toBe(unscoped);
+    expect(agencyCampaignUrl({ ...LINK_TARGET, accountId: undefined }, 'https://app.example.com'))
+      .toBe(unscoped);
+    expect(agencyCampaignUrl({ ...LINK_TARGET, accountId: 'not-a-uuid' }, 'https://app.example.com'))
+      .toBe(unscoped);
   });
 
   /**
@@ -147,12 +174,12 @@ describe('the deep link', () => {
   });
 
   it('trims a trailing slash on the configured origin rather than doubling it', () => {
-    expect(agencyCampaignUrl(CAMPAIGN, 'https://app.example.com/'))
-      .toBe(`https://app.example.com/agency/campaigns/${CAMPAIGN}`);
+    expect(agencyCampaignUrl(LINK_TARGET, 'https://app.example.com/'))
+      .toBe(`https://app.example.com${SCOPED_PATH}`);
   });
 
   it('is null with no configured origin, rather than a guessed one', () => {
-    expect(agencyCampaignUrl(CAMPAIGN, undefined)).toBeNull();
+    expect(agencyCampaignUrl(LINK_TARGET, undefined)).toBeNull();
   });
 });
 
@@ -274,7 +301,26 @@ describe('sending', () => {
       [{ email: 'b@example.com' }],
     ]);
     expect(params[0]!.subject).toContain('Q3 Renewals');
-    expect(params[0]!.textBody).toContain(`/agency/campaigns/${CAMPAIGN}`);
+    expect(params[0]!.textBody).toContain(`https://app.example.com${SCOPED_PATH}`);
+  });
+
+  /**
+   * An account that does not resolve in the tenant still reaches tenant-level
+   * supervisors, but their link must not be scoped to it: the console would meet
+   * every one of them with "You can't open this account".
+   */
+  it('leaves an account that does not resolve out of the link', async () => {
+    mocks.findByIdInTenant.mockResolvedValue(null);
+    mocks.findAddressableMembersInAccount.mockResolvedValue([
+      { email: 'owner@example.com', role: 'tenant_owner' },
+    ]);
+
+    const result = await sendAgencyCampaignCompletionEmail(completion);
+
+    expect(result).toEqual({ sent: true, recipients: 1 });
+    const body = (mocks.sendEmail.mock.calls[0]![0] as { textBody: string }).textBody;
+    expect(body).toContain(`https://app.example.com/agency/campaigns/${CAMPAIGN}`);
+    expect(body).not.toContain(`/a/${ACCOUNT}/`);
   });
 
   /**
