@@ -539,8 +539,8 @@ describe('the 201 and the lineage strip', () => {
     expect(res.statusCode).toBe(201);
     const body = res.json();
     expect(body.campaign.id).toBe('camp-child');
-    // A retry is created in draft: creation and starting stay separate verbs, and it side-steps
-    // `uq_agency_campaign_running` at creation time.
+    // A retry is created in draft: creation and starting stay separate verbs. (Once started it
+    // may run beside its parent: several running campaigns per account, decisions MC6.)
     expect(body.campaign.status).toBe('draft');
     expect(body.campaign.retry_generation).toBe(1);
     expect(body.campaign.parent_campaign_id).toBe('camp-parent');

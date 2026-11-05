@@ -22,9 +22,9 @@ const { agencyCampaignRepository } = await import(
  * timeout, a pod eviction, a reset connection — leaves the supervisor looking at
  * an error over a campaign that exists and is fully dialable. The natural next
  * act is to press the button again, and without `uq_agency_campaign_retry_idempotency` that produced a
- * SECOND complete retry over the same cohort. `uq_agency_campaign_running` does
- * not help: it bites at `/start`, for only one of the two, and only while the
- * other is actually running.
+ * SECOND complete retry over the same cohort. Nothing at `/start` helps: an
+ * account may run several campaigns at once (decisions MC6), so both copies
+ * can be started and run side by side.
  *
  * Every case here is written against a real server rather than a mocked pool,
  * for the reason `agency-retry-seeding.test.ts`'s header sets out at length: the
@@ -217,7 +217,7 @@ describe('what the key does NOT suppress', () => {
   it('one key in two ACCOUNTS of one tenant is two intents', async () => {
     // The index is `(tenant_id, account_id, retry_idempotency_key)`. Two accounts
     // under one tenant are two customers' desks, and every other agency resource
-    // is scoped by both (`requireOwned`, `uq_agency_campaign_running`).
+    // is scoped by both (`requireOwned`, the claims' account-wide number probe).
     //
     // Scoped by tenant alone, this test fails in the way that matters: account
     // a2's create comes back `replayed` carrying a1's campaign — its name,

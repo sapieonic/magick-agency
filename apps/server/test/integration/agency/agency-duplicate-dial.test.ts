@@ -322,23 +322,25 @@ describe('agency duplicate-dial backstop (integration)', () => {
     }
   }, 60_000);
 
-  // ── The other two live-uniqueness guarantees ──────────────────────────────
+  // ── Across campaigns, and the agent's live-uniqueness guarantee ───────────
 
-  it('T-M5: only one campaign per account may be `running`', async () => {
-    await insertAgencyCampaign({ status: 'running' });
+  it('T-M5: several campaigns of one account may be `running`; one number still carries one call', async () => {
+    // `uq_agency_campaign_running` is gone (migration 0015, decisions MC6). What it used to
+    // give this file for free — two campaigns of one account never dialling at once — is now
+    // the claim's account-wide busy probe (MC4): a number live on one running campaign is not
+    // claimed by another of the same account.
+    const first = await insertAgencyCampaign({ status: 'running' });
+    const second = await insertAgencyCampaign({ status: 'running' });
+    await expect(insertAgencyCampaign({ status: 'running', account_id: OTHER_ACCOUNT })).resolves.toBeTruthy();
 
-    await expect(insertAgencyCampaign({ status: 'running' })).rejects.toMatchObject({
-      code: '23505',
-      constraint: 'uq_agency_campaign_running',
-    });
-
-    // A different account is unaffected...
-    await expect(
-      insertAgencyCampaign({ status: 'running', account_id: OTHER_ACCOUNT }),
-    ).resolves.toBeTruthy();
-    // ...and the predicate really is partial, not blanket uniqueness.
-    await expect(insertAgencyCampaign({ status: 'paused' })).resolves.toBeTruthy();
-    await expect(insertAgencyCampaign({ status: 'draft' })).resolves.toBeTruthy();
+    const phone = '+919876500042';
+    const onFirst = await insertAgencyContact(first.id, { phone_e164: phone });
+    const onSecond = await insertAgencyContact(second.id, { phone_e164: phone });
+    expect((await agencyContactRepository.claimDialable(first.id, 5)).map((c) => c.id)).toEqual([onFirst.id]);
+    // The first campaign's call is live: the second campaign's contact on the number waits.
+    expect(await agencyContactRepository.claimDialable(second.id, 5)).toEqual([]);
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'completed' WHERE id = $1`, [onFirst.id]);
+    expect((await agencyContactRepository.claimDialable(second.id, 5)).map((c) => c.id)).toEqual([onSecond.id]);
   });
 
   it('T-M6: one live session per agent per TENANT, reusable after leaving', async () => {

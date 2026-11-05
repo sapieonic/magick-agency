@@ -280,8 +280,8 @@ describe('the guardrail pauses at the ceiling the supervisor set', () => {
 
   it('a 5% ceiling set over PATCH holds at 4% (which pauses a default campaign) and pauses over 5%', async () => {
     const raised = await campaignAt('running');
-    // The control runs on a second account of the same tenant: one RUNNING campaign per
-    // account (`uq_agency_campaign_running`).
+    // The control runs on a second account of the same tenant. Forced while one account could
+    // run one campaign (`uq_agency_campaign_running`, dropped by migration 0015); kept as is.
     const other = await insertAccount({ tenant_id: w.tenant });
     const atDefault = (await insertAgencyCampaign({ tenant_id: w.tenant, account_id: other.id, status: 'running' })).id as string;
     const res = await patch(raised, { abandonment_ceiling_pct: 5 });

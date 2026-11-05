@@ -17,7 +17,8 @@ import {
  * an opinion about any of them.
  *
  * The uniqueness indexes are covered separately, behaviourally, in
- * `agency-duplicate-dial.test.ts` (T-M4/T-M5/T-M6). This file is structure.
+ * `agency-duplicate-dial.test.ts` (T-M4/T-M6; T-M5 now pins that several campaigns of one
+ * account may run, migration 0015). This file is structure.
  *
  * Modelled on the existing precedent `test/integration/db/dialer-analysis-migration.test.ts`.
  */
@@ -103,9 +104,9 @@ describe('agency schema (integration)', () => {
   // ── T-M2: check constraints ───────────────────────────────────────────────
 
   it('T-M2: campaign status accepts every legal value and rejects anything else', async () => {
-    // Distinct accounts, because uq_agency_campaign_running permits only one
-    // `running` campaign per (tenant, account) — sharing an account here would
-    // fail on the index and prove nothing about the CHECK.
+    // Distinct accounts: written when uq_agency_campaign_running permitted only one
+    // `running` campaign per (tenant, account). Migration 0015 dropped it (decisions MC6),
+    // so one account would do now; kept as is, the CHECK is what this pins.
     for (const [i, status] of LEGAL.campaign_status.entries()) {
       await expect(
         insertAgencyCampaign({ status, account_id: uuidFor(`acct-${i}`) }),

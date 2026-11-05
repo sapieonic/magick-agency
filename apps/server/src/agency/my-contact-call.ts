@@ -23,8 +23,10 @@
  *  5. The agent: `available → reserved` (the pacing tick's CAS; a tick that reserved them
  *     first wins, and this answers `agent_not_available`).
  *  6. The claim, with the spends, in ONE statement (`claimForAgentDial`): `pending` /
- *     `exhausted` → `in_flight`, `FOR UPDATE SKIP LOCKED`, one live call per number, the basis
- *     and the ownership re-checked on the locked row.
+ *     `exhausted` → `in_flight`, `FOR UPDATE SKIP LOCKED`, one live call per number across the
+ *     ACCOUNT (a number on a call on any of the account's running campaigns, a retry child or
+ *     its parent included, is `contact_in_flight`; decisions MC4), the basis and the ownership
+ *     re-checked on the locked row.
  *  7. The attempt (`agent_manual`, `override_applied`, `override_note`), then the dispatch.
  *
  * Every failure after step 5 undoes what was written, as the tick's release paths do: the agent

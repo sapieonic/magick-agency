@@ -460,12 +460,15 @@ describe('triggers', () => {
 describe('the uniqueness constraints that carry the design (docs/architecture.md)', () => {
   beforeEach(() => truncateAll());
 
+  // The baseline creates uq_agency_campaign_running (one running campaign per account);
+  // 0015 drops it (decisions MC6), so after every migration an account may run several.
+  // The index itself, and its return on 0015's down, are pinned by
+  // test/integration/db/multiple-running-campaigns-migration.test.ts.
   // See also apps/server/test/integration/agency/agency-duplicate-dial.test.ts T-M5
-  it('uq_agency_campaign_running — one running campaign per account', async () => {
+  it('uq_agency_campaign_running is gone after 0015 — several running campaigns per account', async () => {
+    expect(await indexDef('uq_agency_campaign_running')).toBeUndefined();
     await insertCampaign({ status: 'running' });
-    await expect(insertCampaign({ status: 'running' })).rejects.toMatchObject({
-      code: '23505', constraint: 'uq_agency_campaign_running',
-    });
+    await expect(insertCampaign({ status: 'running' })).resolves.toBeTruthy();
     await expect(insertCampaign({ status: 'running', account_id: randomUUID() })).resolves.toBeTruthy();
     await expect(insertCampaign({ status: 'paused' })).resolves.toBeTruthy();
     await expect(insertCampaign({ status: 'draft' })).resolves.toBeTruthy();

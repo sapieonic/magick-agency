@@ -128,13 +128,18 @@ Owned by `AgencyRuntime`. One call at a time per session.
    allowed set (tagged: the campaign's `caller_ids`, default the pool's round-robin pick as pacing
    dials; untagged: the account's assigned numbers, `findAvailableForAccount`, default the
    settings' `default_caller_id` while still assigned, else the account's default number); roster
-   guard — tagged, the match on the tag (`campaign_id` + phone digits, the existing index), and
-   a contact `in_flight` refuses `contact_in_flight` with no override; then, on a `strict`
-   campaign (contact assignment, decision CA15), a picked contact assigned to another agent
-   refuses `contact_assigned_elsewhere` (409) with no override, unless the caller supervises (the
-   pool, the caller's own contacts and `pool` / `preferred` campaigns are not checked); untagged, the number
-   `in_flight` on ANY campaign of the account (`findInFlightForAccount`, the partial in-flight
-   index) refuses `contact_in_flight` with that campaign, and nothing is claimed or linked;
+   guard, one live call per number across the account (decisions MC4) — tagged, the match on the
+   tag (`campaign_id` + phone digits, the existing index), and a contact `in_flight` refuses
+   `contact_in_flight` with no override; then, tagged or untagged, the number `in_flight` on ANY
+   campaign of the account (`findInFlightForAccount`, the partial in-flight index: a running retry
+   parent, another roster carrying the number) refuses `contact_in_flight` naming that campaign and
+   contact, with no override; untagged, nothing is claimed or linked. Only `in_flight` is refused:
+   a number `connected` elsewhere (bridged, or in wrap-up) is not (decisions §5). Both are reads,
+   not locks, so a pacing claim of another row of the number can still land before step 3's claim
+   (decisions §5, "Soft phone vs one live call per number across the account"). Then, tagged on a `strict` campaign
+   (contact assignment, decision CA15), a picked contact assigned to another agent refuses
+   `contact_assigned_elsewhere` (409) with no override, unless the caller supervises (the pool, the
+   caller's own contacts and `pool` / `preferred` campaigns are not checked);
    calling window (tagged) → `outside_calling_hours` unless overridden; DNC, one read →
    `dnc_listed` unless overridden, lookup error → `dnc_unavailable` (503). Tagged, it reads the
    tag's own dials' scopes (tenant, account, the tag); untagged, tenant, account and a
@@ -268,10 +273,13 @@ Only when the call is tagged and the number matched a contact of that campaign.
 |---|---|---|
 | `pending` | claimed → `in_flight` | the disposition decision applies as on the station: suppress → `suppressed` (+ DNC), terminal / success → `completed`, callback → `pending` at the callback time (inside the window), retry → `pending` after the delay (or `exhausted` past max attempts), none → back to `pending` unchanged. `attempt_count` + 1 when the call was placed. With **no outcome** (below) the tag's retry policy decides |
 | `in_flight` (live campaign attempt) | refused `contact_in_flight` | — |
+| any state, while the number is `in_flight` on another campaign of the account (MC4) | refused `contact_in_flight`, naming that campaign's contact | — |
 | `connected` (campaign call awaiting its own disposition) | linked only | only suppress applies |
 | `completed`, `exhausted`, `suppressed` | linked only | only suppress applies; a terminal contact is never reopened |
 
-The stranded-contact sweep ignores a contact with a live or unsettled manual call.
+A number only `connected` on another campaign of the account (bridged, or in wrap-up) does not
+refuse the dial, as a `connected` match on the tag does not (decisions §5). The stranded-contact
+sweep ignores a contact with a live or unsettled manual call.
 
 A claimed contact whose call settles with **no outcome saved** (an unanswered call, §4.1 step 6;
 a refused dial, step 4; a lapsed outcome, step 8; an unbridged orphan, step 10) gets the campaign

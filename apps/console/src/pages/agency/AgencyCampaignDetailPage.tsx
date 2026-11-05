@@ -167,11 +167,12 @@ export function AgencyCampaignDetailPage() {
         /**
          * A 409 is an answer, not a transport failure. Two kinds:
          * the campaign moved underneath us (stale Start / Resume), or the
-         * one-running-campaign-per-account rule refused the start. The
-         * first is repaired by refetching — the refreshed view then replaces the
-         * button, and a conflict toast on a control that has just
-         * disappeared is friction. The second is a real refusal
-         * (this campaign is still a draft) and still has to be said.
+         * transition is refused where the campaign stands. The first is repaired
+         * by refetching — the refreshed view then replaces the button, and a
+         * conflict toast on a control that has just disappeared is friction. The
+         * second is a real refusal (the roster gate, say) and still has to be
+         * said. Another running campaign on the account is not a refusal: several
+         * run at once and share the account's lines (decisions MC6).
          */
         let reportFailure = true;
         if (statusCode === 409) {
@@ -290,6 +291,7 @@ export function AgencyCampaignDetailPage() {
         lastUpdatedAt={lastUpdatedAt}
         autoRefreshing={shouldPoll}
         timelineParts={timelineParts}
+        concurrency={stats?.concurrency}
         tenantId={tenantId}
         accountId={accountId}
         canControl={canControl}

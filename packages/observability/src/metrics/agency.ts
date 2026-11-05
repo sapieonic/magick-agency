@@ -476,6 +476,68 @@ export const agencyPacingMissedWakeupsTotal = counter(meter, 'agency_pacing_miss
   description: 'Pacing safety ticks that found work no invalidation event announced',
 });
 
+// ─── Agency dialer: the account's headroom split between its campaigns (MC1, MC7) ──
+//
+// An account may run several campaigns at once; the pacing round splits the account's
+// free slots between them, each slot to the campaign with the fewest live calls
+// (`apps/server/src/agency/pacing/round.ts`). Per campaign, set by the round:
+//
+//  - `agency_campaign_slots_in_use`: the campaign's own live attempts as the round read
+//    them;
+//  - `agency_campaign_slots_allocated`: those plus the new dials the round granted it.
+//
+// Both are set only in a CONTENDED round (two or more of the account's campaigns
+// ticking): only then does the round read per-campaign live attempts, and a lone
+// campaign's round issues exactly the statements it always has. A campaign whose round
+// is uncontended has no series (it is cleared), and so does one whose leadership is
+// given up; a lone campaign's live calls are `agency_live_attempts_current`. Unitless,
+// no tenant label (the campaign id is unique), and process-local like every in-memory
+// gauge: reduce with `max` across replicas.
+//
+// `agency_pacing_share_withheld_total` counts the dials the split held back from a
+// campaign while the account had headroom: `MIN(demand, headroom) − granted`, when
+// positive. A steady rate on one campaign means another campaign of its account is
+// taking the slots it could use; zero whenever one campaign runs alone.
+
+/** One campaign's slots, as its last contended round saw them. */
+const _campaignSlots = new Map<string, { inUse: number; allocated: number }>();
+
+/** Record a campaign's slots for this round (both gauges). Cannot throw. */
+export function setAgencyCampaignSlots(campaignId: string, inUse: number, allocated: number): void {
+  _campaignSlots.set(campaignId, { inUse, allocated });
+}
+
+/** Stop reporting a campaign's slot series (uncontended round, leadership given up). */
+export function clearAgencyCampaignSlots(campaignId: string): void {
+  _campaignSlots.delete(campaignId);
+}
+
+/** Test seam — the module-level map would otherwise leak between cases. */
+export function resetAgencyCampaignSlots(): void {
+  _campaignSlots.clear();
+}
+
+/** What the two slot series report now (tests). */
+export function agencyCampaignSlotsSnapshot(): ReadonlyMap<string, { inUse: number; allocated: number }> {
+  return new Map(_campaignSlots);
+}
+
+observableGauge<'campaign_id'>(meter, 'agency_campaign_slots_in_use', {
+  description: 'Live attempts of a running campaign as the pacing round read them (contended accounts only)',
+}, (observe) => {
+  for (const [campaignId, s] of _campaignSlots) observe(s.inUse, { campaign_id: campaignId });
+});
+
+observableGauge<'campaign_id'>(meter, 'agency_campaign_slots_allocated', {
+  description: 'Live attempts of a running campaign plus the new dials the pacing round granted it (contended accounts only)',
+}, (observe) => {
+  for (const [campaignId, s] of _campaignSlots) observe(s.allocated, { campaign_id: campaignId });
+});
+
+export const agencyPacingShareWithheldTotal = counter<'campaign_id'>(meter, 'agency_pacing_share_withheld_total', {
+  description: 'Dials the per-account share rule held back from a campaign while its account had headroom',
+});
+
 // ─── Agency dialer: pacing history writes (IN2) ─────────────────────────────
 //
 // The pacing history (`agency_campaign_pacing_minutes`) is best effort: the leader counts per

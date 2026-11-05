@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.0](https://github.com/sapieonic/magick-agency/compare/server-v0.8.0...server-v0.9.0) (2026-11-05)
+
+
+### Features
+
+* **console,contracts:** set the abandonment ceiling by dragging a line on the meter ([#42](https://github.com/sapieonic/magick-agency/issues/42)) ([1bd8002](https://github.com/sapieonic/magick-agency/commit/1bd80029b4c989c6c3afc43eafdbaf5f75f97bc1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.8.0
+    * @magick-agency/db bumped to 0.7.1
+    * @magick-agency/domain bumped to 0.4.2
+
 ## [0.8.0](https://github.com/sapieonic/magick-agency/compare/server-v0.7.1...server-v0.8.0) (2026-11-05)
 
 

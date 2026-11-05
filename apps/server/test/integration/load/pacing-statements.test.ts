@@ -30,8 +30,9 @@ type World = Awaited<ReturnType<typeof createFloorWorld>>;
  * How much database and Redis work the pacing engine does per second in STEADY
  * STATE, with N campaigns of M agents each led by one engine on its own timers
  * (the production path: no `tickOnce`, no supervise pass, no reaper). Each
- * campaign is on its own tenant and account, as `uq_agency_campaign_running`
- * requires of running campaigns.
+ * campaign is on its own tenant and account, so every round has one participant
+ * per account: the statements measured are a lone campaign's, which the account's
+ * split between running campaigns (decisions MC1, MC2) must leave unchanged.
  *
  *   idle — every agent on a break: each tick finds no agent (`no_agents`).
  *   busy — the account limit is half the pool and the carrier holds every call it

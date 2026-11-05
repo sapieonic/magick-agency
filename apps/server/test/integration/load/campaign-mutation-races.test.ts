@@ -6,7 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  * Two or three supervisors on one dashboard press Start / Pause / Resume / Stop and save
  * the builder at the same moment. Through the real routes: the public lifecycle handlers
  * (actor resolution, platform audit row), `callCore`, the internal `transition` (status
- * guard, roster gate, `uq_agency_campaign_running`, the `audit_logs` row) and the guarded
+ * guard, roster gate, the `audit_logs` row) and the guarded
  * `transitionStatus` UPDATE; the public and internal PATCH.
  *
  * ── Forcing the interleaving instead of hoping for it ───────────────────────────
@@ -25,8 +25,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
  *  2. A free-for-all over several campaigns and rounds: every campaign ends in a status its
  *     accepted transitions can reach from where it started, and every 200 is audited once
  *     in each trail.
- *  3. Two campaigns of one account started at once: exactly one runs, the other gets the
- *     documented `409 another_campaign_running` (`uq_agency_campaign_running`).
+ *  3. Two campaigns of one account started at once: both run (several running campaigns per
+ *     account, decisions MC6; `another_campaign_running` is retired), and each campaign's
+ *     racing Starts apply exactly once.
  *  4. Concurrent PATCHes of DIFFERENT fields both land (column-scoped update, no lost update).
  *  5. `it.fails` — DEFECT: the lifecycle audit's `from` is the status the preHandler READ,
  *     not the one the guarded UPDATE moved from.
@@ -176,7 +177,8 @@ describe('racing campaign mutations (integration, load)', () => {
 
   it('2. a free-for-all over every campaign: final statuses are reachable from the accepted transitions, each audited once', async () => {
     const start = new Map<string, string>();
-    // One running campaign per account (`uq_agency_campaign_running`), the rest paused.
+    // One campaign starts running, the rest paused. Any number of them may end up running
+    // (decisions MC6): a Start or Resume is refused only by the status guard.
     for (const [i, c] of floor.campaigns.entries()) {
       const s = i === 0 ? 'running' : 'paused';
       start.set(c, s);
@@ -196,13 +198,11 @@ describe('racing campaign mutations (integration, load)', () => {
           expect(res.json().status, `${op} answered with the wrong status`).toBe(TARGET[op]);
         } else {
           expect(res.statusCode, res.body).toBe(409);
-          // `another_campaign_running`: one running campaign per account.
-          expect(['invalid_campaign_transition', 'another_campaign_running']).toContain(res.json().code);
+          // The status guard is the only refusal left: another running campaign is none.
+          expect(res.json().code).toBe('invalid_campaign_transition');
         }
       }
     }
-    // At most one running campaign in the account, whatever happened.
-    expect(await scalar(`SELECT count(*)::int AS n FROM agency_campaigns WHERE status = 'running'`)).toBeLessThanOrEqual(1);
     for (const c of floor.campaigns) {
       const ops = accepted.get(c)!;
       const into = (s: string) => ops.filter((op) => TARGET[op] === s).length;
@@ -224,17 +224,23 @@ describe('racing campaign mutations (integration, load)', () => {
     expect(await scalar(`SELECT count(*)::int AS n FROM platform_audit_log WHERE action LIKE 'agency_campaign.%'`)).toBe(total200);
   });
 
-  it('3. two campaigns of one account started at once: exactly one runs, the other is told why', async () => {
+  it('3. two campaigns of one account started at once: both run, each Start applies once', async () => {
+    // Several running campaigns per account (decisions MC6, migration 0015 dropped
+    // `uq_agency_campaign_running`). The two Starts on ONE campaign still race on its status
+    // guard: one applies, the other finds `running` and is refused.
     const [a, b] = floor.campaigns as [string, string];
     const answers = await Promise.all([control(a, 'start', sup(0)), control(b, 'start', sup(1)), control(a, 'start', sup(2)), control(b, 'start', sup(0))]);
     for (const res of answers) expectHealthy(res, 'start');
-    const ok = answers.filter((r) => r.statusCode === 200);
-    expect(ok.length).toBe(1);
+    const okFor = (i: number, j: number) => [answers[i]!, answers[j]!].filter((r) => r.statusCode === 200).length;
+    expect(okFor(0, 2), 'campaign a').toBe(1);
+    expect(okFor(1, 3), 'campaign b').toBe(1);
     for (const res of answers.filter((r) => r.statusCode !== 200)) {
       expect(res.statusCode).toBe(409);
-      expect(['another_campaign_running', 'invalid_campaign_transition']).toContain(res.json().code);
+      expect(res.json().code).toBe('invalid_campaign_transition');
     }
-    expect(await scalar(`SELECT count(*)::int AS n FROM agency_campaigns WHERE status = 'running'`)).toBe(1);
+    expect(await statusOf(a)).toBe('running');
+    expect(await statusOf(b)).toBe('running');
+    expect(await scalar(`SELECT count(*)::int AS n FROM agency_campaigns WHERE status = 'running'`)).toBe(2);
   });
 
   it('4. concurrent PATCHes of different fields both land: no lost update', async () => {

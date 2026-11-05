@@ -67,6 +67,34 @@ locals {
         summary       = "Agency campaign halted — cannot read the DNC registry"
         description   = "agency_predial_gate_total{gate=\"dnc_unavailable\"} has been advancing for 10m on {{ $labels.service_name }} (campaign_id={{ $labels.campaign_id }}). The pre-dial gate could not read the dnc_entries table, so it is refusing to dial — correctly: a wrongly-dialled DNC number is a regulatory event, a paused campaign is not. In magick-agency the DNC check is a direct Postgres read (there is no Redis DNC set), so this is the database: pool exhaustion, a timeout, or Postgres down. Check agency's Postgres and its pool; the caught error is logged under component=agency-dnc-registry, and each halted tick as 'Agency pre-dial gate halted the tick'. Every tick re-checks, so the campaign resumes on its own once the read succeeds; the supervisor's health strip shows the same stall meanwhile."
       },
+      {
+        uid  = "agy-pacing-share-starved"
+        name = "A running campaign is starved of its account's slots"
+        # Several running campaigns of one account split its max_concurrent_calls in the pacing
+        # round, fewest live calls first (MC1-MC7, docs/decisions.md). The withheld counter alone
+        # measures CONTENTION (every campaign whose demand exceeded what it got while the account
+        # had headroom; a busy campaign above an equal share is withheld routinely). Withheld at
+        # 0 in use is the starvation signal: a campaign with NO live call is first in line, so it
+        # means its tick reports after its account's split closed (MC2: it then gets 0), more
+        # campaigns tie at 0 live than the account has lines, or the split is wrong. The slot
+        # gauges carry a series only while the campaign reports demand to a contended split, so
+        # a campaign alone on its account, or not reporting demand, cannot match. Withheld
+        # within every 5m window AND at 0 in use, held for 10m
+        # (strictly longer than the rate window), is ~10-15 minutes of a campaign with demand
+        # that placed no call. A sparse counter under rate(), not increase(): the condition is
+        # sustained, so missing the first increment costs nothing. The `and` keeps only campaigns
+        # whose in-use gauge exists and reads 0 (max BY campaign); a campaign that stops being
+        # withheld resolves. Warns (Slack), never pages: the account still dials up to its limit
+        # through the others.
+        expr          = "sum by (service_name, campaign_id) (rate(agency_pacing_share_withheld_total{${local.agency}}[5m])) and on (service_name, campaign_id) (max by (service_name, campaign_id) (agency_campaign_slots_in_use{${local.agency}}) == 0)"
+        op            = "gt"
+        threshold     = 0
+        for           = "10m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "A running campaign has been withheld its account's slots for 10 minutes with no live call"
+        description   = "agency_pacing_share_withheld_total has kept advancing for campaign_id={{ $labels.campaign_id }} on {{ $labels.service_name }} for 10m while agency_campaign_slots_in_use for it stayed at 0: the pacing round split its account's max_concurrent_calls between the account's running campaigns and gave this one nothing, although the account had headroom and the campaign had demand. The withheld counter alone only measures contention; withheld at 0 in use is starvation, because the fewest-live-calls-first rule (MC1, docs/decisions.md) serves a campaign with no live call first. Its ready agents wait while the account's other campaigns dial. Confirm on the dashboard's Pacing Share panels (this campaign's allocated never above its in use, another campaign's allocated rising). Then check whether the account runs more campaigns than it has lines (max_concurrent_calls; the console's campaign card then reads 'N campaigns share M lines'): campaigns tied at 0 live calls take turns, so one is always waiting, and this can fire with the share working as designed. If so, raise the account's limit or have the supervisors run no more campaigns at once than the account has lines. Otherwise read the pacing logs for this campaign_id: a tick that misses the 1 s wait but reports while its account's split is open still gets the leftover, but one that reports only after the split closed (at the latest the 5 s deadline, MC2) gets 0 and waits for the next split, so a tick whose reads are always that slow starves (a 'Pacing split open past its deadline' warning for the account points the same way; so does 'A pacing tick has held granted dials with no progress past the bound' for a dial hung in the carrier); file it with the campaign and account ids. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
     ]
 
     # ── Insights: the rollup job and the pacing history ──────────────────

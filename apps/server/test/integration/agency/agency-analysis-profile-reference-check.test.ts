@@ -34,11 +34,11 @@ const { agencyCampaignRepository } = await import(
  * (1) `NOT (status = ANY($n))` over a `VARCHAR` column with a CHECK constraint,
  *     with the array bound as a parameter. The unit test proves the string; only
  *     Postgres proves it plans and that a `text[]` compares against the column.
- * (2) `uq_agency_campaign_running` — ONE running campaign per (tenant, account).
- *     That is why the live arms below use `running` at most once per scope and
- *     reach for `paused` and `stopping` for the rest: a fixture that tried four
- *     running campaigns in one account would fail on the index, not on the
- *     predicate.
+ * (2) The live arms below use `running` at most once per scope and reach for
+ *     `paused` and `stopping` for the rest. That was forced when
+ *     `uq_agency_campaign_running` allowed ONE running campaign per (tenant,
+ *     account); migration 0015 dropped it (decisions MC6), and the mix of
+ *     statuses is kept because each live status is an arm of the predicate.
  *
  * There is deliberately no foreign key from `agency_campaigns.analysis_profile_id`
  * to `call_analysis_profiles`, which is why these fixtures can

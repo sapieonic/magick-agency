@@ -190,7 +190,7 @@ describe('pacing rounds: skip, wake, share (load)', () => {
      * Two engines lead the same campaign (two "replicas": separate lease keys, the
      * same stations, agents and dialer), both on the process bus — the split brain
      * the lease cannot rule out, and the simplest way to put two engines on one
-     * account with one running campaign per account. 8 agents, limit 4: one engine
+     * account (each splits only among its own campaigns, MC3). 8 agents, limit 4: one engine
      * dials 4 and the carrier holds them; both then sit at the limit, quiescent,
      * each with 4 in its cache.
      */

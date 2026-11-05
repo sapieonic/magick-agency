@@ -104,9 +104,9 @@ describe('roster refusal codes', () => {
 });
 
 describe('campaign-lifecycle codes', () => {
-  it('are the seven campaign-lifecycle names, distinct', () => {
+  it('are the six campaign-lifecycle names, distinct', () => {
+    // `another_campaign_running` is retired (decisions MC6): several campaigns may run per account.
     expect([...AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES]).toEqual([
-      'another_campaign_running',
       'invalid_campaign_transition',
       'campaign_not_found',
       'campaign_roster_empty',
