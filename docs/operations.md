@@ -624,17 +624,43 @@ the Insights pacing history of that window is incomplete.
 **Means:** for 10 minutes the pacing round kept withholding slots from one running campaign
 (`agency_pacing_share_withheld_total`, by `campaign_id`) while its live calls stayed at 0
 (`agency_campaign_slots_in_use`). An account's running campaigns split its `max_concurrent_calls`
-in the pacing round, fewest live calls first (MC1–MC7 in [`decisions.md`](decisions.md)), so a
-campaign with no live call should be served before any other. Its ready agents wait while the
-account's other campaigns dial; the account as a whole still dials up to its limit.
+in the pacing round, fewest live calls first (MC1–MC7 in [`decisions.md`](decisions.md)). The
+withheld counter on its own measures contention, not starvation: it counts every campaign whose
+demand exceeded what it got while the account had headroom, so a busy campaign above an equal
+share is withheld routinely. Withheld at 0 in use is the starvation signal, because fewest live
+first serves a campaign with no live call before any other unless something else is wrong. Its
+ready agents wait while the account's other campaigns dial; the account as a whole still dials up
+to its limit. The slot gauges are set only after a campaign's contended report to the split and
+cleared on every other tick outcome, so the rule cannot fire for a campaign alone on its account
+or one that is not reporting demand.
 
 **Check:** the dashboard's *Pacing Share* panels, at the end of the *Agency dialer* row: this
-campaign's `allocated` never above its `in use` while another campaign's `allocated` rises. Then the
-pacing logs for the campaign: a tick that reports after the round's 1 s cut-off (MC2) is offered
-only what the account's other campaigns left, so a slow read inside its tick starves it.
+campaign's `allocated` never above its `in use` while another campaign's `allocated` rises. Then:
 
-**Do:** file it with the campaign and account ids and what the logs show. A burst of withheld
-slots with live calls on the campaign is the share rule working, not this alert.
+- **More campaigns running than lines.** Compare the account's running campaigns with its
+  `max_concurrent_calls` (the campaign's stats `concurrency` block, or the console's campaign card,
+  which then reads "… · 3 campaigns share 2 lines"). When more campaigns tie at 0 live calls than
+  the account has lines, the tie goes round-robin and some campaign is always waiting at 0, so the
+  rule can fire with the share working as designed.
+- **A late tick.** The pacing logs for the campaign. A tick that misses the 1 s wait (counted from
+  the account's first report) but reports while its account's split is still open gets what the
+  split left over, so a slow sibling is not starved by that alone; only a report after the split
+  CLOSES (the 5 s deadline, MC2) gets 0, counted as withheld. A
+  warning "Pacing split open past its deadline — closing it" for the account means some member
+  never reported within 5 s: a tick stuck in its reads, which starves its campaign and also holds
+  back the account's other campaigns, since no tick starts for an account while its split is open.
+- **A stuck dial.** A warning "A pacing tick has held granted dials with no progress past the bound
+  — no longer counting them against the account" means a tick sat 60 s
+  (`PACING_DIAL_HOLD_MAX_MS`) between granted dials, hung in the carrier: its campaign keeps no
+  new dials while it hangs, and should it recover the account can briefly exceed its limit by what
+  it still inserts (the concurrency guard refuses the excess). Check the carrier (VoiceLink login
+  and `add_lead` latency) for the same window.
+
+**Do:** for more campaigns than lines, raise the account's limit (super-admin) or ask the
+supervisors to run no more campaigns at once than the account has lines, pausing the ones that
+can wait; nothing is broken. Otherwise file it with the campaign and account ids and what the logs
+show. A burst of withheld slots with live calls on the campaign is the share rule working, not
+this alert.
 
 ## Releases and versioning
 

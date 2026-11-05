@@ -36,7 +36,10 @@ type Stat = RoundReport['campaigns'][string];
  *  - the account's live calls never exceed its limit, across both campaigns;
  *  - with both saturated the slots split evenly (within one), and every round the
  *    split is MC1's: fewest live calls first, all the headroom either can use;
- *  - a campaign with nothing due leaves the whole limit to the other.
+ *  - a campaign with nothing due leaves the whole limit to the other;
+ *  - a tick whose dials outlive its round (the carrier slow to take one) holds its
+ *    granted, not yet inserted dials in the engine's pending-dial ledger, so the next
+ *    round, where its sibling ticks alone, is not granted those slots again.
  *
  * Needs migration 0015 (two running campaigns on one account were refused by
  * `uq_agency_campaign_running` before it).
@@ -164,6 +167,73 @@ describe('several running campaigns on one account (load)', () => {
     expect(dialsA, `seed ${seed}`).toBeGreaterThan(LIMIT);
     expect(dialsB, `seed ${seed}`).toBeGreaterThan(LIMIT);
     expect(violations).toEqual([]);
+  }, 300_000);
+
+  it('a tick whose dials outlive its round: the next round does not grant its slots again (pending-dial ledger)', async () => {
+    // Not scaled: the arithmetic below is exact. 3 + 3 granted in round 1, 8 agents each.
+    const LIMIT = 6;
+    world = await createFloorWorld({
+      scheduled: true,
+      campaigns: [
+        { label: 'A', tenant: 't1', account: 'm3', agents: 8, contacts: 60, maxConcurrentCalls: LIMIT },
+        { label: 'B', tenant: 't1', account: 'm3', agents: 8, contacts: 60, maxConcurrentCalls: LIMIT },
+      ],
+    });
+    patientRounds(world);
+    const a = world.campaign('A');
+    const b = world.campaign('B');
+    const seed = world.seed;
+    const accountKey = `${a.tenantId}:${a.accountId}`;
+    // The pending-dial ledger per account: the sum of the ticks' holds.
+    const ledger = () => new Map([...(world.runtime.pacing as unknown as {
+      pendingDials: Map<string, Set<{ remaining: number }>>;
+    }).pendingDials].map(([k, holds]) => [k, [...holds].reduce((n, h) => n + h.remaining, 0)] as const));
+    const seen = observe(world);
+
+    // The carrier hangs on the round's FIRST dial (whichever campaign placed it), so that
+    // campaign's tick, granted 3, holds 2 granted dials not yet inserted past its round.
+    let answer!: () => void;
+    const hung = new Promise<void>((resolve) => { answer = resolve; });
+    let hungAttempt: string | null = null;
+    world.carrier.admission = {
+      admit: async (call) => {
+        if (hungAttempt === null) {
+          hungAttempt = call.attemptId;
+          await hung;
+        }
+      },
+      release: async () => {},
+    };
+
+    const first = world.runtime.pacing.runRound();
+    await vi.waitFor(() => expect(hungAttempt).not.toBeNull(), { timeout: 15_000 });
+    const { rows } = await getTestPool().query<{ campaign_id: string }>(
+      'SELECT campaign_id FROM agency_call_attempts WHERE id = $1', [hungAttempt]);
+    const slowId = rows[0]!.campaign_id;
+    const other = slowId === a.id ? b : a;
+    // The other campaign's tick ends: all 3 of its dials placed.
+    await vi.waitFor(() => expect(seen.some((o) => o.campaignId === other.id && o.mode === 'full')).toBe(true),
+      { timeout: 15_000 });
+    expect(await liveOf(other.id), `seed ${seed}`).toBe(3);
+    expect(await liveOf(slowId), `seed ${seed}`).toBe(1);
+    expect(ledger().get(accountKey), `seed ${seed}`).toBe(2);
+
+    // Round 2 passes the slow campaign by (still ticking); the other ticks alone with 5
+    // agents free. 4 rows + 2 pending = the limit: it is granted nothing. Without the
+    // ledger it would read 4 live and dial 2 more, and the account would end at 8.
+    await world.runtime.pacing.runRound();
+    const lone = seen.filter((o) => o.campaignId === other.id).at(-1);
+    expect(lone, `seed ${seed}`).toMatchObject({ mode: 'full', plan: { occupied: LIMIT, toDial: 0, idle: 'no_slots' } });
+
+    answer();
+    await first;
+    world.carrier.admission = null;
+    expect(await accountLive(a.tenantId, a.accountId), `seed ${seed}`).toBe(LIMIT);
+    expect(world.carrier.peakLiveByAccount.get(accountKey) ?? 0, `seed ${seed}`).toBe(LIMIT);
+    expect(world.carrier.refusals, `seed ${seed}`).toEqual([]);
+    expect(ledger().size, `seed ${seed}`).toBe(0);
+    const violations = await world.checkInvariants();
+    expect(violations, violations.slice(0, 10).join('\n')).toEqual([]);
   }, 300_000);
 
   it('a campaign with nothing due leaves the whole limit to the other', async () => {

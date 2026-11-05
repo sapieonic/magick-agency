@@ -90,7 +90,7 @@ Every expression selects `${local.agency}` and nothing else.
 | uid | Reads |
 |---|---|
 | `agy-dnc-unavailable` | `agency_predial_gate_total{gate="dnc_unavailable"}` (the halt is a failed Postgres read of `dnc_entries`, decision B8) |
-| `agy-pacing-share-starved` | `agency_pacing_share_withheld_total` by `campaign_id`, advancing for 10m while `agency_campaign_slots_in_use` reads 0: a campaign with no live call withheld its account's slots (the fair share serves it first, MC1–MC7 in `docs/decisions.md`) |
+| `agy-pacing-share-starved` | `agency_pacing_share_withheld_total` by `campaign_id`, advancing for 10m while `agency_campaign_slots_in_use` reads 0. The counter alone measures contention (every campaign whose demand exceeded what it got while the account had headroom); withheld at 0 in use is starvation, since the fair share serves a campaign with no live call first (MC1–MC7 in `docs/decisions.md`). It can also fire with the share working, when more of an account's campaigns tie at 0 live calls than it has lines: raise the limit or run fewer campaigns at once (runbook in `docs/operations.md`) |
 | `agy-telephony-lease-release-failure` | `telephony_lease_release_total{outcome=~"failure\|partial"}` |
 | `agy-telephony-lease-release-fallback` | `telephony_lease_release_total`, `fallback` share |
 | `agy-rate-limit-infra-rejected` | `rate_limit_rejected_total{bucket_kind=~"webhook\|carrier_media\|internal"}` |
@@ -138,8 +138,9 @@ and `service_name=~"$service_name"`. The rows:
   our-fault retirements, campaign-completion emails; the insights rollup
   (backlog and oldest dirty mark, batch duration, batches, buckets and
   failures) and pacing-history write failures and drops; the pacing share
-  (each running campaign's slots in use against slots allocated, and the
-  slots the fair-share rule withheld from it, MC1–MC7).
+  (each campaign's slots in use against slots allocated, set only after a
+  contended report to the split, and the slots the fair-share rule withheld
+  from it, a measure of contention, MC1–MC7).
 - **Voice, capacity and storage**: WebSockets, telephony lease release,
   provider concurrency admission, rate-limit rejections, S3.
 - **Identity and mail**: sign-in attempts; invite emails and claims.
@@ -166,7 +167,10 @@ metric in `packages/observability/src/metrics/` first:
   `agency_pacing_share_withheld_total` carry only `campaign_id`: no tenant or
   account label, so the Pacing Share panels ignore `$tenant_id` and cannot
   group the campaigns that share one account's limit. Read them one account's
-  campaigns at a time.
+  campaigns at a time. The two gauges are set only after the campaign reports
+  demand to a contended split (two or more of its account's campaigns
+  contending) and cleared on every other tick outcome, so a campaign running
+  alone has none.
 
 ## Validators
 

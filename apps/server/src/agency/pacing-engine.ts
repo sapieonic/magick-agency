@@ -78,7 +78,7 @@ import {
   type PacingInvalidationEvent,
 } from './pacing/invalidation-bus.js';
 import { GenerationTtlCache } from './pacing/read-cache.js';
-import { PACING_SHARE_WAIT_MS, PacingRound, ShareRotation, accountKeyOf } from './pacing/round.js';
+import { PACING_SHARE_WAIT_MS, PACING_SPLIT_DEADLINE_MS, PacingRound, ShareRotation, accountKeyOf } from './pacing/round.js';
 import { getFeatureFlagService, FLAGS } from '../feature-flags/index.js';
 import { auditLogger } from '../audit/audit-logger.js';
 import { ownerModeOf, queueStateKey, readAgentQueues, type AgentQueueReading } from './pacing/agent-queue.js';
@@ -192,8 +192,8 @@ interface TickPlan {
   /**
    * The account's split (MC1) gave this campaign fewer dials than it could have placed
    * while the account had headroom: `toDial < MIN(demand, headroom)`, the rest granted to
-   * another campaign of the account. Such a tick is never quiescent (MC5): it ticks every
-   * round until it is served, so it cannot sleep through slots another campaign leaves.
+   * another campaign of the account; or it reported into a CLOSED split and got 0. Such a tick is never quiescent (MC5): it ticks every round until it is served, so it
+   * cannot sleep through slots another campaign leaves.
    */
   shareHeld?: boolean;
   /**
@@ -201,7 +201,54 @@ interface TickPlan {
    * (`pending`) contact existed when the probe ran.
    */
   openPendingSeen?: boolean;
+  /**
+   * The account was contended when this tick reached the split (two or more of its
+   * campaigns in the round): the claim then feeds the claim-shortfall cap
+   * ({@link PacingEngine.demandCap}).
+   */
+  contended?: boolean;
 }
+
+/**
+ * One tick's part of the pending-dial ledger ({@link PacingEngine.pendingDials}): the
+ * dials its split granted that it has not yet inserted as attempt rows. Created empty by
+ * every `runTick`; filled once, right after the grant; drained per inserted attempt, cut
+ * down as the tick learns it will insert fewer, and released in `runTick`'s `finally`.
+ */
+interface DialHold {
+  /** The account the grant came from; null until the tick was granted a dial. */
+  accountKey: string | null;
+  /** Granted dials this tick has neither inserted nor released. */
+  remaining: number;
+  /**
+   * Engine clock: its last progress (the grant, or the latest attempt it inserted). A hold
+   * with no progress for {@link PACING_DIAL_HOLD_MAX_MS} is ignored by the ledger's read.
+   */
+  touchedAt: number;
+  /** The read has already warned that this hold went stale (once per hold). */
+  staleWarned: boolean;
+}
+
+/**
+ * How long a tick's hold in the pending-dial ledger counts without progress (its grant, or
+ * an attempt insert), engine clock. A tick hung inside `dialUpTo` (a carrier call that
+ * never returns) would otherwise hold its siblings' headroom down until a restart; its own
+ * `finally` still releases the hold whenever it does end.
+ *
+ * Why 60 s: between two inserts a healthy tick runs one pair's gates (a DNC read), its
+ * station-owner lookup (Redis, 2 s command timeout), the attempt insert, and the previous
+ * pair's dispatch, which awaits the carrier request: VoiceLink's login (10 s) and
+ * `add_lead` (15 s), each bounded by its own timeout (decisions "VoiceLink timeouts"). That
+ * is about 30 s at worst, with the database statements on top; 60 s is twice it. Measured
+ * from the last progress, not the grant, so a tick of several slow dials is not cut off
+ * while it is still working through them. Ignoring a stale hold can only over-dial (its
+ * dials may still be inserted later), and the account concurrency guard refuses that.
+ *
+ * VoiceLink is the only carrier adapter that places a dial today (`telephony/voicelink/`,
+ * every request under `AbortSignal.timeout`). An adapter added later must bound its dial
+ * request the same way, well inside this, or a slow-but-healthy tick can outlive it.
+ */
+export const PACING_DIAL_HOLD_MAX_MS = 60_000;
 
 /**
  * Why a tick dialled nothing. Closed set — it is a metric label.
@@ -265,6 +312,12 @@ export interface PacingEngineOptions {
    * account's headroom without it (MC2). Default {@link PACING_SHARE_WAIT_MS}.
    */
   shareWaitMs?: number;
+  /**
+   * How long an account's split may stay open before the next round closes it (the backstop
+   * for a split nobody reported to). Default {@link PACING_SPLIT_DEADLINE_MS}; never less
+   * than the share wait.
+   */
+  splitDeadlineMs?: number;
 }
 
 /** One tick, as the engine saw it. For tests and the measurement harness only. */
@@ -355,10 +408,25 @@ export class PacingEngine {
     this.limitCache = new GenerationTtlCache(ttl, this.now);
     this.history = options.history ?? new PacingHistoryAccumulator();
     this.shareWaitMs = options.shareWaitMs ?? PACING_SHARE_WAIT_MS;
+    this.splitDeadlineMs = options.splitDeadlineMs ?? PACING_SPLIT_DEADLINE_MS;
   }
 
   /** {@link PacingEngineOptions.shareWaitMs}. */
   private readonly shareWaitMs: number;
+  /** {@link PacingEngineOptions.splitDeadlineMs}. */
+  private readonly splitDeadlineMs: number;
+
+  /**
+   * Per account, the scheduled round whose split of it is OPEN (`pacing/round.ts`, "one open
+   * split per account"), and when it opened (engine clock). Set by the round when the
+   * account's first participant joins, deleted when that split closes (every participant
+   * reported or withdrew, also after the share wait split without a slow one; or
+   * {@link expireOpenSplits} closed it at the deadline). While an account has an
+   * entry, {@link runRound} starts no tick for its campaigns, so no two splits of one account
+   * are ever open at once and a later round's read sees every earlier grant in the ledger.
+   * Forced rounds (`tickOnce`) do not report here: exempt, no production caller.
+   */
+  private readonly openSplits = new Map<string, { round: PacingRound; openedAt: number }>();
 
   /**
    * Per account, where the next contended split starts breaking ties (MC1: ties go
@@ -372,9 +440,76 @@ export class PacingEngine {
    */
   private readonly claimLocks = new Map<string, Promise<void>>();
 
+  /**
+   * The PENDING-DIAL LEDGER, per account: dials a split granted (`round.submit`) that are
+   * not yet attempt rows. A tick inserts each attempt and then awaits the carrier before
+   * the next, so a tick granted k dials can outlive its 250 ms round, and later rounds pass
+   * that campaign by while it is still ticking (`ticking`). Without the ledger a sibling
+   * ticking alone would read `countLiveForAccount` (which cannot see those k) and be granted
+   * the same headroom again: live attempts above `max_concurrent_calls`, and the account
+   * guard refusing what pacing had already reserved and claimed for. Each round's account
+   * live read is `countLiveForAccount + this ledger` (`planTick`).
+   *
+   * Changed only through a tick's {@link DialHold}: + its grant right after `submit`
+   * ({@link holdDials}), − 1 when an attempt row is inserted ({@link spendDial}), − whatever
+   * the tick will not insert as soon as it knows ({@link trimDials}) and at the latest in
+   * `runTick`'s `finally` ({@link releaseDials}). Kept per hold (a tick's), so that a hold
+   * with no progress for {@link PACING_DIAL_HOLD_MAX_MS} can be left out of the read
+   * ({@link pendingOf}); a hold at 0 leaves its account's set, and an empty set is deleted.
+   * A campaign's own entries are gone before its next tick starts (`ticking`), so a campaign
+   * alone on its account always reads 0 here, and its statements and `to_dial` are exactly
+   * the single-campaign law's. In memory: one engine leads every campaign of an account on
+   * this single-replica deployment (MC3).
+   */
+  private readonly pendingDials = new Map<string, Set<DialHold>>();
+
+  /**
+   * The CLAIM-SHORTFALL CAP, per campaign: under contention a campaign's demand can exceed
+   * what its claim will find (an owner-mode campaign's demand counts its agents with work
+   * due, not numbers busy on the account's other campaigns; a `pool` campaign's due-contact
+   * count is read before its claim, which can then find fewer). Fewest-live-first would then
+   * hand it slots every round that it claims nothing for, while its sibling is held back.
+   *
+   * After a CONTENDED tick's claim of `c` pairs against a grant `g`: `c < g` sets the cap to
+   * `MAX(1, c)`; `c ≥ g` deletes it. A later contended tick states
+   * `demand = MIN(demand, cap)`. Deleted on any tick that reaches the split uncontended, on
+   * a tick that finds the campaign not dialling (not running, or drain-only), and by
+   * `relinquish`. The floor of 1 keeps the campaign probing, so it recovers once its
+   * contacts become claimable, and bounds the waste to one slot per round.
+   */
+  private readonly demandCap = new Map<string, number>();
+
   /** A new round, with the engine's share settings. */
   private newRound(fresh: boolean): PacingRound {
-    return new PacingRound(fresh, { shareWaitMs: this.shareWaitMs, rotation: this.shareRotation });
+    if (fresh) return new PacingRound(true, { shareWaitMs: this.shareWaitMs, rotation: this.shareRotation });
+    const round: PacingRound = new PacingRound(false, {
+      shareWaitMs: this.shareWaitMs,
+      rotation: this.shareRotation,
+      onSplitOpen: (accountKey) => this.openSplits.set(accountKey, { round, openedAt: this.now() }),
+      onSplitClose: (accountKey) => {
+        if (this.openSplits.get(accountKey)?.round === round) this.openSplits.delete(accountKey);
+      },
+    });
+    return round;
+  }
+
+  /**
+   * Close every split open longer than the deadline (the larger of
+   * {@link PacingEngineOptions.splitDeadlineMs} and the share wait), counted from its open.
+   * A split stays open until every member has reported or withdrawn, also after its wait ran
+   * out and it split among those that reported; this bounds how long a stuck member holds back
+   * its account. If the split has not run, those that reported are split now; members still
+   * pending then report into a closed split (grant 0).
+   */
+  private expireOpenSplits(now: number): void {
+    const deadline = Math.max(this.splitDeadlineMs, this.shareWaitMs);
+    for (const [accountKey, open] of [...this.openSplits]) {
+      if (now - open.openedAt < deadline) continue;
+      log.warn({ accountKey, openMs: now - open.openedAt }, 'Pacing split open past its deadline — closing it');
+      open.round.close(accountKey);
+      // `close` reports the close; a split that never was this round's must not hold the account.
+      if (this.openSplits.get(accountKey) === open) this.openSplits.delete(accountKey);
+    }
   }
 
   /**
@@ -927,7 +1062,11 @@ export class PacingEngine {
       this.shareRotation.forget(accountKey);
     }
     // Its slot series stop: a campaign no longer led has no share (MC7).
-    safeEmit('agency-pacing-share', () => clearAgencyCampaignSlots(campaignId));
+    this.clearSlots(campaignId);
+    // A cap learnt under this leadership says nothing about the next (MC5). Its ledger
+    // entries are NOT touched here: a tick still in flight holds them, and releases them
+    // in its own `finally`, which a revoked tick reaches like any other.
+    this.demandCap.delete(campaignId);
     this.campaignCache.invalidate(campaignId);
     this.queueSent.delete(campaignId);
     this.fallbackSweptAt.delete(campaignId);
@@ -972,7 +1111,10 @@ export class PacingEngine {
     // round of its own, `fresh`), exactly as a tick always did. The scheduled path
     // is `runRound`. Tracked so `stop()` can wait for it — see `inFlightTicks`.
     // Its own round, so the tick is that round's only participant of its account (MC2): the
-    // split is the per-tick law, and it never waits for another campaign.
+    // split is the per-tick law, and it never waits for another campaign. EXEMPT from "one
+    // open split per account" (`openSplits`): it neither waits for a scheduled round's open
+    // split nor holds one back, so a forced tick racing a scheduled one can grant the same
+    // headroom twice (the account guard refuses the excess). No production code calls it.
     await this.inFlightTicks.track(this.runTick(campaignId, this.newRound(true), 'forced'));
   }
 
@@ -985,15 +1127,27 @@ export class PacingEngine {
    *
    * Every campaign it starts is registered with the round as a participant of its
    * account BEFORE any tick runs, so the round knows whom to wait for before it splits
-   * the account's headroom (decisions MC1, MC2). A skipped campaign is not a participant.
+   * the account's headroom (decisions MC1, MC2). One known not to dial
+   * ({@link knownNotDialing}: led only to drain, or its last full tick found it not
+   * running) joins as NOT CONTENDING: the split waits for it (it withdraws at once while
+   * still not running) but it does not make the account contended unless it reports, so a
+   * paused sibling that an account event (`account_capacity_freed`) wakes leaves a lone
+   * running campaign uncontended (no extra reads, no slot gauges). A skipped campaign is
+   * not a participant.
+   *
+   * NOT STARTED this round: a campaign whose account has a split still OPEN from an earlier
+   * round ({@link openSplits}). It is not skipped either (nothing is counted, its state is
+   * left as it is, dirty included) and starts in the first round after that split closes.
+   * A split open past the deadline is closed first ({@link expireOpenSplits}).
    *
    * Resolves when every tick it started has settled (the timer does not wait; tests
    * and the harness do).
    */
   async runRound(): Promise<void> {
     if (this.stopped) return;
-    const round = this.newRound(false);
     const now = this.now();
+    this.expireOpenSplits(now);
+    const round = this.newRound(false);
     const toStart: Array<{ campaignId: string; cause: PacingWakeCause }> = [];
     for (const campaignId of this.led.keys()) {
       // A tick still in flight from an earlier round keeps the campaign; this round
@@ -1010,13 +1164,23 @@ export class PacingEngine {
         this.observe({ campaignId, mode: 'skipped' });
         continue;
       }
+      // Its account's split from an earlier round can still grant: reading the account now
+      // could hand out the same headroom twice. Next round, or the first after it closes.
+      // Still a running tick for the pacing history (as a skipped one is), so its minute's
+      // `ticks` do not under-count while it waits.
+      if (state?.accountKey && this.openSplits.has(state.accountKey)) {
+        if (state.runningRow) this.countRunningTick(state.runningRow);
+        continue;
+      }
       toStart.push({ campaignId, cause });
     }
     // Every participant first, then the ticks: a tick that reports before a sibling joined
     // would be split alone and take the account's whole headroom.
     for (const { campaignId } of toStart) {
-      const accountKey = this.pacingState.get(campaignId)?.accountKey;
-      if (accountKey) round.join(accountKey, campaignId);
+      const state = this.pacingState.get(campaignId);
+      if (state?.accountKey) {
+        round.join(state.accountKey, campaignId, { contends: !this.knownNotDialing(campaignId, state) });
+      }
     }
     const started: Promise<void>[] = [];
     for (const { campaignId, cause } of toStart) {
@@ -1025,6 +1189,15 @@ export class PacingEngine {
       }));
     }
     await Promise.all(started);
+  }
+
+  /**
+   * A campaign that joins its account's split as NOT CONTENDING (MC2): led only to drain
+   * (`drainOnly`), or its last full tick found it not running (`paused`, `stopping`). Before
+   * its first full tick nothing is known, and it contends.
+   */
+  private knownNotDialing(campaignId: string, state: CampaignPacingState): boolean {
+    return this.drainOnly.has(campaignId) || (state.runningRow === null && state.lastFullAt !== NEVER);
   }
 
   /**
@@ -1140,6 +1313,9 @@ export class PacingEngine {
     let quiescent = false;
     let idle: TickIdleReason | undefined;
     let planned: TickPlan | undefined;
+    // This tick's part of the pending-dial ledger: filled by `planTick` at the grant,
+    // drained by `dialUpTo`, and whatever is left released in `finally`, on every path.
+    const hold: DialHold = { accountKey: null, remaining: 0, touchedAt: startedAt, staleWarned: false };
     safeEmit('agency-pacing-ticks', () => agencyPacingTicksTotal.inc({ mode: 'full', cause }));
     try {
       const campaign = await this.loadCampaign(campaignId, round);
@@ -1234,7 +1410,7 @@ export class PacingEngine {
         // of owners no longer staffed, to the pool. Started here, never awaited: the sweep
         // runs beside the dialing, and a move wakes the campaign for the next round.
         this.maybeStartOwnerSweeps(campaign);
-        const plan = await this.planTick(campaign, round);
+        const plan = await this.planTick(campaign, round, hold);
         // Reported, or returned before it could (`no_agents`, `nothing_due`): out of the split.
         round.withdraw(campaignId);
         planned = plan;
@@ -1245,7 +1421,7 @@ export class PacingEngine {
           // up in that window. Reserving and dialing past this point would place
           // calls without a lease.
           if (!this.mayDial(campaignId)) return;
-          const dialed = await this.dialUpTo(campaign, plan);
+          const dialed = await this.dialUpTo(campaign, plan, hold);
           if (dialed > 0) return; // did work; completion is only checked on an idle tick
         } else if (plan.idle === 'nothing_due' || plan.idle === 'no_contacts') {
           // Agents are available and nothing is due for them: time passing makes contacts
@@ -1265,6 +1441,10 @@ export class PacingEngine {
           // ending or the limit rising can change it, and each publishes.
           idle = plan.idle;
         }
+      } else {
+        // Not dialling (paused, stopping, drain-only): a claim-shortfall cap is stale by the
+        // time it dials again (MC5).
+        this.demandCap.delete(campaignId);
       }
 
       // Idle tick (or a stopping campaign draining): the leader — and ONLY the
@@ -1280,6 +1460,13 @@ export class PacingEngine {
       quiescent = willBeQuiescent;
     } finally {
       round.withdraw(campaignId);
+      // Whatever this tick was granted and did not insert leaves the ledger now, on every
+      // path out: a return, a throw, a revoked lead.
+      this.releaseDials(hold);
+      // A tick that did not plan (not running, drain-only, no caller IDs, no row, a throw
+      // before the plan) is in no split: its slot series stop (MC7). `planTick` clears them
+      // itself on its own early returns.
+      if (!planned) this.clearSlots(campaignId);
       this.ticking.delete(campaignId);
       const state = this.pacingState.get(campaignId);
       if (state) {
@@ -1306,7 +1493,7 @@ export class PacingEngine {
     }
   }
 
-  private async planTick(campaign: AgencyCampaignRecord, round: PacingRound): Promise<TickPlan> {
+  private async planTick(campaign: AgencyCampaignRecord, round: PacingRound, hold: DialHold): Promise<TickPlan> {
     // Availability is read from Redis, not the DB: presence is the heartbeat, and
     // a DB row saying `available` for an agent whose socket died would put a real
     // customer through to nobody.
@@ -1355,7 +1542,11 @@ export class PacingEngine {
     // return below, so a campaign whose agents all went away still drops them).
     const mode = ownerModeOf(campaign);
     this.pruneQueueSent(campaign.id, mode ? sessions.map((s) => s.id) : null);
-    if (candidates.length === 0) return { toDial: 0, candidates: [], idle: 'no_agents' };
+    if (candidates.length === 0) {
+      // Not in this round's split: no slot series from an earlier contended round (MC7).
+      this.clearSlots(campaign.id);
+      return { toDial: 0, candidates: [], idle: 'no_agents' };
+    }
 
     // ── Fairness: longest-idle first. ───────────────────────────────────────
     // The requirement is that no agent's idle time diverges over a 200-call run,
@@ -1383,6 +1574,7 @@ export class PacingEngine {
       const work = await this.agentsWithWorkDue(campaign, mode, candidates);
       pickable = work.picked;
       if (pickable.length === 0) {
+        this.clearSlots(campaign.id);
         return { toDial: 0, candidates: [], idle: 'nothing_due', openPendingSeen: work.openPendingSeen };
       }
     }
@@ -1397,13 +1589,30 @@ export class PacingEngine {
     // account's ceiling, and a manual call holds a carrier slot like any attempt
     // while belonging to no campaign, so no per-campaign count can see it.
     //
+    // PLUS the pending-dial ledger: dials earlier rounds granted to ticks still in flight
+    // and not yet inserted ({@link pendingDials}), which no database count can see. The
+    // ledger is snapshotted synchronously BEFORE the query is issued (an async function
+    // runs to its first `await` at once). That order errs only one way. A row inserted
+    // between the snapshot and the query's own snapshot is in both (it was still pending
+    // at ours, and committed at the query's): counted twice, a one-round under-dial of
+    // one. The reverse order (query, then ledger) could miss a row entirely: committed
+    // just after the query's snapshot and decremented from the ledger just before ours,
+    // it would be in neither, and its slot granted again. A hold with no progress for
+    // `PACING_DIAL_HOLD_MAX_MS` (a tick hung in the carrier) is left out ({@link pendingOf}).
+    // A campaign alone on its account
+    // reads 0 here (its own previous tick has ended: `ticking`), so the value, and the
+    // statement, are what they always were.
+    //
     // NOT the concurrency guard's Redis count, although it caps the same thing: the
     // guard counts a call from bridge admission to its release, this counts an
     // attempt from its insert (before admission) to `ended`, and the guard also
     // holds calls the dialer never made (another product's browser dial on the
     // account). The database count is the conservative one for pacing.
-    const occupied = await round.liveCalls(accountKey, () =>
-      agencyAttemptRepository.countLiveForAccount(campaign.tenant_id, campaign.account_id));
+    const occupied = await round.liveCalls(accountKey, async () => {
+      const pending = this.pendingOf(accountKey); // BEFORE the query: see above
+      const live = await agencyAttemptRepository.countLiveForAccount(campaign.tenant_id, campaign.account_id);
+      return live + pending;
+    });
 
     /**
      * **The two limits constrain different things, and subtracting one from the
@@ -1438,10 +1647,17 @@ export class PacingEngine {
     //   • its demand, bounded in `pool` mode by the contacts actually dialable now, so a
     //     campaign with agents but nothing due does not hold slots another could use. An
     //     owner-mode campaign's `pickable` is already its agents with work due (CA3).
+    //     Both can still promise more than the claim finds, so the demand is also capped
+    //     by what its last contended claim fell short by ({@link demandCap}, MC5).
     const contended = round.contended(accountKey);
     let demand = pickable.length;
     let ownLive: number | null = null;
-    if (contended) {
+    if (!contended) {
+      // Uncontended: nobody to hold back, so no cap (and none carried into a later contention).
+      this.demandCap.delete(campaign.id);
+    } else {
+      const cap = this.demandCap.get(campaign.id);
+      if (cap !== undefined) demand = Math.min(demand, cap);
       const [byCampaign, dialable] = await Promise.all([
         round.liveByCampaign(accountKey, () =>
           agencyAttemptRepository.countLiveByCampaignForAccount(campaign.tenant_id, campaign.account_id)),
@@ -1451,13 +1667,19 @@ export class PacingEngine {
       demand = Math.min(demand, dialable);
     }
     if (demand === 0) {
-      // Agents ready and nothing to dial: out of the split, so the others need not wait.
+      // Agents ready and nothing to dial: out of the split, so the others need not wait,
+      // and (out of it) no slot series (MC7).
       round.withdraw(campaign.id);
-      this.recordSlots(campaign.id, ownLive, 0);
+      this.clearSlots(campaign.id);
       return { toDial: 0, candidates: [], accountLimit, occupied, idle: 'no_contacts' };
     }
     const share = await round.submit(accountKey, campaign.id, { demand, ownLive, limit: accountLimit, live: occupied });
     const toDial = share.grant;
+    // Into the pending-dial ledger at once, with no `await` between the grant and here: the
+    // round resolves a grant synchronously (the split's, or a late report's from the
+    // leftover), and only microtasks run until this continuation, so every ledger read that
+    // comes after the grant (another round's live read, which follows I/O or a timer) sees it.
+    this.holdDials(hold, accountKey, toDial);
     // What the split held back while the account had room (0 for a lone campaign).
     const withheld = Math.min(demand, share.headroom) - toDial;
     if (withheld > 0) {
@@ -1467,20 +1689,109 @@ export class PacingEngine {
     return {
       toDial, candidates: pickable, accountLimit, occupied,
       ...(toDial === 0 ? { idle: 'no_slots' as const } : {}),
-      ...(withheld > 0 ? { shareHeld: true } : {}),
+      // A report into a CLOSED split got 0 whatever was left: held back by the share, so not
+      // quiescent, and it takes part in the next split.
+      ...(withheld > 0 || share.closed ? { shareHeld: true } : {}),
+      ...(contended ? { contended: true } : {}),
     };
+  }
+
+  // ─── The pending-dial ledger ({@link pendingDials}) ──────────────────────
+
+  /** Put a grant of `n` dials into the ledger under `hold`. */
+  private holdDials(hold: DialHold, accountKey: string, n: number): void {
+    if (n <= 0) return;
+    hold.accountKey = accountKey;
+    hold.remaining += n;
+    hold.touchedAt = this.now();
+    let set = this.pendingDials.get(accountKey);
+    if (!set) {
+      set = new Set();
+      this.pendingDials.set(accountKey, set);
+    }
+    set.add(hold);
+  }
+
+  /** One attempt row was inserted: from now on the live count has it, so the ledger does not. */
+  private spendDial(hold: DialHold): void {
+    this.trimDials(hold, hold.remaining - 1);
+    hold.touchedAt = this.now();
+    // Progress again: a later stall of this same hold is warned about too.
+    hold.staleWarned = false;
+  }
+
+  /** The tick will insert at most `atMost` more attempts: release the rest of its hold now. */
+  private trimDials(hold: DialHold, atMost: number): void {
+    const keep = Math.max(0, Math.min(hold.remaining, atMost));
+    if (hold.accountKey === null || keep === hold.remaining) return;
+    hold.remaining = keep;
+    if (keep > 0) return;
+    const set = this.pendingDials.get(hold.accountKey);
+    set?.delete(hold);
+    if (set?.size === 0) this.pendingDials.delete(hold.accountKey);
+  }
+
+  /** The tick is over: whatever it holds leaves the ledger. */
+  private releaseDials(hold: DialHold): void {
+    this.trimDials(hold, 0);
+  }
+
+  /**
+   * The account's pending dials as the live read adds them: every hold's `remaining`, except
+   * a hold with no progress for {@link PACING_DIAL_HOLD_MAX_MS} (a tick hung in `dialUpTo`),
+   * which is left out and warned about once. Synchronous: the caller reads it before issuing
+   * the live-count query.
+   */
+  private pendingOf(accountKey: string): number {
+    const set = this.pendingDials.get(accountKey);
+    if (!set) return 0;
+    const now = this.now();
+    let n = 0;
+    for (const hold of set) {
+      if (now - hold.touchedAt < PACING_DIAL_HOLD_MAX_MS) {
+        n += hold.remaining;
+        continue;
+      }
+      if (!hold.staleWarned) {
+        hold.staleWarned = true;
+        log.warn(
+          { accountKey, held: hold.remaining, idleMs: now - hold.touchedAt },
+          'A pacing tick has held granted dials with no progress past the bound — no longer counting them against the account',
+        );
+      }
+    }
+    return n;
+  }
+
+  /**
+   * The claim-shortfall cap after a contended tick's claim ({@link demandCap}, MC5): `c`
+   * pairs claimed against a grant of `g`.
+   */
+  private noteClaim(campaignId: string, claimed: number, granted: number): void {
+    if (claimed < granted) this.demandCap.set(campaignId, Math.max(1, claimed));
+    else this.demandCap.delete(campaignId);
   }
 
   /**
    * The campaign's slot gauges (MC7): set when the round read its own live calls (a
    * contended account), cleared when it did not, so a campaign alone on its account
-   * carries no stale series from an earlier contended round.
+   * carries no stale series from an earlier contended round. A series exists only for a
+   * campaign whose latest full tick was in a contended split: every other tick outcome
+   * clears it ({@link clearSlots}: `no_agents`, `nothing_due`, a contended demand of 0
+   * (`no_contacts`) here, and in `runTick` every tick that did not plan), as does `relinquish`.
    */
   private recordSlots(campaignId: string, ownLive: number | null, granted: number): void {
-    safeEmit('agency-pacing-share', () => {
-      if (ownLive === null) clearAgencyCampaignSlots(campaignId);
-      else setAgencyCampaignSlots(campaignId, ownLive, ownLive + granted);
-    });
+    if (ownLive === null) {
+      this.clearSlots(campaignId);
+      return;
+    }
+    const inUse = ownLive;
+    safeEmit('agency-pacing-share', () => setAgencyCampaignSlots(campaignId, inUse, inUse + granted));
+  }
+
+  /** Drop the campaign's slot series (a map delete; a no-op when it has none). */
+  private clearSlots(campaignId: string): void {
+    safeEmit('agency-pacing-share', () => clearAgencyCampaignSlots(campaignId));
   }
 
   /**
@@ -1620,7 +1931,7 @@ export class PacingEngine {
    * reaper. Reserving first means a lost CAS costs one Redis call and touches
    * nothing durable.
    */
-  private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan): Promise<number> {
+  private async dialUpTo(campaign: AgencyCampaignRecord, plan: TickPlan, hold: DialHold): Promise<number> {
     // ── 1. Reserve agents first, strictly before the dial and now also
     //       strictly before the claim. The agent is committed before the carrier
     //       is contacted, which is what makes an answered call with no agent
@@ -1668,6 +1979,9 @@ export class PacingEngine {
     const pairs = await this.withAccountClaim(accountKeyOf(campaign.tenant_id, campaign.account_id), () => (mode
       ? this.claimForOwners(campaign, mode, reserved)
       : this.claimPool(campaign, reserved)));
+    // A contended grant this claim could not fill caps the campaign's next contended
+    // demand (MC5, `demandCap`).
+    if (plan.contended) this.noteClaim(campaign.id, pairs.length, plan.toDial);
 
     // Any agent we reserved and cannot pair with a contact goes straight back to
     // the pool — the roster ran out, which is not their fault and must not cost
@@ -1686,6 +2000,11 @@ export class PacingEngine {
     let dialed = 0;
 
     for (const [index, { sessionId, contact }] of pairs.entries()) {
+      // The pending-dial ledger: this tick can insert at most one attempt per pair left, so
+      // a grant beyond the pairs (agents not reserved, contacts not claimed) and the slot of
+      // every earlier pair that inserted nothing (suppressed, deferred, offline, refused by
+      // the backstop) go back to the account now, not when the dispatches are done.
+      this.trimDials(hold, pairs.length - index);
 
       // ── 3. The compliance gates, in the tick: after the claim
       //       and BEFORE the attempt exists. Suppressing here costs no attempt row
@@ -1775,6 +2094,8 @@ export class PacingEngine {
         // insert consumes the contact's marker in the same statement.
         consumeAgentReopen: true,
       });
+      // The row is in the account's live count from now on: out of the pending-dial ledger.
+      if (attempt) this.spendDial(hold);
 
       if (!attempt) {
         // The duplicate-dial backstop refused it. Something believed this contact

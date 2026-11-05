@@ -262,7 +262,10 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   number is already `in_flight` or `connected` on another contact of any campaign of the account
   (a retry child and its parent, or two rosters sharing a number), and takes at most one contact
   per number in a tick (a roster deduped on a loan number can hold one borrower twice). Claims for
-  one account's campaigns run one at a time in the engine, so the read probe is enough.
+  one account's campaigns run one at a time in the engine, so the read probe is enough against
+  other pacing ticks. The agent's own dial (`claimForAgentDial`) and the soft phone's pre-dial
+  check the account the same way but run outside that lock, a millisecond race `decisions.md` §5
+  keeps open.
   `pre-dial-gates.ts` checks phone validity, then calling hours, then DNC (fail closed).
   `stop()` waits up to 5 s (`TICK_DRAIN_TIMEOUT_MS`) for ticks in flight, and every dial site
   re-checks `mayDial`, so no tick dials after shutdown begins.
@@ -274,12 +277,30 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   and Start and Resume no longer answer 409 `another_campaign_running`), and the round splits the
   account's headroom between them rather than first come, first served: each tick states its demand
   and its own live calls, and each free slot goes to the campaign with the fewest live calls that
-  can still use one, a campaign that cannot use its share leaving it to the others (MC1). A tick
-  that has not reported within 1 s is left out of the split and gets only what is left (MC2); one
-  held back while the account had headroom is not quiescent (MC5). With one running campaign the
-  rule is the old `MAX(0, MIN(limit − live, idle))`. `agency_campaign_slots_in_use`,
-  `agency_campaign_slots_allocated` and `agency_pacing_share_withheld_total` show the split
-  (dashboard *Pacing Share* panels, `agy-pacing-share-starved`). A campaign whose last full tick
+  can still use one, a campaign that cannot use its share leaving it to the others (MC1). Every
+  campaign a scheduled round starts joins its account's split before any tick runs, a drain-only
+  (`stopping`) one or one whose last full tick found it not running joining without contending.
+  Once every member has reported or withdrawn the headroom is split among those that reported; if
+  some have not reported 1 s after the account's first report, the split runs without them and
+  stays open (MC2). An account has at most one open split: while it is open, rounds start no tick
+  for that account's campaigns, and it closes when every member has reported or withdrawn, or,
+  once open past `max(5 s, the wait)`, at the next round's start with a warning. A member reporting
+  while the split is open after it ran gets `min(demand, leftover)`, first come first served; one
+  reporting after the close gets 0, is held back (not quiescent) and takes part in the next split.
+  Dials a split granted that are not yet attempt rows are held per tick in a per-account ledger
+  (released per inserted attempt and at the latest when the tick ends; a hold with no progress for
+  60 s stops counting, with a warning) and added to every later round's live read, so with one
+  open split at a time no headroom is granted twice (MC2). A contended tick that claimed fewer
+  contacts than its grant has its demand capped at what it claimed (at least 1) in later contended
+  rounds, until it fills a grant (MC5); one held back while the account had headroom is not
+  quiescent (MC5). With one running campaign the rule is the old `MAX(0, MIN(limit − live, idle))`.
+  A forced `tickOnce` is exempt from the split (no production caller; the concurrency guard refuses
+  any excess). While two processes lead campaigns of one account (a leader failover or a deploy
+  overlap; an old leader learns it lost a lease only at its next renewal) each splits the account's
+  headroom, and the concurrency guard refuses the excess (MC3). `agency_campaign_slots_in_use` and
+  `agency_campaign_slots_allocated` (set only after a contended report) and
+  `agency_pacing_share_withheld_total` (contention) show the split (dashboard *Pacing Share*
+  panels, `agy-pacing-share-starved`). A campaign whose last full tick
   was QUIESCENT (no agent available, no account slot, no usable caller ID, or not running) is
   skipped with no database or Redis work until an event wakes it or the safety tick
   (`PACING_SAFETY_TICK_MS`, 1 s) comes due; a campaign that planned a dial ticks every round.

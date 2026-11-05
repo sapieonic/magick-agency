@@ -710,10 +710,11 @@ export class AgencyContactRepository {
 
   /**
    * The oldest contact `in_flight` on ANY campaign of the account whose number is
-   * `phoneE164`, or null: the soft phone's roster guard for an UNTAGGED dial (§4.1
-   * step 2). A campaign attempt, or another soft-phone call's claim, is live on that
-   * customer, so an untagged call to them is refused `contact_in_flight` as a tagged
-   * one is. Read only: an untagged call never claims or settles a contact (SP6).
+   * `phoneE164`, or null: the soft phone's account-wide roster guard (§4.1 step 2). An
+   * untagged dial is refused `contact_in_flight` on any match; a tagged dial is refused
+   * on a match on another campaign of the account (decisions MC4: several campaigns may
+   * run per account, so a sibling's call is live on that customer too). Read only: the
+   * guard never claims or settles a contact (SP6).
    *
    * Served by the partial `idx_agency_contacts_in_flight` (only the in-flight rows),
    * then narrowed to the account and the digits prefilter; the decision is

@@ -173,9 +173,20 @@ describe('concurrencyLine', () => {
       .toBe('1 of 10 lines in use');
   });
 
+  it('leaves out a share that rounds down to 0: more campaigns running than lines', () => {
+    // "share 0 of 2 lines" would read as "this campaign gets nothing", but idle lines
+    // still flow to it (MC1): say the campaigns share the lines instead.
+    expect(concurrencyLine('running', block({ account_limit: 2, fair_share: 0, running_campaigns: 3 })))
+      .toBe('4 live calls · 3 campaigns share 2 lines');
+    expect(concurrencyLine('running', block({ account_limit: 2, fair_share: 0, campaign_live: 1, running_campaigns: 3 })))
+      .toBe('1 live call · 3 campaigns share 2 lines');
+  });
+
   it('agrees in number with a one-line account', () => {
     expect(concurrencyLine('running', block({ account_limit: 1, fair_share: 0, campaign_live: 0 })))
-      .toBe('0 live calls · share 0 of 1 line · 2 campaigns running');
+      .toBe('0 live calls · 2 campaigns share 1 line');
+    expect(concurrencyLine('running', block({ account_limit: 2, fair_share: 1, campaign_live: 1 })))
+      .toBe('1 live call · share 1 of 2 lines · 2 campaigns running');
   });
 
   it('says nothing without a block or a limit to measure against', () => {

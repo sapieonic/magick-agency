@@ -18,12 +18,19 @@
  *     `default_caller_id` when it is still allowed, else the account's default
  *     number (the first of `findAvailableForAccount`, which orders `is_default`
  *     first). Not allowed → `caller_id_not_allowed` with the set.
- *  4. The roster guard. Tagged: the match on the tag (`findForManualMatch`): any
- *     match `in_flight` refuses `contact_in_flight`, no override; else the oldest
- *     `pending` match is the one to claim, else the oldest match is linked.
- *     Untagged: the number `in_flight` on ANY campaign of the account
- *     (`findInFlightForAccount`) refuses `contact_in_flight` with that campaign;
- *     nothing is claimed or linked (SP6 settles tagged calls only).
+ *  4. The roster guard: one live call per number across the ACCOUNT (decisions MC4),
+ *     tagged or not. Tagged: the match on the tag (`findForManualMatch`): any match
+ *     `in_flight` refuses `contact_in_flight`, no override; else the oldest `pending`
+ *     match is the one to claim, else the oldest match is linked. Then, tagged too, the
+ *     number `in_flight` on ANY campaign of the account (`findInFlightForAccount`: a
+ *     retry child's parent, another roster carrying the number) refuses
+ *     `contact_in_flight` naming THAT campaign and contact, no override; nothing is
+ *     claimed. Untagged: that account-wide read alone, and nothing is claimed or linked
+ *     (SP6 settles tagged calls only). Only `in_flight` is refused, as on the tag: a
+ *     number `connected` elsewhere (bridged, or in wrap-up) is not. These are reads,
+ *     not locks: a pacing claim of another row of the number can still land between
+ *     them and step 3's claim (decisions §5, "Soft phone vs one live call per number
+ *     across the account", which holds both open questions).
  *     Then, tagged on a `strict` campaign (contact assignment): a picked contact
  *     assigned to another agent refuses `contact_assigned_elsewhere`, no override,
  *     unless the actor supervises (`SoftphoneActor.supervise`). The pool and the
@@ -95,7 +102,11 @@ export interface ManualPredialInput {
 export interface ManualPredialDeps {
   dnc: Pick<DncRegistry, 'checkEntry'>;
   findRosterMatches: (campaignId: string, phoneE164: string) => Promise<AgencyContactRecord[]>;
-  /** Untagged: the number's contact `in_flight` on any campaign of the account, or null. */
+  /**
+   * The number's oldest contact `in_flight` on any campaign of the account, or null.
+   * Asked for every dial: untagged it is the whole roster guard; tagged it follows the
+   * tag's own match (step 4).
+   */
   findInFlightInAccount: (phoneE164: string) => Promise<AgencyContactRecord | null>;
 }
 
@@ -227,20 +238,22 @@ export async function runManualPredial(
   });
   if (!caller.ok) return caller;
 
-  // 4. The roster guard: the tag's match, or (untagged) the account's live contact.
+  // 4. The roster guard: the tag's match first (it names the tag's own live contact),
+  // then the number live on ANY campaign of the account, tagged or not (MC4).
   let contact: AgencyContactRecord | null = null;
   if (input.tag) {
     const picked = pickRosterContact(input.tag.id, await deps.findRosterMatches(input.tag.id, destinationE164));
     if (!picked.ok) return picked;
     contact = picked.contact;
-    if (assignedElsewhere(input.tag, contact, input.actor)) {
-      return { ok: false, refusal: { code: 'contact_assigned_elsewhere' } };
-    }
-  } else {
-    const live = await deps.findInFlightInAccount(destinationE164);
-    if (live) {
-      return { ok: false, refusal: { code: 'contact_in_flight', campaign_id: live.campaign_id, contact_id: live.id } };
-    }
+  }
+  const live = await deps.findInFlightInAccount(destinationE164);
+  if (live) {
+    // Tagged, this is a sibling campaign's contact (the tag's own was refused above,
+    // or went in flight between the two reads, which refuses all the same).
+    return { ok: false, refusal: { code: 'contact_in_flight', campaign_id: live.campaign_id, contact_id: live.id } };
+  }
+  if (input.tag && assignedElsewhere(input.tag, contact, input.actor)) {
+    return { ok: false, refusal: { code: 'contact_assigned_elsewhere' } };
   }
 
   // 5. The calling window (tagged).

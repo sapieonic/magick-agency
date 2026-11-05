@@ -310,8 +310,11 @@ export interface AgencyCampaignConcurrency {
   campaign_live: number;
   /**
    * The equal share of the account limit while other campaigns run:
-   * `Math.floor(account_limit / running_campaigns)`. A guide, not a cap: a campaign
-   * can run above it while another leaves its slots idle (MC1).
+   * `Math.floor(account_limit / running_campaigns)`: what each running campaign would
+   * get if every one of them were busy (what fewest-live-calls-first converges on). It
+   * is neither a cap nor a guarantee: a campaign can run above it while another leaves
+   * its slots idle, and holds fewer while it cannot use them (MC1). It is 0 when more
+   * campaigns run than the account has lines, and idle lines still flow to each of them.
    *
    * `null` when this campaign is the only one running, or is not running itself
    * (`stopping` or `paused` dial nothing new, so they hold no share).

@@ -69,8 +69,12 @@ export function needsPolling(
  * the running ones: each free line goes to the running campaign with the fewest live
  * calls. So beside another running campaign, the useful sentence is this campaign's
  * calls against its equal share ("4 live calls · share 5 of 10 lines · 2 campaigns
- * running"). The share is a guide, not a cap: a campaign can sit above it while the
- * other leaves lines idle, which is why its own count is said first. Running
+ * running"). The share is a guide, neither a cap nor a guarantee: a campaign can sit
+ * above it while the other leaves lines idle, which is why its own count is said first.
+ * With more campaigns running than the account has lines the equal share rounds down
+ * to 0, and "share 0 of 2 lines" would read as "this campaign gets nothing" when idle
+ * lines still flow to it, so the share is left out ("4 live calls · 3 campaigns share
+ * 2 lines"). Running
  * alone, it is the account's lines in use ("4 of 10 lines in use"), which counts
  * soft-phone calls and draining calls too. Paused or stopping, it holds no share,
  * so it is the lines in use and, when others run, how many ("6 of 10 lines in use ·
@@ -87,8 +91,13 @@ export function concurrencyLine(
   const { campaign_live, fair_share, account_limit, account_live, running_campaigns } = concurrency;
   const lines = account_limit === 1 ? 'line' : 'lines';
   const running = `${plural(running_campaigns, 'campaign')} running`;
-  if (fair_share !== null) {
+  if (fair_share !== null && fair_share >= 1) {
     return `${plural(campaign_live, 'live call')} · share ${formatCount(fair_share)} of ${formatCount(account_limit)} ${lines} · ${running}`;
+  }
+  if (fair_share !== null) {
+    // Fewer lines than running campaigns: no whole share to name.
+    const sharing = `${plural(running_campaigns, 'campaign')} ${running_campaigns === 1 ? 'shares' : 'share'}`;
+    return `${plural(campaign_live, 'live call')} · ${sharing} ${formatCount(account_limit)} ${lines}`;
   }
   const inUse = `${formatCount(account_live)} of ${formatCount(account_limit)} ${lines} in use`;
   // Running alone, the one running campaign is this one, and saying so adds nothing.

@@ -11,7 +11,7 @@ import {
 // ---------------------------------------------------------------------------
 // The pacing round as the arbiter of an account's headroom between its running
 // campaigns (decisions MC1, MC2): the pure split (`splitHeadroom`) and the barrier
-// (`join` / `submit` / `withdraw`, the wait for a slow participant, the late
+// (`join` / `submit` / `withdraw`, the split's open and close, the wait for a slow participant, the late
 // report). The engine's use of it is in `pacing-skip.test.ts`.
 // ---------------------------------------------------------------------------
 
@@ -155,7 +155,7 @@ describe('PacingRound: the account barrier (MC2)', () => {
       expect(round.contended('t:a')).toBe(false);
       const g = watch(round.submit('t:a', 'c1', { demand: idle, ownLive: null, limit, live }));
       await drain();
-      expect(g.value).toEqual({ grant: Math.max(0, Math.min(limit - live, idle)), headroom: Math.max(0, limit - live), late: false });
+      expect(g.value).toEqual({ grant: Math.max(0, Math.min(limit - live, idle)), headroom: Math.max(0, limit - live), late: false, closed: false });
       expect(t.timers).toHaveLength(0);
     }
   });
@@ -163,7 +163,7 @@ describe('PacingRound: the account barrier (MC2)', () => {
   it('a forced round (no join) is its account\'s only participant', async () => {
     const round = new PacingRound(true);
     expect(round.contended('t:a')).toBe(false);
-    expect(await round.submit('t:a', 'c1', report(3))).toEqual({ grant: 3, headroom: 5, late: false });
+    expect(await round.submit('t:a', 'c1', report(3))).toEqual({ grant: 3, headroom: 5, late: false, closed: false });
   });
 
   it('waits for every participant, then splits the headroom between them', async () => {
@@ -193,7 +193,7 @@ describe('PacingRound: the account barrier (MC2)', () => {
     expect(a.value).toBeUndefined();
     round.withdraw('c2'); // its tick returned early (no agents, an error, a revoked lead)
     await drain();
-    expect(a.value).toEqual({ grant: 5, headroom: 5, late: false });
+    expect(a.value).toEqual({ grant: 5, headroom: 5, late: false, closed: false });
     expect(round.contended('t:a')).toBe(false);
   });
 
@@ -211,20 +211,30 @@ describe('PacingRound: the account barrier (MC2)', () => {
     expect([a.value!.grant, b.value!.grant]).toEqual([2, 2]);
   });
 
-  it('every participant withdrawing resolves nothing and arms nothing', () => {
+  it('every participant withdrawing resolves nothing, arms nothing, and closes the split', () => {
     const t = manualTimers();
-    const round = new PacingRound(false, { schedule: t.schedule });
+    const events: string[] = [];
+    const round = new PacingRound(false, {
+      schedule: t.schedule,
+      onSplitOpen: (k) => events.push(`open ${k}`),
+      onSplitClose: (k) => events.push(`close ${k}`),
+    });
     round.join('t:a', 'c1');
     round.join('t:a', 'c2');
+    expect(round.isOpen('t:a')).toBe(true);
     round.withdraw('c1');
+    expect(events).toEqual(['open t:a']); // c2 still pending
     round.withdraw('c2');
     expect(t.timers).toHaveLength(0);
     expect(round.participants('t:a')).toBe(0);
+    expect(events).toEqual(['open t:a', 'close t:a']);
+    expect(round.isOpen('t:a')).toBe(false);
   });
 
-  it('a participant that has not reported by the wait is left out; reporting late, it gets the leftover', async () => {
+  it('when the wait runs out the reporters are split, but the split stays open for the one still pending', async () => {
     const t = manualTimers();
-    const round = new PacingRound(false, { schedule: t.schedule, shareWaitMs: 1_234 });
+    const events: string[] = [];
+    const round = new PacingRound(false, { schedule: t.schedule, shareWaitMs: 1_234, onSplitClose: (k) => events.push(k) });
     round.join('t:a', 'c1');
     round.join('t:a', 'c2');
     const a = watch(round.submit('t:a', 'c1', report(3)));
@@ -232,25 +242,128 @@ describe('PacingRound: the account barrier (MC2)', () => {
     expect(t.timers[0]!.ms).toBe(1_234);
     t.fire();
     await drain();
-    expect(a.value).toEqual({ grant: 3, headroom: 5, late: false });
-    // 5 − 3 = 2 left, and it wants 4.
-    expect(await round.submit('t:a', 'c2', report(4))).toEqual({ grant: 2, headroom: 5, late: true });
-    // Withdrawing after the split is harmless.
+    expect(a.value).toEqual({ grant: 3, headroom: 5, late: false, closed: false });
+    expect(round.isOpen('t:a')).toBe(true); // c2 has neither reported nor withdrawn
+    expect(events).toEqual([]);
+    // Late while open: MIN(demand, leftover) = MIN(4, 5 − 3). Its report closes the split.
+    expect(await round.submit('t:a', 'c2', report(4))).toEqual({ grant: 2, headroom: 5, late: true, closed: false });
+    expect(round.isOpen('t:a')).toBe(false);
+    expect(events).toEqual(['t:a']);
+    // Withdrawing after the report is harmless.
     round.withdraw('c2');
   });
 
-  it('two late reports share the leftover without exceeding the headroom', async () => {
+  it('late reports while open share the leftover first come first served, never past the headroom; after the close, 0', async () => {
     const t = manualTimers();
     const round = new PacingRound(false, { schedule: t.schedule });
     for (const c of ['c1', 'c2', 'c3']) round.join('t:a', c);
     const a = watch(round.submit('t:a', 'c1', report(1)));
     t.fire();
     await drain();
-    expect(a.value!.grant).toBe(1);
-    const b = await round.submit('t:a', 'c2', report(3));
-    const c = await round.submit('t:a', 'c3', report(3));
+    expect(a.value!.grant).toBe(1); // 4 left
+    // Not by fewest live calls: the first late report takes what it asks for.
+    const b = await round.submit('t:a', 'c2', report(3, 9));
+    expect(round.isOpen('t:a')).toBe(true); // c3 still pending
+    const c = await round.submit('t:a', 'c3', report(3, 0));
     expect([b.grant, c.grant]).toEqual([3, 1]);
     expect(a.value!.grant + b.grant + c.grant).toBe(5);
+    expect(round.isOpen('t:a')).toBe(false);
+    // A report into the closed split (a forced tick joining at its report): 0, `closed`.
+    expect(await round.submit('t:a', 'c4', report(3))).toEqual({ grant: 0, headroom: 5, late: true, closed: true });
+  });
+
+  it('the last pending member withdrawing after the wait split closes it', async () => {
+    const t = manualTimers();
+    const round = new PacingRound(false, { schedule: t.schedule });
+    round.join('t:a', 'c1');
+    round.join('t:a', 'c2');
+    void round.submit('t:a', 'c1', report(1));
+    t.fire();
+    expect(round.isOpen('t:a')).toBe(true);
+    round.withdraw('c2');
+    expect(round.isOpen('t:a')).toBe(false);
+  });
+
+  it('opens a split at the first join and closes it once, when it settles', async () => {
+    const events: string[] = [];
+    const round = new PacingRound(false, {
+      schedule: manualTimers().schedule,
+      onSplitOpen: (k) => events.push(`open ${k}`),
+      onSplitClose: (k) => events.push(`close ${k}`),
+    });
+    round.join('t:a', 'c1');
+    round.join('t:a', 'c2');
+    round.join('t:b', 'c3');
+    expect(events).toEqual(['open t:a', 'open t:b']);
+    const a = watch(round.submit('t:a', 'c1', report(2)));
+    const b = watch(round.submit('t:a', 'c2', report(2)));
+    await drain();
+    expect(events).toEqual(['open t:a', 'open t:b', 'close t:a']);
+    expect([a.value!.grant, b.value!.grant]).toEqual([2, 2]);
+    round.withdraw('c2'); // after its report: no second close
+    round.close('t:a'); // already closed: nothing
+    expect(events).toHaveLength(3);
+    // A lone report opens and closes at once.
+    await round.submit('t:c', 'c4', report(1));
+    expect(events.slice(3)).toEqual(['open t:c', 'close t:c']);
+  });
+
+  it('close() closes an open split now: who reported is split, who has not reported gets 0', async () => {
+    const events: string[] = [];
+    const t = manualTimers();
+    const round = new PacingRound(false, { schedule: t.schedule, onSplitClose: (k) => events.push(k) });
+    round.join('t:a', 'c1');
+    round.join('t:a', 'c2');
+    round.close('t:a'); // nobody reported (the engine's deadline): closes with no grant
+    expect(events).toEqual(['t:a']);
+    expect(await round.submit('t:a', 'c1', report(2))).toEqual({ grant: 0, headroom: 5, late: true, closed: true });
+
+    // Before the wait ran out: the reporters are split, and the rest are closed out.
+    const r2 = new PacingRound(false, { schedule: manualTimers().schedule });
+    r2.join('t:a', 'c1');
+    r2.join('t:a', 'c2');
+    const a = watch(r2.submit('t:a', 'c1', report(2)));
+    r2.close('t:a');
+    await drain();
+    expect(a.value).toEqual({ grant: 2, headroom: 5, late: false, closed: false });
+    expect(await r2.submit('t:a', 'c2', report(2))).toEqual({ grant: 0, headroom: 5, late: true, closed: true });
+
+    // After the wait split, while open: the leftover is no longer on offer.
+    const t3 = manualTimers();
+    const r3 = new PacingRound(false, { schedule: t3.schedule });
+    r3.join('t:a', 'c1');
+    r3.join('t:a', 'c2');
+    void r3.submit('t:a', 'c1', report(2));
+    t3.fire();
+    expect(r3.isOpen('t:a')).toBe(true);
+    r3.close('t:a');
+    expect(r3.isOpen('t:a')).toBe(false);
+    expect(await r3.submit('t:a', 'c2', report(2))).toEqual({ grant: 0, headroom: 5, late: true, closed: true });
+  });
+
+  it('a participant joined as not contending is waited for, but does not make the account contended', async () => {
+    const round = new PacingRound(false, { schedule: manualTimers().schedule });
+    round.join('t:a', 'c1');
+    round.join('t:a', 'c2', { contends: false });
+    expect(round.contended('t:a')).toBe(false);
+    expect(round.participants('t:a')).toBe(2);
+    const a = watch(round.submit('t:a', 'c1', report(9)));
+    await drain();
+    expect(a.value).toBeUndefined(); // waits for c2's report or withdrawal
+    round.withdraw('c2');
+    await drain();
+    expect(a.value).toEqual({ grant: 5, headroom: 5, late: false, closed: false });
+  });
+
+  it('a not-contending participant that reports after all is split with the others', async () => {
+    const round = new PacingRound(false, { schedule: manualTimers().schedule });
+    round.join('t:a', 'c1');
+    round.join('t:a', 'c2', { contends: false });
+    const b = watch(round.submit('t:a', 'c2', report(9)));
+    expect(round.contended('t:a')).toBe(true); // it reported a demand
+    const a = watch(round.submit('t:a', 'c1', report(9)));
+    await drain();
+    expect([a.value!.grant, b.value!.grant].sort()).toEqual([2, 3]);
   });
 
   it('never grants an account more than its headroom, whatever the order of reports and withdrawals (property)', async () => {
@@ -274,6 +387,52 @@ describe('PacingRound: the account barrier (MC2)', () => {
       const got = await Promise.all(grants);
       expect(got.reduce((a, g) => a + g.grant, 0)).toBeLessThanOrEqual(Math.max(0, limit - live));
     }
+  });
+
+  it('the wait is armed by the account\'s FIRST report, not by the joins', async () => {
+    const t = manualTimers();
+    const round = new PacingRound(false, { schedule: t.schedule, shareWaitMs: 500 });
+    round.join('t:a', 'c1');
+    round.join('t:a', 'c2');
+    round.join('t:a', 'c3');
+    expect(t.timers).toHaveLength(0);
+    void round.submit('t:a', 'c1', report(1));
+    expect(t.timers.map((x) => x.ms)).toEqual([500]);
+    void round.submit('t:a', 'c2', report(1));
+    expect(t.timers).toHaveLength(1); // a second report does not re-arm it
+  });
+
+  // A campaign that never joined: a forced tick (its own round), the only one that reaches
+  // `submit` without the engine having joined it first.
+  describe('a campaign that never joined, reporting', () => {
+    it('alone on its account: the per-tick law at once, not late, no timer', async () => {
+      const t = manualTimers();
+      const round = new PacingRound(false, { schedule: t.schedule });
+      expect(round.contended('t:a')).toBe(false);
+      expect(await round.submit('t:a', 'c9', report(3))).toEqual({ grant: 3, headroom: 5, late: false, closed: false });
+      expect(t.timers).toHaveLength(0);
+    });
+
+    it('while the account\'s split is open: it is split with the others', async () => {
+      const round = new PacingRound(false, { schedule: manualTimers().schedule });
+      round.join('t:a', 'c1');
+      round.join('t:a', 'c2');
+      const a = watch(round.submit('t:a', 'c1', report(9)));
+      const c = watch(round.submit('t:a', 'c9', report(9))); // joins at its report
+      await drain();
+      expect(a.value).toBeUndefined(); // c2 has neither reported nor withdrawn
+      const b = watch(round.submit('t:a', 'c2', report(9)));
+      await drain();
+      expect([a.value!.grant, b.value!.grant, c.value!.grant].sort()).toEqual([1, 2, 2]);
+      expect(c.value!.late).toBe(false);
+    });
+
+    it('after the split closed: 0, `closed`', async () => {
+      const round = new PacingRound(false, { schedule: manualTimers().schedule });
+      round.join('t:a', 'c1');
+      expect((await round.submit('t:a', 'c1', report(2))).grant).toBe(2); // lone: split and closed at once, 3 unused
+      expect(await round.submit('t:a', 'c8', report(2, 9))).toEqual({ grant: 0, headroom: 5, late: true, closed: true });
+    });
   });
 
   it('accounts are split independently', async () => {
@@ -322,7 +481,7 @@ describe('PacingRound: the account barrier (MC2)', () => {
     expect(a.value).toBeUndefined();
     await vi.advanceTimersByTimeAsync(1);
     await drain();
-    expect(a.value).toEqual({ grant: 2, headroom: 5, late: false });
+    expect(a.value).toEqual({ grant: 2, headroom: 5, late: false, closed: false });
     expect(PACING_SHARE_WAIT_MS).toBe(1_000);
   });
 
