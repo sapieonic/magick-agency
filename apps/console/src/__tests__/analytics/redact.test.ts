@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { redactInviteToken, redactAnalyticsProperties, stripJoinPageElements } from '../../analytics/redact';
+import {
+  normaliseUrlScope,
+  redactAnalyticsProperties,
+  redactInviteToken,
+  stripJoinPageElements,
+} from '../../analytics/redact';
 import { safeAnalyticsPath } from '../../api/error-analytics';
 
 /**
@@ -104,6 +109,86 @@ describe('redactAnalyticsProperties', () => {
     const out = redactAnalyticsProperties({ at, url: `/agency/join/${TOKEN}` });
     expect(out.at).toBe(at);
     expect(out.url).toBe('/agency/join/:token');
+  });
+});
+
+describe('normaliseUrlScope', () => {
+  /*
+    Signed-in pages live under `/t/<tenantId>/a/<accountId>`, and posthog-js copies
+    the address into every capture. Without this, one page is one path per tenant
+    and account in PostHog, and the ids ride in URL properties. The groups and
+    super properties already carry them.
+  */
+  const TENANT = '3f2b8c1e-5d4a-4e7b-9c6d-1a2b3c4d5e6f';
+  const ACCOUNT = '9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d';
+  const SCOPE = `/t/${TENANT}/a/${ACCOUNT}`;
+
+  it('normalises a bare pathname and keeps the app path', () => {
+    expect(normaliseUrlScope(`${SCOPE}/agency/campaigns`)).toBe('/t/:tenant/a/:account/agency/campaigns');
+    // The scope root on its own.
+    expect(normaliseUrlScope(SCOPE)).toBe('/t/:tenant/a/:account');
+  });
+
+  it('normalises a full URL, keeping its origin, query and hash', () => {
+    expect(normaliseUrlScope(`https://app.example.com${SCOPE}/agency/campaigns/c1?tab=insights#top`))
+      .toBe('https://app.example.com/t/:tenant/a/:account/agency/campaigns/c1?tab=insights#top');
+    expect(normaliseUrlScope(`http://localhost:5175${SCOPE}?next=x`))
+      .toBe('http://localhost:5175/t/:tenant/a/:account?next=x');
+  });
+
+  it('leaves an unscoped path or URL unchanged', () => {
+    for (const value of [
+      '/agency/campaigns',
+      'https://app.example.com/dialer?x=1',
+      '/login',
+      '$direct',
+      // `/t/` that is not at the start of the path is not a scope.
+      `/agency${SCOPE}/campaigns`,
+    ]) {
+      expect(normaliseUrlScope(value)).toBe(value);
+    }
+  });
+
+  it('is idempotent', () => {
+    expect(normaliseUrlScope('/t/:tenant/a/:account/agency')).toBe('/t/:tenant/a/:account/agency');
+  });
+
+  it('runs across the whole property bag, autocapture hrefs included', () => {
+    const out = redactAnalyticsProperties({
+      $current_url: `https://app.example.com${SCOPE}/agency/campaigns?tab=x`,
+      $pathname: `${SCOPE}/agency/campaigns`,
+      $referrer: `https://app.example.com${SCOPE}/dialer`,
+      $elements: [{ tag_name: 'a', attr__href: `${SCOPE}/agency/roster` }],
+      $elements_chain: `a:attr__href="${SCOPE}/agency/roster"href="${SCOPE}/agency/roster"nth-child="1"`,
+    });
+
+    expect(out).toEqual({
+      $current_url: 'https://app.example.com/t/:tenant/a/:account/agency/campaigns?tab=x',
+      $pathname: '/t/:tenant/a/:account/agency/campaigns',
+      $referrer: 'https://app.example.com/t/:tenant/a/:account/dialer',
+      $elements: [{ tag_name: 'a', attr__href: '/t/:tenant/a/:account/agency/roster' }],
+      $elements_chain:
+        'a:attr__href="/t/:tenant/a/:account/agency/roster"href="/t/:tenant/a/:account/agency/roster"nth-child="1"',
+    });
+    expect(JSON.stringify(out)).not.toContain(TENANT);
+    expect(JSON.stringify(out)).not.toContain(ACCOUNT);
+  });
+
+  it('still redacts a join link, scoped or not', () => {
+    const TOKEN = 'Xk8sQ2vLp7NmR4tYwZ1aB3cD5eF6gH9jK0lM2nO4pQ6';
+    const out = redactAnalyticsProperties({
+      $current_url: `https://app.example.com/agency/join/${TOKEN}?utm=mail`,
+      $pathname: `/join/${TOKEN}`,
+      // The instant a scoped URL strays onto an invite page, before the router
+      // replaces it with the bare one.
+      stray: `https://app.example.com${SCOPE}/join/${TOKEN}`,
+    });
+
+    expect(out).toEqual({
+      $current_url: 'https://app.example.com/agency/join/:token?utm=mail',
+      $pathname: '/join/:token',
+      stray: 'https://app.example.com/t/:tenant/a/:account/join/:token',
+    });
   });
 });
 
