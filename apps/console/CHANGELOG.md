@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0](https://github.com/sapieonic/magick-agency/compare/console-v0.9.0...console-v0.10.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server,console,db,contracts:** several running campaigns per account ([#44](https://github.com/sapieonic/magick-agency/issues/44))
+
+### Features
+
+* **server,console,db,contracts:** several running campaigns per account ([#44](https://github.com/sapieonic/magick-agency/issues/44)) ([da33207](https://github.com/sapieonic/magick-agency/commit/da33207080d817c58eb63d7cdf7c4d8a310ac7f9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.9.0
+
 ## [0.9.0](https://github.com/sapieonic/magick-agency/compare/console-v0.8.0...console-v0.9.0) (2026-11-05)
 
 
