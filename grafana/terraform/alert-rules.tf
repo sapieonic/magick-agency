@@ -67,6 +67,29 @@ locals {
         summary       = "Agency campaign halted — cannot read the DNC registry"
         description   = "agency_predial_gate_total{gate=\"dnc_unavailable\"} has been advancing for 10m on {{ $labels.service_name }} (campaign_id={{ $labels.campaign_id }}). The pre-dial gate could not read the dnc_entries table, so it is refusing to dial — correctly: a wrongly-dialled DNC number is a regulatory event, a paused campaign is not. In magick-agency the DNC check is a direct Postgres read (there is no Redis DNC set), so this is the database: pool exhaustion, a timeout, or Postgres down. Check agency's Postgres and its pool; the caught error is logged under component=agency-dnc-registry, and each halted tick as 'Agency pre-dial gate halted the tick'. Every tick re-checks, so the campaign resumes on its own once the read succeeds; the supervisor's health strip shows the same stall meanwhile."
       },
+      {
+        uid  = "agy-pacing-share-starved"
+        name = "A running campaign is starved of its account's slots"
+        # Several running campaigns of one account split its max_concurrent_calls in the pacing
+        # round, fewest live calls first (MC1-MC7, docs/decisions.md). A campaign with NO live
+        # call is first in line, so being withheld slots (they went to another campaign of the
+        # account while it had headroom) round after round at 0 in use is not the rule working:
+        # its tick reports after the round's split (MC2) or the split is wrong. Withheld within
+        # every 5m window AND at 0 in use, held for 10m (strictly longer than the rate window),
+        # is ~10-15 minutes of a campaign with demand that placed no call. A sparse counter
+        # under rate(), not increase(): the condition is sustained, so missing the first
+        # increment costs nothing. The `and` keeps only campaigns whose in-use gauge exists and
+        # reads 0 (max BY campaign); a campaign that stops being withheld resolves. Warns
+        # (Slack), never pages: the account still dials up to its limit through the others.
+        expr          = "sum by (service_name, campaign_id) (rate(agency_pacing_share_withheld_total{${local.agency}}[5m])) and on (service_name, campaign_id) (max by (service_name, campaign_id) (agency_campaign_slots_in_use{${local.agency}}) == 0)"
+        op            = "gt"
+        threshold     = 0
+        for           = "10m"
+        severity      = "warning"
+        no_data_state = "OK"
+        summary       = "A running campaign has been withheld its account's slots for 10 minutes with no live call"
+        description   = "agency_pacing_share_withheld_total has kept advancing for campaign_id={{ $labels.campaign_id }} on {{ $labels.service_name }} for 10m while agency_campaign_slots_in_use for it stayed at 0: the pacing round split its account's max_concurrent_calls between the account's running campaigns and gave this one nothing, although the account had headroom and the campaign had demand. Under the fewest-live-calls-first rule (MC1, docs/decisions.md) a campaign with no live call is served first, so this is not the share working: the campaign's ready agents wait while the account's other campaigns dial. Confirm on the dashboard's Pacing Share panels (this campaign's allocated never above its in use, another campaign's allocated rising). Then read the pacing logs for this campaign_id: a tick that reports after the round's 1 s cut-off (MC2) is offered only what the others left, so a slow read in its tick starves it. File it with the campaign and account ids. Runbook: docs/operations.md, 'Alert runbooks'."
+      },
     ]
 
     # ── Insights: the rollup job and the pacing history ──────────────────

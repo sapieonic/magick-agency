@@ -258,21 +258,33 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   the campaigns it leads. The lease is only for efficiency. Correctness is the `FOR UPDATE SKIP LOCKED` claim in
   `AgencyContactRepository.claimDialable` (`apps/server/src/db/repositories/agency/contact.repository.ts`)
   plus the `uq_agency_attempt_live` unique index, so two leaders cannot dial one contact.
-  The claim also keeps one live call per number in a campaign: it skips a contact whose number
-  is already `in_flight` or `connected` on another contact, and takes at most one contact per
-  number in a tick (a roster deduped on a loan number can hold one borrower twice).
+  The claim also keeps one live call per number across the ACCOUNT (MC4): it skips a contact whose
+  number is already `in_flight` or `connected` on another contact of any campaign of the account
+  (a retry child and its parent, or two rosters sharing a number), and takes at most one contact
+  per number in a tick (a roster deduped on a loan number can hold one borrower twice). Claims for
+  one account's campaigns run one at a time in the engine, so the read probe is enough.
   `pre-dial-gates.ts` checks phone validity, then calling hours, then DNC (fail closed).
   `stop()` waits up to 5 s (`TICK_DRAIN_TIMEOUT_MS`) for ticks in flight, and every dial site
   re-checks `mayDial`, so no tick dials after shutdown begins.
 - **Pacing rounds, skips and invalidation** (`pacing-engine.ts` `runRound`, `pacing/round.ts`,
   `pacing/invalidation-bus.ts`, `pacing/read-cache.ts`). A round starts a tick for every led
   campaign together, so campaigns of one account read the account limit and its live calls once
-  per round and draw new dials from one headroom budget (the live-call count is never carried into
-  the next round). A campaign whose last full tick was QUIESCENT (no agent available, no account
-  slot, no usable caller ID, or not running) is skipped with no database or Redis work until an
-  event wakes it or the safety tick (`PACING_SAFETY_TICK_MS`, 1 s) comes due; a campaign that
-  planned a dial ticks every round. The events go over `PacingInvalidationBus`, plain JSON so a
-  child-process IPC implementation can replace the in-process one: `campaign_changed` (every
+  per round (the live-call count is never carried into the next round). An account may run several
+  campaigns at once (MC1–MC7 in `decisions.md`; migration 0015 dropped `uq_agency_campaign_running`,
+  and Start and Resume no longer answer 409 `another_campaign_running`), and the round splits the
+  account's headroom between them rather than first come, first served: each tick states its demand
+  and its own live calls, and each free slot goes to the campaign with the fewest live calls that
+  can still use one, a campaign that cannot use its share leaving it to the others (MC1). A tick
+  that has not reported within 1 s is left out of the split and gets only what is left (MC2); one
+  held back while the account had headroom is not quiescent (MC5). With one running campaign the
+  rule is the old `MAX(0, MIN(limit − live, idle))`. `agency_campaign_slots_in_use`,
+  `agency_campaign_slots_allocated` and `agency_pacing_share_withheld_total` show the split
+  (dashboard *Pacing Share* panels, `agy-pacing-share-starved`). A campaign whose last full tick
+  was QUIESCENT (no agent available, no account slot, no usable caller ID, or not running) is
+  skipped with no database or Redis work until an event wakes it or the safety tick
+  (`PACING_SAFETY_TICK_MS`, 1 s) comes due; a campaign that planned a dial ticks every round.
+  The events go over `PacingInvalidationBus`, plain JSON so a child-process IPC implementation can
+  replace the in-process one: `campaign_changed` (every
   campaign repository write), `account_limit_changed` (the `ConcurrencyControl` seam's limit
   invalidations, wrapped by `startAgency`), `account_capacity_freed` (attempt and manual-call
   ends), `agent_available` (a state write into `available`, a station attach), `contacts_changed`

@@ -375,9 +375,13 @@ export function retrySelectionConditions(
   //
   // Without the `in_flight` term: pause a campaign that is going badly, retry
   // "everyone we did not reach", start the child, and the numbers still
-  // ringing on the parent are dialled a second time. `uq_agency_campaign_running`
-  // does not bite — it refuses a second RUNNING campaign, and a paused parent
-  // is not running, while pause does not cancel attempts already in flight.
+  // ringing on the parent would be seeded into the child. Pause does not cancel
+  // attempts already in flight, and a child can run beside its parent anyway
+  // (decisions MC6: several running campaigns per account). The claim's
+  // account-wide busy probe (`numberLiveSql`, MC4) keeps the child from dialling
+  // a number while the parent's call on it is live; this term keeps the live
+  // contact out of the child's cohort in the first place, so the child does not
+  // dial it straight after either, on a snapshot taken mid-call.
   // The contact-state term stays: `claimDialable` flips `in_flight` before the
   // attempt row exists, and a NULL-outcome first ring matches `__none__` in
   // that window. The EXISTS covers every later state that still has a live

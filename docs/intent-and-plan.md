@@ -94,7 +94,9 @@ each stands is in [`status.md`](status.md).
 
 The build rule is that each of these has a test that fails if it breaks:
 
-- One live attempt per contact (unique index plus `SKIP LOCKED`); one running campaign per account.
+- One live attempt per contact (unique index plus `SKIP LOCKED`); one running campaign per account
+  (since 2026-11-05 an account may run several, splitting its concurrency limit between them, and
+  one live call per number holds across the account: MC1–MC7 in [`decisions.md`](decisions.md)).
 - An agent is reserved before the dial; the panel is on screen before audio, with no `await` between.
 - `answered_at` and `bridged_at` live on the attempt and are never back-filled; the abandonment
   predicate is shared by SQL and code.

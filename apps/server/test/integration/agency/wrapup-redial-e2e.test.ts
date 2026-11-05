@@ -432,8 +432,9 @@ describe('wrap-up redial — real app, real runtime, fake carrier (integration)'
   }, 60_000);
 
   it('refuses when the campaign has redial off (the bootstrap says so too), and a malformed attempt id at the edge', async () => {
-    // Reuses the running app: a second campaign with the setting off. One running
-    // campaign per account (`uq_agency_campaign_running`), so the first one is closed.
+    // Reuses the running app: a second campaign with the setting off. The first one is
+    // closed so the case has one running campaign, as written (it was forced while
+    // `uq_agency_campaign_running` allowed one per account; migration 0015 dropped it).
     await getTestPool().query(
       "UPDATE agency_campaigns SET status = 'completed' WHERE account_id = $1 AND status = 'running'", [account]);
     const campaign = await insertAgencyCampaign({

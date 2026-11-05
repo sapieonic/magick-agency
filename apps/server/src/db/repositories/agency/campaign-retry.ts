@@ -363,9 +363,9 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
       // ── What is NOT copied, and why each one ────────────────────────────
       //
       // `status` (the child starts `draft` — creation and starting stay
-      // separate verbs, and it side-steps `uq_agency_campaign_running` at creation
-      // time rather than failing the create for a reason that has nothing to do
-      // with the retry), `started_at`, `ended_at`, `completed_at`,
+      // separate verbs; once started, the child may run beside its parent,
+      // decisions MC6, and the claim's account-wide busy probe keeps the two from
+      // ringing one number at once, MC4), `started_at`, `ended_at`, `completed_at`,
       // `contacts_total`, `last_transition_by_*`, `pause_reason`, `paused_at`,
       // `pause_abandonment_rate_pct`. Every one of them describes THE PARENT'S
       // RUN. "Copy the config columns" applied naively would carry a stale
@@ -589,9 +589,9 @@ export async function createRetryCampaign(repo: RetryIdempotencyLookup, input: {
     // answer the fast path gives, arrived at a few milliseconds later.
     //
     // Matched on the CONSTRAINT NAME, never on the message text: another unique
-    // index on this table (a future one, or `uq_agency_campaign_running` if the
-    // shape of this statement ever changes) must not be silently reported as a
-    // successful replay of somebody else's campaign.
+    // index on this table (a future one, or one this statement starts to touch
+    // if its shape ever changes) must not be silently reported as a successful
+    // replay of somebody else's campaign.
     if (input.idempotencyKey && isUniqueViolation(err, 'uq_agency_campaign_retry_idempotency')) {
       const winner = await repo.findByRetryIdempotencyKey(
         input.parent.tenant_id, input.parent.account_id, input.idempotencyKey,

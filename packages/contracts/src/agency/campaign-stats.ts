@@ -288,6 +288,47 @@ export type AgencyStall =
       window_minutes: number;
     };
 
+/**
+ * How one campaign sits within its account's line limit (decisions MC7).
+ *
+ * An account may run several campaigns at once, and pacing splits the account's
+ * `max_concurrent_calls` between the running ones: each free slot goes to the running
+ * campaign with the fewest live calls that can use it (MC1). This block is the read-out
+ * of that split, so a supervisor can see why a campaign is dialling less than its
+ * agents could take.
+ *
+ * Every count is read when the stats are served, from the same sources pacing reads
+ * (`account_settings.max_concurrent_calls` and the database's live-call count), not
+ * from the round's allocation: the allocation is per round and changes every tick.
+ */
+export interface AgencyCampaignConcurrency {
+  /**
+   * This campaign's live attempts. The same number as
+   * {@link AgencyCampaignStats.attempts_live}, repeated here so the block reads on its
+   * own beside the account figures it is compared with.
+   */
+  campaign_live: number;
+  /**
+   * The equal share of the account limit while other campaigns run:
+   * `Math.floor(account_limit / running_campaigns)`. A guide, not a cap: a campaign
+   * can run above it while another leaves its slots idle (MC1).
+   *
+   * `null` when this campaign is the only one running, or is not running itself
+   * (`stopping` or `paused` dial nothing new, so they hold no share).
+   */
+  fair_share: number | null;
+  /** The account's line limit, `max_concurrent_calls` (the limit pacing reads). */
+  account_limit: number;
+  /**
+   * Every live call on the account: the attempts of all its campaigns plus its live
+   * soft-phone calls, as pacing counts them (`countLiveForAccount`). Not the
+   * concurrency guard's Redis count, which is {@link AgencyCampaignStats.concurrency_in_use}.
+   */
+  account_live: number;
+  /** Campaigns in status `running` on the account, this one included when it runs. */
+  running_campaigns: number;
+}
+
 export interface AgencyCampaignStats {
   campaign_id: string;
   status: AgencyCampaignStatus;
@@ -556,6 +597,21 @@ export interface AgencyCampaignStats {
    */
   concurrency_in_use: number | null;
 
+  /**
+   * The campaign's place in its account's line limit (decisions MC7): its live calls,
+   * its equal share while other campaigns run, and the account's limit, live calls and
+   * running campaigns.
+   *
+   * `null` for a campaign that is not `running`, `stopping` or `paused` (a draft or a
+   * finished campaign holds no lines), and when the reads behind it failed: the
+   * stats are best-effort, and an unknown share is not a zero one.
+   *
+   * Optional on the wire, like {@link attempts_retried}: the server always sends the
+   * key, and the `?` lets a console talk to a server that predates it. Absent means
+   * "not reported", never "no share".
+   */
+  concurrency?: AgencyCampaignConcurrency | null;
+
   // The per-tile hour-over-hour delta is NOT here, and this is the second
   // deliberate omission rather than an oversight.
   //
@@ -618,6 +674,9 @@ export interface AgencyCampaignStats {
 export const AGENCY_STATS_ROUTE_FIELDS = [
   'campaign_id', 'status', 'stall', 'other_stalls',
   'concurrency_limit', 'concurrency_in_use',
+  // MC7: account-wide reads (the live-call count, the running campaigns) that a
+  // per-campaign repository query does not make.
+  'concurrency',
 ] as const satisfies readonly (keyof AgencyCampaignStats)[];
 
 export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, true> = {
@@ -628,6 +687,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   other_stalls: true,
   concurrency_limit: true,
   concurrency_in_use: true,
+  concurrency: true,
   contacts_total: true,
   contacts_pending: true,
   contacts_in_flight: true,

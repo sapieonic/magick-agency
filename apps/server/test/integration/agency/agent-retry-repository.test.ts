@@ -275,6 +275,24 @@ describe('AgencyAgentRetryRepository.claimForAgentDial / releaseAgentDialClaim',
     expect((await row(c.id)).state).toBe('pending');
   });
 
+  it('one live call per number across the ACCOUNT: another campaign of it blocks, another account does not (MC4)', async () => {
+    const campaign = await insertAgencyCampaign({ status: 'running' });
+    const sibling = await insertAgencyCampaign({ status: 'running' });
+    const c = await owned(campaign.id, { state: 'pending' });
+    const elsewhere = await insertAgencyContact(sibling.id, { state: 'in_flight', phone_e164: c.phone_e164 });
+    expect(await claim(campaign.id, c.id, 'due')).toBeNull();
+    expect(await agencyAgentRetryRepository.numberIsLive(campaign.id, c.id)).toBe(true);
+    expect((await row(c.id)).state).toBe('pending');
+
+    // The same number live only on ANOTHER account's campaign: claimed.
+    await getTestPool().query(`UPDATE agency_contacts SET state = 'completed' WHERE id = $1`, [elsewhere.id]);
+    const otherAccount = randomUUID();
+    const foreign = await insertAgencyCampaign({ status: 'running', account_id: otherAccount });
+    await insertAgencyContact(foreign.id, { state: 'connected', phone_e164: c.phone_e164, account_id: otherAccount });
+    expect(await agencyAgentRetryRepository.numberIsLive(campaign.id, c.id)).toBe(false);
+    expect((await claim(campaign.id, c.id, 'due'))?.contact.state).toBe('in_flight');
+  });
+
   it('DNC is never claimed, whatever overrides it holds', async () => {
     const campaign = await insertAgencyCampaign({ status: 'running' });
     const c = await owned(campaign.id, {

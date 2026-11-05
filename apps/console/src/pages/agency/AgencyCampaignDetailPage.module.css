@@ -66,6 +66,15 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The campaign's place in the account's line limit (decisions MC7), under its clock. */
+.lines {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
 .actions {
   display: flex;
   align-items: flex-start;

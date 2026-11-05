@@ -3,6 +3,7 @@ import { ChevronRight, TriangleAlert } from 'lucide-react';
 import { LiveDot } from '@magick-agency/web-ui/components/LiveDot';
 import { formatDate } from '@magick-agency/web-ui/format';
 import { listWorkedRing } from '../../../utils/agency/overview/pulse';
+import { concurrencyLine } from '../../../utils/agencyCampaignsHome';
 import { stallCopy } from '../../../utils/agencyHealthStrip';
 import { formatCount } from '../../../utils/format/number';
 import { AgencyCampaignStatusBadge } from '../AgencyCampaignStatusBadge';
@@ -19,6 +20,8 @@ export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampai
   const dialing = campaign.status === 'running';
   const worked = listWorkedRing(stats);
   const stall = stats?.stall ? stallCopy(stats.stall, formatDate) : null;
+  // Its live calls against its share of the account's lines, when other campaigns run too.
+  const lines = concurrencyLine(campaign.status, stats?.concurrency);
   const href = `/agency/campaigns/${campaign.id}`;
 
   return (
@@ -67,6 +70,13 @@ export function ActiveCampaignCard({ campaign, state }: { campaign: AgencyCampai
             />
             <Metric label="Waiting to dial" value={figure(stats?.contacts_pending)} />
           </dl>
+
+          {/* Not a live region either, for the headline's reason above. */}
+          {lines && (
+            <p className={styles.lines} data-testid="campaign-lines">
+              {lines}
+            </p>
+          )}
 
           <div className={styles.progress}>
             <div className={styles.progressHead}>

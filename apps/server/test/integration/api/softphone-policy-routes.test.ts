@@ -514,7 +514,8 @@ describe('soft-phone policy over HTTP — real app, real runtime, fake carrier (
     await mk('draft', true, 25);
     await mk('stopped', true, 22);
     // Newer than every staffed one, and not the agent's: under the old take-then-filter
-    // these filled the cap first. (One running campaign per account: `uq_agency_campaign_running`.)
+    // these filled the cap first. (Paused rather than running: written while one account could run
+    // one campaign; migration 0015 dropped that rule, and the status does not matter here.)
     const unstaffed = [await mk('paused', false, 10), await mk('paused', false, 5)];
     const ask = (staffedUserId: string | null, limit: number) => agencyCampaignRepository
       .listSoftphoneTaggable(tenant, acct, { statuses: ['running', 'paused'], staffedUserId, limit })

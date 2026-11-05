@@ -539,10 +539,11 @@ per process, per export interval), which keep their own histogram and are not to
 ## Alert runbooks
 
 Each rule in `grafana/terraform/alert-rules.tf` carries its own runbook in its `description`, which
-the alert shows. The entries below are for the insights rules, which all warn (Slack) and never
-page: a stale or holed Insights page costs no call. Their panels are at the bottom of the
-dashboard's *Agency dialer* row (*Insights Rollup*, *Pacing History*). Their thresholds assume the
-default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS` (15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
+the alert shows. The entries below are for the insights rules and the pacing share rule, which all
+warn (Slack) and never page. The insights rules first: a stale or holed Insights page costs no
+call. Their panels are near the bottom of the dashboard's *Agency dialer* row (*Insights Rollup*,
+*Pacing History*), and their thresholds assume the default `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`
+(15 s) and `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` (200).
 
 ### `agy-insights-rollup-failing`
 
@@ -617,6 +618,23 @@ oldest (`agency_pacing_history_dropped_total`). Those minutes are gone from
 
 **Do:** fix the write (Postgres) and the drops stop with it. Tell the affected supervisors that
 the Insights pacing history of that window is incomplete.
+
+### `agy-pacing-share-starved`
+
+**Means:** for 10 minutes the pacing round kept withholding slots from one running campaign
+(`agency_pacing_share_withheld_total`, by `campaign_id`) while its live calls stayed at 0
+(`agency_campaign_slots_in_use`). An account's running campaigns split its `max_concurrent_calls`
+in the pacing round, fewest live calls first (MC1–MC7 in [`decisions.md`](decisions.md)), so a
+campaign with no live call should be served before any other. Its ready agents wait while the
+account's other campaigns dial; the account as a whole still dials up to its limit.
+
+**Check:** the dashboard's *Pacing Share* panels, at the end of the *Agency dialer* row: this
+campaign's `allocated` never above its `in use` while another campaign's `allocated` rises. Then the
+pacing logs for the campaign: a tick that reports after the round's 1 s cut-off (MC2) is offered
+only what the account's other campaigns left, so a slow read inside its tick starves it.
+
+**Do:** file it with the campaign and account ids and what the logs show. A burst of withheld
+slots with live calls on the campaign is the share rule working, not this alert.
 
 ## Releases and versioning
 

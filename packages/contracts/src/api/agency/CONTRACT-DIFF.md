@@ -35,7 +35,7 @@ against.
 | `AgencyWrapupState` | `seconds_total: number`; `held_reason: AgencyWrapupHoldReason \| null` (required; 2 members) | no `seconds_total`; `held_reason?: AgencyWrapupHold \| null` (2 members) | `supervisor_hold` is declared on both sides but nothing produces it (`docs/decisions.md`, still open) |
 | `AgencyStationReadyFrame` | `active_wrapup?: AgencyWrapupState` (dialer) | `active_wrapup?: AgencyWrapupState` (console, above) | Otherwise the dialer frame |
 | `AgencySupervisorAgent` | no name | `agent_name: string \| null` | Public API layer enrichment: it joins the name from `users` |
-| `AgencyCampaignStats` | every counter required | every counter optional; `agents` is the console's `AgencySupervisorAgent[]`; adds `agents_peak?: number \| null` | `agents_peak` has no producer; the console degrades on absence. `stall`, `other_stalls`, `concurrency_limit`, `concurrency_in_use` and `abandonment_ceiling_pct` keep the dialer declaration |
+| `AgencyCampaignStats` | every counter required | every counter optional; `agents` is the console's `AgencySupervisorAgent[]`; adds `agents_peak?: number \| null` | `agents_peak` has no producer; the console degrades on absence. `stall`, `other_stalls`, `concurrency_limit`, `concurrency_in_use` and `abandonment_ceiling_pct` keep the dialer declaration. `concurrency?: AgencyCampaignConcurrency \| null` (MC7) is optional on both sides, like `attempts_retried` |
 | `AgencyRetryCreateResponse` (declared, not derived) | generic discriminated union `AgencyRetryCreated<T> \| AgencyRetryReplayed<T>` on `idempotent_replay` | one interface: `campaign: AgencyCampaign`, `idempotent_replay?: boolean`, `contacts_seeded: number \| null`, `duplicates_collapsed?: number \| null`, `excluded: … \| null` | Same wire; the console flattens the union |
 | `AgencyCampaignLineage` | `campaigns: AgencyLineageCampaign[]` | `campaigns: AgencyCampaignLineageEntry[]` | Entries differ only in `status: string` (§2) |
 | `AgencyAgentStatsBucket` / `AgencyAgentStatsTotals` | `occupancy: AgencyAgentOccupancy` (required) | `occupancy?: AgencyOccupancy \| null` | The console treats occupancy as possibly unmeasured |
@@ -84,7 +84,8 @@ package root.
   (`AgencyRedialRequest` is not re-exported: see §5).
 - `agency-campaign.ts`: `AgencyCampaignStatus` (the same binding again), `AgencyAgentLiveState`,
   `AgencyAgentsByState`, `AgencyStallCode` / `AgencyStall`, `AgencyRetryPreview`,
-  `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null).
+  `AgencyCampaignActor` (`name: string | null`; the console renders the id when it is null),
+  `AgencyCampaignConcurrency` (the `concurrency` block on the campaign stats, decisions MC7).
 - `agency-spine.ts`: `AgencyContactState`, `AgencyRetrySelector`, `RETRY_NO_OUTCOME`,
   `AgencyKeysetPage`, `AgencyContactDetail`.
 - `agency-stats.ts`: `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, `AgencyRosterSort`,

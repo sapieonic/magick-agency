@@ -585,7 +585,12 @@ export interface FloorCampaignSpec {
   label: string;
   /** Tenant label; campaigns sharing it share a tenant. */
   tenant: string;
-  /** Account label, unique per running campaign (`uq_agency_campaign_running`). */
+  /**
+   * Account label; campaigns sharing it share an account, and its `max_concurrent_calls`
+   * (the last spec's value wins). Several running campaigns per account split it (MC1);
+   * the scheduled path (`scheduled`) is the one that arbitrates, a `tickOnce` round each
+   * campaign's own.
+   */
   account: string;
   agents: number;
   contacts: number;

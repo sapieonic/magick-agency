@@ -40,16 +40,26 @@ export function presentSessionSql(alias: string): string {
 }
 
 /**
- * Whether contact `c`'s number is live on its campaign: some contact of `campaignSql` (a
- * parameter or a column) on the same digits (`CONTACT_PHONE_DIGITS_SQL`, one
- * `idx_agency_contacts_campaign_phone_digits` probe) is `in_flight` or `connected`, `c` itself
- * included. Every claim refuses a contact whose number is live (`NOT` this), so one number never
- * carries two calls at once (`claimDialable`).
+ * Whether contact `c`'s number is live on its ACCOUNT: some contact of the same tenant and
+ * account as `c`, on any campaign, on the same digits (`CONTACT_PHONE_DIGITS_SQL`) is
+ * `in_flight` or `connected`, `c` itself included. Every claim that starts a call refuses a
+ * contact whose number is live (`NOT` this), so one number never carries two calls at once,
+ * whichever of the account's campaigns placed them (decisions MC4): an account may run several
+ * campaigns (MC6), a retry child can run beside its parent, and two rosters can share a number.
+ * Another account's live call on the same number does not count: accounts are separate
+ * customers of the dialer, and nothing joins their rosters.
+ *
+ * One probe of `idx_agency_contacts_account_live_digits` (migration 0015): `(tenant_id,
+ * account_id, <the digits>) WHERE state IN ('in_flight', 'connected')`. The index's key
+ * expression is `CONTACT_PHONE_DIGITS_SQL` byte for byte and its predicate is
+ * {@link LIVE_STATES_SQL}'s list, so the planner proves the probe's `state IN …` implies it;
+ * respell either side and the probe falls back to `idx_agency_contacts_phone` or a scan.
  */
-export function numberLiveSql(alias: string, campaignSql: string): string {
+export function numberLiveSql(alias: string): string {
   return `EXISTS (
               SELECT 1 FROM agency_contacts live
-               WHERE live.campaign_id = ${campaignSql}
+               WHERE live.tenant_id = ${alias}.tenant_id
+                 AND live.account_id = ${alias}.account_id
                  AND ${contactPhoneDigitsSql('live')} = ${contactPhoneDigitsSql(alias)}
                  AND live.state IN ${LIVE_STATES_SQL})`;
 }

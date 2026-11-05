@@ -169,9 +169,10 @@ describe('a contact that is on a call right now is never seeded', () => {
   it('the default selector does not match it, though every field says it should', async () => {
     // The workflow that reaches this: "this campaign is going badly — pause it
     // and retry everyone we did not reach". Pause does not cancel attempts
-    // already in flight, and `uq_agency_campaign_running` does not bite because
-    // a paused parent is not running. Seeding this row and starting the child
-    // dials a number the parent has an OPEN CALL on.
+    // already in flight, and a child may run beside its parent anyway (decisions
+    // MC6). The claim's account-wide busy probe (MC4) keeps the child from
+    // ringing the number while the parent's call is OPEN; seeding this row would
+    // still have the child dial it again the moment that call ends.
     await addRinging();
     const preview = await agencyCampaignRepository.retryPreview(PARENT, {
       last_outcome: ['no_answer', 'busy', '__none__'],

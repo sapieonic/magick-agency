@@ -100,8 +100,11 @@
   line-height: 1.6;
 }
 
+/* `.parentRunningNote`: the parent is still dialling. Neutral, not a warning:
+   the child can run beside it (decisions MC6), so nothing is refused. */
 .originNote,
-.droppedNote {
+.droppedNote,
+.parentRunningNote {
   margin: 0;
   padding: 8px 10px;
   font-size: 12px;
@@ -203,9 +206,9 @@
 }
 
 /*
- * The one-running-campaign warning. `--warning`, never `--danger`: the child is
- * still created and nothing is lost — it simply cannot dial yet. Danger weight
- * here would train the reader to dismiss the weight where it means a refusal.
+ * A warning note, used by the assignment dialog (`assign-stale`). `--warning`,
+ * never `--danger`: nothing is lost. Danger weight here would train the reader to
+ * dismiss the weight where it means a refusal.
  */
 .parentRunning {
   display: flex;

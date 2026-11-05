@@ -162,7 +162,7 @@ describe('callback grace/fallback sweep', () => {
       { assignment_mode: 'pool' },
       { status: 'paused' },
     ]) {
-      await truncateAll(); // one running campaign per account
+      await truncateAll(); // a fresh world per case
       const c = await campaign(overrides);
       const cb = await callback(c.id, OWNER, 600);
       expect(await sweepCallbackFallback(c)).toBe(0);
@@ -261,7 +261,7 @@ describe('unstaffed-owner sweep (CA6 catch-up)', () => {
       { on_unstaff: 'return_to_pool', assignment_mode: 'pool' },
       { on_unstaff: 'return_to_pool', status: 'paused' },
     ]) {
-      await truncateAll(); // one running campaign per account
+      await truncateAll(); // a fresh world per case
       const c = await campaign(overrides);
       const held = await insertAgencyContact(c.id, { assigned_user_id: goneUser, assigned_at: new Date() });
       expect(await sweepUnstaffedOwners(c as never)).toBe(0);

@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-04.
+"is it done". As of 2026-11-05.
 
 ## Summary
 
@@ -453,7 +453,8 @@ phone number (the default, unchanged), any kept column, or none.
   `dedupe_column_missing`, and `distinct` / `distinct_phones` per analysed column, shown as
   "x% unique" under the control. Requests without `dedupe_column` behave as before.
 - `claimDialable` keeps one live call per number in a campaign (skips a number `in_flight` or
-  `connected` on another contact; one contact per number per tick). Proven on real Postgres
+  `connected` on another contact; one contact per number per tick); widened to the whole account
+  on 2026-11-05 (MC4, "Several running campaigns per account" below). Proven on real Postgres
   (`agency-contact-claim-one-per-number.test.ts`) and end to end through the roster insert
   (`agency-ingest-roundtrip.test.ts`); guards mutation-checked.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
@@ -834,6 +835,31 @@ create and PATCH, but the console only displayed it.
   the full server unit suite and the Dart tests were not run (no file of theirs changed; Dart is
   not installed on the build container).
 
+### Several running campaigns per account 2026-11-05 (MC1–MC7)
+
+ClickUp "Allow multiple running campaigns per account within the account's concurrency limit". An
+account could run one campaign at a time (`uq_agency_campaign_running`; Start and Resume answered
+409 `another_campaign_running`). Design and defaults: [`decisions.md`](decisions.md) §4, "Several
+running campaigns per account".
+
+- Migration `0015` drops `uq_agency_campaign_running`; the `another_campaign_running` code is
+  retired from `packages/contracts` (MC6). Agent exclusivity is unchanged: one live session per
+  agent per tenant.
+- The pacing round splits the account's `max_concurrent_calls` between its running campaigns,
+  fewest live calls first, a campaign that cannot use its share leaving it to the others; before,
+  the round's headroom went to whichever tick drew on it first (MC1, MC2). A campaign held back by
+  the share while the account had headroom keeps ticking every round (MC5). With one running
+  campaign the rule is unchanged.
+- The claim's one-live-call-per-number check spans the whole account, not one campaign (MC4).
+- Visibility (MC7): campaign stats carry `concurrency`, shown on the console's campaign cards and
+  detail page. Metrics `agency_campaign_slots_in_use`, `agency_campaign_slots_allocated` and
+  `agency_pacing_share_withheld_total`; the dashboard's *Agency dialer* row gains two *Pacing
+  Share* panels (slots in use against allocated per campaign, and slots withheld per campaign);
+  a new warning, `agy-pacing-share-starved`, fires when a campaign with no live call has been
+  withheld slots for 10 minutes (runbook in [`operations.md`](operations.md)). The new series
+  carry only `campaign_id` (`grafana/README.md`, "Known metric gaps").
+- Counts: not recorded here yet; `pnpm test:grafana` was not run for the Grafana changes.
+
 ## Test counts
 
 Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
@@ -1094,6 +1120,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
+| Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account. Weights and a per-campaign cap were left for later |
 
 ## Deployment invariants
 

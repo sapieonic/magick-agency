@@ -35,6 +35,7 @@ import {
   type AgencyCampaignAction as Action,
 } from '../../utils/agencyCampaignControls';
 import { campaignTimeline } from '../../utils/agency/overview/lifecycle';
+import { concurrencyLine } from '../../utils/agencyCampaignsHome';
 import { CampaignDetailHeader } from './campaign-detail/CampaignDetailHeader';
 import { InsightsPanel } from './campaign-detail/insights/InsightsPanel';
 import { useAgencyCampaignDetail } from './campaign-detail/useAgencyCampaignDetail';
@@ -167,11 +168,12 @@ export function AgencyCampaignDetailPage() {
         /**
          * A 409 is an answer, not a transport failure. Two kinds:
          * the campaign moved underneath us (stale Start / Resume), or the
-         * one-running-campaign-per-account rule refused the start. The
-         * first is repaired by refetching — the refreshed view then replaces the
-         * button, and a conflict toast on a control that has just
-         * disappeared is friction. The second is a real refusal
-         * (this campaign is still a draft) and still has to be said.
+         * transition is refused where the campaign stands. The first is repaired
+         * by refetching — the refreshed view then replaces the button, and a
+         * conflict toast on a control that has just disappeared is friction. The
+         * second is a real refusal (the roster gate, say) and still has to be
+         * said. Another running campaign on the account is not a refusal: several
+         * run at once and share the account's lines (decisions MC6).
          */
         let reportFailure = true;
         if (statusCode === 409) {
@@ -275,6 +277,11 @@ export function AgencyCampaignDetailPage() {
   const timelineParts = [timeline.started, timeline.ran].filter(
     (part): part is string => part !== null,
   );
+  /*
+    The campaign's place in the account's lines (decisions MC7). Read against
+    `campaign.status`, the status the badge shows, not the stats' copy of it.
+  */
+  const linesInUse = concurrencyLine(campaign.status, stats?.concurrency);
 
   return (
     <div className={styles.page}>
@@ -290,6 +297,7 @@ export function AgencyCampaignDetailPage() {
         lastUpdatedAt={lastUpdatedAt}
         autoRefreshing={shouldPoll}
         timelineParts={timelineParts}
+        linesInUse={linesInUse}
         tenantId={tenantId}
         accountId={accountId}
         canControl={canControl}

@@ -34,6 +34,12 @@ interface CampaignDetailHeaderProps {
   autoRefreshing: boolean;
   /** "Started …" / "Running for …", absent facts already dropped. */
   timelineParts: string[];
+  /**
+   * The campaign's live calls against the account's lines (`concurrencyLine`), or
+   * `null` when the stats carry nothing to say (a draft, a finished campaign, an
+   * older server).
+   */
+  linesInUse: string | null;
   tenantId: string | null;
   accountId: string | null;
   /** `agency.supervise`: the lifecycle buttons and the secondary actions. */
@@ -60,6 +66,7 @@ export function CampaignDetailHeader({
   lastUpdatedAt,
   autoRefreshing,
   timelineParts,
+  linesInUse,
   tenantId,
   accountId,
   canControl,
@@ -99,6 +106,17 @@ export function CampaignDetailHeader({
         {timelineParts.length > 0 && (
           <p className={styles.timeline} data-testid="campaign-timeline">
             {timelineParts.join(' · ')}
+          </p>
+        )}
+        {/*
+          The account's lines, beneath the campaign's clock: several campaigns can
+          run at once and share them (decisions MC7), so "why is this campaign
+          dialling less than its agents could take" is answered here, on every tab.
+          Not a live region: it changes on every poll.
+        */}
+        {linesInUse && (
+          <p className={styles.lines} data-testid="campaign-lines">
+            {linesInUse}
           </p>
         )}
         {/*
@@ -175,7 +193,7 @@ export function CampaignDetailHeader({
 
           Offered on every status rather than only on a terminal one: a paused
           campaign is a perfectly ordinary thing to retry part of, and a
-          running one is told in the dialog that the child cannot start yet.
+          running one's child can run beside it (the dialog says how).
         */}
         {canRetry && (
           <button

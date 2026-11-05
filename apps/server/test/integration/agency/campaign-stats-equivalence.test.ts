@@ -240,7 +240,10 @@ describe('campaign stats — single-pass aggregates vs one subquery per counter 
 
   it('every counter equals its reference over a fixture that touches every state', async () => {
     const id = await seedCampaign(CATALOG);
-    await seedCampaign(CATALOG, 'paused'); // the decoy (one running campaign per account)
+    // The decoy, on the same account. `paused` was forced while one account could run one
+    // campaign (`uq_agency_campaign_running`, dropped by migration 0015); every counter here
+    // is scoped by campaign id, so its status does not matter to what this compares.
+    await seedCampaign(CATALOG, 'paused');
 
     const ref = await referenceRow(id);
     const stats = await agencyCampaignRepository.stats(id);

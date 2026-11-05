@@ -24,7 +24,8 @@ import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
  * safe: a prefilter that could reject a real match would be a fail-open.
  *
  * A literal fragment with no interpolated input, and it must stay byte-identical
- * to the expression indexed by `idx_agency_contacts_campaign_phone_digits`
+ * to the expression indexed by `idx_agency_contacts_campaign_phone_digits` and
+ * `idx_agency_contacts_account_live_digits` (0015, the account-wide busy probe, MC4)
  * — Postgres matches expression indexes structurally, so a stray
  * space or a `'[^\d]'` spelling costs the index and turns an agent's button press
  * into a scan of every contact in the campaign, silently.
@@ -34,6 +35,7 @@ export const CONTACT_PHONE_DIGITS_SQL = "regexp_replace(phone_e164, '[^0-9]', ''
 /**
  * {@link CONTACT_PHONE_DIGITS_SQL} on the `phone_e164` of table alias `alias`. Only the column
  * is qualified, so the expression still matches `idx_agency_contacts_campaign_phone_digits`
+ * and `idx_agency_contacts_account_live_digits`
  * (the planner compares parsed expressions, and an alias does not change one).
  */
 export function contactPhoneDigitsSql(alias: string): string {

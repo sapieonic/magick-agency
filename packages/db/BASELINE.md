@@ -5,7 +5,7 @@ under [Later migrations](#later-migrations). This file is their inventory: the r
 they follow, every table with its purpose and columns, the unique indexes that carry invariants, the
 triggers and functions, how it is tested, and the schema questions still open. Read it before
 writing a repository, a migration or an import script. Column lists are generated from the SQL;
-the SQL is the authority. As of 2026-11-01.
+the SQL is the authority. As of 2026-11-05.
 
 ## Rules
 
@@ -156,7 +156,7 @@ Columns: `id`, `call_id`, `tenant_id`, `account_id`, `profile_id`, `profile_snap
 
 ### Dialer
 
-**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. One running campaign per account (`uq_agency_campaign_running`). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below).
+**`agency_campaigns`**. A campaign: caller IDs, calling window and days, timezone, wrap-up, retry policy, disposition catalog, recording, analysis profile, context display, status, break reasons, abandon announcement, abandonment ceiling and pause reason, retry lineage. `telephony_provider` defaults to `'voicelink'`. The baseline allows one running campaign per account (`uq_agency_campaign_running`); 0015 drops that index, so an account may run several (see below). 0008 adds `allow_wrapup_redial` (the wrap-up redial setting, off by default; see below). 0009 adds the contact-assignment and agent-retry settings (see below).
 
 Columns: `id`, `tenant_id`, `account_id`, `name`, `caller_ids`, `telephony_provider`, `calling_window_start`, `calling_window_end`, `calling_days`, `default_timezone`, `wrapup_seconds`, `wrapup_auto_return`, `retry_policy`, `disposition_catalog`, `record_calls`, `analysis_profile_id`, `context_display`, `status`, `contacts_total`, `created_by`, `started_at`, `completed_at`, `created_at`, `updated_at`, `break_reasons`, `abandon_announcement_id`, `abandonment_ceiling_pct`, `pause_reason`, `paused_at`, `pause_abandonment_rate_pct`, `ended_at`, `last_transition_by_user_id`, `last_transition_by_name`, `parent_campaign_id`, `root_campaign_id`, `retry_generation`, `retry_selector`, `retry_idempotency_key`.
 
@@ -210,7 +210,7 @@ Columns: `id`, `tenant_id`, `account_id`, `caller_id`, `destination_phone`, `pro
 | `idx_announcements_tenant_name_active` | `announcements` |
 | `uq_analysis_profiles_name` | `call_analysis_profiles` |
 | `uq_analysis_profiles_default` | `call_analysis_profiles` |
-| `uq_agency_campaign_running` | `agency_campaigns` |
+| `uq_agency_campaign_running` (dropped by 0015) | `agency_campaigns` |
 | `uq_agency_campaign_retry_idempotency` | `agency_campaigns` |
 | `uq_agency_contacts_source_row` | `agency_contacts` |
 | `uq_agency_contacts_row_fingerprint` | `agency_contacts` |
@@ -739,6 +739,31 @@ CHECK and drops the four columns. **Tests**: `test/integration/db/insights-rollu
 (the columns, the CHECK, both triggers marking the right bucket, the backfill, down then up), the
 trigger list in `baseline.test.ts`, the down → up suite, and the server's rollup oracle.
 
+### 0015 — `migrations/0015_multiple_running_campaigns.sql`
+
+Several running campaigns per account (`docs/decisions.md`, "Several running campaigns per
+account", MC4 and MC6).
+
+- **Drops `uq_agency_campaign_running`**, the baseline's one running campaign per account. The
+  account's `max_concurrent_calls` is shared between its running campaigns by the pacing round;
+  Start and Resume no longer answer 409 `another_campaign_running` (the code is retired from
+  `packages/contracts`). Agent exclusivity is unchanged (`uq_agency_agent_live_tenant`).
+- **`idx_agency_contacts_account_live_digits`** `(tenant_id, account_id, regexp_replace(phone_e164,
+  '[^0-9]', '', 'g')) WHERE state IN ('in_flight', 'connected')`: the claims' busy probe
+  (`numberLiveSql`), widened from the campaign to the account so a number on a call on any of the
+  account's campaigns (a retry child and its parent, two rosters sharing a number) is not
+  claimed again. The key expression is `CONTACT_PHONE_DIGITS_SQL` byte for byte and the predicate
+  is `LIVE_STATES_SQL`'s list, so the planner uses it for the probe; partial on the live states,
+  it holds about one entry per live call.
+- **Locking.** Plain `CREATE INDEX` (SHARE on `agency_contacts`, one scan of the table) and a
+  catalog-only `DROP INDEX` on `agency_campaigns`; one transaction, at container start.
+
+**Down** refuses (RAISE, nothing changed) while any account has more than one running campaign;
+otherwise it drops the live-number index and recreates `uq_agency_campaign_running`. **Tests**:
+`test/integration/db/multiple-running-campaigns-migration.test.ts` (the unique index gone, the new
+index's definition and that the planner uses it for the probe, the refused down, down then up), the
+`uq_agency_campaign_running` case in `baseline.test.ts`, and the down → up suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and
@@ -746,7 +771,7 @@ trigger list in `baseline.test.ts`, the down → up suite, and the server's roll
 
 - the table set, column shapes, nullability, state CHECKs, JSONB guards and cascades;
 - every unique index above, including all live-state pairs of `uq_agency_attempt_live` and its exact
-  definition, `uq_agency_campaign_running` and `uq_agency_agent_live_tenant`;
+  definition, `uq_agency_campaign_running` (absent after 0015) and `uq_agency_agent_live_tenant`;
 - every `updated_at` trigger firing (with backdated rows, so the check cannot pass vacuously);
 - the root-stamping trigger and the retry-lineage columns and indexes;
 - the fingerprint function (definition, `NOT STRICT`, `STABLE`, collision behaviour);

@@ -2,13 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
   callingDaysLabel,
   campaignGroup,
+  concurrencyLine,
   countCampaigns,
   filterCampaigns,
   needsPolling,
   scheduleLabel,
   sortCampaigns,
 } from '../../utils/agencyCampaignsHome';
-import type { AgencyCampaign } from '../../types/agency-campaign';
+import type { AgencyCampaign, AgencyCampaignConcurrency } from '../../types/agency-campaign';
 
 function campaign(over: Partial<AgencyCampaign> & Pick<AgencyCampaign, 'id' | 'status'>): AgencyCampaign {
   return { name: over.id, ...over };
@@ -144,5 +145,42 @@ describe('needsPolling', () => {
   it('leaves a settled paused campaign alone, and one whose stats have not loaded', () => {
     expect(needsPolling('paused', { attempts_live: 0, agents: [] })).toBe(false);
     expect(needsPolling('paused', null)).toBe(false);
+  });
+});
+
+describe('concurrencyLine', () => {
+  function block(over: Partial<AgencyCampaignConcurrency> = {}): AgencyCampaignConcurrency {
+    return {
+      campaign_live: 4, fair_share: 5, account_limit: 10, account_live: 7, running_campaigns: 2, ...over,
+    };
+  }
+
+  it('states the share while other campaigns run, its own calls first', () => {
+    expect(concurrencyLine('running', block())).toBe('4 live calls · share 5 of 10 lines · 2 campaigns running');
+    expect(concurrencyLine('running', block({ campaign_live: 1, fair_share: 3, running_campaigns: 3 })))
+      .toBe('1 live call · share 3 of 10 lines · 3 campaigns running');
+  });
+
+  it('states the account’s lines in use for a campaign running alone', () => {
+    expect(concurrencyLine('running', block({ fair_share: null, running_campaigns: 1, account_live: 4 })))
+      .toBe('4 of 10 lines in use');
+  });
+
+  it('names the campaigns that are running when this one is paused', () => {
+    expect(concurrencyLine('paused', block({ fair_share: null, running_campaigns: 1, account_live: 6 })))
+      .toBe('6 of 10 lines in use · 1 campaign running');
+    expect(concurrencyLine('stopping', block({ fair_share: null, running_campaigns: 0, account_live: 1 })))
+      .toBe('1 of 10 lines in use');
+  });
+
+  it('agrees in number with a one-line account', () => {
+    expect(concurrencyLine('running', block({ account_limit: 1, fair_share: 0, campaign_live: 0 })))
+      .toBe('0 live calls · share 0 of 1 line · 2 campaigns running');
+  });
+
+  it('says nothing without a block or a limit to measure against', () => {
+    expect(concurrencyLine('running', undefined)).toBeNull();
+    expect(concurrencyLine('running', null)).toBeNull();
+    expect(concurrencyLine('running', block({ account_limit: 0 }))).toBeNull();
   });
 });

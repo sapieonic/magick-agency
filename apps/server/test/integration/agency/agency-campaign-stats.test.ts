@@ -322,9 +322,10 @@ describe('agency supervisor stats — the agent floor (integration)', () => {
     // an unbridged attempt counted, another agent's attempt counted, another
     // campaign's attempt counted.
     const campaign = await insertAgencyCampaign({ status: 'running' });
-    // `paused`, not a second `running` — `uq_agency_campaign_running` allows only
-    // one running campaign per (tenant, account). Status is irrelevant to the
-    // isolation being tested, which is by campaign id.
+    // `paused`, written when `uq_agency_campaign_running` allowed only one running
+    // campaign per (tenant, account); migration 0015 dropped it, so a second `running`
+    // campaign would do as well. Status is irrelevant to the isolation being tested,
+    // which is by campaign id.
     const other = await insertAgencyCampaign({ status: 'paused' });
 
     const busy = await insertAgentSession(campaign.id as string, { agent_user_id: uuidFor('busy') });

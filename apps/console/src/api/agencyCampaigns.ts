@@ -327,8 +327,10 @@ export async function getAgencyCampaignStats(
  * what came back rather than assuming the transition completed.
  *
  * A **409** here is a real answer, not a failure to retry: either the campaign
- * moved underneath us, or the one-running-campaign-per-account rule refused the
- * start. Both carry a `code` the caller should show.
+ * moved underneath us, or the transition is refused where the campaign stands
+ * (the roster gate, say). Both carry a `code` the caller should show. Another
+ * running campaign on the account is not a refusal: several run at once and share
+ * the account's lines (decisions MC6).
  */
 export async function transitionAgencyCampaign(
   id: string,

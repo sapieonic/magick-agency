@@ -125,7 +125,7 @@ describe('AgencyCampaignsPage — no campaigns yet', () => {
     const create = screen.getByRole('link', { name: /New campaign/ });
     expect(create.getAttribute('href')).toBe('/agency/campaigns/new');
     expect(screen.getByRole('heading', { name: 'Start dialing' })).toBeTruthy();
-    expect(screen.getByText('Only one campaign can run at a time per account.')).toBeTruthy();
+    expect(screen.getByText('Several campaigns can run at once. They share your account’s lines.')).toBeTruthy();
     expect(mocks.getAgencyCampaignStats).not.toHaveBeenCalled();
   });
 
@@ -135,7 +135,7 @@ describe('AgencyCampaignsPage — no campaigns yet', () => {
     expect(await screen.findByRole('heading', { name: 'No campaigns yet' })).toBeTruthy();
     expect(screen.queryByRole('link', { name: /New campaign/ })).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Start dialing' })).toBeNull();
-    expect(screen.getByText('Only one campaign can run at a time per account.')).toBeTruthy();
+    expect(screen.getByText('Several campaigns can run at once. They share your account’s lines.')).toBeTruthy();
   });
 });
 
@@ -174,6 +174,51 @@ describe('AgencyCampaignsPage — active campaigns', () => {
     expect(within(card('Gold loan pilot')).queryByText(/didn’t load/)).toBeNull();
     // The list is still there.
     expect(screen.getByRole('link', { name: /Diwali leads/ })).toBeTruthy();
+  });
+
+  it('shows each running campaign’s live calls against its share of the account’s lines', async () => {
+    // Two running at once on one account (decisions MC6).
+    const second: AgencyCampaign = { id: 'c-two', name: 'Gold loan pilot', status: 'running' };
+    mocks.listAgencyCampaignsPage.mockResolvedValue(listing([RUNNING, second]));
+    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
+      stats({
+        concurrency: {
+          campaign_live: id === 'c-live' ? 4 : 1,
+          fair_share: 5,
+          account_limit: 10,
+          account_live: 5,
+          running_campaigns: 2,
+        },
+      }),
+    );
+    renderPage();
+
+    await waitFor(() =>
+      expect(within(card('Monsoon offers')).getByTestId('campaign-lines').textContent)
+        .toBe('4 live calls · share 5 of 10 lines · 2 campaigns running'),
+    );
+    expect(within(card('Gold loan pilot')).getByTestId('campaign-lines').textContent)
+      .toBe('1 live call · share 5 of 10 lines · 2 campaigns running');
+  });
+
+  it('shows the lines in use for a campaign running alone, and nothing without the block', async () => {
+    mocks.getAgencyCampaignStats.mockImplementation(async (id: string) =>
+      id === 'c-live'
+        ? stats({
+          concurrency: {
+            campaign_live: 4, fair_share: null, account_limit: 10, account_live: 4, running_campaigns: 1,
+          },
+        })
+        : stats({ attempts_live: 0, agents_live: 7 }),
+    );
+    renderPage();
+
+    await waitFor(() =>
+      expect(within(card('Monsoon offers')).getByTestId('campaign-lines').textContent).toBe('4 of 10 lines in use'),
+    );
+    await waitFor(() => expect(within(card('Gold loan pilot')).getByText('7')).toBeTruthy());
+    // An older server sends no `concurrency`: the card says nothing rather than a guess.
+    expect(within(card('Gold loan pilot')).queryByTestId('campaign-lines')).toBeNull();
   });
 
   it('shows the top diagnosis when the campaign is stalled', async () => {

@@ -5,9 +5,10 @@
 import type { FastifyInstance } from 'fastify';
 import { getTenantId, getAccountId } from '../../middleware/auth.middleware.js';
 import { createChildLogger } from '@magick-agency/observability';
-import { agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
+import { agencyAttemptRepository, agencyCampaignRepository } from '../../../db/repositories/agency.repository.js';
 import type { AgencyCampaignRecord } from '../../../db/models/agency.model.js';
 import type { AgencyCampaignStats, AgencyCampaignStatsSeries } from '@magick-agency/contracts/agency';
+import { CAMPAIGN_CONCURRENCY_STATUSES, campaignConcurrency } from '../../../agency/campaign-concurrency.js';
 // The trend line's query parser. Its own module, and a thin one: the bucket
 // vocabulary, the 92-day cap and the date rules are all imported there rather
 // than re-declared.
@@ -110,16 +111,18 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
     // them is deliberate: `concurrencyLimit` falls back to `0`, which `saturated()`
     // reads as "no known ceiling" and therefore never diagnoses saturation, while
     // the other two fall back to `null`, which the assembler reads as "unknown".
-    const [dncAppliedVersion, concurrencyLimit, concurrencyInUse, connected] = await Promise.all([
+    // The limit is read as `null` on failure and turned into that `0` below, so the
+    // `concurrency` block (MC7) can tell a failed read from a real ceiling.
+    const [dncAppliedVersion, limitRead, concurrencyInUse, connected, accountCounts] = await Promise.all([
       bestEffort<number | null>(
         'agency.dnc.appliedVersion',
         () => deps.runtime.dnc.appliedVersion(tenantId),
         null,
       ),
-      bestEffort<number>(
+      bestEffort<number | null>(
         'account_settings.max_concurrent_calls',
         () => accountSettingsRepository.getMaxConcurrentCalls(tenantId, accountId),
-        0,
+        null,
       ),
       bestEffort<number | null>(
         'concurrency.distributed_account_count',
@@ -148,7 +151,25 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
         () => deps.runtime.stations.connectedBySession(stats.agents.map((a) => a.session_id)),
         new Map(),
       ),
+      // The account half of `concurrency` (MC7): its live calls, counted as pacing
+      // counts them (every campaign's attempts plus the soft phone's live calls), and
+      // its running campaigns. Read only for a campaign that can hold lines; two
+      // indexed COUNTs on the poll. Best-effort like the rest: a failure is
+      // `concurrency: null` ("not known"), never a share of zero.
+      bestEffort<{ accountLive: number; runningCampaigns: number } | null>(
+        'agency.campaign_concurrency',
+        async () => {
+          if (!CAMPAIGN_CONCURRENCY_STATUSES.has(campaign.status)) return null;
+          const [accountLive, runningCampaigns] = await Promise.all([
+            agencyAttemptRepository.countLiveForAccount(tenantId, accountId),
+            agencyCampaignRepository.countRunningForAccount(tenantId, accountId),
+          ]);
+          return { accountLive, runningCampaigns };
+        },
+        null,
+      ),
     ]);
+    const concurrencyLimit = limitRead ?? 0;
 
     const { outsideCallingHours, nextWindowOpensAt } = evaluateCallingHours(campaign, health.pendingByTimezone);
 
@@ -174,6 +195,17 @@ export async function registerCampaignStatsRoutes(app: FastifyInstance, deps: Ag
       // complete" are not the same thing and the dashboard shows both.
       concurrency_limit: concurrencyLimit,
       concurrency_in_use: concurrencyInUse,
+      // Always sent, `null` when the campaign holds no lines or a read behind it
+      // failed (`limitRead` null is a failed read, not a ceiling of zero).
+      concurrency: accountCounts && limitRead !== null
+        ? campaignConcurrency({
+          status: campaign.status,
+          campaignLive: stats.attempts_live,
+          accountLimit: limitRead,
+          accountLive: accountCounts.accountLive,
+          runningCampaigns: accountCounts.runningCampaigns,
+        })
+        : null,
       ...campaignHealth({
         campaign,
         stats,

@@ -679,13 +679,17 @@ const SELECTOR_SUPPRESSION_REFUSAL =
  * this instant is `state = 'in_flight'`, `last_outcome IS NULL`,
  * `attempt_count = 0` — which is to say it satisfies BOTH `__none__` (the
  * default selector's outcome member) and `never_attempted: true`. Seeding it
- * into a child and starting that child dials a number the parent has an open
- * call on.
+ * into a child and starting that child would dial the number again as soon as
+ * the parent's call on it ends, on an outcome snapshot taken before that call
+ * had one (a customer just reached, rung a second time).
  *
- * `uq_agency_campaign_running` does not prevent this: it refuses a second
- * RUNNING campaign, and the workflow that reaches here is "this campaign is
- * going badly — pause it and retry who we missed". Pausing does not cancel
- * in-flight attempts, and a paused parent leaves the running slot free.
+ * Nothing about campaign status prevents this: the workflow that reaches here is
+ * "this campaign is going badly — pause it and retry who we missed", pausing does
+ * not cancel in-flight attempts, and a child may run beside its parent anyway
+ * (decisions MC6: several running campaigns per account). The claim's
+ * account-wide busy probe (`numberLiveSql`, MC4) only keeps the child from
+ * ringing the number WHILE the parent's call is live; it cannot tell the child
+ * that call happened.
  *
  * The refusal is the visible half; the predicate excludes `in_flight`
  * unconditionally (`retrySelectionConditions`) so a contact that is ringing is

@@ -392,6 +392,26 @@ export class AgencyCampaignRepository {
   }
 
   /**
+   * How many of the account's campaigns are `running` (decisions MC6, MC7): the
+   * divisor of a campaign's equal share of the account's line limit, served on its
+   * stats as `concurrency.running_campaigns`.
+   *
+   * `running` only. A `stopping` or `paused` campaign dials nothing new, so it holds no
+   * share of the slots pacing hands out (its live calls are still in the account's live
+   * count). Served by `idx_agency_campaigns_tenant` (`tenant_id, account_id, created_at`);
+   * an account has few campaigns, so the status filter on those rows is cheap.
+   */
+  async countRunningForAccount(tenantId: string, accountId: string): Promise<number> {
+    const { rows } = await getPool().query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n
+         FROM agency_campaigns
+        WHERE tenant_id = $1::uuid AND account_id = $2::uuid AND status = 'running'`,
+      [tenantId, accountId],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  /**
    * Move a campaign to a new status. Returns the updated row, or null when the
    * `from` guard did not match — which is how the pacing leader's exclusive claim
    * on `running → completed` / `stopping → stopped` is enforced (exactly one
