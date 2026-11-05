@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { Bell, ChartNoAxesCombined, ListChecks, Phone, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
+import { Bell, Briefcase, ChartNoAxesCombined, ListChecks, Phone, PhoneOff, Plus, Settings2, X, type LucideIcon } from 'lucide-react';
 import { AppVersion } from '@magick-agency/web-ui/components/AppVersion';
 import { Logo } from '../common/Logo';
 import { brand } from '../../brand';
@@ -119,6 +119,15 @@ const NAV_ITEMS: NavItem[] = [
     end: false,
     permission: 'agency.softphone.manage',
     flag: 'agency_softphone_enabled',
+  },
+  {
+    /* Leaves the shell like the two above: tenant admins and owners work here too, and
+       adding an account (decision AA1) is a platform-zone page. */
+    label: 'Accounts',
+    to: '/app/accounts',
+    icon: Briefcase,
+    end: false,
+    permission: 'account.create',
   },
 ];
 

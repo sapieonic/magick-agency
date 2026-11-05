@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
     create: vi.fn(),
   },
   auditLog: vi.fn().mockResolvedValue(undefined),
+  createTenantAccount: vi.fn(),
   phoneAssignmentRepo: {
     findAvailableForAccount: vi.fn(),
   },
@@ -84,6 +85,11 @@ vi.mock('@magick-agency/db/repositories/account-settings.repository', () => ({
 }));
 vi.mock('@magick-agency/db/repositories/agency-campaign-agent.repository', () => ({
   agencyCampaignAgentRepository: {},
+}));
+// The write (transaction, tenant lock, name rule, slug) is the helper's, proven on real
+// Postgres; here only the route's own part is pinned.
+vi.mock('../../../../src/api/routes/helpers/create-account.js', () => ({
+  createTenantAccount: mocks.createTenantAccount,
 }));
 vi.mock('../../../../src/audit/audit-logger.js', () => ({
   auditLogger: { log: mocks.coreAuditLog },
@@ -865,9 +871,8 @@ describe('in-process concurrency handler (equivalence)', () => {
 
 /**
  * `POST /super-admin/tenants/:id/accounts`: the super-admin half of account creation.
- * The name rule and slug choice are `createTenantAccount`'s, covered route by route in
- * `account.routes.test.ts`; this pins what is different here: no membership, the
- * tenant lookup, and the super-admin audit row.
+ * What differs from `POST /accounts`: no membership, the platform's default call limit
+ * rather than zero (the super admin sets limits), and the super-admin audit row.
  */
 describe('POST /super-admin/tenants/:id/accounts', () => {
   const TENANT_ID = '11111111-1111-4111-8111-111111111111';
@@ -875,10 +880,10 @@ describe('POST /super-admin/tenants/:id/accounts', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    mocks.tenantRepo.findById.mockResolvedValue({ id: TENANT_ID, name: 'Acme', status: 'active' });
-    mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount({ tenant_id: TENANT_ID })]);
-    mocks.accountRepo.create.mockImplementation(async (input: { tenant_id: string; name: string; slug: string }) =>
-      makeAccount({ id: 'acc-new', tenant_id: input.tenant_id, name: input.name, slug: input.slug }));
+    mocks.createTenantAccount.mockImplementation(async (tenantId: string, name: string) => ({
+      status: 'created',
+      account: makeAccount({ id: 'acc-new', tenant_id: tenantId, name, slug: 'collections' }),
+    }));
     app = Fastify();
     await app.register(superAdminRoutes, { prefix: '/super-admin' });
     await app.ready();
@@ -891,12 +896,18 @@ describe('POST /super-admin/tenants/:id/accounts', () => {
   const post = (tenantId: string, payload: Record<string, unknown>) =>
     app.inject({ method: 'POST', url: `/super-admin/tenants/${tenantId}/accounts`, payload });
 
-  it('creates the account and answers 201 with the row', async () => {
+  it('creates the account with the trimmed name and answers 201 with the row', async () => {
     const res = await post(TENANT_ID, { name: ' Collections ' });
 
     expect(res.statusCode).toBe(201);
     expect(res.json().account).toMatchObject({ id: 'acc-new', tenant_id: TENANT_ID, name: 'Collections', slug: 'collections' });
-    expect(mocks.accountRepo.create).toHaveBeenCalledWith({ tenant_id: TENANT_ID, name: 'Collections', slug: 'collections' });
+  });
+
+  it('passes no zero call limit: a super admin\'s account takes the platform default (decision AA4)', async () => {
+    await post(TENANT_ID, { name: 'Collections' });
+
+    expect(mocks.createTenantAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.createTenantAccount.mock.calls[0]).toEqual([TENANT_ID, 'Collections']);
   });
 
   it('records a create_account super-admin audit row', async () => {
@@ -912,43 +923,39 @@ describe('POST /super-admin/tenants/:id/accounts', () => {
     }));
   });
 
-  it('answers 404 for an unknown tenant and writes nothing', async () => {
-    mocks.tenantRepo.findById.mockResolvedValue(null);
+  it('answers 404 for an unknown or deleted tenant and audits nothing', async () => {
+    mocks.createTenantAccount.mockResolvedValue({ status: 'tenant_not_found' });
 
     const res = await post(TENANT_ID, { name: 'Collections' });
 
     expect(res.statusCode).toBe(404);
-    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
     expect(mocks.auditLog).not.toHaveBeenCalled();
   });
 
-  it('answers 404 for a malformed tenant id without querying it', async () => {
+  it('answers 404 for a malformed tenant id without writing', async () => {
     const res = await post('not-a-uuid', { name: 'Collections' });
 
     expect(res.statusCode).toBe(404);
-    expect(mocks.tenantRepo.findById).not.toHaveBeenCalled();
-    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
+    expect(mocks.createTenantAccount).not.toHaveBeenCalled();
   });
 
-  it('answers 400 for a blank name before looking the tenant up', async () => {
-    const res = await post(TENANT_ID, { name: '  ' });
+  it.each([
+    ['a blank name', { name: '  ' }],
+    ['a zero-width space', { name: 'Sales\u200b' }],
+  ])('answers 400 for %s before writing', async (_label, body) => {
+    const res = await post(TENANT_ID, body);
 
     expect(res.statusCode).toBe(400);
-    expect(mocks.tenantRepo.findById).not.toHaveBeenCalled();
-    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
+    expect(mocks.createTenantAccount).not.toHaveBeenCalled();
   });
 
-  it('answers 409 account_name_taken for a name the tenant already has', async () => {
+  it('answers 409 account_name_taken and audits nothing', async () => {
+    mocks.createTenantAccount.mockResolvedValue({ status: 'name_taken' });
+
     const res = await post(TENANT_ID, { name: 'DEFAULT' });
 
     expect(res.statusCode).toBe(409);
     expect(res.json()).toMatchObject({ error: 'Conflict', code: 'account_name_taken' });
-    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
     expect(mocks.auditLog).not.toHaveBeenCalled();
-  });
-
-  it('reads only the target tenant\'s accounts for the name check', async () => {
-    await post(TENANT_ID, { name: 'Collections' });
-    expect(mocks.accountRepo.findByTenantId).toHaveBeenCalledWith(TENANT_ID);
   });
 });

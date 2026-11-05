@@ -438,6 +438,41 @@ describe('super-admin routes (integration)', () => {
       expect(missing.statusCode).toBe(404);
     });
 
+    it('writes no settings row, so the account takes the platform default call limit (decision AA4)', async () => {
+      const token = await loginAndGetToken(app);
+      const tenant = await insertTenant();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/super-admin/tenants/${tenant.id}/accounts`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Outbound' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const { rows } = await getTestPool().query(
+        'SELECT 1 FROM account_settings WHERE account_id = $1',
+        [res.json().account.id],
+      );
+      expect(rows).toEqual([]);
+    });
+
+    it('answers 404 for a deleted tenant and writes nothing', async () => {
+      const token = await loginAndGetToken(app);
+      const tenant = await insertTenant({ status: 'deleted' });
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/super-admin/tenants/${tenant.id}/accounts`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Ghost' },
+      });
+
+      expect(res.statusCode).toBe(404);
+      const { rows } = await getTestPool().query('SELECT 1 FROM accounts WHERE tenant_id = $1', [tenant.id]);
+      expect(rows).toEqual([]);
+    });
+
     it('requires a super-admin token', async () => {
       const tenant = await insertTenant();
       const res = await app.inject({

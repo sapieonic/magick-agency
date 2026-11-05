@@ -30,14 +30,13 @@ import { createTenantSchema, addUserToTenantSchema, changeMembershipRoleSchema }
 import { parseOr400 } from '../helpers/parse-or-400.js';
 import { sendRefusal } from '../helpers/refusal.js';
 import { createTenantAccount } from '../helpers/create-account.js';
+import { UUID_RE } from '../../../utils/uuid.js';
 import { createAccountSchema } from '../../validators/account.validator.js';
 import type { CreateAccountErrorCode } from '@magick-agency/contracts/api/platform/auth';
 import { returnContactsOnUnstaff } from '../../../agency/assignment/unstaff.js';
 import { SYSTEM_AUDIT_ACTOR } from '../../../audit/platform/audit-actor.js';
 
 const log = createChildLogger({ component: 'super-admin-routes' });
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Close a user's campaign staffing across the whole tenant, as
@@ -257,8 +256,10 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
    * Add an account to a tenant. Body `CreateAccountBody`, 201
    * `CreateAccountResponse`: the same write and the same name rule as the
    * console's `POST /accounts` (`createTenantAccount`), without its membership
-   * check — a super admin has no membership. 404 for an unknown or deleted tenant,
-   * 409 `account_name_taken`. Audited here as `create_account`.
+   * check — a super admin has no membership — and without the zero call limit a tenant
+   * admin's account starts with: the super admin is the one who sets limits, so their
+   * account takes the platform default (decision AA4). 404 for an unknown or deleted
+   * tenant, 409 `account_name_taken`. Audited here as `create_account`.
    */
   authApp.post('/tenants/:id/accounts', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id: tenantId } = request.params;
@@ -266,13 +267,15 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
     if (!parsed) return reply;
     const { name } = parsed.data;
 
-    // A malformed id is an unknown tenant, not a 22P02 from the lookup.
-    const tenant = UUID_PATTERN.test(tenantId) ? await tenantRepository.findById(tenantId) : null;
-    if (!tenant) {
+    // A malformed id is an unknown tenant, not a 22P02 from the lookup. The helper's
+    // locked tenant read is the existence check (a deleted tenant is not found; a
+    // suspended one can still be given accounts, as it can still be given members).
+    const result = UUID_RE.test(tenantId)
+      ? await createTenantAccount(tenantId, name)
+      : { status: 'tenant_not_found' as const };
+    if (result.status === 'tenant_not_found') {
       return reply.code(404).send({ error: 'Not Found', message: 'Tenant not found' });
     }
-
-    const result = await createTenantAccount(tenantId, name);
     if (result.status === 'name_taken') {
       return sendRefusal<CreateAccountErrorCode>(
         reply,

@@ -1,8 +1,8 @@
 /*
  * Account routes on real Postgres through `initDbPool` (the repositories import the
  * package pool directly): the list, `GET /accounts/mine` (the agent's bootstrap read)
- * and `POST /accounts`, whose slug choice leans on the partial unique index
- * `idx_accounts_tenant_slug_active` and so is only proven here. `PUT` and `DELETE
+ * and `POST /accounts`, whose name check, slug choice and zero-call settings row run in
+ * one transaction under a lock on the tenant's row, and so are only proven here. `PUT` and `DELETE
  * /accounts/:id` are not served (no `account.update|delete` in the contract).
  */
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
@@ -34,7 +34,6 @@ vi.mock('../../../src/rbac/rbac.middleware.js', () => ({
 
 const { accountRoutes } = await import('../../../src/api/routes/account.routes.js');
 const { platformAuditLogger } = await import('../../../src/audit/platform/audit-logger.js');
-const { accountRepository } = await import('@magick-agency/db/repositories/account.repository');
 
 describe('account routes (integration)', () => {
   let app: ReturnType<typeof Fastify>;
@@ -200,19 +199,47 @@ describe('account routes (integration)', () => {
       expect(res.json().account.slug).toBe('sales');
     });
 
-    /*
-     * A lost race, made deterministic: the name check's first read is stale (it
-     * misses a row another request has just committed), so the INSERT meets the real
-     * partial unique index. These two are what prove the helper recognises that
-     * index's violation by its real constraint name; two concurrent `inject`s do not
-     * interleave reliably enough to reach it.
-     */
-    it('a create that loses the slug race to the same name is a 409, not a second account', async () => {
-      await insertAccount({ tenant_id: tenant.id, name: 'Renewals', slug: 'renewals' });
-      const stale = vi.spyOn(accountRepository, 'findByTenantId').mockResolvedValueOnce([]);
+    it('a tenant admin\'s account starts at zero concurrent calls (decision AA4)', async () => {
+      const { account } = (await create('Zero Calls')).json();
 
-      const res = await create('Renewals');
-      stale.mockRestore();
+      const { rows } = await getTestPool().query(
+        'SELECT max_concurrent_calls, concurrency_allocation_mode FROM account_settings WHERE tenant_id = $1 AND account_id = $2',
+        [tenant.id, account.id],
+      );
+      expect(rows).toEqual([{ max_concurrent_calls: 0, concurrency_allocation_mode: 'legacy_total' }]);
+    });
+
+    it('folds accents out of the slug and falls back to `account` for a name without ASCII letters', async () => {
+      expect((await create('Crème Brûlée')).json().account.slug).toBe('creme-brulee');
+      expect((await create('営業')).json().account.slug).toBe('account');
+      expect((await create('Продажи')).json().account.slug).toMatch(/^account-[0-9a-f]{6}$/);
+    });
+
+    /*
+     * One create per tenant at a time. Another transaction holds the tenant's row (as a
+     * concurrent create would) and commits an account while the create waits on it; the
+     * create must then see that account. Without the tenant lock the create would not wait:
+     * it would miss the uncommitted row, pick a free slug and answer 201 (the second case is
+     * the one the slug index cannot catch, because the two creates pick different suffixes).
+     */
+    async function whileTenantHeld(insert: { name: string; slug: string }, name: string) {
+      const holder = await getTestPool().connect();
+      try {
+        await holder.query('BEGIN');
+        await holder.query('SELECT id FROM tenants WHERE id = $1 FOR NO KEY UPDATE', [tenant.id]);
+        await holder.query('INSERT INTO accounts (tenant_id, name, slug) VALUES ($1, $2, $3)', [tenant.id, insert.name, insert.slug]);
+        const pending = create(name);
+        // Long enough for an unblocked create to finish; a blocked one waits for COMMIT.
+        await new Promise((r) => setTimeout(r, 300));
+        await holder.query('COMMIT');
+        return await pending;
+      } finally {
+        holder.release();
+      }
+    }
+
+    it('waits for a concurrent create of the same name and answers 409, not a second account', async () => {
+      const res = await whileTenantHeld({ name: 'Renewals', slug: 'renewals' }, 'Renewals');
 
       expect(res.statusCode).toBe(409);
       expect(res.json().code).toBe('account_name_taken');
@@ -223,15 +250,30 @@ describe('account routes (integration)', () => {
       expect(rows).toEqual([{ name: 'Renewals' }]);
     });
 
-    it('a create that loses the slug race to a different name retries with a suffixed slug', async () => {
-      await insertAccount({ tenant_id: tenant.id, name: 'Renewals!', slug: 'renewals' });
-      const stale = vi.spyOn(accountRepository, 'findByTenantId').mockResolvedValueOnce([]);
+    it('also when the base slug was already taken, so the two creates would pick different suffixes', async () => {
+      await insertAccount({ tenant_id: tenant.id, name: 'Sales!', slug: 'sales' });
 
-      const res = await create('Renewals');
-      stale.mockRestore();
+      const res = await whileTenantHeld({ name: 'Sales', slug: 'sales-aaaaaa' }, 'sales');
 
-      expect(res.statusCode).toBe(201);
-      expect(res.json().account.slug).toMatch(/^renewals-[0-9a-f]{6}$/);
+      expect(res.statusCode).toBe(409);
+      const { rows } = await getTestPool().query(
+        `SELECT name FROM accounts WHERE tenant_id = $1 AND lower(name) = 'sales'`,
+        [tenant.id],
+      );
+      expect(rows).toHaveLength(1);
+    });
+
+    it('two concurrent creates of one name in a tenant whose base slug is taken end as one account', async () => {
+      await insertAccount({ tenant_id: tenant.id, name: 'Sales!', slug: 'sales' });
+
+      const results = await Promise.all([create('Sales'), create('Sales'), create('SALES')]);
+
+      expect(results.map((r) => r.statusCode).sort()).toEqual([201, 409, 409]);
+      const { rows } = await getTestPool().query(
+        `SELECT name FROM accounts WHERE tenant_id = $1 AND lower(name) = 'sales'`,
+        [tenant.id],
+      );
+      expect(rows).toHaveLength(1);
     });
 
     it('refuses an account-scoped seat (403) and writes nothing', async () => {

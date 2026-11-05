@@ -3,9 +3,11 @@ import { ACCOUNT_NAME_MAX_LENGTH, type CreateAccountBody } from '@magick-agency/
 
 /**
  * The body of `POST /accounts` and `POST /super-admin/tenants/:id/accounts`
- * (`CreateAccountBody`). The name is trimmed before its length is checked, so
- * "   " is empty, and it may not carry control characters (a tab or newline would
- * render as nothing in the account switcher and still make the name unique).
+ * (`CreateAccountBody`). The name is trimmed before its length is checked, so "   " is
+ * empty, and it may not carry control or invisible format characters (`\p{Cc}`,
+ * `\p{Cf}`: tabs, newlines, zero-width spaces, bidi overrides) or line and paragraph
+ * separators. Each would render as nothing, or reorder the text, in the account switcher
+ * while still making the name differ from a visible twin.
  */
 export const createAccountSchema = z.object({
   name: z
@@ -13,7 +15,7 @@ export const createAccountSchema = z.object({
     .trim()
     .min(1)
     .max(ACCOUNT_NAME_MAX_LENGTH)
-    .refine((name) => !/[\u0000-\u001f\u007f]/.test(name), {
-      message: 'Account name cannot contain control characters',
+    .refine((name) => !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(name), {
+      message: 'Account name cannot contain control or invisible characters',
     }),
 }) satisfies z.ZodType<CreateAccountBody>;

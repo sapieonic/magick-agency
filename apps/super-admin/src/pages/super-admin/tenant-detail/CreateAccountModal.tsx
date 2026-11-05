@@ -61,14 +61,21 @@ export function CreateAccountModal({ tenantId, tenantName, onClose, onCreated }:
             onChange={e => { setName(e.target.value); if (error) setError(null); }}
             required
             autoComplete="off"
+            aria-describedby={error ? 'create-account-hint create-account-error' : 'create-account-hint'}
+            aria-invalid={error ? true : undefined}
             data-autofocus="true"
           />
         </div>
-        <p className={styles.hint}>
+        <p id="create-account-hint" className={styles.hint}>
           Starts with recording and call analysis off and the default concurrency. Change them on
-          the Service tab.
+          the Service tab. (An account a tenant admin creates starts with no call capacity until
+          you set it there.)
         </p>
-        {error && <div className={styles.error} data-testid="sa-create-account-error"><ErrorText message={error} /></div>}
+        {error && (
+          <div id="create-account-error" className={styles.error} role="alert" data-testid="sa-create-account-error">
+            <ErrorText message={error} />
+          </div>
+        )}
       </form>
     </Modal>
   );

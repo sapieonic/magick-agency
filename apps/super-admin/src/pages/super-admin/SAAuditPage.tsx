@@ -15,6 +15,7 @@ import styles from './SAAuditPage.module.css';
 const ACTION_LABELS: Record<string, string> = {
   create_tenant: 'Created tenant',
   add_user_to_tenant: 'Added user to tenant',
+  create_account: 'Created account',
   create_admin: 'Created admin',
   remove_admin: 'Removed admin',
   reactivate_admin: 'Reactivated admin',

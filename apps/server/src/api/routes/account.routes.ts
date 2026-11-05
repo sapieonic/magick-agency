@@ -41,6 +41,9 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
    * 409 `account_name_taken` when a live account already has the name, ignoring
    * case and spacing (`createTenantAccount`). Nothing is cached about a new
    * account id, so nothing is invalidated.
+   *
+   * The account starts with `max_concurrent_calls = 0`: it can be set up but
+   * places no call until a super admin gives it a limit (decision AA4).
    */
   app.post('/', {
     preHandler: [requirePermission('account.create')],
@@ -50,7 +53,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         reply,
         403,
         'tenant_wide_membership_required',
-        'Your admin access covers one account, not the whole workspace, so you cannot create accounts. Ask the workspace owner.',
+        'Your admin access covers one account, not the whole workspace, so you cannot create accounts. Ask an admin with access to the whole workspace.',
       );
     }
 
@@ -59,7 +62,13 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     const { name } = parsed.data;
     const tenantId = request.tenantId!;
 
-    const result = await createTenantAccount(tenantId, name);
+    // Zero calls until a super admin sets the account's limit (decision AA4): call
+    // capacity is not the tenant admin's to grant, and there is no tenant-wide cap.
+    const result = await createTenantAccount(tenantId, name, { initialMaxConcurrentCalls: 0 });
+    if (result.status === 'tenant_not_found') {
+      // The tenant-context middleware proved the tenant; it was deleted since.
+      return reply.code(404).send({ error: 'Not Found', message: 'Workspace not found' });
+    }
     if (result.status === 'name_taken') {
       return sendRefusal<CreateAccountErrorCode>(
         reply,

@@ -212,7 +212,7 @@ export default function SATenantDetailPage() {
             />
             {/* From every tab: the Service, Flags and Members tabs all list the
                 accounts, and each reloads with `loadAccounts`. */}
-            <button className="btn-primary" onClick={() => setShowCreateAccount(true)}>
+            <button type="button" className="btn-primary" onClick={() => setShowCreateAccount(true)}>
               <Briefcase size={14} /> New account
             </button>
           </div>

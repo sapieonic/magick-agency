@@ -101,6 +101,9 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   const [accountResolution, setAccountResolution] = useState<AccountResolution>('loading');
   const [accountError, setAccountError] = useState<string | null>(null);
   const accountsLoadedForTenant = useRef<string | null>(null);
+  /** The tenant active NOW, for async work that started under another one. */
+  const activeTenantRef = useRef<string | null>(activeTenantId);
+  useEffect(() => { activeTenantRef.current = activeTenantId; }, [activeTenantId]);
 
   /**
    * Resolve the tenant's accounts, **preferring the full list and falling back to
@@ -313,9 +316,14 @@ export function TenantProvider({ children }: { children: ReactNode }) {
    */
   const reloadAccounts = useCallback(() => {
     if (!activeTenantId) return;
+    const forTenant = activeTenantId;
     setAccountError(null);
-    resolveAccounts(activeTenantId)
+    resolveAccounts(forTenant)
       .then(({ accounts: fetched, degraded, cause }) => {
+        // The person switched tenant while this was in flight (the Accounts page reloads
+        // after every create): this list is the OLD tenant's, and applying it would put
+        // its accounts in the new tenant's switcher.
+        if (activeTenantRef.current !== forTenant) return;
         setAccounts(fetched);
         // A retry that succeeds through the fallback is **still degraded** — it must
         // not report `'ready'` and take the warning down over a list that is just as
@@ -336,6 +344,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch((err: unknown) => {
+        if (activeTenantRef.current !== forTenant) return;
         setAccountResolution('error');
         setAccountError(err instanceof Error ? err.message : 'Could not load your accounts.');
       });

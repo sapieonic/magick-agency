@@ -124,6 +124,16 @@ describe('analytics/events catalog', () => {
     });
   });
 
+  it('emits the account-create events with their outcome only', () => {
+    capture.mockClear();
+
+    trackSetupEvent('account_created', { account_count: 2 });
+    trackSetupEvent('account_create_failed', { reason: 'name_taken' });
+
+    expect(capture).toHaveBeenNthCalledWith(1, 'account_created', { account_count: 2 });
+    expect(capture).toHaveBeenNthCalledWith(2, 'account_create_failed', { reason: 'name_taken' });
+  });
+
   // The broadened surface the catalog keeps: both team-invite events, the agency
   // feature-flag gate, an agency export failure (`incomplete_source`, the activity
   // trail's 424) and an api error. There are no contact-list, audio, API-key,

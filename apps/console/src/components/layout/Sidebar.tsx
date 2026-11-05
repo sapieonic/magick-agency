@@ -65,8 +65,10 @@ const NAV_SECTIONS: NavSection[] = [
     description: 'Team and account settings',
     items: [
       { label: 'Team', to: '/app/team', icon: Users, permission: 'user.invite' },
-      // Shown to the roles that can create accounts (tenant admin and owner).
-      // Everyone else switches accounts from the switcher and has nothing to do here.
+      // Shown to the roles that can create accounts (tenant admin and owner); everyone
+      // else switches accounts from the switcher and has nothing to do here. Gated on the
+      // role, so a tenant admin whose seat covers one account sees it too, and the page
+      // tells them why it offers no button (`accountCreateAccess`, decision AA1).
       { label: 'Accounts', to: '/app/accounts', icon: Briefcase, permission: 'account.create' },
       // Floored at `tenant.read` (the `viewer` level), NOT at an admin
       // permission: this page manages the signed-in person's OWN email

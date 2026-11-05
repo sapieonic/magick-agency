@@ -89,6 +89,36 @@ describe('SATenantDetailPage — New account', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
+  it('keeps a typed, unsaved concurrency total on the Service tab when an account is created', async () => {
+    mocks.createTenantAccount.mockResolvedValue({ id: 'a-2', name: 'Outbound', slug: 'outbound' });
+    renderPage('/tenants/t-1?tab=service');
+    const input = await screen.findByLabelText('Legacy max concurrent calls for Default') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '12' } });
+
+    mocks.getAccounts.mockResolvedValue([
+      { id: 'a-1', name: 'Default', slug: 'default', status: 'active', max_concurrent_calls: 5 },
+      { id: 'a-2', name: 'Outbound', slug: 'outbound', status: 'active', max_concurrent_calls: 5 },
+    ]);
+    const dialog = await openModal();
+    fireEvent.change(within(dialog).getByLabelText('Account name'), { target: { value: 'Outbound' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    const outbound = await screen.findByLabelText('Legacy max concurrent calls for Outbound') as HTMLInputElement;
+    expect(outbound.value).toBe('5');
+    expect((screen.getByLabelText('Legacy max concurrent calls for Default') as HTMLInputElement).value).toBe('12');
+  });
+
+  it('announces a refusal to screen readers', async () => {
+    mocks.createTenantAccount.mockRejectedValue(new Error('There is already an account called "Default" in this tenant.'));
+    renderPage();
+    const dialog = await openModal();
+    fireEvent.change(within(dialog).getByLabelText('Account name'), { target: { value: 'default' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('already an account');
+    expect(within(dialog).getByLabelText('Account name').getAttribute('aria-invalid')).toBe('true');
+  });
+
   it('keeps the modal open with the server\'s sentence on a refusal', async () => {
     mocks.createTenantAccount.mockRejectedValue(new Error('There is already an account called "Default" in this tenant.'));
     renderPage();

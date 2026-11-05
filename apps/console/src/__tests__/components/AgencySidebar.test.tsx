@@ -52,14 +52,23 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => cleanup());
 
 describe('AgencySidebar — what a supervisor is offered', () => {
-  it.each(['account_admin', 'tenant_admin', 'tenant_owner'] as const)(
-    '%s gets all five destinations',
+  it('account_admin gets the five supervisor destinations', () => {
+    renderSidebar('account_admin');
+
+    expect(navLabels()).toEqual([
+      'Campaigns', 'New campaign', 'Analytics', 'Do Not Call', 'Notifications',
+    ]);
+  });
+
+  it.each(['tenant_admin', 'tenant_owner'] as const)(
+    '%s also gets Accounts, the page where accounts are added (account.create)',
     (role) => {
       renderSidebar(role);
 
       expect(navLabels()).toEqual([
-        'Campaigns', 'New campaign', 'Analytics', 'Do Not Call', 'Notifications',
+        'Campaigns', 'New campaign', 'Analytics', 'Do Not Call', 'Notifications', 'Accounts',
       ]);
+      expect(screen.getByRole('link', { name: /accounts/i }).getAttribute('href')).toBe('/app/accounts');
     },
   );
 

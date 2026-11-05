@@ -191,9 +191,16 @@ export function trackEmailVerificationRequired(props: EventCatalog['email_verifi
   track('email_verification_required', props);
 }
 
+/**
+ * Why an account create was refused: the server's two codes, a 400 from its name
+ * schema, or anything else. Never the name itself (user-typed text stays out of
+ * analytics).
+ */
+export type AccountCreateFailureReason = 'name_taken' | 'not_tenant_wide' | 'validation_error' | 'unknown_error';
+
 type SetupEventProps = {
-  // Only the team-invite events exist; the contact
-  // list, audio, API-key and phone-number setup events went with their pages.
+  // The team-invite and account-create events; the contact list, audio, API-key and
+  // phone-number setup events went with their pages.
   team_invite_sent: {
     role: AccountRole;
     account_scoped: boolean;
@@ -202,6 +209,13 @@ type SetupEventProps = {
     role: AccountRole;
     account_scoped: boolean;
     reason: SetupFailureReason;
+  };
+  /** The Accounts page created one; `account_count` is the tenant's live accounts after it. */
+  account_created: {
+    account_count: number;
+  };
+  account_create_failed: {
+    reason: AccountCreateFailureReason;
   };
 };
 

@@ -67,17 +67,25 @@ export class AccountRepository {
     return result.rows[0] || null;
   }
 
+  /**
+   * Oldest first (`created_at`, then `id` for a tie). The order is a product rule, not a
+   * detail: the console selects the first account when it has no saved choice, so the
+   * tenant's original account (`Default`) stays where a fresh sign-in lands, however many
+   * accounts are added after it. Newest-first would move every such sign-in into whatever
+   * account was created last.
+   */
   async findByTenantId(tenantId: string): Promise<AccountRecord[]> {
     const pool = getPool();
     const result = await pool.query<AccountRecord>(
-      `SELECT * FROM accounts WHERE tenant_id = $1 AND status != 'deleted' ORDER BY created_at DESC`,
+      `SELECT * FROM accounts WHERE tenant_id = $1 AND status != 'deleted' ORDER BY created_at ASC, id ASC`,
       [tenantId],
     );
     return result.rows;
   }
 
   /**
-   * Batch lookup for `GET /accounts/mine` (agent account self-resolution) —
+   * Batch lookup for `GET /accounts/mine` (agent account self-resolution), oldest first
+   * like {@link findByTenantId} —
    * the accounts a caller's own memberships point at, never the full tenant
    * list. `= ANY($1)` short-circuits to zero rows on an empty array rather
    * than matching everything, which matters here: a caller with no
@@ -103,7 +111,7 @@ export class AccountRepository {
     if (ids.length === 0) return [];
     const pool = getPool();
     const result = await pool.query<AccountRecord>(
-      `SELECT * FROM accounts WHERE id = ANY($1) AND tenant_id = $2 AND status != 'deleted' ORDER BY created_at DESC`,
+      `SELECT * FROM accounts WHERE id = ANY($1) AND tenant_id = $2 AND status != 'deleted' ORDER BY created_at ASC, id ASC`,
       [ids, tenantId],
     );
     return result.rows;

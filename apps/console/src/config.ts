@@ -34,7 +34,8 @@ export const ENDPOINTS = {
   },
   // `tenants.base` / `tenants.get` and `accounts.get`
   // are deleted — nothing in the console calls them (`listTenants`,
-  // `updateTenant` and the account CRUD went with their pages).
+  // `updateTenant` and account update/delete went with their pages).
+  // `accounts.base` serves `GET` and `POST /accounts` (the list and the create).
   tenants: {
     members: (id: string) => `${API_BASE}/tenants/${id}/members`,
   },

@@ -565,9 +565,11 @@ export default function App() {
               <Route path="/app" element={<RequireAuth><AgentLanding><AppLayout /></AgentLanding></RequireAuth>}>
                 <Route index element={<AppHomeRedirect />} />
                 <Route path="team" element={<TeamPage />} />
-                {/* The tenant's accounts. Listed for `account.read`; the page offers
-                    "New account" only to a tenant-wide `account.create` seat, and the
-                    server enforces both. */}
+                {/* The tenant's accounts. Linked from the sidebars and search for
+                    `account.create` only; the route itself is ungated (the list is
+                    `account.read`, which the server enforces), and the page offers "New
+                    account" only to a tenant-wide `account.create` seat, as the server
+                    requires. */}
                 <Route path="accounts" element={<AccountsPage />} />
                 {/* Per-user notification subscriptions. No RequireCapability and no
                     permission guard: the page is about the signed-in person and the server

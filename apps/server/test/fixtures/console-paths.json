@@ -496,14 +496,14 @@
       "path": "/tenants",
       "source": "apps/console/src/api/tenants.ts",
       "status": "not_served",
-      "reason": "tenant/account CRUD: not served (no tenant.update / account.* permission in contracts rbac, decision Q3e)"
+      "reason": "tenant CRUD: not served (no tenant.update permission in contracts rbac, decision Q3e)"
     },
     {
       "method": "PUT",
       "path": "/tenants/:id",
       "source": "apps/console/src/api/tenants.ts",
       "status": "not_served",
-      "reason": "tenant/account CRUD: not served (no tenant.update / account.* permission in contracts rbac, decision Q3e) (TenantSettingsPage edits AI pipeline/provider settings)"
+      "reason": "tenant CRUD: not served (no tenant.update permission in contracts rbac, decision Q3e) (TenantSettingsPage edits AI pipeline/provider settings)"
     },
     {
       "method": "GET",

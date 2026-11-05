@@ -19,17 +19,21 @@ const mocks = vi.hoisted(() => ({
   reloadAccounts: vi.fn(),
   refreshSession: vi.fn(),
   setActiveAccountId: vi.fn(),
+  trackSetupEvent: vi.fn(),
 }));
 
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: mocks.useAuth }));
 vi.mock('../../contexts/TenantContext', () => ({ useTenant: mocks.useTenant }));
 vi.mock('../../hooks/useAccounts', () => ({ useAccounts: mocks.useAccounts }));
 vi.mock('../../api/accounts', () => ({ createAccount: mocks.createAccount }));
+vi.mock('../../analytics/events', () => ({ trackSetupEvent: mocks.trackSetupEvent }));
 vi.mock('@magick-agency/web-ui/contexts/ToastContext', () => ({
   useToast: () => ({ showToast: mocks.showToast, showErrorToast: vi.fn() }),
 }));
 
-import AccountsPage, { accountCreateAccess } from '../../pages/accounts/AccountsPage';
+import AccountsPage from '../../pages/accounts/AccountsPage';
+import { accountCreateAccess } from '../../utils/accountCreateAccess';
+import { ApiError } from '../../api/client';
 import type { Membership, Role } from '../../types/auth';
 
 const TENANT = 'tenant-1';
@@ -52,12 +56,14 @@ function setup({
   memberships = [membership('tenant_admin', null)],
   accounts = [account('acct-1', 'Default'), account('acct-2', 'Renewals')],
   activeAccountId = 'acct-1',
+  settings = {},
 }: {
   memberships?: Membership[];
   accounts?: ReturnType<typeof account>[];
   activeAccountId?: string;
+  settings?: Record<string, { max_concurrent_calls: number }>;
 } = {}) {
-  mocks.useAuth.mockReturnValue({ memberships, refreshSession: mocks.refreshSession });
+  mocks.useAuth.mockReturnValue({ memberships, settings, refreshSession: mocks.refreshSession });
   mocks.useTenant.mockReturnValue({
     tenantId: TENANT,
     accountId: activeAccountId,
@@ -96,6 +102,18 @@ describe('AccountsPage — the list', () => {
     expect(within(other).queryByText('Current')).toBeNull();
   });
 
+  it('shows each account\'s call limit, and says a zero one is not set yet', () => {
+    setup({ settings: { 'acct-1': { max_concurrent_calls: 5 }, 'acct-2': { max_concurrent_calls: 0 } } });
+
+    expect(within(screen.getByTestId('account-row-acct-1')).getByText('5 at once')).toBeTruthy();
+    expect(within(screen.getByTestId('account-row-acct-2')).getByText('Not set yet')).toBeTruthy();
+  });
+
+  it('labels the actions column for screen readers', () => {
+    setup();
+    expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
+  });
+
   it('switches the active account from a row', () => {
     setup();
 
@@ -122,6 +140,18 @@ describe('AccountsPage — who may create', () => {
 
     expect(screen.queryByRole('button', { name: /New account/i })).toBeNull();
     expect(screen.getByTestId('accounts-scoped-note').textContent).toMatch(/covers one account/);
+  });
+
+  it('with no accounts, offers one New account button (in the empty state) to a creator', () => {
+    setup({ accounts: [] });
+    expect(screen.getAllByRole('button', { name: /New account/i })).toHaveLength(1);
+    expect(screen.getByText('Create an account to start running campaigns.')).toBeTruthy();
+  });
+
+  it('with no accounts, tells someone who cannot create one whom to ask', () => {
+    setup({ accounts: [], memberships: [membership('account_admin', null)] });
+    expect(screen.queryByRole('button', { name: /New account/i })).toBeNull();
+    expect(screen.getByText(/Ask an admin with access to the whole workspace/)).toBeTruthy();
   });
 });
 
@@ -169,10 +199,20 @@ describe('AccountsPage — creating', () => {
     expect(mocks.reloadAccounts).toHaveBeenCalledTimes(1);
     expect(mocks.refreshSession).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(mocks.trackSetupEvent).toHaveBeenCalledWith('account_created', { account_count: 3 });
+  });
+
+  it('tells the person the new account cannot place calls yet', () => {
+    setup();
+    const dialog = openModal();
+    expect(within(dialog).getByText(/can’t place calls until support sets its call limit/)).toBeTruthy();
   });
 
   it('keeps the modal open with the server\'s sentence when the name is taken', async () => {
-    mocks.createAccount.mockRejectedValue(new Error('There is already an account called "Renewals" in this workspace.'));
+    mocks.createAccount.mockRejectedValue(new ApiError(409, {
+      error: 'Conflict', code: 'account_name_taken',
+      message: 'There is already an account called "Renewals" in this workspace.',
+    }));
     setup();
     const dialog = openModal();
 
@@ -185,6 +225,31 @@ describe('AccountsPage — creating', () => {
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(mocks.reload).not.toHaveBeenCalled();
     expect(mocks.refreshSession).not.toHaveBeenCalled();
+    expect(mocks.trackSetupEvent).toHaveBeenCalledWith('account_create_failed', { reason: 'name_taken' });
+    expect(screen.getByLabelText('Account name').getAttribute('aria-invalid')).toBe('true');
+  });
+
+  it('pressing Enter on a blank name sends nothing', () => {
+    setup();
+    const dialog = openModal();
+    const input = within(dialog).getByLabelText('Account name');
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.submit(input.closest('form')!);
+    expect(mocks.createAccount).not.toHaveBeenCalled();
+  });
+
+  it('reports a refusal of an account-scoped seat with its own reason', async () => {
+    mocks.createAccount.mockRejectedValue(new ApiError(403, {
+      error: 'Forbidden', code: 'tenant_wide_membership_required',
+      message: 'Your admin access covers one account, not the whole workspace, so you cannot create accounts.',
+    }));
+    setup();
+    const dialog = openModal();
+    fireEvent.change(within(dialog).getByLabelText('Account name'), { target: { value: 'Renewals' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /Create account/i }));
+
+    expect((await screen.findByTestId('create-account-error')).textContent).toMatch(/covers one account/);
+    expect(mocks.trackSetupEvent).toHaveBeenCalledWith('account_create_failed', { reason: 'not_tenant_wide' });
   });
 
   it('caps the name at the server\'s length', () => {

@@ -49,7 +49,7 @@ import {
   type AgencyStationManualCallFrame,
   type AgencyStationServerFrame,
 } from '../src/agency';
-import { SESSION_REFUSAL_CODES } from '../src/api/platform/auth';
+import { ACCOUNT_NAME_MAX_LENGTH, CREATE_ACCOUNT_ERROR_CODES, SESSION_REFUSAL_CODES } from '../src/api/platform/auth';
 import {
   TELEPHONY_CREDENTIAL_ERROR_CODES,
   type TelephonyCredentialErrorCode,
@@ -128,6 +128,13 @@ describe('package surface', () => {
 
   it('declares the session refusals agency answers with', () => {
     expect([...SESSION_REFUSAL_CODES]).toEqual(['email_unverified', 'no_membership']);
+  });
+
+  it('declares the account-create refusals, distinct (SNAPSHOT, written out by hand)', () => {
+    expect([...CREATE_ACCOUNT_ERROR_CODES]).toEqual(['account_name_taken', 'tenant_wide_membership_required']);
+    expect(new Set(CREATE_ACCOUNT_ERROR_CODES).size).toBe(CREATE_ACCOUNT_ERROR_CODES.length);
+    // The server's schema and both UIs' inputs read this one number (decision AA2).
+    expect(ACCOUNT_NAME_MAX_LENGTH).toBe(100);
   });
 
   it('declares the telephony credential refusals, distinct (SNAPSHOT, written out by hand)', () => {

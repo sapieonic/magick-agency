@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
 import { useGovernance } from '../../contexts/GovernanceContext';
+import { useTenant } from '../../contexts/TenantContext';
+import { hasPermission, type Permission } from '../../utils/permissions';
 import styles from './GlobalSearch.module.css';
 
 interface PageEntry {
@@ -13,9 +15,11 @@ interface PageEntry {
   flag?: string;
   /** Optional governance capability gating this entry. */
   capability?: string;
+  /** Optional permission the active role must hold, as the sidebar entry requires it. */
+  permission?: Permission;
 }
 
-// The page directory: the agency workspace, Team and Notifications, plus
+// The page directory: the agency workspace, Team, Accounts and Notifications, plus
 // `Call Summaries` for the analysis profiles page (gated on the
 // `agency_call_analysis` flag and `agency.analytics` capability, as its route is).
 const PAGES: PageEntry[] = [
@@ -38,7 +42,9 @@ const PAGES: PageEntry[] = [
   // `/app` zone, where a bare "Do Not Call" reads as tenant-wide.
   { label: 'Agency Do Not Call', path: '/agency/dnc', section: 'Agency', keywords: ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'agency', 'dialing'], flag: 'agency_dialer_enabled', capability: 'agency' },
   { label: 'Team', path: '/app/team', section: 'Admin', keywords: ['team', 'member', 'invite'] },
-  { label: 'Accounts', path: '/app/accounts', section: 'Admin', keywords: ['account', 'accounts', 'new account', 'workspace'] },
+  // Gated like its sidebar entry: only the roles that can create accounts have anything
+  // to do there; everyone else moves between accounts with the switcher.
+  { label: 'Accounts', path: '/app/accounts', section: 'Admin', keywords: ['account', 'accounts', 'new account', 'create account'], permission: 'account.create' },
   // No `capability` and no permission: the page manages the signed-in person's
   // own email subscriptions. "unsubscribe" is in the keywords because that is
   // the word somebody reaches for search with when a digest arrives they did
@@ -54,18 +60,20 @@ export function GlobalSearch() {
   const navigate = useNavigate();
   const { isEnabled } = useFeatureFlags();
   const { isEnabled: isCapabilityEnabled } = useGovernance();
+  const { role } = useTenant();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  // Pages visible given the current tenant's feature flags and governance
-  // capabilities (an entry may require either or both).
+  // Pages visible given the current tenant's feature flags, governance capabilities
+  // and the active role (an entry may require any of them).
   const availablePages = useMemo(
     () => PAGES.filter((page) =>
       (!page.flag || isEnabled(page.flag))
-      && (!page.capability || isCapabilityEnabled(page.capability)),
+      && (!page.capability || isCapabilityEnabled(page.capability))
+      && (!page.permission || hasPermission(role, page.permission)),
     ),
-    [isEnabled, isCapabilityEnabled],
+    [isEnabled, isCapabilityEnabled, role],
   );
 
   // Filter pages based on query
