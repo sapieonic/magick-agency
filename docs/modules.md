@@ -20,8 +20,8 @@ per row and a loop that generates cases one per pass; where a changed file's old
 stale, the new one corrects it. The Dart files keep the mobile section's `~` rule. The files contact
 assignment added or changed (2026-11-03) were counted the same way as the wrap-up redial's. The
 files the abandonment ceiling added or changed (2026-11-05) show the counts Vitest printed that day. The
-two test files for the tenant/account URL scope (2026-11-05) were being written alongside this
-entry and have no count yet (`—`); the analytics files it changed show the counts Vitest printed.
+files the tenant/account URL scope (B26, 2026-11-05) added or changed show the counts Vitest printed
+that day.
 
 For how the pieces fit together, read [`architecture.md`](architecture.md); for boundaries,
 [`seams.md`](seams.md).
@@ -1438,7 +1438,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 | `apps/console/src/__tests__/analytics/events.test.ts` | 10 |
 | `apps/console/src/__tests__/analytics/posthog.test.ts` | 23 |
 | `apps/console/src/__tests__/analytics/productSurface.test.tsx` | 12 |
-| `apps/console/src/__tests__/analytics/redact.test.ts` | 19 |
+| `apps/console/src/__tests__/analytics/redact.test.ts` | 21 |
 
 ### `apps/console/src/api/`
 
