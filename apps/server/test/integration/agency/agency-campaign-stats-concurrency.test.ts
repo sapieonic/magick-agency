@@ -93,7 +93,7 @@ async function concurrencyOf(campaignId: string) {
 }
 
 /** `count` live attempts on `campaignId`, each on its own contact, plus one ended one. */
-async function liveAttempts(campaignId: string, count: number, accountId = ACCOUNT) {
+async function liveAttempts(campaignId: string, count: number, accountId: string = ACCOUNT) {
   for (let i = 0; i < count; i += 1) {
     const contact = await insertAgencyContact(campaignId, {
       account_id: accountId, state: 'in_flight', source_row_number: i + 1,
