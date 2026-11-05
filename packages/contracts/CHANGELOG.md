@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.9.0...contracts-v0.10.0) (2026-11-05)
+
+
+### Features
+
+* **server,console,super-admin,contracts:** create accounts from the console and super-admin ([#46](https://github.com/sapieonic/magick-agency/issues/46)) ([853e1c2](https://github.com/sapieonic/magick-agency/commit/853e1c21bf62e3019bb85c80f305a1fe5e0b3400))
+
 ## [0.9.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.8.0...contracts-v0.9.0) (2026-11-05)
 
 

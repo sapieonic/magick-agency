@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.11.0](https://github.com/sapieonic/magick-agency/compare/server-v0.10.0...server-v0.11.0) (2026-11-05)
+
+
+### Features
+
+* **server,console,super-admin,contracts:** create accounts from the console and super-admin ([#46](https://github.com/sapieonic/magick-agency/issues/46)) ([853e1c2](https://github.com/sapieonic/magick-agency/commit/853e1c21bf62e3019bb85c80f305a1fe5e0b3400))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.10.0
+    * @magick-agency/db bumped to 0.9.0
+    * @magick-agency/domain bumped to 0.4.4
+
 ## [0.10.0](https://github.com/sapieonic/magick-agency/compare/server-v0.9.0...server-v0.10.0) (2026-11-05)
 
 

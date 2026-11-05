@@ -1,10 +1,10 @@
 {
-  "apps/server": "0.10.0",
-  "apps/console": "0.10.0",
-  "apps/super-admin": "0.2.7",
-  "packages/contracts": "0.9.0",
-  "packages/db": "0.8.0",
-  "packages/domain": "0.4.3",
+  "apps/server": "0.11.0",
+  "apps/console": "0.11.0",
+  "apps/super-admin": "0.3.0",
+  "packages/contracts": "0.10.0",
+  "packages/db": "0.9.0",
+  "packages/domain": "0.4.4",
   "packages/observability": "0.6.0",
   "packages/web-ui": "0.1.0",
   "apps/mobile": "0.5.0"
