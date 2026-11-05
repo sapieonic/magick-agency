@@ -29,6 +29,7 @@ import {
   emptyCampaignConfig,
   buildConfigPayload,
   callingWindowEcho,
+  ceilingStateError,
   configBlockReason,
   isBuiltInCode,
   validateConfig,
@@ -49,7 +50,7 @@ import {
 } from './builderFlow';
 import { BuilderStepper } from './BuilderStepper';
 import { BuilderSummary } from './BuilderSummary';
-import { ceilingAboveReference, ceilingFieldError, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
+import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
@@ -131,9 +132,8 @@ export default function CampaignBuilderPage() {
     (NaN) or an out-of-range value is left out, so the server's default applies
     and the config save that follows is where the field's error is met.
   */
-  const ceilingForCreate = ceilingFieldError(config.abandonmentCeilingPct, config.abandonmentCeilingStoredPct) === null
-    ? config.abandonmentCeilingPct
-    : undefined;
+  // `undefined` is dropped from the JSON body, so the server's default applies.
+  const ceilingForCreate = ceilingStateError(config) === null ? config.abandonmentCeilingPct : undefined;
 
   /** Create the campaign on first need, so a draft exists to attach the roster to. */
   const ensureCampaign = useCallback(async (): Promise<string> => {
@@ -150,7 +150,7 @@ export default function CampaignBuilderPage() {
         // would dial on the wrong provider from a VoiceLink-only pool.
         caller_ids: callerIds,
         telephony_provider: AGENCY_TELEPHONY_PROVIDER,
-        ...(ceilingForCreate !== undefined ? { abandonment_ceiling_pct: ceilingForCreate } : {}),
+        abandonment_ceiling_pct: ceilingForCreate,
       },
       tenantId ?? undefined,
       accountId ?? undefined,

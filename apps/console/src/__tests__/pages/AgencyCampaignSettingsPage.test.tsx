@@ -392,7 +392,6 @@ describe('campaign settings — permissions', () => {
     const box = (await screen.findByRole('spinbutton', { name: 'Pause above (%)' })) as HTMLInputElement;
     expect(box.value).toBe('4.5');
     expect(box.disabled).toBe(true);
-    expect(box.readOnly).toBe(true);
     expect(screen.queryByRole('slider', { name: 'Abandonment limit' })).toBeNull();
     expect(screen.getByTestId('abandonment-meter-value').textContent).toBe('4.5%');
   });

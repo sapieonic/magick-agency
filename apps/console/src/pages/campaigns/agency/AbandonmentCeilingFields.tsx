@@ -33,10 +33,7 @@ const FIELD = 'abandonment_ceiling_pct';
 interface AbandonmentCeilingFieldsProps {
   /** `abandonmentCeilingPct`: `NaN` while the box is empty, so the validator names it. */
   ceilingPct: number;
-  /**
-   * `abandonmentCeilingStoredPct`: the campaign's stored value, accepted as stored
-   * even outside the offered range (AC1); `null` for a campaign not yet saved.
-   */
+  /** `abandonmentCeilingStoredPct`, for the validator's rule (`abandonmentCeiling.ts`, "The range"). */
   storedPct: number | null;
   onChange: (next: number) => void;
   errors: ConfigFieldErrors;
@@ -68,7 +65,7 @@ export function AbandonmentCeilingFields({
   const inputId = useId();
   const leadId = useId();
   const warningId = useId();
-  const liveErrorId = useId();
+  const errorId = useId();
 
   /*
     The box keeps its own text. Rendering `value={ceilingPct}` straight would
@@ -97,23 +94,21 @@ export function AbandonmentCeilingFields({
     back to its own live check.
   */
   const sectionMessage = errors.message(FIELD);
-  const [arrival, setArrival] = useState<{ message: string | null; value: number }>(() => ({
-    message: sectionMessage,
-    value: ceilingPct,
-  }));
-  const arrivedWith = arrival.message === sectionMessage ? arrival.value : ceilingPct;
+  const [arrival, setArrival] = useState({ message: sectionMessage, value: ceilingPct });
+  // A setState during render discards this render and runs it again with the new
+  // state before anything commits, so `arrival` below is always current.
   if (arrival.message !== sectionMessage) setArrival({ message: sectionMessage, value: ceilingPct });
-  const sectionCurrent = sectionMessage !== null && Object.is(arrivedWith, ceilingPct);
+  const sectionCurrent = sectionMessage !== null && Object.is(arrival.value, ceilingPct);
 
   /*
     Save is disabled while this value is out of range, so a supervisor who typed 15
     would read "Fix the highlighted fields" with nothing highlighted if the field
     waited for a save attempt. So it names its own problem as soon as the value has
-    one, by the validator's rule (the stored value is accepted as stored), and
-    defers to the section's message while that one is about the value on screen.
+    one, and defers to the section's message while that one is about the value on
+    screen.
   */
-  const liveError = sectionCurrent ? null : ceilingFieldError(ceilingPct, storedPct);
-  const errorIds = sectionCurrent ? errors.describedBy(FIELD) : liveError !== null ? liveErrorId : undefined;
+  const shown = sectionCurrent ? sectionMessage : ceilingFieldError(ceilingPct, storedPct);
+  const errorIds = shown !== null ? errorId : undefined;
   const warn = ceilingAboveReference(ceilingPct);
   const warningIds = warn ? warningId : undefined;
   // The slider and the box describe one value alike: what it does (the lead), the
@@ -147,9 +142,7 @@ export function AbandonmentCeilingFields({
               step={ABANDONMENT_CEILING_STEP_PCT}
               value={draft}
               disabled={readOnly}
-              readOnly={readOnly}
               onChange={(event) => {
-                if (readOnly) return;
                 setDraft(event.target.value);
                 onChange(valueOf(event.target.value));
               }}
@@ -159,9 +152,7 @@ export function AbandonmentCeilingFields({
             />
           </div>
         </div>
-        {sectionCurrent
-          ? errors.render(FIELD)
-          : <FieldError id={liveErrorId} message={liveError} className="error-text" />}
+        <FieldError id={errorId} message={shown} className="error-text" />
         {/*
           A consequence, not an error: the save goes through. Whether a campaign
           falls under a dropped-call rule is the account's call, not the form's.

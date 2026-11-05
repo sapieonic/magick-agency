@@ -87,10 +87,7 @@ export function HealthSection({
           label={`Abandonment vs ${ceilingPctText(ceiling)} ceiling`}
           value={rateText(abandonment)}
           withheld={abandonment.kind !== 'value'}
-          // The builder's meter, read-only: the rate on the same 0–10% scale as the
-          // line the supervisor dragged, so the ceiling sits where they put it. The
-          // scale grows only when the ceiling or the rate is above 10%
-          // (`insightsScaleMaxPct`), where a 0–10% scale would pin both at the end.
+          // The builder's meter, read-only, on its scale (`abandonmentCeiling.ts`, "One scale").
           sub={<AbandonmentMeter ceilingPct={ceiling} ratePct={ratePct} scaleMaxPct={insightsScaleMaxPct(ceiling, ratePct)} />}
           testId="kpi-health-abandonment"
         />

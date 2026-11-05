@@ -27,10 +27,11 @@ export function formatCount(value: number): string {
  * A percentage: one decimal, trailing zero trimmed — `18%`, `18.4%`, never
  * `18.0%`. A `.0` reads as a measurement with false precision the denominator
  * cannot support, and one product must not print `18%` on one screen and
- * `18.0%` on the next.
+ * `18.0%` on the next. `decimals` is for a configured value that may carry more
+ * precision than a measurement (the abandonment ceiling prints to two).
  */
-export function pct(value: number): string {
-  return `${Number(value.toFixed(1))}%`;
+export function pct(value: number, decimals = 1): string {
+  return `${Number(value.toFixed(decimals))}%`;
 }
 
 /**

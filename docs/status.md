@@ -813,8 +813,13 @@ create and PATCH, but the console only displayed it.
   server error on the field retires once the value changes; the amber note is in both controls'
   `aria-describedby`; the track has an inset edge (visible on the Insights tile) and only the end
   ticks are labelled on a narrow meter; `agency_campaign_config_saved` carries
-  `abandonment_ceiling_pct`.
-- No server code changed. Server tests now pin create and PATCH through the public routes,
+  `abandonment_ceiling_pct`. A simplify pass then moved the 3% default into the contract
+  (`AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT` in `campaign-defaults.ts`, which the server's
+  `DEFAULT_ABANDONMENT_CEILING_PCT` now re-exports), so the console keeps no copy of it; the
+  health strip prints the ceiling to two decimals too; one `rateAboveCeiling` / `abandonmentTone`
+  rule serves the meter and the headline.
+- The only server change is `campaign-thresholds.ts` re-exporting the contract's default (same
+  value). Server tests now pin create and PATCH through the public routes,
   refused values, the `config_changed` row (`{ from: 3, to: 4.5 }`), the 403 for agent, viewer and
   operator, and the guardrail pausing at a supervisor-set ceiling end to end
   (`agency-campaign-abandonment-ceiling.test.ts`).
@@ -823,7 +828,7 @@ create and PATCH, but the console only displayed it.
   still pauses on 2 abandoned of 33 answered; a minimum-answered floor is a separate task if wanted.
   The retry dialog offers no ceiling override (a retry inherits its parent's; the server would take
   one in `config_overrides`).
-- Counts, 2026-11-05: `apps/console` 5209 (272 files) after the review fixes (5173 before), lint
+- Counts, 2026-11-05: `apps/console` 5211 (272 files) after the review fixes and the simplify pass (5173 before), lint
   clean; `packages/contracts` 281, `contracts-literals --check` up to date; `apps/server` lint clean, the two changed unit files 119,
   rest lane 1937 passed + 9 expected fail + 1 skipped (199 files + 1 skipped). The wall-clock lane,
   the full server unit suite and the Dart tests were not run (no file of theirs changed; Dart is

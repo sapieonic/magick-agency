@@ -1,4 +1,5 @@
-import { pct } from '../format/number';
+import { AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT } from '@magick-agency/contracts/agency';
+import { clampPercent, pct } from '../format/number';
 
 /**
  * The abandonment ceiling (`abandonment_ceiling_pct`): the rolling 24-hour
@@ -41,8 +42,8 @@ import { pct } from '../format/number';
  * stored value exactly as loaded, and only a new value has to land in the range.
  */
 
-/** The server's `DEFAULT_ABANDONMENT_CEILING_PCT` and the column's DEFAULT. */
-export const DEFAULT_ABANDONMENT_CEILING_PCT = 3;
+/** The contract's default, which the server applies and the column defaults to. */
+export const DEFAULT_ABANDONMENT_CEILING_PCT = AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT;
 /** The common regulatory dropped-call limit. Above it the field warns. */
 export const ABANDONMENT_CEILING_REFERENCE_PCT = 3;
 export const ABANDONMENT_CEILING_MIN_PCT = 0.5;
@@ -58,9 +59,6 @@ const SCALE_INTERVALS = 5;
 export function abandonmentScaleTicks(scaleMaxPct: number = ABANDONMENT_SCALE_MAX_PCT): number[] {
   return Array.from({ length: SCALE_INTERVALS + 1 }, (_, i) => (scaleMaxPct * i) / SCALE_INTERVALS);
 }
-
-/** The labelled ticks under the editable meter. */
-export const ABANDONMENT_SCALE_TICKS: readonly number[] = abandonmentScaleTicks();
 
 /**
  * The right-hand end of the read-only Insights meter: the builder's 10% while the
@@ -85,18 +83,37 @@ const round1 = (value: number) => Math.round(value * 10) / 10;
  * of the track's width), clamped to the track.
  */
 export function meterPosition(valuePct: number, scaleMaxPct: number = ABANDONMENT_SCALE_MAX_PCT): number {
-  if (!Number.isFinite(valuePct) || !(scaleMaxPct > 0)) return 0;
-  return Math.min(100, Math.max(0, (valuePct / scaleMaxPct) * 100));
+  return scaleMaxPct > 0 ? clampPercent((valuePct / scaleMaxPct) * 100) : 0;
 }
 
 /**
- * The ceiling as text, to two decimals with trailing zeros trimmed: `3%`, `4.5%`,
- * `7.25%`. Not `pct()`, which rounds to one: the console only offers tenths, but
- * the server stores any decimal, and a ceiling of 7.25 printed as `7.3%` would
- * name a limit the guardrail does not use. Measured RATES stay on `pct()`.
+ * The ceiling as text, to two decimals: `3%`, `4.5%`, `7.25%`. The console only
+ * offers tenths, but the server stores any decimal, and a ceiling of 7.25 printed
+ * as `7.3%` would name a limit the guardrail does not use. Measured RATES stay on
+ * one decimal.
  */
 export function ceilingPctText(valuePct: number): string {
-  return `${Number(valuePct.toFixed(2))}%`;
+  return pct(valuePct, 2);
+}
+
+/**
+ * Whether a measured rate is over the ceiling: ABOVE it, not at it, because the
+ * guardrail pauses only then (`measured <= ceiling` keeps dialling) and every line
+ * of copy says "more than". The one comparison the meter and the headline share.
+ */
+export function rateAboveCeiling(ratePct: number, ceilingPct: number): boolean {
+  return ratePct > ceilingPct;
+}
+
+/**
+ * The tone for a measured rate against the ceiling: `bad` above it, `warn` from
+ * 80% of it up to and including it, otherwise none. The band is compared as
+ * `5 × rate ≥ 4 × ceiling`: `3 * 0.8` is 2.4000000000000004, which would miss a
+ * rate of exactly 2.4.
+ */
+export function abandonmentTone(ratePct: number, ceilingPct: number): 'bad' | 'warn' | undefined {
+  if (rateAboveCeiling(ratePct, ceilingPct)) return 'bad';
+  return ratePct * 5 >= ceilingPct * 4 ? 'warn' : undefined;
 }
 
 /**
@@ -107,8 +124,7 @@ export function ceilingPctText(valuePct: number): string {
  * Twelve percent of the track is more than half the widest label (`0.5%`) on the
  * narrowest track the meter is drawn on (a 170px Insights tile, less its padding).
  */
-export type CeilingLabelAlign = 'start' | 'center' | 'end';
-export function ceilingLabelAlign(positionPct: number): CeilingLabelAlign {
+export function ceilingLabelAlign(positionPct: number): 'start' | 'center' | 'end' {
   if (positionPct < 12) return 'start';
   if (positionPct > 88) return 'end';
   return 'center';
@@ -158,31 +174,18 @@ const DECREASE_KEYS = new Set(['ArrowLeft', 'ArrowDown', 'PageDown', 'Home']);
  * 0.5); Home and End still go to the far bound.
  */
 export function ceilingAfterKey(valuePct: number, key: string): number | null {
+  const dir = INCREASE_KEYS.has(key) ? 1 : DECREASE_KEYS.has(key) ? -1 : 0;
+  if (dir === 0) return null;
   const from = Number.isFinite(valuePct) ? valuePct : DEFAULT_ABANDONMENT_CEILING_PCT;
-  if (INCREASE_KEYS.has(key) && from >= ABANDONMENT_CEILING_MAX_PCT) return from;
-  if (DECREASE_KEYS.has(key) && from <= ABANDONMENT_CEILING_MIN_PCT) return from;
-  // A step (not Home/End) from outside the range enters it at the nearer bound,
-  // the same whether the step is a tenth or a whole percent.
-  if (key !== 'End' && INCREASE_KEYS.has(key) && from < ABANDONMENT_CEILING_MIN_PCT) return ABANDONMENT_CEILING_MIN_PCT;
-  if (key !== 'Home' && DECREASE_KEYS.has(key) && from > ABANDONMENT_CEILING_MAX_PCT) return ABANDONMENT_CEILING_MAX_PCT;
-  switch (key) {
-    case 'ArrowRight':
-    case 'ArrowUp':
-      return clampCeiling(from + ABANDONMENT_CEILING_STEP_PCT);
-    case 'ArrowLeft':
-    case 'ArrowDown':
-      return clampCeiling(from - ABANDONMENT_CEILING_STEP_PCT);
-    case 'PageUp':
-      return clampCeiling(from + 1);
-    case 'PageDown':
-      return clampCeiling(from - 1);
-    case 'Home':
-      return ABANDONMENT_CEILING_MIN_PCT;
-    case 'End':
-      return ABANDONMENT_CEILING_MAX_PCT;
-    default:
-      return null;
-  }
+  // Never pushed further out of the range than it already is.
+  if (dir > 0 ? from >= ABANDONMENT_CEILING_MAX_PCT : from <= ABANDONMENT_CEILING_MIN_PCT) return from;
+  if (key === 'Home') return ABANDONMENT_CEILING_MIN_PCT;
+  if (key === 'End') return ABANDONMENT_CEILING_MAX_PCT;
+  // A step from outside the range enters it at the nearer bound (only an increase
+  // reaches the first line, only a decrease the second).
+  if (from < ABANDONMENT_CEILING_MIN_PCT) return ABANDONMENT_CEILING_MIN_PCT;
+  if (from > ABANDONMENT_CEILING_MAX_PCT) return ABANDONMENT_CEILING_MAX_PCT;
+  return clampCeiling(from + dir * (key.startsWith('Page') ? 1 : ABANDONMENT_CEILING_STEP_PCT));
 }
 
 /** The field's error, or `null`. Keyed `abandonment_ceiling_pct`, as the server keys its `details`. */

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
+import { assertFieldAnnouncesError } from '../helpers/a11y';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
@@ -397,9 +398,7 @@ describe('the abandonment limit', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
 
     const box = await screen.findByRole('spinbutton', { name: 'Pause above (%)' });
-    const described = (box.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent);
-    expect(described).toContain('Must be above 0 and at most 100.');
-    expect(box.getAttribute('aria-invalid')).toBe('true');
+    assertFieldAnnouncesError(box.id, 'Must be above 0 and at most 100.');
 
     // A refusal is about the value it came with: moving the line retires it.
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Abandonment limit' }), { key: 'ArrowRight' });

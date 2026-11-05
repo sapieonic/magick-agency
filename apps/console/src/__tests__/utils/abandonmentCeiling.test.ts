@@ -5,10 +5,10 @@ import {
   ABANDONMENT_CEILING_REFERENCE_PCT,
   ABANDONMENT_CEILING_STEP_PCT,
   ABANDONMENT_SCALE_MAX_PCT,
-  ABANDONMENT_SCALE_TICKS,
   DEFAULT_ABANDONMENT_CEILING_PCT,
   abandonmentCeilingError,
   abandonmentScaleTicks,
+  abandonmentTone,
   ceilingAboveReference,
   ceilingAfterKey,
   ceilingFieldError,
@@ -21,7 +21,9 @@ import {
   clampCeiling,
   insightsScaleMaxPct,
   meterPosition,
+  rateAboveCeiling,
 } from '../../utils/agency/abandonmentCeiling';
+import { AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT } from '@magick-agency/contracts/agency';
 
 /**
  * The abandonment ceiling's rules, pure. The drag, the slider's keys and the
@@ -37,7 +39,7 @@ describe('the constants', () => {
     expect(ABANDONMENT_CEILING_MAX_PCT).toBe(10);
     expect(ABANDONMENT_CEILING_STEP_PCT).toBe(0.1);
     expect(ABANDONMENT_SCALE_MAX_PCT).toBe(10);
-    expect(ABANDONMENT_SCALE_TICKS).toEqual([0, 2, 4, 6, 8, 10]);
+    expect(abandonmentScaleTicks()).toEqual([0, 2, 4, 6, 8, 10]);
   });
 });
 
@@ -291,5 +293,30 @@ describe('the copy', () => {
       '7.25%: the campaign pauses when more than 7.25% of answered calls are abandoned',
     );
     expect(ceilingValueText(Number.NaN)).toBe('Not set');
+  });
+});
+
+describe('the default', () => {
+  it('is the contract’s, the one the server applies', () => {
+    expect(DEFAULT_ABANDONMENT_CEILING_PCT).toBe(AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT);
+    expect(AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT).toBe(3);
+  });
+});
+
+describe('a rate against the ceiling', () => {
+  it('is over only above it, as the guardrail pauses', () => {
+    expect(rateAboveCeiling(3, 3)).toBe(false);
+    expect(rateAboveCeiling(3.01, 3)).toBe(true);
+    expect(rateAboveCeiling(2.9, 3)).toBe(false);
+  });
+
+  it('warns from 80% of the ceiling up to and including it, and is bad only above it', () => {
+    expect(abandonmentTone(2.3, 3)).toBeUndefined();
+    // Exactly 80%: `3 * 0.8` is 2.4000000000000004, which a naive compare would miss.
+    expect(abandonmentTone(2.4, 3)).toBe('warn');
+    expect(abandonmentTone(3, 3)).toBe('warn');
+    expect(abandonmentTone(3.1, 3)).toBe('bad');
+    expect(abandonmentTone(4, 5)).toBe('warn');
+    expect(abandonmentTone(3.9, 5)).toBeUndefined();
   });
 });

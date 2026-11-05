@@ -1495,7 +1495,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/CallFieldsForm.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/CallerIdPicker.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/CampaignAssignmentProgress.test.tsx` | 5 |
-| `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 25 |
+| `apps/console/src/__tests__/components/AbandonmentCeiling.test.tsx` | 23 |
 | `apps/console/src/__tests__/components/CampaignBehaviourSection.test.tsx` | 13 |
 | `apps/console/src/__tests__/components/CampaignContribution.test.tsx` | 42 |
 | `apps/console/src/__tests__/components/CampaignHealthStrip.test.tsx` | 8 |
@@ -1708,7 +1708,7 @@ Files: `agency/agentReadouts.ts`, `agency/abandonmentCeiling.ts`, `agency/agentW
 | `apps/console/src/__tests__/utils/agencyAttemptRange.timezone.test.ts` | 6 |
 | `apps/console/src/__tests__/utils/agencyBestHours.test.ts` | 45 |
 | `apps/console/src/__tests__/utils/agencyCampaignConfigForm.test.ts` | 86 |
-| `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 33 |
+| `apps/console/src/__tests__/utils/abandonmentCeiling.test.ts` | 36 |
 | `apps/console/src/__tests__/utils/agencyCampaignContribution.test.ts` | 54 |
 | `apps/console/src/__tests__/utils/agencyCampaignControls.test.ts` | 10 |
 | `apps/console/src/__tests__/utils/agencyCampaignLineage.test.ts` | 11 |
@@ -1761,7 +1761,7 @@ Files: `agency/agentReadouts.ts`, `agency/abandonmentCeiling.ts`, `agency/agentW
 | `apps/console/src/__tests__/utils/audio-worklet-processor.test.ts` | 16 |
 | `apps/console/src/__tests__/utils/build-splitting.test.ts` | 2 |
 | `apps/console/src/__tests__/utils/builderFlow.test.ts` | 5 |
-| `apps/console/src/__tests__/utils/format.test.ts` | 16 |
+| `apps/console/src/__tests__/utils/format.test.ts` | 17 |
 | `apps/console/src/__tests__/utils/insightsDrilldowns.test.tsx` | 81 |
 | `apps/console/src/__tests__/utils/insightsHelpers.test.ts` | 20 |
 | `apps/console/src/__tests__/utils/insightsRange.timezone.test.ts` | 17 |

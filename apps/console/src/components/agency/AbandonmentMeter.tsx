@@ -10,6 +10,7 @@ import {
   ceilingSliderBounds,
   ceilingValueText,
   meterPosition,
+  rateAboveCeiling,
 } from '../../utils/agency/abandonmentCeiling';
 import { pct } from '../../utils/format/number';
 import styles from './AbandonmentMeter.module.css';
@@ -36,11 +37,6 @@ import styles from './AbandonmentMeter.module.css';
  * measured rate would pause the campaign is the stretch that is red. Moving the
  * line visibly grows or shrinks it, which is the thing the supervisor is choosing.
  *
- * ── Over the line ───────────────────────────────────────────────────────────
- * The fill turns red only ABOVE the ceiling, as the guardrail pauses only when
- * the measured rate is above it (a rate equal to the ceiling keeps dialling), and
- * as every line of copy says "more than".
- *
  * ── One pointer ─────────────────────────────────────────────────────────────
  * A drag belongs to the pointer that started it. A second finger on the track,
  * or a pen while the mouse is down, neither moves the line nor ends the drag;
@@ -57,7 +53,7 @@ import styles from './AbandonmentMeter.module.css';
  * names the rate and the ceiling), and a second reading of them is noise.
  */
 
-export interface AbandonmentMeterEditable {
+interface AbandonmentMeterEditable {
   onChange: (next: number) => void;
   /** The slider's accessible name. */
   label: string;
@@ -65,10 +61,10 @@ export interface AbandonmentMeterEditable {
   describedBy?: string;
 }
 
-export interface AbandonmentMeterProps {
+interface AbandonmentMeterProps {
   /** The ceiling, in percent. A non-finite value (a cleared field) draws no line. */
   ceilingPct: number;
-  /** The measured rate, in percent, as a fill; red when above the ceiling. */
+  /** The measured rate, in percent, as a fill; red when above the ceiling (`rateAboveCeiling`). */
   ratePct?: number;
   /**
    * The right-hand end of the scale, read-only only (Insights passes
@@ -76,20 +72,15 @@ export interface AbandonmentMeterProps {
    * the track to that scale.
    */
   scaleMaxPct?: number;
-  /** The tick labels under the track. Default on. */
-  showScale?: boolean;
   /** Present: the line is a slider. Absent: a picture. */
   editable?: AbandonmentMeterEditable;
-  testId?: string;
 }
 
 export function AbandonmentMeter({
   ceilingPct,
   ratePct,
   scaleMaxPct = ABANDONMENT_SCALE_MAX_PCT,
-  showScale = true,
   editable,
-  testId = 'abandonment-meter',
 }: AbandonmentMeterProps) {
   const trackRef = useRef<HTMLSpanElement>(null);
   const sliderRef = useRef<HTMLSpanElement>(null);
@@ -117,8 +108,7 @@ export function AbandonmentMeter({
   // focusable to be set again by key), so it sits at the default, drawn muted.
   const position = meterPosition(set ? ceilingPct : DEFAULT_ABANDONMENT_CEILING_PCT, scaleMax);
   const ratePosition = ratePct !== undefined && Number.isFinite(ratePct) ? meterPosition(ratePct, scaleMax) : null;
-  // Above, not at: the guardrail pauses only when the rate is above the ceiling.
-  const over = ratePct !== undefined && set && ratePct > ceilingPct;
+  const over = ratePct !== undefined && set && rateAboveCeiling(ratePct, ceilingPct);
   const bounds = ceilingSliderBounds(ceilingPct);
 
   /** The ceiling under the pointer, or `null` while the track has no width (not laid out). */
@@ -178,33 +168,23 @@ export function AbandonmentMeter({
     if (!Object.is(next, ceilingPct)) editable.onChange(next);
   }
 
-  const line = editable ? (
-    <span
-      ref={sliderRef}
-      className={styles.line}
-      data-editable="true"
-      data-unset={set ? undefined : 'true'}
-      style={{ left: `${position}%` }}
-      role="slider"
-      tabIndex={0}
-      aria-label={editable.label}
-      aria-describedby={editable.describedBy}
-      aria-valuemin={bounds.min}
-      aria-valuemax={bounds.max}
-      aria-valuenow={set ? ceilingPct : undefined}
-      aria-valuetext={ceilingValueText(ceilingPct)}
-      aria-orientation="horizontal"
-      onKeyDown={onKeyDown}
-      data-testid={`${testId}-ceiling`}
-    />
-  ) : (
-    <span
-      className={styles.line}
-      data-unset={set ? undefined : 'true'}
-      style={{ left: `${position}%` }}
-      data-testid={`${testId}-ceiling`}
-    />
-  );
+  // Editable, the line is the slider; read-only, the same span without its role.
+  const sliderProps = editable
+    ? {
+        ref: sliderRef,
+        'data-editable': 'true',
+        role: 'slider',
+        tabIndex: 0,
+        'aria-label': editable.label,
+        'aria-describedby': editable.describedBy,
+        'aria-valuemin': bounds.min,
+        'aria-valuemax': bounds.max,
+        'aria-valuenow': set ? ceilingPct : undefined,
+        'aria-valuetext': ceilingValueText(ceilingPct),
+        'aria-orientation': 'horizontal' as const,
+        onKeyDown,
+      }
+    : {};
 
   return (
     <span
@@ -212,7 +192,7 @@ export function AbandonmentMeter({
       data-editable={editable ? 'true' : undefined}
       data-dragging={dragging ? 'true' : undefined}
       aria-hidden={editable ? undefined : 'true'}
-      data-testid={testId}
+      data-testid="abandonment-meter"
     >
       <span className={styles.valueRow} aria-hidden="true">
         {set ? (
@@ -220,7 +200,7 @@ export function AbandonmentMeter({
             className={styles.value}
             data-align={ceilingLabelAlign(position)}
             style={{ left: `${position}%` }}
-            data-testid={`${testId}-value`}
+            data-testid="abandonment-meter-value"
           >
             {ceilingPctText(ceilingPct)}
           </span>
@@ -235,21 +215,25 @@ export function AbandonmentMeter({
               data-over={String(over)}
               style={{ width: `${ratePosition}%` }}
               aria-hidden="true"
-              data-testid={`${testId}-rate`}
+              data-testid="abandonment-meter-rate"
             />
           ) : null}
-          {line}
+          <span
+            className={styles.line}
+            data-unset={set ? undefined : 'true'}
+            style={{ left: `${position}%` }}
+            data-testid="abandonment-meter-ceiling"
+            {...sliderProps}
+          />
         </span>
       </span>
-      {showScale ? (
-        <span className={styles.scale} aria-hidden="true" data-testid={`${testId}-scale`}>
-          {abandonmentScaleTicks(scaleMax).map((tick) => (
-            <span key={tick} className={styles.tick} style={{ left: `${meterPosition(tick, scaleMax)}%` }}>
-              {pct(tick)}
-            </span>
-          ))}
-        </span>
-      ) : null}
+      <span className={styles.scale} aria-hidden="true" data-testid="abandonment-meter-scale">
+        {abandonmentScaleTicks(scaleMax).map((tick) => (
+          <span key={tick} className={styles.tick} style={{ left: `${meterPosition(tick, scaleMax)}%` }}>
+            {pct(tick)}
+          </span>
+        ))}
+      </span>
     </span>
   );
 }

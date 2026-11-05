@@ -103,14 +103,22 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
     errors['wrapup_seconds'] = 'Wrap-up is 0–600 seconds. 0 means no wrap-up.';
   }
 
-  // Only a NEW value has to be in the offered range: the stored one is accepted as
-  // stored, or a campaign set to 25 through the API could not save any other edit.
-  const ceiling = ceilingFieldError(state.abandonmentCeilingPct, state.abandonmentCeilingStoredPct);
+  const ceiling = ceilingStateError(state);
   if (ceiling !== null) errors['abandonment_ceiling_pct'] = ceiling;
 
   Object.assign(errors, validateAssignment(state.assignment));
 
   return errors;
+}
+
+/**
+ * The form's abandonment ceiling error, or `null`: a new value must be in the
+ * offered range, the stored one is accepted as stored (`abandonmentCeiling.ts`,
+ * "The range"). The one call `validateConfig`, the builder's create and its
+ * summary share.
+ */
+export function ceilingStateError(state: CampaignConfigState): string | null {
+  return ceilingFieldError(state.abandonmentCeilingPct, state.abandonmentCeilingStoredPct);
 }
 
 /**

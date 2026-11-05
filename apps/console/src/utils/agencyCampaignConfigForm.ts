@@ -399,11 +399,8 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     autoReturn: campaign.wrapup_auto_return ?? EMPTY_CAMPAIGN_CONFIG.autoReturn,
     // Absent on a campaign read from a server that predates the setting: off.
     allowWrapupRedial: campaign.allow_wrapup_redial ?? EMPTY_CAMPAIGN_CONFIG.allowWrapupRedial,
-    // Loaded as stored, even outside the range the field offers, and remembered as
-    // stored: the validator accepts that exact value (AC1), so a campaign PATCHed to
-    // 25 through the API saves its other edits and keeps its 25, rather than the
-    // form refusing every save or quietly writing a different number. Re-seeded
-    // from the response after each save, so the saved value becomes the stored one.
+    // Loaded as stored and remembered as stored (`abandonmentCeiling.ts`, "The
+    // range"); the settings page re-seeds from each save's response.
     abandonmentCeilingPct: campaign.abandonment_ceiling_pct ?? EMPTY_CAMPAIGN_CONFIG.abandonmentCeilingPct,
     abandonmentCeilingStoredPct: campaign.abandonment_ceiling_pct ?? null,
     assignment: assignmentFromCampaign(campaign),

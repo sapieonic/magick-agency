@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeAll } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { useState } from 'react';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { CampaignBehaviourSection } from '../../pages/campaigns/agency/CampaignBehaviourSection';
@@ -9,6 +9,7 @@ import {
   type CampaignConfigState,
 } from '../../utils/agencyCampaignConfigForm';
 import type { AgencyCampaign } from '../../types/agency-campaign';
+import { assertFieldAnnouncesError } from '../helpers/a11y';
 
 /**
  * The abandonment limit as the supervisor meets it: the meter whose line is the
@@ -18,30 +19,22 @@ import type { AgencyCampaign } from '../../types/agency-campaign';
  * two controls stay one value.
  */
 
-/*
-  A DOM without `PointerEvent` would turn `fireEvent.pointerDown` into a bare
-  `Event` with no `clientX`, and the drag would silently test nothing. Polyfilled
-  as a MouseEvent (which carries the coordinates) only where it is missing.
-*/
-beforeAll(() => {
-  if (typeof window.PointerEvent === 'undefined') {
-    class PointerEventPolyfill extends MouseEvent {
-      pointerId: number;
-      pointerType: string;
-      constructor(type: string, init: PointerEventInit = {}) {
-        super(type, init);
-        this.pointerId = init.pointerId ?? 1;
-        this.pointerType = init.pointerType ?? 'mouse';
-      }
-    }
-    Object.defineProperty(window, 'PointerEvent', { value: PointerEventPolyfill, configurable: true });
-  }
-});
-
 afterEach(cleanup);
 
-/** The section's behaviour group with the page's own validator feeding its errors live. */
-function Harness({ campaign, readOnly }: { campaign?: Partial<AgencyCampaign>; readOnly?: boolean }) {
+/**
+ * The section's behaviour group. Without `fieldErrors`, the page's own validator
+ * feeds its errors live; with them (`{}` included), as the builder and settings
+ * pages drive it, where they stay as the last save left them.
+ */
+function Harness({
+  campaign,
+  readOnly,
+  fieldErrors,
+}: {
+  campaign?: Partial<AgencyCampaign>;
+  readOnly?: boolean;
+  fieldErrors?: Record<string, string>;
+}) {
   const [state, setState] = useState<CampaignConfigState>(() =>
     configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft', ...campaign }),
   );
@@ -50,33 +43,13 @@ function Harness({ campaign, readOnly }: { campaign?: Partial<AgencyCampaign>; r
       <CampaignBehaviourSection
         state={state}
         onChange={setState}
-        fieldErrors={validateConfig(state)}
+        fieldErrors={fieldErrors ?? validateConfig(state)}
         layout="plain"
         include={['behaviour']}
         readOnly={readOnly}
       />
       <output data-testid="state-ceiling">{String(state.abandonmentCeilingPct)}</output>
     </>
-  );
-}
-
-/**
- * As the builder and settings pages drive it: `fieldErrors` stays empty until a
- * save attempt, and Save is disabled while the value is out of range, so the field
- * must name the problem on its own.
- */
-function PageHarness({ fieldErrors = {} }: { fieldErrors?: Record<string, string> }) {
-  const [state, setState] = useState<CampaignConfigState>(() =>
-    configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft' }),
-  );
-  return (
-    <CampaignBehaviourSection
-      state={state}
-      onChange={setState}
-      fieldErrors={fieldErrors}
-      layout="plain"
-      include={['behaviour']}
-    />
   );
 }
 
@@ -93,7 +66,7 @@ const RANGE_ERROR = 'Set the limit between 0.5% and 10%.';
 
 /** Lay the track out at 200px wide from x = 100, so x = 100 + 20·p is p% on the scale. */
 function layOutTrack() {
-  const track = slider().parentElement as HTMLElement;
+  const track = screen.getByTestId('abandonment-meter-ceiling').parentElement as HTMLElement;
   track.getBoundingClientRect = () =>
     ({ left: 100, right: 300, width: 200, top: 0, bottom: 8, height: 8, x: 100, y: 0, toJSON: () => ({}) }) as DOMRect;
   return track.parentElement as HTMLElement; // the hit area, which takes the pointer
@@ -261,20 +234,19 @@ describe('the number box', () => {
     expect(input().getAttribute('aria-invalid')).toBeNull();
 
     fireEvent.change(input(), { target: { value: '12' } });
-    expect(describedTexts(input())).toContain(RANGE_ERROR);
-    expect(input().getAttribute('aria-invalid')).toBe('true');
+    assertFieldAnnouncesError(input().id, RANGE_ERROR);
     // The line holds at the end of the scale; the slider names the error too.
     expect(lineLeft()).toBe('100%');
     expect(describedTexts(slider())).toContain(RANGE_ERROR);
   });
 
   it('names an out-of-range value before any save, when the page has no field errors yet', () => {
-    render(<PageHarness />);
+    // Save is disabled while the value is out of range, so the field must name it.
+    render(<Harness fieldErrors={{}} />);
     expect(input().getAttribute('aria-invalid')).toBeNull();
 
     fireEvent.change(input(), { target: { value: '15' } });
-    expect(describedTexts(input())).toContain(RANGE_ERROR);
-    expect(input().getAttribute('aria-invalid')).toBe('true');
+    assertFieldAnnouncesError(input().id, RANGE_ERROR);
     expect(describedTexts(slider())).toContain(RANGE_ERROR);
 
     fireEvent.change(input(), { target: { value: '4' } });
@@ -371,9 +343,8 @@ describe('the section’s error', () => {
   const SERVER = 'Must be above 0 and at most 100.';
 
   it('shows the server’s message for the value it came with, and drops it once the value changes', () => {
-    render(<PageHarness fieldErrors={{ abandonment_ceiling_pct: SERVER }} />);
-    expect(describedTexts(input())).toContain(SERVER);
-    expect(input().getAttribute('aria-invalid')).toBe('true');
+    render(<Harness fieldErrors={{ abandonment_ceiling_pct: SERVER }} />);
+    assertFieldAnnouncesError(input().id, SERVER);
 
     fireEvent.change(input(), { target: { value: '4' } });
     expect(screen.queryByText(SERVER)).toBeNull();
@@ -383,7 +354,7 @@ describe('the section’s error', () => {
 
     // The live check still names a value of its own that is out of range.
     fireEvent.change(input(), { target: { value: '15' } });
-    expect(describedTexts(input())).toContain(RANGE_ERROR);
+    assertFieldAnnouncesError(input().id, RANGE_ERROR);
     expect(screen.queryByText(SERVER)).toBeNull();
   });
 });
@@ -396,14 +367,10 @@ describe('a user who cannot write campaigns', () => {
     const box = screen.getByTestId('abandonment-ceiling-input') as HTMLInputElement;
     expect(box.value).toBe('4.5');
     expect(box.disabled).toBe(true);
-    expect(box.readOnly).toBe(true);
     expect(screen.getByTestId('abandonment-meter-value').textContent).toBe('4.5%');
 
     // No handlers: a press on the track moves nothing.
-    const hit = (screen.getByTestId('abandonment-meter-ceiling').parentElement as HTMLElement).parentElement as HTMLElement;
-    (hit.firstElementChild as HTMLElement).getBoundingClientRect = () =>
-      ({ left: 100, right: 300, width: 200, top: 0, bottom: 8, height: 8, x: 100, y: 0, toJSON: () => ({}) }) as DOMRect;
-    fireEvent.pointerDown(hit, { clientX: 190, pointerId: 1, pointerType: 'mouse', button: 0 });
+    fireEvent.pointerDown(layOutTrack(), { clientX: 190, pointerId: 1, pointerType: 'mouse', button: 0 });
     expect(stateValue()).toBe('4.5');
   });
 });
@@ -440,22 +407,6 @@ describe('the read-only meter', () => {
     expect(screen.getByTestId('abandonment-meter-ceiling').style.left).toBe('40%');
     expect(parseFloat(screen.getByTestId('abandonment-meter-rate').style.width)).toBeCloseTo(21, 6);
     expect(screen.getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('false');
-  });
-
-  it('turns the rate red above the ceiling, not at it, as the guardrail pauses', () => {
-    // The guardrail continues while measured <= ceiling, and the copy says "more than".
-    const { rerender } = render(<AbandonmentMeter ceilingPct={3} ratePct={3} />);
-    expect(screen.getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('false');
-    rerender(<AbandonmentMeter ceilingPct={3} ratePct={3.1} />);
-    expect(screen.getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('true');
-  });
-
-  it('draws on a wider scale when given one, with six ticks to its end', () => {
-    render(<AbandonmentMeter ceilingPct={12} ratePct={11} scaleMaxPct={15} />);
-    expect(screen.getByTestId('abandonment-meter-ceiling').style.left).toBe('80%');
-    expect(parseFloat(screen.getByTestId('abandonment-meter-rate').style.width)).toBeCloseTo((11 / 15) * 100, 6);
-    const ticks = Array.from(screen.getByTestId('abandonment-meter-scale').children).map((t) => t.textContent);
-    expect(ticks).toEqual(['0%', '3%', '6%', '9%', '12%', '15%']);
   });
 
   it('keeps the editable meter on 0–10% whatever scale is passed', () => {

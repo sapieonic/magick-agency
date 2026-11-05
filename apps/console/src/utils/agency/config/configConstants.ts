@@ -359,11 +359,9 @@ export interface CampaignConfigState {
    */
   abandonmentCeilingPct: number;
   /**
-   * The ceiling as the campaign stored it when the form was loaded, or `null` for
-   * a campaign not yet saved (the builder) or one read from a server that does not
-   * serve it. Never sent: it only lets the validator accept the stored value as
-   * stored, even outside the range the console offers (AC1), so a campaign set to
-   * 25 through the API can still have its calling hours fixed.
+   * The ceiling as loaded, or `null` (the builder, or a server that does not serve
+   * it). Never sent; the validator accepts it as stored (`abandonmentCeiling.ts`,
+   * "The range").
    */
   abandonmentCeilingStoredPct: number | null;
   /** Contact assignment (0009): how contacts reach agents, and the agent's own retry. */

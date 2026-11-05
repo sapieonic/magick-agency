@@ -88,11 +88,10 @@ export interface CampaignBehaviourSectionProps {
    */
   assignment?: { modeLocked: boolean };
   /**
-   * The viewer cannot write campaigns (the settings page's `canEdit` is false, and
-   * Save is hidden). For now only the abandonment limit honours it, drawn as a
-   * picture with a disabled box: it is the one editor whose control is not a form
-   * input the browser already greys, and a draggable line with no Save reads as a
-   * setting that took effect. The other editors are unchanged.
+   * The viewer cannot write campaigns (the settings page hides Save). Only the
+   * abandonment limit honours it so far (a draggable line with no Save reads as a
+   * setting that took effect); the other editors stay live, as before, and save
+   * nothing.
    */
   readOnly?: boolean;
 }
@@ -140,10 +139,6 @@ export function CampaignBehaviourSection({
         onChange={(patch) => onChange({ ...state, ...patch })}
         errors={errors}
       />
-      {/*
-        One group for the builder's "How agents work" step and the settings
-        page's Behaviour card alike, so the limit is set in both from here.
-      */}
       <AbandonmentCeilingFields
         ceilingPct={state.abandonmentCeilingPct}
         storedPct={state.abandonmentCeilingStoredPct}
