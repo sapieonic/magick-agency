@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.7.0](https://github.com/sapieonic/magick-agency/compare/db-v0.6.0...db-v0.7.0) (2026-11-05)
+
+
+### Features
+
+* **server,console,mobile,db,contracts:** campaign insights page ([#39](https://github.com/sapieonic/magick-agency/issues/39)) ([2183301](https://github.com/sapieonic/magick-agency/commit/2183301fdb6d384839a3af359de0740bfcd742de))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @magick-agency/contracts bumped to 0.7.0
+    * @magick-agency/domain bumped to 0.4.1
+    * @magick-agency/observability bumped to 0.5.0
+
 ## [0.6.0](https://github.com/sapieonic/magick-agency/compare/db-v0.5.0...db-v0.6.0) (2026-11-04)
 
 

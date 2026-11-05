@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.6.0...contracts-v0.7.0) (2026-11-05)
+
+
+### Features
+
+* **server,console,mobile,db,contracts:** campaign insights page ([#39](https://github.com/sapieonic/magick-agency/issues/39)) ([2183301](https://github.com/sapieonic/magick-agency/commit/2183301fdb6d384839a3af359de0740bfcd742de))
+
 ## [0.6.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.5.0...contracts-v0.6.0) (2026-11-04)
 
 
