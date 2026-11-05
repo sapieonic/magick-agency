@@ -50,8 +50,8 @@ export function ratePct(part: number | undefined, whole: number | undefined): nu
  * `offline`.
  *
  * An agent who signed out is not on shift: the server's `shift_seconds` is the
- * sum of these states and nothing else, the Overview rail's floor bar is drawn
- * over them, and the Agents tab's stacked bar is too. Including `offline` dilutes
+ * sum of these states and nothing else, and the Agents tab's stacked bar is
+ * drawn over them. Including `offline` dilutes
  * every share by signed-out time and makes "3 of 9 free" a fraction of a floor
  * that is not there. It used to be declared three times, in two orders.
  */

@@ -10,6 +10,7 @@
 // two screens come to disagree about how many sales there were.
 import { successDispositionSql } from '@magick-agency/domain/success-disposition';
 import { AGENCY_REDIALED_DISPOSITION_CODE } from '@magick-agency/contracts/agency';
+import { AUTO_DISPOSITION_CODE } from '../../../agency/disposition.js';
 
 /**
  * "This roster row's number, digits only" — the PREFILTER for
@@ -52,6 +53,17 @@ export function contactPhoneDigitsSql(alias: string): string {
  */
 export const WRAPUP_MEASURED_RESOLUTIONS_SQL =
   "wrapup_resolution IN ('disposition_submitted','auto_return','agent_returned')";
+
+/**
+ * A machine connect is an agent who sat through an answering machine, and the
+ * only signal for it is the agent's own write-up: AMD is out of scope, so
+ * nothing else in the system knows. Kept as one constant because the count, its
+ * complement (`human_connects`) and both AHT variants must all agree on the same
+ * code — a second spelling would put a voicemail in the human column and in the
+ * AHT it is excluded from at the same time. Here rather than in `campaign-stats.ts`
+ * because the insights rollup reads count human connects with it too.
+ */
+export const VOICEMAIL_DISPOSITION_CODE = 'voicemail';
 
 /**
  * The RESOLVED campaign timezone, spelled once for the three statements that cut
@@ -139,16 +151,18 @@ export const AGENCY_RESOLVED_ZONE_JOIN_SQL =
  * `$2`/`$3` the window, `$4`/`$5` tenant and account. A swapped from/to would
  * survive review because `WHERE i.ended > i.started` absorbs an inverted window as
  * an empty result rather than as an error. `campaignFilter` is the optional
- * `AND s.campaign_id = $n::uuid` line, appended to `sess`.
+ * `AND s.campaign_id = $n::uuid` line, appended to `sess`. A third variant,
+ * `campaign`, serves the insights page: its selector is a campaign and it binds
+ * four (no account); the shared part is the same text.
  *
  * Callers append their own outer SELECT over `intervals i` (columns `state`,
- * `started`, `ended`, plus the variant's key).
+ * `break_reason`, `started`, `ended`, plus the variant's key).
  */
 const OCCUPANCY_VARIANTS = {
   // The per-agent record: one agent, and the campaign's resolved zone carried down
   // to the buckets.
   agent: {
-    agentMatch: '= $1',
+    eventMatch: 'e.agent_user_id = $1',
     intervalKey: 'sess.zone',
     sess: `         -- The agent's sessions that OVERLAP the window, never all of them. A
          -- session's life is [joined_at, left_at), the window is [$2, $3), and two
@@ -185,7 +199,7 @@ const OCCUPANCY_VARIANTS = {
   // The roster: a known SET of agents, and no zone (a duration is
   // zone-independent, and nothing here buckets).
   roster: {
-    agentMatch: '= ANY($1::uuid[])',
+    eventMatch: 'e.agent_user_id = ANY($1::uuid[])',
     intervalKey: 'sess.agent_user_id',
     sess: `         -- The sessions that OVERLAP the window, never all of them. A session's
          -- life is [joined_at, left_at), the window is [$2, $3), and two half-open
@@ -201,6 +215,24 @@ const OCCUPANCY_VARIANTS = {
           WHERE s.tenant_id = $4
             AND s.account_id = $5
             AND s.agent_user_id = ANY($1::uuid[])
+            AND s.joined_at < $3
+            AND (s.left_at IS NULL OR s.left_at > $2)\${campaignFilter}
+`,
+  },
+  // One campaign's floor, for the insights page (`insights-range-reads.ts`): every agent's
+  // sessions on the campaign, and the event log read by campaign through
+  // idx_agency_session_events_campaign_at (campaign_id, at) instead of by agent. Binds FOUR
+  // values: `$1` the campaign, `$2`/`$3` the window, `$4` the tenant (the campaign row already
+  // fixes the account). `campaignFilter` is unused (the campaign is the selector).
+  campaign: {
+    eventMatch: 'e.campaign_id = $1::uuid',
+    intervalKey: 'sess.agent_user_id',
+    sess: `         -- The campaign's sessions that OVERLAP the window, as the other variants
+         -- bound theirs: [joined_at, left_at) against [$2, $3).
+         SELECT s.id, s.agent_user_id, s.left_at, s.joined_at
+           FROM agency_agent_sessions s
+          WHERE s.campaign_id = $1::uuid
+            AND s.tenant_id = $4
             AND s.joined_at < $3
             AND (s.left_at IS NULL OR s.left_at > $2)\${campaignFilter}
 `,
@@ -222,10 +254,14 @@ ${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
          -- it applies the tenant/account scope and the optional campaign narrowing.
          -- e.id rides along for the lead() tiebreak in intervals, for the same
          -- reason carried's ORDER BY carries it: at alone is not unique.
-         SELECT e.session_id, e.to_state, e.at, e.id
+         -- (The campaign variant predicates on e.campaign_id instead, the same
+         -- denormalised copy, for idx_agency_session_events_campaign_at.)
+         -- break_reason rides along for the readers that split break by reason; it
+         -- is carried at the transition, never read off the session later.
+         SELECT e.session_id, e.to_state, e.break_reason, e.at, e.id
            FROM agency_agent_session_events e
            JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id ${v.agentMatch}
+          WHERE ${v.eventMatch}
             AND e.at >= $2 AND e.at < $3
        ), carried AS (
          -- e.id DESC breaks a tie on at. DISTINCT ON returns whichever row the
@@ -237,10 +273,10 @@ ${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
          -- the mutation, the batch INSERT took the column's DEFAULT now(), which
          -- is the transaction timestamp and therefore identical for every row of a
          -- markAllOffline sweep of the whole floor.
-         SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id
+         SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.break_reason, e.at, e.id
            FROM agency_agent_session_events e
            JOIN sess ON sess.id = e.session_id
-          WHERE e.agent_user_id ${v.agentMatch}
+          WHERE ${v.eventMatch}
             AND e.at < $2
             -- The lower bound is what stops this range scan reading the agent's
             -- whole tenure, and it is EXACT: a session's events never predate its
@@ -288,6 +324,7 @@ ${v.sess.replace('${campaignFilter}', campaignFilter)}       ), in_window AS (
          -- reads, not a number that is wrong.
          SELECT ${v.intervalKey},
                 ev.to_state AS state,
+                ev.break_reason,
                 GREATEST(ev.at, $2::timestamptz) AS started,
                 LEAST(
                   COALESCE(lead(ev.at) OVER (PARTITION BY ev.session_id ORDER BY ev.at, ev.id), now()),
@@ -351,6 +388,32 @@ export const CONVERSATION_ATTEMPT_SQL = `((a.bridged_at IS NOT NULL AND a.redial
                 AND a.disposition_code IS DISTINCT FROM '${AGENCY_REDIALED_DISPOSITION_CODE}'`;
 
 /**
+ * ── The connect rate: ONE definition for the whole product ──────────────────
+ *
+ * HUMAN CONNECTS over PLACED FIRST DIALS. `/stats` `connect_rate_pct`, the agent record
+ * (scorecard, roster, grouped cells, best hours) and the Insights page all divide these two,
+ * spelled here once:
+ *
+ *  - {@link HUMAN_CONNECT_ATTEMPT_SQL}, the numerator: a conversation
+ *    ({@link CONVERSATION_ATTEMPT_SQL}, a redial chain once) written up with a code that is
+ *    neither voicemail nor the reaper's auto-stamp. A machine or an unclassified connect is not
+ *    a person reached.
+ *  - {@link PLACED_FIRST_DIAL_SQL}, the denominator: a dial that was PLACED (`dialed_at` set:
+ *    a queued row that never left the building is not a dial, IN6's `dials_placed` and the
+ *    drill-downs' `placed=1`) and was not a wrap-up redial (a redial continues a conversation
+ *    already counted; it is not another try at reaching someone).
+ *
+ * Both name the attempt as `a`, like every fragment here.
+ */
+export const HUMAN_CONNECT_ATTEMPT_SQL = `${CONVERSATION_ATTEMPT_SQL}
+                AND a.disposition_code IS NOT NULL
+                AND a.disposition_code <> '${VOICEMAIL_DISPOSITION_CODE}'
+                AND a.disposition_code <> '${AUTO_DISPOSITION_CODE}'`;
+
+/** The connect rate's denominator: placed, and not a wrap-up redial. See {@link HUMAN_CONNECT_ATTEMPT_SQL}. */
+export const PLACED_FIRST_DIAL_SQL = `(a.dialed_at IS NOT NULL AND a.redial_number = 0)`;
+
+/**
  * The FIVE metric expressions every agency attempts aggregate selects, in ONE
  * spelling.
  *
@@ -410,12 +473,25 @@ export const AGENCY_ATTEMPT_METRICS_SQL = `COUNT(*)::text AS attempts,
                 WHERE a.wrapup_started_at IS NOT NULL
                   AND a.wrapup_ended_at IS NOT NULL
                   AND ${WRAPUP_MEASURED_RESOLUTIONS_SQL.replace('wrapup_resolution', 'a.wrapup_resolution')}), 0)::text
-                AS wrapup_seconds`;
+                AS wrapup_seconds,
+              -- The connect rate's two counts (HUMAN_CONNECT_ATTEMPT_SQL): every
+              -- connect_rate_pct the agent record serves is human_connects / first_dials.
+              COUNT(*) FILTER (WHERE ${HUMAN_CONNECT_ATTEMPT_SQL})::text AS human_connects,
+              COUNT(*) FILTER (WHERE ${PLACED_FIRST_DIAL_SQL})::text AS first_dials`;
 
-/** The five {@link AGENCY_ATTEMPT_METRICS_SQL} columns, as numbers. */
+/** The five {@link AGENCY_ATTEMPT_METRICS_SQL} counters, as numbers. */
 export interface AgencyAttemptMetrics {
   attempts: number; connected: number; successes: number;
   talk_seconds: number; wrapup_seconds: number;
+}
+
+/**
+ * The connect rate's two {@link AGENCY_ATTEMPT_METRICS_SQL} columns
+ * ({@link HUMAN_CONNECT_ATTEMPT_SQL}, {@link PLACED_FIRST_DIAL_SQL}), read apart from the five so
+ * a payload that spreads those (the campaign series' buckets) does not grow two fields.
+ */
+export function readConnectCounts(row: { human_connects: string; first_dials: string }): { human_connects: number; first_dials: number } {
+  return { human_connects: Number(row.human_connects), first_dials: Number(row.first_dials) };
 }
 
 /**

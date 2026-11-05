@@ -241,6 +241,26 @@ export interface AgencyAgentCampaignRow {
   successes: number;
   talk_seconds: number;
   wrapup_seconds: number;
+  /**
+   * The connect rate's numerator on this campaign: conversations coded neither voicemail nor
+   * `no_disposition` (the totals' own definition).
+   */
+  human_connects: number;
+  /** The connect rate's denominator on this campaign: placed dials that are not wrap-up redials. */
+  first_dials: number;
+  /**
+   * `human_connects / first_dials` (percent): the product's one connect rate, the same as
+   * {@link AgencyAgentStatsTotals.connect_rate_pct} over this campaign's rows. `null` when no
+   * first dial was placed.
+   */
+  connect_rate_pct: number | null;
+  /**
+   * `first_dials >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR`: enough first dials to quote
+   * {@link connect_rate_pct} as a number, the roster's own gate (`AgencyRosterAgentRow`). A
+   * consumer renders the rate as words when this is false and never applies the threshold
+   * itself.
+   */
+  rates_reportable: boolean;
 }
 
 /** The window totals. Every counter here is the exact sum of the buckets. */
@@ -258,7 +278,11 @@ export interface AgencyAgentStatsTotals {
   attempts: number;
   /** `bridged_at IS NOT NULL` — media actually joined the agent to a person. */
   connected: number;
-  /** `connected / attempts`, or `null` when nothing was dialled. */
+  /**
+   * The product's one connect rate: human connects (conversations coded neither voicemail
+   * nor `no_disposition`) over placed first dials (not wrap-up redials), or `null` when no
+   * first dial was placed. Not `connected / attempts`.
+   */
   connect_rate_pct: number | null;
   /** Connected attempts whose disposition maps to an `is_success` catalog entry. */
   successes: number;
@@ -452,7 +476,10 @@ export interface AgencyRosterAgentRow {
   talk_seconds: number;
   wrapup_seconds: number;
 
-  /** null on a zero denominator — nothing dialled is NOT a 0% connect rate. */
+  /**
+   * Human connects over placed first dials (the product's one connect rate). null on a
+   * zero denominator — nothing dialled is NOT a 0% connect rate.
+   */
   connect_rate_pct: number | null;
   /** Denominator is `connected`, not `attempts`. */
   success_rate_pct: number | null;
@@ -508,9 +535,9 @@ export interface AgencyRosterAgentRow {
    *
    * ── Which denominator, stated because the flag is one bool over three rates ─
    *
-   * `attempts` — the row's headline denominator, the count of dials the whole
-   * line is built from. A row that fails it contributes to NO percentile pool,
-   * which is what makes the flag usable as the single gate its name promises.
+   * The placed FIRST dials — the connect rate's own denominator (wrap-up redials are
+   * not first dials). A row that fails it contributes to NO percentile pool, which
+   * is what makes the flag usable as the single gate its name promises.
    *
    * Two refinements sit on top of it inside `benchmark`, and only ONE of them is
    * expressible as a flag:
@@ -537,21 +564,21 @@ export interface AgencyRosterAgentRow {
    *
    * ── Why one flag was not enough ─────────────────────────────────────────────
    *
-   * `rates_reportable` floors `attempts`. `success_rate_pct` divides by `connected`.
-   * So 20 dials, ONE connect and one conversion is a reportable row carrying
+   * `rates_reportable` floors the placed first dials. `success_rate_pct` divides by
+   * `connected`. So 20 first dials, ONE connect and one conversion is a reportable row carrying
    * `success_rate_pct: 100` — a 100% conversion built from a single conversation,
    * printed beside a named person, which is the exact reading the first flag was
    * added to prevent. The house rule is a minimum volume PER METRIC, and one
    * threshold on one denominator cannot express two denominators.
    *
-   * ── It IMPLIES `rates_reportable`, so gating on it alone is correct ─────────
+   * ── It almost always IMPLIES `rates_reportable` ─────────────────────────────
    *
-   * `connected <= attempts` always — a connect is an attempt that bridged — and
-   * `rates_reportable` IS `attempts >= 20`, so `connected >= 20` is strictly
-   * stronger and can never be true where `rates_reportable` is false. A consumer
-   * rendering `success_rate_pct` or `aht_seconds` therefore needs to read only this
-   * flag; it does not have to AND the two. The converse does not hold, which is why
-   * both are served: `connect_rate_pct` is gated by `rates_reportable` alone and
+   * `rates_reportable` IS `placed first dials >= 20`, and a conversation is either a
+   * bridged first dial or the last redial of a chain whose first dial it follows, so
+   * `connected <= first dials` within a window — except at its edge, where a redial's
+   * conversation falls inside and its chain's first dial outside. A consumer rendering
+   * `success_rate_pct` or `aht_seconds` can read only this flag. The converse does not
+   * hold, which is why both are served: `connect_rate_pct` is gated by `rates_reportable` alone and
    * must stay quotable on a row that connected almost nobody, because that row's
    * connect rate is precisely the finding.
    *
@@ -605,8 +632,8 @@ export interface AgencyRosterPercentiles {
  * `agents` is the total. When `agents_rated` is 0 every percentile is null.
  *
  * ── Pooled rates are NOT the median ───────────────────────────────────────
- * `connect_rate_pct` here is total connected / total attempts across the whole
- * cohort — the floor's actual rate. The median is in `connect_rate.median`.
+ * `connect_rate_pct` here is the cohort's total human connects over its total placed
+ * first dials — the floor's actual rate. The median is in `connect_rate.median`.
  * They answer different questions and both are on the payload so neither has to
  * be recomputed by a consumer.
  *
@@ -836,16 +863,14 @@ export interface AgencyGroupKey {
  * read that breaks it is how a supervisor comes to read "0% conversion" off a group
  * that connected nobody.
  *
- * ⚠️ `attempts` is ALWAYS >= 1 on a served row, and `connect_rate_pct` therefore
- * never `null`. It is derived rather than asserted: `attempts` is `COUNT(*)` over a
- * `GROUP BY` whose joins are all INNER and whose WHERE requires
- * `dialed_at IS NOT NULL`, with no `HAVING`, no `ROLLUP`/`GROUPING SETS` and no
- * outer join that could manufacture a null-extended row — so a group exists only
- * because at least one attempt satisfied the predicate. The type keeps the `null`
- * because the shared helper produces it and because this row must stay shaped like
- * a roster row; no consumer should carry a branch for it.
- * `success_rate_pct` and `aht_seconds` DO reach `null`, whenever the group
- * connected nobody.
+ * ⚠️ `attempts` is ALWAYS >= 1 on a served row: `COUNT(*)` over a `GROUP BY` whose
+ * joins are all INNER and whose WHERE requires `dialed_at IS NOT NULL`, with no
+ * `HAVING`, no `ROLLUP`/`GROUPING SETS` and no outer join that could manufacture a
+ * null-extended row — so a group exists only because at least one attempt satisfied
+ * the predicate. `connect_rate_pct` divides by the placed FIRST dials, though, and a
+ * group of nothing but wrap-up redials (an hour cell a redial fell into) has none, so
+ * it CAN be `null`. `success_rate_pct` and `aht_seconds` reach `null` whenever the
+ * group connected nobody.
  */
 export interface AgencyGroupRow {
   key: AgencyGroupKey;
@@ -854,15 +879,15 @@ export interface AgencyGroupRow {
   successes: number;
   talk_seconds: number;
   wrapup_seconds: number;
-  /** connected / attempts. */
+  /** Human connects / placed first dials (the product's one connect rate). */
   connect_rate_pct: number | null;
   /** successes / CONNECTED — a call that never bridged had no conversation to convert. */
   success_rate_pct: number | null;
   /** (talk + wrapup) / connected. Same definition as AgencyRosterAgentRow.aht_seconds. */
   aht_seconds: number | null;
   /**
-   * `attempts >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR` — enough volume to quote this
-   * row's rates as NUMBERS.
+   * `placed first dials >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR` — enough volume to
+   * quote this row's rates as NUMBERS.
    *
    * The rates are served either way; what this gates is how they read. The house
    * rule is that a rate under the minimum denominator renders as WORDS, because a
@@ -886,11 +911,11 @@ export interface AgencyGroupRow {
    * same value — one number tuned in one place, or the two reads disagree about
    * which rows are quotable while both claim to be honouring "the" minimum.
    *
-   * ⚠️ The denominator is `attempts`, the row's HEADLINE count, which floors
+   * ⚠️ The denominator is the placed FIRST dials, the connect rate's own, which floors
    * `connect_rate_pct` and nothing else. `success_rate_pct` and `aht_seconds` divide
    * by `connected`, which can be far smaller, and their floor is
    * `success_rate_reportable` below — a SECOND flag rather than a footnote, because
-   * a row of 20 dials and one converted connect is reportable on this one and still
+   * a row of 20 first dials and one converted connect is reportable on this one and still
    * carries `success_rate_pct: 100`.
    */
   rates_reportable: boolean;
@@ -899,22 +924,22 @@ export interface AgencyGroupRow {
    * `connected >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR` — enough CONNECTS to quote
    * this row's `success_rate_pct` and `aht_seconds` as numbers.
    *
-   * The per-metric half of the same house rule. `rates_reportable` floors
-   * `attempts`, which is the right denominator for `connect_rate_pct` and the wrong
-   * one for the other two: 20 dials with one connect and one conversion clears it
+   * The per-metric half of the same house rule. `rates_reportable` floors the
+   * placed first dials, the right denominator for `connect_rate_pct` and the wrong
+   * one for the other two: 20 first dials with one connect and one conversion clears it
    * while carrying a 100% conversion rate off a single conversation — the exact
    * number, beside a named person on the contribution screen, that the first flag
    * exists to keep out of a console. It earns even more on 02b's heatmap, where a
    * cell holding twenty dials and two connects is common.
    *
-   * ── It IMPLIES `rates_reportable`, so a consumer may gate on it ALONE ───────
+   * ── It almost always IMPLIES `rates_reportable` ─────────────────────────────
    *
-   * `connected <= attempts` always — a connect is an attempt that bridged — and
-   * `rates_reportable` IS `attempts >= 20`, so this predicate is strictly stronger
-   * and is never true where that flag is false. Rendering `success_rate_pct` or
-   * `aht_seconds` therefore needs this flag and not the conjunction. The converse is
-   * false, which is why both ride: a row that dialled 400 and connected nobody is
-   * quotable on its connect rate and has no conversion rate at all.
+   * `rates_reportable` IS `placed first dials >= 20`, and `connected <= first dials`
+   * within a cell except where a redial's conversation falls in the cell and its
+   * chain's first dial in the one before (an hour boundary, the window's edge).
+   * Rendering `success_rate_pct` or `aht_seconds` therefore needs this flag. The
+   * converse is false, which is why both ride: a row that dialled 400 and connected
+   * nobody is quotable on its connect rate and has no conversion rate at all.
    *
    * Same constant and same predicate as the roster's `success_rate_reportable` and
    * as the `success_rate`/`aht` percentile pools it gates there, deliberately not a

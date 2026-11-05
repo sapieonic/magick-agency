@@ -148,6 +148,11 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   // reads a roster of 812 new contacts as 812 redials.
   { value: 'agency_campaign.retry_created', label: 'Retry campaign created', group: 'Campaign', product: 'agency' },
   { value: 'agency_campaign.assignment_mode_changed', label: 'Campaign assignment mode changed', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.config_changed', label: 'Campaign settings changed', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.roster_upload_started', label: 'Campaign roster upload started', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.roster_upload_completed', label: 'Campaign roster upload completed', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.roster_upload_failed', label: 'Campaign roster upload failed or cancelled', group: 'Campaign', product: 'agency' },
+  { value: 'agency_campaign.roster_cleared', label: 'Campaign roster cleared', group: 'Campaign', product: 'agency' },
 
   { value: 'agency_disposition.created', label: 'Call disposition filed', group: 'Calls', product: 'agency' },
   { value: 'agency_attempts.exported', label: 'Call attempts exported', group: 'Calls', product: 'agency' },

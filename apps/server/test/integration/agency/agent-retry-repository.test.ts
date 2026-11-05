@@ -217,7 +217,7 @@ describe('AgencyAgentRetryRepository.claimForAgentDial / releaseAgentDialClaim',
     const campaign = await insertAgencyCampaign({ status: 'running' });
     const c = await owned(campaign.id, { state: 'pending' });
     const got = await claim(campaign.id, c.id, 'due');
-    expect(got?.spent).toEqual({ round: false, retryDelay: false, callingHours: false });
+    expect(got?.spent).toEqual({ round: false, retryDelay: false, callingHours: false, agentReopen: false });
     expect(got?.contact.state).toBe('in_flight');
     expect(got?.prior.state).toBe('pending');
   });
@@ -227,7 +227,7 @@ describe('AgencyAgentRetryRepository.claimForAgentDial / releaseAgentDialClaim',
     const later = new Date(Date.now() + 86_400_000);
     const c = await owned(campaign.id, { state: 'pending', attempt_count: 1, last_outcome: 'connected', last_disposition: 'callback', next_attempt_at: later, override_retry_delay: true });
     const got = await claim(campaign.id, c.id, 'retry_delay');
-    expect(got?.spent).toEqual({ round: false, retryDelay: true, callingHours: false });
+    expect(got?.spent).toEqual({ round: false, retryDelay: true, callingHours: false, agentReopen: false });
     expect(await row(c.id)).toMatchObject({ state: 'in_flight', override_retry_delay: false });
     // The exact undo puts the time and the override back.
     expect(await agencyAgentRetryRepository.releaseAgentDialClaim(c.id, got!)).toBe(true);

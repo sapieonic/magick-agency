@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-03.
+"is it done". As of 2026-11-04.
 
 ## Summary
 
@@ -722,23 +722,95 @@ app.
     `contact.repository.ts`: a SQL `NOT … = ANY` versus a pre-read with `FOR UPDATE`.
   - **`returnOnUnstaff` is unlike the sweeps.** It does not set `updated_at`; the sweeps do.
 
+### Campaign insights 2026-11-04 (IN1–IN12, [`insights.md`](insights.md))
+
+One Insights tab per campaign at `/agency/campaigns/:id/insights` (`agency.supervise`), replacing
+Overview and Performance, whose URLs redirect to it: the campaign's whole health in every status,
+and every number opens the Contacts or Call attempts list whose total is that number. ClickUp
+"Campaign insights page"; the data mapping and IN1–IN8 signed off by Manas; IN9–IN12 are the
+build's own calls, defaults pending Manas (`decisions.md` §4).
+
+- Migrations: `0011_insights_foundation.sql` (`agent_reopened` on attempts, `dials_placed` on
+  contacts kept by a trigger, the read indexes), `0012_insights_rollup.sql` (the rollup tables,
+  dirty-bucket triggers, backfill), `0013_insights_pacing_history.sql` (pacing history per
+  campaign per minute, the reopen marker), `0014_insights_rollup_first_dials_carrier_errors.sql`
+  (the connect-rate measures, carrier errors). All inventoried in `packages/db/BASELINE.md` and
+  tested down and up. Wire: `packages/contracts/src/api/agency/insights.ts`; the spine lists gain
+  drill-down filters and an opt-in exact `total`. No mobile wire shape changed.
+- Seven routes under `/proxy/agency/campaigns/:id/insights/`: `summary`, `readiness`, `allocation`,
+  `uploads` (as of now, from `agency_contacts` through a covering index) and `activity`, `trends`,
+  `health` (a range, from the rollup, the agent session events and the pacing history). Guards:
+  session, `agency.supervise`, the dialer flag, a UUID id, the ownership probe; an in-process
+  single-flight cache below them.
+- The rollup: per campaign per 15-minute UTC bucket, recomputed from the attempts by a job in the
+  main process every 15 s (`agency.insightsRollup`), never incremented; an oracle test holds every
+  read to the attempts table. Pacing history: the pacing leader's per-minute counters, flushed
+  every 15 s, best effort. Five warning alerts and four dashboard panels (`grafana/`), with
+  runbooks in `operations.md`.
+- Start-recording writes and the mapping's defects, fixed first (IN8): `/stats` `contacts_connected`;
+  `created_by` from the actor; `agency_campaign.config_changed` and roster-upload audit rows; stale
+  comments; one connect rate across the product, human connects ÷ placed first dials (IN10;
+  `/stats`, the agent record and Insights pinned equal by `agency-connect-rate.test.ts`).
+- Scale, 1M contacts or 1M attempts in one campaign: lifetime rollup reads 0.15–0.25 s; activity
+  1.2 s and trends 1.0 s end to end over 30 days (the agent-state and callback reads are the slow
+  part); a running campaign's summary 2.5–2.9 s, cached for four times its cost; drill-down totals
+  0.1–0.3 s. The attempt triggers add ~85 µs per attempt write and the dial counter ~0.33 ms per
+  placed dial.
+- Built in parallel lanes (foundation, defects, rollup, pacing history, console, as-of-now API,
+  drill-downs, range API), then a fresh-context review of the whole branch. It found no blocker;
+  this branch fixed what it found: a flaky plan test; the connect rate counted three ways; IN4's
+  closed-first rule; the account ownership guard untested; an unbounded lifetime range (now the
+  last 92 days, IN12); four links untested and two whose lists did not match; the reaper's failed
+  uploads unaudited; dead code; stale docs; no alerts on the new metrics. Every fix has a
+  mutation-checked test.
+- **One connect rate on every surface, per campaign too:** `by_campaign[]` rows on the agent
+  record carry `human_connects`, `first_dials`, `connect_rate_pct` and `rates_reportable` (the
+  roster's floor on first dials, decided by the server), and `/stats` serves
+  `first_dials_placed`. The console's agent page and the agent app's Performance screen print each
+  campaign's rate as served ("All campaigns" shows the overall rate in the headline and each
+  campaign's in the breakdown; a picked campaign shows its own), withheld where the row is not
+  reportable (neither client applies the threshold); the
+  campaign Performance card prints "N people answered, of M first dials placed". The app's decoder
+  takes rows without the counts (an older server) and shows a dash, never a derived rate.
+- **Left open:** `health.analysis` is not served (no index-driven read of a range's analysed calls;
+  needs a rollup facet or an index; a TODO in `insights/health.ts`); the mapping's "waiting for
+  calling hours" bucket (needs `timezone` in the covering index, a concurrent rebuild over the
+  roster; a TODO in `insights/roster.ts`); override notes in the Call attempts list (the attempt
+  row is mobile wire; the list filter `override_applied` exists; accepted as is); Grafana rules
+  applied with the rest of `grafana/` (never applied; Manas applies them by hand); the summary's
+  cost on a 1M running campaign (2.5–2.9 s, cached) if the page is kept open on many campaigns at
+  once; the console's analytics floor `RATE_MIN_ATTEMPTS` still floors `attempts_total`, not the connect
+  rate's placed first dials (`/stats` now serves `first_dials_placed`, so moving it is a small
+  change; not made here); and at a window edge a cell's
+  `success_rate_reportable` can hold while `rates_reportable` does not (a redial's conversation in
+  the window, its first dial before it), so a cell should gate on both.
+
 ## Test counts
 
-Latest run, 2026-11-04, the contact assignment branch after the PR #33 review fixes, from
-inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 32 and
-`pnpm test:release` 10 pass):
+Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
+review fixes, from inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33
+and `pnpm test:release` 10 pass; `pnpm build` clean). Integration on `05e988e`; unit, release,
+Grafana and build again after merging `main` (#36):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 7895 passed + 42 skipped (394 files) | rest lane 1749 passed + 9 expected fail (186 files); wall-clock lane 15 (3 files) |
-| `packages/db` | 427 (25 files) | 536 (49 files) |
-| `apps/console` | 5159 (268 files) | — |
+| `apps/server` | 8036 passed + 42 skipped (404 files) | rest lane 1916 passed + 9 expected fail + 1 skipped (198 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 562 (53 files) |
+| `apps/console` | 5122 (270 files) | — |
 | `apps/super-admin` | 436 | — |
-| `packages/contracts` | 281 | — |
+| `packages/contracts` | 281, `contracts-literals --check` up to date | — |
 | `packages/web-ui` | 235 | — |
 | `packages/domain` | 61 | — |
 | `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1404, `agency_wire` 398, `flutter analyze` clean, `contracts-literals --check` up to date | — |
+| `apps/mobile` | `flutter test` 1404, `agency_wire` 399, `flutter analyze` and `dart analyze` (`agency_wire`) clean, Flutter 3.47.7 | — |
+
+After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
+`/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8
+packages; unit as in the table (`apps/server` 8036 + 42 skipped, `packages/contracts` 281,
+`contracts-literals --check` up to date); `apps/server` rest lane 1916 passed + 9 expected fail + 1
+skipped, wall-clock lane 15; `packages/db` integration 562. One earlier rest-lane run on this work
+failed `pacing-skip.test.ts` ("the skip path was never exercised"), the flake `main` fixed in #37,
+not yet merged here; it passed 3 of 3 alone, before and after the change.
 
 After 0009's row work moved to 0010 (CHECKs added `NOT VALID` in 0009, validated with the
 assignee index in 0010): `packages/db` 427 unit, 536 integration (49 files); `apps/server` rest

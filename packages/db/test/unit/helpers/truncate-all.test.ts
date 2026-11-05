@@ -44,6 +44,17 @@ describe('truncateAll (lead harness)', () => {
     expect(wipes(c)).toHaveLength(3);
   });
 
+  it('deletes the insights dirty marks after the wipe, which the attempts DELETE trigger leaves (0012)', async () => {
+    const query = vi.fn(async (sql: string) => (sql.startsWith('SELECT')
+      ? { rows: [{ t: 'public.agency_call_attempts' }, { t: 'public.agency_insights_rollup_dirty' }] }
+      : { rows: [] }));
+    await truncateAll({ query } as unknown as pg.PoolClient);
+    expect(query.mock.calls.map(([sql]) => String(sql)).slice(1)).toEqual([
+      'WITH d0 AS (DELETE FROM public.agency_call_attempts), d1 AS (DELETE FROM public.agency_insights_rollup_dirty) SELECT 1',
+      'DELETE FROM agency_insights_rollup_dirty',
+    ]);
+  });
+
   it('never retries any other error', async () => {
     const c = fakeClient(['42P01']);
     await expect(truncateAll(c)).rejects.toMatchObject({ code: '42P01' });

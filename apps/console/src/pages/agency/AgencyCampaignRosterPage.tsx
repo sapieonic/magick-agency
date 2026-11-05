@@ -48,6 +48,7 @@ import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner'
 import { PageDescription } from '../../components/common/PageDescription';
 import { FilterChip } from '../../components/agency/FilterChip';
 import { FiltersCard } from '../../components/agency/FiltersCard';
+import { AppliedFilterChips } from '../../components/agency/AppliedFilterChips';
 import { AgencyRetryDialog } from '../../components/agency/AgencyRetryDialog';
 import { DEFAULT_DISPOSITIONS } from '../../utils/agencyCampaignConfigForm';
 import { retryCreatedToast, selectorFromContactFilters } from '../../utils/agencyRetrySelector';
@@ -57,6 +58,7 @@ import {
   rosterFilterGroupCount,
   rosterFiltersFromParams,
   rosterFiltersToParams,
+  rosterLinkFilterChips,
 } from '../../utils/agencyRosterFilters';
 import { AgencyCampaignStatusBadge } from './AgencyCampaignStatusBadge';
 import {
@@ -140,6 +142,8 @@ export function AgencyCampaignRosterPage() {
   const [campaign, setCampaign] = useState<AgencyCampaign | null>(null);
   const [rows, setRows] = useState<AgencyRosterContact[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
+  /** The server's exact count of the filtered roster (`?include_total=1`), or null without one. */
+  const [total, setTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -219,10 +223,15 @@ export function AgencyCampaignRosterPage() {
     setLoading(true);
     setError(null);
     try {
-      const page = await getCampaignContacts(id, active, { limit: PAGE_SIZE }, tenantId, accountId);
+      // The first page asks for the exact total, counted with the list's own predicate:
+      // it is the number an Insights drill-down is checked against. Later pages keep it.
+      const page = await getCampaignContacts(
+        id, active, { limit: PAGE_SIZE, includeTotal: true }, tenantId, accountId,
+      );
       if (seq !== requestSeq.current) return;
       setRows(page.rows);
       setNextCursor(page.next_cursor);
+      setTotal(typeof page.total === 'number' ? page.total : null);
       // A new list is a new set of rows: a tick on a row that is no longer shown
       // would be sent by "Selected rows" without the supervisor seeing it.
       setSelection(EMPTY_SELECTION);
@@ -385,19 +394,29 @@ export function AgencyCampaignRosterPage() {
 
   const applyFilters = useCallback(() => {
     applyToUrl({
+      // The two filters only a link sets (no control on this form) are kept, so
+      // Apply narrows an Insights drill-down rather than silently undoing it.
+      ...(filters.waiting ? { waiting: filters.waiting } : {}),
+      ...(filters.attempted ? { attempted: filters.attempted } : {}),
       ...(draftStates.length > 0 ? { state: draftStates } : {}),
       ...(draftReasons.length > 0 ? { suppressed_reason: draftReasons } : {}),
       ...(draftDispositions.length > 0 ? { last_disposition: draftDispositions } : {}),
       ...(draftAssignees.length > 0 ? { assigned_to: draftAssignees } : {}),
       ...(draftPhone.trim() ? { phone: draftPhone.trim() } : {}),
     });
-  }, [applyToUrl, draftStates, draftReasons, draftDispositions, draftAssignees, draftPhone]);
+  }, [applyToUrl, filters, draftStates, draftReasons, draftDispositions, draftAssignees, draftPhone]);
 
   const clearFilters = useCallback(() => {
     applyToUrl({});
   }, [applyToUrl]);
 
   const filtered = useMemo(() => isRosterFiltered(filters), [filters]);
+
+  const linkChips = useMemo(() => rosterLinkFilterChips(filters), [filters]);
+  const removeLinkChip = useCallback((chipId: string) => {
+    const chip = linkChips.find((c) => c.id === chipId);
+    if (chip) applyToUrl(chip.without);
+  }, [linkChips, applyToUrl]);
 
   // How many independent filter groups are APPLIED, for the small badge on the
   // filter panel — a supervisor should see at a glance that the view is narrowed.
@@ -550,9 +569,7 @@ export function AgencyCampaignRosterPage() {
             concluded two thirds of the list was never worked.
 
             So the tip now says the reason is per-contact and that some were
-            worked first, which covers both populations. Paired with the Overview
-            funnel's Suppressed hint, which stopped saying "Skipped" for the same
-            reason.
+            worked first, which covers both populations.
           */
           'Suppressed contacts are listed with the reason — some were never dialed, others were '
           + 'worked first and then closed.',
@@ -683,14 +700,15 @@ export function AgencyCampaignRosterPage() {
         </div>
       </FiltersCard>
 
+      <AppliedFilterChips chips={linkChips} onRemove={removeLinkChip} testIdPrefix="roster" />
+
       {error && <ErrorAlert message={error} onRetry={() => void load(filters)} />}
 
       <p className={spine.count} data-testid="roster-count" aria-live="polite" aria-atomic="true">
         {!loading && rows.length > 0 && (
           <>
             <ListChecks size={14} className={spine.countIcon} aria-hidden="true" />
-            {`Showing ${rows.length.toLocaleString()} contact${rows.length === 1 ? '' : 's'}`
-              + (nextCursor ? ' — there are more' : '')}
+            {rosterCountCopy(rows.length, total, nextCursor !== null)}
           </>
         )}
       </p>
@@ -932,3 +950,15 @@ export function AgencyCampaignRosterPage() {
 }
 
 export default AgencyCampaignRosterPage;
+
+/**
+ * The count line. With the server's exact total: "1,234 contacts — showing 50". Without one:
+ * what is on screen, never an "N of M" nothing counted.
+ */
+function rosterCountCopy(shown: number, total: number | null, more: boolean): string {
+  const noun = (n: number) => `contact${n === 1 ? '' : 's'}`;
+  if (total !== null) {
+    return `${formatCount(total)} ${noun(total)}` + (shown < total ? ` — showing ${formatCount(shown)}` : '');
+  }
+  return `Showing ${shown.toLocaleString()} ${noun(shown)}` + (more ? ' — there are more' : '');
+}

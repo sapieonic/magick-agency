@@ -12,12 +12,6 @@ import 'en_in_format.dart';
 /// server has nothing to measure (`null`: "Not measured yet" and a sentence),
 /// and a real `0`, the only one that is a claim about the shift.
 
-/// Below this many dials the console withholds a per-campaign connect rate
-/// ("Not enough calls"): `AGENCY_ROSTER_MIN_RATE_DENOMINATOR`
-/// (`packages/contracts/src/agency/performance.ts`). The headline tiles and
-/// readouts are NOT floored on the agent's own page; the server's rate (or
-/// its null) is shown as served, exactly as the console does.
-const rosterMinRateDenominator = 20;
 
 /// One headline figure (`HeadlineFigure`).
 @immutable
@@ -142,13 +136,17 @@ Readout wrapupReadout(AgentStatsTotals? totals) => _served(
       format: EnIn.statClock,
     );
 
-/// A per-campaign connect rate, derived here only because `by_campaign[]`
-/// carries no rates (`rowConnectRate`): no dials → em dash; under the
-/// roster's floor → "Not enough calls"; else the rate.
+/// A campaign's connect rate as the server serves it (the console's
+/// `rowConnectRate`): the totals' definition on that campaign, never
+/// `connected / attempts`, and the server's floor (`ratesReportable`), never
+/// one applied here. A null rate or none served (an older server) → em dash;
+/// not reportable → "Not enough calls"; else the rate. The headline tiles and
+/// readouts are not floored on the agent's own page, exactly as the console.
 String rowConnectRate(AgentCampaignRow row) {
-  if (row.attempts <= 0) return '—';
-  if (row.attempts < rosterMinRateDenominator) return 'Not enough calls';
-  return EnIn.pct(row.connected / row.attempts * 100);
+  final rate = row.connectRatePct;
+  if (rate == null) return '—';
+  if (row.ratesReportable != true) return 'Not enough calls';
+  return EnIn.pct(rate);
 }
 
 /// Nothing at all happened in the window (`isEmptyRange`).

@@ -32,7 +32,31 @@ vi.mock('@magick-agency/observability', () => ({
 }));
 
 const { pool } = vi.hoisted(() => ({ pool: { query: vi.fn(), connect: vi.fn() } }));
-vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
+/**
+ * The connect rate's two columns (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL): a fixture row that
+ * does not name them reads them as its `connected` and `attempts`, so a fixture written for the
+ * counters keeps its rate; the cases about the connect rate set them apart explicitly.
+ */
+function withConnectCounts(result: unknown): unknown {
+  const r = result as { rows?: unknown[] } | undefined;
+  if (!r || !Array.isArray(r.rows)) return result;
+  return {
+    ...r,
+    rows: r.rows.map((row) => {
+      const o = row as Record<string, unknown>;
+      if (!o || typeof o !== 'object' || !('attempts' in o)) return row;
+      return { human_connects: o['connected'], first_dials: o['attempts'], ...o };
+    }),
+  };
+}
+
+vi.mock('@magick-agency/db', () => ({
+  getPool: () => new Proxy(pool, {
+    get: (target, key) => (key === 'query'
+      ? (...args: unknown[]) => Promise.resolve((target.query as (...a: unknown[]) => unknown)(...args)).then(withConnectCounts)
+      : Reflect.get(target, key)),
+  }),
+}));
 
 const { AgencyAgentStatsRepository } = await import('../../../src/db/repositories/agency.repository.js');
 
@@ -122,6 +146,26 @@ beforeEach(() => {
 const read = () => new AgencyAgentStatsRepository().stats(SCOPE, WINDOW);
 
 // ─── the attempts aggregate ─────────────────────────────────────────────────
+
+describe('the scorecard\'s connect rate (human connects over placed first dials)', () => {
+  it('sums the two counts over every attempt row, never connected / attempts', async () => {
+    serve([
+      { bucket_start: '2026-08-17', campaign_id: 'c1', attempts: '30', connected: '12', successes: '2',
+        talk_seconds: '1200', wrapup_seconds: '120', human_connects: '6', first_dials: '25' },
+      { bucket_start: '2026-08-18', campaign_id: 'c2', attempts: '20', connected: '8', successes: '1',
+        talk_seconds: '800', wrapup_seconds: '80', human_connects: '4', first_dials: '15' },
+    ], []);
+    const s = await new AgencyAgentStatsRepository().stats(SCOPE, WINDOW);
+    expect(s.totals.connect_rate_pct).toBeCloseTo((10 / 40) * 100);
+    expect(s.totals.attempts).toBe(50);
+    expect(s.totals.connected).toBe(20);
+    // Per campaign, the same rate from its own counts, and the roster's floor on its first
+    // dials decided here (25 first dials quotable, 15 not), so no client applies it.
+    const byId = new Map(s.by_campaign.map((c) => [c.campaign_id, c]));
+    expect(byId.get('c1')).toMatchObject({ connect_rate_pct: (6 / 25) * 100, rates_reportable: true });
+    expect(byId.get('c2')).toMatchObject({ connect_rate_pct: (4 / 15) * 100, rates_reportable: false });
+  });
+});
 
 describe('the attempt buckets are cut in each campaign\'s own timezone', () => {
   it('derives the zone from the CAMPAIGN row, per attempt', async () => {
@@ -307,14 +351,20 @@ describe('two campaigns in different zones still sum exactly', () => {
       {
         campaign_id: 'camp-in',
         attempts: 70, connected: 19, successes: 7, talk_seconds: 5700, wrapup_seconds: 700,
+        human_connects: 19, first_dials: 70, connect_rate_pct: expect.closeTo((19 / 70) * 100), rates_reportable: true,
       },
       {
         campaign_id: 'camp-us',
         attempts: 20, connected: 5, successes: 1, talk_seconds: 1500, wrapup_seconds: 200,
+        human_connects: 5, first_dials: 20, connect_rate_pct: 25, rates_reportable: true,
       },
     ]);
     const total = byCampaign.reduce((acc, c) => acc + c.attempts, 0);
     expect(total).toBe(stats.totals.attempts);
+    // The connect rate's two counts fold the same way: the campaigns' sum is the totals' rate.
+    const human = byCampaign.reduce((acc, c) => acc + c.human_connects, 0);
+    const first = byCampaign.reduce((acc, c) => acc + c.first_dials, 0);
+    expect(stats.totals.connect_rate_pct).toBeCloseTo((human / first) * 100);
     expect(stats.totals.campaigns).toBe(2);
   });
 
@@ -400,9 +450,10 @@ describe('occupancy is derived from the transition log', () => {
     expect(sql).toContain('lead(ev.at) OVER (PARTITION BY ev.session_id ORDER BY ev.at, ev.id)');
     expect(sql).toContain('FROM agency_agent_session_events e');
     // `ev.id` only exists in `intervals` because both halves of `events` carry it
-    // through — a `UNION ALL` of two `SELECT *`, so the column must be on both.
-    expect(sql).toContain('SELECT e.session_id, e.to_state, e.at, e.id');
-    expect(sql).toContain('SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.at, e.id');
+    // through — a `UNION ALL` of two `SELECT *`, so the column must be on both (as must
+    // `break_reason`, which the insights reads split break time by).
+    expect(sql).toContain('SELECT e.session_id, e.to_state, e.break_reason, e.at, e.id');
+    expect(sql).toContain('SELECT DISTINCT ON (e.session_id) e.session_id, e.to_state, e.break_reason, e.at, e.id');
   });
 
   it('closes an OPEN final interval at min(now, window end, the session\'s own end)', async () => {

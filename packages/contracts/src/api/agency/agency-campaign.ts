@@ -210,6 +210,8 @@ export interface AgencyIngestJob {
   rejected_truncated: boolean;
   error_code: AgencyIngestFailureCode | string | null;
   error_message: string | null;
+  /** Who ran the import: the uploader's user id. Null on a job created without one. */
+  created_by: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

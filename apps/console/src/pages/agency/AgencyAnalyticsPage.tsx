@@ -447,7 +447,6 @@ export function AgencyAnalyticsPage() {
                     {LIVE_STATUSES.has(campaign.status) && (
                       <CampaignHealthStrip
                         stats={resolved}
-                        mode="diagnosis"
                         campaignId={campaign.id}
                         campaignStatus={campaign.status}
                         /*

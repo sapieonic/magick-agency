@@ -37,10 +37,10 @@ import styles from './AgentFloor.module.css';
  * **which agent**.
  *
  * Everything else on the campaign aggregates: the health strip says the
- * campaign is not dialing, the Overview counters say five agents are on break.
+ * campaign is not dialing, the Insights tab says five agents are on break.
  * Neither names a person, and every action a supervisor can take is aimed at
- * one. Those counters are a section away rather than directly
- * above — the strip's diagnosis still sits above this, on every section.
+ * one. Insights is a tab away rather than directly above — the strip's
+ * diagnosis still sits above this, on every section.
  *
  * ── A summary card, then a table ────────────────────────────────────────────
  * The floor used to be a grid of tiles, which cost four rows of vertical space

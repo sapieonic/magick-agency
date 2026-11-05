@@ -15,6 +15,19 @@ describe('parseConfig', () => {
     expect(result.config.db.url).toBe(valid.DATABASE_URL);
   });
 
+  it('agency.insightsRollup: 15 s and 200 buckets by default, read from the env, bounded', () => {
+    const rollup = (env: Record<string, string>) => {
+      const result = parseConfig({ ...valid, ...env });
+      return result.ok ? result.config.agency.insightsRollup : null;
+    };
+    expect(rollup({})).toEqual({ intervalMs: 15_000, batchSize: 200 });
+    expect(rollup({ AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS: '30000', AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE: '50' }))
+      .toEqual({ intervalMs: 30_000, batchSize: 50 });
+    expect(rollup({ AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS: '10' })).toBeNull();
+    expect(rollup({ AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE: '0' })).toBeNull();
+    expect(rollup({ AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE: 'many' })).toBeNull();
+  });
+
   it('reports every missing required value', () => {
     const result = parseConfig({});
     expect(result.ok).toBe(false);

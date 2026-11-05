@@ -142,7 +142,7 @@ describe('success_rate_pct', () => {
     // "nothing has converted yet" and "nothing has been dispositioned yet" are
     // different facts, and rendering the second as a confident 0.0% is how a
     // metric gets trusted before it has measured anything.
-    serve({ attempts_total: '120', attempts_not_redial: '120', human_connects: '0', machine_connects: '0', unclassified_connects: '0', attempts_success: '0' });
+    serve({ attempts_total: '120', first_dials_placed: '120', human_connects: '0', machine_connects: '0', unclassified_connects: '0', attempts_success: '0' });
     const stats = await read();
     expect(stats.attempts_success).toBe(0);
     expect(stats.success_rate_pct).toBeNull();

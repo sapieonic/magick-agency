@@ -152,6 +152,19 @@ describe('agent churn at floor scale (load)', () => {
 
     let round = 0;
     let roundStart = new Date(0);
+    /**
+     * Every time the test takes an agent off the floor, per agent. The re-offer check
+     * reads it: churn picks its idle victims at random, and an agent who just came back
+     * is idle at the back of the longest-idle queue, so churn can take them off again
+     * before their turn comes. That is not a forgotten agent.
+     */
+    const departures = new Map<string, Array<{ round: number; at: Date }>>();
+    const goAway = (sessionId: string, why: string) => {
+      away.set(sessionId, why);
+      const list = departures.get(sessionId) ?? [];
+      list.push({ round, at: new Date() });
+      departures.set(sessionId, list);
+    };
     const churn = async () => {
       const present = world.agents.filter((a) => a.attached && !a.left && !away.has(a.sessionId) && !queuedBreak.has(a.sessionId));
       const states = await rt.agents.getMany(present.map((a) => a.sessionId));
@@ -165,7 +178,7 @@ describe('agent churn at floor scale (load)', () => {
       if (rng.chance(0.6)) {
         const a = take(idle);
         if (a && (await world.goBreak(a)) === 'applied') {
-          away.set(a.sessionId, 'break');
+          goAway(a.sessionId, 'break');
           tally.breakIdle++;
           schedule(round + rng.int(2, 6), () => comeBack(a, round));
         }
@@ -184,7 +197,7 @@ describe('agent churn at floor scale (load)', () => {
           const r = await world.dropStation(a);
           if (r.attemptId !== null) violations.push(`${tag(round)} idle agent ${a.label} had live attempt ${r.attemptId}`);
           if (!r.wroteOffline) violations.push(`${tag(round)} idle drop of ${a.label} did not write offline`);
-          away.set(a.sessionId, 'dropped');
+          goAway(a.sessionId, 'dropped');
           tally.dropIdle++;
           schedule(round + rng.int(1, 4), () => comeBack(a, round));
         }
@@ -195,7 +208,7 @@ describe('agent churn at floor scale (load)', () => {
         if (c && a) {
           const r = await world.dropStation(a);
           if (r.wroteOffline) violations.push(`${tag(round)} mid-ring drop of ${a.label} wrote offline over a live attempt`);
-          away.set(a.sessionId, 'dropped');
+          goAway(a.sessionId, 'dropped');
           ringDrops.push(c.attemptId);
           tally.dropRinging++;
           // Back later than the drop: if the call is still ringing then, the return
@@ -210,7 +223,7 @@ describe('agent churn at floor scale (load)', () => {
           const r = await world.dropStation(a);
           if (!r.graceArmed) violations.push(`${tag(round)} mid-talk drop of ${a.label} armed no re-attach window`);
           if (r.wroteOffline) violations.push(`${tag(round)} mid-talk drop of ${a.label} wrote offline over a live call`);
-          away.set(a.sessionId, 'dropped');
+          goAway(a.sessionId, 'dropped');
           tally.dropTalking++;
           if (rng.chance(0.5)) {
             // Back inside the window: the call resumes on the fresh socket.
@@ -239,7 +252,7 @@ describe('agent churn at floor scale (load)', () => {
         }
         const a = take(idle);
         if (a && (await world.leave(a))) {
-          away.set(a.sessionId, 'left');
+          goAway(a.sessionId, 'left');
           leftAt.set(a.sessionId, round);
           tally.leave++;
         }
@@ -288,7 +301,7 @@ describe('agent churn at floor scale (load)', () => {
             violations.push(`${tag(round)} ${a.label}'s queued break did not apply when ${attemptId} ended (reads ${live?.state})`);
             continue;
           }
-          away.set(sessionId, 'break');
+          goAway(sessionId, 'break');
           schedule(round + rng.int(1, 4), () => comeBack(a, round));
         }
         if (round % 10 === 0) {
@@ -336,19 +349,27 @@ describe('agent churn at floor scale (load)', () => {
     expect(refusedLeaves.length, summary).toBeGreaterThan(0);
 
     // Released agents are re-offered: every agent who came back while their
-    // campaign had plenty left to dial — and went on dialing for a while — was
-    // reserved again afterwards. "Plenty" and "a while" are what make a miss mean
-    // the agent was forgotten, rather than that the roster or the campaign ended.
+    // campaign had plenty left to dial — and went on dialing, with the agent still
+    // on the floor, for a while — was reserved again before they next left it.
+    // "Plenty" and "a while" are what make a miss mean the agent was forgotten,
+    // rather than that the roster or the campaign ended, or that churn took the
+    // agent off again before their turn in the longest-idle queue came round.
+    const A_WHILE = 15;
     const { rows: byAgent } = await db.query<{ reserved_agent_id: string; n: number }>(
       `SELECT reserved_agent_id, count(*)::int AS n FROM agency_call_attempts WHERE campaign_id = ANY($1::uuid[]) GROUP BY 1`, [ids]);
     const callsPerAgent = new Map(byAgent.map((r) => [r.reserved_agent_id, r.n]));
     const stillDialing = (campaignId: string, fromRound: number) =>
-      (pausedAt.get(campaignId) ?? Infinity) > fromRound + 15;
-    const checkable = returns.filter((r) => r.pending > 40 && stillDialing(r.campaignId, r.round)
-      && !world.agents.find((a) => a.sessionId === r.sessionId)!.left);
+      (pausedAt.get(campaignId) ?? Infinity) > fromRound + A_WHILE;
+    const checkable = returns
+      .map((r) => ({ ...r, next: (departures.get(r.sessionId) ?? []).find((d) => d.at > r.at) }))
+      .filter((r) => r.pending > 40 && stillDialing(r.campaignId, r.round)
+        && (r.next?.round ?? Infinity) > r.round + A_WHILE
+        && !world.agents.find((a) => a.sessionId === r.sessionId)!.left);
     expect(checkable.length, summary).toBeGreaterThan(10);
     for (const r of checkable) {
-      const again = rows.some((x) => x.reserved_agent_id === r.sessionId && x.created_at > r.at);
+      const until = r.next?.at;
+      const again = rows.some((x) => x.reserved_agent_id === r.sessionId && x.created_at > r.at
+        && (until === undefined || x.created_at < until));
       expect(again, `${r.label} came back in round ${r.round} and was never reserved again — ${summary}`).toBe(true);
     }
 

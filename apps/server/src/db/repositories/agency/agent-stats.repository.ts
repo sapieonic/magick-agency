@@ -18,14 +18,16 @@ import {
   foldOccupancy,
   type AgentStatsParams,
 } from '../../../agency/agent-record.js';
-import type {
-  AgencyAgentOccupancy,
-  AgencyAgentStats,
-  AgencyAgentStatsBucket,
-  AgencyAgentCampaignRow,
+import {
+  AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+  type AgencyAgentOccupancy,
+  type AgencyAgentStats,
+  type AgencyAgentStatsBucket,
+  type AgencyAgentCampaignRow,
 } from '@magick-agency/contracts/agency';
 import {
   AGENCY_ATTEMPT_METRICS_SQL,
+  readConnectCounts,
   AGENCY_RESOLVED_ZONE_JOIN_SQL,
   AGENCY_RESOLVED_ZONE_SQL,
   occupancyIntervalsCtes,
@@ -145,7 +147,8 @@ export class AgencyAgentStatsRepository {
       return fresh;
     };
 
-    const campaigns = new Map<string, AgencyAgentCampaignRow>();
+    // The served row less its two derived fields, which are set once the counts are final.
+    const campaigns = new Map<string, Omit<AgencyAgentCampaignRow, 'connect_rate_pct' | 'rates_reportable'>>();
 
     for (const row of attemptRows) {
       const bucket = bucketFor(row.bucket_start);
@@ -158,12 +161,15 @@ export class AgencyAgentStatsRepository {
       const campaign = campaigns.get(row.campaign_id) ?? {
         campaign_id: row.campaign_id,
         attempts: 0, connected: 0, successes: 0, talk_seconds: 0, wrapup_seconds: 0,
+        human_connects: 0, first_dials: 0,
       };
       campaign.attempts += row.attempts;
       campaign.connected += row.connected;
       campaign.successes += row.successes;
       campaign.talk_seconds += row.talk_seconds;
       campaign.wrapup_seconds += row.wrapup_seconds;
+      campaign.human_connects += row.human_connects;
+      campaign.first_dials += row.first_dials;
       campaigns.set(row.campaign_id, campaign);
     }
 
@@ -193,6 +199,23 @@ export class AgencyAgentStatsRepository {
       };
     });
 
+    // Each campaign's connect rate, from its own two counts: the totals' definition per
+    // campaign, so a client never divides `connected` by `attempts` (a different number), and
+    // its floor on those first dials, decided here as the roster decides it.
+    const byCampaign: AgencyAgentCampaignRow[] = [...campaigns.values()].map((c) => ({
+      ...c,
+      connect_rate_pct: ratePct(c.human_connects, c.first_dials),
+      rates_reportable: c.first_dials >= AGENCY_ROSTER_MIN_RATE_DENOMINATOR,
+    }));
+    // The totals' two counts are the campaigns' sums (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL).
+    const connect = byCampaign.reduce(
+      (acc, c) => {
+        acc.human += c.human_connects;
+        acc.first += c.first_dials;
+        return acc;
+      },
+      { human: 0, first: 0 },
+    );
     const totals = wireBuckets.reduce(
       (acc, bucket) => {
         acc.attempts += bucket.attempts;
@@ -217,9 +240,10 @@ export class AgencyAgentStatsRepository {
       totals: {
         attempts: totals.attempts,
         connected: totals.connected,
-        // `null`, never `0`, on a zero denominator — the imported rule. Nothing
-        // dialled is not a 0% connect rate.
-        connect_rate_pct: ratePct(totals.connected, totals.attempts),
+        // The product's one connect rate: human connects over placed first dials
+        // (`HUMAN_CONNECT_ATTEMPT_SQL`, `/stats`' own). `null`, never `0`, on a zero
+        // denominator — the imported rule. Nothing dialled is not a 0% connect rate.
+        connect_rate_pct: ratePct(connect.human, connect.first),
         successes: totals.successes,
         // The denominator is CONNECTED, not attempts: a call that never bridged
         // had no conversation to convert.
@@ -235,7 +259,7 @@ export class AgencyAgentStatsRepository {
         occupancy,
       },
       buckets: wireBuckets,
-      by_campaign: [...campaigns.values()],
+      by_campaign: byCampaign,
     };
   }
 
@@ -287,6 +311,7 @@ export class AgencyAgentStatsRepository {
     p: AgentStatsParams,
   ): Promise<{
     bucket_start: string; campaign_id: string;
+    human_connects: number; first_dials: number;
     attempts: number; connected: number; successes: number;
     talk_seconds: number; wrapup_seconds: number;
   }[]> {
@@ -301,6 +326,7 @@ export class AgencyAgentStatsRepository {
       bucket_start: string; campaign_id: string;
       attempts: string; connected: string; successes: string;
       talk_seconds: string; wrapup_seconds: string;
+      human_connects: string; first_dials: string;
     }>(
       `SELECT ${bucketStartSql(p.bucket, 'a.dialed_at', zone)} AS bucket_start,
               a.campaign_id,
@@ -324,6 +350,7 @@ export class AgencyAgentStatsRepository {
       bucket_start: r.bucket_start,
       campaign_id: r.campaign_id,
       ...readAttemptMetrics(r),
+      ...readConnectCounts(r),
     }));
   }
 

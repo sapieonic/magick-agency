@@ -40,6 +40,8 @@ vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
 const { AgencyCampaignRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { ABANDONED_ATTEMPT_PREDICATE_SQL } = await import('@magick-agency/domain/abandonment-predicate');
 const { DEFAULT_ABANDONMENT_CEILING_PCT } = await import('../../../src/agency/campaign-config.js');
+const { HUMAN_CONNECT_ATTEMPT_SQL, PLACED_FIRST_DIAL_SQL, VOICEMAIL_DISPOSITION_CODE } = await import('../../../src/db/repositories/agency/sql-fragments.js');
+const { AUTO_DISPOSITION_CODE } = await import('../../../src/agency/disposition.js');
 
 /** The scalar-aggregate statement — the one that must stay single. */
 const aggregateSql = (): string => {
@@ -82,9 +84,9 @@ const ROW: Record<string, string> = {
   retries_pending: '16',
   attempts_live: '17',
   attempts_total: '80',
-  // The connect rate's denominator: the dials that were not wrap-up redials (a
+  // The connect rate's denominator: the PLACED dials that were not wrap-up redials (a
   // distinct value, so reading `attempts_total` for it fails).
-  attempts_not_redial: '62',
+  first_dials_placed: '62',
   attempts_redialed: '18',
   attempts_connected: '19',
   agents_live: '20',
@@ -452,7 +454,7 @@ describe('no evidence reports null, not a reassuring zero', () => {
   });
 
   it('reports a null connect rate before the first attempt', async () => {
-    serve({ ...ROW, attempts_total: '0', attempts_not_redial: '0', human_connects: '0' });
+    serve({ ...ROW, attempts_total: '0', first_dials_placed: '0', human_connects: '0' });
 
     const s = await stats();
 
@@ -552,12 +554,27 @@ describe('a call nobody wrote up is not a human connect', () => {
     const sql = executable(aggregateSql());
     const human = sql.slice(sql.lastIndexOf('FILTER (', sql.indexOf('AS human_connects')), sql.indexOf('AS human_connects'));
 
-    // Bound as parameters, not inlined: `no_disposition` is the reaper's constant
-    // and a local respelling would drift from the thing that writes it.
+    // The product's one spelling (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL), interpolated
+    // from the constants, never a local respelling: `no_disposition` is the reaper's constant
+    // (AUTO_DISPOSITION_CODE) and would drift from the thing that writes it. The other two
+    // connect buckets still bind the same two codes as $3 / $4.
+    expect(human).toContain(HUMAN_CONNECT_ATTEMPT_SQL);
     expect(human).toContain('disposition_code IS NOT NULL');
-    expect(human).toContain('disposition_code <> $3');
-    expect(human).toContain('disposition_code <> $4');
-    expect(aggregateParams()[3]).toBe('no_disposition');
+    expect(human).toContain(`disposition_code <> '${VOICEMAIL_DISPOSITION_CODE}'`);
+    expect(human).toContain(`disposition_code <> '${AUTO_DISPOSITION_CODE}'`);
+    expect(aggregateParams()[2]).toBe(VOICEMAIL_DISPOSITION_CODE);
+    expect(aggregateParams()[3]).toBe(AUTO_DISPOSITION_CODE);
+  });
+
+  it('divides by PLACED first dials: a queued attempt never placed is not a dial', async () => {
+    await stats();
+    const sql = executable(aggregateSql());
+    // The one denominator (sql-fragments.ts): `dialed_at IS NOT NULL AND redial_number = 0`.
+    // It counted every `redial_number = 0` row before, so a paused campaign holding queued
+    // first attempts read a lower connect rate for dials it had not made.
+    expect(sql).toContain(`COUNT(*) FILTER (WHERE ${PLACED_FIRST_DIAL_SQL}) AS first_dials_placed`);
+    expect(PLACED_FIRST_DIAL_SQL).toContain('a.dialed_at IS NOT NULL');
+    expect(sql).not.toContain('attempts_not_redial');
   });
 });
 

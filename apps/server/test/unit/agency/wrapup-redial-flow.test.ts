@@ -28,6 +28,7 @@ const { repos, gates } = vi.hoisted(() => ({
     campaign: { findById: vi.fn() },
     contact: { findById: vi.fn() },
     session: { setState: vi.fn().mockResolvedValue(undefined) },
+    insightsPacing: { addToMinute: vi.fn().mockResolvedValue(undefined) },
   },
   gates: { evaluatePreDialGates: vi.fn() },
 }));
@@ -36,6 +37,7 @@ vi.mock('../../../src/db/repositories/agency.repository.js', () => ({
   agencyCampaignRepository: repos.campaign,
   agencyContactRepository: repos.contact,
   agencyAgentSessionRepository: repos.session,
+  agencyInsightsPacingRepository: repos.insightsPacing,
 }));
 vi.mock('../../../src/agency/pre-dial-gates.js', async (orig) => ({
   ...(await orig<typeof import('../../../src/agency/pre-dial-gates.js')>()),
@@ -257,5 +259,51 @@ describe('startWrapupRedial — not this session\'s attempt', () => {
     // Nothing was read past the attempt, and nothing was taken.
     expect(repos.campaign.findById).not.toHaveBeenCalled();
     expect(h.wrapup.stateFor(SESSION)?.attempt_id).toBe(ATTEMPT);
+  });
+});
+
+describe('startWrapupRedial — a refusal at the limit is recorded (IN2)', () => {
+  const atLimit = () => expect(repos.insightsPacing.addToMinute).toHaveBeenCalledWith(expect.objectContaining({
+    campaignId: 'camp-1', tenantId: 'ten-1', field: 'redials_refused_at_limit',
+  }));
+
+  it('the live wrap-up has no redials left: 409 redial_limit_reached, one minute counted', async () => {
+    const h = harness();
+    await h.wrapup.enter({
+      sessionId: SESSION, attemptId: ATTEMPT, campaignId: 'camp-1', tenantId: 'ten-1',
+      wrapupSeconds: 30, autoReturn: true, requiresDisposition: true, redialRemaining: 0,
+    });
+    expect(await go(h)).toMatchObject({ ok: false, status: 409, code: 'redial_limit_reached' });
+    expect(repos.insightsPacing.addToMinute).toHaveBeenCalledTimes(1);
+    atLimit();
+  });
+
+  it('the attempt row is already the last redial: refused by the row check, counted', async () => {
+    const h = harness();
+    await inWrapup(h);
+    repos.attempt.findById.mockResolvedValueOnce({ ...original, redial_number: 2, redial_of_attempt_id: 'x' });
+    expect(await go(h)).toMatchObject({ ok: false, code: 'redial_limit_reached' });
+    expect(repos.insightsPacing.addToMinute).toHaveBeenCalledTimes(1);
+    atLimit();
+  });
+
+  it('a refusal for any other reason records nothing', async () => {
+    const h = harness();
+    await inWrapup(h);
+    gates.evaluatePreDialGates.mockResolvedValueOnce({ action: 'suppress', gate: 'dnc', suppressedReason: 'dnc' });
+    expect(await go(h)).toMatchObject({ ok: false, code: 'redial_blocked_dnc' });
+    const ok = await go(h);
+    expect(ok.ok).toBe(true);
+    expect(repos.insightsPacing.addToMinute).not.toHaveBeenCalled();
+  });
+
+  it('a pacing history write that fails does not change the answer', async () => {
+    const h = harness();
+    await h.wrapup.enter({
+      sessionId: SESSION, attemptId: ATTEMPT, campaignId: 'camp-1', tenantId: 'ten-1',
+      wrapupSeconds: 30, autoReturn: true, requiresDisposition: true, redialRemaining: 0,
+    });
+    repos.insightsPacing.addToMinute.mockRejectedValueOnce(new Error('database unavailable'));
+    expect(await go(h)).toMatchObject({ ok: false, status: 409, code: 'redial_limit_reached' });
   });
 });

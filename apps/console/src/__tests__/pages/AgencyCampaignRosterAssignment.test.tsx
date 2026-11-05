@@ -169,7 +169,7 @@ describe('who owns each contact', () => {
       expect(query.getAll('assigned_to')).toEqual(['unassigned', 'agent-b']);
     });
     await waitFor(() => expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
-      'camp-1', { assigned_to: ['unassigned', 'agent-b'] }, { limit: 50 }, 'tenant-1', 'account-1',
+      'camp-1', { assigned_to: ['unassigned', 'agent-b'] }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
     ));
   });
 

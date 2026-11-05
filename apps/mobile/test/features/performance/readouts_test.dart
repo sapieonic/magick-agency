@@ -5,13 +5,16 @@ import 'package:magick_agency_agent/features/performance/logic/readouts.dart';
 
 import 'support.dart';
 
-AgentCampaignRow row(int attempts, int connected) => AgentCampaignRow(
+/// A campaign row with the served connect rate and the server's floor.
+AgentCampaignRow row({int attempts = 0, int connected = 0, double? rate, bool? reportable}) => AgentCampaignRow(
       campaignId: 'c1',
       attempts: attempts,
       connected: connected,
       successes: 0,
       talkSeconds: 0,
       wrapupSeconds: 0,
+      connectRatePct: rate,
+      ratesReportable: reportable,
     );
 
 void main() {
@@ -130,18 +133,21 @@ void main() {
     });
   });
 
-  group('rowConnectRate (the console\'s floor)', () {
-    test('no dials is a dash, not 0%', () => expect(rowConnectRate(row(0, 0)), '—'));
-
-    test('under 20 dials the rate is withheld', () {
-      expect(rosterMinRateDenominator, 20);
-      expect(rowConnectRate(row(1, 1)), 'Not enough calls');
-      expect(rowConnectRate(row(19, 10)), 'Not enough calls');
+  group('rowConnectRate (served, with the server\'s floor)', () {
+    test('a null rate or none served is a dash, not 0%', () {
+      expect(rowConnectRate(row(reportable: false)), '—');
+      // A server older than the field: never derived from connected / attempts.
+      expect(rowConnectRate(row(attempts: 142, connected: 54)), '—');
     });
 
-    test('at the floor the rate is shown', () {
-      expect(rowConnectRate(row(20, 7)), '35%');
-      expect(rowConnectRate(row(142, 54)), '38%');
+    test('not reportable is withheld, in the roster\'s words', () {
+      expect(rowConnectRate(row(rate: 100, reportable: false)), 'Not enough calls');
+    });
+
+    test('reportable shows the served rate, not connected over attempts', () {
+      expect(rowConnectRate(row(rate: 35, reportable: true)), '35%');
+      // 54 / 142 would be 38%; the served rate is 30.8%.
+      expect(rowConnectRate(row(attempts: 142, connected: 54, rate: 40 / 130 * 100, reportable: true)), '30.8%');
     });
   });
 

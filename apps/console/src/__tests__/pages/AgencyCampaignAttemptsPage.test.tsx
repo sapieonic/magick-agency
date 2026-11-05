@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom';
 import type { AgencyAttempt, AgencyKeysetPage } from '../../types/agency-spine';
 
 /**
@@ -245,7 +245,7 @@ describe('filters', () => {
 
     await waitFor(() => {
       expect(mocks.getCampaignAttempts).toHaveBeenLastCalledWith(
-        'camp-1', { outcome: ['abandoned'] }, { limit: 50 }, 'tenant-1', 'account-1',
+        'camp-1', { outcome: ['abandoned'] }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
       );
     });
 
@@ -275,7 +275,7 @@ describe('filters', () => {
     renderPage('/agency/campaigns/camp-1/attempts?contact_id=contact-2');
     await waitFor(() => {
       expect(mocks.getCampaignAttempts).toHaveBeenCalledWith(
-        'camp-1', { contact_id: 'contact-2' }, { limit: 50 }, 'tenant-1', 'account-1',
+        'camp-1', { contact_id: 'contact-2' }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
       );
     });
     expect(screen.getByTestId('attempts-pinned-contact')).toBeTruthy();
@@ -300,7 +300,7 @@ describe('paging', () => {
     );
   });
 
-  it('counts what is shown and never claims a total the API cannot produce', async () => {
+  it('without a total from the server, counts what is shown and never claims "N of M"', async () => {
     renderPage();
     await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
     const count = screen.getByTestId('attempts-count').textContent ?? '';
@@ -449,6 +449,155 @@ describe('the campaign section bar', () => {
     expect(tab.getAttribute('aria-current')).toBe('page');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
-    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
+  });
+});
+
+/**
+ * ── The filters live in the URL (the Insights drill-downs, docs/insights.md WS F) ──
+ * A number on the Insights tab opens this list with its filters in the query string. Every
+ * one is read, sent, shown as a removable chip and written back; the list asks for the
+ * exact total so the count on screen is the number that was clicked.
+ */
+function AttemptsLocationProbe() {
+  const location = useLocation();
+  return <span data-testid="location-search">{location.search}</span>;
+}
+
+function renderWithLocation(query: string) {
+  return render(
+    <MemoryRouter initialEntries={[`/agency/campaigns/camp-1/attempts${query}`]}>
+      <AttemptsLocationProbe />
+      <Routes>
+        <Route path="/agency/campaigns/:id/attempts" element={<AttemptsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+function currentQuery(): URLSearchParams {
+  return new URLSearchParams(screen.getByTestId('location-search').textContent ?? '');
+}
+
+const DRILLDOWN = '?outcome=connected&disposition_code=not_interested&agent_user_id=ac1f9d2e-1111-4222-8333-444455556666'
+  + '&caller_id=%2B919000000001&redial=1&agent_manual=1&agent_reopened=1&placed=1'
+  + '&dialed_from=2026-08-17T00%3A00%3A00.000Z&dialed_to=2026-08-18T00%3A00%3A00.000Z';
+
+describe('filters in the URL', () => {
+  it('reads every drill-down filter from the URL and sends it, asking for the total', async () => {
+    renderWithLocation(DRILLDOWN);
+    await waitFor(() => {
+      expect(mocks.getCampaignAttempts).toHaveBeenLastCalledWith(
+        'camp-1',
+        {
+          outcome: ['connected'],
+          disposition_code: ['not_interested'],
+          agent_user_id: 'ac1f9d2e-1111-4222-8333-444455556666',
+          caller_id: '+919000000001',
+          redial: '1',
+          agent_manual: '1',
+          agent_reopened: '1',
+          placed: '1',
+          dialed_from: '2026-08-17T00:00:00.000Z',
+          dialed_to: '2026-08-18T00:00:00.000Z',
+        },
+        { limit: 50, includeTotal: true },
+        'tenant-1',
+        'account-1',
+      );
+    });
+  });
+
+  it('shows each applied filter as a chip, in words', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue({
+      id: 'camp-1', name: 'Q3 Renewals', status: 'stopped',
+      disposition_catalog: [{ code: 'not_interested', label: 'Not interested' }],
+    });
+    renderWithLocation(DRILLDOWN);
+    await screen.findByText('Q3 Renewals');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const applied = within(screen.getByTestId('attempts-applied'));
+    expect(applied.getByText('Outcome: Connected')).toBeTruthy();
+    expect(applied.getByText('Written up as: Not interested')).toBeTruthy();
+    // Named from the loaded rows, not shown as a UUID.
+    expect(applied.getByText('Agent: Ravi Menon')).toBeTruthy();
+    expect(applied.getByText('Caller ID: +919000000001')).toBeTruthy();
+    expect(applied.getByText('Wrap-up redials')).toBeTruthy();
+    expect(applied.getByText('Dialled by hand')).toBeTruthy();
+    expect(applied.getByText('Dials after a reopen')).toBeTruthy();
+    expect(applied.getByText('Dials placed')).toBeTruthy();
+    expect(applied.getByText(/^Dialled from .+, up to .+$/)).toBeTruthy();
+  });
+
+  it('removing a chip rewrites the URL without it and reloads the list', async () => {
+    renderWithLocation(DRILLDOWN);
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove filter: Wrap-up redials' }));
+
+    await waitFor(() => expect(currentQuery().get('redial')).toBeNull());
+    // Everything else is still applied.
+    expect(currentQuery().get('caller_id')).toBe('+919000000001');
+    expect(currentQuery().get('dialed_from')).toBe('2026-08-17T00:00:00.000Z');
+    await waitFor(() => {
+      const [, filters] = mocks.getCampaignAttempts.mock.calls.at(-1)!;
+      expect(filters).not.toHaveProperty('redial');
+      expect(filters).toHaveProperty('caller_id', '+919000000001');
+    });
+
+    // The dialled window is one chip for both ends.
+    fireEvent.click(screen.getByRole('button', { name: /^Remove filter: Dialled from/ }));
+    await waitFor(() => expect(currentQuery().get('dialed_from')).toBeNull());
+    expect(currentQuery().get('dialed_to')).toBeNull();
+  });
+
+  it('writes the form back to the URL and keeps the filters the form has no control for', async () => {
+    renderWithLocation('?caller_id=%2B919000000001&placed=1');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+
+    fireEvent.click(screen.getByLabelText('Abandoned (no agent free)'));
+    fireEvent.click(screen.getByText('Apply'));
+
+    await waitFor(() => expect(currentQuery().getAll('outcome')).toEqual(['abandoned']));
+    expect(currentQuery().get('caller_id')).toBe('+919000000001');
+    expect(currentQuery().get('placed')).toBe('1');
+  });
+
+  it('fills the form from a link, so Apply does not silently undo it', async () => {
+    renderWithLocation('?outcome=busy&phone=98765');
+    const chip = (await screen.findByLabelText('Busy')) as HTMLInputElement;
+    expect(chip.checked).toBe(true);
+    expect((screen.getByPlaceholderText('Whole number, or the last few digits') as HTMLInputElement).value).toBe('98765');
+  });
+
+  it('ignores an unknown key and a malformed flag rather than failing the page', async () => {
+    renderWithLocation('?utm_source=mail&redial=yes&placed=1');
+    await waitFor(() => {
+      expect(mocks.getCampaignAttempts).toHaveBeenLastCalledWith(
+        'camp-1', { placed: '1' }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
+      );
+    });
+  });
+
+  it('shows the exact total when the server sends one: the drill-down count', async () => {
+    mocks.getCampaignAttempts.mockResolvedValue({ ...page([BRIDGED, ABANDONED], 'cursor-2'), total: 1234 });
+    renderWithLocation('?placed=1');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    const count = screen.getByTestId('attempts-count').textContent ?? '';
+    expect(count).toMatch(/^1[,.]?234 attempts — showing 2$/);
+  });
+
+  it('the export carries every applied filter, the drill-down ones included', async () => {
+    mocks.downloadSpineCsv.mockResolvedValue({
+      blob: new Blob(['a']), truncated: false, reason: null, rowLimit: null, rows: 3,
+    });
+    renderWithLocation('?redial=1&dialed_from=2026-08-17T00%3A00%3A00.000Z');
+    await screen.findByTestId(`attempt-row-${BRIDGED.id}`);
+    fireEvent.click(screen.getByText('Export CSV'));
+    await waitFor(() => {
+      expect(mocks.downloadSpineCsv).toHaveBeenCalledWith(
+        'camp-1', 'attempts', { redial: '1', dialed_from: '2026-08-17T00:00:00.000Z' }, 'tenant-1', 'account-1',
+      );
+    });
   });
 });

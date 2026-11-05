@@ -37,14 +37,14 @@ function codeOf(source: SupervisorSource): string {
  * Does this file read the field off the payload?
  *
  * Two shapes count, because the supervisor surface uses both: a property access
- * on the stats object (`stats?.aht_seconds`), and a quoted key — the contact
- * funnel's `CONTACT_FUNNEL_STATES` table drives its five states through
- * `stats?.[cell.key]`, so the only literal occurrence is `key: 'contacts_total'`.
+ * on the stats object (`stats?.aht_seconds`), and a quoted key — a table that
+ * drives several fields through `stats?.[row.key]` names each only as a literal
+ * (`key: 'contacts_total'`).
  *
- * (This used to name a `TILES` table on the page. That table is gone: every counter
- * moved off the page and into `agencyCampaignOverview`'s
- * derivations, which is exactly the reader-moved staleness this map exists to
- * catch — so the comment describing the mechanism had to move with it.)
+ * (The Overview panel's derivations were the last readers of most campaign counters.
+ * When the Insights tab replaced that panel they were deleted, and the entries moved
+ * to the live readers or to `unconsumed`: the reader-moved staleness this map exists
+ * to catch.)
  *
  * A bare identifier deliberately does not count. `agents` and `status` are
  * ordinary words in this codebase — `campaign.status` is on the same page and is

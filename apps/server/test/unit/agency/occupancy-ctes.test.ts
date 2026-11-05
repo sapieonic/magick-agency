@@ -47,6 +47,24 @@ describe('occupancyIntervalsCtes', () => {
     }
   });
 
+  it('the insights campaign variant is the same shared text, selecting events by campaign', () => {
+    const agent = occupancyIntervalsCtes('agent', '');
+    const campaign = occupancyIntervalsCtes('campaign', '');
+    const shared = (sql: string, match: string, key: string) => {
+      const tail = sql.slice(sql.indexOf('), in_window AS ('));
+      expect(tail.split(`${match}\n`)).toHaveLength(3);
+      return tail.replaceAll(`${match}\n`, '<MATCH>\n').replace(`SELECT ${key},\n`, 'SELECT <KEY>,\n');
+    };
+    expect(shared(campaign, 'e.campaign_id = $1::uuid', 'sess.agent_user_id'))
+      .toBe(shared(agent, 'e.agent_user_id = $1', 'sess.zone'));
+    const sess = campaign.split('), in_window AS (')[0]!;
+    expect(sess).toContain('WHERE s.campaign_id = $1::uuid');
+    expect(sess).toContain('AND s.tenant_id = $4');
+    expect(sess).not.toContain('$5');
+    // break_reason is carried through to the intervals, for the readers that split by it.
+    expect(campaign).toContain('ev.break_reason,');
+  });
+
   it('both sess CTEs bind the same five positions and select joined_at for the bound', () => {
     for (const variant of ['agent', 'roster'] as const) {
       const sess = occupancyIntervalsCtes(variant, '').split('), in_window AS (')[0]!;

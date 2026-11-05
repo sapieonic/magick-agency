@@ -3,7 +3,7 @@
  * ../metric-instruments.js and ../meter.js.
  */
 import { meter } from '../meter.js';
-import { counter, histogram, observableGauge } from '../metric-instruments.js';
+import { counter, gauge, histogram, observableGauge } from '../metric-instruments.js';
 
 // ── S3 metrics ────────────────────────────────────────────
 // Names, labels and buckets are charted by the platform overview dashboard. Read by
@@ -476,6 +476,22 @@ export const agencyPacingMissedWakeupsTotal = counter(meter, 'agency_pacing_miss
   description: 'Pacing safety ticks that found work no invalidation event announced',
 });
 
+// ─── Agency dialer: pacing history writes (IN2) ─────────────────────────────
+//
+// The pacing history (`agency_campaign_pacing_minutes`) is best effort: the leader counts per
+// campaign per minute in memory and flushes every ~15 s (`path="batch"`), and the writes outside
+// the tick are one upsert each (`path="direct"`). A failed write never fails a tick or a request;
+// it counts here. A failed batch is kept for the next flush, and beyond the cap its oldest
+// minutes are dropped and counted in `..._dropped_total`: a steady rate there means the
+// insights page's stall history has holes.
+export const agencyPacingHistoryWriteFailuresTotal = counter<'path'>(meter, 'agency_pacing_history_write_failures_total', {
+  description: 'Pacing history writes that failed (batch: kept for the next flush; direct: lost)',
+});
+
+export const agencyPacingHistoryDroppedTotal = counter(meter, 'agency_pacing_history_dropped_total', {
+  description: 'Campaign minutes of pacing history dropped unwritten (oldest first, beyond the pending cap)',
+});
+
 // ─── Agency dialer: SEAT TIME, so pacing decisions stop being arguments ──────
 //
 // Added 2026-09-10. Every number in the pacing recommendation — the 5-agent
@@ -716,4 +732,35 @@ export const agencyOurFaultRetirementTotal = counter<
   'tenant_id' | 'campaign_id' | 'outcome'
 >(meter, 'agency_our_fault_retirement_total', {
   description: 'Contacts permanently retired by exhausting the our-fault redial ledger',
+});
+
+// ─── Insights rollup (migration 0012, docs/insights.md "Shape") ───────────────
+//
+// The job in `apps/server/src/agency/insights-rollup-job.ts` recomputes the 15-minute buckets
+// the dirty-marking triggers name. The backlog is what makes the page's "as of" honest: a
+// growing count or an old oldest mark means the range sections are behind the attempts table.
+// Unlabelled: there is one job per deployment, and a per-campaign label would be one series
+// per campaign ever dialled.
+
+export const agencyInsightsRollupDirtyBuckets = gauge(meter, 'agency_insights_rollup_dirty_buckets', {
+  description: 'Insights rollup buckets marked dirty and not yet recomputed, after the last pass',
+});
+
+export const agencyInsightsRollupOldestDirtySeconds = gauge(meter, 'agency_insights_rollup_oldest_dirty_seconds', {
+  description: 'Age of the oldest insights rollup dirty mark after the last pass, seconds (0 when none)',
+  unit: 's',
+});
+
+export const agencyInsightsRollupRecomputeSeconds = histogram(meter, 'agency_insights_rollup_recompute_seconds', {
+  description: 'Seconds one insights rollup batch took: claim, recompute and commit',
+  unit: 's',
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+});
+
+export const agencyInsightsRollupBucketsTotal = counter(meter, 'agency_insights_rollup_buckets_total', {
+  description: 'Insights rollup buckets recomputed',
+});
+
+export const agencyInsightsRollupFailuresTotal = counter(meter, 'agency_insights_rollup_failures_total', {
+  description: 'Insights rollup batches that failed and were rolled back (their marks stay dirty)',
 });

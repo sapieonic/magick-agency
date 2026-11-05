@@ -86,7 +86,7 @@ const { mockAnalytics } = vi.hoisted(() => ({
 }));
 vi.mock('../../../src/analytics/posthog.js', () => mockAnalytics);
 
-import { WebRtcBridgeManager, WebRtcCallError, UNSTORED_WS_TOKEN_CAP } from '../../../src/core/webrtc-bridge-manager.js';
+import { WebRtcBridgeManager, WebRtcCallError, UNSTORED_WS_TOKEN_CAP, PSTN_EARLY_FRAME_CAP } from '../../../src/core/webrtc-bridge-manager.js';
 import { CarrierRequestTimeoutError, isDialOutcomeUnknown } from '../../../src/telephony/carrier-errors.js';
 import { BridgeWsTokens, UNSTORED_WS_TOKEN_SWEEP_MS } from '../../../src/core/bridge/ws-tokens.js';
 import { encodeAlaw, decodeAlaw } from '../../../src/utils/audio.js';
@@ -1430,6 +1430,70 @@ describe('WebRtcBridgeManager.attachPstnLegVerified — provider-token gate (Voi
     expect(pstn.readyState).toBe(3); // closed
     expect(mgr.getSession('call-1')!.pstnWs).toBeNull(); // never attached
     await endByUser(mgr);
+  });
+
+  // The carrier sends `start` the moment its socket opens, which is inside the token
+  // check's Redis round trip. `ws` keeps nothing for an event with no listener, so those
+  // frames were lost and the call ended `provider_start_timeout` (seen in the media-WS
+  // load test under a full run's load).
+  describe('frames the carrier sends while its token is being checked', () => {
+    function slowRedis(getVal: string | null) {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => { release = r; });
+      const redis = {
+        get: vi.fn(async () => { await gate; return getVal; }),
+        set: vi.fn().mockResolvedValue('OK'),
+        del: vi.fn().mockResolvedValue(1),
+      };
+      return { redis, release };
+    }
+    async function attachWhile(getVal: string | null, token: string, send: (pstn: ReturnType<typeof fakeWs>) => void) {
+      const { redis, release } = slowRedis(getVal);
+      const mgr = new WebRtcBridgeManager(makeCallManager() as any, redis as any);
+      await dial(mgr, VL_PARAMS);
+      const pstn = fakeWs();
+      const attached = mgr.attachPstnLegVerified('call-1', pstn as any, token);
+      await vi.waitFor(() => expect(redis.get).toHaveBeenCalled());
+      send(pstn);
+      release();
+      return { mgr, pstn, ok: await attached };
+    }
+
+    it('a valid start sent during the check opens the media, as if it came after', async () => {
+      const { mgr, ok } = await attachWhile('prov-tok', 'prov-tok', (pstn) => negotiateVoicelink(pstn));
+      expect(ok).toBe(true);
+      const session = mgr.getSession('call-1')!;
+      expect(session.providerMediaReady).toBe(true);
+      expect(session.carrierCallId).toBe('c');
+      await endByUser(mgr);
+    });
+
+    it('a bad start sent during the check ends the call unsupported_media_format, not by timeout', async () => {
+      const { mgr } = await attachWhile('prov-tok', 'prov-tok', (pstn) => pstn.emit('message', JSON.stringify({
+        event: 'start', start: { media_format: { encoding: 'audio/alaw', sample_rate: '16000' } },
+      })));
+      await new Promise((r) => setImmediate(r));
+      expect(mgr.getSession('call-1')).toBeUndefined();
+      const persisted = mockRepo.update.mock.calls.map((c: any[]) => c[1]).filter(Boolean);
+      expect(persisted.some((u: any) => u.outcome === 'unsupported_media_format' && u.error_code === 'UNSUPPORTED_MEDIA_FORMAT')).toBe(true);
+    });
+
+    it('frames held on a refused token are discarded with the socket', async () => {
+      const { mgr, pstn, ok } = await attachWhile('prov-tok', 'WRONG', (p) => negotiateVoicelink(p));
+      expect(ok).toBe(false);
+      expect(pstn.readyState).toBe(3);
+      expect(mgr.getSession('call-1')!.providerMediaReady).toBe(false);
+      await endByUser(mgr);
+    });
+
+    it(`holds at most ${PSTN_EARLY_FRAME_CAP} frames; later ones are dropped`, async () => {
+      const { mgr } = await attachWhile('prov-tok', 'prov-tok', (pstn) => {
+        for (let i = 0; i < PSTN_EARLY_FRAME_CAP; i++) pstn.emit('message', 'not json');
+        negotiateVoicelink(pstn); // one past the cap
+      });
+      expect(mgr.getSession('call-1')!.providerMediaReady).toBe(false);
+      await endByUser(mgr);
+    });
   });
 });
 

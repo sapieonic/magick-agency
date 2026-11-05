@@ -296,15 +296,14 @@ export async function updateAgencyCampaign(
 // ─── Stats and lifecycle ─────────────────────────────────────────────────────
 
 /**
- * Campaign counters.
+ * Campaign counters, the supervisor floor and the health strip.
  *
- * What comes back today is eleven counters from `agencyCampaignRepository.stats`.
- * `AgencyCampaignStats` in the shared contract additionally declares
- * `abandoned_24h`, `answered_24h` and `abandonment_rate_24h_pct` as REQUIRED,
- * and the server produces none of them — they exist only as Prometheus metrics
- * (see the contract). They are typed optional here on purpose: a required field with no
- * producer reads as guaranteed and silences the one check that would catch it.
- * Render them as unavailable rather than as zero.
+ * The server produces every counter, the 24 h abandonment pair and
+ * `abandonment_rate_24h_pct` included (read from the attempt rows in the same
+ * statement as the rest, `campaign-stats.ts` in the server). The counters are still
+ * typed optional in the console wire type (see `AgencyCampaignStats` there): an
+ * absent one renders as unavailable, never as zero, and `abandonment_rate_24h_pct`
+ * is `null` (not `0`) until anything has been answered.
  */
 export async function getAgencyCampaignStats(
   id: string,

@@ -524,6 +524,9 @@ export async function registerCampaignRetryRoutes(app: FastifyInstance): Promise
       },
       tenantId: request.tenantId!,
       accountId: request.accountId,
+      // The signed-in creator, as on `POST /campaigns`: the handler stores the
+      // originator in `created_by` and stamps it as the `audit_logs` actor (IN8).
+      originator: actorUserId,
     });
 
     /*

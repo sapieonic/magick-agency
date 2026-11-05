@@ -68,8 +68,9 @@ export function CampaignTabs({
   liveAgentCount,
   campaignStatus,
 }: CampaignTabsProps) {
-  // Never empty and never a single tab: the three panel sections are ungated,
-  // so every role that can open a campaign at all gets a real choice here.
+  // Never empty: Agents is ungated, so every role that can open a campaign gets
+  // at least that. A viewer or operator gets ONLY that (Insights and the spine
+  // tabs floor at `agency.supervise`), and the bar still says where they are.
   const softphone = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   const tabs = visibleCampaignTabs(role, (flag) => flag === SOFTPHONE_FLAG && softphone);
 

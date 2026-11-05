@@ -63,19 +63,12 @@ import {
   AGENCY_RESOLVED_ZONE_JOIN_SQL,
   AGENCY_RESOLVED_ZONE_SQL,
   CONVERSATION_ATTEMPT_SQL,
+  HUMAN_CONNECT_ATTEMPT_SQL,
+  PLACED_FIRST_DIAL_SQL,
+  VOICEMAIL_DISPOSITION_CODE,
   WRAPUP_MEASURED_RESOLUTIONS_SQL,
   readAttemptMetrics,
 } from './sql-fragments.js';
-
-/**
- * A machine connect is an agent who sat through an answering machine, and the
- * only signal for it is the agent's own write-up: AMD is out of scope, so
- * nothing else in the system knows. Kept as one constant because the count, its
- * complement (`human_connects`) and both AHT variants must all agree on the same
- * code — a second spelling would put a voicemail in the human column and in the
- * AHT it is excluded from at the same time.
- */
-const VOICEMAIL_DISPOSITION_CODE = 'voicemail';
 
 /**
  * A `TIMESTAMPTZ` as an ISO instant, degrading to the epoch rather than throwing.
@@ -166,6 +159,7 @@ export async function campaignStats(
          SELECT COUNT(*) AS contacts_total,
                 COUNT(*) FILTER (WHERE state = 'pending') AS contacts_pending,
                 COUNT(*) FILTER (WHERE state = 'in_flight') AS contacts_in_flight,
+                COUNT(*) FILTER (WHERE state = 'connected') AS contacts_connected,
                 COUNT(*) FILTER (WHERE state = 'completed') AS contacts_completed,
                 COUNT(*) FILTER (WHERE state = 'suppressed') AS contacts_suppressed,
                 COUNT(*) FILTER (WHERE state = 'exhausted') AS contacts_exhausted,
@@ -186,9 +180,13 @@ export async function campaignStats(
                 -- counted here (the original is always connected): not again.
                 COUNT(*) FILTER (WHERE outcome = 'connected' AND redial_number = 0) AS attempts_connected,
                 -- Wrap-up redials PLACED (dialed_at, as attempts_retried), and the
-                -- dials that were not one (the connect rate's denominator).
+                -- PLACED dials that were not one: the connect rate's denominator
+                -- (PLACED_FIRST_DIAL_SQL, the product's one definition). It counted
+                -- every redial_number = 0 row before, a queued attempt that never left
+                -- the building included, so a paused campaign holding queued first
+                -- attempts read a lower connect rate for dials it had not made.
                 COUNT(*) FILTER (WHERE redial_number > 0 AND dialed_at IS NOT NULL) AS attempts_redialed,
-                COUNT(*) FILTER (WHERE redial_number = 0) AS attempts_not_redial,
+                COUNT(*) FILTER (WHERE ${PLACED_FIRST_DIAL_SQL}) AS first_dials_placed,
                 -- Dials that were NOT a contact's first.
                 --
                 -- A different question from retries_pending, and the pair
@@ -251,11 +249,11 @@ export async function campaignStats(
                 -- that carries its outcome. The redialled attempts carry the system
                 -- code redialed, which would otherwise book every one of them a human
                 -- connect whatever the conversation turned out to be.
-                COUNT(*) FILTER (
-                  WHERE ${CONVERSATION_ATTEMPT_SQL}
-                    AND disposition_code IS NOT NULL
-                    AND disposition_code <> $3
-                    AND disposition_code <> $4) AS human_connects,
+                -- HUMAN_CONNECT_ATTEMPT_SQL: the connect rate's numerator, the product's
+                -- one spelling (the agent record and the insights rollup count it too).
+                -- Disjoint from the two buckets below by the same codes ($3 voicemail,
+                -- $4 the reaper's auto-stamp).
+                COUNT(*) FILTER (WHERE ${HUMAN_CONNECT_ATTEMPT_SQL}) AS human_connects,
                 COUNT(*) FILTER (
                   WHERE ${CONVERSATION_ATTEMPT_SQL}
                     AND (disposition_code IS NULL OR disposition_code = $4)) AS unclassified_connects,
@@ -319,6 +317,7 @@ export async function campaignStats(
        SELECT ct.contacts_total::text AS contacts_total,
               ct.contacts_pending::text AS contacts_pending,
               ct.contacts_in_flight::text AS contacts_in_flight,
+              ct.contacts_connected::text AS contacts_connected,
               ct.contacts_completed::text AS contacts_completed,
               ct.contacts_suppressed::text AS contacts_suppressed,
               ct.contacts_exhausted::text AS contacts_exhausted,
@@ -328,7 +327,7 @@ export async function campaignStats(
               att.attempts_connected::text AS attempts_connected,
               att.attempts_retried::text AS attempts_retried,
               att.attempts_redialed::text AS attempts_redialed,
-              att.attempts_not_redial::text AS attempts_not_redial,
+              att.first_dials_placed::text AS first_dials_placed,
               (SELECT COUNT(*) FROM agency_agent_sessions WHERE campaign_id = $1 AND left_at IS NULL)::text AS agents_live,
               att.answered_24h::text AS answered_24h,
               att.abandoned_24h::text AS abandoned_24h,
@@ -403,6 +402,9 @@ export async function campaignStats(
     contacts_total: num('contacts_total'),
     contacts_pending: num('contacts_pending'),
     contacts_in_flight: num('contacts_in_flight'),
+    // Bridged and owing an outcome (live or in wrap-up). Without it the six buckets
+    // do not sum to `contacts_total` while calls are parked.
+    contacts_connected: num('contacts_connected'),
     contacts_completed: num('contacts_completed'),
     contacts_suppressed: num('contacts_suppressed'),
     contacts_exhausted: num('contacts_exhausted'),
@@ -455,9 +457,11 @@ export async function campaignStats(
     machine_connects: machineConnects,
     unclassified_connects: unclassifiedConnects,
     machine_connects_available: row['machine_connects_available'] === 'true',
-    // Over the dials that were not wrap-up redials: a redial continues a conversation
-    // already counted, it is not another try at reaching someone.
-    connect_rate_pct: ratePct(humanConnects, num('attempts_not_redial')),
+    // The product's one connect rate (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL): human
+    // connects over PLACED first dials. A wrap-up redial continues a conversation already
+    // counted, and a queued attempt never placed is not a dial.
+    connect_rate_pct: ratePct(humanConnects, num('first_dials_placed')),
+    first_dials_placed: num('first_dials_placed'),
     attempts_success: attemptsSuccess,
     // `null`, never `0`, when nothing has bridged — the same imported helper
     // `abandonment_rate_24h_pct` uses, and the same distinction: "nothing has

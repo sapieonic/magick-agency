@@ -16,9 +16,7 @@ import {
   noOutcomeSettlementFor,
   type NoOutcomeSettled,
 } from './softphone/manual-settlement.js';
-import {
-  agencyOurFaultRetirementTotal,
-} from '@magick-agency/observability/metrics/agency';
+import { countOurFaultRetirement } from './pacing/pacing-history.js';
 
 const log = createChildLogger({ component: 'agency-reaper' });
 
@@ -703,7 +701,7 @@ export class AgencyReaper {
     reapedAttemptId: string | null,
     source: 'startup' | 'leak' | 'stranded',
     /**
-     * Label set for {@link agencyOurFaultRetirementTotal}, taken from the attempt
+     * Label set for `agency_our_fault_retirement_total` ({@link countOurFaultRetirement}), taken from the attempt
      * (or, for the stranded-contact sweep, contact) row the caller is already
      * holding.
      *
@@ -814,7 +812,8 @@ export class AgencyReaper {
        * contact that had moved on (nothing written) and a rejected write all
        * count nothing.
        */
-      agencyOurFaultRetirementTotal.inc({
+      // The counter and the campaign's pacing history (`our_fault_retired`), together.
+      await countOurFaultRetirement({
         tenant_id: scope.tenantId,
         campaign_id: scope.campaignId,
         outcome: 'orphaned',

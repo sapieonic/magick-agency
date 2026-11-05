@@ -1,0 +1,578 @@
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
+import { DEFAULTS, uuidFor } from '../setup/factories.js';
+
+/*
+ * The insights drill-downs (docs/insights.md, WS F): every number on the Insights tab opens a
+ * list, and the list's `total` must equal the number clicked. These run the new filters and
+ * the opt-in total against real Postgres and check three things for each:
+ *
+ *  1. the total equals the count computed DIRECTLY in SQL, with the bucket rule spelled out
+ *     here independently of `drilldown-sql.ts` (a second spelling on purpose: the test is
+ *     the reader's check that the shared one says what the docs say);
+ *  2. the total equals the number of rows the keyset pages yield when walked to the end, so
+ *     the count and the list cannot be of different sets;
+ *  3. the total is the number this seed was built to produce (a literal), so a predicate
+ *     that is wrong in the same way in both spellings is still caught.
+ *
+ * Then the plans: the predicates must be servable by a campaign-led index on a large campaign.
+ * A seeded table this small would plan a sequential scan whatever the predicate, so the plan
+ * cases switch sequential and bitmap scans off for one transaction, ANALYZE the seeded tables
+ * inside it (the plan sees this seed's statistics, never what an earlier file left, and the
+ * ROLLBACK discards them), and assert the SHAPE: the campaign is an index condition and nothing
+ * reads the table outside an index. Which campaign-led index wins is the planner's business
+ * (`idx_agency_contacts_phone_suffix` serves `campaign_id =` as well as the insights index);
+ * the 1M-row timings are in the report.
+ */
+
+/** Every statement the repositories send, so a plan case can EXPLAIN exactly that SQL. */
+const sent: Array<{ sql: string; values: unknown[] }> = [];
+/** When set, the repositories' statements run on this client (one open transaction). */
+let inTransaction: { query: (sql: string, values: unknown[]) => Promise<unknown> } | null = null;
+vi.mock('@magick-agency/db', () => ({
+  getPool: () => ({
+    query: (sql: string, values: unknown[]) => {
+      sent.push({ sql, values });
+      return inTransaction ? inTransaction.query(sql, values) : getTestPool().query(sql, values);
+    },
+  }),
+}));
+
+const { insertAgencyCampaign, insertAgencyContact, insertAgencyAttempt, insertAgentSession } =
+  await import('./agency-factories.js');
+const { agencyAttemptRepository, agencyContactRepository } =
+  await import('../../../src/db/repositories/agency.repository.js');
+const { parseAttemptFilters, parseContactFilters } = await import('../../../src/agency/spine-filters.js');
+const { callbackCodes } = await import('../../../src/db/repositories/agency/assignment-sql.js');
+
+const CATALOG = [
+  { code: 'ptp', label: 'Promise to pay', requires_datetime: false },
+  { code: 'call_back', label: 'Call back later', requires_datetime: true },
+];
+const CODES = callbackCodes(CATALOG as never);
+
+const HOUR = 3_600_000;
+const T0 = new Date('2026-10-01T09:00:00Z');
+const at = (hours: number) => new Date(T0.getTime() + hours * HOUR);
+const PAST = () => new Date(Date.now() - 2 * HOUR);
+const FUTURE = () => new Date(Date.now() + 2 * HOUR);
+
+const U1 = uuidFor('drill-agent-1');
+const U2 = uuidFor('drill-agent-2');
+
+beforeEach(async () => {
+  await truncateAll();
+  sent.length = 0;
+});
+
+afterAll(async () => {
+  await closeTestPool();
+});
+
+/**
+ * One campaign whose contacts land in every bucket, and whose attempts cover every attempt
+ * slice, with the expected counts written next to the rows that make them.
+ */
+async function seed() {
+  const campaign = await insertAgencyCampaign({
+    status: 'running', disposition_catalog: JSON.stringify(CATALOG),
+  });
+  const s1 = await insertAgentSession(campaign.id, { agent_user_id: U1 });
+  const s2 = await insertAgentSession(campaign.id, { agent_user_id: U2 });
+  // A second session of U1 on ANOTHER campaign: its attempts must not count as U1's here.
+  const other = await insertAgencyCampaign({ name: 'other' });
+  // Left (one live session per agent per tenant, `uq_agency_agent_live_tenant`).
+  const sOther = await insertAgentSession(other.id, { agent_user_id: U1, state: 'offline', left_at: at(-1) });
+
+  const contact = (o: Record<string, unknown>) => insertAgencyContact(campaign.id, o);
+  // waiting=due_now (2): due, never written up; and a callback whose time has come.
+  const due = await contact({ state: 'pending', next_attempt_at: PAST() });
+  const dueCallback = await contact({
+    state: 'pending', next_attempt_at: PAST(), last_disposition: 'call_back', last_outcome: 'connected',
+    attempt_count: 1,
+  });
+  // waiting=callback (1): booked for later, and that call is still the latest outcome.
+  const callback = await contact({
+    state: 'pending', next_attempt_at: FUTURE(), last_disposition: 'call_back', last_outcome: 'connected',
+    attempt_count: 1, assigned_user_id: U1, assigned_at: new Date(),
+  });
+  // waiting=retry (4): a callback dialled and NOT reached (no longer a callback, isCallbackSql),
+  // a retry never written up, a ptp, and a connected call closed without a write-up and
+  // rescheduled: last_disposition NULL with last_outcome 'connected' makes isCallbackSql
+  // NULL, not false, and under NOT a NULL would drop it (the COALESCE in waitingContactSql).
+  const callbackNotReached = await contact({
+    state: 'pending', next_attempt_at: FUTURE(), last_disposition: 'call_back', last_outcome: 'no_answer',
+    attempt_count: 2,
+  });
+  const retryNull = await contact({
+    state: 'pending', next_attempt_at: FUTURE(), last_outcome: 'busy', attempt_count: 1, assigned_user_id: U1, assigned_at: new Date(),
+  });
+  const retryPtp = await contact({
+    state: 'pending', next_attempt_at: FUTURE(), last_disposition: 'ptp', last_outcome: 'connected',
+    attempt_count: 1,
+  });
+  const retryConnectedNoWriteUp = await contact({
+    state: 'pending', next_attempt_at: FUTURE(), last_outcome: 'connected', attempt_count: 1,
+  });
+  // Not waiting: on a call, finished, suppressed (a past next_attempt_at must not make them due).
+  const onCall = await contact({ state: 'in_flight', next_attempt_at: PAST() });
+  const completed = await contact({ state: 'completed', next_attempt_at: PAST(), last_outcome: 'connected', attempt_count: 1 });
+  const dnc = await contact({ state: 'suppressed', suppressed_reason: 'dnc', next_attempt_at: PAST() });
+  // Another campaign's due contact: never in this campaign's counts.
+  await insertAgencyContact(other.id, { state: 'pending', next_attempt_at: PAST() });
+
+  const attempt = (contactId: string, o: Record<string, unknown>) =>
+    insertAgencyAttempt(campaign.id, contactId, { state: 'ended', ...o });
+  // Dials placed (dialed_at set) drive `dials_placed` through 0011's trigger, so `attempted`
+  // is exercised the way production writes it. Window under test: [at(0), at(5)).
+  const aFrom = await attempt(completed.id, {
+    attempt_number: 1, dialed_at: at(0), outcome: 'connected', disposition_code: 'ptp',
+    reserved_agent_id: s1.id, caller_id: '+919000000001',
+  });
+  const aNoAnswer = await attempt(callbackNotReached.id, {
+    attempt_number: 1, dialed_at: at(1), outcome: 'no_answer', caller_id: '+919000000002',
+  });
+  const aRedial = await attempt(completed.id, {
+    attempt_number: 2, dialed_at: at(2), outcome: 'connected', redial_number: 1, redial_of_attempt_id: aFrom.id,
+    reserved_agent_id: s1.id, caller_id: '+919000000001',
+  });
+  const aManual = await attempt(retryNull.id, {
+    attempt_number: 1, dialed_at: at(3), outcome: 'busy', agent_manual: true, reserved_agent_id: s2.id,
+    caller_id: '+919000000001',
+  });
+  const aReopened = await attempt(retryPtp.id, {
+    attempt_number: 1, dialed_at: at(4.5), outcome: 'connected', agent_reopened: true, disposition_code: 'ptp',
+    reserved_agent_id: s1.id, caller_id: '+919000000002',
+  });
+  // Exactly at the exclusive end: outside [at(0), at(5)).
+  const aAtTo = await attempt(callback.id, {
+    attempt_number: 1, dialed_at: at(5), outcome: 'connected', disposition_code: 'call_back',
+    reserved_agent_id: s1.id, caller_id: '+919000000001',
+  });
+  // Never placed: created in the window, no dialed_at. In no dialled count, and its contact
+  // (`dueCallback` has no other attempt) stays NOT attempted despite the attempt row.
+  const aNeverPlaced = await attempt(dueCallback.id, {
+    attempt_number: 1, outcome: 'orphaned', created_at: at(1),
+  });
+  // Another campaign's dial in the window, by U1 on their other session.
+  const otherContact = await insertAgencyContact(other.id);
+  await insertAgencyAttempt(other.id, otherContact.id, {
+    state: 'ended', dialed_at: at(1), reserved_agent_id: sOther.id, outcome: 'connected',
+  });
+
+  return {
+    campaign, s1, s2,
+    contacts: {
+      due, dueCallback, callback, callbackNotReached, retryNull, retryPtp, retryConnectedNoWriteUp,
+      onCall, completed, dnc,
+    },
+    attempts: { aFrom, aNoAnswer, aRedial, aManual, aReopened, aAtTo, aNeverPlaced },
+  };
+}
+
+/** Walk every keyset page (small pages, so the cursor is exercised) and collect the ids. */
+async function walkContacts(campaignId: string, query: Record<string, unknown>): Promise<string[]> {
+  const parsed = parseContactFilters(query);
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
+  const ids: string[] = [];
+  let after: { at: string; id: string } | undefined;
+  const { decodeKeysetCursor } = await import('@magick-agency/domain/keyset-cursor');
+  for (;;) {
+    const page = await agencyContactRepository.listForCampaign({
+      campaignId, filters: parsed.filters, callbackCodes: CODES, limit: 2, ...(after ? { after } : {}),
+    });
+    ids.push(...page.rows.map((r) => r.id));
+    if (!page.next_cursor) return ids;
+    after = decodeKeysetCursor(page.next_cursor)!;
+  }
+}
+
+async function walkAttempts(campaignId: string, query: Record<string, unknown>): Promise<string[]> {
+  const parsed = parseAttemptFilters(query);
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
+  const ids: string[] = [];
+  let after: { at: string; id: string } | undefined;
+  const { decodeKeysetCursor } = await import('@magick-agency/domain/keyset-cursor');
+  for (;;) {
+    const page = await agencyAttemptRepository.listForCampaign({
+      campaignId, filters: parsed.filters, limit: 2, ...(after ? { after } : {}),
+    });
+    ids.push(...page.rows.map((r) => r.id));
+    if (!page.next_cursor) return ids;
+    after = decodeKeysetCursor(page.next_cursor)!;
+  }
+}
+
+async function contactTotal(campaignId: string, query: Record<string, unknown>): Promise<number> {
+  const parsed = parseContactFilters(query);
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
+  return agencyContactRepository.countListed({ campaignId, filters: parsed.filters, callbackCodes: CODES });
+}
+
+async function attemptTotal(campaignId: string, query: Record<string, unknown>): Promise<number> {
+  const parsed = parseAttemptFilters(query);
+  if (!parsed.ok) throw new Error(JSON.stringify(parsed.issues));
+  return agencyAttemptRepository.countListed({ campaignId, filters: parsed.filters });
+}
+
+async function direct(sql: string, values: unknown[]): Promise<number> {
+  const { rows } = await getTestPool().query<{ n: string }>(sql, values);
+  return Number(rows[0]!.n);
+}
+
+describe('contacts: waiting and attempted, total = direct SQL = rows listed', () => {
+  it('waiting=due_now: pending and next_attempt_at <= now, a due callback included', async () => {
+    const s = await seed();
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_contacts
+        WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at <= now()`,
+      [s.campaign.id],
+    );
+    const total = await contactTotal(s.campaign.id, { waiting: 'due_now' });
+    const listed = await walkContacts(s.campaign.id, { waiting: 'due_now' });
+    expect(expected).toBe(2);
+    expect(total).toBe(expected);
+    expect(listed.sort()).toEqual([s.contacts.due.id, s.contacts.dueCallback.id].sort());
+  });
+
+  it('waiting=callback: pending, booked for later, the callback call still the latest outcome', async () => {
+    const s = await seed();
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_contacts
+        WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at > now()
+          AND last_disposition = ANY($2::text[]) AND last_outcome = 'connected'`,
+      [s.campaign.id, CODES],
+    );
+    const total = await contactTotal(s.campaign.id, { waiting: 'callback' });
+    const listed = await walkContacts(s.campaign.id, { waiting: 'callback' });
+    expect(expected).toBe(1);
+    expect(total).toBe(expected);
+    expect(listed).toEqual([s.contacts.callback.id]);
+  });
+
+  it('waiting=retry: pending, later, and not a callback — a never-written-up contact included', async () => {
+    const s = await seed();
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_contacts
+        WHERE campaign_id = $1 AND state = 'pending' AND next_attempt_at > now()
+          AND NOT (last_disposition IS NOT NULL AND last_disposition = ANY($2::text[])
+                   AND last_outcome IS NOT DISTINCT FROM 'connected')`,
+      [s.campaign.id, CODES],
+    );
+    const total = await contactTotal(s.campaign.id, { waiting: 'retry' });
+    const listed = await walkContacts(s.campaign.id, { waiting: 'retry' });
+    expect(expected).toBe(4);
+    expect(total).toBe(expected);
+    expect(listed.sort()).toEqual([
+      s.contacts.callbackNotReached.id, s.contacts.retryNull.id, s.contacts.retryPtp.id,
+      s.contacts.retryConnectedNoWriteUp.id,
+    ].sort());
+  });
+
+  it('due now includes a contact due at exactly now(): `<=`, not `<`', async () => {
+    // One transaction, so the seed's now() and the count's now() are the same instant.
+    const campaign = await insertAgencyCampaign({ status: 'running', disposition_catalog: JSON.stringify(CATALOG) });
+    const client = await getTestPool().connect();
+    try {
+      await client.query('BEGIN');
+      inTransaction = client as never;
+      await client.query(
+        `INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, state, next_attempt_at)
+         VALUES ($1, $2, $3, '+919800000001', 'pending', now())`,
+        [campaign.id, campaign.tenant_id, campaign.account_id],
+      );
+      expect(await contactTotal(campaign.id, { waiting: 'due_now' })).toBe(1);
+      expect(await contactTotal(campaign.id, { waiting: 'retry' })).toBe(0);
+    } finally {
+      inTransaction = null;
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('the three waiting buckets partition the pending contacts', async () => {
+    const s = await seed();
+    const pending = await direct(
+      `SELECT count(*) AS n FROM agency_contacts WHERE campaign_id = $1 AND state = 'pending'`,
+      [s.campaign.id],
+    );
+    const sum = (await contactTotal(s.campaign.id, { waiting: 'due_now' }))
+      + (await contactTotal(s.campaign.id, { waiting: 'retry' }))
+      + (await contactTotal(s.campaign.id, { waiting: 'callback' }));
+    expect(sum).toBe(pending);
+    expect(pending).toBe(7);
+  });
+
+  it('attempted=1|0 is dials_placed > 0 | = 0, kept by the 0011 trigger from placed dials', async () => {
+    const s = await seed();
+    const attempted = await direct(
+      `SELECT count(*) AS n FROM agency_contacts c
+        WHERE c.campaign_id = $1
+          AND EXISTS (SELECT 1 FROM agency_call_attempts a WHERE a.contact_id = c.id AND a.dialed_at IS NOT NULL)`,
+      [s.campaign.id],
+    );
+    const all = await direct(`SELECT count(*) AS n FROM agency_contacts WHERE campaign_id = $1`, [s.campaign.id]);
+    expect(attempted).toBe(5);
+    expect(await contactTotal(s.campaign.id, { attempted: '1' })).toBe(attempted);
+    expect(await contactTotal(s.campaign.id, { attempted: '0' })).toBe(all - attempted);
+    const listed = await walkContacts(s.campaign.id, { attempted: '1' });
+    expect(listed.length).toBe(attempted);
+    // An attempt row that was never placed does not make its contact attempted.
+    const never = await walkContacts(s.campaign.id, { attempted: '0' });
+    expect(never).toContain(s.contacts.dueCallback.id);
+  });
+
+  it('combines with the existing filters, and the total follows them', async () => {
+    const s = await seed();
+    // Callbacks and retries held by U1: the allocation table's per-agent drill-down.
+    expect(await contactTotal(s.campaign.id, { state: 'pending', waiting: 'callback', assigned_to: U1 })).toBe(1);
+    expect(await contactTotal(s.campaign.id, { waiting: 'retry', assigned_to: U1 })).toBe(1);
+    expect(await contactTotal(s.campaign.id, { state: 'pending', attempted: '0' })).toBe(
+      await direct(
+        `SELECT count(*) AS n FROM agency_contacts WHERE campaign_id = $1 AND state = 'pending' AND dials_placed = 0`,
+        [s.campaign.id],
+      ),
+    );
+    // No filter: the whole roster, this campaign only.
+    expect(await contactTotal(s.campaign.id, {})).toBe(10);
+  });
+});
+
+describe('contacts: suppressed for another reason, a NULL reason included (suppressed_reason=none)', () => {
+  it('max_attempts, manual and none count every suppression but dnc and invalid, as the roster does', async () => {
+    const s = await seed();
+    const contact = (o: Record<string, unknown>) => insertAgencyContact(s.campaign.id, o);
+    await contact({ state: 'suppressed', suppressed_reason: 'max_attempts' });
+    await contact({ state: 'suppressed', suppressed_reason: 'manual' });
+    await contact({ state: 'suppressed', suppressed_reason: null });
+    await contact({ state: 'suppressed', suppressed_reason: 'invalid' });
+    // A pending contact with no reason is not suppressed: the state filter keeps it out.
+    await contact({ state: 'pending', next_attempt_at: FUTURE() });
+    const query = { state: 'suppressed', suppressed_reason: ['max_attempts', 'manual', 'none'] };
+    // The roster's suppressedOtherSql, spelled again.
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_contacts WHERE campaign_id = $1 AND state = 'suppressed'
+          AND suppressed_reason IS DISTINCT FROM 'dnc' AND suppressed_reason IS DISTINCT FROM 'invalid'`, [s.campaign.id]);
+    expect(expected).toBe(3);
+    expect(await contactTotal(s.campaign.id, query)).toBe(expected);
+    expect(await walkContacts(s.campaign.id, query)).toHaveLength(expected);
+    // `none` alone is the NULL reason; the stored reasons alone leave it out.
+    expect(await contactTotal(s.campaign.id, { state: 'suppressed', suppressed_reason: 'none' })).toBe(1);
+    expect(await contactTotal(s.campaign.id, { state: 'suppressed', suppressed_reason: ['max_attempts', 'manual'] })).toBe(2);
+  });
+});
+
+describe('attempts: the drill-down slices, total = direct SQL = rows listed', () => {
+  const WINDOW = { dialed_from: '2026-10-01T09:00:00Z', dialed_to: '2026-10-01T14:00:00Z' };
+
+  it('dialed_from/dialed_to are half-open on dialed_at and count placed dials only', async () => {
+    const s = await seed();
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_call_attempts
+        WHERE campaign_id = $1 AND dialed_at >= $2 AND dialed_at < $3`,
+      [s.campaign.id, WINDOW.dialed_from, WINDOW.dialed_to],
+    );
+    const total = await attemptTotal(s.campaign.id, WINDOW);
+    const listed = await walkAttempts(s.campaign.id, WINDOW);
+    expect(expected).toBe(5);
+    expect(total).toBe(expected);
+    expect(listed).toHaveLength(expected);
+    // The inclusive start is in, the exclusive end and the never-placed attempt are not.
+    expect(listed).toContain(s.attempts.aFrom.id);
+    expect(listed).not.toContain(s.attempts.aAtTo.id);
+    expect(listed).not.toContain(s.attempts.aNeverPlaced.id);
+  });
+
+  it('the existing from/to keep their meaning: inclusive, on created_at, unplaced attempts included', async () => {
+    const s = await seed();
+    // aNeverPlaced was created at at(1); every other attempt was created now().
+    const total = await attemptTotal(s.campaign.id, { from: '2026-10-01T10:00:00Z', to: '2026-10-01T10:00:00Z' });
+    expect(total).toBe(1);
+  });
+
+  it('placed=1 with no window: every placed dial of the campaign (the lifetime count)', async () => {
+    const s = await seed();
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_call_attempts WHERE campaign_id = $1 AND dialed_at IS NOT NULL`,
+      [s.campaign.id],
+    );
+    expect(expected).toBe(6);
+    expect(await attemptTotal(s.campaign.id, { placed: '1' })).toBe(expected);
+    expect(await attemptTotal(s.campaign.id, { placed: '0' })).toBe(1);
+  });
+
+  it.each([
+    ['redial', { redial: '1' }, `redial_number > 0`, 1],
+    ['agent_manual', { agent_manual: '1' }, `agent_manual`, 1],
+    ['agent_reopened', { agent_reopened: '1' }, `agent_reopened`, 1],
+    ['caller_id', { caller_id: '+919000000001' }, `caller_id = '+919000000001'`, 3],
+    ['outcome', { outcome: 'connected' }, `outcome = 'connected'`, 3],
+    ['disposition_code', { disposition_code: 'ptp' }, `disposition_code = 'ptp'`, 2],
+  ] as const)('%s within the window', async (_name, filter, sqlRule, literal) => {
+    const s = await seed();
+    const query = { ...WINDOW, ...filter };
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_call_attempts
+        WHERE campaign_id = $1 AND dialed_at >= $2 AND dialed_at < $3 AND ${sqlRule}`,
+      [s.campaign.id, WINDOW.dialed_from, WINDOW.dialed_to],
+    );
+    expect(expected).toBe(literal);
+    expect(await attemptTotal(s.campaign.id, query)).toBe(expected);
+    expect(await walkAttempts(s.campaign.id, query)).toHaveLength(expected);
+  });
+
+  it('agent_user_id resolves through reserved_agent_id → the session user, on this campaign only', async () => {
+    const s = await seed();
+    const query = { ...WINDOW, agent_user_id: U1 };
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_call_attempts a
+         JOIN agency_agent_sessions s ON s.id = a.reserved_agent_id
+        WHERE a.campaign_id = $1 AND s.agent_user_id = $2 AND a.dialed_at >= $3 AND a.dialed_at < $4`,
+      [s.campaign.id, U1, WINDOW.dialed_from, WINDOW.dialed_to],
+    );
+    expect(expected).toBe(3);
+    expect(await attemptTotal(s.campaign.id, query)).toBe(expected);
+    expect(await walkAttempts(s.campaign.id, query)).toHaveLength(expected);
+    // U1's dial on their other campaign's session is not this campaign's.
+    expect(await attemptTotal(s.campaign.id, { placed: '1', agent_user_id: U1 })).toBe(4);
+  });
+
+  it('override_applied=1|0: the dials that spent an override (the rollup\'s overrides_used), and the rest', async () => {
+    const s = await seed();
+    const contact = await insertAgencyContact(s.campaign.id, { state: 'exhausted' });
+    await insertAgencyAttempt(s.campaign.id, contact.id, { attempt_number: 1, state: 'ended', dialed_at: at(1), override_applied: ['extra_attempts'] });
+    await insertAgencyAttempt(s.campaign.id, contact.id, { attempt_number: 2, state: 'ended', dialed_at: at(2), override_applied: ['retry_delay', 'calling_hours'] });
+    await insertAgencyAttempt(s.campaign.id, contact.id, { attempt_number: 3, state: 'ended', dialed_at: at(8), override_applied: ['extra_attempts'] });
+    const query = { ...WINDOW, override_applied: '1' };
+    const expected = await direct(
+      `SELECT count(*) AS n FROM agency_call_attempts
+        WHERE campaign_id = $1 AND cardinality(override_applied) > 0 AND dialed_at >= $2 AND dialed_at < $3`,
+      [s.campaign.id, WINDOW.dialed_from, WINDOW.dialed_to]);
+    expect(expected).toBe(2);
+    expect(await attemptTotal(s.campaign.id, query)).toBe(expected);
+    expect(await walkAttempts(s.campaign.id, query)).toHaveLength(expected);
+    // The two halves partition the window's dials.
+    expect(await attemptTotal(s.campaign.id, { ...WINDOW, override_applied: '0' }) + expected)
+      .toBe(await attemptTotal(s.campaign.id, WINDOW));
+    expect(parseAttemptFilters({ override_applied: 'yes' }).ok).toBe(false);
+  });
+
+  it('the total is the whole filtered list, not what is left after a cursor', async () => {
+    const s = await seed();
+    const parsed = parseAttemptFilters(WINDOW);
+    if (!parsed.ok) throw new Error('parse');
+    const first = await agencyAttemptRepository.listForCampaign({ campaignId: s.campaign.id, filters: parsed.filters, limit: 2 });
+    expect(first.rows).toHaveLength(2);
+    expect(await attemptTotal(s.campaign.id, WINDOW)).toBe(5);
+  });
+});
+
+describe('plans: index-shaped predicates (sequential and bitmap scans off, the seed analysed, one rolled-back transaction)', () => {
+  async function planOf(sql: string, values: unknown[]): Promise<string> {
+    const client = await getTestPool().connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL enable_seqscan = off');
+      await client.query('SET LOCAL enable_bitmapscan = off');
+      for (const t of SEEDED_TABLES) await client.query(`ANALYZE ${t}`);
+      const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, values);
+      return rows.map((r) => r['QUERY PLAN']).join('\n');
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  }
+
+  /** The last statement the repository sent, EXPLAINed. */
+  async function planOfLast(): Promise<string> {
+    const last = sent[sent.length - 1]!;
+    return planOf(last.sql, last.values);
+  }
+
+  /** The tables the seed writes, analysed inside the plan's rolled-back transaction. */
+  const SEEDED_TABLES = ['agency_campaigns', 'agency_contacts', 'agency_call_attempts', 'agency_agent_sessions'];
+
+  /**
+   * A second campaign with 3,000 contacts in every waiting bucket and 3,000 dials inside the
+   * window under test, so the CAMPAIGN is what selects. With only the seed's few rows every index
+   * costs the same, and the planner may walk a whole index that does not lead with the campaign
+   * (`idx_agency_attempts_agent_dialed` for the dialed window, seen in a full run) with the
+   * campaign as a filter: a plan no 1M-row campaign would get, and not what these cases ask.
+   */
+  async function crowd(): Promise<void> {
+    const other = await insertAgencyCampaign({ name: 'crowd' });
+    await getTestPool().query(
+      `WITH c AS (
+         INSERT INTO agency_contacts (campaign_id, tenant_id, account_id, phone_e164, context, state, next_attempt_at, last_outcome, last_disposition)
+         SELECT $1, $2, $3, '+91' || lpad(g::text, 10, '0'), '{}'::jsonb, 'pending',
+                now() + make_interval(hours => (g % 3) - 1), 'connected', CASE WHEN g % 2 = 0 THEN 'call_back' END
+           FROM generate_series(1, 3000) g
+         RETURNING id, phone_e164)
+       INSERT INTO agency_call_attempts (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, state, dialed_at, redial_number)
+       SELECT $1, c.id, $2, $3, 1, '+919000000001', 'ended',
+              $4::timestamptz + make_interval(secs => right(c.phone_e164, 4)::int * 5), right(c.phone_e164, 1)::int % 2
+         FROM c`,
+      [other.id, DEFAULTS.tenantId, DEFAULTS.accountId, T0]);
+  }
+
+  /** The campaign is an index condition on `table`, and no scan of it reads outside an index. */
+  function expectCampaignIndexed(plan: string, table: string): void {
+    expect(plan, plan).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+    const lines = plan.split('\n');
+    const scan = lines.findIndex((l) => new RegExp(`Index (Only )?Scan( Backward)? using \\w+ on ${table}\\b`).test(l));
+    expect(scan, plan).toBeGreaterThanOrEqual(0);
+    // The scan's own Index Cond (the first one after it, before the next plan node).
+    const own = lines.slice(scan + 1).find((l) => /Index Cond:|->/.test(l)) ?? '';
+    expect(own, plan).toMatch(/Index Cond: .*campaign_id = /);
+  }
+
+  /*
+   * The waiting buckets: whichever campaign-led index the planner takes (the insights index, the
+   * dialable index, or the phone-suffix index on some statistics), the campaign narrows the scan
+   * and nothing reads the heap outside an index. On a 1M-row campaign the planner picks
+   * `idx_agency_contacts_insights` (index-only) for every bucket but due now, which
+   * `idx_agency_contacts_dialable` serves index-only (the WS F report).
+   */
+  it.each(['due_now', 'retry', 'callback'] as const)(
+    'contacts total, waiting=%s: an index condition on the campaign',
+    async (waiting) => {
+      const s = await seed();
+      await crowd();
+      await contactTotal(s.campaign.id, { waiting });
+      expectCampaignIndexed(await planOfLast(), 'agency_contacts');
+    },
+  );
+
+  it('contacts total, attempted=1: an index condition on the campaign', async () => {
+    const s = await seed();
+    await crowd();
+    await contactTotal(s.campaign.id, { attempted: '1' });
+    expectCampaignIndexed(await planOfLast(), 'agency_contacts');
+  });
+
+  it('attempts total, override_applied=1 for an agent over a window: the campaign and window in the index, the flag a filter on them', async () => {
+    const s = await seed();
+    await crowd();
+    await attemptTotal(s.campaign.id, { dialed_from: '2026-10-01T09:00:00Z', dialed_to: '2026-10-01T14:00:00Z', override_applied: '1' });
+    const plan = await planOfLast();
+    expect(plan).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+    const cond = plan.split('\n').find((l) => l.includes('Index Cond:') && l.includes('dialed_at')) ?? '';
+    expect(cond, plan).toContain('campaign_id =');
+    expect(cond, plan).toContain('dialed_at >=');
+    expect(plan).toMatch(/Filter: .*cardinality\(override_applied\) > 0/);
+  });
+
+  it('attempts total, dialed window: a dialed_at range under the campaign, both bounds in the index', async () => {
+    const s = await seed();
+    await crowd();
+    await attemptTotal(s.campaign.id, { dialed_from: '2026-10-01T09:00:00Z', dialed_to: '2026-10-01T14:00:00Z', redial: '1' });
+    const plan = await planOfLast();
+    expect(plan).not.toMatch(/Seq Scan|Bitmap Heap Scan/);
+    // `idx_agency_attempts_campaign_dialed` (campaign, dialed_at) or `idx_agency_attempts_billing`
+    // (dialed_at, campaign): either way both bounds and the campaign are the index condition.
+    const cond = plan.split('\n').find((l) => l.includes('Index Cond:') && l.includes('dialed_at')) ?? '';
+    expect(cond, plan).toContain('campaign_id =');
+    expect(cond, plan).toContain('dialed_at >=');
+    expect(cond, plan).toContain('dialed_at <');
+  });
+});

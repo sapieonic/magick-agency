@@ -163,6 +163,59 @@ describe('activityDetailSummary', () => {
       .toBe('Un-suppressed, scope: tenant.');
   });
 
+  it('names every changed setting, with before and after where the row carries them (IN8)', () => {
+    const changed = row({
+      source: 'master',
+      action: 'agency_campaign.config_changed',
+      detail: {
+        campaign_id: 'camp-1',
+        fields: ['calling_window_end', 'record_calls', 'calling_days', 'retry_policy', 'brand_new_setting'],
+        changes: {
+          calling_window_end: { from: '20:00:00', to: '21:00:00' },
+          record_calls: { from: false, to: true },
+          calling_days: { from: [1, 2, 3, 4, 5], to: [1, 2, 3, 4, 5, 6] },
+        },
+      },
+    });
+    expect(activityDetailSummary(changed)).toBe(
+      'Changed calling hours end (20:00:00 → 21:00:00), call recording (off → on), '
+      + 'calling days (1, 2, 3, 4, 5 → 1, 2, 3, 4, 5, 6), retry policy and brand new setting.',
+    );
+    // One field reads as a sentence too, and a row naming nothing falls back to the raw detail.
+    expect(activityDetailSummary({ ...changed, detail: { fields: ['retry_policy'] } }))
+      .toBe('Changed retry policy.');
+    expect(activityDetailSummary({ ...changed, detail: { fields: [] } })).toBeNull();
+  });
+
+  it('reads out a roster upload: the file and its rule, then how it ended (IN8)', () => {
+    const started = row({
+      source: 'master',
+      action: 'agency_campaign.roster_upload_started',
+      detail: { file_name: 'may.csv', mode: 'append', dedupe_column: 'Loan No', dedupe_phones: true },
+    });
+    expect(activityDetailSummary(started))
+      .toBe('Uploaded “may.csv”, adding to the roster, duplicates found on “Loan No”.');
+    expect(activityDetailSummary({ ...started, detail: { file_name: 'may.csv', mode: 'replace', dedupe_column: null } }))
+      .toBe('Uploaded “may.csv”, replacing the roster, duplicates found on the phone number.');
+
+    const counts = { rows_read: 1200, accepted: 1150, rejected: 50, duplicates: 20 };
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_upload_completed', detail: { status: 'completed', ...counts } })))
+      .toBe('1,200 rows read: 1,150 accepted, 50 rejected (20 duplicates).');
+    expect(activityDetailSummary(row({
+      action: 'agency_campaign.roster_upload_failed',
+      detail: { status: 'failed', error_code: 'dnc_unavailable', rows_read: 0, accepted: 0, rejected: 0, duplicates: 0 },
+    }))).toBe('Failed: dnc_unavailable. 0 rows read: 0 accepted, 0 rejected.');
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_upload_failed', detail: { status: 'cancelled' } })))
+      .toBe('Cancelled.');
+  });
+
+  it('says how many contacts a roster clear removed, or that it could not tell', () => {
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_cleared', detail: { roster_state: 'cleared', cleared: 4210 } })))
+      .toBe('4,210 contacts removed from the roster.');
+    expect(activityDetailSummary(row({ action: 'agency_campaign.roster_cleared', detail: { roster_state: 'unconfirmed', cleared: null } })))
+      .toMatch(/could not be confirmed/);
+  });
+
   it('renders a status transition generically', () => {
     expect(activityDetailSummary(row({ action: 'agency_campaign.stopped', detail: { from: 'running', to: 'stopping' } })))
       .toBe('running → stopping');

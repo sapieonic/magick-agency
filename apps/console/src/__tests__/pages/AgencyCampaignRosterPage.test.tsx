@@ -172,7 +172,7 @@ describe('suppressed contacts', () => {
 
     await waitFor(() => {
       expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
-        'camp-1', { state: ['suppressed'] }, { limit: 50 }, 'tenant-1', 'account-1',
+        'camp-1', { state: ['suppressed'] }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
       );
     });
   });
@@ -186,7 +186,7 @@ describe('suppressed contacts', () => {
 
     await waitFor(() => {
       expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
-        'camp-1', { suppressed_reason: ['dnc'] }, { limit: 50 }, 'tenant-1', 'account-1',
+        'camp-1', { suppressed_reason: ['dnc'] }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
       );
     });
   });
@@ -264,7 +264,7 @@ describe('the campaign section bar', () => {
     expect(tab.getAttribute('aria-current')).toBe('page');
     // Its neighbours are reachable from here — the point of the bar is that
     // getting to another section does not mean going back through the campaign.
-    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
   });
 });
 
@@ -285,7 +285,7 @@ describe('the filters round-trip through the URL', () => {
       expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
         'camp-1',
         { last_disposition: ['not_interested'] },
-        { limit: 50 },
+        { limit: 50, includeTotal: true },
         'tenant-1',
         'account-1',
       );
@@ -309,7 +309,7 @@ describe('the filters round-trip through the URL', () => {
       expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
         'camp-1',
         { last_disposition: ['not_interested'] },
-        { limit: 50 },
+        { limit: 50, includeTotal: true },
         'tenant-1',
         'account-1',
       );
@@ -327,7 +327,7 @@ describe('the filters round-trip through the URL', () => {
     await waitFor(() => expect(currentQuery().toString()).toBe(''));
     await waitFor(() => {
       expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
-        'camp-1', {}, { limit: 50 }, 'tenant-1', 'account-1',
+        'camp-1', {}, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
       );
     });
   });
@@ -418,5 +418,71 @@ describe('Retry these contacts', () => {
     renderPage();
     await screen.findByTestId(`roster-row-${COMPLETED.id}`);
     expect(screen.queryByTestId('roster-retry-action')).toBeNull();
+  });
+});
+
+/**
+ * ── The Insights tab's drill-downs (docs/insights.md, WS F) ─────────────────
+ * A roster number opens this list with `waiting` / `attempted` in the URL. The form has no
+ * control for either, so each shows as a removable chip, Apply keeps them, and the list
+ * asks for the exact total so the count on screen can be checked against the number clicked.
+ */
+describe('insights drill-downs: waiting, attempted and the total', () => {
+  it('reads waiting and attempted from the URL and sends them, asking for the total', async () => {
+    renderPage('?state=pending&waiting=callback&attempted=1');
+    await waitFor(() => {
+      expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
+        'camp-1',
+        { state: ['pending'], waiting: 'callback', attempted: '1' },
+        { limit: 50, includeTotal: true },
+        'tenant-1',
+        'account-1',
+      );
+    });
+  });
+
+  it('drops a value this build does not know rather than sending a filter the server would refuse', async () => {
+    renderPage('?waiting=later&attempted=yes');
+    await waitFor(() => {
+      expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
+        'camp-1', {}, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
+      );
+    });
+  });
+
+  it('shows each as a removable chip, and removing one rewrites the URL and the request', async () => {
+    renderPage('?state=pending&waiting=due_now&attempted=0');
+    await screen.findByTestId(`roster-row-${COMPLETED.id}`);
+    expect(screen.getByTestId('roster-chip-waiting').textContent).toContain('Waiting: Due now');
+    expect(screen.getByTestId('roster-chip-attempted').textContent).toContain('Never attempted');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove filter: Waiting: Due now' }));
+
+    await waitFor(() => expect(currentQuery().get('waiting')).toBeNull());
+    expect(currentQuery().get('attempted')).toBe('0');
+    expect(currentQuery().getAll('state')).toEqual(['pending']);
+    await waitFor(() => {
+      expect(mocks.getCampaignContacts).toHaveBeenLastCalledWith(
+        'camp-1', { state: ['pending'], attempted: '0' }, { limit: 50, includeTotal: true }, 'tenant-1', 'account-1',
+      );
+    });
+  });
+
+  it('keeps the link-only filters when the form is applied', async () => {
+    renderPage('?waiting=retry');
+    await screen.findByTestId(`roster-row-${COMPLETED.id}`);
+    fireEvent.click(await screen.findByLabelText('Not interested'));
+    fireEvent.click(screen.getByText('Apply'));
+    await waitFor(() => expect(currentQuery().getAll('last_disposition')).toEqual(['not_interested']));
+    expect(currentQuery().get('waiting')).toBe('retry');
+  });
+
+  it('shows the exact total when the server sends one', async () => {
+    mocks.getCampaignContacts.mockResolvedValue({ ...page([COMPLETED, SUPPRESSED, OUR_FAULT]), total: 1234 });
+    renderPage('?waiting=due_now');
+    await screen.findByTestId(`roster-row-${COMPLETED.id}`);
+    const count = screen.getByTestId('roster-count').textContent ?? '';
+    expect(count).toContain('contacts — showing 3');
+    expect(count).toMatch(/^1[,.]?234 contacts/);
   });
 });

@@ -83,7 +83,31 @@ const { pool, clients } = vi.hoisted(() => {
   });
   return { pool: { query, connect }, clients };
 });
-vi.mock('@magick-agency/db', () => ({ getPool: () => pool }));
+/**
+ * The connect rate's two columns (sql-fragments.ts HUMAN_CONNECT_ATTEMPT_SQL): a fixture row that
+ * does not name them reads them as its `connected` and `attempts`, so a fixture written for the
+ * counters keeps its rate; the cases about the connect rate set them apart explicitly.
+ */
+function withConnectCounts(result: unknown): unknown {
+  const r = result as { rows?: unknown[] } | undefined;
+  if (!r || !Array.isArray(r.rows)) return result;
+  return {
+    ...r,
+    rows: r.rows.map((row) => {
+      const o = row as Record<string, unknown>;
+      if (!o || typeof o !== 'object' || !('attempts' in o)) return row;
+      return { human_connects: o['connected'], first_dials: o['attempts'], ...o };
+    }),
+  };
+}
+
+vi.mock('@magick-agency/db', () => ({
+  getPool: () => new Proxy(pool, {
+    get: (target, key) => (key === 'query'
+      ? (...args: unknown[]) => Promise.resolve((target.query as (...a: unknown[]) => unknown)(...args)).then(withConnectCounts)
+      : Reflect.get(target, key)),
+  }),
+}));
 
 const { AgencyAgentStatsRepository } = await import('../../../src/db/repositories/agency.repository.js');
 const { AGENCY_GROUP_DIMENSIONS, GROUP_SORTS } = await import('../../../src/agency/agent-record.js');
@@ -719,7 +743,7 @@ describe('the ORDER BY is TOTAL, which is what makes the limit reproducible', ()
     // the fixture. `NULLIF` makes it NULL, which the explicit `NULLS LAST` then
     // files where the contract says an unranked row goes.
     const expected: Record<string, string> = {
-      connect_rate_pct: 'g.connected::numeric / NULLIF(g.attempts::numeric, 0)',
+      connect_rate_pct: 'g.human_connects::numeric / NULLIF(g.first_dials::numeric, 0)',
       success_rate_pct: 'g.successes::numeric / NULLIF(g.connected::numeric, 0)',
       aht_seconds:
         '(g.talk_seconds::numeric + g.wrapup_seconds::numeric) / NULLIF(g.connected::numeric, 0)',
@@ -879,10 +903,36 @@ describe('a null disposition is a real group, not a gap ', () => {
   });
 });
 
+// ─── The connect rate: human connects over placed first dials ───────────────
+
+describe('connect_rate_pct is the product\'s one connect rate (human connects over placed first dials)', () => {
+  it('divides HUMAN connects by placed FIRST dials, never connected by attempts, and gates on the first dials', async () => {
+    // 50 dials of which 31 were wrap-up redials (19 first dials); 30 conversations of which
+    // 10 reached a person. connected / attempts would read 60% and pass the floor.
+    serve([{
+      agent_user_id: 'u-hana', attempts: '50', connected: '30', successes: '5', human_connects: '10', first_dials: '19',
+      talk_seconds: '3000', wrapup_seconds: '300', total_groups: '1',
+    }]);
+    const row = (await read()).rows[0]!;
+    expect(row.connect_rate_pct).toBeCloseTo((10 / 19) * 100);
+    expect(row.rates_reportable).toBe(false);
+    expect(row.success_rate_pct).toBeCloseTo((5 / 30) * 100);
+  });
+
+  it('selects the two counts from the shared fragment and orders by them', async () => {
+    serve(GROUPED_ROWS);
+    await read({ sort: 'connect_rate_pct' });
+    const sql = String(pool.query.mock.calls.map((c: unknown[]) => c[0]).find((s: unknown) => String(s).includes('WITH grouped')));
+    expect(sql).toContain('AS human_connects');
+    expect(sql).toContain('AS first_dials');
+    expect(sql).toContain('g.human_connects, g.first_dials');
+  });
+});
+
 // ─── `rates_reportable` ─────────────────────────────────────────────────────
 
 describe('`rates_reportable` is the SERVER\'s minimum-volume gate, on every grouping', () => {
-  it('is true EXACTLY on the threshold and false one attempt below it', async () => {
+  it('is true EXACTLY on the threshold and false one first dial below it', async () => {
     // The `>=` is the whole assertion. u-esi sits on the bound and u-farah one dial
     // under it, which is the only pair that separates `>=` from `>` — every other
     // fixture row is far enough from 20 to pass under either operator.
@@ -912,7 +962,7 @@ describe('`rates_reportable` is the SERVER\'s minimum-volume gate, on every grou
       .toBe(true);
   });
 
-  it('gates on `attempts`, which is `connect_rate_pct`\'s denominator and only that', async () => {
+  it('gates on the placed first dials, which are `connect_rate_pct`\'s denominator, and only that', async () => {
     // u-chen dialled 40 — over the bound — and connected nobody. The row IS
     // reportable on this flag, because the gate is the headline denominator and 40
     // dials genuinely are enough to quote a connect rate of 0% for. What it is NOT

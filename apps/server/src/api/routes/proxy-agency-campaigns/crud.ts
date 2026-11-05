@@ -12,6 +12,8 @@ import { assertAssignmentSettingsAllowed } from '../../../agency/campaign-assign
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import { ownedCoreCampaignOnce, stringField } from '../helpers/core-campaign.js';
+import { decodeConfigChange } from '../../../agency/campaign-config-audit.js';
+import { CONFIG_CHANGE_HEADER } from '../../middleware/headers.js';
 import {
   validateAgencyCampaignConfig,
   withCampaignConfigDefaults,
@@ -78,6 +80,13 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
       method: 'POST',
       path: '/agency-campaigns',
       body,
+      // Who created it (IN8). The handler stores the originator in `created_by` and
+      // stamps it as the `audit_logs` actor; with no originator both read as the
+      // system (`NULL` / `system:api`), which is how every campaign was recorded
+      // before this was sent. `request.user` is always the signed-in person here
+      // (`sessionMiddleware` has no API-key path); the bare user id, as
+      // `agency_ingest_jobs.created_by` and `last_transition_by.user_id` hold it.
+      ...(request.user?.id ? { originator: request.user.id } : {}),
     });
   });
 
@@ -228,6 +237,31 @@ export async function registerCampaignCrudRoutes(app: FastifyInstance): Promise<
         resource_id: request.params.id,
         campaign_id: request.params.id,
         details: { campaign_id: request.params.id, from: modeBefore, to: modeAfter },
+      });
+    }
+
+    // ── Every config change is audited too (IN8) ──────────────────────────────
+    // One row per successful PATCH that changed anything, naming each changed field
+    // with `{ from, to }` for the small ones. The handler computed the change (it holds
+    // the row before and after the write) and sent it on a private response header,
+    // so this costs no read here: a PATCH stays one internal call. Absent header = no
+    // change (a save of what is stored) = no row. Kept beside the mode row above, not
+    // instead of it: `assignment_mode_changed` is the CA10 trail's own action.
+    // `?.`: a double of `callCore` may answer without headers, and an audit read must
+    // never fail a write that has already landed.
+    const change = result.status < 400
+      ? decodeConfigChange(result.headers?.get(CONFIG_CHANGE_HEADER))
+      : null;
+    if (change) {
+      platformAuditLogger.log({
+        tenant_id: request.tenantId!,
+        ...(request.accountId ? { account_id: request.accountId } : {}),
+        ...requestAuditActor(request),
+        action: 'agency_campaign.config_changed',
+        resource_type: 'agency_campaign',
+        resource_id: request.params.id,
+        campaign_id: request.params.id,
+        details: { campaign_id: request.params.id, fields: change.fields, changes: change.changes },
       });
     }
     return reply.code(result.status).send(result.body);

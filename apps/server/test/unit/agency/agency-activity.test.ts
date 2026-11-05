@@ -193,6 +193,31 @@ describe('normalizeCoreRow', () => {
    * `last_transition_by`, since `system` and `unattributed` are opposite
    * conclusions for an incident.
    */
+  /**
+   * IN8: the public layer sends the signed-in creator's user id as the originator on
+   * campaign create and retry, so those rows carry a bare user id. One the tenant's
+   * directory resolved is that person; one it did not stays an originator label.
+   */
+  it('reports a dialer-side actor that is a resolved user id as that person', () => {
+    const userId = '6f1c2d3e-4b5a-4c6d-8e7f-0a1b2c3d4e5f';
+    const names = new Map([[userId, 'Priya Creator']]);
+    const normalized = normalizeCoreRow(
+      coreRecord({ event_type: 'agency_campaign.created', actor: userId }),
+      names,
+    );
+    expect(normalized.actor).toEqual({
+      type: 'human', system: false, user_id: userId, api_key_id: null, display: 'Priya Creator',
+    });
+    // Nothing else about the row changes.
+    expect(normalized.target).toEqual({ type: 'agency_campaign', id: 'camp-1' });
+    expect(normalized.action).toBe('agency_campaign.created');
+
+    // Unresolved (another tenant's user, a deleted one): still only a label.
+    expect(normalizeCoreRow(coreRecord({ actor: userId })).actor).toMatchObject({
+      type: 'unknown', user_id: null, display: userId,
+    });
+  });
+
   it('reports a null dialer-side actor as unknown, not as system', () => {
     expect(normalizeCoreRow(coreRecord({ actor: null })).actor.type).toBe('unknown');
     expect(normalizeCoreRow(coreRecord({ actor: 'system:abandonment-guardrail' })).actor.type)

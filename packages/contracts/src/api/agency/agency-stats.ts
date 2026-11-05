@@ -324,8 +324,8 @@ export interface AgencyRosterAgentRowWithName extends AgencyRosterAgentRow {
  * {@link agents} is the total. When `agents_rated` is 0 every percentile is null.
  *
  * ── Pooled rates are NOT the median, and both are here on purpose ──────────
- * {@link connect_rate_pct} is total connected over total attempts across the
- * whole cohort — the floor's actual rate. The median is in
+ * {@link connect_rate_pct} is the cohort's total human connects over its total placed
+ * first dials (the product's one connect rate) — the floor's actual rate. The median is in
  * `connect_rate.median`. They answer different questions ("how did the floor do"
  * versus "what does a typical agent do"), they differ most exactly when one agent
  * dialled most of the calls, and both are on the payload so neither has to be

@@ -266,11 +266,10 @@ describe('CampaignPerformance', () => {
 
   it('does not mount the by-day trend, and fetches nothing of its own', () => {
     /**
-     * The trend exists — `CampaignSeriesSection` — but it is a SIBLING of this
-     * component on the Performance panel, mounted by the detail page, not part
-     * of it. The reason is the second call site: `AgencyAnalyticsPage` renders
-     * this component once per campaign inside a list, and a fetch in here would
-     * be one series request per row of a page that never asked the question.
+     * A trend belongs to the one-campaign Insights tab, not to this component:
+     * `AgencyAnalyticsPage` renders this component once per campaign inside a
+     * list, and a fetch in here would be one request per row of a page that
+     * never asked the question.
      *
      * Asserted at the DOM rather than by a spy, and this file mocks NOTHING as
      * a result: a component that fetches nothing needs no network stub, and the

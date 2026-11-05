@@ -167,7 +167,7 @@ export const BEST_HOURS_VIEW_LABELS: Record<BestHoursView, string> = {
 
 /** Each view's denominator, said out loud — the contribution table's rule for the same reason. */
 export const BEST_HOURS_VIEW_HINTS: Record<BestHoursView, string> = {
-  connect_rate: 'of dials',
+  connect_rate: 'of first dials',
   volume: 'attempts placed',
   conversion_rate: 'of connects',
 };
@@ -655,7 +655,9 @@ function measureCell(row: AgencyGroupRow, view: BestHoursView, day: number, hour
       state: 'measured',
       text: agentPct(row.connect_rate_pct),
       value: row.connect_rate_pct,
-      note: `${agentPct(row.connect_rate_pct)} of ${dials} connected`,
+      // The rate is human connects over placed FIRST dials (the server's one connect
+      // rate), so it is not "of" the cell's dials, which count redials too.
+      note: `${agentPct(row.connect_rate_pct)} reached a person · ${dials}`,
     };
   }
 

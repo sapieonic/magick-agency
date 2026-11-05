@@ -337,8 +337,30 @@ export interface CoreAuditLogRow {
  * own: `platform_audit_log` has no equivalent, and a field that exists on half a
  * merged stream reads as missing data on the other half.
  */
-export function normalizeCoreRow(row: CoreAuditLogRow): ActivityRow {
+export function normalizeCoreRow(
+  row: CoreAuditLogRow,
+  displayNames: ReadonlyMap<string, string | null> = new Map(),
+): ActivityRow {
   const actor = row.actor ?? null;
+  // ── A user id the tenant's directory knows is a person (IN8) ──────────────
+  // The public layer sends the signed-in creator's user id as the originator on
+  // campaign create and retry, so those `audit_logs` rows carry a bare user id.
+  // Only an id that RESOLVES in this tenant's directory (the caller's
+  // `displayNames`, looked up tenant-scoped) is reported as that person; an
+  // unresolved id, or any other string, stays the originator label below.
+  const actorUserId = coreActorUserId(actor);
+  if (actorUserId !== null && displayNames.has(actorUserId)) {
+    return {
+      ...normalizeCoreRow({ ...row, actor: null }),
+      actor: {
+        type: 'human',
+        system: false,
+        user_id: actorUserId,
+        api_key_id: null,
+        display: displayNames.get(actorUserId) ?? null,
+      },
+    };
+  }
   const campaignId = typeof row.event_data?.['campaign_id'] === 'string'
     ? (row.event_data['campaign_id'] as string)
     : null;
@@ -393,6 +415,11 @@ export function normalizeCoreRow(row: CoreAuditLogRow): ActivityRow {
       ...(row.severity ? { severity: row.severity } : {}),
     },
   };
+}
+
+/** The user id an `audit_logs` actor names, when it is one (a bare uuid), else null. */
+export function coreActorUserId(actor: string | null): string | null {
+  return actor !== null && UUID_RE.test(actor) ? actor : null;
 }
 
 // ── Ordering ────────────────────────────────────────────────────────────────

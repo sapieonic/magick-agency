@@ -33,12 +33,20 @@ const mocks = vi.hoisted(() => ({
   // hook hid the defect these tests are meant to catch — see below.
   listTenantMembers: vi.fn(),
   /*
-    The Overview panel mounts `CampaignSeriesSection`, which owns its
-    own read and fires it on mount. Mocked here rather than left to a real
-    `fetch` — an unmocked one would make every test on this page depend on the
-    network, and the section's own behaviour is covered where it lives.
+    The Insights panel owns its own reads and fires them on mount. Mocked here
+    rather than left to a real `fetch` — an unmocked one would make every test
+    on this page depend on the network, and the panel's own behaviour is
+    covered where it lives (`InsightsPanel.test.tsx`).
   */
-  getAgencyCampaignSeries: vi.fn(),
+  insights: {
+    getInsightsSummary: vi.fn(),
+    getInsightsAllocation: vi.fn(),
+    getInsightsReadiness: vi.fn(),
+    getInsightsUploads: vi.fn(),
+    getInsightsActivity: vi.fn(),
+    getInsightsTrends: vi.fn(),
+    getInsightsHealth: vi.fn(),
+  },
   /*
     The header's lineage strip owns its own read and fires it on mount for
     EVERY campaign — a parent that has been retried carries
@@ -77,12 +85,12 @@ vi.mock('../../api/agency', () => ({
   unassignAgent: mocks.unassignAgent,
 }));
 vi.mock('../../api/tenants', () => ({ listTenantMembers: mocks.listTenantMembers }));
-vi.mock('../../api/agencyCampaignSeries', () => ({
-  getAgencyCampaignSeries: mocks.getAgencyCampaignSeries,
-}));
+vi.mock('../../api/agencyInsights', () => mocks.insights);
 vi.mock('../../hooks/usePhoneNumbers', () => ({ usePhoneNumbers: mocks.usePhoneNumbers }));
 
 import DetailPage from '../../pages/agency/AgencyCampaignDetailPage';
+import { CampaignLandingRedirect } from '../../pages/agency/campaign-detail/CampaignLandingRedirect';
+import * as insightsSamples from '../helpers/insights';
 import { ApiError } from '../../api/client';
 
 function campaign(over: Partial<AgencyCampaign> = {}): AgencyCampaign {
@@ -138,17 +146,18 @@ function wrappingAgent(over: Partial<AgencySupervisorAgent> = {}): AgencySupervi
 }
 
 /**
- * the page is three sections, each its own URL, and all three mount
- * the same component. Tests name the section they are about — the default is
- * the one a supervisor lands on.
+ * The page is two panels, each its own URL, and both mount the same component.
+ * The campaign's own URL and the retired `…/performance` redirect, as in
+ * `App.tsx`. Tests name the section they are about — the default is the one a
+ * supervisor lands on. `path` opens any other URL (a redirect under test).
  */
-function renderPage(section: 'overview' | 'performance' | 'agents' = 'overview') {
-  const suffix = section === 'overview' ? '' : `/${section}`;
+function renderPage(section: 'insights' | 'agents' = 'insights', path?: string) {
   return render(
-    <MemoryRouter initialEntries={[`/agency/campaigns/camp-1${suffix}`]}>
+    <MemoryRouter initialEntries={[path ?? `/agency/campaigns/camp-1/${section}`]}>
       <Routes>
-        <Route path="/agency/campaigns/:id" element={<DetailPage />} />
-        <Route path="/agency/campaigns/:id/performance" element={<DetailPage />} />
+        <Route path="/agency/campaigns/:id" element={<CampaignLandingRedirect />} />
+        <Route path="/agency/campaigns/:id/performance" element={<CampaignLandingRedirect />} />
+        <Route path="/agency/campaigns/:id/insights" element={<DetailPage />} />
         <Route path="/agency/campaigns/:id/agents" element={<DetailPage />} />
       </Routes>
     </MemoryRouter>,
@@ -165,13 +174,15 @@ beforeEach(() => {
   mocks.getAgencyCampaign.mockResolvedValue(campaign());
   mocks.getAgencyCampaignStats.mockResolvedValue(stats());
   mocks.listCampaignAgents.mockResolvedValue({ agents: [] });
-  // An empty range answers the section's four states without drawing a chart:
-  // these tests are about whether the section is MOUNTED, not about its shape.
-  mocks.getAgencyCampaignSeries.mockResolvedValue({
-    campaign_id: 'camp-1',
-    bucket: 'day',
-    buckets: [],
-  });
+  // The Insights reads answer with the reconciling samples; these tests are
+  // about the shell around the panel, not the panel's figures.
+  mocks.insights.getInsightsSummary.mockResolvedValue(insightsSamples.summary('running'));
+  mocks.insights.getInsightsAllocation.mockResolvedValue(insightsSamples.allocation());
+  mocks.insights.getInsightsReadiness.mockResolvedValue(insightsSamples.readiness());
+  mocks.insights.getInsightsUploads.mockResolvedValue(insightsSamples.uploads());
+  mocks.insights.getInsightsActivity.mockResolvedValue(insightsSamples.activity());
+  mocks.insights.getInsightsTrends.mockResolvedValue(insightsSamples.trends());
+  mocks.insights.getInsightsHealth.mockResolvedValue(insightsSamples.health());
   mocks.listTenantMembers.mockResolvedValue([]);
   // A campaign in no chain answers with itself as the only entry, not a 404 —
   // so the strip renders nothing, which is what every test here except the
@@ -262,7 +273,7 @@ describe('campaign detail — the status-to-action matrix', () => {
     expect(reason.textContent).toMatch(/can’t be resumed/i);
   });
 
-  it('offers a productive next step, and KEEPS the rail on a terminal campaign', async () => {
+  it('offers a productive next step on a terminal campaign', async () => {
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'stopped' }));
 
     renderPage();
@@ -272,33 +283,15 @@ describe('campaign detail — the status-to-action matrix', () => {
     expect(screen.getByRole('link', { name: 'New campaign' }).getAttribute('href')).toBe(
       '/agency/campaigns/new',
     );
-    /*
-      The rail used to be removed outright once a campaign stopped, which left
-      the page one narrow column with a screen of white beside it — on the very
-      status this panel is read at MOST, since a finished campaign is what a
-      supervisor comes back to. It stays; what changes is its contents. The
-      account's guardrails are still worth reading (the ceiling is shared, and
-      the 24h window outlives this campaign), and the live floor is not — nobody
-      is at a station on a campaign that has stopped.
-    */
-    expect(screen.getByRole('heading', { name: 'The account right now' })).toBeTruthy();
-    expect(screen.getByTestId('concurrency-readout')).toBeTruthy();
-    expect(screen.queryByTestId('floor-summary')).toBeNull();
-    // The floor did not go away with the guardrails — it moved to its own
-    // section, and a stopped campaign still has a shift to account for.
+    // The floor still has its own section on a stopped campaign.
     expect(screen.getByTestId('campaign-tab-agents')).toBeTruthy();
   });
 
-  it('names the rail for the live floor while dialing can continue', async () => {
+  it('offers Add contacts while dialing can continue', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
 
     expect(screen.getByRole('link', { name: 'Add contacts' })).toBeTruthy();
-    // Same rail, and it leads with what is happening now rather than with the
-    // account's standing limits.
-    expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
-    expect(screen.getByTestId('floor-summary')).toBeTruthy();
-    expect(screen.getByTestId('concurrency-readout')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'New campaign' })).toBeNull();
   });
 });
@@ -532,48 +525,23 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
   });
 });
 
-describe('campaign detail — counters', () => {
-  it('renders an absent counter as a dash, never as zero', async () => {
-    // A zero is a claim about the campaign. A dash is a claim about our
-    // knowledge of it, which is the true one when a field did not arrive.
-    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ contacts_exhausted: undefined }));
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    const tile = screen.getByTestId('contact-state-contacts_exhausted');
-    expect(tile.textContent).toContain('—');
-    expect(tile.textContent).not.toContain('0');
-  });
-
-  it('separates the roster total from simultaneous contact states', async () => {
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    expect(screen.getByTestId('total-contacts').textContent).toContain('1,000');
-    expect(screen.getByTestId('contact-state-contacts_completed').textContent).toContain('Completed');
-    expect(screen.queryByText('Done')).toBeNull();
-    // One cell for live attempts, named for what it is. "Active attempts" was
-    // the rail's label for the same figure; the strip absorbed it, and two
-    // labels for one number is how a supervisor comes to believe there are two.
-    expect(screen.getAllByText('On the line now')).toHaveLength(1);
-    expect(screen.queryByText('Live calls')).toBeNull();
-    expect(screen.queryByText('Active attempts')).toBeNull();
-  });
-
-  it('uses one page landmark and labels this screen as a region', async () => {
+describe('campaign detail — landmarks and the refresh stamp', () => {
+  it('uses one page landmark and labels the Insights panel as a region', async () => {
     const { container } = renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
 
     expect(container.querySelectorAll('main')).toHaveLength(0);
-    expect(screen.getByRole('region', { name: 'Campaign overview' })).toBeTruthy();
+    expect(await screen.findByRole('region', { name: 'Campaign insights' })).toBeTruthy();
   });
 
-  it('keeps the refresh timestamp quiet for screen readers', async () => {
+  it('keeps the shell’s refresh timestamp quiet for screen readers', async () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
 
-    const timestamp = screen.getByText(/Updated .*Auto-refreshing/i);
+    // Case-sensitive: the shell says "Auto-refreshing", the Insights stamp
+    // "auto-refreshing". Neither stamp is a live region; Insights announces
+    // only a Refresh the reader asked for.
+    const timestamp = screen.getByText(/Updated .*Auto-refreshing/);
     expect(timestamp.getAttribute('aria-live')).toBeNull();
   });
 });
@@ -590,63 +558,64 @@ describe('campaign detail — counters', () => {
  * did not ask for, and hiding something they must never have to choose to see.
  */
 describe('campaign detail — sections', () => {
-  it('lands on the overview: the counters and the guardrails, and nothing else', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: [wrappingAgent()] }));
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    expect(screen.getByTestId('total-contacts')).toBeTruthy();
-    expect(screen.getByTestId('concurrency-readout')).toBeTruthy();
-    // The two sections that moved off it.
-    expect(screen.queryByTestId('connect-rate-readout')).toBeNull();
-    expect(screen.queryByTestId('floor-row-wrap-sess')).toBeNull();
+  it('lands a supervisor on Insights, from the campaign’s own URL and from the retired Performance URL', async () => {
+    for (const path of ['/agency/campaigns/camp-1', '/agency/campaigns/camp-1/performance']) {
+      cleanup();
+      renderPage('insights', path);
+      await screen.findByRole('heading', { name: 'Collections' });
+      expect(await screen.findByTestId('insights-panel')).toBeTruthy();
+      expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBe('page');
+    }
   });
 
-  it('shows the derived figures on their own section', async () => {
-    renderPage('performance');
-    await screen.findByRole('heading', { name: 'Collections' });
+  it.each(['viewer', 'operator'])(
+    'lands a %s, who cannot read Insights, on the Agents panel rather than a page of 403s',
+    async (role) => {
+      mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role });
+      mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: [wrappingAgent()] }));
+      for (const path of ['/agency/campaigns/camp-1', '/agency/campaigns/camp-1/insights']) {
+        cleanup();
+        renderPage('insights', path);
+        await screen.findByRole('heading', { name: 'Collections' });
+        expect(await screen.findByTestId('floor-row-wrap-sess')).toBeTruthy();
+        expect(screen.queryByTestId('insights-panel')).toBeNull();
+        expect(screen.queryByTestId('campaign-tab-insights')).toBeNull();
+        expect(screen.getByTestId('campaign-tab-agents').getAttribute('aria-current')).toBe('page');
+      }
+      expect(mocks.insights.getInsightsSummary).not.toHaveBeenCalled();
+    },
+  );
 
-    expect(screen.getByTestId('connect-rate-readout')).toBeTruthy();
-    expect(screen.queryByTestId('total-contacts')).toBeNull();
-  });
-
-  it('keeps the lifecycle controls and the campaign name on every section', async () => {
-    // The header is the reason all three panels are one component: a supervisor
-    // must be able to press Stop from wherever they noticed the problem.
-    for (const section of ['performance', 'agents'] as const) {
+  it('keeps the shell — name, controls, health strip — on Insights and on Agents', async () => {
+    mocks.getAgencyCampaignStats.mockResolvedValue(
+      stats({ stall: { code: 'dnc_unavailable', tenant_wide: true }, other_stalls: [] }),
+    );
+    for (const section of ['insights', 'agents'] as const) {
       cleanup();
       renderPage(section);
       await screen.findByRole('heading', { name: 'Collections' });
       expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
       expect(screen.getByRole('link', { name: /join as agent/i })).toBeTruthy();
-    }
-  });
-
-  it('keeps a stall diagnosis above the tab strip, on whichever section is open', async () => {
-    // A blocker a supervisor only sees if they happened to pick the right
-    // section is a blocker that goes unread. This is the one thing on the page
-    // worth seeing before choosing what to look at.
-    mocks.getAgencyCampaignStats.mockResolvedValue(
-      stats({ stall: { code: 'dnc_unavailable', tenant_wide: true }, other_stalls: [] }),
-    );
-
-    for (const section of ['overview', 'performance', 'agents'] as const) {
-      cleanup();
-      renderPage(section);
       expect(await screen.findByTestId('health-strip-diagnosis')).toBeTruthy();
     }
   });
 
-  it('does not read the staffing routes until the Agents section is opened', async () => {
-    // Both reads 403 below `agency.supervise` and neither answers a question the
-    // overview asks, so a campaign page view should not spend them.
-    mocks.useTenant.mockReturnValue({
-      tenantId: 'tenant-1',
-      accountId: 'account-1',
-      role: 'tenant_owner',
-    });
+  it('shows the floor only on Agents, and Insights only on Insights', async () => {
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents: [wrappingAgent()] }));
+    renderPage();
+    await screen.findByTestId('insights-panel');
+    expect(screen.queryByTestId('floor-row-wrap-sess')).toBeNull();
 
+    cleanup();
+    renderPage('agents');
+    await screen.findByRole('heading', { name: 'Collections' });
+    expect(screen.getByTestId('floor-row-wrap-sess')).toBeTruthy();
+    expect(screen.queryByTestId('insights-panel')).toBeNull();
+  });
+
+  it('does not read the staffing routes until the Agents section is opened', async () => {
+    // Both reads 403 below `agency.supervise` and neither answers a question
+    // Insights asks, so a campaign page view should not spend them.
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
 
@@ -659,13 +628,22 @@ describe('campaign detail — sections', () => {
     // renders and then 403s on arrival is a worse answer than no tab.
     mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'agent' });
 
-    renderPage();
+    renderPage('agents');
     await screen.findByRole('heading', { name: 'Collections' });
 
-    expect(screen.getByTestId('campaign-tab-overview')).toBeTruthy();
-    for (const id of ['contacts', 'attempts', 'activity', 'settings']) {
+    expect(screen.getByTestId('campaign-tab-agents')).toBeTruthy();
+    for (const id of ['insights', 'contacts', 'attempts', 'activity', 'settings']) {
       expect(screen.queryByTestId(`campaign-tab-${id}`)).toBeNull();
     }
+  });
+
+  it('puts Insights first in the bar for a supervisor, with no Overview or Performance', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Collections' });
+    const tabs = within(screen.getByTestId('campaign-tabs')).getAllByRole('link');
+    expect(tabs[0]?.textContent).toBe('Insights');
+    expect(screen.queryByTestId('campaign-tab-overview')).toBeNull();
+    expect(screen.queryByTestId('campaign-tab-performance')).toBeNull();
   });
 
   it('marks the open section as the current page, and only that one', async () => {
@@ -673,7 +651,7 @@ describe('campaign detail — sections', () => {
     await screen.findByRole('heading', { name: 'Collections' });
 
     expect(screen.getByTestId('campaign-tab-agents').getAttribute('aria-current')).toBe('page');
-    expect(screen.getByTestId('campaign-tab-overview').getAttribute('aria-current')).toBeNull();
+    expect(screen.getByTestId('campaign-tab-insights').getAttribute('aria-current')).toBeNull();
   });
 
   it('badges the Agents tab with the live floor — and says nothing when the floor is unknown', async () => {
@@ -692,6 +670,18 @@ describe('campaign detail — sections', () => {
     await screen.findByRole('heading', { name: 'Collections' });
     expect(screen.queryByTestId('campaign-tab-agents-count')).toBeNull();
   });
+
+  it('re-reads every Insights section when the shell’s Refresh is pressed', async () => {
+    renderPage();
+    await screen.findByTestId('insights-panel');
+    await waitFor(() => expect(mocks.insights.getInsightsActivity).toHaveBeenCalledTimes(1));
+
+    // The shell's own control (the Insights toolbar has "Refresh insights").
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(mocks.insights.getInsightsActivity).toHaveBeenCalledTimes(2));
+    expect(mocks.insights.getInsightsSummary).toHaveBeenCalledTimes(2);
+    expect(mocks.insights.getInsightsTrends).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('campaign detail — the health strip', () => {
@@ -702,8 +692,6 @@ describe('campaign detail — the health strip', () => {
     // Not an "all good" banner. A banner that is present when everything is fine
     // trains a supervisor to skim past the one place a real diagnosis appears.
     expect(screen.queryByTestId('health-strip-diagnosis')).toBeNull();
-    // The read-outs are not diagnoses and stay on screen regardless.
-    expect(screen.getByTestId('concurrency-readout')).toBeTruthy();
   });
 
   it('shows the ONE diagnosis, with that arm’s own evidence', async () => {
@@ -765,85 +753,6 @@ describe('campaign detail — the health strip', () => {
   });
 });
 
-describe('campaign detail — concurrency is read-only', () => {
-  it('reads out the live count against the ceiling', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(
-      stats({ concurrency_limit: 5, concurrency_in_use: 3 }),
-    );
-
-    renderPage();
-    const readout = await screen.findByTestId('concurrency-readout');
-    expect(readout.textContent).toContain('3 of 5');
-  });
-
-  it('is READ-ONLY — no setter, no input, no link to one', async () => {
-    renderPage();
-    const readout = await screen.findByTestId('concurrency-readout');
-
-    // The contract is explicit: the supervisor sees it and cannot set it. Rendering any
-    // affordance here would be a claim the platform cannot honour.
-    expect(readout.querySelector('input')).toBeNull();
-    expect(readout.querySelector('button')).toBeNull();
-    expect(readout.querySelector('a')).toBeNull();
-    expect(readout.querySelector('select')).toBeNull();
-  });
-
-  it('renders a null in-use as unknown — never 0, never saturated', async () => {
-    // `null` means Redis could not answer. Telling a supervisor to contact
-    // support about a limit we merely failed to read is the wrong instruction.
-    mocks.getAgencyCampaignStats.mockResolvedValue(
-      stats({ concurrency_limit: 5, concurrency_in_use: null }),
-    );
-
-    renderPage();
-    const readout = await screen.findByTestId('concurrency-readout');
-
-    expect(readout.getAttribute('data-unknown')).toBe('true');
-    expect(readout.getAttribute('data-saturated')).toBe('false');
-    expect(readout.textContent).not.toContain('0 of 5');
-    expect(readout.textContent).toMatch(/couldn’t read/i);
-  });
-
-  it('marks a genuinely saturated account as saturated', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(
-      stats({ concurrency_limit: 5, concurrency_in_use: 5 }),
-    );
-
-    renderPage();
-    const readout = await screen.findByTestId('concurrency-readout');
-    expect(readout.getAttribute('data-saturated')).toBe('true');
-  });
-});
-
-describe('campaign detail — abandonment against the campaign’s own ceiling', () => {
-  it('draws the measured 24h rate against this campaign’s ceiling', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(
-      stats({ abandonment_rate_24h_pct: 2.4, abandonment_ceiling_pct: 3 }),
-    );
-
-    renderPage();
-    const readout = await screen.findByTestId('abandonment-readout');
-
-    // The threshold a supervisor watches has to be the one that actually pauses
-    // their campaign — hence the campaign's own field, not a constant.
-    expect(readout.textContent).toContain('2.4%');
-    expect(readout.textContent).toContain('3%');
-    expect(readout.getAttribute('data-over')).toBe('false');
-  });
-
-  it('renders a null rate as “No data”, never as 0%', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(
-      stats({ abandonment_rate_24h_pct: null }),
-    );
-
-    renderPage();
-    const readout = await screen.findByTestId('abandonment-readout');
-
-    expect(readout.textContent).toContain('No data');
-    expect(readout.textContent).not.toContain('0%');
-  });
-});
-
 describe('campaign detail — polling', () => {
   /**
    * Status alone is the wrong predicate. A paused campaign still has in-flight
@@ -861,7 +770,7 @@ describe('campaign detail — polling', () => {
     // predicate reads `stats.attempts_live`, so a wait that only proves the
     // request was made can advance the clock before the state that enables
     // polling exists — and then assert the absence of a poll it prevented.
-    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Collections' })).toBeTruthy());
     const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
 
     await act(async () => {
@@ -881,7 +790,7 @@ describe('campaign detail — polling', () => {
     // predicate reads `stats.attempts_live`, so a wait that only proves the
     // request was made can advance the clock before the state that enables
     // polling exists — and then assert the absence of a poll it prevented.
-    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Collections' })).toBeTruthy());
     const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
 
     await act(async () => {
@@ -906,7 +815,7 @@ describe('campaign detail — polling', () => {
     );
 
     renderPage();
-    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Collections' })).toBeTruthy());
     const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
 
     await act(async () => {
@@ -929,7 +838,7 @@ describe('campaign detail — polling is visible-only and single-flight', () => 
     mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 2 }));
 
     renderPage();
-    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Collections' })).toBeTruthy());
     const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
 
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
@@ -951,7 +860,7 @@ describe('campaign detail — polling is visible-only and single-flight', () => 
     mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 2 }));
 
     renderPage();
-    await vi.waitFor(() => expect(screen.getByTestId('active-attempts')).toBeTruthy());
+    await vi.waitFor(() => expect(screen.getByRole('heading', { name: 'Collections' })).toBeTruthy());
     const afterLoad = mocks.getAgencyCampaignStats.mock.calls.length;
 
     // The next read hangs: a slow backend.
@@ -1100,10 +1009,10 @@ describe('campaign detail — permissions (agency.supervise)', () => {
     }
     // Not merely hidden: nothing on the page can reach the transition API.
     expect(mocks.transitionAgencyCampaign).not.toHaveBeenCalled();
-    // The counters and the strip are still readable — supervising without
-    // controlling is the point of the read-only view.
-    expect(screen.getByTestId('total-contacts')).toBeTruthy();
-    expect(screen.getByTestId('concurrency-readout')).toBeTruthy();
+    // The floor is still readable — supervising without controlling is the
+    // point of the read-only view — and Insights, whose reads would 403, is not.
+    expect(await screen.findByTestId('floor-unavailable')).toBeTruthy();
+    expect(screen.queryByTestId('insights-panel')).toBeNull();
   });
 
   it('an operator is now below the floor too — the gate moved off proxy.schedules.write', async () => {
@@ -1386,14 +1295,15 @@ describe('campaign detail — the header timeline', () => {
     // campaign started. One line answering both is how the first is read as the
     // second.
     expect(screen.getByTestId('campaign-timeline').textContent).not.toMatch(/Updated/);
-    expect(screen.getByText(/Updated .*Auto-refreshing/i)).toBeTruthy();
+    expect(screen.getByText(/Updated .*Auto-refreshing/)).toBeTruthy();
   });
 
   it('omits the whole line when the campaign carries no start, rather than dashing it', async () => {
     // An older server. The campaign did not fail to start — we were not told.
+    // (On Agents: Insights lists the lifecycle, with its own "Started" line.)
     mocks.getAgencyCampaign.mockResolvedValue(campaign());
 
-    renderPage();
+    renderPage('agents');
     await screen.findByRole('heading', { name: 'Collections' });
 
     expect(screen.queryByTestId('campaign-timeline')).toBeNull();
@@ -1414,297 +1324,6 @@ describe('campaign detail — the header timeline', () => {
 
     expect(screen.getByTestId('campaign-timeline').textContent).toContain('Ran for 1 day');
     expect(screen.getByTestId('campaign-timeline').textContent).not.toContain('Running for');
-  });
-});
-
-/**
- * ── "How it ended" ─────────────────────────────────────────────────────────
- *
- * The rail's terminal block. Above "How it ran" on purpose: when it ended and
- * who ended it is the first question on a stopped campaign, and the calling
- * window below is context for that answer.
- */
-describe('campaign detail — how it ended', () => {
-  const stoppedCampaign = (over: Partial<AgencyCampaign> = {}) => campaign({
-    status: 'stopped',
-    started_at: new Date(Date.now() - 30 * 3_600_000).toISOString(),
-    ended_at: new Date(Date.now() - 6 * 3_600_000).toISOString(),
-    ...over,
-  });
-
-  it('names who stopped it, and how long it ran', async () => {
-    mocks.getAgencyCampaign.mockResolvedValue(stoppedCampaign({
-      last_transition_by: { user_id: 'usr-1', name: 'Priya Sharma' },
-    }));
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    const block = screen.getByTestId('how-it-ended');
-    expect(block.textContent).toContain('Stopped by');
-    expect(block.textContent).toContain('Priya Sharma');
-    expect(block.textContent).toContain('Ran for');
-  });
-
-  it('says the dialer stopped it when nobody did', async () => {
-    /*
-      `null` is the server saying the transition had no human behind it — the
-      abandonment auto-pause. On a campaign that stopped itself this is the
-      single most useful sentence on the page, so it is said rather than
-      dropped, and never left as an unattributed dash.
-    */
-    mocks.getAgencyCampaign.mockResolvedValue(stoppedCampaign({ last_transition_by: null }));
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    expect(screen.getByTestId('how-it-ended').textContent).toContain('Automatically');
-  });
-
-  it('reports the busiest the floor ever got, which the live floor cannot', async () => {
-    mocks.getAgencyCampaign.mockResolvedValue(stoppedCampaign());
-    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ agents_peak: 4 }));
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    const block = screen.getByTestId('how-it-ended');
-    expect(block.textContent).toContain('Agents who worked it');
-    expect(block.textContent).toContain('4');
-  });
-
-  it('skips the block entirely when none of the fields arrived', async () => {
-    // An older server carries none of the three, and the stats payload no peak.
-    // A heading over an empty list is worse than no heading: it says the
-    // campaign ended in a way nobody recorded.
-    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'stopped' }));
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    expect(screen.queryByTestId('how-it-ended')).toBeNull();
-    // The rest of the rail is unaffected — the guardrails still render.
-    expect(screen.getByTestId('concurrency-readout')).toBeTruthy();
-  });
-
-  it('never claims an ending on a campaign that is still running', async () => {
-    mocks.getAgencyCampaign.mockResolvedValue(campaign({
-      started_at: new Date(Date.now() - 6 * 3_600_000).toISOString(),
-      last_transition_by: { user_id: 'usr-1', name: 'Priya Sharma' },
-    }));
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    expect(screen.queryByTestId('how-it-ended')).toBeNull();
-  });
-});
-
-/**
- * ── The time dimension on Overview ─────────────────────────────────────────
- *
- * The panel's answer to "is it dialing" — every counter beside it is a lifetime
- * total and cannot tell a campaign that has been going all week from one that
- * woke up an hour ago. It is a section of Overview only: Performance asks a
- * different question of the same endpoint, and Agents asks none of it.
- */
-describe('campaign detail — the dialing activity section', () => {
-  it('renders on the Overview panel and reads the campaign it is on', async () => {
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    expect(screen.getByTestId('campaign-series-activity')).toBeTruthy();
-    await waitFor(() => expect(mocks.getAgencyCampaignSeries).toHaveBeenCalled());
-    const [campaignId, query, tenantId, accountId] =
-      mocks.getAgencyCampaignSeries.mock.calls[0]!;
-    expect([campaignId, tenantId, accountId]).toEqual(['camp-1', 'tenant-1', 'account-1']);
-    expect((query as { bucket: string }).bucket).toBe('day');
-  });
-
-  it('is not mounted on the other two sections', async () => {
-    renderPage('performance');
-    await screen.findByRole('heading', { name: 'Collections' });
-    expect(screen.queryByTestId('campaign-series-activity')).toBeNull();
-
-    cleanup();
-
-    renderPage('agents');
-    await screen.findByRole('heading', { name: 'Collections' });
-    expect(screen.queryByTestId('campaign-series-activity')).toBeNull();
-  });
-});
-
-/**
- * ── The rate trend on Performance ──────────────────────────────────────────
- *
- * A sibling of `CampaignPerformance`, not a section inside it. That component
- * has a second caller — `AgencyAnalyticsPage` renders it once per campaign down
- * a list — so a fetch inside it would be one series request per row on a page
- * that never asked the question. The screen that wants the trend mounts it.
- */
-describe('campaign detail — the rate trend section', () => {
-  it('renders on the Performance panel, exactly once', async () => {
-    renderPage('performance');
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    /*
-      `getByTestId` throws on a second match, which is the assertion that
-      matters here: two mounts would be two requests for one answer, and the
-      pair could disagree the moment their range pickers diverged.
-    */
-    expect(screen.getByTestId('campaign-series-rates')).toBeTruthy();
-  });
-
-  it('asks the same endpoint for the same campaign, by day', async () => {
-    renderPage('performance');
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    await waitFor(() => expect(mocks.getAgencyCampaignSeries).toHaveBeenCalled());
-    const [campaignId, query, tenantId, accountId] =
-      mocks.getAgencyCampaignSeries.mock.calls[0]!;
-    expect([campaignId, tenantId, accountId]).toEqual(['camp-1', 'tenant-1', 'account-1']);
-    expect((query as { bucket: string }).bucket).toBe('day');
-  });
-
-  it('is not on Overview, where the activity chart asks the other question', async () => {
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    // Two charts off one endpoint: "is it dialing" belongs to Overview, "are
-    // the rates holding" to Performance. Both on one panel would be the same
-    // data drawn twice.
-    expect(screen.queryByTestId('campaign-series-rates')).toBeNull();
-    expect(screen.getByTestId('campaign-series-activity')).toBeTruthy();
-  });
-});
-
-/**
- * The contact funnel, at the page level.
- *
- * `contactFunnel`'s own suite pins the arithmetic. What only a rendered page can
- * check is the two things the panel asserts around it: that the KEY holds as
- * many tracks as it has cells, and that the sentences beside it agree with the
- * status badge above them. Review caught both of these here after the util
- * tests were all green.
- */
-describe('campaign detail — the contact funnel', () => {
-  /** The five counters sum to the total: no remainder, so no sixth state. */
-  const reconciling = () => stats({
-    contacts_total: 1000,
-    contacts_pending: 400,
-    contacts_in_flight: 3,
-    contacts_completed: 550,
-    contacts_suppressed: 20,
-    contacts_exhausted: 27,
-  });
-
-  /** Three contacts short of the total — the production shape, bridged agents. */
-  const withOnCall = () => stats({ ...reconciling(), contacts_pending: 397 });
-
-  it('lists five states and asks for five tracks when nothing is on a call', async () => {
-    mocks.getAgencyCampaignStats.mockResolvedValue(reconciling());
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    const key = await screen.findByTestId('contact-funnel-key');
-    expect(key.getAttribute('data-count')).toBe('5');
-    expect(screen.queryByTestId('contact-state-contacts_on_call')).toBeNull();
-  });
-
-  it('lists the sixth state and asks for six tracks when contacts are on a call', async () => {
-    /*
-      The layout defect review caught, on the exact campaign this branch was
-      written from.
-
-      `.funnelKey` was a hard `grid-template-columns: repeat(5, …)` with a
-      comment saying that a state wrapping onto its own row is the failure five
-      explicit tracks exist to prevent. A sixth cell in five tracks is that
-      failure: five on row one and Exhausted alone on row two at a fifth of the
-      width. Nothing in the util suite could see it, and nothing in this file
-      looked at the funnel at all.
-
-      The count is asserted rather than the resolved CSS because happy-dom
-      computes no grid — the contract is that the page tells the stylesheet how
-      many cells there are, and the stylesheet has a rule for each count.
-    */
-    mocks.getAgencyCampaignStats.mockResolvedValue(withOnCall());
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-
-    const key = await screen.findByTestId('contact-funnel-key');
-    expect(key.getAttribute('data-count')).toBe('6');
-    expect(screen.getByTestId('contact-state-contacts_on_call')).toBeTruthy();
-    // And every cell is still one cell — no stray wrapper inside the grid.
-    expect(key.children.length).toBe(6);
-  });
-
-  it('has a track rule for every cell count the funnel can produce', async () => {
-    /*
-      The guard, rather than one more fix.
-
-      `data-count` above is only half a contract: the page can say `6` and the
-      stylesheet still has to have a rule for it. A hard `repeat(5, …)` was
-      correct until `contactFunnel` grew a sixth state, and adding a seventh
-      would break it again just as quietly — happy-dom computes no grid, so no
-      rendering test can see a wrapped row.
-
-      So this reads the stylesheet and requires a rule per reachable count. The
-      counts come from `CONTACT_FUNNEL_STATES`: every state can be listed, and
-      "On a call" is the one that drops out when it has nothing to say.
-    */
-    const { readFileSync } = await import('node:fs');
-    const { resolve } = await import('node:path');
-    const { CONTACT_FUNNEL_STATES } = await import('../../utils/agencyCampaignOverview');
-
-    const css = readFileSync(
-      resolve(process.cwd(), 'src/pages/agency/AgencyCampaignDetailPage.module.css'), 'utf8',
-    );
-    const all = CONTACT_FUNNEL_STATES.length;
-
-    // The base rule carries the count with every state but "On a call".
-    expect(css).toMatch(
-      new RegExp(`\\.funnelKey \\{[^}]*grid-template-columns: repeat\\(${all - 1},`),
-    );
-    // And an explicit rule carries the full set.
-    expect(css).toMatch(
-      new RegExp(`\\.funnelKey\\[data-count='${all}'\\] \\{[^}]*repeat\\(${all},`),
-    );
-  });
-
-  it('does not tell a completed campaign that it stopped', async () => {
-    /*
-      Two sentences, one badge. `terminal` is true for `completed` as well as
-      `stopped`, so both the panel's caption and the stuck note read "stopped"
-      under a badge saying **Completed** — the conflation `howItEndedLines` and
-      `campaignTimeline` exist to keep apart, on a new surface.
-    */
-    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'completed' }));
-    mocks.getAgencyCampaignStats.mockResolvedValue(withOnCall());
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-    await screen.findByTestId('contact-funnel-key');
-
-    const panel = screen.getByLabelText('Where the contacts finished');
-    expect(panel.textContent).toMatch(/3 contacts are still marked as being on a call/);
-    expect(panel.textContent).not.toMatch(/stopp/i);
-  });
-
-  it('names the stop on a campaign that was stopped', async () => {
-    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'stopped' }));
-    mocks.getAgencyCampaignStats.mockResolvedValue(withOnCall());
-
-    renderPage();
-    await screen.findByRole('heading', { name: 'Collections' });
-    await screen.findByTestId('contact-funnel-key');
-
-    const panel = screen.getByLabelText('Where the contacts finished');
-    expect(panel.textContent).toMatch(/on a campaign that was stopped/);
-    // The claim it may not make: this page reads a derived remainder, not
-    // whether any call is actually still up.
-    expect(panel.textContent).not.toMatch(/calls (themselves )?have ended/i);
   });
 });
 
@@ -1790,7 +1409,7 @@ describe('the campaign header names the retry chain', () => {
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
     expect(screen.queryByTestId('campaign-lineage')).toBeNull();
-    expect(screen.getByTestId('campaign-tab-overview')).toBeTruthy();
+    expect(screen.getByTestId('campaign-tab-insights')).toBeTruthy();
   });
 });
 

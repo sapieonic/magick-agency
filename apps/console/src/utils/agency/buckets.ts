@@ -58,11 +58,9 @@ const BUCKET_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
  * `bucket_start` names a DAY, not an instant, so it is built as one — with the
  * reader's own calendar, which is the only calendar the label is read on.
  *
- * ── Exported, because the campaign series parses the same labels ───────────
- * `GET /agency/campaigns/:id/stats/series` mirrors `AgencyAgentStatsBucket`
- * field-for-field precisely so this function serves both. A second copy in
- * `agencyCampaignSeries.ts` would be a second place for the two rules above —
- * parse the components, anchor at noon — to be re-learned the hard way.
+ * ── Exported, so a day label is parsed one way everywhere ───────────────────
+ * A second copy would be a second place for the two rules above — parse the
+ * components, anchor at noon — to be re-learned the hard way.
  *
  * ── Noon, not midnight ──────────────────────────────────────────────────────
  * Some zones move their clocks AT midnight (Cuba and Chile spring forward at

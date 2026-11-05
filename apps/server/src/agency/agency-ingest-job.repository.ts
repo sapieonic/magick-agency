@@ -1,5 +1,6 @@
 import { getPool } from '@magick-agency/db';
 import type { AgencyIngestFailureCode } from './agency-csv-ingest.js';
+import { auditRosterUploadEnded } from './agency-ingest-audit.js';
 
 /**
  * Postgres `42703 undefined_column` — the SQLSTATE for "this column doesn't
@@ -715,18 +716,26 @@ export class AgencyIngestJobRepository {
    * "no worker will ever advance this" test, applied per-row instead of
    * per-table. A 10-minute stale-heartbeat threshold rather than a new
    * owner/instance column — the schema already carries what's needed.
+   *
+   * ── The activity row ───────────────────────────────────────────────────────
+   * A reaped job never returns to `run()`, which is where every other terminal
+   * state writes its `roster_upload_failed` row (IN8), so the reap writes it
+   * here, from the rows the UPDATE returned (`details.error_code` is
+   * `interrupted`). Best effort, as every upload audit write is: it never throws.
    */
   async reapStaleJobs(staleMinutes = AGENCY_INGEST_JOB_STALE_MINUTES): Promise<number> {
     const pool = getPool();
-    const result = await pool.query(
+    const result = await pool.query<AgencyIngestJobRecord>(
       `UPDATE agency_ingest_jobs
           SET status = 'failed', finished_at = NOW(),
               error_code = 'interrupted',
               error_message = 'The import was interrupted by a service restart. Upload the file again.'
         WHERE status IN ('pending', 'running')
-          AND updated_at < NOW() - ($1 * INTERVAL '1 minute')`,
+          AND updated_at < NOW() - ($1 * INTERVAL '1 minute')
+        RETURNING *`,
       [staleMinutes],
     );
+    for (const job of result.rows ?? []) auditRosterUploadEnded(job);
     return result.rowCount ?? 0;
   }
 }

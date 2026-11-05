@@ -48,10 +48,13 @@ export async function closeTestPool(): Promise<void> {
  * DELETE, not TRUNCATE. Suites call this before every test, and TRUNCATE gives
  * every table, partition and index a new file (~280 ms locally, ~550 ms on a CI
  * runner, for tables holding a handful of rows); DELETE on these tables is ~10 ms.
- * The end state is the same: the schema has no sequences or identity columns to
- * restart and no DELETE triggers. Every DELETE is a CTE of one statement, so the
- * FK checks run once at its end, against empty tables, and table order does not
- * matter.
+ * The end state is the same, with two exceptions that do not matter to a suite:
+ * the one identity column (`agency_insights_rollup_dirty.id`, 0012) is not
+ * restarted, and the one DELETE trigger (0012's statement trigger on
+ * `agency_call_attempts`) marks the deleted attempts' buckets AFTER the statement,
+ * so the dirty marks it leaves are deleted by a second statement. Every DELETE of
+ * the first is a CTE of one statement, so the FK checks run once at its end,
+ * against empty tables, and table order does not matter.
  */
 export async function truncateAll(client: pg.Pool | pg.PoolClient = getTestPool()): Promise<void> {
   const { rows } = await client.query<{ t: string }>(
@@ -69,6 +72,9 @@ export async function truncateAll(client: pg.Pool | pg.PoolClient = getTestPool(
   for (let attempt = 1; ; attempt++) {
     try {
       await client.query(sql);
+      if (rows.some((r) => r.t === 'public.agency_insights_rollup_dirty')) {
+        await client.query('DELETE FROM agency_insights_rollup_dirty');
+      }
       return;
     } catch (err) {
       const code = (err as { code?: string }).code;

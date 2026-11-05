@@ -187,6 +187,10 @@ describe('the grouped read against Postgres (integration)', () => {
       // attempts, one connect — which is a 50% connect rate for the hour, where the
       // INNER join reported 100% off the one attempt it could attribute.
       const campaignId = await floor();
+      // The connect is written up with a code, so it is a human connect (the connect rate's
+      // numerator: human connects over placed first dials).
+      await getTestPool().query(
+        `UPDATE agency_call_attempts SET disposition_code = 'sale' WHERE campaign_id = $1 AND bridged_at IS NOT NULL`, [campaignId]);
       const page = await read({ groupBy: ['hour_of_day'], campaignId });
 
       expect(page.rows).toHaveLength(1);

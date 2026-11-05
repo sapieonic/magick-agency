@@ -30,6 +30,7 @@ import type {
   AgencyOverrideKind,
 } from '@magick-agency/contracts/agency';
 import { attemptFilterConditions, keysetCondition, params, toKeysetPage } from './query-builders.js';
+import { attemptAgentUserSql } from './drilldown-sql.js';
 import { projectAttemptRow } from './projections.js';
 import { publishPacingInvalidation } from '../../../agency/pacing/invalidation-bus.js';
 
@@ -73,6 +74,26 @@ const ATTEMPT_ROW_SELECT_SQL = `a.id, a.campaign_id, a.contact_id, a.attempt_num
  */
 const ATTEMPT_CONTACT_JOIN_SQL = `JOIN agency_contacts c
           ON c.id = a.contact_id AND c.campaign_id = a.campaign_id`;
+
+/**
+ * The campaign spine's WHERE terms (campaign, then every filter), shared by the page and its
+ * opt-in total so the count is of exactly the rows the pages walk.
+ *
+ * The agent filter goes through the session (`attemptAgentUserSql`), because the attempt row
+ * holds a SESSION id and a session id is meaningless to the person reading the page.
+ */
+function campaignAttemptConditions(
+  campaignId: string,
+  f: AgencyAttemptFilters,
+  bind: ReturnType<typeof params>,
+): string[] {
+  return [
+    `a.campaign_id = ${bind.add(campaignId)}`,
+    ...attemptFilterConditions(f, bind, () => (f.agentUserId
+      ? attemptAgentUserSql('a', bind.add(campaignId), bind.add(f.agentUserId))
+      : null)),
+  ];
+}
 
 export class AgencyAttemptRepository {
   /**
@@ -123,16 +144,36 @@ export class AgencyAttemptRepository {
      * defaults: `false`, `{}`, NULL).
      */
     agentManual?: { overrideApplied: readonly AgencyOverrideKind[]; overrideNote: string | null };
+    /**
+     * A paced dial (the pacing tick): consume the contact's pending reopen marker
+     * (`agent_reopen_pending`, set by an agent's "Retry not reached") and stamp this attempt
+     * `agent_reopened` when there was one, in this statement. So exactly the first paced
+     * attempt after a reopen carries the flag.
+     *
+     * Race-safe without a lock of its own: the contact is `in_flight`, held by the tick's claim,
+     * and a reopen only touches `pending` / `exhausted` rows under their row lock, so nothing
+     * can set the marker between the claim and this insert. The marker's UPDATE is a CTE of the
+     * INSERT, one statement: an insert refused by a unique index (null below) rolls the
+     * consumption back with it. A contact with no marker writes nothing (no `updated_at` bump).
+     */
+    consumeAgentReopen?: boolean;
   }): Promise<AgencyCallAttemptRecord | null> {
     try {
       const { rows } = await getPool().query<AgencyCallAttemptRecord>(
-        `INSERT INTO agency_call_attempts
+        `WITH reopen AS (
+           UPDATE agency_contacts
+              SET agent_reopen_pending = false
+            WHERE id = $2 AND agent_reopen_pending AND $10::boolean
+           RETURNING id
+         )
+         INSERT INTO agency_call_attempts
            (campaign_id, contact_id, tenant_id, account_id, attempt_number, caller_id, reserved_agent_id, state,
-            agent_manual, override_applied, override_note)
+            agent_manual, override_applied, override_note, agent_reopened)
          SELECT $1, $2, $3, $4,
                 COALESCE(MAX(attempt_number), 0) + 1,
                 $5, $6, 'queued',
-                $7::boolean, $8::text[], $9::text
+                $7::boolean, $8::text[], $9::text,
+                EXISTS (SELECT 1 FROM reopen)
            FROM agency_call_attempts
           WHERE contact_id = $2
          RETURNING *`,
@@ -141,6 +182,7 @@ export class AgencyAttemptRepository {
           input.callerId, input.reservedAgentId,
           input.agentManual !== undefined, [...(input.agentManual?.overrideApplied ?? [])],
           input.agentManual?.overrideNote ?? null,
+          input.consumeAgentReopen === true && input.agentManual === undefined,
         ],
       );
       return rows[0] ?? null;
@@ -571,28 +613,7 @@ export class AgencyAttemptRepository {
     limit: number;
   }): Promise<AgencyKeysetPage<AgencyAttemptRow>> {
     const bind = params();
-    const conditions = [`a.campaign_id = ${bind.add(input.campaignId)}`];
-    const f = input.filters;
-
-    // Through the session, because the attempt row holds a SESSION id and a
-    // session id is meaningless to the person reading this page.
-    //
-    // ── Written as a subquery on `reserved_agent_id`, NOT as `s.agent_user_id
-    //    = $n` on the LEFT-joined side ────────────────────────────────────────
-    // Both are correct; they plan very differently. Filtering on the joined
-    // column makes the agent's identity a join condition, and the planner
-    // materialises the whole session table per outer row — measured 6.3ms
-    // against 3.7ms for this form on a 1M-attempt campaign, and 590ms against
-    // 343ms in the no-match case below.
-    //
-    // The filter is campaign-scoped as well as agent-scoped so that an agent
-    // who has worked several campaigns matches only their sessions on THIS one.
-    // Sessions are per-shift, so this is a handful of ids.
-    conditions.push(...attemptFilterConditions(f, bind, () => (f.agentUserId
-      ? `a.reserved_agent_id = ANY(ARRAY(
-           SELECT id FROM agency_agent_sessions
-            WHERE campaign_id = ${bind.add(input.campaignId)} AND agent_user_id = ${bind.add(f.agentUserId)}))`
-      : null)));
+    const conditions = campaignAttemptConditions(input.campaignId, input.filters, bind);
     if (input.after) conditions.push(keysetCondition(input.after, 'a', bind));
 
     const sql = `
@@ -610,6 +631,29 @@ export class AgencyAttemptRepository {
     }>(sql, bind.values);
 
     return toKeysetPage(rows, input.limit, projectAttemptRow);
+  }
+
+  /**
+   * How many attempts {@link listForCampaign} would list with these filters, across every
+   * page: the opt-in `total` (`?include_total=1`). The same WHERE terms
+   * (`campaignAttemptConditions`), no keyset and no limit.
+   *
+   * The contact join is kept only when a filter reads the contact (`phone`); otherwise it
+   * cannot change the count (`contact_id` is `NOT NULL REFERENCES agency_contacts`, and an
+   * attempt's contact is on its campaign), and dropping it lets a dialled-window count be a
+   * range scan of `idx_agency_attempts_campaign_dialed` alone.
+   */
+  async countListed(input: { campaignId: string; filters: AgencyAttemptFilters }): Promise<number> {
+    const bind = params();
+    const conditions = campaignAttemptConditions(input.campaignId, input.filters, bind);
+    const { rows } = await getPool().query<{ n: string }>(
+      `SELECT count(*)::text AS n
+         FROM agency_call_attempts a
+         ${input.filters.phone ? ATTEMPT_CONTACT_JOIN_SQL : ''}
+        WHERE ${conditions.join(' AND ')}`,
+      bind.values,
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 
   /**

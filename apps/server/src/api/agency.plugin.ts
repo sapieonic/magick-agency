@@ -14,6 +14,7 @@ import { phoneNumberRoutes } from './routes/phone-number.routes.js';
 import { proxyAgencyCampaignsRoutes } from './routes/proxy-agency-campaigns.routes.js';
 import { proxyAgencyStaffingRoutes } from './routes/proxy-agency-staffing.routes.js';
 import { proxyAgencyAssignmentRoutes } from './routes/proxy-agency-assignment.routes.js';
+import { proxyAgencyInsightsRoutes } from './routes/proxy-agency-insights.routes.js';
 import { proxyAgencyPerformanceRoutes } from './routes/proxy-agency-performance.routes.js';
 import { proxyAgencyCallsRoutes } from './routes/proxy-agency-calls.routes.js';
 import { proxyAgencySoftphoneRoutes } from './routes/proxy-agency-softphone.routes.js';
@@ -126,6 +127,11 @@ export const agencyPlugin: FastifyPluginAsync<{ ctx: AppContext | null }> = asyn
   // ── Contact assignment (its own 404s for `:id` / `:contactId`) ─────────────────────
   await app.register(async (scope) => {
     await scope.register(proxyAgencyAssignmentRoutes, { prefix: P.proxyAgency });
+  });
+
+  // ── Campaign insights (its own 404 for `:id`, `proxy-agency-insights.routes.ts`) ────
+  await app.register(async (scope) => {
+    await scope.register(proxyAgencyInsightsRoutes, { prefix: P.proxyAgency });
   });
 
   // ── Agent performance (its own 400 for `:userId`) ──────────────────────────────────

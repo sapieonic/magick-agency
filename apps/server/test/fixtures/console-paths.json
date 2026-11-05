@@ -283,13 +283,6 @@
     },
     {
       "method": "GET",
-      "path": "/proxy/agency/campaigns/:id/stats/series",
-      "source": "apps/console/src/api/agencyCampaignSeries.ts",
-      "status": "served",
-      "reason": "agency route, served by the public API layer at the console path (decision B16) (ENDPOINTS.proxy.agency.campaignStatsSeries, src/config.ts:292)"
-    },
-    {
-      "method": "GET",
       "path": "/proxy/agency/campaigns/:id/attempts",
       "source": "apps/console/src/api/agencySpine.ts",
       "status": "served",
@@ -2456,6 +2449,55 @@
       "source": "apps/console/src/api/agencyAssignment.ts",
       "status": "served",
       "reason": "contact-assignment route, served by the public API layer at the console path (decision B16; contracts api/agency/assignment.ts)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/insights/summary",
+      "source": "apps/console/src/api/agencyInsights.ts",
+      "status": "served",
+      "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/insights/readiness",
+      "source": "apps/console/src/api/agencyInsights.ts",
+      "status": "served",
+      "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/insights/allocation",
+      "source": "apps/console/src/api/agencyInsights.ts",
+      "status": "served",
+      "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/insights/activity",
+      "source": "apps/console/src/api/agencyInsights.ts",
+      "status": "served",
+      "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/insights/trends",
+      "source": "apps/console/src/api/agencyInsights.ts",
+      "status": "served",
+      "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/insights/health",
+      "source": "apps/console/src/api/agencyInsights.ts",
+      "status": "served",
+      "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
+    },
+    {
+      "method": "GET",
+      "path": "/proxy/agency/campaigns/:id/insights/uploads",
+      "source": "apps/console/src/api/agencyInsights.ts",
+      "status": "served",
+      "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
     },
     {
       "method": "GET",

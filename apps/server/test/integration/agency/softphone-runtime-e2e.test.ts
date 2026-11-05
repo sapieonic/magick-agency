@@ -152,8 +152,8 @@ describe('soft phone runtime end to end — real app, real bridge, fake carrier 
    * needs, so it cannot pass because pacing was not running at all.
    */
   function idleTicks(campaignId: string, reason: string) {
-    const spy = vi.spyOn(runtime.pacing as unknown as { recordIdle: (id: string, r: string) => void }, 'recordIdle');
-    const count = () => spy.mock.calls.filter(([id, r]) => id === campaignId && r === reason).length;
+    const spy = vi.spyOn(runtime.pacing as unknown as { recordIdle: (id: string, tenantId: string, r: string) => void }, 'recordIdle');
+    const count = () => spy.mock.calls.filter(([id, , r]) => id === campaignId && r === reason).length;
     return {
       atLeast: (n: number) => waitFor(`${n} '${reason}' ticks on ${campaignId}`, () => count() >= n, 15_000),
       restore: () => spy.mockRestore(),

@@ -19,7 +19,7 @@ import styles from './CampaignPerformance.module.css';
  * where the connected calls went, and what one handled call costs.
  *
  * ── Why these are not tiles ─────────────────────────────────────────────────
- * The eleven counters on the Overview section are observations: the API counted
+ * The campaign's counters (contacts, attempts) are observations: the API counted
  * rows and the console prints them, and an absent one can only mean the read
  * failed. Every figure here is a *derivation* with a denominator, a set of
  * exclusions, and at least one way to be absent that is a fact about the
@@ -50,46 +50,20 @@ import styles from './CampaignPerformance.module.css';
  * computes a share, substitutes a zero, or decides what an absent field means.
  *
  * ── Placement ───────────────────────────────────────────────────────────────
- * Its own section of the campaign workspace, between Overview and
- * Agents in the tab order. It used to sit inline beneath the counters and
- * above the floor, on the argument that handle time is what the floor's "on a
- * call too long" warning is measured against, so the `2:14` should be readable
- * from the same screen as the `4:50`.
+ * The Analytics page's card for each live campaign. It was the campaign
+ * workspace's Performance tab until the Insights tab replaced that tab and the
+ * Overview (IN1); the campaign detail page no longer renders it.
  *
- * That adjacency is gone — the two are sibling tabs now, and reaching one from
- * the other is a click. It was paid for by putting four derived figures in the
- * scroll path of every supervisor who opened the page to answer a different
- * question, which is the cost the split was made to stop. The tab order keeps
- * them neighbours, which is the most that survives.
- *
- * ── The by-day trend is a SIBLING of this component, not part of it ─────────
+ * ── It fetches nothing, and has no trend of its own ─────────────────────────
  * "Are the rates holding?" is the question these four figures structurally
- * cannot answer — a campaign whose connect rate fell off a cliff this morning
- * reads identically to one that has been steady all week, because every figure
- * here is a lifetime-to-date aggregate and `AgencyCampaignStats` has no time
- * dimension at all. The series endpoint that does is now built, and
- * `CampaignSeriesSection` draws it: mounted by `AgencyCampaignDetailPage`
- * beside this component on the Performance panel, below it, where it reads as
- * the follow-up to the four figures rather than as a fifth one.
- *
- * **It is deliberately not mounted in here, and the reason is the second call
- * site.** `AgencyAnalyticsPage` renders this component once per campaign inside
- * a list. `CampaignSeriesSection` owns a fetch of its own, so a mount in this
- * file would be one series request — up to 92 daily buckets each — for every
+ * cannot answer: every figure here is a lifetime-to-date aggregate and
+ * `AgencyCampaignStats` has no time dimension at all. On a single campaign the
+ * Insights tab answers it (trends by bucket over a chosen range); this
+ * component's remaining caller is `AgencyAnalyticsPage`, which renders it once
+ * per campaign inside a list. A fetch in here would be one request for every
  * row of a page that never asked the question, on top of the per-campaign stats
- * reads that page already makes. The trend belongs to the panel that shows one
- * campaign, so the panel is what mounts it. Anything added here that fetches
- * inherits the same constraint.
- *
- * **It does not replace these four either.** They remain lifetime aggregates
- * measured over the whole campaign, which is exactly what makes them the
- * figures to quote; the chart is measured per DAY and is a shape, not a total.
- * A day is also a far smaller denominator, which is why the chart withholds one
- * whose own denominator falls under `RATE_MIN_ATTEMPTS` — the same threshold
- * these cards publish against, imported by `utils/agencyCampaignSeries.ts`
- * rather than restated, so the two halves of one panel cannot disagree about
- * whether a figure is publishable. That module's docstring sets out why the
- * per-day application of it is the right one; it is not repeated here.
+ * reads that page already makes. Anything added here that fetches inherits the
+ * same constraint.
  */
 
 export interface CampaignPerformanceProps {

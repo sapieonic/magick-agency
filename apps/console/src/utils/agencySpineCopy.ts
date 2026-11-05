@@ -262,9 +262,8 @@ export const ATTEMPTS_DESCRIPTION =
  * closed as wins. Told they were "never dialed", a supervisor reads the
  * campaign's best outcomes as contacts it failed to reach.
  *
- * The same inversion was fixed in the funnel's Suppressed hint and in this
- * page's own tips; this constant is the third copy and was missed. All three are
- * pinned by tests now.
+ * The same inversion was fixed in the roster page's own tips; this constant was
+ * missed, and is pinned by a test now.
  */
 export const ROSTER_DESCRIPTION =
   'Every contact on this campaign and where each one got to — including the ones nothing will '

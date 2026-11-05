@@ -1,4 +1,5 @@
-import type { AgencyContactFilters } from '../types/agency-spine';
+import type { AgencyContactFilters, AgencyContactWaiting } from '../types/agency-spine';
+import { AGENCY_CONTACT_WAITING } from '../types/agency-spine';
 
 /**
  * The contacts tab's filters, in the URL.
@@ -75,6 +76,14 @@ export function rosterFiltersFromParams(params: URLSearchParams): AgencyContactF
   }
   const phone = params.get('phone')?.trim();
   if (phone) filters.phone = phone;
+  // The insights roster's buckets (Insights tab links). Allow-listed like every key here: a
+  // value this build does not know is dropped rather than sent to a route that would 400 it.
+  const waiting = params.get('waiting');
+  if (waiting && (AGENCY_CONTACT_WAITING as readonly string[]).includes(waiting)) {
+    filters.waiting = waiting as AgencyContactWaiting;
+  }
+  const attempted = params.get('attempted');
+  if (attempted === '1' || attempted === '0') filters.attempted = attempted;
   return filters;
 }
 
@@ -93,6 +102,8 @@ export function rosterFiltersToParams(filters: AgencyContactFilters): URLSearchP
     for (const value of filters[key] ?? []) params.append(key, value);
   }
   if (filters.phone) params.set('phone', filters.phone);
+  if (filters.waiting) params.set('waiting', filters.waiting);
+  if (filters.attempted) params.set('attempted', filters.attempted);
   return params;
 }
 
@@ -101,7 +112,41 @@ export function rosterFilterGroupCount(filters: AgencyContactFilters): number {
   let count = 0;
   for (const key of LIST_KEYS) if (filters[key]?.length) count += 1;
   if (filters.phone) count += 1;
+  if (filters.waiting) count += 1;
+  if (filters.attempted) count += 1;
   return count;
+}
+
+/** How each waiting bucket reads: the Insights tab's own row labels (`RosterSection`). */
+export const WAITING_LABELS: Record<AgencyContactWaiting, string> = {
+  due_now: 'Due now',
+  retry: 'Waiting for retry time',
+  callback: 'Callback scheduled',
+};
+
+/**
+ * The two filters only a link sets (no control on the form), as removable chips: without a
+ * chip a supervisor would be looking at a narrowed list with nothing on screen saying so.
+ */
+export function rosterLinkFilterChips(
+  filters: AgencyContactFilters,
+): Array<{ id: string; label: string; without: AgencyContactFilters }> {
+  const chips: Array<{ id: string; label: string; without: AgencyContactFilters }> = [];
+  if (filters.waiting) {
+    const { waiting: _w, ...rest } = filters;
+    void _w;
+    chips.push({ id: 'waiting', label: `Waiting: ${WAITING_LABELS[filters.waiting]}`, without: rest });
+  }
+  if (filters.attempted) {
+    const { attempted: _a, ...rest } = filters;
+    void _a;
+    chips.push({
+      id: 'attempted',
+      label: filters.attempted === '1' ? 'Attempted at least once' : 'Never attempted',
+      without: rest,
+    });
+  }
+  return chips;
 }
 
 export function isRosterFiltered(filters: AgencyContactFilters): boolean {

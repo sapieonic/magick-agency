@@ -16,8 +16,10 @@ import { AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
  * **The human connect rate is the headline, and the split is its drill-down.**
  *
  * The choice is not this console's to make and is not being made here — the server
- * made it on the wire. `connect_rate_pct` is `human_connects / attempts_total`,
- * with voicemails and never-written-up calls both outside the numerator. This
+ * made it on the wire. `connect_rate_pct` is the product's one connect rate,
+ * `human_connects` over PLACED FIRST dials (wrap-up redials and never-placed queued
+ * rows out of the denominator), with voicemails and never-written-up calls both
+ * outside the numerator. This
  * module renders that number as the headline and puts all three buckets
  * underneath it, so the figure a supervisor quotes is the one the server computed and
  * the buckets explain what it excluded. Re-deriving a blended rate here — even
@@ -244,9 +246,9 @@ function volumeWithheldReadout(dials: number): PerformanceReadout {
 }
 
 /**
- * The connect rate — human answers over every call placed.
+ * The connect rate — human answers over every first dial placed.
  *
- * The denominator is `attempts_total`, not bridged calls, which is why this is
+ * The denominator is `first_dials_placed`, not bridged calls, which is why this is
  * low on a cold list and why it is the right number: a supervisor asking "is
  * this list working" is asking about dials, not about the subset that connected.
  */
@@ -255,8 +257,9 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
   const unclassified = stats?.unclassified_connects;
   /*
     ── The numerator of THIS rate, and it is not `attempts_connected` ─────────
-    `connect_rate_pct` is `human_connects / attempts_total` — the type says so in
-    as many words. The denominator line below used to lead with
+    `connect_rate_pct` is `human_connects` over the PLACED FIRST dials (the server's
+    one definition; wrap-up redials and never-placed queued rows are in no
+    denominator). The denominator line below used to lead with
     `attempts_connected`, a wider population (human + machine + unclassified), so
     the card rendered a fraction that does not equal its own headline:
 
@@ -269,12 +272,11 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
     2,104 people answered and that 1,509 did. A supervisor either stops trusting
     the panel or quotes the wrong number into a review.
 
-    This is the rule `agencyCampaignOverview` states for the pulse strip —
-    a percentage must sit with its own numerator — applied to the card that
-    was breaking it.
+    The rule: a percentage must sit with its own numerator, applied to the card
+    that was breaking it.
   */
   const humans = stats?.human_connects;
-  const total = stats?.attempts_total;
+  const firstDials = stats?.first_dials_placed;
 
   if (rate === undefined) {
     return {
@@ -323,19 +325,22 @@ export function connectRateReadout(stats: AgencyCampaignStats | null): Performan
       + 'so they don’t count towards this rate.';
   }
 
+  const answeredOf = typeof firstDials === 'number'
+    ? `people answered, of ${plural(firstDials, 'first dial')} placed`
+    : 'people answered';
+
   return {
     value: pct(rate),
-    detail: 'Calls where a person answered, out of every call placed — including the ones nobody picked up.',
+    detail: 'Calls where a person answered, out of every first dial placed — including the ones nobody picked up. Wrap-up redials are not counted again.',
     caveat,
+    // The rate as its own fraction: `human_connects` of `first_dials_placed`, the two
+    // counts the server divided. Never "of `attempts_total`", which also counts redials
+    // and never-placed queued rows: a fraction that is not this rate, the defect the
+    // note above describes by the other half. Without the denominator (an older server),
+    // the numerator alone.
     denominator:
-      typeof humans === 'number' && typeof total === 'number'
-        ? {
-          lead: formatCount(humans),
-          // Names what the number IS, not just what it is out of: "2,104 of
-          // 6,742" beside a split card counting 1,509 people is two numbers for
-          // one concept with nothing saying which is which.
-          rest: `people answered, of ${formatCount(total)} dials placed`,
-        }
+      typeof humans === 'number'
+        ? { lead: formatCount(humans), rest: answeredOf }
         : null,
     scale: { kind: 'fill', percent: clampPercent(rate), tone: 'accent' },
     known: true,

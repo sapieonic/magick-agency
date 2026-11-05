@@ -35,8 +35,8 @@ afterAll(closeTestPool);
 /**
  * Every table the migrations own (partitions excluded): the baseline's, plus the two
  * tenant carrier credential tables from 0002_telephony_credentials.sql, the two
- * soft-phone tables from 0005_softphone.sql and the contact owner history from
- * 0009_contact_assignment.sql.
+ * soft-phone tables from 0005_softphone.sql, the contact owner history from
+ * 0009_contact_assignment.sql and the pacing history from 0013_insights_pacing_history.sql.
  */
 const EXPECTED_TABLES = [
   // identity
@@ -65,6 +65,11 @@ const EXPECTED_TABLES = [
   'agency_manual_calls', 'agency_softphone_settings',
   // contact assignment's owner history (0009)
   'agency_contact_assignment_events',
+  // the insights rollup and its dirty marks (0012, docs/insights.md)
+  'agency_insights_rollup_dirty', 'agency_insights_rollup_buckets', 'agency_insights_rollup_agents',
+  'agency_insights_rollup_codes', 'agency_insights_rollup_facets',
+  // pacing history per campaign per minute (0013, IN2)
+  'agency_campaign_pacing_minutes',
 ].sort();
 
 const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
@@ -96,6 +101,20 @@ const UPDATED_AT_TRIGGERS: Array<[trigger: string, table: string]> = [
 const ALL_TRIGGERS: Array<[trigger: string, table: string]> = [
   ...UPDATED_AT_TRIGGERS,
   ['trg_agency_contacts_root', 'agency_contacts'],
+  // dials_placed (0011)
+  ['trg_agency_attempts_dial_placed_insert', 'agency_call_attempts'],
+  ['trg_agency_attempts_dial_placed_update', 'agency_call_attempts'],
+  // insights rollup dirty marks (0012)
+  ['trg_agency_attempts_insights_insert', 'agency_call_attempts'],
+  ['trg_agency_attempts_insights_update', 'agency_call_attempts'],
+  ['trg_agency_attempts_insights_delete', 'agency_call_attempts'],
+  ['trg_agency_calls_insights_recording_insert', 'agency_calls'],
+  ['trg_agency_calls_insights_recording_update', 'agency_calls'],
+  ['trg_agency_contacts_insights_zone', 'agency_contacts'],
+  ['trg_agency_campaigns_insights_zone', 'agency_campaigns'],
+  // insights rollup: a carrier error code on the call row (0014)
+  ['trg_agency_calls_insights_error_insert', 'agency_calls'],
+  ['trg_agency_calls_insights_error_update', 'agency_calls'],
 ];
 
 async function indexDef(name: string): Promise<string | undefined> {

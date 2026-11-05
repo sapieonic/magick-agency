@@ -254,7 +254,8 @@ describe('BestHoursMatrix — nothing is conveyed by colour alone', () => {
     renderMatrix(
       bestHoursPage({ rows: [hourCell({ day: 1, hour: 10, attempts: 300, connected: 100 })] }),
     );
-    expect(cell(1, 10).textContent).toContain('300 dials connected');
+    // The rate is human connects over placed first dials, so it is not "of" the cell's dials.
+    expect(cell(1, 10).textContent).toContain('reached a person · 300 dials');
     expect(swatch(1, 10).getAttribute('title')).toContain('Monday 10:00');
     expect(swatch(1, 10).getAttribute('title')).toContain('Asia/Kolkata');
   });

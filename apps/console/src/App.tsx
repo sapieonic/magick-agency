@@ -56,6 +56,7 @@ const AgentAttemptsPage = lazy(() => import('./pages/agency/AgentAttemptsPage'))
 const SoftphonePage = lazy(() => import('./pages/agency/SoftphonePage'));
 const AgencyHomeRedirect = lazy(() => import('./pages/agency/AgencyHomeRedirect'));
 const AgencyCampaignDetailPage = lazy(() => import('./pages/agency/AgencyCampaignDetailPage'));
+const CampaignLandingRedirect = lazy(() => import('./pages/agency/campaign-detail/CampaignLandingRedirect'));
 const DncPage = lazy(() => import('./pages/agency/DncPage'));
 const AgencyCampaignSettingsPage = lazy(() => import('./pages/agency/AgencyCampaignSettingsPage'));
 const AgencyCampaignContactsPage = lazy(() => import('./pages/agency/AgencyCampaignContactsPage'));
@@ -434,19 +435,25 @@ export default function App() {
                 <Route path="campaigns" element={<AgencyCampaignsPage />} />
                 <Route path="campaigns/new" element={<AgencyCampaignBuilderPage />} />
                 {/*
-                  The detail page is now three sections rather than one
-                  long scroll, and each is its own URL so a section survives a
-                  refresh, can be sent to a colleague and answers the back
-                  button. All three mount the same component — which reads the
-                  panel off the path via `campaignPanelFromPath` — because they
-                  share one campaign fetch, one stats poll and one header
-                  carrying the lifecycle controls.
+                  The detail page's two panels, Insights and Agents, each its own
+                  URL so a section survives a refresh, can be sent to a colleague
+                  and answers the back button. Both mount the same component —
+                  which reads the panel off the path via `campaignPanelFromPath` —
+                  because they share one campaign fetch, one stats poll and one
+                  header carrying the lifecycle controls.
+
+                  Insights replaced Overview and Performance (decision IN1). Their
+                  URLs, the bare campaign path and `…/performance`, redirect: to
+                  Insights for a supervisor, to Agents for a role that cannot read
+                  Insights (`CampaignLandingRedirect`), so no old link lands on a
+                  tab that 403s.
 
                   `campaigns/new` is declared above and wins on rank (a static
                   segment outranks `:id`), so nothing here shadows it.
                 */}
-                <Route path="campaigns/:id" element={<AgencyCampaignDetailPage />} />
-                <Route path="campaigns/:id/performance" element={<AgencyCampaignDetailPage />} />
+                <Route path="campaigns/:id" element={<CampaignLandingRedirect />} />
+                <Route path="campaigns/:id/performance" element={<CampaignLandingRedirect />} />
+                <Route path="campaigns/:id/insights" element={<AgencyCampaignDetailPage />} />
                 <Route path="campaigns/:id/agents" element={<AgencyCampaignDetailPage />} />
                 <Route path="campaigns/:id/settings" element={<AgencyCampaignSettingsPage />} />
                 {/*
@@ -489,7 +496,7 @@ export default function App() {
                   of the layout, so a page that does not mount it has none.
                   `campaignPanelFromPath` cannot help here: it answers which
                   PANEL of the detail page a path wants, so its range is
-                  `overview` | `performance` | `agents` and never `attempts`.
+                  `insights` | `agents` and never `attempts`.
                 */}
                 <Route
                   path="campaigns/:id/attempts/:attemptId"

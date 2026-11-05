@@ -255,3 +255,84 @@ describe('agency ingest round trip on real Postgres', () => {
     expect(await contactPhones()).toEqual([]);
   });
 });
+
+describe('the activity log records how a committed upload ended (IN8)', () => {
+  const uploadRows = async () => {
+    const { platformAuditLogger } = await import('../../../src/audit/platform/audit-logger.js');
+    await platformAuditLogger.shutdown();
+    return (await getTestPool().query<{ action: string; actor_type: string; user_id: string | null; details: Record<string, unknown> }>(
+      `SELECT action, actor_type, user_id, details FROM platform_audit_log
+        WHERE campaign_id = $1 AND action LIKE 'agency_campaign.roster_upload_%' ORDER BY created_at`,
+      [campaignId],
+    )).rows;
+  };
+
+  it('a completed import writes one completed row with its counts, from the system actor', async () => {
+    const job = await newJob();
+    await agencyIngestService.run({ job, campaignId });
+
+    expect(await uploadRows()).toEqual([{
+      action: 'agency_campaign.roster_upload_completed',
+      actor_type: 'system',
+      user_id: null,
+      details: {
+        campaign_id: campaignId, job_id: job.id, file_name: 'roster.csv', mode: 'append',
+        status: 'completed', rows_read: 9, accepted: 4, rejected: 5, duplicates: 1,
+      },
+    }]);
+  });
+
+  it('a failed import writes one failed row naming the failure', async () => {
+    const job = await newJob();
+    await getTestPool().query('ALTER TABLE dnc_entries RENAME TO dnc_entries_broken');
+    try {
+      await agencyIngestService.run({ job, campaignId });
+    } finally {
+      await getTestPool().query('ALTER TABLE dnc_entries_broken RENAME TO dnc_entries');
+    }
+
+    const rows = await uploadRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      action: 'agency_campaign.roster_upload_failed',
+      details: { job_id: job.id, status: 'failed', error_code: 'dnc_unavailable', accepted: 0 },
+    });
+  });
+
+  it('a dry run writes nothing', async () => {
+    await agencyIngestService.run({ job: await newJob({ dry_run: true }), campaignId });
+    expect(await uploadRows()).toEqual([]);
+  });
+
+  it('a job the stale-job reaper fails writes one failed row (its run never returns to write it)', async () => {
+    const { AGENCY_INGEST_JOB_STALE_MINUTES } = await import('../../../src/agency/agency-ingest-job.repository.js');
+    const orphan = await newJob();
+    const live = await newJob();
+    const preview = await newJob({ dry_run: true });
+    // Orphaned: its process died mid-run, so its heartbeat aged. The updated_at trigger rewrites
+    // the column on UPDATE, so age the rows with it off.
+    await getTestPool().query('ALTER TABLE agency_ingest_jobs DISABLE TRIGGER agency_ingest_jobs_updated_at');
+    try {
+      await getTestPool().query(
+        `UPDATE agency_ingest_jobs SET status = 'running', updated_at = NOW() - make_interval(mins => $3::int)
+          WHERE id IN ($1, $2)`,
+        [orphan.id, preview.id, AGENCY_INGEST_JOB_STALE_MINUTES + 5]);
+    } finally {
+      await getTestPool().query('ALTER TABLE agency_ingest_jobs ENABLE TRIGGER agency_ingest_jobs_updated_at');
+    }
+
+    expect(await agencyIngestJobRepository.reapStaleJobs()).toBe(2);
+
+    // One row: the committed orphan's. The live job is untouched, the reaped preview writes none.
+    expect(await uploadRows()).toEqual([{
+      action: 'agency_campaign.roster_upload_failed',
+      actor_type: 'system',
+      user_id: null,
+      details: {
+        campaign_id: campaignId, job_id: orphan.id, file_name: 'roster.csv', mode: 'append',
+        status: 'failed', rows_read: 0, accepted: 0, rejected: 0, duplicates: 0, error_code: 'interrupted',
+      },
+    }]);
+    expect((await agencyIngestJobRepository.findById(live.id, TENANT))!.status).toBe('pending');
+  });
+});

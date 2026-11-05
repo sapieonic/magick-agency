@@ -120,6 +120,15 @@ DNC (`dnc.ts`), analysis profiles (`call-analysis-profile.ts`), the call detail
 envelope (`call_availability`) and the enriched `dispositioned_by_name?` (who saved the outcome,
 joined from `users`).
 
+The spine list pages (`agency-spine.ts`): `AgencySpineListPage<T>` extends the re-exported
+`AgencyKeysetPage<T>` (§3) with `total?: number`, and `AgencyAttemptsListPage` /
+`AgencyRosterContactsPage` are its pages of `AgencyAttempt` / `AgencyRosterContact`. The internal
+handler writes `total` only when the request carries `?include_total=1`; the dialer contract's
+`AgencyKeysetPage` deliberately has no `total` and is not changed, so the mobile app's pages
+(`AgencyManualCallsPage`) are unaffected. The insights drill-down filter vocabulary is console-side
+too: `AgencyContactWaiting` / `AGENCY_CONTACT_WAITING` (`?waiting=`), `AgencyListFlag` (`1` / `0`),
+and the new keys on `AgencyAttemptFilters` / `AgencyContactFilters` (docs/insights.md, WS F).
+
 ## 5. Request fields the server sets itself
 
 - `agent_user_id` on `AgencyCreateSessionRequest` and `AgencyActorFields` is filled by the public API

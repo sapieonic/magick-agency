@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import { floorSummary } from '../../utils/agencyCampaignOverview';
 import {
   AGENCY_FLOOR_RISK_CLAUSE,
   AGENCY_FLOOR_RISK_FLAG,
@@ -612,12 +611,10 @@ describe('agentInitials — the row’s avatar', () => {
   });
 });
 
-describe('Overview and the Agents tab agree about who is on shift', () => {
+describe('the Agents tab counts who is on shift as the API does', () => {
   /*
-    `agencyCampaignOverview`'s rail excludes `offline` (its `FLOOR_BAR_ORDER`,
-    matching the API's `shift_seconds` via `foldOccupancy`). This tab used to
-    include it, so one payload produced "3 of 9 free" on Overview and a different
-    denominator plus an Offline band on Agents.
+    `offline` is not on shift (the API's `shift_seconds` via `foldOccupancy`). The tab used to
+    include it, giving a different denominator plus an Offline band.
   */
   const byState = { on_call: 2, wrapup: 1, available: 3, break: 1, reserved: 0, offline: 4 };
 
@@ -630,13 +627,6 @@ describe('Overview and the Agents tab agree about who is on shift', () => {
     expect(Math.round(slices.reduce((sum, slice) => sum + slice.pct, 0))).toBe(100);
     const available = slices.find((slice) => slice.state === 'available');
     expect(available?.pct).toBeCloseTo((3 / onShift) * 100);
-  });
-
-  it('matches the Overview rail exactly, for the same payload', () => {
-    const rail = floorSummary({ agents_by_state: byState } as never);
-    const slices = floorStateSlices(byState);
-    expect(slices.map((s) => [s.state, s.count])).toEqual(rail.slices.map((s) => [s.state, s.count]));
-    expect(rail.onShift).toBe(slices.reduce((sum, s) => sum + s.count, 0));
   });
 
   it('counts on-shift agents, not roster rows', () => {

@@ -171,8 +171,10 @@ void main() {
       to: fixedNow,
       buckets: [bucket('2026-10-12', 40, 12), bucket('2026-10-14', 52, 22)],
       byCampaign: const [
-        AgentCampaignRow(campaignId: 'c1', attempts: 130, connected: 50, successes: 11, talkSeconds: 9000, wrapupSeconds: 0),
-        AgentCampaignRow(campaignId: 'c2', attempts: 12, connected: 4, successes: 1, talkSeconds: 1390, wrapupSeconds: 0),
+        AgentCampaignRow(campaignId: 'c1', attempts: 130, connected: 50, successes: 11, talkSeconds: 9000, wrapupSeconds: 0,
+            humanConnects: 42, firstDials: 120, connectRatePct: 35, ratesReportable: true),
+        AgentCampaignRow(campaignId: 'c2', attempts: 12, connected: 4, successes: 1, talkSeconds: 1390, wrapupSeconds: 0,
+            humanConnects: 3, firstDials: 12, connectRatePct: 25, ratesReportable: false),
       ],
     );
     final v = buildPerformanceView(
@@ -187,7 +189,8 @@ void main() {
     expect(v.emptyLine, isNull);
     expect(v.series!.points.map((p) => p.coverage).toList(), [BucketCoverage.edge, BucketCoverage.soFar]);
     expect(v.campaigns.map((c) => (c.name, c.connectRate)).toList(), [
-      ('Q4 Card Renewals', '38.5%'),
+      // The served rate (42 of 120 first dials), not 50 / 130 = 38.5%.
+      ('Q4 Card Renewals', '35%'),
       ('Campaign c2', 'Not enough calls'),
     ]);
     expect(v.campaignsWorked, '2 campaigns');

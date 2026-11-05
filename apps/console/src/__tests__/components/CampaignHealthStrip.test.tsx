@@ -76,12 +76,12 @@ describe('the diagnosis banner', () => {
   it('renders nothing at all when there is no stall', () => {
     // Never a green "all good" banner: a banner present when everything is fine
     // trains a supervisor to skim past the one place a diagnosis will appear.
-    renderStrip({ stats: stats(), mode: 'diagnosis' });
+    renderStrip({ stats: stats() });
     expect(screen.queryByTestId('health-strip-diagnosis')).toBeNull();
   });
 
   it('reads as a headline plus a run of facts with the numbers emphasised', () => {
-    renderStrip({ mode: 'diagnosis' });
+    renderStrip();
     const banner = screen.getByTestId('health-strip-diagnosis');
 
     expect(banner.getAttribute('data-stall-code')).toBe('no_agents_available');
@@ -98,7 +98,6 @@ describe('the diagnosis banner', () => {
 
   it('keeps the additional-blockers disclosure, in priority order', () => {
     renderStrip({
-      mode: 'diagnosis',
       stats: stats({
         ...STALLED,
         other_stalls: ['elevated_failure_rate', 'dnc_unavailable'],
@@ -123,18 +122,18 @@ describe('the action links, and their gate', () => {
      * enforces `agency.supervise` / `audit.read` on the two routes — a link
      * that renders and then 403s on arrival is worse than no link.
      */
-    renderStrip({ mode: 'diagnosis' });
+    renderStrip();
     expect(screen.queryByRole('link')).toBeNull();
   });
 
   const linkNames = (role: Role) => {
     cleanup();
-    renderStrip({ mode: 'diagnosis', role });
+    renderStrip({ role });
     return screen.queryAllByRole('link').map((a) => a.textContent);
   };
 
   it('gives a supervisor both destinations, campaign-scoped', () => {
-    renderStrip({ mode: 'diagnosis', role: 'account_admin' });
+    renderStrip({ role: 'account_admin' });
     const floor = screen.getByRole('link', { name: 'Open the floor' });
     const activity = screen.getByRole('link', { name: 'See the activity trail' });
     expect(floor.getAttribute('href')).toBe('/agency/campaigns/camp-1/agents');
@@ -153,87 +152,9 @@ describe('the action links, and their gate', () => {
   });
 });
 
-describe('the read-out meters', () => {
-  const meters = (testId: string) =>
-    screen.getByTestId(testId).querySelectorAll('[style*="width"]');
-
-  it('fills the concurrency meter to the ratio of the account limit', () => {
-    renderStrip({ mode: 'readouts', stats: stats({ concurrency_limit: 30, concurrency_in_use: 12 }) });
-    const readout = screen.getByTestId('concurrency-readout');
-    expect(within(readout).getByText('12 of 30')).toBeTruthy();
-    expect(readout.getAttribute('data-saturated')).toBe('false');
-    expect(meters('concurrency-readout')[0]?.getAttribute('style')).toContain('width: 40%');
-  });
-
-  it('draws NO bar for an unreadable line count — never a zero-width one', () => {
-    // `null` is Redis failing to answer. A 0%-wide fill is a drawn claim that
-    // the account is idle, which is not what we failed to read.
-    renderStrip({ mode: 'readouts', stats: stats({ concurrency_in_use: null }) });
-    const readout = screen.getByTestId('concurrency-readout');
-    expect(readout.getAttribute('data-unknown')).toBe('true');
-    expect(readout.getAttribute('data-saturated')).toBe('false');
-    expect(meters('concurrency-readout')).toHaveLength(0);
-  });
-
-  it('scales abandonment against the campaign’s own ceiling, tick and all', () => {
-    renderStrip({
-      mode: 'readouts',
-      stats: stats({ abandonment_ceiling_pct: 5, abandonment_rate_24h_pct: 2.5 }),
-    });
-    const readout = screen.getByTestId('abandonment-readout');
-    expect(within(readout).getByText('2.5%')).toBeTruthy();
-    expect(readout.getAttribute('data-over')).toBe('false');
-    // The track's full width IS the ceiling, so half the ceiling is half a bar.
-    expect(meters('abandonment-readout')[0]?.getAttribute('style')).toContain('width: 50%');
-    expect(readout.querySelector('[title="5% ceiling"]')).toBeTruthy();
-  });
-
-  it('renders a null rate as “No data” with no bar, never a reassuring 0%', () => {
-    /**
-     * The server sends `null` when nothing was answered in the window. This is the
-     * rule the field exists for, so it is pinned in the DOM as well as in the
-     * derivation: an empty green bar would be the same lie as "0.0%".
-     */
-    renderStrip({ mode: 'readouts', stats: stats({ abandonment_rate_24h_pct: null }) });
-    const readout = screen.getByTestId('abandonment-readout');
-    expect(within(readout).getByText('No data')).toBeTruthy();
-    expect(readout.textContent).not.toContain('0.0%');
-    expect(meters('abandonment-readout')).toHaveLength(0);
-  });
-
-  it('flags a saturated account and an over-ceiling rate', () => {
-    renderStrip({
-      mode: 'readouts',
-      stats: stats({
-        concurrency_limit: 10,
-        concurrency_in_use: 10,
-        abandonment_ceiling_pct: 3,
-        abandonment_rate_24h_pct: 4.2,
-      }),
-    });
-    expect(screen.getByTestId('concurrency-readout').getAttribute('data-saturated')).toBe('true');
-    expect(screen.getByTestId('abandonment-readout').getAttribute('data-over')).toBe('true');
-  });
-});
-
-describe('mode', () => {
-  it('mode="diagnosis" shows no read-outs and mode="readouts" no diagnosis', () => {
-    renderStrip({ mode: 'diagnosis', role: 'account_admin' });
-    expect(screen.queryByTestId('concurrency-readout')).toBeNull();
-    expect(screen.queryByTestId('abandonment-readout')).toBeNull();
-
-    cleanup();
-    vi.clearAllMocks();
-    renderStrip({ mode: 'readouts', role: 'account_admin' });
-    expect(screen.queryByTestId('health-strip-diagnosis')).toBeNull();
-    expect(screen.getByTestId('concurrency-readout')).toBeTruthy();
-    // The read-outs instance must never double-count a stall the diagnosis
-    // instance beside it has already reported.
-    expect(mocks.trackAgencyCampaignStallSurfaced).not.toHaveBeenCalled();
-  });
-
+describe('the stall-surfaced event', () => {
   it('reports a surfaced stall once per mount, not once per poll tick', () => {
-    const { rerender } = renderStrip({ mode: 'diagnosis' });
+    const { rerender } = renderStrip();
     rerender(
       <MemoryRouter>
         <CampaignHealthStrip stats={STALLED} campaignId="camp-1" campaignStatus="running" />

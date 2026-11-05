@@ -22,6 +22,13 @@ export const ACCOUNT_NAME_HEADER = 'x-mgkvc-account-name';
  * alone, never forwarded from a caller's headers.
  */
 export const PROVEN_CAMPAIGN_HEADER = 'x-mgkvc-proven-campaign';
+/**
+ * Internal only, a RESPONSE header: what a campaign PATCH changed, set by the internal
+ * PATCH handler (which holds the row before and after the write) for the public route to
+ * audit (`agency_campaign.config_changed`, IN8). base64url JSON; absent when nothing
+ * changed. The public route sends only the body on, so it never reaches a client.
+ */
+export const CONFIG_CHANGE_HEADER = 'x-mgkvc-config-change';
 
 /**
  * The {@link PROVEN_CAMPAIGN_HEADER} value: `<tenant>:<account>:<campaign>`, the account

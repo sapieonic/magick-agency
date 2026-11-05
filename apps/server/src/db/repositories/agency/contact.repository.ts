@@ -27,10 +27,9 @@ import type {
 import { normalizeE164 } from '../../../agency/dnc-registry.js';
 import { CONTACT_PHONE_DIGITS_SQL, contactPhoneDigitsSql } from './sql-fragments.js';
 import {
-  contactFilterConditions,
+  contactListFilterConditions,
   keysetCondition,
   params,
-  phoneCondition,
   toKeysetPage,
 } from './query-builders.js';
 import { projectContactRow } from './projections.js';
@@ -595,13 +594,20 @@ export class AgencyContactRepository {
    * calling window is re-claimed on the very next tick, and a campaign whose
    * contacts are all out of hours spins at 4 claims/second all night burning agent
    * reservations on calls it will never place.
+   *
+   * `restoreAgentReopen`: the contact's paced attempt consumed a reopen marker
+   * (`agent_reopened`) and was abandoned before its dial (the dispatcher refused it, or the
+   * tick lost its lease after the insert): the marker goes back, so the dial that does happen
+   * carries the flag.
    */
-  async unclaim(contactId: string, nextAttemptAt: Date): Promise<void> {
+  async unclaim(contactId: string, nextAttemptAt: Date, opts: { restoreAgentReopen?: boolean } = {}): Promise<void> {
     await getPool().query(
       `UPDATE agency_contacts
-          SET state = 'pending', next_attempt_at = $2, updated_at = now()
+          SET state = 'pending', next_attempt_at = $2,
+              agent_reopen_pending = agent_reopen_pending OR $3::boolean,
+              updated_at = now()
         WHERE id = $1 AND state = 'in_flight'`,
-      [contactId, nextAttemptAt],
+      [contactId, nextAttemptAt, opts.restoreAgentReopen === true],
     );
   }
 
@@ -1994,23 +2000,21 @@ export class AgencyContactRepository {
   async listForCampaign(input: {
     campaignId: string;
     filters: AgencyContactFilters;
+    /** `callbackCodes(campaign.disposition_catalog)`; required by `waiting=retry|callback`. */
+    callbackCodes?: readonly string[];
     after?: AgencyKeysetPosition;
     limit: number;
   }): Promise<AgencyKeysetPage<AgencyContactRow>> {
     const bind = params();
-    const f = input.filters;
     // The four vocabulary dimensions come from the SHARED builder, because this
     // list is where a retry selection is authored and the seeding statement has to
-    // mean the same thing by them — see `contactFilterConditions`. The three below
-    // are this route's own: they are deliberately not retry-selector dimensions.
+    // mean the same thing by them — see `contactFilterConditions`. The rest are this
+    // list's own (`contactListFilterConditions`): deliberately not retry-selector
+    // dimensions, and shared with `countListed` so the total counts these rows.
     const conditions = [
       `c.campaign_id = ${bind.add(input.campaignId)}`,
-      ...contactFilterConditions(f, 'c', bind),
+      ...contactListFilterConditions(input.filters, 'c', bind, input.callbackCodes),
     ];
-
-    if (f.phone) conditions.push(phoneCondition(f.phone, 'c', bind));
-    if (f.from) conditions.push(`c.created_at >= ${bind.add(f.from)}`);
-    if (f.to) conditions.push(`c.created_at <= ${bind.add(f.to)}`);
     if (input.after) conditions.push(keysetCondition(input.after, 'c', bind));
 
     const sql = `
@@ -2027,6 +2031,32 @@ export class AgencyContactRepository {
 
     const { rows } = await getPool().query<AgencyContactRecord & { cursor_at: string }>(sql, bind.values);
     return toKeysetPage(rows, input.limit, projectContactRow);
+  }
+
+  /**
+   * How many contacts {@link listForCampaign} would list with these filters, across every
+   * page: the opt-in `total` (`?include_total=1`). The same WHERE terms, no keyset, no limit.
+   *
+   * Every column the list filters read except the phone digits and `created_at` is a key or
+   * INCLUDE column of `idx_agency_contacts_insights` (0011), so a count by state, waiting
+   * bucket, attempted, owner, outcome or disposition is a scan of that index's
+   * `(campaign_id[, state])` prefix (index-only once the visibility map is set).
+   */
+  async countListed(input: {
+    campaignId: string;
+    filters: AgencyContactFilters;
+    callbackCodes?: readonly string[];
+  }): Promise<number> {
+    const bind = params();
+    const conditions = [
+      `c.campaign_id = ${bind.add(input.campaignId)}`,
+      ...contactListFilterConditions(input.filters, 'c', bind, input.callbackCodes),
+    ];
+    const { rows } = await getPool().query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM agency_contacts c WHERE ${conditions.join(' AND ')}`,
+      bind.values,
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 
   /**

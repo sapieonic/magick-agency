@@ -102,6 +102,15 @@ function webrtcEndedBy(opts: { status: WebRtcCallStatus; outcome?: string; error
 /** How long to wait for a VoiceLink `start` frame before tearing down a silent WS. */
 const PROVIDER_START_TIMEOUT_SECONDS = 30;
 /**
+ * Most carrier frames held while the provider token is checked
+ * ({@link WebRtcBridgeManager.attachPstnLegVerified}). The carrier sends `start` the moment
+ * its socket opens, so the first frame is the one that matters; the rest would be 20 ms
+ * media frames. The cap bounds what an unauthenticated socket can make us hold (each frame
+ * is already bounded by the transport's `maxPayload`); frames past it are dropped and
+ * counted in the log.
+ */
+export const PSTN_EARLY_FRAME_CAP = 16;
+/**
  * How long to wait for the carrier's `call.ended` after a local hangup of an
  * **answered** call before finalizing anyway.
  *
@@ -1200,19 +1209,50 @@ export class WebRtcBridgeManager {
    */
   async attachPstnLegVerified(callId: string, ws: WebSocket, token: string | undefined): Promise<boolean> {
     const session = this.sessions.get(callId);
-    if (session?.carrier) {
-      const ok = await this.verifyWsToken(callId, token, 'provider');
-      if (!ok) {
-        log.warn({ callId }, 'PSTN leg connect with invalid provider token — rejecting');
-        closeQuietly(ws);
-        return false;
-      }
+    if (!session?.carrier) return this.attachPstnLeg(callId, ws);
+
+    // ── HOLD WHAT THE CARRIER SENDS WHILE THE TOKEN IS CHECKED ──────────────
+    //
+    // `ws` buffers nothing for an event with no listener, and the carrier sends its
+    // `start` frame as soon as the socket opens. `attachPstnLeg` registers the real
+    // listener only after the token check's Redis round trip, so a `start` that landed
+    // inside it was dropped: the call then sat open until the start timeout and ended
+    // `provider_start_timeout` (or, under load, a refusal that should have been
+    // `unsupported_media_format` became a timeout). The frames are held here, unread,
+    // and replayed in order once the leg is attached; on a refused token they are
+    // discarded with the socket.
+    const early: Array<Buffer | string> = [];
+    let dropped = 0;
+    const hold = (data: Buffer | string): void => {
+      if (early.length < PSTN_EARLY_FRAME_CAP) early.push(data);
+      else dropped++;
+    };
+    ws.on('message', hold);
+    let ok: boolean;
+    try {
+      ok = await this.verifyWsToken(callId, token, 'provider');
+    } finally {
+      // Nothing is awaited between here and `attachPstnLeg` registering its own
+      // listener, so no frame can fall between the two.
+      ws.off('message', hold);
     }
-    return this.attachPstnLeg(callId, ws);
+    if (!ok) {
+      log.warn({ callId }, 'PSTN leg connect with invalid provider token — rejecting');
+      closeQuietly(ws);
+      return false;
+    }
+    if (dropped > 0) {
+      log.warn({ callId, held: early.length, dropped }, 'PSTN frames past the hold cap during the token check — dropped');
+    }
+    return this.attachPstnLeg(callId, ws, early);
   }
 
-  /** Attach the provider media WebSocket (the VoiceLink lead WS). */
-  attachPstnLeg(callId: string, ws: WebSocket): boolean {
+  /**
+   * Attach the provider media WebSocket (the VoiceLink lead WS). `early` is what the
+   * socket sent before this ran ({@link attachPstnLegVerified}); it is handled first, in
+   * order, as though it had arrived after.
+   */
+  attachPstnLeg(callId: string, ws: WebSocket, early: ReadonlyArray<Buffer | string> = []): boolean {
     const session = this.sessions.get(callId);
     if (!session) {
       log.warn({ callId }, 'PSTN leg connect for unknown WebRTC call');
@@ -1297,6 +1337,8 @@ export class WebRtcBridgeManager {
       }), callId, 'Error ending call on PSTN close');
     });
     ws.on('error', (err) => log.warn({ err, callId }, 'PSTN leg WebSocket error'));
+    // Before the closed-socket check below: a socket's frames come before its close.
+    for (const data of early) this.onPstnMessage(session, typeof data === 'string' ? data : data.toString());
     if (ws.readyState !== 1 /* OPEN */) {
       this.inBackground(this.endCall(callId, {
         status: session.remoteEndStatus(),

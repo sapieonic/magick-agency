@@ -1,12 +1,13 @@
 /**
  * The agency repository's WHERE-clause builders and keyset paging: the positional
  * parameter accumulator, the phone / contact / retry-selector / attempt filters, and
- * the keyset predicate and page. A leaf: it imports only `sql-fragments.ts` from
- * this folder.
+ * the keyset predicate and page. A leaf: it imports only `sql-fragments.ts` and the
+ * drill-down predicates (`drilldown-sql.ts`, itself a leaf) from this folder.
  */
 import { encodeKeysetCursor, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import {
   RETRY_NO_OUTCOME,
+  SUPPRESSED_REASON_NONE,
   type AgencyAttemptFilters,
   type AgencyContactFilters,
   type PhoneFilter,
@@ -14,6 +15,16 @@ import {
 import type { AgencyRetrySelector, AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import type { AgentAttemptFilters } from '../../../agency/agent-record.js';
 import { contactPhoneDigitsSql } from './sql-fragments.js';
+import {
+  agentManualAttemptSql,
+  agentReopenedAttemptSql,
+  overrideAppliedAttemptSql,
+  attemptedContactSql,
+  dialedRangeSql,
+  placedDialSql,
+  redialAttemptSql,
+  waitingContactSql,
+} from './drilldown-sql.js';
 
 // ─── Supervisor read surface — shared paging machinery ────────────
 
@@ -140,7 +151,13 @@ export function contactFilterConditions(
     conditions.push(`${alias}.state = ANY(${bind.add(filters.states)}::varchar[])`);
   }
   if (filters.suppressedReasons?.length) {
-    conditions.push(`${alias}.suppressed_reason = ANY(${bind.add(filters.suppressedReasons)}::varchar[])`);
+    // `none` is the contacts list's spelling of NULL (spine-filters' SUPPRESSED_REASONS); a retry
+    // selector's narrower vocabulary cannot carry it, so the retry seed never sees this branch.
+    const stored = filters.suppressedReasons.filter((r) => r !== SUPPRESSED_REASON_NONE);
+    const none = stored.length !== filters.suppressedReasons.length;
+    const any = stored.length > 0 ? `${alias}.suppressed_reason = ANY(${bind.add(stored)}::varchar[])` : null;
+    const isNull = none ? `${alias}.suppressed_reason IS NULL` : null;
+    conditions.push(any && isNull ? `(${any} OR ${isNull})` : (any ?? isNull)!);
   }
   if (filters.lastOutcomes?.length) {
     conditions.push(`${alias}.last_outcome = ANY(${bind.add(filters.lastOutcomes)}::varchar[])`);
@@ -159,6 +176,39 @@ export function contactFilterConditions(
     if (filters.assignedTo.unassigned) parts.push(`${alias}.assigned_user_id IS NULL`);
     conditions.push(parts.length === 1 ? parts[0]! : `(${parts.join(' OR ')})`);
   }
+  return conditions;
+}
+
+/**
+ * The Contacts LIST's whole filter set as SQL: the shared dimensions
+ * ({@link contactFilterConditions}) plus the list's own (`phone`, `from`/`to`, `waiting`,
+ * `attempted`), which are deliberately not retry-selector dimensions. One builder for the page
+ * and its opt-in total (`listForCampaign` / `countListed`), so the count is of exactly the
+ * rows the pages walk. Does NOT include the campaign or the keyset; each caller adds them.
+ *
+ * `callbackCodesParam` is the bound `text[]` of the campaign's callback codes, needed by
+ * `waiting=retry|callback` ({@link waitingContactSql}); the caller binds it only then.
+ */
+export function contactListFilterConditions(
+  filters: AgencyContactFilters,
+  alias: string,
+  bind: ReturnType<typeof params>,
+  callbackCodes?: readonly string[],
+): string[] {
+  const conditions = contactFilterConditions(filters, alias, bind);
+  if (filters.phone) conditions.push(phoneCondition(filters.phone, alias, bind));
+  if (filters.from) conditions.push(`${alias}.created_at >= ${bind.add(filters.from)}`);
+  if (filters.to) conditions.push(`${alias}.created_at <= ${bind.add(filters.to)}`);
+  if (filters.waiting) {
+    const needsCodes = filters.waiting !== 'due_now';
+    if (needsCodes && !callbackCodes) {
+      throw new Error(`contact filter waiting=${filters.waiting} needs the campaign's callback codes`);
+    }
+    conditions.push(waitingContactSql(
+      filters.waiting, alias, needsCodes ? bind.add([...(callbackCodes ?? [])]) : undefined,
+    ));
+  }
+  if (filters.attempted !== undefined) conditions.push(attemptedContactSql(filters.attempted, alias));
   return conditions;
 }
 
@@ -353,7 +403,9 @@ export function retrySelectionConditions(
  * (the campaign spine's agent subquery); `listForAgent` has none, its agent IS the
  * scope. `from`/`to` bound `created_at`, the column the keyset orders by — NOT
  * `dialed_at`, which is NULL on an attempt that never left the building and would
- * drop those rows from a date-filtered view.
+ * drop those rows from a date-filtered view. `dialed_from`/`dialed_to` are the other
+ * convention, half-open on `dialed_at` and placed dials only, for the insights drill-downs
+ * ({@link dialedRangeSql}); the two never share a parameter.
  */
 export function attemptFilterConditions(
   f: AgencyAttemptFilters | AgentAttemptFilters,
@@ -372,6 +424,21 @@ export function attemptFilterConditions(
   if (f.phone) conditions.push(phoneCondition(f.phone, 'c', bind));
   if (f.from) conditions.push(`a.created_at >= ${bind.add(f.from)}`);
   if (f.to) conditions.push(`a.created_at <= ${bind.add(f.to)}`);
+  if (f.callerId) conditions.push(`a.caller_id = ${bind.add(f.callerId)}`);
+  if (f.redial !== undefined) conditions.push(redialAttemptSql(f.redial, 'a'));
+  if (f.agentManual !== undefined) conditions.push(agentManualAttemptSql(f.agentManual, 'a'));
+  if (f.agentReopened !== undefined) conditions.push(agentReopenedAttemptSql(f.agentReopened, 'a'));
+  if (f.overrideApplied !== undefined) conditions.push(overrideAppliedAttemptSql(f.overrideApplied, 'a'));
+  if (f.dialedFrom || f.dialedTo) {
+    conditions.push(dialedRangeSql(
+      'a',
+      f.dialedFrom ? bind.add(f.dialedFrom) : undefined,
+      f.dialedTo ? bind.add(f.dialedTo) : undefined,
+    ));
+  } else if (f.placed === true) {
+    conditions.push(placedDialSql('a'));
+  }
+  if (f.placed === false) conditions.push(`a.dialed_at IS NULL`);
   return conditions;
 }
 

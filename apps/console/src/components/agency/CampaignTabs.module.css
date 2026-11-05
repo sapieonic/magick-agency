@@ -89,3 +89,10 @@
     transition: none;
   }
 }
+
+/* Print: the section bar is navigation, and a printout has nowhere to go. */
+@media print {
+  .tabs {
+    display: none !important;
+  }
+}

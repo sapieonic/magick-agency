@@ -250,6 +250,23 @@ describe('agency route table — the agent invariant', () => {
     expect(reached.sort()).toEqual(EXPECTED_AGENT_REACHABLE);
   });
 
+  it('the campaign insights reads are on the table and refuse an agent (agency.supervise)', async () => {
+    const insights = agencyRoutes().filter((r) => r.url.includes('/insights/')).map((r) => r.key).sort();
+    expect(insights).toEqual([
+      'GET /proxy/agency/campaigns/:id/insights/activity',
+      'GET /proxy/agency/campaigns/:id/insights/allocation',
+      'GET /proxy/agency/campaigns/:id/insights/health',
+      'GET /proxy/agency/campaigns/:id/insights/readiness',
+      'GET /proxy/agency/campaigns/:id/insights/summary',
+      'GET /proxy/agency/campaigns/:id/insights/trends',
+      'GET /proxy/agency/campaigns/:id/insights/uploads',
+    ]);
+    for (const key of insights) {
+      const [method, url] = key.split(' ') as [string, string];
+      expect(refusedByGuards(await callAsAgent(method, url)), key).toBe(true);
+    }
+  });
+
   it('every agency route needs a session: no route answers an unauthenticated caller', async () => {
     const open: string[] = [];
     for (const r of agencyRoutes()) {

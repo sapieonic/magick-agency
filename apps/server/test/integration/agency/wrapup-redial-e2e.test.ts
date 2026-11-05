@@ -299,6 +299,11 @@ describe('wrap-up redial — real app, real runtime, fake carrier (integration)'
     expect(third3.statusCode).toBe(409);
     expect(third3.json().code).toBe('redial_limit_reached');
     expect((await runtime.agents.get(sessionId))?.state).toBe('wrapup');
+    // Recorded in the campaign's pacing history (IN2): one refusal at the limit, nothing else.
+    const { rows: refused } = await getTestPool().query<{ n: number }>(
+      `SELECT COALESCE(sum(redials_refused_at_limit), 0)::int AS n
+         FROM agency_campaign_pacing_minutes WHERE campaign_id = $1`, [campaign.id]);
+    expect(refused[0]!.n).toBe(1);
 
     // ── 7. The outcome is saved on the last call; the agent goes back to the pool. ─
     const saved = await post(`/proxy/agency/attempts/${thirdId}/disposition`, agent, { disposition_code: 'interested' });

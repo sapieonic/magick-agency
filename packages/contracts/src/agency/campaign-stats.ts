@@ -294,6 +294,15 @@ export interface AgencyCampaignStats {
   contacts_total: number;
   contacts_pending: number;
   contacts_in_flight: number;
+  /**
+   * Contacts in state `connected`: bridged to an agent and still owing an outcome,
+   * whether the call is live or the agent is in wrap-up.
+   *
+   * Its own bucket for the reason `contacts_exhausted` is: without it the buckets
+   * (`pending + in_flight + connected + completed + suppressed + exhausted`) do not
+   * sum to `contacts_total` while calls are parked, and the gap is invisible.
+   */
+  contacts_connected: number;
   contacts_completed: number;
   contacts_suppressed: number;
   /**
@@ -430,11 +439,20 @@ export interface AgencyCampaignStats {
    */
   machine_connects_available: boolean;
   /**
-   * Human connects over attempts, as a percentage. `null` before any attempt. The
-   * denominator leaves wrap-up redials out (`attempts_total - ` redial rows): a redial
-   * continues a conversation already counted, it is not a new try at reaching someone.
+   * The product's one connect rate, as a percentage: `human_connects` over the PLACED
+   * FIRST dials (`dialed_at` set and not a wrap-up redial). `null` before any first dial
+   * is placed. A redial continues a conversation already counted, it is not a new try
+   * at reaching someone, and a queued attempt never placed is not a dial. The agent
+   * record and the Insights tab divide the same two counts.
    */
   connect_rate_pct: number | null;
+  /**
+   * The connect rate's denominator: PLACED FIRST dials (`dialed_at` set and not a wrap-up
+   * redial). Served so a reader can print the rate as its own fraction (`human_connects` of
+   * this) and floor it on its own denominator, never on {@link attempts_total} (which also
+   * counts redials and queued rows never placed).
+   */
+  first_dials_placed: number;
 
   /**
    * Bridged attempts whose disposition maps to a catalog entry flagged
@@ -613,6 +631,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   contacts_total: true,
   contacts_pending: true,
   contacts_in_flight: true,
+  contacts_connected: true,
   contacts_completed: true,
   contacts_suppressed: true,
   contacts_exhausted: true,
@@ -633,6 +652,7 @@ export const AGENCY_CAMPAIGN_STATS_FIELDS: Record<keyof AgencyCampaignStats, tru
   unclassified_connects: true,
   machine_connects_available: true,
   connect_rate_pct: true,
+  first_dials_placed: true,
   attempts_success: true,
   success_rate_pct: true,
   aht_seconds: true,

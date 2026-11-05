@@ -2,7 +2,6 @@ import { ON_SHIFT_STATES, ratePct, stateShares } from './agency/metrics';
 import { assignmentEntry } from './agencyAssignmentEntry';
 import { AGENCY_FLOOR_STATE_LABELS } from './agencyAgentFloor';
 import type { AgencyAgentLiveState } from '../types/agency-campaign';
-import { AGENCY_ROSTER_MIN_RATE_DENOMINATOR } from '../types/agency-stats';
 import type {
   AgencyAgentStats,
   AgencyOccupancy,
@@ -343,25 +342,20 @@ export function rowSeconds(value: number | undefined): string {
   return typeof value === 'number' ? agentSeconds(value) : '—';
 }
 
-/** A rate for one campaign row, derived HERE only because the server sends none. */
-export function rowConnectRate(row: { attempts: number; connected: number }): string {
+/** A campaign row's connect rate, as served (`by_campaign[].connect_rate_pct`). */
+export function rowConnectRate(row: { connect_rate_pct: number | null; rates_reportable: boolean }): string {
   /*
-    The one place this module divides. `by_campaign[]` carries counts and no
-    rates, and a per-campaign connect rate is the whole reason a supervisor or an
-    agent reads that table — but the guard matters: zero dials is "not measured
-    yet", exactly as `connect_rate_pct: null` is on the totals, and printing
-    `0.0%` for a campaign nobody has dialled yet would be the same lie by
-    arithmetic instead of by wire.
+    The server's rate and the server's floor, never derived here: the rate is the totals'
+    definition (human connects over placed first dials) per campaign, and `connected /
+    attempts` is a different number. `rates_reportable` is the roster's own gate over those
+    first dials, so this table withholds the rate where the roster does, in its words.
 
-    And the roster's floor: below AGENCY_ROSTER_MIN_RATE_DENOMINATOR dials the
-    roster withholds this same agent's connect rate (`rates_reportable`), so this
-    table does too, in the roster's words — it printed `100%` for one dial and one
-    connect beside a withheld roster cell.
+    No rate (none placed, or a server from before it was served) is "not measured yet": an
+    em dash, never `0%` for a campaign nobody has dialled.
   */
-  if (row.attempts <= 0) return '—';
-  if (row.attempts < AGENCY_ROSTER_MIN_RATE_DENOMINATOR) return 'Not enough calls';
-  const rate = ratePct(row.connected, row.attempts);
-  return rate === null ? '—' : agentPct(rate);
+  if (typeof row.connect_rate_pct !== 'number') return '—';
+  if (row.rates_reportable !== true) return 'Not enough calls';
+  return agentPct(row.connect_rate_pct);
 }
 
 /** Whether a stats payload describes a range in which literally nothing happened. */

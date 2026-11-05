@@ -53,7 +53,8 @@ const FIXTURE = JSON.parse(
  * after it is served fails the "pending is really pending" case below.
  */
 const PENDING: ReadonlyMap<string, string> = new Map([
-  // Empty: the runtime routes have landed.
+  // Empty: the insights range reads (activity, trends, health) were the last, served since
+  // workstream E2 (docs/insights.md "API (range reads)").
 ]);
 
 /**
@@ -64,6 +65,11 @@ const PENDING: ReadonlyMap<string, string> = new Map([
 const SERVER_ONLY: ReadonlyMap<string, string> = new Map([
   ['GET /healthz', 'liveness probe'],
   ['GET /readyz', 'readiness probe'],
+  // The console's Overview/Performance tabs were its only caller; the Insights tab replaced them
+  // (docs/insights.md, IN1). Kept: its types live in `contracts/src/agency/performance.ts`, beside
+  // the agent's own record the mobile wire mirrors, and the insights rollup oracle cross-checks its
+  // day trends against it (`insights-rollup-oracle.test.ts`).
+  ['GET /proxy/agency/campaigns/:_/stats/series', 'campaign stats series (no console caller since the Insights tab)'],
   ['POST /api/v1/webhooks/voicelink/webrtc-status/:_', 'VoiceLink bridge webhook (carrier-facing)'],
   ['WS /api/v1/webrtc-call/:_/pstn-stream', 'VoiceLink PSTN media leg (carrier-facing WS)'],
   ['GET /api/v1/webrtc-recordings/:_', 'signed recording playback (the HMAC token is the credential)'],

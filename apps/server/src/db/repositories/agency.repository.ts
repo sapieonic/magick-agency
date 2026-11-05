@@ -51,6 +51,19 @@ export {
 } from './agency/fleet-metrics.repository.js';
 export type { AgencyLiveAttemptStateRow, AgencyLiveManualCallStateRow } from './agency/fleet-metrics.repository.js';
 export { AgencyAgentStatsRepository, agencyAgentStatsRepository } from './agency/agent-stats.repository.js';
+export {
+  AgencyInsightsPacingRepository,
+  agencyInsightsPacingRepository,
+  PACING_HISTORY_FIELDS,
+  PACING_HISTORY_MAX_EPISODES,
+  PACING_IDLE_FIELD,
+} from './agency/insights-pacing.repository.js';
+export type {
+  AgencyPacingHistory,
+  AgencyStallReason,
+  PacingHistoryField,
+  PacingMinuteRow,
+} from './agency/insights-pacing.repository.js';
 export { occupancyIntervalsCtes } from './agency/sql-fragments.js';
 export { AgencyAssignmentRepository, agencyAssignmentRepository, planCtes } from './agency/assignment.repository.js';
 export type {
@@ -65,5 +78,76 @@ export {
   heroColumns,
 } from './agency/assignment-reads.repository.js';
 export type { MyContactsTally, OwnerTally, ProgressRaw } from './agency/assignment-reads.repository.js';
+export { agentAbsent } from './agency/assignment-reads.repository.js';
+export {
+  AgencyInsightsReadRepository,
+  agencyInsightsReadRepository,
+  abandonmentWindowStatement,
+  allocationCountersStatement,
+  allocationStatement,
+  contactsOnDncStatement,
+  dialPaceStatement,
+  dncMarkedStatement,
+  softphoneCallsStatement,
+  INSIGHTS_UPLOADS_LIMIT,
+  rosterStatement,
+} from './agency/insights-reads.repository.js';
+export type {
+  AllocationCountsInput,
+  DialPace,
+  InsightsStatement,
+  InsightsUploadRow,
+  OwnerAttemptCounters,
+  OwnerCounts,
+  RosterCounts,
+  RosterCountsInput,
+} from './agency/insights-reads.repository.js';
+export {
+  attemptedSql,
+  pendingCallbackSql,
+  ROSTER_BUCKETS,
+  rosterBucketPredicates,
+  suppressedDncSql,
+  suppressedInvalidSql,
+  suppressedOtherSql,
+  waitingCallbackSql,
+  waitingDueNowSql,
+  waitingRetrySql,
+  waitingSql,
+} from './agency/insights-sql.js';
+export type { RosterBucket } from './agency/insights-sql.js';
 export { manualCallRequiresDisposition, projectManualCallRow } from './agency/projections.js';
 export type { AgencyManualCallJoinedRow } from './agency/projections.js';
+// The drill-down predicates: one definition of each roster bucket and attempt slice, read by
+// the Contacts / Call attempts lists and their totals and by the insights reads.
+export {
+  agentManualAttemptSql,
+  agentReopenedAttemptSql,
+  attemptAgentUserSql,
+  attemptedContactSql,
+  dialedRangeSql,
+  placedDialSql,
+  redialAttemptSql,
+  waitingContactSql,
+} from './agency/drilldown-sql.js';
+export type { ContactWaitingBucket } from './agency/drilldown-sql.js';
+export { contactListFilterConditions } from './agency/query-builders.js';
+export {
+  AgencyInsightsRollupRepository,
+  agencyInsightsRollupRepository,
+} from './agency/insights-rollup.repository.js';
+export type { InsightsRollupBatchResult } from './agency/insights-rollup.repository.js';
+export { INSIGHTS_BUCKET_MINUTES } from './agency/insights-rollup-sql.js';
+export type {
+  InsightsActivityAgentRow,
+  InsightsActivityRollup,
+  InsightsMeasures,
+  InsightsRangeQuery,
+  InsightsTrendRow,
+  InsightsTrends,
+} from './agency/insights-rollup-reads.js';
+export type {
+  InsightsAgentStateRow,
+  InsightsCallbackClass,
+  InsightsCallbackTiming,
+} from './agency/insights-range-reads.js';

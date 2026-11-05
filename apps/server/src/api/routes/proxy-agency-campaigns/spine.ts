@@ -13,6 +13,7 @@ import {
   ATTEMPT_QUERY_PARAMS,
   CONTACT_QUERY_PARAMS,
   PAGING_QUERY_PARAMS,
+  TOTAL_QUERY_PARAMS,
   SPINE_EXPORT_MAX_ROWS,
   SPINE_EXPORT_PAGE_SIZE,
   SPINE_EXPORT_TIME_BUDGET_MS,
@@ -118,7 +119,9 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
     // Refused before `callCore`, so the 400 is not masked as a handler error.
-    const forwarded = forwardAllowedQuery(request.query, [...ATTEMPT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS]);
+    const forwarded = forwardAllowedQuery(
+      request.query, [...ATTEMPT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS, ...TOTAL_QUERY_PARAMS],
+    );
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
     const result = await callCore({
@@ -150,7 +153,9 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
   app.get<{ Params: { id: string } }>('/campaigns/:id/contacts', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const forwarded = forwardAllowedQuery(request.query, [...CONTACT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS]);
+    const forwarded = forwardAllowedQuery(
+      request.query, [...CONTACT_QUERY_PARAMS, ...PAGING_QUERY_PARAMS, ...TOTAL_QUERY_PARAMS],
+    );
     if (!forwarded.ok) return reply.code(400).send(unknownQueryParamsError(forwarded.unknown));
 
     return forwardCore(request, reply, {
@@ -260,7 +265,7 @@ export async function registerCampaignSpineRoutes(app: FastifyInstance): Promise
           accountId: params.request.accountId,
           // Proved by the caller's `requireOwnedCampaign` probe on this request, with
           // these same tenant and account, before the drain started: each page skips
-          // the handler's flag read and campaign read (`spinePageCampaignId`).
+          // the handler's flag read and campaign read (`spinePageCampaign`).
           provenCampaignId: params.request.params.id,
         });
         if (result.status >= 400) {

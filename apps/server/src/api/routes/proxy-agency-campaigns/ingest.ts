@@ -21,6 +21,8 @@ import {
 import { agencyIngestJobRepository } from '../../../agency/agency-ingest-job.repository.js';
 import { isTenantUploadKey, uploadKey } from '../../../agency/agency-ingest-keys.js';
 import { agencyIngestService } from '../../../agency/agency-ingest.service.js';
+import { auditRosterCleared, auditRosterUploadStarted } from '../../../agency/agency-ingest-audit.js';
+import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import { supersedeRoster, RosterSupersedeError } from '../../../agency/agency-roster.client.js';
 import { fetchOwnedCoreCampaign, stringField } from '../helpers/core-campaign.js';
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
@@ -361,6 +363,10 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
       created_by: request.user?.id ?? null,
     });
 
+    // The campaign's activity log: who started a committed upload, and with which
+    // file and duplicate rule (IN8). A dry run writes nothing (`agency-ingest-audit.ts`).
+    auditRosterUploadStarted(job, requestAuditActor(request));
+
     // Detached deliberately: the ingest owns its own failure handling and
     // records every outcome on the job row, so there is nothing here to await
     // and nothing that can become an unhandled rejection.
@@ -521,6 +527,15 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
           },
           'Agency roster cleared',
         );
+        auditRosterCleared({
+          tenantId: request.tenantId!,
+          accountId: clearAccountId,
+          campaignId: request.params.id,
+          actor: requestAuditActor(request),
+          rosterState: 'cleared',
+          cleared: result.superseded,
+          alreadyApplied: result.already_applied,
+        });
 
         return reply.code(200).send({
           campaign_id: request.params.id,
@@ -601,6 +616,16 @@ export async function registerCampaignIngestRoutes(app: FastifyInstance): Promis
               },
               'Agency roster clear could not be confirmed — the roster may already be empty',
             );
+            // The contacts may be gone, so the trail says a clear was asked for and
+            // that its outcome is unknown, rather than nothing.
+            auditRosterCleared({
+              tenantId: request.tenantId!,
+              accountId: clearAccountId,
+              campaignId: request.params.id,
+              actor: requestAuditActor(request),
+              rosterState: 'unconfirmed',
+              cleared: null,
+            });
             return reply.code(202).send({
               campaign_id: request.params.id,
               roster_state: 'unconfirmed',
@@ -907,6 +932,9 @@ function toJobResponse(job: Awaited<ReturnType<typeof agencyIngestJobRepository.
     ),
     error_code: job.error_code,
     error_message: job.error_message,
+    // Who ran the import: the uploader's user id (`request.user.id` at create), null
+    // on a job created without one (IN8).
+    created_by: job.created_by ?? null,
     created_at: job.created_at,
     started_at: job.started_at,
     finished_at: job.finished_at,
