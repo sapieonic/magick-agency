@@ -92,7 +92,7 @@ beforeEach(() => {
   mocks.useTeam.mockReturnValue({ members: [], loading: false, error: null, reload: mocks.reload });
   mocks.useAccounts.mockReturnValue({ accounts: [] });
   mocks.usePermission.mockReturnValue(true);
-  mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'tenant_admin' });
+  mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', role: 'tenant_admin', accounts: [] });
   /*
     The dialer ON by default, so the `agent` cases below read the sentence they
     were written for and the gated variants are asked for explicitly.

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   accountRepo: {
     findByTenantId: vi.fn(),
     findById: vi.fn(),
+    create: vi.fn(),
   },
   auditLog: vi.fn().mockResolvedValue(undefined),
   phoneAssignmentRepo: {
@@ -859,5 +860,95 @@ describe('in-process concurrency handler (equivalence)', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ allocation: legacyAllocation, utilization: null });
+  });
+});
+
+/**
+ * `POST /super-admin/tenants/:id/accounts`: the super-admin half of account creation.
+ * The name rule and slug choice are `createTenantAccount`'s, covered route by route in
+ * `account.routes.test.ts`; this pins what is different here: no membership, the
+ * tenant lookup, and the super-admin audit row.
+ */
+describe('POST /super-admin/tenants/:id/accounts', () => {
+  const TENANT_ID = '11111111-1111-4111-8111-111111111111';
+  let app: ReturnType<typeof Fastify>;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    mocks.tenantRepo.findById.mockResolvedValue({ id: TENANT_ID, name: 'Acme', status: 'active' });
+    mocks.accountRepo.findByTenantId.mockResolvedValue([makeAccount({ tenant_id: TENANT_ID })]);
+    mocks.accountRepo.create.mockImplementation(async (input: { tenant_id: string; name: string; slug: string }) =>
+      makeAccount({ id: 'acc-new', tenant_id: input.tenant_id, name: input.name, slug: input.slug }));
+    app = Fastify();
+    await app.register(superAdminRoutes, { prefix: '/super-admin' });
+    await app.ready();
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  const post = (tenantId: string, payload: Record<string, unknown>) =>
+    app.inject({ method: 'POST', url: `/super-admin/tenants/${tenantId}/accounts`, payload });
+
+  it('creates the account and answers 201 with the row', async () => {
+    const res = await post(TENANT_ID, { name: ' Collections ' });
+
+    expect(res.statusCode).toBe(201);
+    expect(res.json().account).toMatchObject({ id: 'acc-new', tenant_id: TENANT_ID, name: 'Collections', slug: 'collections' });
+    expect(mocks.accountRepo.create).toHaveBeenCalledWith({ tenant_id: TENANT_ID, name: 'Collections', slug: 'collections' });
+  });
+
+  it('records a create_account super-admin audit row', async () => {
+    await post(TENANT_ID, { name: 'Collections' });
+
+    expect(mocks.auditLog).toHaveBeenCalledWith(expect.objectContaining({
+      admin_id: 'sa-1',
+      admin_email: 'admin@test.com',
+      action: 'create_account',
+      resource_type: 'account',
+      resource_id: 'acc-new',
+      details: { tenant_id: TENANT_ID, name: 'Collections', slug: 'collections' },
+    }));
+  });
+
+  it('answers 404 for an unknown tenant and writes nothing', async () => {
+    mocks.tenantRepo.findById.mockResolvedValue(null);
+
+    const res = await post(TENANT_ID, { name: 'Collections' });
+
+    expect(res.statusCode).toBe(404);
+    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
+    expect(mocks.auditLog).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a malformed tenant id without querying it', async () => {
+    const res = await post('not-a-uuid', { name: 'Collections' });
+
+    expect(res.statusCode).toBe(404);
+    expect(mocks.tenantRepo.findById).not.toHaveBeenCalled();
+    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('answers 400 for a blank name before looking the tenant up', async () => {
+    const res = await post(TENANT_ID, { name: '  ' });
+
+    expect(res.statusCode).toBe(400);
+    expect(mocks.tenantRepo.findById).not.toHaveBeenCalled();
+    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
+  });
+
+  it('answers 409 account_name_taken for a name the tenant already has', async () => {
+    const res = await post(TENANT_ID, { name: 'DEFAULT' });
+
+    expect(res.statusCode).toBe(409);
+    expect(res.json()).toMatchObject({ error: 'Conflict', code: 'account_name_taken' });
+    expect(mocks.accountRepo.create).not.toHaveBeenCalled();
+    expect(mocks.auditLog).not.toHaveBeenCalled();
+  });
+
+  it('reads only the target tenant\'s accounts for the name check', async () => {
+    await post(TENANT_ID, { name: 'Collections' });
+    expect(mocks.accountRepo.findByTenantId).toHaveBeenCalledWith(TENANT_ID);
   });
 });

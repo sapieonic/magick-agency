@@ -121,6 +121,11 @@ export const PLATFORM_AUDIT_ACTIONS = [
   // through this door" is unanswerable.
   'user.invite_sent',
   'user.invite_claimed',
+  // A tenant admin added an account to the tenant (`POST /accounts`). Filed under
+  // the NEW account (`account_id`, `resource_id`), so its own trail opens with its
+  // creation; `details` carry `{ name, slug }`. An account a super admin creates is
+  // recorded in `super_admin_audit_log` (`create_account`), not here.
+  'account.created',
 ] as const;
 
 export type PlatformAuditAction = (typeof PLATFORM_AUDIT_ACTIONS)[number];
@@ -148,6 +153,8 @@ export const PLATFORM_AUDIT_RESOURCE_TYPES = [
   // the refusal paths (expired, revoked, already claimed) there is no user to
   // name at all.
   'membership_invite',
+  // An account of the tenant (`accounts.id`).
+  'account',
 ] as const;
 
 export type PlatformAuditResourceType = (typeof PLATFORM_AUDIT_RESOURCE_TYPES)[number];

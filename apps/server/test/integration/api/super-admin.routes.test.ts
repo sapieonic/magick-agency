@@ -371,6 +371,86 @@ describe('super-admin routes (integration)', () => {
 
   // ── POST /admins ─────────────────────────────────────────────────────────
 
+  describe('POST /super-admin/tenants/:id/accounts', () => {
+    it('adds a live account beside the tenant\'s Default and audits it', async () => {
+      const token = await loginAndGetToken(app);
+      const created = await app.inject({
+        method: 'POST',
+        url: '/super-admin/tenants',
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Two Accounts Ltd', owner_email: 'two@example.com' },
+      });
+      const tenantId = created.json().tenant.id;
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/super-admin/tenants/${tenantId}/accounts`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Outbound Team' },
+      });
+
+      expect(res.statusCode).toBe(201);
+      const { account } = res.json();
+      expect(account).toMatchObject({ tenant_id: tenantId, name: 'Outbound Team', slug: 'outbound-team', status: 'active' });
+
+      const pool = getTestPool();
+      const { rows: accounts } = await pool.query(
+        'SELECT name FROM accounts WHERE tenant_id = $1 ORDER BY created_at',
+        [tenantId],
+      );
+      expect(accounts.map((a: { name: string }) => a.name)).toEqual(['Default', 'Outbound Team']);
+
+      await auditWrites.drain();
+      const { rows: audit } = await pool.query(
+        `SELECT admin_id, resource_type, resource_id, details FROM super_admin_audit_log WHERE action = 'create_account'`,
+      );
+      expect(audit).toEqual([{
+        admin_id: adminId,
+        resource_type: 'account',
+        resource_id: account.id,
+        details: { tenant_id: tenantId, name: 'Outbound Team', slug: 'outbound-team' },
+      }]);
+    });
+
+    it('refuses the tenant\'s existing account name (409) and a missing tenant (404)', async () => {
+      const token = await loginAndGetToken(app);
+      const tenant = await insertTenant();
+      await getTestPool().query(
+        `INSERT INTO accounts (tenant_id, name, slug) VALUES ($1, 'Default', 'default')`,
+        [tenant.id],
+      );
+
+      const taken = await app.inject({
+        method: 'POST',
+        url: `/super-admin/tenants/${tenant.id}/accounts`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'default' },
+      });
+      expect(taken.statusCode).toBe(409);
+      expect(taken.json().code).toBe('account_name_taken');
+
+      const missing = await app.inject({
+        method: 'POST',
+        url: `/super-admin/tenants/${randomUUID()}/accounts`,
+        headers: { authorization: `Bearer ${token}` },
+        payload: { name: 'Anything' },
+      });
+      expect(missing.statusCode).toBe(404);
+    });
+
+    it('requires a super-admin token', async () => {
+      const tenant = await insertTenant();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/super-admin/tenants/${tenant.id}/accounts`,
+        payload: { name: 'Sneaky' },
+      });
+      expect(res.statusCode).toBe(401);
+      const { rows } = await getTestPool().query('SELECT 1 FROM accounts WHERE tenant_id = $1', [tenant.id]);
+      expect(rows).toEqual([]);
+    });
+  });
+
   describe('POST /super-admin/admins', () => {
     it('creates a new super admin', async () => {
       const token = await loginAndGetToken(app);

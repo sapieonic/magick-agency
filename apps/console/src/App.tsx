@@ -42,6 +42,7 @@ const JoinPage = lazy(() => import('./pages/auth/JoinPage'));
 const VerifyEmailPage = lazy(() => import('./pages/auth/VerifyEmailPage'));
 const AgentConsolePage = lazy(() => import('./pages/agency/AgentConsolePage'));
 const TeamPage = lazy(() => import('./pages/team/TeamPage'));
+const AccountsPage = lazy(() => import('./pages/accounts/AccountsPage'));
 const NotificationSettingsPage = lazy(() => import('./pages/settings/NotificationSettingsPage'));
 const AnalysisProfilesPage = lazy(() => import('./pages/settings/AnalysisProfilesPage'));
 const AgencyCampaignBuilderPage = lazy(() => import('./pages/campaigns/agency/CampaignBuilderPage'));
@@ -564,6 +565,10 @@ export default function App() {
               <Route path="/app" element={<RequireAuth><AgentLanding><AppLayout /></AgentLanding></RequireAuth>}>
                 <Route index element={<AppHomeRedirect />} />
                 <Route path="team" element={<TeamPage />} />
+                {/* The tenant's accounts. Listed for `account.read`; the page offers
+                    "New account" only to a tenant-wide `account.create` seat, and the
+                    server enforces both. */}
+                <Route path="accounts" element={<AccountsPage />} />
                 {/* Per-user notification subscriptions. No RequireCapability and no
                     permission guard: the page is about the signed-in person and the server
                     takes no subject on any of its routes, so there is nobody else it

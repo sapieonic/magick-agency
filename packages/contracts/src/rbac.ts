@@ -76,6 +76,9 @@ export type Permission =
   // ── Platform permissions Magick Agency keeps, names unchanged ──────────────
   | 'tenant.read'
   | 'account.read'
+  // Adding an account to the caller's tenant (`POST /accounts`). There is no
+  // update or delete: renaming and removing accounts stay out of the console.
+  | 'account.create'
   | 'user.invite' | 'user.update_role' | 'user.remove'
   | 'audit.read'
   // ── Renamed to agency names (the public API layer's name → here), floors unchanged ──────
@@ -130,6 +133,13 @@ export const PERMISSION_MATRIX: Record<Permission, MembershipRole> = {
   // membership-scoped and returns `{id, name, tenant_id}` only — which is how an
   // `agent` (below this floor) resolves its account (`TenantContext.tsx`).
   'account.read': 'viewer',
+  // A tenant-level act: an account is a new workspace inside the tenant, with
+  // its own campaigns, settings and audit trail. `account_admin` runs ONE
+  // account and must not mint siblings, so the floor is `tenant_admin`, the
+  // same as changing roles. The route also refuses an account-scoped
+  // membership at this level (`account.routes.ts`): the new account would be
+  // one its creator cannot see.
+  'account.create': 'tenant_admin',
   'user.invite': 'account_admin',
   'user.update_role': 'tenant_admin',
   'user.remove': 'tenant_admin',

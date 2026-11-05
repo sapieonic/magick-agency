@@ -172,6 +172,11 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   purpose: it reaches only the agent surfaces, `/auth/session`, `/accounts/mine`, notification
   preferences, the flag map and the uplink probe (`POST /client-config/uplink-probe`, any verified
   user). Enforced by `rbac/rbac.middleware.ts`.
+- **Accounts.** A tenant starts with one account, `Default`, written with the tenant. More are added
+  by a tenant admin or owner on a tenant-wide seat (`POST /accounts`, `account.create`, the console's
+  Accounts page) or by a super admin (`POST /super-admin/tenants/:id/accounts`), both through
+  `api/routes/helpers/create-account.ts`: a name unique in the tenant ignoring case, a slug derived
+  from it. A new account needs no other row (decisions AA1–AA5). There is no rename or delete.
 - **Settings.** `settings/agency-account-settings.ts` resolves the per-account row to effective
   values (`allow_recording` and `analyze_calls` default `false`, `max_concurrent_calls` 5,
   `webrtc_max_duration_seconds` 1800).
@@ -622,12 +627,12 @@ a rate-limit key and never an auth input.
 
 - **Console** (`apps/console`). Firebase web sign-in (`VITE_FIREBASE_*`), `AgencyLoginPage` and
   `AgencyJoinPage` (no self sign-up), the agent station, campaigns, roster, activity, DNC, analysis
-  profiles, team and notification settings. Permissions come from `packages/contracts/src/rbac.ts`.
+  profiles, team, accounts and notification settings. Permissions come from `packages/contracts/src/rbac.ts`.
   Brand pack `brands/magick-agency/` (B17); a branding guard test
   (`src/__tests__/branding/noParentBrand.test.ts`). In dev, Vite proxies every API prefix to `:3021`
   (`vite.config.ts`), and `devProxyPrefixes.test.ts` fails for any API segment the proxy misses.
-- **Super-admin console** (`apps/super-admin`). Tenants, users, admins, phone numbers, feature flags,
-  usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
+- **Super-admin console** (`apps/super-admin`). Tenants (and their accounts), users, admins, phone
+  numbers, feature flags, usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
   branding guard.
 - **Shared UI** (`packages/web-ui`). The components, toast context, stylesheet and helpers both SPAs
   import by path; it has its own branding guard (`packages/web-ui/test/noParentBrand.test.ts`), as

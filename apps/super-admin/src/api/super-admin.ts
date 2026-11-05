@@ -1,5 +1,6 @@
 import { API_BASE, ORIGINATOR_HEADER, ORIGINATOR } from '../config';
 import { parseApiErrorBody } from '@magick-agency/web-ui/apiErrorBody';
+import type { Account, CreateAccountBody, CreateAccountResponse } from '@magick-agency/contracts/api/platform/auth';
 import type {
   SuperAdminLoginResponse,
   SuperAdminTenant,
@@ -200,6 +201,19 @@ export async function listAllUsers(): Promise<{ users: SuperAdminUser[] }> {
 }
 
 // ── Account Concurrency ──────────────────────────────────
+
+/**
+ * Add an account to a tenant. A refusal throws with the server's sentence
+ * (409 `account_name_taken`, 404 for an unknown tenant).
+ */
+export async function createTenantAccount(tenantId: string, name: string): Promise<Account> {
+  const body: CreateAccountBody = { name };
+  const res = await saFetch<CreateAccountResponse>(`${SA_BASE}/tenants/${tenantId}/accounts`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  return res.account;
+}
 
 export async function getTenantAccounts(tenantId: string): Promise<TenantAccountWithConcurrency[]> {
   const res = await saFetch<{ accounts: TenantAccountWithConcurrency[] }>(`${SA_BASE}/tenants/${tenantId}/accounts`);

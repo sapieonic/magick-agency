@@ -104,8 +104,19 @@ function InviteStateBadge({ member }: { member: TenantMember }) {
 
 /* ── Team Page ────────────────────────────────── */
 
+/**
+ * The Account cell: the account's name once a tenant can hold several, falling back
+ * to the id's first eight characters for an account the switcher's list does not
+ * carry (an account-scoped viewer sees only their own).
+ */
+export function accountLabel(accountId: string | null, names: ReadonlyMap<string, string>): string {
+  if (!accountId) return 'Tenant-level';
+  return names.get(accountId) ?? accountId.slice(0, 8);
+}
+
 export default function TeamPage() {
-  const { tenantId, role } = useTenant();
+  const { tenantId, role, accounts } = useTenant();
+  const accountNames = useMemo(() => new Map(accounts.map((a) => [a.id, a.name])), [accounts]);
   const { members, loading, loaded, error, reload } = useTeam();
   const canInvite = usePermission('user.invite');
   const [showInvite, setShowInvite] = useState(false);
@@ -289,7 +300,7 @@ export default function TeamPage() {
                     </td>
                     <td>
                       <span className={styles.account}>
-                        {m.membership.account_id ? m.membership.account_id.slice(0, 8) : 'Tenant-level'}
+                        {accountLabel(m.membership.account_id, accountNames)}
                       </span>
                     </td>
                     <td>

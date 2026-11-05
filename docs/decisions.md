@@ -347,11 +347,25 @@ same scale, against the measured rate. AC1–AC3 answer the ask's "To decide".
 | AC2 | Raising it above 3% | Allowed, with an amber note that 3% is the limit most dropped-call rules set. No extra role: every campaign write already needs `agency.campaigns.write` (account admin and above), so a role gate above 3% would leave only tenant admins able to raise it | **default, pending Manas** |
 | AC3 | Recording the change | No new write: a PATCH that changes it already writes `agency_campaign.config_changed` with `abandonment_ceiling_pct: { from, to }` and the signed-in actor (IN8), shown on the campaign's Activity page | **default, pending Manas** |
 
+Account creation, 2026-11-05 (Manas: "Both super admin and tenant admin should be able to create
+more accounts through UI"). Before this a tenant had exactly one account, the `Default` that tenant
+creation writes; no route made another. The console's Accounts page (`/app/accounts`) and the
+super-admin tenant page's "New account" button now do, through one write
+(`api/routes/helpers/create-account.ts`).
+
+| # | Topic | Ruling | Status |
+|---|---|---|---|
+| AA1 | Who | Tenant admins and owners (`account.create`, floor `tenant_admin`, the one account-administration permission in the contract) through `POST /accounts`, and super admins through `POST /super-admin/tenants/:id/accounts`. Not `account_admin`: that role runs one account. The console route also requires a tenant-wide membership: a `tenant_admin` seat scoped to one account is refused 403 `tenant_wide_membership_required`, because `GET /accounts` confines it to its own account and the account it made would vanish from its switcher. The console sends the create without `X-Account-Id` so the tenant-wide seat is the one checked | **Decided** (who); **default, pending Manas** (the tenant-wide requirement) |
+| AA2 | Name | Trimmed, 1–100 characters, no control characters; unique among the tenant's live (not deleted) accounts ignoring case, Unicode compatibility forms and repeated spaces, else 409 `account_name_taken`. A deleted account's name and slug can be used again | **default, pending Manas** |
+| AA3 | Slug | The server's, never typed: the name's ASCII letters and digits joined by dashes (40 characters at most, `account` when the name has none), with a random six-hex suffix when another live account holds it. The partial unique index decides a race; a create that loses it to the same name is a 409, not a second account of that name | **default, pending Manas** |
+| AA4 | What a new account starts with | Nothing but its row. With no `account_settings` row it reads the defaults (recording and analysis off, 5 concurrent calls, legacy-total concurrency), untagged numbers serve it, and feature flags fall back to the tenant's. Limits stay a super-admin act (Service tab). There is still no rename or delete (`account.update` / `account.delete`, Q3e) | **default, pending Manas** |
+| AA5 | Audit | A tenant admin's create writes `account.created` to `platform_audit_log`, filed under the new account (`account_id`, `resource_type` `account`), so its own trail opens with its creation; a super admin's writes `create_account` to `super_admin_audit_log` | **default, pending Manas** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
 |---|---|---|---|
-| Q3 | Contract choices made during the build | (a) the session settings map is keyed by `account_id` across every account the caller's memberships reach; (b) there is no separate per-account dialer-analysis toggle: analysis is governed by `analyze_calls` alone; (c) usage counts carry seconds, windowed on `dialed_at`; (d) super-admin shapes for change role, revoke and add-to-account exist; (e) `tenant.update` / `account.update` are added only if a console page needs them | Manas (ratify) |
+| Q3 | Contract choices made during the build | (a) the session settings map is keyed by `account_id` across every account the caller's memberships reach; (b) there is no separate per-account dialer-analysis toggle: analysis is governed by `analyze_calls` alone; (c) usage counts carry seconds, windowed on `dialed_at`; (d) super-admin shapes for change role, revoke and add-to-account exist; (e) `tenant.update` / `account.update` are added only if a console page needs them (`account.create` was added on 2026-11-05 for the Accounts page, AA1) | Manas (ratify) |
 | — | `supervisor_hold` | Declared in the wrap-up hold union, never produced by the server. Keep, remove or build a producer | Manas |
 | — | Shutdown grace | The completion-notice drain is 30 s and Docker's default stop grace is 10 s. Implemented, pending ratification: `stop_grace_period: 45s` in `docker/docker-compose.prod.yml`; and `stop()` now awaits in-flight pacing ticks and owner sweeps, bounded at 5 s (`TICK_DRAIN_TIMEOUT_MS`), with every dial site re-checking before the carrier (Rulings of 2026-10-16/17, "Pacing shutdown"). 5 s plus the 30 s drain fits inside 45 s | Manas (ratify) |
 | — | Rate floors | Campaign rates are withheld under 25 dials (`AGENCY_CAMPAIGN_MIN_RATE_DENOMINATOR`, applied by the console), agent rates under 20 (`AGENCY_ROSTER_MIN_RATE_DENOMINATOR`, the server's `rates_reportable`). Both are in the contracts, side by side. Should they be one number? | Manas |

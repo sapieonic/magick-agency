@@ -4,21 +4,86 @@ import { tenantContextMiddleware } from '../middleware/tenant-context.middleware
 import { requirePermission } from '../../rbac/rbac.middleware.js';
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
+import type { CreateAccountErrorCode } from '@magick-agency/contracts/api/platform/auth';
+import { createAccountSchema } from '../validators/account.validator.js';
+import { parseOr400 } from './helpers/parse-or-400.js';
+import { sendRefusal } from './helpers/refusal.js';
+import { createTenantAccount } from './helpers/create-account.js';
+import { platformAuditLogger } from '../../audit/platform/audit-logger.js';
+import { requestAuditActor } from '../../audit/platform/audit-actor.js';
+import { createChildLogger } from '@magick-agency/observability';
+
+const log = createChildLogger({ component: 'account-routes' });
 
 /*
- * Read-only: there are no account create, update or delete routes here (see the
- * notes in the plugin below), so no account-scope-mismatch guard for them either.
+ * Accounts of the caller's tenant: list, the caller's own, and create. There is no
+ * update or delete route: renaming and removing accounts are not console acts (the
+ * contract has no `account.update` or `account.delete`).
  */
 
 export async function accountRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', sessionMiddleware);
   app.addHook('preHandler', tenantContextMiddleware);
 
-  /*
-   * No `POST /accounts`: the contract (`@magick-agency/contracts/rbac`) has no
-   * `account.create`, and no console page calls it (decision Q3e). Super-admins
-   * create accounts.
+  /**
+   * POST /accounts — add an account to the caller's tenant (tenant_admin+,
+   * `account.create`). Body `CreateAccountBody`, 201 `CreateAccountResponse`.
+   *
+   * ── A tenant-wide seat only ──────────────────────────────────────────────
+   * `requirePermission` proves the ROLE. A `tenant_admin` whose membership is
+   * scoped to one account (super-admin can add one) holds the role but not the
+   * tenant: `GET /accounts` confines them to their own account, so the account
+   * they made would vanish from their switcher the moment it existed. Refused
+   * 403 `tenant_wide_membership_required` instead. The console sends this
+   * request without `X-Account-Id`, so the tenant-context middleware picks the
+   * caller's tenant-wide membership when they hold one beside an account seat.
+   *
+   * 409 `account_name_taken` when a live account already has the name, ignoring
+   * case and spacing (`createTenantAccount`). Nothing is cached about a new
+   * account id, so nothing is invalidated.
    */
+  app.post('/', {
+    preHandler: [requirePermission('account.create')],
+  }, async (request: FastifyRequest, reply: FastifyReply) => {
+    if ((request.membership?.account_id ?? null) !== null) {
+      return sendRefusal<CreateAccountErrorCode>(
+        reply,
+        403,
+        'tenant_wide_membership_required',
+        'Your admin access covers one account, not the whole workspace, so you cannot create accounts. Ask the workspace owner.',
+      );
+    }
+
+    const parsed = parseOr400(createAccountSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
+    const { name } = parsed.data;
+    const tenantId = request.tenantId!;
+
+    const result = await createTenantAccount(tenantId, name);
+    if (result.status === 'name_taken') {
+      return sendRefusal<CreateAccountErrorCode>(
+        reply,
+        409,
+        'account_name_taken',
+        `There is already an account called "${name}" in this workspace.`,
+      );
+    }
+    const { account } = result;
+
+    log.info({ tenantId, accountId: account.id }, 'Account created');
+    platformAuditLogger.log({
+      tenant_id: tenantId,
+      account_id: account.id,
+      ...requestAuditActor(request),
+      action: 'account.created',
+      resource_type: 'account',
+      resource_id: account.id,
+      details: { name: account.name, slug: account.slug },
+      ip_address: request.ip,
+    });
+
+    return reply.code(201).send({ account });
+  });
 
   /**
    * GET /accounts — list accounts in tenant (viewer+)
@@ -109,7 +174,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
 
   /*
    * No `PUT /accounts/:id` (`account.update`) or `DELETE /accounts/:id`
-   * (`account.delete`), for the same reason as `POST /` above: neither permission
-   * is in the contract and no console page calls them.
+   * (`account.delete`): neither permission is in the contract and no console page
+   * calls them.
    */
 }

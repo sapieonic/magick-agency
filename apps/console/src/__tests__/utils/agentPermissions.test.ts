@@ -33,7 +33,7 @@ const AGENCY_PERMISSIONS: Permission[] = [
 // exist here, so they have no `it.each` rows.
 const PRE_EXISTING_PERMISSIONS: Permission[] = [
   'tenant.read',
-  'account.read',
+  'account.read', 'account.create',
   'user.invite', 'user.update_role', 'user.remove',
   'agency.analysis_profiles.write', 'agency.analysis_profiles.read',
   'agency.campaigns.read', 'agency.campaigns.write',

@@ -20,6 +20,7 @@ export const SA_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'GET', path: '/super-admin/users' },
 
   { method: 'GET', path: '/super-admin/tenants/:id/accounts' },
+  { method: 'POST', path: '/super-admin/tenants/:id/accounts' },
   { method: 'GET', path: '/super-admin/tenants/:id/accounts/:accountId/concurrency' },
   { method: 'PUT', path: '/super-admin/tenants/:id/accounts/:accountId/concurrency' },
   { method: 'GET', path: '/super-admin/tenants/:id/accounts/:accountId/settings' },

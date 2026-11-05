@@ -28,10 +28,16 @@ import type { InviteEmailResult } from '../../../notifications/invite-mailer.js'
 import { createChildLogger } from '@magick-agency/observability';
 import { createTenantSchema, addUserToTenantSchema, changeMembershipRoleSchema } from '../../validators/super-admin.validator.js';
 import { parseOr400 } from '../helpers/parse-or-400.js';
+import { sendRefusal } from '../helpers/refusal.js';
+import { createTenantAccount } from '../helpers/create-account.js';
+import { createAccountSchema } from '../../validators/account.validator.js';
+import type { CreateAccountErrorCode } from '@magick-agency/contracts/api/platform/auth';
 import { returnContactsOnUnstaff } from '../../../agency/assignment/unstaff.js';
 import { SYSTEM_AUDIT_ACTOR } from '../../../audit/platform/audit-actor.js';
 
 const log = createChildLogger({ component: 'super-admin-routes' });
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Close a user's campaign staffing across the whole tenant, as
@@ -245,6 +251,47 @@ export async function registerSuperAdminTenantRoutes(authApp: FastifyInstance): 
   });
 
   // No tenant delete route — see the module note in `super-admin.routes.ts`.
+
+  /**
+   * POST /super-admin/tenants/:id/accounts
+   * Add an account to a tenant. Body `CreateAccountBody`, 201
+   * `CreateAccountResponse`: the same write and the same name rule as the
+   * console's `POST /accounts` (`createTenantAccount`), without its membership
+   * check — a super admin has no membership. 404 for an unknown or deleted tenant,
+   * 409 `account_name_taken`. Audited here as `create_account`.
+   */
+  authApp.post('/tenants/:id/accounts', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { id: tenantId } = request.params;
+    const parsed = parseOr400(createAccountSchema, request.body, reply, 'platform');
+    if (!parsed) return reply;
+    const { name } = parsed.data;
+
+    // A malformed id is an unknown tenant, not a 22P02 from the lookup.
+    const tenant = UUID_PATTERN.test(tenantId) ? await tenantRepository.findById(tenantId) : null;
+    if (!tenant) {
+      return reply.code(404).send({ error: 'Not Found', message: 'Tenant not found' });
+    }
+
+    const result = await createTenantAccount(tenantId, name);
+    if (result.status === 'name_taken') {
+      return sendRefusal<CreateAccountErrorCode>(
+        reply,
+        409,
+        'account_name_taken',
+        `There is already an account called "${name}" in this tenant.`,
+      );
+    }
+    const { account } = result;
+
+    log.info({ tenantId, accountId: account.id }, 'Super admin created account');
+    void recordSuperAdminAudit({
+      admin_id: request.superAdmin!.id, admin_email: request.superAdmin!.email,
+      action: 'create_account', resource_type: 'account', resource_id: account.id,
+      details: { tenant_id: tenantId, name: account.name, slug: account.slug },
+    });
+
+    return reply.code(201).send({ account });
+  });
 
   /**
    * POST /super-admin/tenants/:id/users

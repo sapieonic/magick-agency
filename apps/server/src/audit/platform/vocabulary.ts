@@ -198,6 +198,9 @@ export const PLATFORM_AUDIT_ACTION_VOCABULARY = [
   // the invited address and the one used is written down.
   { value: 'user.invite_sent', label: 'Invitation sent', group: 'Team', product: 'platform' },
   { value: 'user.invite_claimed', label: 'Invitation accepted', group: 'Team', product: 'platform' },
+  // Under Team: the group is the workspace's administration, and an account is
+  // where a team works.
+  { value: 'account.created', label: 'Account created', group: 'Team', product: 'platform' },
 ] as const satisfies readonly AuditActionOption[];
 
 /**
@@ -222,6 +225,7 @@ export const PLATFORM_AUDIT_RESOURCE_TYPE_VOCABULARY = [
   // membership change to point at. Same reasoning as `agency_campaign_agent`
   // being labelled an assignment rather than an agent.
   { value: 'membership_invite', label: 'Invitation' },
+  { value: 'account', label: 'Account' },
 ] as const satisfies readonly AuditResourceTypeOption[];
 
 /**

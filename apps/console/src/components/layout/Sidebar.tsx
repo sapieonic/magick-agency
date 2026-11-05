@@ -11,6 +11,7 @@ import {
   Sparkles,
   Shield,
   Phone,
+  Briefcase,
 } from 'lucide-react';
 import { useTenant } from '../../contexts/TenantContext';
 import { useFeatureFlags } from '../../contexts/FeatureFlagsContext';
@@ -50,7 +51,7 @@ interface NavSection {
 }
 
 /**
- * One section, ADMIN, holding Team, Notifications, Call Summaries and Soft phone (the analysis
+ * One section, ADMIN, holding Team, Accounts, Notifications, Call Summaries and Soft phone (the analysis
  * profiles page; its gates are the `agency_call_analysis` flag and the
  * `agency.analytics` capability, the active account's `analyze_calls`). This
  * shell is the platform zone (team and settings); the agency workspace is entered from the
@@ -64,6 +65,9 @@ const NAV_SECTIONS: NavSection[] = [
     description: 'Team and account settings',
     items: [
       { label: 'Team', to: '/app/team', icon: Users, permission: 'user.invite' },
+      // Shown to the roles that can create accounts (tenant admin and owner).
+      // Everyone else switches accounts from the switcher and has nothing to do here.
+      { label: 'Accounts', to: '/app/accounts', icon: Briefcase, permission: 'account.create' },
       // Floored at `tenant.read` (the `viewer` level), NOT at an admin
       // permission: this page manages the signed-in person's OWN email
       // subscriptions, and an unsubscribe only admins can reach is not an

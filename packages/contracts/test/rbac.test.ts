@@ -46,6 +46,8 @@ const FLOORS: ReadonlyArray<{
 }> = [
   { permission: 'tenant.read', floor: 'viewer', masterName: 'tenant.read', masterLine: 80 },
   { permission: 'account.read', floor: 'viewer', masterName: 'account.read', masterLine: 83 },
+  // Accounts created from the console and super-admin: a tenant-level act.
+  { permission: 'account.create', floor: 'tenant_admin', masterName: null, masterLine: null },
   { permission: 'user.invite', floor: 'account_admin', masterName: 'user.invite', masterLine: 86 },
   { permission: 'user.update_role', floor: 'tenant_admin', masterName: 'user.update_role', masterLine: 87 },
   { permission: 'user.remove', floor: 'tenant_admin', masterName: 'user.remove', masterLine: 88 },

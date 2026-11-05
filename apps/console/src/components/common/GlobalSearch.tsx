@@ -38,6 +38,7 @@ const PAGES: PageEntry[] = [
   // `/app` zone, where a bare "Do Not Call" reads as tenant-wide.
   { label: 'Agency Do Not Call', path: '/agency/dnc', section: 'Agency', keywords: ['dnc', 'do not call', 'suppress', 'blocklist', 'blacklist', 'agency', 'dialing'], flag: 'agency_dialer_enabled', capability: 'agency' },
   { label: 'Team', path: '/app/team', section: 'Admin', keywords: ['team', 'member', 'invite'] },
+  { label: 'Accounts', path: '/app/accounts', section: 'Admin', keywords: ['account', 'accounts', 'new account', 'workspace'] },
   // No `capability` and no permission: the page manages the signed-in person's
   // own email subscriptions. "unsubscribe" is in the keywords because that is
   // the word somebody reaches for search with when a digest arrives they did
