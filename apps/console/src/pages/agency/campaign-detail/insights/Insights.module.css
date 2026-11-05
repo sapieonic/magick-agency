@@ -621,23 +621,6 @@
 .swatchLine { background: var(--ember); }
 .swatchCeiling { background: var(--danger); }
 
-.meter {
-  position: relative;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-}
-
-.meterFill {
-  height: 100%;
-  border-radius: 4px;
-  background: var(--success);
-}
-
-.meterFill[data-over='true'] {
-  background: var(--danger);
-}
-
 .chartControls {
   display: flex;
   flex-wrap: wrap;

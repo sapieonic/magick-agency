@@ -420,3 +420,49 @@
   line-height: 1.6;
   color: var(--warning);
 }
+
+/* ── The abandonment limit (`AbandonmentCeilingFields`) ─────────────────── */
+
+/* The meter takes the width; the box keeps its own. Wraps under the meter on
+   a narrow column rather than squeezing the track. */
+.ceilingRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+}
+
+.ceilingMeter {
+  flex: 1 1 260px;
+  min-width: 0;
+  max-width: 520px;
+}
+
+.ceilingInput {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: none;
+}
+
+.ceilingInput label {
+  margin: 0;
+}
+
+.ceilingInput input {
+  width: 96px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The `.zeroWarning` idea at the size of a field note: amber, not error red,
+   because the save goes through. */
+.ceilingWarning {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--warning-subtle);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}

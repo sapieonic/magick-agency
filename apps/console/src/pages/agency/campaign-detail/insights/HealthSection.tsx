@@ -1,6 +1,7 @@
 import type { AgencyInsightsHealth, AgencyInsightsSettings, AgencyInsightsStallEpisode } from '../../../../types/agency-insights';
 import { AGENCY_PACING_IDLE_REASONS } from '../../../../types/agency-insights';
-import { clampPercent, formatCount, pct } from '../../../../utils/format/number';
+import { formatCount, pct } from '../../../../utils/format/number';
+import { AbandonmentMeter } from '../../../../components/agency/AbandonmentMeter';
 import { durationWords } from '../../../../utils/format/duration';
 import { abandonmentRate, connectRate, insightsRate, rateText, rateValue } from '../../../../utils/agency/insights/rates';
 import { formatZoned, IDLE_REASON_LABELS } from '../../../../utils/agency/insights/copy';
@@ -34,7 +35,6 @@ export function HealthSection({
   const { campaignId, range } = ctx;
   const abandonment = abandonmentRate(health.abandonment.rolling_24h);
   const ceiling = health.abandonment.ceiling_pct;
-  const over = abandonment.kind === 'value' && abandonment.pct >= ceiling;
   // The campaign's connect rate over the same rows (human connects over first dials, connectRate).
   const average = rateFigure(connectRate({
     human_connects: health.caller_ids.reduce((s, c) => s + c.human_connects, 0),
@@ -85,15 +85,9 @@ export function HealthSection({
           label={`Abandonment vs ${pct(ceiling)} ceiling`}
           value={rateText(abandonment)}
           withheld={abandonment.kind !== 'value'}
-          sub={
-            <span className={styles.meter} style={{ display: 'block' }} aria-hidden="true">
-              <span
-                className={styles.meterFill}
-                data-over={String(over)}
-                style={{ display: 'block', width: `${abandonment.kind === 'value' && ceiling > 0 ? clampPercent((abandonment.pct / ceiling) * 100) : 0}%` }}
-              />
-            </span>
-          }
+          // The builder's meter, read-only: the rate on the same 0–10% scale as the
+          // line the supervisor dragged, so the ceiling sits where they put it.
+          sub={<AbandonmentMeter ceilingPct={ceiling} ratePct={abandonment.kind === 'value' ? abandonment.pct : undefined} />}
           testId="kpi-health-abandonment"
         />
         <Kpi

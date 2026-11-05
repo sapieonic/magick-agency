@@ -334,6 +334,19 @@ a definition open.
 | IN11 | Who an allocation dial belongs to | The allocation table's contact columns are by owner; its dial columns (redials, retries, overrides, last activity) by the agent who placed the dial, so each opens a Call attempts list of exactly those dials. In `strict` mode the two agree | **default, pending Manas** |
 | IN12 | "Lifetime" | From the campaign's `created_at` to now, at most 92 days (`AGENCY_INSIGHTS_MAX_RANGE_DAYS`, the limit on every range read); an older campaign's Lifetime serves the last 92 days and the page says so | **default, pending Manas** |
 
+Abandonment ceiling in the console, 2026-11-05 (ClickUp "Campaign builder: let the supervisor set
+the abandonment ceiling by dragging a line (default 3%)"). The server already took
+`abandonment_ceiling_pct` on create and PATCH; the console only displayed it. The builder's "How
+agents work" step and the settings page's Behaviour section now show a meter with a draggable
+ceiling line and a number field (`CampaignBehaviourSection`); Insights draws the same meter, on the
+same scale, against the measured rate. AC1–AC3 answer the ask's "To decide".
+
+| # | Topic | Default used | Status |
+|---|---|---|---|
+| AC1 | Range | The console offers 0.5–10% in steps of 0.1 on a fixed 0–10% scale (`utils/agency/abandonmentCeiling.ts`). The server still accepts `> 0` and `<= 100` (the column CHECK and `validateAbandonmentCeiling`), so a value set through the API outside the console's range loads as stored and the field names it; saving needs a value in range | **default, pending Manas** |
+| AC2 | Raising it above 3% | Allowed, with an amber note that 3% is the limit most dropped-call rules set. No extra role: every campaign write already needs `agency.campaigns.write` (account admin and above), so a role gate above 3% would leave only tenant admins able to raise it | **default, pending Manas** |
+| AC3 | Recording the change | No new write: a PATCH that changes it already writes `agency_campaign.config_changed` with `abandonment_ceiling_pct: { from, to }` and the signed-in actor (IN8), shown on the campaign's Activity page | **default, pending Manas** |
+
 ## 5. Still open
 
 | # | Question | Context | Owner |
@@ -353,5 +366,6 @@ a definition open.
 | — | Soft phone vs one live call per number | Should a tagged soft-phone call to a number whose contact is `connected` (bridged, or in wrap-up) be refused, as `in_flight` is? And is the millisecond race between a manual claim and a pacing claim on two rows of one number worth a per-number lock? (§4, "Roster upload, choosing the duplicate column") | Manas |
 | WR1, WR3, WR4, WR7–WR13 | Wrap-up redial defaults | Built, pending ratification (§4, "Wrap-up redial"). WR3 is the ask's open question: do redials use up the contact's `max_attempts`? Built as no | Manas (ratify) |
 | CA2–CA10, CA13–CA15 | Contact assignment defaults | Built, pending ratification (§4, "Contact assignment"). CA5's strict-mode consequence: a callback that falls back waits for a supervisor | Manas (ratify) |
+| AC1–AC3 | Abandonment ceiling defaults | Built, pending ratification (§4, "Abandonment ceiling in the console"): the console range 0.5–10%, a warning but no role gate above 3% | Manas (ratify) |
 | B17 | Internal header names | `x-mgkvc-*` names are on the in-process wire only; renaming them is a follow-up | lead |
 | — | Gated items | Vendor setup; Playwright happy path (real Firebase sign-in); parity check against production data; dark pilot; a real VoiceLink call and a real recording analysed; launch | Manas |

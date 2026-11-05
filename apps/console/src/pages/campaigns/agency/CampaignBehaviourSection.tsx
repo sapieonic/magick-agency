@@ -5,15 +5,17 @@ import { CallingHoursFields } from './CallingHoursFields';
 import { DispositionCatalogEditor } from './DispositionCatalogEditor';
 import { RetryPolicyTable } from './RetryPolicyTable';
 import { WrapupFields } from './WrapupFields';
+import { AbandonmentCeilingFields } from './AbandonmentCeilingFields';
 import { AssignmentFields } from './AssignmentFields';
 
 /**
  * Campaign configuration: calling hours, the
- * disposition catalog, the retry policy and wrap-up.
+ * disposition catalog, the retry policy, wrap-up and the abandonment limit.
  *
  * Every rule lives in `utils/agencyCampaignConfigForm.ts`. This file assembles
- * four editors — `CallingHoursFields`, `DispositionCatalogEditor`,
- * `RetryPolicyTable` and `WrapupFields` — around one set of field errors
+ * five editors — `CallingHoursFields`, `DispositionCatalogEditor`,
+ * `RetryPolicyTable`, `WrapupFields` and `AbandonmentCeilingFields` (rules in
+ * `utils/agency/abandonmentCeiling.ts`) — around one set of field errors
  * (`configFieldErrors.tsx`), and the notes below are about the copy in them that
  * is itself the feature:
  *
@@ -129,6 +131,15 @@ export function CampaignBehaviourSection({
         onChange={(patch) => onChange({ ...state, ...patch })}
         errors={errors}
       />
+      {/*
+        One group for the builder's "How agents work" step and the settings
+        page's Behaviour card alike, so the limit is set in both from here.
+      */}
+      <AbandonmentCeilingFields
+        ceilingPct={state.abandonmentCeilingPct}
+        onChange={(abandonmentCeilingPct) => onChange({ ...state, abandonmentCeilingPct })}
+        errors={errors}
+      />
       {assignment ? (
         <AssignmentFields
           assignment={state.assignment}
@@ -163,8 +174,8 @@ export function CampaignBehaviourSection({
         <ComposerSection
           title="Behaviour"
           helper={assignment
-            ? 'Outcomes agents can pick, how retries work, wrap-up, and how contacts are assigned.'
-            : 'Outcomes agents can pick, how retries work, and wrap-up.'}
+            ? 'Outcomes agents can pick, how retries work, wrap-up, when the campaign pauses itself, and how contacts are assigned.'
+            : 'Outcomes agents can pick, how retries work, wrap-up, and when the campaign pauses itself.'}
         >
           {behaviour}
         </ComposerSection>

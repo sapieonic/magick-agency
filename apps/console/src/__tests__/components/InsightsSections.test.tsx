@@ -328,6 +328,32 @@ describe('health and compliance', () => {
     expect(hrefOf(screen.getByTestId('kpi-carrier-failures'), '60 failed dials')).toBe(`/agency/campaigns/camp-1/attempts?outcome=failed&${RANGE_QS}`);
   });
 
+  it('draws the rate against the ceiling on the builder’s 0–10% scale', () => {
+    // The same meter the supervisor dragged the line on: 3% sits 30% along, and the
+    // 2.1% rate (21 of 1,000 answered) fills 21%, under the line.
+    show(<HealthSection ctx={ctx} health={health()} timezone={ZONE} />);
+    const kpi = screen.getByTestId('kpi-health-abandonment');
+    expect(within(kpi).getByTestId('abandonment-meter-ceiling').style.left).toBe('30%');
+    expect(parseFloat(within(kpi).getByTestId('abandonment-meter-rate').style.width)).toBeCloseTo(21, 6);
+    expect(within(kpi).getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('false');
+    // A picture of the figures the KPI states in words: no slider here.
+    expect(within(kpi).queryByRole('slider')).toBeNull();
+  });
+
+  it('draws a 4% ceiling where the builder put it, and the rate red once at it', () => {
+    const sample = health();
+    show(
+      <HealthSection
+        ctx={ctx}
+        health={{ ...sample, abandonment: { ...sample.abandonment, ceiling_pct: 4, rolling_24h: { abandoned: 40, answered: 1000 } } }}
+        timezone={ZONE}
+      />,
+    );
+    const kpi = screen.getByTestId('kpi-health-abandonment');
+    expect(within(kpi).getByTestId('abandonment-meter-ceiling').style.left).toBe('40%');
+    expect(within(kpi).getByTestId('abandonment-meter-rate').getAttribute('data-over')).toBe('true');
+  });
+
   it('lists caller IDs with their connect rate and a link to their dials', () => {
     show(<HealthSection ctx={ctx} health={health()} timezone={ZONE} />);
     const table = screen.getByTestId('caller-ids-table');

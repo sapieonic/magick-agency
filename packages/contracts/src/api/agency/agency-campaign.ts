@@ -440,6 +440,13 @@ export interface AgencyCampaign {
    * per call). Off by default; the column is `NOT NULL DEFAULT false`.
    */
   allow_wrapup_redial?: boolean;
+  /**
+   * The abandonment ceiling, as a percentage: the campaign pauses itself when its
+   * rolling 24-hour abandonment rate (abandoned ÷ answered) goes over it. The column is
+   * `NOT NULL DEFAULT 3` with a CHECK of `> 0` and `<= 100`. Settable on create and by
+   * PATCH at any status; a PATCH that changes it is recorded in the campaign's activity.
+   */
+  abandonment_ceiling_pct?: number;
   /** Contact assignment (0009): how pacing reads each contact's owner. Changed only while draft or paused. */
   assignment_mode?: AgencyAssignmentMode;
   /** When an agent is unstaffed: their open contacts return to the pool (default) or stay theirs. */

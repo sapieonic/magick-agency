@@ -49,6 +49,7 @@ import {
 } from './builderFlow';
 import { BuilderStepper } from './BuilderStepper';
 import { BuilderSummary } from './BuilderSummary';
+import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
@@ -681,6 +682,12 @@ export default function CampaignBuilderPage() {
                       onEdit={() => goTo('behaviour')}
                     />
                   ) : null}
+                  <ReviewRow
+                    label="Abandonment limit"
+                    value={ceilingSummary(config.abandonmentCeilingPct)}
+                    warning={ceilingAboveReference(config.abandonmentCeilingPct)}
+                    onEdit={() => goTo('behaviour')}
+                  />
                   <ReviewRow
                     label="Recording"
                     value={recordCalls ? 'Every call is recorded' : 'Off'}

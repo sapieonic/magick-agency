@@ -12,6 +12,7 @@ import {
 import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
 import type { AssignmentConfigState, CampaignConfigState } from './configConstants';
 import { reservedDispositionCodeMessage } from '../systemDisposition';
+import { abandonmentCeilingError } from '../abandonmentCeiling';
 
 /*
   The campaign builder's validation: the client half of the rules the API
@@ -101,6 +102,9 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
   if (!Number.isInteger(state.wrapupSeconds) || state.wrapupSeconds < 0 || state.wrapupSeconds > 600) {
     errors['wrapup_seconds'] = 'Wrap-up is 0–600 seconds. 0 means no wrap-up.';
   }
+
+  const ceiling = abandonmentCeilingError(state.abandonmentCeilingPct);
+  if (ceiling !== null) errors['abandonment_ceiling_pct'] = ceiling;
 
   Object.assign(errors, validateAssignment(state.assignment));
 

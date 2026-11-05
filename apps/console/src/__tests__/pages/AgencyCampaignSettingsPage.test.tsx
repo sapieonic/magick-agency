@@ -269,6 +269,28 @@ describe('campaign settings — saving', () => {
     expect(box.checked).toBe(false);
   });
 
+  it('loads the campaign’s abandonment limit and PATCHes the one the line is moved to', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_ceiling_pct: 4.5 }));
+    renderPage();
+
+    const slider = await screen.findByRole('slider', { name: 'Abandonment limit' });
+    expect(slider.getAttribute('aria-valuenow')).toBe('4.5');
+    expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).value).toBe('4.5');
+    // 4.5% is above the common 3% rule: the note says so, and the save still goes.
+    expect(screen.getByTestId('abandonment-ceiling-warning')).toBeTruthy();
+
+    fireEvent.keyDown(slider, { key: 'PageDown' });
+    fireEvent.keyDown(slider, { key: 'ArrowDown' });
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(3.4);
+
+    // Re-seeded off the response, which echoes what was sent.
+    await waitFor(() =>
+      expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).value).toBe('3.4'),
+    );
+  });
+
   it('refuses to save a campaign with no name, without calling the API', async () => {
     renderPage();
 

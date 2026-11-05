@@ -321,6 +321,45 @@ describe('wrap-up redial', () => {
   });
 });
 
+describe('the abandonment ceiling', () => {
+  it('starts at the server’s 3% on a new campaign, and sends it', () => {
+    expect(EMPTY_CAMPAIGN_CONFIG.abandonmentCeilingPct).toBe(3);
+    expect(buildConfigPayload(config()).abandonment_ceiling_pct).toBe(3);
+  });
+
+  it('round-trips a stored value through load and save', () => {
+    const state = configFromCampaign({
+      id: 'camp-1',
+      name: 'Collections',
+      status: 'running',
+      abandonment_ceiling_pct: 4.5,
+    });
+    expect(state.abandonmentCeilingPct).toBe(4.5);
+    expect(buildConfigPayload(state).abandonment_ceiling_pct).toBe(4.5);
+  });
+
+  it('reads a campaign without the field as the default', () => {
+    const state = configFromCampaign({ id: 'camp-1', name: 'Collections', status: 'draft' });
+    expect(state.abandonmentCeilingPct).toBe(3);
+  });
+
+  it('sends a changed value', () => {
+    expect(buildConfigPayload(config({ abandonmentCeilingPct: 2.3 })).abandonment_ceiling_pct).toBe(2.3);
+  });
+
+  it('keys its error as the API does, and blocks the save', () => {
+    expect(validateConfig(config({ abandonmentCeilingPct: 12 }))).toEqual({
+      abandonment_ceiling_pct: 'Set the limit between 0.5% and 10%.',
+    });
+    expect(validateConfig(config({ abandonmentCeilingPct: Number.NaN }))).toEqual({
+      abandonment_ceiling_pct: 'Enter a limit between 0.5% and 10%.',
+    });
+    expect(configBlockReason(config({ abandonmentCeilingPct: 0.2 }))).toBe('invalid_fields');
+    // Above the reference warns on the field but is a legal value.
+    expect(validateConfig(config({ abandonmentCeilingPct: 7 }))).toEqual({});
+  });
+});
+
 describe('validation, keyed exactly as the API keys its details', () => {
   it('accepts the default configuration', () => {
     expect(validateConfig(config())).toEqual({});

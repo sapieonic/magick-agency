@@ -333,6 +333,75 @@ describe('wrap-up', () => {
   });
 });
 
+describe('the abandonment limit', () => {
+  /*
+    Every campaign pauses itself past `abandonment_ceiling_pct`, and until now the
+    builder had no way to set it: every campaign ran on the column default. The
+    builder's first save is a create and then a PATCH, so the value has to ride
+    on the PATCH, whether or not it was touched.
+  */
+  const slider = () => screen.getByRole('slider', { name: 'Abandonment limit' });
+
+  it('is on the “How agents work” step at 3%, and sends 3 when left alone', async () => {
+    await openBehaviour();
+    expect(slider().getAttribute('aria-valuenow')).toBe('3');
+    expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).value).toBe('3');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(3);
+  });
+
+  it('sends the value the line was moved to', async () => {
+    await openBehaviour();
+    fireEvent.keyDown(slider(), { key: 'PageUp' });
+    fireEvent.keyDown(slider(), { key: 'ArrowRight' });
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(4.1);
+  });
+
+  it('shows the limit in the summary rail and on review, each a way back to the step', async () => {
+    await openBehaviour();
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '2.5' } });
+
+    const rail = screen.getByLabelText('Campaign summary');
+    expect(within(rail).getByRole('button', { name: 'Pauses above 2.5%' })).toBeTruthy();
+
+    goToStep('Review & save');
+    const review = screen.getByTestId('builder-review');
+    expect(review.textContent).toContain('Abandonment limit');
+    expect(review.textContent).toContain('Pauses above 2.5%');
+    fireEvent.click(within(review).getByRole('button', { name: 'Edit Abandonment limit' }));
+    expect(slider()).toBeTruthy();
+  });
+
+  it('blocks the save on an out-of-range value', async () => {
+    await openBehaviour();
+    fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '15' } });
+
+    expect(screen.getByTestId('config-block')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save campaign' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mocks.updateAgencyCampaign).not.toHaveBeenCalled();
+  });
+
+  it('lands a server refusal on the field, on the behaviour step', async () => {
+    mocks.updateAgencyCampaign.mockRejectedValueOnce(
+      Object.assign(new Error('Validation Error'), {
+        statusCode: 400,
+        details: { details: { abandonment_ceiling_pct: 'Must be above 0 and at most 100.' } },
+      }),
+    );
+    await openBehaviour();
+    goToStep('Review & save');
+    fireEvent.click(screen.getByRole('button', { name: 'Save campaign' }));
+
+    const box = await screen.findByRole('spinbutton', { name: 'Pause above (%)' });
+    const describedBy = box.getAttribute('aria-describedby');
+    expect(document.getElementById(describedBy!)?.textContent).toBe('Must be above 0 and at most 100.');
+  });
+});
+
 describe('the retry policy editor', () => {
   it('shows invalid and connected as fixed at zero WITH the reason, not hidden', async () => {
     await openBehaviour();

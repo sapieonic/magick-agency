@@ -353,6 +353,11 @@ export interface CampaignConfigState {
    * the wrap-up screen before saving the outcome. Off by default.
    */
   allowWrapupRedial: boolean;
+  /**
+   * `abandonment_ceiling_pct`: the rolling 24-hour abandonment rate above which the
+   * campaign pauses itself. Bounds, scale and copy: `utils/agency/abandonmentCeiling.ts`.
+   */
+  abandonmentCeilingPct: number;
   /** Contact assignment (0009): how contacts reach agents, and the agent's own retry. */
   assignment: AssignmentConfigState;
 }

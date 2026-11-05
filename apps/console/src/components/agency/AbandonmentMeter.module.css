@@ -1,0 +1,193 @@
+/*
+  The abandonment meter (`AbandonmentMeter.tsx`). The track and the ceiling line
+  are the console's existing ceiling meter (`CampaignPerformance.module.css`
+  `.meterTrack` / `.meterCeiling`); the fill is the Insights one (success, danger
+  when at or over). Tokens only, from `packages/web-ui/src/global.css`, so it reads
+  in both themes. Everything is a `span` set to block: the read-only meter is drawn
+  inside the Insights KPI's `sub`, which is itself a span.
+*/
+
+.meter {
+  display: block;
+  position: relative;
+  min-width: 0;
+}
+
+/* ── The number beside the line ─────────────────────────────────────────── */
+
+.valueRow {
+  display: block;
+  position: relative;
+  height: 15px;
+  margin-bottom: 1px;
+}
+
+.value {
+  position: absolute;
+  bottom: 0;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.value[data-align='center'] {
+  transform: translateX(-50%);
+}
+
+/* Near the left end the number sits to the right of the line, near the right
+   end to its left (`ceilingLabelAlign`), so it never hangs off the track. */
+.value[data-align='start'] {
+  transform: translateX(-1px);
+}
+
+.value[data-align='end'] {
+  transform: translateX(calc(-100% + 1px));
+}
+
+/* ── The track ──────────────────────────────────────────────────────────── */
+
+/* Room above and below for the line's overhang; when editable, a taller
+   target than the 8px track, and no scroll or zoom gesture stealing the drag. */
+.hit {
+  display: block;
+  padding: 3px 0;
+}
+
+.meter[data-editable] .hit {
+  padding: 8px 0;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.track {
+  display: block;
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+
+/* Past the line: where a measured rate pauses the campaign. */
+.beyond {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 0 999px 999px 0;
+  background: var(--danger-subtle);
+}
+
+.fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--success);
+}
+
+.fill[data-over='true'] {
+  background: var(--danger);
+}
+
+.line {
+  position: absolute;
+  z-index: 1;
+  top: -3px;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--danger);
+}
+
+/* The slider. Wider and taller than the read-only tick so it reads as a thing
+   to take hold of; the ring in the surface colour separates it from the tint
+   either side in both themes. */
+.line[data-editable] {
+  top: -6px;
+  width: 4px;
+  height: 20px;
+  margin-left: -2px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px var(--bg-secondary);
+  cursor: ew-resize;
+}
+
+/* A grab area wider than the 4px line. */
+.line[data-editable]::before {
+  content: '';
+  position: absolute;
+  inset: -4px -9px;
+}
+
+.line[data-editable]:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+/* A cleared field: the slider stays reachable but claims no value. */
+.line[data-unset] {
+  background: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ── The scale ──────────────────────────────────────────────────────────── */
+
+.scale {
+  display: block;
+  position: relative;
+  height: 13px;
+  margin-top: 3px;
+}
+
+.tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.tick:first-child {
+  transform: none;
+}
+
+.tick:last-child {
+  transform: translateX(-100%);
+}
+
+/* ── Motion ─────────────────────────────────────────────────────────────── */
+
+/* A key press glides; a drag follows the pointer exactly. */
+.line,
+.beyond,
+.value {
+  transition: left 120ms ease;
+}
+
+.fill {
+  transition: width 200ms ease;
+}
+
+.meter[data-dragging] .line,
+.meter[data-dragging] .beyond,
+.meter[data-dragging] .value {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line,
+  .beyond,
+  .value,
+  .fill {
+    transition: none;
+  }
+}
