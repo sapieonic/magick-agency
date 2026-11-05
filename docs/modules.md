@@ -1553,7 +1553,8 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/components/common/DateRangeFilter.test.tsx` | 25 |
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
 | `apps/console/src/components/common/Logo.test.tsx` | 5 |
-| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 18 |
+| `apps/console/src/__tests__/routing/appRouteTable.test.ts` | 13 |
+| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 28 |
 
 ### `apps/console/src/components/softphone/`
 

@@ -1172,6 +1172,39 @@ The production image and compose file (`docker/`, see [`operations.md`](operatio
 the server publishes no port, Redis runs with AOF and `noeviction`, the image is
 `NODE_ENV=production` and migrates on start, the grace is 45 s.
 
+### Tenant/account-scoped console URLs 2026-11-05 (B26)
+
+Console links did not name a tenant or account, so a link sent to a colleague opened whichever
+account their browser last had open. Every signed-in console page is now served under
+`/t/:tenantId/a/:accountId/…` ([`decisions.md`](decisions.md) B26).
+
+- The prefix is the router's basename (`components/routing/ScopedRouter`, over the history
+  `contexts/UrlScopeContext` owns), so no route, link or `navigate()` changed. `TenantContext`
+  derives the active account from the URL whenever it names a listed account and moves the URL on a
+  switch (pushed: back returns to the previous account); `localStorage` is only the fallback.
+  `components/routing/ScopeGate` re-points an unscoped URL (an old `/dialer` bookmark) at the
+  active account and refuses a link to a tenant or account the viewer cannot open ("You can’t
+  open this workspace / account", with Go to my workspace and Sign out). Sign-in, invite and
+  verification pages stay unscoped; a signed-out visitor keeps the scope through `?next=`.
+- PostHog receives the prefix as `/t/:tenant/a/:account`, in paths, URLs, autocapture hrefs and
+  the sign-in page's encoded `next`. The campaign-completion email links under the campaign's own
+  scope (unscoped when its account does not resolve).
+- A fresh-context review found four defects, all fixed and pinned by tests that fail on the
+  pre-fix code: an account switch followed by `navigate()` in one handler (the soft phone's
+  "Go to station" for a sibling account) hung on a spinner; Try again on a narrowed account list
+  never opened the linked account; Retry after an outage opened the first account instead of the
+  linked one; a cold load of a scoped sign-in URL rendered a blank page. Back/forward between
+  accounts no longer remounts the page. `appRouteTable.test.ts` pins every signed-in route inside
+  the gate.
+- **Left open:** a tenant or account switch keeps the current app path, as before, so a record
+  page (`/agency/campaigns/:id`) carried into another account shows its not-found state. Signing
+  out and in as a different user keeps the first user's scoped `next`, which the second user may
+  be refused (the refusal offers a way out). The history comes from react-router's
+  `UNSAFE_createBrowserHistory`; the routing tests exercise it, so an upgrade that breaks it goes red.
+- Counts, 2026-11-05: `apps/console` 5371 (281 files), lint clean, build clean; `apps/server` lint
+  clean, unit 8163 passed + 42 skipped (407 files). Integration lanes and the Dart tests were not run
+  (no server SQL, route or contract changed).
+
 ### Pre-deploy checklist
 
 - [ ] `docker/.env` filled in from `docker/.env.example`, including the console's
