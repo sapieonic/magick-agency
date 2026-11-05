@@ -155,7 +155,7 @@ Files: `abandon-clip.ts`, `abandonment-guardrail.ts`, `abandonment-metrics.ts`, 
 | `apps/server/test/unit/agency/abandonment-metrics.test.ts` | 9 |
 | `apps/server/test/unit/agency/abandonment-otlp-export.test.ts` | 11 |
 | `apps/server/test/unit/agency/abandonment-window.test.ts` | 19 |
-| `apps/server/test/unit/agency/agency-activity-actions.test.ts` | 6 |
+| `apps/server/test/unit/agency/agency-activity-actions.test.ts` | 8 |
 | `apps/server/test/unit/agency/agency-activity.test.ts` | 57 |
 | `apps/server/test/unit/agency/agency-ingest-audit.test.ts` | 5 |
 | `apps/server/test/unit/agency/agency-actor.test.ts` | 6 |
@@ -399,7 +399,8 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/integration/api/account.routes.test.ts` | 11 |
+| `apps/server/test/integration/api/account-create.e2e.test.ts` | 6 |
+| `apps/server/test/integration/api/account.routes.test.ts` | 15 |
 | `apps/server/test/integration/api/agency-contact-assignment.test.ts` | 13 |
 | `apps/server/test/integration/api/agency-ingest-job-owner.test.ts` | ~3 |
 | `apps/server/test/integration/api/agency-my-campaigns.routes.test.ts` | ~27 |
@@ -422,12 +423,12 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 | `apps/server/test/integration/api/notification.routes.test.ts` | ~6 |
 | `apps/server/test/integration/api/phone-number.routes.test.ts` | ~4 |
 | `apps/server/test/integration/api/platform-onboarding.e2e.test.ts` | ~2 |
-| `apps/server/test/integration/api/super-admin.routes.test.ts` | 49 |
+| `apps/server/test/integration/api/super-admin.routes.test.ts` | 51 |
 | `apps/server/test/integration/api/tenant.routes.test.ts` | ~17 |
 | `apps/server/test/integration/api/user.routes.test.ts` | ~15 |
 | `apps/server/test/integration/api/voice-routes.test.ts` | ~7 |
 | `apps/server/test/integration/api/webrtc-recordings.routes.test.ts` | ~11 |
-| `apps/server/test/unit/api/agency-agent-reach.test.ts` | 3 |
+| `apps/server/test/unit/api/agency-agent-reach.test.ts` | 4 |
 | `apps/server/test/unit/api/agency-route-table.test.ts` | 9 |
 | `apps/server/test/unit/api/agency-station-route.test.ts` | 2 |
 | `apps/server/test/unit/api/core-dispatch.test.ts` | 13 |
@@ -471,17 +472,18 @@ Route handlers. Public API layer: `auth`, `tenant`, `account`, `user`, `invites`
 
 Route families: a large plugin keeps its exported function, hooks and module note in `<family>.routes.ts` and registers its routes from `<family>/` on the same instance, so the hooks apply to every one of them and the area plugins are unchanged: `agency/` (sessions, attempts, the soft phone's internal handlers and their refusal statuses and envelope, the agent's dial of one of their own contacts, `my-contact-call.ts`, shared helpers), `agency-campaigns/` (guards with the `ownedCampaign` preHandler, crud with the batched `GET /summaries`, stats, spine, retry, lifecycle), `proxy-agency-campaigns/` (ownership, crud, stats, activity, spine with the CSV export drain, lifecycle, retry, ingest), `proxy-agency-performance/` (the per-agent pairs, the whole-floor reads, shared), `proxy-agency-staffing/` (the `my-*` reads, campaign agents), `proxy-agency-softphone/` (the soft phone, docs/softphone.md §6: sessions and the switch, calls, reads, settings, shared actor / flag / envelope / enrichment), `proxy-agency-assignment/` (contact assignment, served without an internal handler hop: the supervisor's preview, commit, progress and history; the agent's own contacts and their actions, retry and the per-contact call; the shared flag gate and refusals), `proxy-agency-insights/` (the campaign insights reads, docs/insights.md "API": summary, readiness, allocation, uploads in `as-of-now.ts`; activity, trends, health in `range.ts`, their query refused `400 invalid_insights_query` after the guards; the shared guard chain after `agency.supervise`: dialer flag, id shape, ownership probe), `super-admin/` (login, own account, tenants, admins, concurrency). Source-text guards read a whole family (`test/helpers/route-source.ts`).
 
-Shared helpers (`helpers/`): `create-account.ts` (`createTenantAccount`, the one account create both `POST /accounts` and the super-admin route make: the name rule and the slug), `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe; `ownedCoreCampaignOnce`, that probe read at most once per request; and `stringField`), `csv-attachment.ts` (the CSV `Content-Disposition` pair), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `refusal.ts` (`sendRefusal`, the contact-assignment routes' `{ error, code, message, details? }` body), `settled.ts` (`settledValue`: independent reads started together, answered in order).
+Shared helpers (`helpers/`): `create-account.ts` (`createTenantAccount`, the one account create both `POST /accounts` and the super-admin route make: one transaction under a lock on the tenant row, the name rule, the slug, and the zero-call settings row for a tenant admin's create), `core-campaign.ts` (`fetchOwnedCoreCampaign`, the one campaign ownership probe; `ownedCoreCampaignOnce`, that probe read at most once per request; and `stringField`), `csv-attachment.ts` (the CSV `Content-Disposition` pair), `drain-pages.ts` (the CSV exports' page loop), `parse-or-400.ts` (one 400 per validation dialect), `path-params.ts`, `read-cursor.ts` (`readKeysetCursor`), `refusal.ts` (`sendRefusal`, the contact-assignment routes' `{ error, code, message, details? }` body), `settled.ts` (`settledValue`: independent reads started together, answered in order).
 
 Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.ts`, `agency-campaigns/crud.ts`, `agency-campaigns/guards.ts`, `agency-campaigns/lifecycle.ts`, `agency-campaigns/retry.ts`, `agency-campaigns/spine.ts`, `agency-campaigns/stats.ts`, `agency.routes.ts`, `agency/attempts.ts`, `agency/device-away.ts`, `agency/helpers.ts`, `agency/my-contact-call.ts`, `agency/redial.ts`, `agency/sessions.ts`, `agency/softphone-answer.ts`, `agency/softphone.ts`, `auth.routes.ts`, `call-analysis-profiles.routes.ts`, `client-config.routes.ts`, `dnc.routes.ts`, `feature-flags.routes.ts`, `helpers/core-campaign.ts`, `helpers/create-account.ts`, `helpers/csv-attachment.ts`, `helpers/drain-pages.ts`, `helpers/parse-or-400.ts`, `helpers/path-params.ts`, `helpers/read-cursor.ts`, `helpers/refusal.ts`, `helpers/settled.ts`, `helpers/softphone-list-query.ts`, `invites.routes.ts`, `notification.routes.ts`, `phone-number.routes.ts`, `proxy-agency-agent.routes.ts`, `proxy-agency-assignment.routes.ts`, `proxy-agency-assignment/my-contact-actions.ts`, `proxy-agency-assignment/my-contacts.ts`, `proxy-agency-assignment/shared.ts`, `proxy-agency-assignment/supervisor.ts`, `proxy-agency-calls.routes.ts`, `proxy-agency-campaigns.routes.ts`, `proxy-agency-campaigns/activity.ts`, `proxy-agency-campaigns/crud.ts`, `proxy-agency-campaigns/ingest.ts`, `proxy-agency-campaigns/lifecycle.ts`, `proxy-agency-campaigns/ownership.ts`, `proxy-agency-campaigns/retry.ts`, `proxy-agency-campaigns/spine.ts`, `proxy-agency-campaigns/stats.ts`, `proxy-agency-insights.routes.ts`, `proxy-agency-insights/as-of-now.ts`, `proxy-agency-insights/range.ts`, `proxy-agency-insights/shared.ts`, `proxy-agency-performance.routes.ts`, `proxy-agency-performance/floor.ts`, `proxy-agency-performance/per-agent.ts`, `proxy-agency-performance/shared.ts`, `proxy-agency-softphone.routes.ts`, `proxy-agency-softphone/calls.ts`, `proxy-agency-softphone/reads.ts`, `proxy-agency-softphone/sessions.ts`, `proxy-agency-softphone/settings.ts`, `proxy-agency-softphone/shared.ts`, `proxy-agency-staffing.routes.ts`, `proxy-agency-staffing/campaign-agents.ts`, `proxy-agency-staffing/my.ts`, `proxy-agency-station.routes.ts`, `super-admin-account-settings.routes.ts`, `super-admin-feature-flags.routes.ts`, `super-admin-phone.routes.ts`, `super-admin-telephony-credentials.routes.ts`, `super-admin-usage-counts.routes.ts`, `super-admin.routes.ts`, `super-admin/account.ts`, `super-admin/admins.ts`, `super-admin/concurrency.ts`, `super-admin/login.ts`, `super-admin/tenants.ts`, `tenant.routes.ts`, `user.routes.ts`, `webhooks.routes.ts`, `webrtc-call.routes.ts`, `webrtc-recordings.routes.ts`
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/api/routes/account.routes.test.ts` | 30 |
+| `apps/server/test/unit/api/routes/account.routes.test.ts` | 36 |
 | `apps/server/test/unit/api/routes/call-analysis-profiles.test.ts` | 21 |
 | `apps/server/test/unit/api/routes/feature-flags-client.test.ts` | 3 |
 | `apps/server/test/unit/api/routes/feature-flags-internal.test.ts` | 22 |
 | `apps/server/test/unit/api/routes/helpers/core-campaign.test.ts` | 4 |
+| `apps/server/test/unit/api/routes/helpers/create-account.test.ts` | 15 |
 | `apps/server/test/unit/api/routes/helpers/csv-attachment.test.ts` | 11 |
 | `apps/server/test/unit/api/routes/helpers/parse-or-400.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/helpers/path-params.test.ts` | 3 |
@@ -493,7 +495,7 @@ Files: `account.routes.ts`, `agency-agents.routes.ts`, `agency-campaigns.routes.
 | `apps/server/test/unit/api/routes/client-config.routes.test.ts` | 28 |
 | `apps/server/test/unit/api/routes/proxy-feature-flags.routes.test.ts` | 4 |
 | `apps/server/test/unit/api/routes/super-admin-account-settings.test.ts` | 24 |
-| `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 45 |
+| `apps/server/test/unit/api/routes/super-admin-accounts.test.ts` | 46 |
 | `apps/server/test/unit/api/routes/super-admin-feature-flags.test.ts` | 22 |
 | `apps/server/test/unit/api/routes/super-admin-memberships.test.ts` | 62 |
 | `apps/server/test/unit/api/routes/super-admin-phone.test.ts` | 10 |
@@ -1114,7 +1116,7 @@ Files: `agency.ts`, `errors.ts`, `flags.ts`, `index.ts`, `primitives.ts`, `rbac.
 | `packages/contracts/test/console-wire-derived.test.ts` | 1 (plus 24 type-level pins) |
 | `packages/contracts/test/console-wire-diff.test.ts` | 2 |
 | `packages/contracts/test/errors.test.ts` | 10 |
-| `packages/contracts/test/exports.test.ts` | 12 |
+| `packages/contracts/test/exports.test.ts` | 13 |
 | `packages/contracts/test/flags.test.ts` | 9 |
 | `packages/contracts/test/rbac.test.ts` | 64 |
 | `packages/contracts/test/stall.test.ts` | 4 |
@@ -1182,7 +1184,7 @@ Files: `account-settings.repository.ts`, `account.repository.ts`, `agency-call.r
 | `packages/db/test/integration/repositories/account-settings-toggles-writer.test.ts` | ~5 |
 | `packages/db/test/integration/repositories/account-settings-webrtc-writer.test.ts` | ~4 |
 | `packages/db/test/integration/repositories/account-settings.repository.test.ts` | ~23 |
-| `packages/db/test/integration/repositories/account.repository.test.ts` | ~16 |
+| `packages/db/test/integration/repositories/account.repository.test.ts` | 17 |
 | `packages/db/test/integration/repositories/agency-campaign-agent.concurrency.test.ts` | ~11 |
 | `packages/db/test/integration/repositories/agency-campaign-agent.repository.test.ts` | ~43 |
 | `packages/db/test/integration/repositories/announcement-advanced.repository.test.ts` | ~14 |
@@ -1425,7 +1427,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 | Test file | Cases |
 |---|---|
 | `apps/console/src/__tests__/analytics/autocaptureOptOut.test.ts` | 4 |
-| `apps/console/src/__tests__/analytics/events.test.ts` | 9 |
+| `apps/console/src/__tests__/analytics/events.test.ts` | 10 |
 | `apps/console/src/__tests__/analytics/posthog.test.ts` | 22 |
 | `apps/console/src/__tests__/analytics/productSurface.test.tsx` | 12 |
 | `apps/console/src/__tests__/analytics/redact.test.ts` | 13 |
@@ -1438,6 +1440,7 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `
 
 | Test file | Cases |
 |---|---|
+| `apps/console/src/__tests__/api/accounts.test.ts` | 3 |
 | `apps/console/src/__tests__/api/agency-account-header.test.ts` | 30 |
 | `apps/console/src/__tests__/api/agency-notes.test.ts` | 17 |
 | `apps/console/src/__tests__/api/agency-redial.test.ts` | 1 |
@@ -1447,7 +1450,6 @@ Files: `accounts.ts`, `agency.ts`, `agencyActivity.ts`, `agencyAssignment.ts`, `
 | `apps/console/src/__tests__/api/agencyCampaignList.test.ts` | 7 |
 | `apps/console/src/__tests__/api/agencyMyAssignments.test.ts` | 6 |
 | `apps/console/src/__tests__/api/agencySpine.test.ts` | 11 |
-| `apps/console/src/__tests__/api/accounts.test.ts` | 3 |
 | `apps/console/src/__tests__/api/agencyStats.test.ts` | 38 |
 | `apps/console/src/__tests__/api/call-analysis-profiles.api.test.ts` | 5 |
 | `apps/console/src/__tests__/api/error-analytics.test.ts` | 5 |
@@ -1509,6 +1511,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/DispositionOverrideGroup.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/DispositionPad.test.tsx` | 29 |
 | `apps/console/src/__tests__/components/DncControl.test.tsx` | 7 |
+| `apps/console/src/__tests__/components/GlobalSearchAccounts.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/GlobalSearchDnc.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/GovernanceGating.test.tsx` | 6 |
 | `apps/console/src/__tests__/components/HoldToConfirmButton.test.tsx` | 43 |
@@ -1535,7 +1538,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/__tests__/components/WrapupTimer.test.tsx` | 25 |
 | `apps/console/src/__tests__/components/agentSurfacesVersion.test.tsx` | 2 |
 | `apps/console/src/__tests__/components/joinDoor.test.ts` | 12 |
-| `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 2 |
+| `apps/console/src/__tests__/components/platformZoneExits.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/sidebarVersion.test.tsx` | 4 |
 | `apps/console/src/__tests__/components/softphoneVisibility.test.tsx` | 11 |
 | `apps/console/src/__tests__/components/switcherDropdownScrollCss.test.ts` | 4 |
@@ -1565,9 +1568,9 @@ Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `T
 |---|---|
 | `apps/console/src/__tests__/contexts/AuthContext.lazyInit.test.tsx` | 2 |
 | `apps/console/src/__tests__/contexts/AuthContext.test.tsx` | 46 |
-| `apps/console/src/__tests__/contexts/FeatureFlagsContext.test.tsx` | 14 |
+| `apps/console/src/__tests__/contexts/FeatureFlagsContext.test.tsx` | 16 |
 | `apps/console/src/__tests__/contexts/GovernanceContext.test.tsx` | 6 |
-| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 33 |
+| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 34 |
 
 ### `apps/console/src/hooks/`
 
@@ -1603,7 +1606,7 @@ Files: `agencyStation/types.ts`, `useAccounts.ts`, `useAgencyAudio.ts`, `useAgen
 
 The campaign Insights tab (decision IN1, docs/insights.md) is `agency/campaign-detail/insights/`: `InsightsPanel` (range bar kept in the URL as `?range=today|yesterday|7d` or `?from=&to=` days in the campaign zone, Refresh, Print after every range section has loaded, the as-of-now stamp), `InsightsHeadline` (one component per status; the draft checklist with a Fix link per check), and one component per section (roster and progress, allocation, calls and outcomes, callbacks, overrides, agents, trends, health and compliance, recording and analysis, settings and lifecycle, upload history), each table with a client-side CSV. It replaced the Overview and Performance panels; `CampaignLandingRedirect` sends `/agency/campaigns/:id` and `…/performance` to Insights for `agency.supervise` and to Agents for everyone else.
 
-Pages: `agency/` (agent home and station, campaigns and their tabs, contacts, attempts, activity, analytics, performance, DNC, login and the agent join page), `auth/` (including `JoinPage.tsx`, the workspace invite claim page at `/join/:token`), `calls/`, `campaigns/` (campaign composer; `campaigns/agency/AssignmentFields.tsx` is the Assignment editor `CampaignBehaviourSection` shows while `agency_contact_assignment_enabled` is on), `settings/` (analysis profiles, notifications, soft phone), `team/`.
+Pages: `agency/` (agent home and station, campaigns and their tabs, contacts, attempts, activity, analytics, performance, DNC, login and the agent join page), `auth/` (including `JoinPage.tsx`, the workspace invite claim page at `/join/:token`), `calls/`, `campaigns/` (campaign composer; `campaigns/agency/AssignmentFields.tsx` is the Assignment editor `CampaignBehaviourSection` shows while `agency_contact_assignment_enabled` is on), `settings/` (analysis profiles, notifications, soft phone), `team/`, `accounts/` (the Accounts page at `/app/accounts`: the tenant's accounts with their call limits, switching, and New account for a tenant-wide `account.create` seat).
 
 Soft-phone pages (docs/softphone.md §7; the supervisor's list and call detail are the next entry). `agency/SoftphonePage.tsx` is `/dialer/phone`, full-viewport and outside both shells, gated like `/station` and reading `agency_softphone_enabled` itself (off: it rehydrates only an existing soft-phone session in this account, into finish mode, else is unavailable; a session in a sibling account of the tenant, which the server will not reopen here, can still be closed, with that session's account): it opens a soft-phone session (`break/soft_phone` from birth) through `agency/softphone/useSoftphoneSession.ts`, connects the station socket for it, warms playback and probes the microphone on the agent's first gesture, and renders `SoftphoneView`; an agent live on a campaign is refused (`session_on_campaign`) and offered the switch on that session, sent with the session's account and, for a sibling account the console can switch to, followed by moving the console to that account and its station (otherwise the screen says where the session is and offers no switch); with the flag on, a soft-phone session open in a sibling account is refused (`session_on_softphone`) and the page offers to close it there with that account (`closeSoftphoneSession`) and open one here, or to move the console to that account. In the station, `agency/station/useStationSoftphone.ts` (SP7) decides when the station is on the soft phone (`break/soft_phone`, or after a reload `session.on_softphone` from the soft-phone bootstrap; whatever the flag map says, so the flag turned off leaves finish mode rather than an ordinary break) and owns Return to campaign (`POST /sessions/:id/softphone/return`, disabled with its reason while a call is live or owes its outcome); `AgentConsolePage` then renders `SoftphoneView` under the station header with the disclosures and Return to campaign, shows `components/agency/SoftphoneJoinScreen.tsx` for `session_on_softphone` (`useStationJoin`'s `onSoftphoneElsewhere`, with **Close the soft phone and join**: `closeSoftphoneAndJoin` runs `agency/softphone/closeSoftphoneSession.ts`, which reads the soft-phone bootstrap and closes nothing while a call there is live or owes its outcome, then leaves that session with its own account, the refusal's `account_id`, and joins), and suspends the station's shortcuts (`useStationShortcuts`'s `suspended`); `useAgencyConsole` routes a manual call through the same audio `sync` (`audioTarget`) and exposes `pendingSoftphone`, `requestSoftphone` and `softphoneRejection` to the action bar. `agency/AgencyCampaignManualCallsPage.tsx` is a campaign's Soft-phone calls tab (`/agency/campaigns/:id/manual-calls`): the account's soft-phone list with the campaign tag fixed, apart from its Call attempts. `settings/SoftphoneSettingsPage.tsx` is Settings → Soft phone (`/app/softphone`): the untagged outcome list, the call-fields editor (keys locked once saved), summary profile, recording and default caller ID, editable with `agency.softphone.manage` and read-only otherwise. `agency/AgentAttemptsPage.tsx` (My calls) has a Soft-phone calls tab (`?view=softphone`, arrow keys switch tabs) when the soft phone is on for the agent, and `agency/DncPage.tsx`'s copy says exactly what the soft phone checks, with an audited override (SP1), where `agency_softphone_enabled` is on. `agency/AgencyContactDetailPage.tsx` lists, below a roster contact's attempts, the soft-phone calls that matched it (`GET /softphone/calls?contact_id=`), where the flag is on and the caller holds `agency.supervise` (below it the list would hold only the caller's own calls).
 
@@ -1611,7 +1614,7 @@ Files: `AppHomeRedirect.tsx`, `accounts/AccountsPage.module.css`, `accounts/Acco
 
 | Test file | Cases |
 |---|---|
-| `apps/console/src/__tests__/pages/AccountsPage.test.tsx` | 15 |
+| `apps/console/src/__tests__/pages/AccountsPage.test.tsx` | 22 |
 | `apps/console/src/__tests__/pages/AgencyAnalyticsPage.test.tsx` | 23 |
 | `apps/console/src/__tests__/pages/AgencyAttemptCallPage.test.tsx` | 19 |
 | `apps/console/src/__tests__/pages/AgencyCampaignActivityPage.test.tsx` | 43 |
@@ -1693,7 +1696,7 @@ _No dedicated test files._
 
 Pure UI helpers: permissions, vocabulary, wrap-up, disposition submit, cue preferences, transcript preferences, the Insights range and more. The soft phone's own helpers are in `softphone/` (next entry); here `agencyAgentSurfaces.ts` adds `SOFTPHONE_SURFACE` and `agentSurfacesFor` (the fourth agent screen, kept out of the fixed `AGENT_SURFACES`), `agencyCampaignTabs.ts` the Soft-phone calls tab with a `flag` that `visibleCampaignTabs` checks, and `agencyStationReducer.ts` the `manualCall` slot and its `manual_call` action. `format/` is the one rendering of counts, percentages and plurals (`number.ts`, display locale `en-IN`), durations (`duration.ts`: live timers floor, aggregates round), dates with cached formatters (`date.ts`), a named zone's wall clock (`zone.ts`) and calling days (`weekdays.ts`). `agency/` holds `metrics.ts` (`ratio`, `ratePct`, `stateShares`, `ON_SHIFT_STATES`) and the pieces the large agency modules were split into — `agentWindows`, `buckets`, `agentReadouts`, `roster/`, `overview/`, `config/` — each re-exported by its original module so import paths are unchanged. `agency/insights/` is the Insights tab's pure layer: every rate (`rates.ts`: null on a zero denominator, withheld below 25 as "Not enough calls yet", decision IN5), the range in the campaign zone and in the URL (`range.ts`), every drill-down link (`links.ts`), the CSV builder (`csv.ts`, RFC 4180), the polling rule (`polling.ts`) and its copy (`copy.ts`). Contact assignment's words are `agencyAssignmentCopy.ts` (the supervisor's side) and `agencyMyContactsCopy.ts` (the agent's own-contact refusals, retry blocks and when Call and Retry not reached are offered); `agencyAssignmentOps.ts` is the roster's assignment tools as pure functions (each operation's form, its wire shape, the row selection).
 
-Files: `agency/agentReadouts.ts`, `agency/abandonmentCeiling.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `alaw8/g711.js` (+ `g711.d.ts`; plain JS, run by the capture worklet as source text: G.711 A-law and the half-band 16 ⇄ 8 kHz filters, checked against the agent app's cross-language checksums), `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/insights/copy.ts`, `agency/insights/csv.ts`, `agency/insights/links.ts`, `agency/insights/polling.ts`, `agency/insights/range.ts`, `agency/insights/rates.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/reservedBreakReason.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agency/systemDisposition.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentCopy.ts`, `agencyAssignmentEntry.ts`, `agencyAssignmentOps.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyMyContactsCopy.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyRedialCopy.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
+Files: `accountCreateAccess.ts` (who may create accounts: the `account.create` role on a tenant-wide seat, the server's rule), `agency/agentReadouts.ts`, `agency/abandonmentCeiling.ts`, `agency/agentWindows.ts`, `agency/buckets.ts`, `alaw8/g711.js` (+ `g711.d.ts`; plain JS, run by the capture worklet as source text: G.711 A-law and the half-band 16 ⇄ 8 kHz filters, checked against the agent app's cross-language checksums), `agency/config/callingWindow.ts`, `agency/config/configConstants.ts`, `agency/config/configValidate.ts`, `agency/insights/copy.ts`, `agency/insights/csv.ts`, `agency/insights/links.ts`, `agency/insights/polling.ts`, `agency/insights/range.ts`, `agency/insights/rates.ts`, `agency/metrics.ts`, `agency/overview/figure.ts`, `agency/overview/lifecycle.ts`, `agency/overview/pulse.ts`, `agency/reservedBreakReason.ts`, `agency/roster/benchmark.ts`, `agency/roster/cells.ts`, `agency/roster/columns.ts`, `agency/roster/notes.ts`, `agency/systemDisposition.ts`, `agencyActivityCopy.ts`, `agencyAgentFloor.ts`, `agencyAgentPerformance.ts`, `agencyAgentRoster.ts`, `agencyAgentSurfaces.ts`, `agencyAssignmentCopy.ts`, `agencyAssignmentEntry.ts`, `agencyAssignmentOps.ts`, `agencyAttemptFilters.ts`, `agencyAudioCopy.ts`, `agencyBestHours.ts`, `agencyCampaignConfigForm.ts`, `agencyCampaignContribution.ts`, `agencyCampaignControls.ts`, `agencyCampaignLineage.ts`, `agencyCampaignPerformance.ts`, `agencyCampaignRecording.ts`, `agencyCampaignTabs.ts`, `agencyCampaignsHome.ts`, `agencyCatalogSync.ts`, `agencyClock.ts`, `agencyColumnMapping.ts`, `agencyCompareTray.ts`, `agencyContext.ts`, `agencyCuePrefs.ts`, `agencyCues.ts`, `agencyDiagnostics.ts`, `agencyDispositionForm.ts`, `agencyDispositionSubmit.ts`, `agencyDncCopy.ts`, `agencyErrors.ts`, `agencyFieldFilter.ts`, `agencyHealthStrip.ts`, `agencyIngestSummary.ts`, `agencyInviteJoinCopy.ts`, `agencyJoinConflict.ts`, `agencyLiveSession.ts`, `agencyMedia.ts`, `agencyMyContactsCopy.ts`, `agencyNotes.ts`, `agencyPadGate.ts`, `agencyPersona.ts`, `agencyPriorAttempts.ts`, `agencyRedialCopy.ts`, `agencyReleaseCopy.ts`, `agencyRetrySelector.ts`, `agencyRosterFilters.ts`, `agencySpineCopy.ts`, `agencyStaleResponse.ts`, `agencyStationExit.ts`, `agencyStationIdle.ts`, `agencyStationLiveness.ts`, `agencyStationReducer.ts`, `agencyStationWsUrl.ts`, `agencyStatsConsumers.ts`, `agencyWebAudioCueSink.ts`, `agencyWrapup.ts`, `audio-worklet-processor.ts`, `format/date.ts`, `format/duration.ts`, `format/number.ts`, `format/weekdays.ts`, `format/zone.ts`, `inviteJoin.ts`, `invitedTenant.ts`, `keyboardTarget.ts`, `permissions.ts`, `phone.ts`, `poll-backoff.ts`, `returnPath.ts`, `session.ts`, `sessionRefusal.ts`, `snake-case.ts`, `switcherFocus.ts`, `switcherSearch.ts`, `transcript-prefs.ts`, `vocabulary.ts`
 
 | Test file | Cases |
 |---|---|
@@ -1881,7 +1884,7 @@ Files: `useCountUp.ts`, `useSuperAdminAdmins.ts`, `useSuperAdminAudit.ts`, `useS
 
 ### `apps/super-admin/src/pages/`
 
-Login, and the super-admin pages: tenants and tenant detail, users, admins, phone numbers, feature flags, usage, audit. The tenant detail page's Service and Members tabs and its account settings panel are in `super-admin/tenant-detail/`; the phone numbers page's create and edit modals and its bulk selection hook are in `super-admin/phone-numbers/`.
+Login, and the super-admin pages: tenants and tenant detail, users, admins, phone numbers, feature flags, usage, audit. The tenant detail page's Service and Members tabs, its account settings panel and its New account modal are in `super-admin/tenant-detail/`; the phone numbers page's create and edit modals and its bulk selection hook are in `super-admin/phone-numbers/`.
 
 Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `super-admin/SAAdminsPage.module.css`, `super-admin/SAAdminsPage.tsx`, `super-admin/SAAuditPage.module.css`, `super-admin/SAAuditPage.tsx`, `super-admin/SAFeatureFlagsPage.module.css`, `super-admin/SAFeatureFlagsPage.tsx`, `super-admin/phone-numbers/PhoneNumberCreateModal.tsx`, `super-admin/phone-numbers/PhoneNumberEditModal.tsx`, `super-admin/phone-numbers/usePhoneNumberBulk.ts`, `super-admin/SAPhoneNumbersPage.module.css`, `super-admin/SAPhoneNumbersPage.tsx`, `super-admin/SATelephonyCredentialsPage.module.css`, `super-admin/SATelephonyCredentialsPage.tsx`, `super-admin/SATenantDetailPage.module.css`, `super-admin/SATenantDetailPage.tsx`, `super-admin/tenant-detail/AccountSettingsPanel.tsx`, `super-admin/tenant-detail/CreateAccountModal.tsx`, `super-admin/tenant-detail/TenantMembersTab.tsx`, `super-admin/tenant-detail/TenantServiceTab.tsx`, `super-admin/SATenantsPage.module.css`, `super-admin/SATenantsPage.tsx`, `super-admin/SAUsagePage.module.css`, `super-admin/SAUsagePage.tsx`, `super-admin/SAUsersPage.module.css`, `super-admin/SAUsersPage.tsx`
 
@@ -1891,7 +1894,7 @@ Files: `auth/SuperAdminLoginPage.module.css`, `auth/SuperAdminLoginPage.tsx`, `s
 | `apps/super-admin/src/__tests__/pages/SAFeatureFlagsPage.test.tsx` | 34 |
 | `apps/super-admin/src/__tests__/pages/SAPhoneNumbersPage.test.tsx` | 15 |
 | `apps/super-admin/src/__tests__/pages/SATelephonyCredentialsPage.test.tsx` | 8 |
-| `apps/super-admin/src/__tests__/pages/SATenantDetailPage.createAccount.test.tsx` | 7 |
+| `apps/super-admin/src/__tests__/pages/SATenantDetailPage.createAccount.test.tsx` | 9 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.new.test.tsx` | 21 |
 | `apps/super-admin/src/__tests__/pages/SATenantDetailPage.test.tsx` | 16 |
 | `apps/super-admin/src/__tests__/pages/SATenantsPage.test.tsx` | 4 |

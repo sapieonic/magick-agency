@@ -18,8 +18,8 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | Package | Responsibility |
 |---|---|
 | `apps/server` | The one Fastify process: identity, tenancy, super-admin auth, the HTTP API, the station WebSocket, carrier webhooks and the media WebSocket, the voice engine, concurrency guard, dialer runtime, analysis worker, sweeps and retention. Bundled by esbuild to `dist/index.js` (`scripts/build.mjs`, CommonJS, B5) |
-| `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, settings |
-| `apps/super-admin` | Vite + React SPA (the super-admin console): tenants, users, admins, phone numbers, feature flags, usage, audit |
+| `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, accounts, settings |
+| `apps/super-admin` | Vite + React SPA (the super-admin console): tenants and their accounts, users, admins, phone numbers, feature flags, usage, audit |
 | `packages/contracts` | Wire contract shared by the server and both UIs: dialer types (`agency.ts`, a barrel over `agency/`, including the campaign config defaults and rate floors), console wire types (`api/`, re-exported or derived from the dialer types), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permissions (`rbac.ts`) |
 | `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, keyset cursor, rates, retry bounds and summary, success disposition, timers |
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
@@ -175,8 +175,11 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
 - **Accounts.** A tenant starts with one account, `Default`, written with the tenant. More are added
   by a tenant admin or owner on a tenant-wide seat (`POST /accounts`, `account.create`, the console's
   Accounts page) or by a super admin (`POST /super-admin/tenants/:id/accounts`), both through
-  `api/routes/helpers/create-account.ts`: a name unique in the tenant ignoring case, a slug derived
-  from it. A new account needs no other row (decisions AA1–AA5). There is no rename or delete.
+  `api/routes/helpers/create-account.ts`: one transaction under a `FOR NO KEY UPDATE` lock on the
+  tenant row, a name unique in the tenant ignoring case, a slug derived from it. A tenant admin's
+  account gets `max_concurrent_calls = 0` until a super admin sets its limit; a super admin's takes
+  the default. Accounts list oldest first, so the console's default selection stays on `Default`
+  (decisions AA1–AA6). There is no rename or delete.
 - **Settings.** `settings/agency-account-settings.ts` resolves the per-account row to effective
   values (`allow_recording` and `analyze_calls` default `false`, `max_concurrent_calls` 5,
   `webrtc_max_duration_seconds` 1800).
