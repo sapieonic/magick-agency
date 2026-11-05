@@ -3,7 +3,7 @@
 Where Magick Agency stands, in detail: what each delivery phase built and the evidence for it,
 the last test counts, what is not built, what is still open and with whom, the deployment
 invariants, and what to do next. Read it before planning work on the repo, or before answering
-"is it done". As of 2026-11-04.
+"is it done". As of 2026-11-05.
 
 ## Summary
 
@@ -455,7 +455,9 @@ phone number (the default, unchanged), any kept column, or none.
 - `claimDialable` keeps one live call per number in a campaign (skips a number `in_flight` or
   `connected` on another contact; one contact per number per tick). Proven on real Postgres
   (`agency-contact-claim-one-per-number.test.ts`) and end to end through the roster insert
-  (`agency-ingest-roundtrip.test.ts`); guards mutation-checked.
+  (`agency-ingest-roundtrip.test.ts`); guards mutation-checked. Widened to the whole account on
+  2026-11-05 (MC4, "Several running campaigns per account" below), whose tests have not had a
+  green run yet.
 - Defaults and the soft-phone gap: [`decisions.md`](decisions.md) §4, "Roster upload, choosing the
   duplicate column".
 
@@ -834,6 +836,51 @@ create and PATCH, but the console only displayed it.
   the full server unit suite and the Dart tests were not run (no file of theirs changed; Dart is
   not installed on the build container).
 
+### Several running campaigns per account 2026-11-05 (MC1–MC7)
+
+ClickUp "Allow multiple running campaigns per account within the account's concurrency limit". An
+account could run one campaign at a time (`uq_agency_campaign_running`; Start and Resume answered
+409 `another_campaign_running`). Design and defaults: [`decisions.md`](decisions.md) §4, "Several
+running campaigns per account". Built and documented; **not yet verified**: no test run of this
+work is recorded (see the last bullet).
+
+- Migration `0015` drops `uq_agency_campaign_running`; the `another_campaign_running` code is
+  retired from `packages/contracts` (MC6). Agent exclusivity is unchanged: one live session per
+  agent per tenant.
+- The pacing round splits the account's `max_concurrent_calls` between its running campaigns,
+  fewest live calls first, a campaign that cannot use its share leaving it to the others; before,
+  the round's headroom went to whichever tick drew on it first (MC1, MC2). Every campaign a round
+  starts joins its account's split (a stopping or not-running one without contending). The split
+  runs once every member has reported, or 1 s after the account's first report without the slow
+  ones, and stays open until every member has reported or withdrawn or its 5 s deadline closes it
+  (with a warning); rounds start none of the account's campaigns while it is open. A member
+  reporting while it is open after it ran gets `min(demand, leftover)`, first come first served,
+  so a slow sibling is served rather than starved; one reporting after the close gets 0 and is
+  served by the next split. A pending-dial ledger per account carries the dials a split granted
+  and not yet inserted into every later live read, so overlapping rounds cannot grant the same
+  headroom twice; a hold with no progress for 60 s stops counting, with a warning (MC2). A
+  campaign held back by the share while the account had headroom keeps ticking every round, and
+  one that claimed fewer contacts than it was granted has its demand capped at what it claimed
+  (at least 1) until it fills a grant (MC5). With one running campaign the rule is unchanged.
+  While two processes lead campaigns of one account (a leader failover or a deploy overlap) each
+  can split the account's headroom, the concurrency guard refusing the excess; open with Manas
+  (MC3, `decisions.md` §5).
+- The one-live-call-per-number check spans the whole account, not one campaign (MC4): pacing's
+  claim, the agent's own dial, and the soft phone's dials, tagged ones included (`in_flight` only,
+  `softphone.md` §4.1). The races that remain are in `decisions.md` §5.
+- Visibility (MC7): campaign stats carry `concurrency`, shown on the console's campaign cards and
+  detail page (the equal share is left out when more campaigns run than the account has lines:
+  "3 campaigns share 2 lines"). Metrics `agency_campaign_slots_in_use` and
+  `agency_campaign_slots_allocated` (set only after a contended report to the split) and
+  `agency_pacing_share_withheld_total` (contention); the dashboard's *Agency dialer* row gains two
+  *Pacing Share* panels (slots in use against allocated per campaign, and slots withheld per
+  campaign); a new warning, `agy-pacing-share-starved`, fires when a campaign with no live call has
+  been withheld slots for 10 minutes (runbook in [`operations.md`](operations.md)). The new series
+  carry only `campaign_id` (`grafana/README.md`, "Known metric gaps").
+- Counts: pending the first green run. No unit, integration, lint or `pnpm test:grafana` run of
+  this work is recorded, so the case counts beside its test files in [`modules.md`](modules.md)
+  are read from the source, not from a run, and nothing here claims a pass.
+
 ## Test counts
 
 Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
@@ -1094,6 +1141,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
+| Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
 
 ## Deployment invariants
 

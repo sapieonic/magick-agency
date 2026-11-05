@@ -221,8 +221,11 @@ export class AgencyAgentRetryRepository {
    * claim holds is skipped, never waited on) requires, on the row as it is now:
    *  - the caller owns it on this campaign;
    *  - it is `pending` or `exhausted` and NOT DNC-suppressed (`claimDialable`'s defence in depth);
-   *  - one live call per number: no other contact of this campaign on the same number is
-   *    `in_flight` or `connected` (the digits projection, as `claimDialable`);
+   *  - one live call per number: no contact of this ACCOUNT, on any of its campaigns, on the
+   *    same number is `in_flight` or `connected` (`numberLiveSql`, the digits projection, as
+   *    `claimDialable`). Account-wide, not campaign-wide (decisions MC4): the agent's dial
+   *    starts a call like a paced one, and a retry child or another roster of the account may
+   *    be ringing the same customer right now;
    *  - the basis still holds: `due` (pending, due now), `retry_delay` (pending, override held),
    *    `retry_round` (`agentRetryBlockSql` IS NULL, which re-checks the rounds and cooldown);
    *  - `spendCallingHours` only while the override is still held.
@@ -261,7 +264,7 @@ export class AgencyAgentRetryRepository {
             AND c.assigned_user_id = ${user}::uuid
             AND c.state IN ('pending', 'exhausted')
             AND c.suppressed_reason IS DISTINCT FROM 'dnc'
-            AND NOT ${numberLiveSql('c', `${campaign}::uuid`)}
+            AND NOT ${numberLiveSql('c')}
             FOR UPDATE OF c SKIP LOCKED
        )
        UPDATE agency_contacts c
@@ -367,15 +370,17 @@ export class AgencyAgentRetryRepository {
   }
 
   /**
-   * Whether a contact of this campaign on the same number as `contactId` (itself included)
-   * is on a call or held for a write-up: why a claim refused a contact that was otherwise
-   * eligible. A read: the claim is the authority.
+   * Whether a contact of this ACCOUNT (any campaign) on the same number as `contactId` (itself
+   * included) is on a call or held for a write-up: why a claim refused a contact that was
+   * otherwise eligible. The same `numberLiveSql` probe as {@link claimForAgentDial}, so the
+   * explanation and the refusal cannot disagree (decisions MC4). `campaignId` only scopes the
+   * contact itself. A read: the claim is the authority.
    */
   async numberIsLive(campaignId: string, contactId: string): Promise<boolean> {
     const { rows } = await getPool().query<{ live: boolean }>(
       `SELECT EXISTS (
          SELECT 1 FROM agency_contacts c
-          WHERE c.id = $1::uuid AND c.campaign_id = $2::uuid AND ${numberLiveSql('c', 'c.campaign_id')}
+          WHERE c.id = $1::uuid AND c.campaign_id = $2::uuid AND ${numberLiveSql('c')}
        ) AS live`,
       [contactId, campaignId],
     );

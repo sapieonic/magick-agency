@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ShieldOff, X } from 'lucide-react';
+import { ShieldOff, X } from 'lucide-react';
 import { createRetry, retryPreview } from '../../api/agencyCampaigns';
 import { useTenant } from '../../contexts/TenantContext';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
@@ -49,14 +49,15 @@ import styles from './AgencyRetryDialog.module.css';
  * `excluded` renders whenever it is non-zero, in the same block as the count,
  * and says which rule removed them.
  *
- * ── The one-running-campaign rule is stated UP FRONT ────────────────────────
- * `uq_agency_campaign_running (tenant_id, account_id) WHERE status='running'`
- * means a child cannot dial while its parent does. The child is created in
- * `draft` so creation never fails for that reason — but Start will, with
- * `409 another_campaign_running`, and that refusal is likely to be the
- * most common support ticket the feature generates. Telling the supervisor while
- * they are still authoring costs one sentence; telling them at Start costs a
- * refusal on a campaign they already made.
+ * ── A running parent is stated UP FRONT ─────────────────────────────────────
+ * An account may run several campaigns at once (decisions MC6), so a child can
+ * dial while its parent still does. Two things about that are not obvious and
+ * are said while the supervisor is still authoring: the two share the account's
+ * lines (pacing gives each free line to the running campaign with the fewest live
+ * calls, MC1), so the parent slows while the child dials; and one customer is
+ * never called by both at once (a number live on any campaign of the account is
+ * not claimed, MC4). The child is still created in `draft`: Start is the
+ * supervisor's, not this dialog's.
  *
  * ── What is NOT here ────────────────────────────────────────────────────────
  * The selector is not editable in this dialog. It arrives from the contacts tab
@@ -516,18 +517,15 @@ export function AgencyRetryDialog({
           </div>
 
           {/*
-            Said before the campaign is made, not after Start refuses it. One
-            account runs one campaign at a time by unique index; the child is
-            created in `draft` so this never blocks creation, only dialing.
+            Said before the campaign is made. Not a warning: nothing is refused.
+            The child can run beside its parent; what the supervisor needs to know
+            is that they share the lines and never call one customer twice at once.
           */}
           {campaign.status === 'running' && (
-            <p className={styles.parentRunning} data-testid="retry-parent-running">
-              <AlertTriangle size={15} aria-hidden="true" />
-              <span>
-                {campaign.name} is still dialing. The retry will be created as a draft, and it
-                cannot be started until this one is paused or stopped — one campaign runs at a time
-                per account.
-              </span>
+            <p className={styles.parentRunningNote} data-testid="retry-parent-running">
+              {campaign.name} is still dialling. The retry will be created as a draft, and you can
+              start it while this one runs: the two share your account’s lines, and a customer is
+              never called by both at once.
             </p>
           )}
 

@@ -74,15 +74,16 @@ type DialCommand = import('../../../src/agency/dial-dispatcher.js').DialCommand;
 
 const TENANT = DEFAULTS.tenantId; // UUID
 /**
- * TWO ACCOUNTS, one tenant — and that is forced rather than chosen.
+ * TWO ACCOUNTS, one tenant — chosen because it is the widest reach of the defect.
  *
- * `uq_agency_campaign_running (tenant_id, account_id) WHERE status = 'running'`
- * allows one running campaign per ACCOUNT, so two campaigns
- * that can dial at the same moment are necessarily in two accounts of the tenant.
- * That is exactly the shape in question: `account_id` is deliberately
- * absent from the uniqueness key because "an agent moving between two accounts of
- * the same tenant is exactly the double-bridge case". An account-scoped index
- * would have left the entire reachable population of this defect unprotected.
+ * This was once forced: `uq_agency_campaign_running` allowed one running campaign per
+ * ACCOUNT, so two campaigns that could dial at the same moment were necessarily in two
+ * accounts. Migration 0015 dropped it (decisions MC6), and two running campaigns of ONE
+ * account are now possible too; `uq_agency_agent_live_tenant` covers that case as well,
+ * since a same-account pair is also a same-tenant pair. The two-account shape stays
+ * because it is the one an account-scoped index would miss: `account_id` is deliberately
+ * absent from the uniqueness key because "an agent moving between two accounts of the
+ * same tenant is exactly the double-bridge case".
  */
 const ACCOUNT = DEFAULTS.accountId; // UUID
 const ACCOUNT_2 = uuidFor('test-account-2'); // UUID

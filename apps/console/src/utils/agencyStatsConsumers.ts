@@ -161,6 +161,10 @@ export const AGENCY_STATS_FIELD_CONSUMERS: Record<
       'Read only by the health strip\'s concurrency read-out, deleted with the Overview panel. The '
       + 'Insights headline shows lines in use from its own read (`headline.running.concurrency_in_use`).',
   },
+  // The campaign's place in the account's line limit (decisions MC7). Two readers, and
+  // the guard needs only one: the live card on the campaigns home and the detail page's
+  // header both render it through `concurrencyLine`.
+  concurrency: { consumedIn: CARD },
   abandonment_rate_24h_pct: {
     unconsumed:
       'Read only by the health strip\'s abandonment read-out, deleted with the Overview panel. The '

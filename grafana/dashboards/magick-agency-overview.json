@@ -1242,12 +1242,156 @@
       ]
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "How the pacing round splits each account's `max_concurrent_calls` between its running campaigns (MC1\u2013MC7, docs/decisions.md). `in use` (solid): the campaign's own live attempts as the round saw them (`agency_campaign_slots_in_use`). `allocated` (dashed): those plus the slots the round granted it (`agency_campaign_slots_allocated`). Allocated above in use is a campaign being given new dials; equal is a campaign holding what it has. Free slots go to the campaign with the fewest live calls first, so campaigns of one account that share a busy limit converge on equal lines; one that cannot use its share (no agent ready, nothing due) leaves it to the others, and one above its share keeps its calls but gets nothing new until it is back at or under the others. Only campaigns of ONE account share slots: compare lines within an account. Both are set only after the campaign reports demand to a CONTENDED split (two or more of its account's campaigns contending) and cleared on every other tick outcome: no agent available, nothing due, a contended demand of 0, a tick that did not plan, any uncontended tick (a campaign alone on its account has no series), and when this process gives up its leadership. So a line that ends is a campaign leaving contention, not a campaign at 0. Set at each such report and exported once a minute, so each point is the last one before the export, not an average. `max` by campaign, so a series seen twice is not double-counted. The tenant filter does not apply: the series carry only `campaign_id`. A campaign held at 0 in use while the panel beside it shows it withheld is starved (`agy-pacing-share-starved`).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "short",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "allocated: .*"
+            },
+            "properties": [
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 65
+      },
+      "id": 120,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Pacing Share \u2014 Slots In Use vs Allocated, per Campaign",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "max by (campaign_id) (agency_campaign_slots_in_use{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "in use: {{campaign_id}}",
+          "refId": "A"
+        },
+        {
+          "expr": "max by (campaign_id) (agency_campaign_slots_allocated{deployment_environment=~\"$environment\", service_name=~\"$service_name\"})",
+          "interval": "1m",
+          "legendFormat": "allocated: {{campaign_id}}",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "description": "Slots the fair-share rule (MC1, docs/decisions.md) held back from a campaign while its account still had headroom: `min(demand, headroom) \u2212 grant`, counted for every campaign whose demand exceeded what it got, a tick that reported after its account's split closed (granted 0) included (`agency_pacing_share_withheld_total`, per second). This measures CONTENTION, not starvation: whenever an account's campaigns want more than its free lines, someone is withheld, and a busy campaign above an equal share is withheld routinely while its calls end. Empty means no contention; an account with one running campaign never withholds. STARVATION is a campaign withheld round after round while its `in use` line in the panel beside stays at 0: fewest-live-first should serve it before anyone, so either more of the account's campaigns tie at 0 live calls than it has lines (they take turns, so one always waits: raise the limit or run fewer campaigns at once), or its tick reports only after its account's split has closed (MC2: a tick that misses the 1 s wait but reports while the split is open still gets the leftover; after the close, at the latest the 5 s deadline, it gets 0) and so gets 0 every time, or the split itself is wrong. `agy-pacing-share-starved` warns after 10 minutes of it. The counter is sparse (a campaign's series starts at its first withheld slot), so `rate` misses that first one. The tenant filter does not apply: the series carry only `campaign_id`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "unit": "cps",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "id": 121,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "title": "Pacing Share \u2014 Slots Withheld per Campaign",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (campaign_id) (rate(agency_pacing_share_withheld_total{deployment_environment=~\"$environment\", service_name=~\"$service_name\"}[$__rate_interval]))",
+          "interval": "1m",
+          "legendFormat": "withheld: {{campaign_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 65
+        "y": 73
       },
       "id": 2,
       "title": "Voice, capacity and storage",
@@ -1284,7 +1428,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 66
+        "y": 74
       },
       "id": 10,
       "options": {
@@ -1373,7 +1517,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 66
+        "y": 74
       },
       "id": 73,
       "options": {
@@ -1462,7 +1606,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 66
+        "y": 74
       },
       "id": 67,
       "options": {
@@ -1521,7 +1665,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 74
+        "y": 82
       },
       "id": 102,
       "options": {
@@ -1609,7 +1753,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 74
+        "y": 82
       },
       "id": 76,
       "options": {
@@ -1650,7 +1794,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 82
+        "y": 90
       },
       "id": 3,
       "title": "Identity and mail",
@@ -1687,7 +1831,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 83
+        "y": 91
       },
       "id": 103,
       "options": {
@@ -1745,7 +1889,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 83
+        "y": 91
       },
       "id": 104,
       "options": {
@@ -1785,7 +1929,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 91
+        "y": 99
       },
       "id": 4,
       "title": "Analysis",
@@ -1853,7 +1997,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 92
+        "y": 100
       },
       "id": 68,
       "options": {
@@ -1917,7 +2061,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 92
+        "y": 100
       },
       "id": 69,
       "options": {
@@ -1993,7 +2137,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 100
+        "y": 108
       },
       "options": {
         "legend": {
@@ -2075,7 +2219,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 100
+        "y": 108
       },
       "options": {
         "legend": {
@@ -2122,7 +2266,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 108
+        "y": 116
       },
       "id": 5,
       "title": "Runtime and telemetry",
@@ -2159,7 +2303,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 109
+        "y": 117
       },
       "id": 106,
       "options": {
@@ -2223,7 +2367,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 109
+        "y": 117
       },
       "id": 107,
       "options": {
@@ -2281,7 +2425,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 109
+        "y": 117
       },
       "id": 108,
       "options": {
@@ -2341,7 +2485,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 117
+        "y": 125
       },
       "id": 87,
       "options": {
@@ -2398,7 +2542,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 117
+        "y": 125
       },
       "id": 74,
       "options": {
@@ -2456,7 +2600,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 125
+        "y": 133
       },
       "id": 50,
       "options": {
@@ -2494,7 +2638,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 133
+        "y": 141
       },
       "id": 111,
       "title": "Processes (MEDIA_WORKERS / ANALYSIS_WORKERS)",
@@ -2531,7 +2675,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 134
+        "y": 142
       },
       "id": 112,
       "options": {
@@ -2589,7 +2733,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 134
+        "y": 142
       },
       "id": 113,
       "options": {
@@ -2647,7 +2791,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 142
+        "y": 150
       },
       "id": 114,
       "options": {
@@ -2705,7 +2849,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 142
+        "y": 150
       },
       "id": 115,
       "options": {

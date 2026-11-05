@@ -297,14 +297,11 @@ void _allRosterCodesListed;
 //
 // These are deliberately OUTSIDE `AGENCY_ACTION_ERROR_CODES` because they are not
 // members of the action union: they are the campaign routes' refusals, not an
-// agent action's. The member set is exactly the seven campaign-lifecycle codes below.
+// agent action's. The member set is exactly the six campaign-lifecycle codes below.
+// `another_campaign_running` is retired (decisions MC6): an account may run several
+// campaigns at once, so Start and Resume no longer refuse on another running campaign.
 
 export type AgencyCampaignLifecycleErrorCode =
-  /**
-   * The one-running-campaign-per-account rule surfacing as a 409 instead of a
-   * raw unique violation. The remedy is "pause the other campaign first".
-   */
-  | 'another_campaign_running'
   /** Carries `current_status` so the console can re-sync rather than guess. */
   | 'invalid_campaign_transition'
   | 'campaign_not_found'
@@ -324,7 +321,6 @@ export type AgencyCampaignLifecycleErrorCode =
   | 'analysis_profile_not_found';
 
 export const AGENCY_CAMPAIGN_LIFECYCLE_ERROR_CODES = [
-  'another_campaign_running',
   'invalid_campaign_transition',
   'campaign_not_found',
   'campaign_roster_empty',

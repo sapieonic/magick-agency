@@ -145,6 +145,8 @@ interface OldAgencyCampaignStats {
   other_stalls: Api.AgencyStallCode[];
   concurrency_limit: number;
   concurrency_in_use: number | null;
+  // Added deliberately (MC7): the campaign's place in the account's line limit.
+  concurrency?: Api.AgencyCampaignConcurrency | null;
   abandonment_ceiling_pct: number;
   agents_by_state?: Api.AgencyAgentsByState;
   agents?: Api.AgencySupervisorAgent[];

@@ -103,9 +103,9 @@ async function conversationAwaitingWrapup(opts: {
   attempt?: Record<string, unknown>;
   contactState?: string;
 }) {
-  // Deliberately NOT `running`. `uq_agency_campaign_running` allows one running
-  // campaign per account, so a case needing several campaigns cannot have them
-  // all running — and it does not need to: `findLapsedWrapups` has no campaign-status
+  // Deliberately NOT `running`. Written when `uq_agency_campaign_running` allowed one
+  // running campaign per account (migration 0015 dropped it, decisions MC6), and kept
+  // because a case needs no running campaign: `findLapsedWrapups` has no campaign-status
   // clause, which is correct and is asserted below. A supervisor pausing a campaign
   // must not strand a contact who is waiting for a write-up.
   const campaign = await insertAgencyCampaign({ status: 'paused', ...opts.campaign });
@@ -473,8 +473,8 @@ describe('findLapsedWrapups clock', () => {
    * The sweep is campaign-status-agnostic, and that is a requirement rather than an
    * omission.
    *
-   * Found while writing this file: `uq_agency_campaign_running` allows one running
-   * campaign per account, which forced the fixtures onto `paused` — and that
+   * Found while writing this file: `uq_agency_campaign_running` then allowed one running
+   * campaign per account (0015 has since dropped it), which forced the fixtures onto `paused` — and that
    * turned out to be the more interesting state to test in. **A supervisor pausing
    * or stopping a campaign must not strand a contact who is mid-wrap-up.** Pausing
    * stops new dials; it says nothing about the conversation that just happened, and

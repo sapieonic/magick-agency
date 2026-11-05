@@ -512,7 +512,7 @@ function PreviewBlock({
   return (
     <div data-testid="assign-preview-result">
       {stale ? (
-        <p className={frame.parentRunning} data-testid="assign-stale">
+        <p className={styles.warningNote} data-testid="assign-stale">
           <AlertTriangle size={15} aria-hidden="true" />
           <span>{ASSIGNMENT_REFUSAL_COPY.preview_stale}</span>
         </p>

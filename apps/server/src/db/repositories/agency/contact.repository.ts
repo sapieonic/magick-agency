@@ -178,16 +178,31 @@ const CLAIM_CANDIDATE_FACTOR = 4;
 
 /**
  * The terms every claim ({@link AgencyContactRepository.claimDialable} and the owner claim) puts
- * on a candidate row `alias` of campaign `campaignParam`: open (`pending`), due, not DNC, and its
- * number not live on the campaign (`numberLiveSql`). See `claimDialable`'s header for why each
- * term is there and why DNC is `IS DISTINCT FROM`. Spelled in the order the index serves them
- * (`state`, `next_attempt_at`), not through `openContactSql`.
+ * on a candidate row `alias`: open (`pending`), due, not DNC, and its number not live on the
+ * ACCOUNT, on any of its campaigns (`numberLiveSql`, decisions MC4). The caller scopes `alias` to
+ * its campaign itself. {@link AgencyContactRepository.countDialable} reads the same terms, so
+ * the pacing round's demand counts what a claim could take. See `claimDialable`'s header for
+ * why each term is there and why DNC is `IS DISTINCT FROM`. Spelled in the order the index
+ * serves them (`state`, `next_attempt_at`), not through `openContactSql`.
  */
-function dueAndNotBusySql(alias: string, campaignParam: string): string {
+function dueAndNotBusySql(alias: string): string {
   const c = alias;
   return `${c}.state = 'pending' AND ${c}.next_attempt_at <= now()
             AND ${c}.suppressed_reason IS DISTINCT FROM 'dnc'
-            AND NOT ${numberLiveSql(c, campaignParam)}`;
+            AND NOT ${numberLiveSql(c)}`;
+}
+
+/**
+ * The pool claim's candidate window on `alias`: its campaign's {@link dueAndNotBusySql} rows,
+ * the first `limitParam` in `next_attempt_at` order. {@link AgencyContactRepository.claimDialable}
+ * locks it (its locking clause follows) and {@link AgencyContactRepository.countDialable} counts
+ * it, so the count cannot drift from what the claim reads.
+ */
+function claimWindowSql(alias: string, campaignParam: string, limitParam: string): string {
+  const c = alias;
+  return `WHERE ${c}.campaign_id = ${campaignParam} AND ${dueAndNotBusySql(c)}
+          ORDER BY ${c}.next_attempt_at
+          LIMIT ${limitParam}`;
 }
 
 /**
@@ -201,7 +216,7 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
          SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
           WHERE c.campaign_id = $1::uuid AND c.assigned_user_id IS NULL
-            AND ${dueAndNotBusySql('c', '$1::uuid')}
+            AND ${dueAndNotBusySql('c')}
           ORDER BY c.next_attempt_at
           LIMIT ((SELECT count(*) FROM agents) - (SELECT count(*) FROM own)) * $3::int
             FOR UPDATE OF c SKIP LOCKED
@@ -238,7 +253,7 @@ function ownerClaimSql(mode: AgencyOwnerClaimMode): string {
             SELECT c.id, ${contactPhoneDigitsSql('c')} AS digits
               FROM agency_contacts c
              WHERE c.campaign_id = $1::uuid AND c.assigned_user_id = a.agent_user_id
-               AND ${dueAndNotBusySql('c', '$1::uuid')}
+               AND ${dueAndNotBusySql('c')}
              ORDER BY c.next_attempt_at
              LIMIT 1
                FOR UPDATE OF c SKIP LOCKED
@@ -319,18 +334,22 @@ export class AgencyContactRepository {
    * A campaign can hold the same number on several contacts: the schema refuses
    * `UNIQUE (campaign_id, phone_e164)` on purpose, an append upload can repeat a
    * number, and an upload deduped on another column (one borrower, two loan
-   * numbers) keeps both rows. The claim must never put two calls on one number at
-   * once, so it:
+   * numbers) keeps both rows. And an account can run several campaigns at once
+   * (decisions MC6), whose rosters can share a number: a retry child and its parent
+   * always do. The claim must never put two calls on one number at once, so it:
    *
-   *  - skips a contact whose number is already live on this campaign: another
-   *    contact on it is `in_flight` (claimed, dialing, or a soft-phone claim) or
-   *    `connected` (bridged, or parked for the agent's write-up; a bridged call
-   *    writes `connected` while the call is still up);
+   *  - skips a contact whose number is already live on its ACCOUNT, on this campaign
+   *    or any other of the account's (decisions MC4): a contact on it is `in_flight`
+   *    (claimed, dialing, or a soft-phone claim) or `connected` (bridged, or parked
+   *    for the agent's write-up; a bridged call writes `connected` while the call is
+   *    still up). Another account's call on the same number does not count;
    *  - takes at most one contact per number in one claim (the earliest due).
    *
    * "The same number" is the digits projection the soft phone's match and
    * `suppressByPhone` prefilter on (`CONTACT_PHONE_DIGITS_SQL`), so the busy
-   * probe is one `idx_agency_contacts_campaign_phone_digits` lookup per candidate.
+   * probe is one `idx_agency_contacts_account_live_digits` lookup per candidate
+   * (0015: the account's live contacts by digits, partial on the live states, so it
+   * stays as small as the account's live calls however many rosters it holds).
    * Ingest stores E.164, so digits and number agree for every roster row.
    *
    * The one-per-number pass needs `DISTINCT ON`, which cannot take `FOR UPDATE`, so
@@ -347,7 +366,11 @@ export class AgencyContactRepository {
    *
    * **What the guard does not cover.** The busy probe is a read, not a lock.
    * Against other pacing ticks that is enough: ticks for one campaign never overlap
-   * (`PacingEngine.ticking`) on this single-replica deployment. It is not enough
+   * (`PacingEngine.ticking`) on this single-replica deployment, and the engine runs
+   * the claims of one ACCOUNT's campaigns one at a time (decisions MC4), so the ticks
+   * of two campaigns of one account no longer overlap at the claim either: each
+   * claim's probe sees the other's committed `in_flight` rows. Two different
+   * accounts' claims may overlap, and need not see each other. It is not enough
    * against the soft phone, which claims contacts in its own transaction: a manual
    * claim of one row and a tick's claim of another row on the same number, in the
    * same few milliseconds, can each miss the other's uncommitted write. And the
@@ -363,10 +386,8 @@ export class AgencyContactRepository {
       `WITH locked AS MATERIALIZED (
          SELECT c.id, c.next_attempt_at, ${contactPhoneDigitsSql('c')} AS digits
            FROM agency_contacts c
-          WHERE c.campaign_id = $1 AND ${dueAndNotBusySql('c', '$1')}
-          ORDER BY c.next_attempt_at
+          ${claimWindowSql('c', '$1', '$3')}
             FOR UPDATE OF c SKIP LOCKED
-          LIMIT $3
        ),
        picked AS MATERIALIZED (
          SELECT id FROM (
@@ -384,6 +405,39 @@ export class AgencyContactRepository {
       [campaignId, limit, limit * CLAIM_CANDIDATE_FACTOR],
     );
     return rows;
+  }
+
+  /**
+   * How many contacts {@link claimDialable}`(campaignId, limit)` could claim right now: a read,
+   * no lock, no write. The pacing round asks each running campaign of an account for its demand
+   * before it splits the account's headroom between them (decisions MC1, MC2), so a campaign
+   * with agents ready but nothing to dial does not hold slots another campaign could use.
+   *
+   * It reads exactly the claim's window (`claimWindowSql`), so it never promises more than one
+   * claim takes: the same terms (`dueAndNotBusySql`: open, due, not DNC, the number not live on
+   * the account), the same first `limit * CLAIM_CANDIDATE_FACTOR` due rows in `next_attempt_at`
+   * order (one `idx_agency_contacts_dialable` range scan, bounded whatever the roster's size),
+   * one per number (distinct digits, as the claim's `DISTINCT ON`), at most `limit`. A run of
+   * one number at the head of the queue counts once, as the claim would take it once.
+   *
+   * What it cannot see: rows another transaction holds locked, which the claim skips (a
+   * soft-phone claim in its few milliseconds), so it can count one the claim then misses; and
+   * a number that goes live between this read and the claim. Both make the claim take fewer,
+   * never more: the count is an upper bound for the tick that follows, not a reservation.
+   * Pool claims only: an owner claim ({@link claimForAgents}) has its own per-agent terms.
+   */
+  async countDialable(campaignId: string, limit: number): Promise<number> {
+    if (limit <= 0) return 0;
+    const { rows } = await getPool().query<{ n: number }>(
+      `SELECT LEAST(count(DISTINCT w.digits), $2::int)::int AS n
+         FROM (
+           SELECT ${contactPhoneDigitsSql('c')} AS digits
+             FROM agency_contacts c
+            ${claimWindowSql('c', '$1::uuid', '$3::int')}
+         ) w`,
+      [campaignId, limit, limit * CLAIM_CANDIDATE_FACTOR],
+    );
+    return rows[0]?.n ?? 0;
   }
 
   /**
@@ -438,7 +492,10 @@ export class AgencyContactRepository {
    * the single statement gives up made that worth it.
    *
    * The busy probe is a read, not a lock, exactly as in {@link claimDialable} (see its "What
-   * the guard does not cover"): enough against other ticks, which never overlap per campaign.
+   * the guard does not cover"): enough against other ticks, which never overlap per campaign,
+   * and whose claims the engine runs one at a time per account (decisions MC4). Like
+   * {@link claimDialable}'s, the probe is account-wide: a number live on another campaign of
+   * the account is not claimed for an agent here.
    */
   async claimForAgents(
     campaignId: string,
@@ -662,10 +719,11 @@ export class AgencyContactRepository {
 
   /**
    * The oldest contact `in_flight` on ANY campaign of the account whose number is
-   * `phoneE164`, or null: the soft phone's roster guard for an UNTAGGED dial (§4.1
-   * step 2). A campaign attempt, or another soft-phone call's claim, is live on that
-   * customer, so an untagged call to them is refused `contact_in_flight` as a tagged
-   * one is. Read only: an untagged call never claims or settles a contact (SP6).
+   * `phoneE164`, or null: the soft phone's account-wide roster guard (§4.1 step 2). An
+   * untagged dial is refused `contact_in_flight` on any match; a tagged dial is refused
+   * on a match on another campaign of the account (decisions MC4: several campaigns may
+   * run per account, so a sibling's call is live on that customer too). Read only: the
+   * guard never claims or settles a contact (SP6).
    *
    * Served by the partial `idx_agency_contacts_in_flight` (only the in-flight rows),
    * then narrowed to the account and the digits prefilter; the decision is

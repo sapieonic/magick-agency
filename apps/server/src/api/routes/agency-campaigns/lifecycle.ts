@@ -157,40 +157,30 @@ export async function registerCampaignLifecycleRoutes(app: FastifyInstance): Pro
     // transition error rather than a roster error it cannot act on yet.
     if (opts.requireRoster && await rosterRejected(reply, campaign)) return reply;
 
-    try {
-      const updated = await agencyCampaignRepository.transitionStatus(campaign.id, from, to, patch);
-      if (!updated) {
-        // The guard matched on read but not on write — something moved underneath
-        // us (most likely the pacing leader finalizing). Re-read and report.
-        const fresh = await agencyCampaignRepository.findById(campaign.id);
-        return reply.code(409).send({
-          error: 'Invalid Transition',
-          code: 'invalid_campaign_transition',
-          message: 'The campaign changed state before this could be applied.',
-          current_status: fresh?.status ?? null,
-        });
-      }
-      auditLogger.log({
-        tenantId: campaign.tenant_id, accountId: campaign.account_id,
-        eventType: `agency_campaign.${to}`, eventCategory: 'call', severity: 'info',
-        actor: getOriginator(request) ?? 'system:api',
-        eventData: { campaign_id: campaign.id, from: campaign.status, to },
+    // Several campaigns of one account may be `running` at once (decisions MC6: migration 0015
+    // dropped `uq_agency_campaign_running`, and `another_campaign_running` is retired). The
+    // account's `max_concurrent_calls` is shared between them by the pacing round (MC1, MC2),
+    // and a number live on one of them is not claimed by another (MC4). No 23505 is expected
+    // from this UPDATE any more; anything it raises reaches the app's error handler.
+    const updated = await agencyCampaignRepository.transitionStatus(campaign.id, from, to, patch);
+    if (!updated) {
+      // The guard matched on read but not on write — something moved underneath
+      // us (most likely the pacing leader finalizing). Re-read and report.
+      const fresh = await agencyCampaignRepository.findById(campaign.id);
+      return reply.code(409).send({
+        error: 'Invalid Transition',
+        code: 'invalid_campaign_transition',
+        message: 'The campaign changed state before this could be applied.',
+        current_status: fresh?.status ?? null,
       });
-      return reply.send(formatAgencyCampaignResponse(updated));
-    } catch (err) {
-      // 23505 here is uq_agency_campaign_running: ONE running campaign is permitted
-      // per account in v1. Surface it as something the console can explain — a raw
-      // unique violation would reach a supervisor as an opaque 500.
-      if ((err as { code?: string }).code === '23505') {
-        log.info({ campaignId: campaign.id }, 'Refused start — another campaign is already running');
-        return reply.code(409).send({
-          error: 'Already Running',
-          code: 'another_campaign_running',
-          message: 'Another campaign is already running for this account. Pause or stop it first.',
-        });
-      }
-      throw err;
     }
+    auditLogger.log({
+      tenantId: campaign.tenant_id, accountId: campaign.account_id,
+      eventType: `agency_campaign.${to}`, eventCategory: 'call', severity: 'info',
+      actor: getOriginator(request) ?? 'system:api',
+      eventData: { campaign_id: campaign.id, from: campaign.status, to },
+    });
+    return reply.send(formatAgencyCampaignResponse(updated));
   }
 
   // ── `started_at` is not passed from here, deliberately ─────────────────────

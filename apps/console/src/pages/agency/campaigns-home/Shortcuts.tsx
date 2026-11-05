@@ -90,7 +90,7 @@ export function Shortcuts({ role }: { role: Parameters<typeof hasPermission>[0] 
 
 const RULES = [
   'A campaign starts as a draft. Nothing is dialed until you start it.',
-  'Only one campaign can run at a time per account.',
+  'Several campaigns can run at once. They share your account’s lines.',
   'Stopping a campaign lets calls already in progress finish.',
 ];
 

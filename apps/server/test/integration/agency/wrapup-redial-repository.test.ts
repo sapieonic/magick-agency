@@ -26,8 +26,8 @@ afterAll(closeTestPool);
 const CATALOG = JSON.stringify([{ code: 'sale', label: 'Sale', is_success: true, terminal: true }]);
 
 async function heldConversation(opts: { contactState?: string; attempt?: Record<string, unknown> } = {}) {
-  // Paused, not running: one running campaign per account, and neither the transaction nor
-  // the sweep reads the status.
+  // Paused, not running: neither the transaction nor the sweep reads the status. (Once also
+  // forced by one running campaign per account, a rule migration 0015 dropped.)
   const campaign = await insertAgencyCampaign({ status: 'paused', allow_wrapup_redial: true, disposition_catalog: CATALOG });
   const campaignId = campaign.id as string;
   const session = await insertAgentSession(campaignId, { state: 'wrapup' });

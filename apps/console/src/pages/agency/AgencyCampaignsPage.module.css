@@ -186,6 +186,14 @@ a.liveOpen {
   color: var(--text-muted);
 }
 
+/* The campaign's place in the account's line limit (decisions MC7). One line, and
+   it changes on every poll, so it is quiet text rather than another tile. */
+.lines {
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -849,7 +857,7 @@ a.liveOpen {
   }
 }
 
-/* Very wide content: two live cards side by side if there are two (one running, one paused). */
+/* Very wide content: two live cards side by side if there are two (two running, or one running and one paused). */
 @container campaigns (min-width: 1320px) {
   .liveGrid:has(> :nth-child(2)) {
     grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -1,5 +1,6 @@
-import type { AgencyCampaign, AgencyCampaignStats } from '../types/agency-campaign';
+import type { AgencyCampaign, AgencyCampaignConcurrency, AgencyCampaignStats } from '../types/agency-campaign';
 import { describeIsoDays, hhmm } from './format/weekdays';
+import { formatCount, plural } from './format/number';
 
 /**
  * Pure helpers for the campaigns home (`AgencyCampaignsPage`): which group a
@@ -15,10 +16,10 @@ import { describeIsoDays, hhmm } from './format/weekdays';
  *
  * `active` is every campaign that has started and not finished: `running`,
  * `stopping` and `paused`. A paused campaign is grouped here, not under finished:
- * it resumes where it left off, and its in-flight calls are still draining. Only
- * `running` is limited to one per account (the `uq_agency_campaign_running`
- * index); any number can be paused. `other` holds a status this build doesn't
- * know. It is listed under All, never placed in a guessed group.
+ * it resumes where it left off, and its in-flight calls are still draining. Any
+ * number of an account's campaigns can be running at once: they share the
+ * account's lines (`concurrencyLine` below). `other` holds a status this build
+ * doesn't know. It is listed under All, never placed in a guessed group.
  */
 type CampaignGroup = 'active' | 'draft' | 'finished' | 'other';
 
@@ -57,6 +58,33 @@ export function needsPolling(
   if (status === 'running' || status === 'stopping') return true;
   const onFloor = stats?.agents ? stats.agents.length : (stats?.agents_live ?? 0);
   return (stats?.attempts_live ?? 0) > 0 || onFloor > 0;
+}
+
+/**
+ * One line on where a campaign sits in its account's line limit, from the stats'
+ * `concurrency` block (decisions MC7), shared by the campaigns home's cards and the
+ * campaign detail header. The share is a guide, not a cap, so the campaign's own calls
+ * come first; a share that rounds down to 0 is left out. `null` with no block or limit.
+ */
+export function concurrencyLine(
+  status: string,
+  concurrency: AgencyCampaignConcurrency | null | undefined,
+): string | null {
+  if (!concurrency || concurrency.account_limit <= 0) return null;
+  const { campaign_live, fair_share, account_limit, account_live, running_campaigns } = concurrency;
+  const lines = plural(account_limit, 'line');
+  const running = `${plural(running_campaigns, 'campaign')} running`;
+  if (fair_share !== null && fair_share >= 1) {
+    return `${plural(campaign_live, 'live call')} · share ${formatCount(fair_share)} of ${lines} · ${running}`;
+  }
+  if (fair_share !== null) {
+    // Fewer lines than running campaigns: no whole share to name. A share is only
+    // ever set beside another running campaign, so the count is at least 2.
+    return `${plural(campaign_live, 'live call')} · ${plural(running_campaigns, 'campaign')} share ${lines}`;
+  }
+  const inUse = `${formatCount(account_live)} of ${lines} in use`;
+  // Running alone, the one running campaign is this one, and saying so adds nothing.
+  return status !== 'running' && running_campaigns > 0 ? `${inUse} · ${running}` : inUse;
 }
 
 export type CampaignFilter = 'all' | 'active' | 'draft' | 'finished';

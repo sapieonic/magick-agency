@@ -430,13 +430,15 @@ describe('campaign detail — a stale Start/Resume must not 409', () => {
     expect(mocks.showErrorToast).not.toHaveBeenCalled();
   });
 
-  it('still surfaces a 409 that did not move this campaign — another one is running', async () => {
+  it('still surfaces a 409 that did not move this campaign — the roster gate', async () => {
+    // Another running campaign on the account is no longer a refusal (decisions MC6);
+    // an empty roster still is, and the campaign stays a draft with Start offered.
     mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'draft' }));
     mocks.transitionAgencyCampaign.mockRejectedValue(
       new ApiError(409, {
-        error: 'Conflict',
-        code: 'another_campaign_running',
-        message: 'Another campaign is already running on this account.',
+        error: 'No Contacts',
+        code: 'campaign_roster_empty',
+        message: 'This campaign has no contacts. Upload a contact roster before starting it.',
       }),
     );
 
@@ -1327,6 +1329,58 @@ describe('campaign detail — the header timeline', () => {
   });
 });
 
+describe('campaign detail — the account’s lines (decisions MC7)', () => {
+  const sharing = {
+    campaign_live: 4, fair_share: 5, account_limit: 10, account_live: 7, running_campaigns: 2,
+  };
+
+  it('shows its live calls against its share while another campaign runs', async () => {
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ attempts_live: 4, concurrency: sharing }));
+
+    renderPage();
+    await screen.findByRole('heading', { name: 'Collections' });
+
+    expect(screen.getByTestId('campaign-lines').textContent)
+      .toBe('4 live calls · share 5 of 10 lines · 2 campaigns running');
+  });
+
+  it('shows the account’s lines in use when it runs alone', async () => {
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({
+      concurrency: { ...sharing, fair_share: null, running_campaigns: 1, account_live: 4 },
+    }));
+
+    renderPage('agents');
+    await screen.findByRole('heading', { name: 'Collections' });
+
+    // In the header, so it is on every section, not only Insights.
+    expect(screen.getByTestId('campaign-lines').textContent).toBe('4 of 10 lines in use');
+  });
+
+  it('reads the campaign’s own status, not the stats’ copy of it', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ status: 'paused' }));
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({
+      concurrency: { ...sharing, fair_share: null, running_campaigns: 1, account_live: 6 },
+    }));
+
+    renderPage();
+    await screen.findByRole('heading', { name: 'Collections' });
+
+    expect(screen.getByTestId('campaign-lines').textContent).toBe('6 of 10 lines in use · 1 campaign running');
+  });
+
+  it('says nothing when the server sends no block, or a null one', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Collections' });
+    expect(screen.queryByTestId('campaign-lines')).toBeNull();
+    cleanup();
+
+    mocks.getAgencyCampaignStats.mockResolvedValue(stats({ concurrency: null }));
+    renderPage();
+    await screen.findByRole('heading', { name: 'Collections' });
+    expect(screen.queryByTestId('campaign-lines')).toBeNull();
+  });
+});
+
 /**
  * ── The lineage strip (retry campaigns, slice S4) ──────────────────────────
  *
@@ -1435,15 +1489,17 @@ describe('Retry contacts, from the campaign header', () => {
     expect(await screen.findByText(/This is the default selection/)).toBeTruthy();
   });
 
-  it('warns that a running parent blocks the child from starting', async () => {
-    // The campaign here is `running` by default, which is the case the unique
-    // index refuses at Start.
+  it('tells the supervisor a retry can run beside its running parent', async () => {
+    // The campaign here is `running` by default. Several campaigns may run per
+    // account (decisions MC6): the note says they share the lines, not that Start
+    // will be refused.
     renderPage();
     await screen.findByRole('heading', { name: 'Collections' });
     fireEvent.click(screen.getByTestId('campaign-retry-action'));
 
     const note = await screen.findByTestId('retry-parent-running');
-    expect(note.textContent).toMatch(/cannot be started/i);
+    expect(note.textContent).toMatch(/start it while this one runs/i);
+    expect(note.textContent).not.toMatch(/cannot be started/i);
   });
 
   it('is hidden from a role that cannot create a campaign', async () => {

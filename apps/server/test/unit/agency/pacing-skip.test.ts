@@ -4,7 +4,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // The scheduled path of the pacing engine: rounds, the skip of a quiescent
 // campaign, the invalidation bus that wakes it, the safety tick that bounds a lost
 // event, the cross-round caches of the campaign row and the account limit, and
-// the per-account budget a round shares. `pacing-engine.test.ts` is the tick's
+// the per-account split a round arbitrates between the campaigns of one account
+// (decisions MC1, MC2, MC4, MC5, MC7; the round itself is `pacing-round.test.ts`), the
+// pending-dial ledger that carries a tick's grant across rounds, and the claim-shortfall cap. `pacing-engine.test.ts` is the tick's
 // arithmetic through `tickOnce` (a forced, never-skipped, fresh tick); this file
 // drives `runRound`, with the round timer off and a fake engine clock.
 // ---------------------------------------------------------------------------
@@ -24,12 +26,15 @@ const { repos, settings } = vi.hoisted(() => ({
     },
     contact: {
       claimDialable: vi.fn().mockResolvedValue([]),
+      countDialable: vi.fn(async (_id: string, limit: number) => limit),
       unclaim: vi.fn().mockResolvedValue(undefined),
       unclaimMany: vi.fn().mockResolvedValue(undefined),
+      markState: vi.fn().mockResolvedValue(null),
     },
     attempt: {
       countLive: vi.fn().mockResolvedValue(0),
       countLiveForAccount: vi.fn().mockResolvedValue(0),
+      countLiveByCampaignForAccount: vi.fn().mockResolvedValue(new Map()),
       create: vi.fn(),
       setState: vi.fn().mockResolvedValue(null),
     },
@@ -56,14 +61,20 @@ vi.mock('../../../src/feature-flags/index.js', () => ({
 }));
 vi.mock('../../../src/audit/audit-logger.js', () => ({ auditLogger: { log: vi.fn() } }));
 
-import { PacingEngine, PACING_SAFETY_TICK_MS, type PacingTickObservation } from '../../../src/agency/pacing-engine.js';
+import {
+  PacingEngine, PACING_DIAL_HOLD_MAX_MS, PACING_SAFETY_TICK_MS, type PacingTickObservation,
+} from '../../../src/agency/pacing-engine.js';
 import {
   InProcessPacingInvalidationBus,
   parsePacingInvalidationEvent,
   type PacingInvalidationEvent,
 } from '../../../src/agency/pacing/invalidation-bus.js';
 import { GenerationTtlCache } from '../../../src/agency/pacing/read-cache.js';
-import { PacingRound } from '../../../src/agency/pacing/round.js';
+import {
+  agencyCampaignSlotsSnapshot,
+  agencyPacingShareWithheldTotal,
+  resetAgencyCampaignSlots,
+} from '@magick-agency/observability/metrics/agency';
 import { withPacingInvalidation } from '../../../src/agency/pacing/limit-invalidation.js';
 
 const CAMPAIGN = {
@@ -113,13 +124,17 @@ interface Rig {
 
 function rig(opts: {
   stations: any; agents: any; bus?: InProcessPacingInvalidationBus; clock?: { t: number }; cacheTtlMs?: number;
+  shareWaitMs?: number;
 }): Rig {
   const bus = opts.bus ?? new InProcessPacingInvalidationBus();
   const clock = opts.clock ?? { t: 1_000_000 };
   const dispatch = vi.fn().mockResolvedValue(undefined);
   const e = new PacingEngine(
     null, '', 'r1', opts.stations, opts.agents, { dispatch } as any, { check: vi.fn().mockResolvedValue('clear') } as any,
-    { bus, now: () => clock.t, ...(opts.cacheTtlMs ? { cacheTtlMs: opts.cacheTtlMs } : {}) },
+    {
+      bus, now: () => clock.t, ...(opts.cacheTtlMs ? { cacheTtlMs: opts.cacheTtlMs } : {}),
+      ...(opts.shareWaitMs !== undefined ? { shareWaitMs: opts.shareWaitMs } : {}),
+    },
   );
   e.setAutoRounds(false);
   const ticks: PacingTickObservation[] = [];
@@ -137,7 +152,7 @@ function dbCalls(): number {
   return [
     repos.campaign.findById, repos.campaign.countOutstanding, repos.attempt.countLive,
     repos.attempt.countLiveForAccount, repos.session.findLiveForCampaign, settings.getMaxConcurrentCalls,
-    repos.contact.claimDialable,
+    repos.contact.claimDialable, repos.attempt.countLiveByCampaignForAccount, repos.contact.countDialable,
   ].reduce((n, f) => n + f.mock.calls.length, 0);
 }
 
@@ -147,6 +162,10 @@ beforeEach(() => {
   repos.campaign.countOutstanding.mockResolvedValue(1);
   repos.contact.claimDialable.mockResolvedValue([]);
   repos.attempt.countLiveForAccount.mockResolvedValue(0);
+  repos.attempt.countLiveByCampaignForAccount.mockResolvedValue(new Map());
+  repos.contact.countDialable.mockImplementation(async (_id: string, limit: number) => limit);
+  repos.contact.markState.mockResolvedValue(null);
+  resetAgencyCampaignSlots();
   repos.attempt.create.mockImplementation(async (p: any) => ({
     id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1,
   }));
@@ -266,30 +285,6 @@ describe('GenerationTtlCache', () => {
     expect(await c.getOrLoad('k', async () => 2)).toBe(1);
     expect(await c.getOrLoad('k', async () => 3, { fresh: true })).toBe(3);
     expect(c.get('k')).toBe(3);
-  });
-});
-
-// ─── The round's shared account budget ──────────────────────────────────────
-
-describe('PacingRound', () => {
-  it('two campaigns of one account share one live-call read and one headroom budget', async () => {
-    const round = new PacingRound(false);
-    const load = vi.fn().mockResolvedValue(3);
-    const [a, b] = await Promise.all([round.liveCalls('t:a', load), round.liveCalls('t:a', load)]);
-    expect(load).toHaveBeenCalledTimes(1);
-    expect([a, b]).toEqual([3, 3]);
-    // limit 10, 3 live: 7 slots between them, whatever each has idle.
-    expect(round.takeHeadroom('t:a', 10, 3, 5)).toBe(5);
-    expect(round.takeHeadroom('t:a', 10, 3, 5)).toBe(2);
-    expect(round.takeHeadroom('t:a', 10, 3, 5)).toBe(0);
-    // Another account is untouched.
-    expect(round.takeHeadroom('t:b', 10, 3, 5)).toBe(5);
-  });
-
-  it('with one campaign it is exactly MAX(0, MIN(limit − live, idle))', () => {
-    for (const [limit, live, idle] of [[5, 0, 2], [5, 5, 3], [5, 7, 3], [2, 0, 9], [0, 0, 1]] as const) {
-      expect(new PacingRound(false).takeHeadroom('k', limit, live, idle)).toBe(Math.max(0, Math.min(limit - live, idle)));
-    }
   });
 });
 
@@ -540,28 +535,585 @@ describe('PacingEngine rounds: the cached account limit', () => {
   });
 });
 
-describe('PacingEngine rounds: per-account sharing', () => {
-  it('two campaigns of one account in one round read live calls ONCE and never plan past the limit together', async () => {
-    const CAMP2 = { ...CAMPAIGN, id: 'camp-2' };
-    repos.campaign.findById.mockImplementation(async (id: string) => (id === 'camp-2' ? CAMP2 : CAMPAIGN));
-    repos.session.findLiveForCampaign.mockImplementation(async (id: string) =>
-      id === 'camp-2' ? [{ id: 's3' }, { id: 's4' }] : [{ id: 's1' }, { id: 's2' }]);
-    settings.getMaxConcurrentCalls.mockResolvedValue(5);
-    repos.attempt.countLiveForAccount.mockResolvedValue(2); // 3 slots left on the account
+describe('PacingEngine rounds: per-account sharing (MC1, MC2)', () => {
+  const CAMP2 = { ...CAMPAIGN, id: 'camp-2' };
+
+  /**
+   * camp-1 (s1 … sN) and camp-2 (sN+1 … s2N) on account t1:a1, N = `agentsEach` (default 2),
+   * every agent available, both led. `states` is the agents' Redis state, for a test to
+   * hand dialled agents back between rounds.
+   */
+  function twoCampaigns(opts: { shareWaitMs?: number; camp2?: any; agentsEach?: number } = {}): Rig & {
+    states: Record<string, string>;
+    freeAll(): void;
+  } {
+    const camp2 = opts.camp2 ?? CAMP2;
+    const n = opts.agentsEach ?? 2;
+    const states: Record<string, string> = {};
+    const owned: Record<string, string> = {};
+    const sessionsOf: Record<string, Array<{ id: string }>> = { 'camp-1': [], 'camp-2': [] };
+    for (const [c, campaignId] of ['camp-1', 'camp-2'].entries()) {
+      for (let i = 1; i <= n; i++) {
+        const id = `s${c * n + i}`;
+        states[id] = 'available';
+        owned[id] = campaignId;
+        sessionsOf[campaignId]!.push({ id });
+      }
+    }
+    repos.campaign.findById.mockImplementation(async (id: string) => (id === 'camp-2' ? camp2 : CAMPAIGN));
+    repos.session.findLiveForCampaign.mockImplementation(async (id: string) => sessionsOf[id] ?? []);
     const r = track(rig({
-      stations: makeStations({ s1: 'camp-1', s2: 'camp-1', s3: 'camp-2', s4: 'camp-2' }),
-      agents: makeAgents({ s1: 'available', s2: 'available', s3: 'available', s4: 'available' }),
+      stations: makeStations(owned),
+      agents: makeAgents(states),
+      ...(opts.shareWaitMs !== undefined ? { shareWaitMs: opts.shareWaitMs } : {}),
     }));
     lead(r.e);
-    lead(r.e, CAMP2);
+    lead(r.e, camp2);
+    return {
+      ...r, states,
+      freeAll: () => { for (const id of Object.keys(states)) states[id] = 'available'; },
+    };
+  }
+
+  /** As many fresh contacts as asked, for every campaign. */
+  function claimsAll(): void {
+    let seq = 0;
+    repos.contact.claimDialable.mockImplementation(async (id: string, limit: number) =>
+      Array.from({ length: limit }, () => contact(`${id}-c${seq++}`)));
+  }
+
+  /**
+   * Every attempt the mock inserts stays live, and the account reads count them: what the
+   * database would show while the carrier holds every call.
+   */
+  function insertsStayLive(): Record<string, number> {
+    const live: Record<string, number> = {};
+    repos.attempt.create.mockImplementation(async (p: any) => {
+      live[p.campaignId] = (live[p.campaignId] ?? 0) + 1;
+      return { id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1 };
+    });
+    repos.attempt.countLiveForAccount.mockImplementation(async () =>
+      Object.values(live).reduce((a, b) => a + b, 0));
+    repos.attempt.countLiveByCampaignForAccount.mockImplementation(async () => new Map(Object.entries(live)));
+    return live;
+  }
+
+  /** The pending-dial ledger per account: the sum of its holds (stale or not). */
+  const ledger = (r: Rig) => new Map([...((r.e as any).pendingDials as Map<string, Set<{ remaining: number }>>)]
+    .map(([k, holds]) => [k, [...holds].reduce((n, h) => n + h.remaining, 0)] as const));
+
+  const planOf = (r: Rig, campaignId: string) => {
+    const t = r.ticks.filter((x) => x.campaignId === campaignId).at(-1);
+    return t && t.mode === 'full' ? t : undefined;
+  };
+
+  /** Hold camp-2's session reads until the returned release is called. */
+  function holdCamp2Read(): () => void {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const sessions = repos.session.findLiveForCampaign.getMockImplementation()!;
+    repos.session.findLiveForCampaign.mockImplementation(async (id: string) => {
+      if (id === 'camp-2') await gate;
+      return sessions(id);
+    });
+    return release;
+  }
+
+  /** camp-1's carrier hangs until the returned answer is called, so its tick outlives its round. */
+  function hangCarrier(r: Rig): () => void {
+    let answer!: () => void;
+    const carrier = new Promise<void>((resolve) => { answer = resolve; });
+    r.dispatch.mockImplementation(async (cmd: any) => { if (cmd.campaignId === 'camp-1') await carrier; });
+    return answer;
+  }
+
+  it('two campaigns of one account read the account ONCE and split its headroom, never past the limit', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(5);
+    repos.attempt.countLiveForAccount.mockResolvedValue(2); // 3 slots left on the account
+    const r = twoCampaigns();
     await r.e.runRound();
 
     expect(repos.attempt.countLiveForAccount).toHaveBeenCalledTimes(1);
     expect(settings.getMaxConcurrentCalls).toHaveBeenCalledTimes(1);
-    const planned = r.ticks.map((t) => (t.mode === 'full' ? t.plan!.toDial : 0));
-    // 4 idle agents, 3 slots: 2 + 1 (in some order), never 2 + 2.
-    expect(planned.reduce((a, b) => a + b, 0)).toBe(3);
+    // Contended: one grouped per-campaign read for the account, one due-contact count each.
+    expect(repos.attempt.countLiveByCampaignForAccount).toHaveBeenCalledTimes(1);
+    expect(repos.attempt.countLiveByCampaignForAccount).toHaveBeenCalledWith('t1', 'a1');
+    expect(repos.contact.countDialable.mock.calls.map((c) => c[0]).sort()).toEqual(['camp-1', 'camp-2']);
+    // 4 idle agents, 3 slots, both campaigns at 0 live: 2 + 1 (the odd slot by the
+    // rotation, camp-1 first in the first round), never 2 + 2 and never 3 + 0.
+    expect(planOf(r, 'camp-1')!.plan!.toDial).toBe(2);
+    expect(planOf(r, 'camp-2')!.plan!.toDial).toBe(1);
     expect(repos.contact.claimDialable.mock.calls.reduce((n, c) => n + (c[1] as number), 0)).toBe(3);
+  });
+
+  it('a tie\'s odd slot alternates between the campaigns round by round', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(3);
+    repos.attempt.countLiveForAccount.mockResolvedValue(2); // one slot a round
+    const r = twoCampaigns();
+    const winners: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      await r.e.runRound();
+      winners.push((planOf(r, 'camp-1')!.plan!.toDial === 1) ? 'camp-1' : 'camp-2');
+      r.clock.t += 250;
+    }
+    expect(winners).toEqual(['camp-1', 'camp-2', 'camp-1', 'camp-2']);
+  });
+
+  it('each slot goes to the campaign with the fewest live calls; the one held back is not quiescent (MC5)', async () => {
+    const inc = vi.spyOn(agencyPacingShareWithheldTotal, 'inc');
+    try {
+      settings.getMaxConcurrentCalls.mockResolvedValue(5);
+      repos.attempt.countLiveForAccount.mockResolvedValue(3);
+      repos.attempt.countLiveByCampaignForAccount.mockResolvedValue(new Map([['camp-1', 3]]));
+      const r = twoCampaigns();
+      await r.e.runRound();
+
+      // 2 slots: camp-2 (0 live) takes both before camp-1 (3 live) gets any.
+      expect(planOf(r, 'camp-2')!.plan!.toDial).toBe(2);
+      expect(planOf(r, 'camp-1')).toMatchObject({ quiescent: false, plan: { toDial: 0, idle: 'no_slots' } });
+      // The share rule held 2 back from camp-1 while the account had room.
+      expect(inc.mock.calls).toEqual([[{ campaign_id: 'camp-1' }, 2]]);
+      expect(Object.fromEntries(agencyCampaignSlotsSnapshot())).toEqual({
+        'camp-1': { inUse: 3, allocated: 3 },
+        'camp-2': { inUse: 0, allocated: 2 },
+      });
+
+      // Not skipped next round although nothing woke it: no event announces the other
+      // campaign leaving slots unused.
+      r.clock.t += 250;
+      await r.e.runRound();
+      expect(planOf(r, 'camp-1')).toMatchObject({ mode: 'full', cause: 'active' });
+    } finally {
+      inc.mockRestore();
+    }
+  });
+
+  it('a campaign at the limit with no headroom stays quiescent (nothing was withheld)', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(4);
+    repos.attempt.countLiveForAccount.mockResolvedValue(4);
+    const r = twoCampaigns();
+    await r.e.runRound();
+    for (const id of ['camp-1', 'camp-2']) {
+      expect(planOf(r, id)).toMatchObject({ quiescent: true, plan: { toDial: 0, idle: 'no_slots' } });
+    }
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.slice(-2).map((t) => t.mode)).toEqual(['skipped', 'skipped']);
+  });
+
+  it('capacity a campaign cannot use flows to the other: no due contacts leaves it the whole headroom', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(4);
+    repos.attempt.countLiveForAccount.mockResolvedValue(2); // 2 slots
+    repos.contact.countDialable.mockImplementation(async (id: string, limit: number) => (id === 'camp-2' ? 0 : limit));
+    const r = twoCampaigns();
+    await r.e.runRound();
+    expect(planOf(r, 'camp-1')!.plan!.toDial).toBe(2);
+    // Nothing due on camp-2: recorded before any reservation, and not quiescent (time makes contacts due).
+    expect(planOf(r, 'camp-2')).toMatchObject({ quiescent: false, plan: { toDial: 0, idle: 'no_contacts' } });
+    expect(repos.contact.claimDialable.mock.calls.map((c) => c[0])).toEqual(['camp-1']);
+  });
+
+  it('a campaign alone on its account issues no extra statement and carries no slot series', async () => {
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1' }), agents: makeAgents({ s1: 'available' }) }));
+    repos.session.findLiveForCampaign.mockResolvedValue([{ id: 's1' }]);
+    const { setAgencyCampaignSlots } = await import('@magick-agency/observability/metrics/agency');
+    setAgencyCampaignSlots('camp-1', 7, 7); // a stale series from an earlier contended round
+    lead(r.e);
+    await r.e.runRound();
+    expect(r.ticks.at(-1)).toMatchObject({ plan: { toDial: 1 } });
+    expect(repos.attempt.countLiveByCampaignForAccount).not.toHaveBeenCalled();
+    expect(repos.contact.countDialable).not.toHaveBeenCalled();
+    expect(agencyCampaignSlotsSnapshot().has('camp-1')).toBe(false);
+  });
+
+  it('a forced tick is its own round\'s only participant, whatever else the account runs', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(5);
+    repos.attempt.countLiveForAccount.mockResolvedValue(2);
+    const r = twoCampaigns();
+    await r.e.tickOnce('camp-1');
+    expect(r.ticks.at(-1)).toMatchObject({ campaignId: 'camp-1', plan: { toDial: 2 } });
+    expect(repos.attempt.countLiveByCampaignForAccount).not.toHaveBeenCalled();
+  });
+
+  it('a sibling that fails before reporting drops out at once: the other is not held for the wait', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(4);
+    repos.attempt.countLiveForAccount.mockResolvedValue(2);
+    // A wait no test would survive: the round must not need it.
+    const r = twoCampaigns({ shareWaitMs: 60_000 });
+    repos.session.findLiveForCampaign.mockImplementation(async (id: string) => {
+      if (id === 'camp-2') throw new Error('connection reset');
+      return [{ id: 's1' }, { id: 's2' }];
+    });
+    await r.e.runRound();
+    expect(planOf(r, 'camp-1')!.plan!.toDial).toBe(2);
+  });
+
+  it('a sibling slower than the wait is left out; reporting late, it gets only the leftover (here none)', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(4);
+    repos.attempt.countLiveForAccount.mockResolvedValue(2); // 2 slots
+    const r = twoCampaigns({ shareWaitMs: 30 });
+    const releaseSlow = holdCamp2Read();
+    const done = r.e.runRound();
+    await vi.waitFor(() => expect(planOf(r, 'camp-1')).toBeDefined());
+    expect(planOf(r, 'camp-1')!.plan!.toDial).toBe(2);
+    releaseSlow();
+    await done;
+    expect(planOf(r, 'camp-2')).toMatchObject({ quiescent: false, plan: { toDial: 0, idle: 'no_slots' } });
+    expect(repos.contact.claimDialable.mock.calls.reduce((n, c) => n + (c[1] as number), 0)).toBe(2);
+  });
+
+  it('claims of two campaigns of one account never overlap (MC4)', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(10);
+    const r = twoCampaigns();
+    let releaseFirst!: (rows: unknown[]) => void;
+    repos.contact.claimDialable
+      .mockImplementationOnce(() => new Promise((resolve) => { releaseFirst = resolve; }))
+      .mockResolvedValue([]);
+    const done = r.e.runRound();
+    await vi.waitFor(() => expect(repos.contact.claimDialable).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(repos.contact.claimDialable).toHaveBeenCalledTimes(1);
+    releaseFirst([]);
+    await done;
+    expect(repos.contact.claimDialable).toHaveBeenCalledTimes(2);
+    expect((r.e as any).claimLocks.size).toBe(0);
+  });
+
+  it('claims of campaigns on different accounts still run side by side', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(10);
+    const r = twoCampaigns({ camp2: { ...CAMP2, account_id: 'a2' } });
+    const releases: Array<(rows: unknown[]) => void> = [];
+    repos.contact.claimDialable.mockImplementation(() => new Promise((resolve) => { releases.push(resolve); }));
+    const done = r.e.runRound();
+    await vi.waitFor(() => expect(repos.contact.claimDialable).toHaveBeenCalledTimes(2));
+    for (const release of releases) release([]);
+    await done;
+  });
+
+  it('giving up a campaign drops its slot series and, with the account\'s last campaign, its rotation', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(5);
+    const r = twoCampaigns();
+    await r.e.runRound();
+    expect(agencyCampaignSlotsSnapshot().has('camp-1')).toBe(true);
+    const rotation = (r.e as any).shareRotation;
+    expect(rotation.size).toBe(1);
+    await (r.e as any).relinquish('camp-1');
+    expect(agencyCampaignSlotsSnapshot().has('camp-1')).toBe(false);
+    expect(rotation.size).toBe(1); // camp-2 still on the account
+    await (r.e as any).relinquish('camp-2');
+    expect(rotation.size).toBe(0);
+  });
+
+  // ─── The pending-dial ledger (MC2) ───────────────────────────────────────
+
+  it('a tick whose dials outlive its round holds its grant: a sibling ticking alone meanwhile is not granted it again', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(4);
+    const live = insertsStayLive();
+    claimsAll();
+    const r = twoCampaigns({ agentsEach: 3 });
+    // camp-1's carrier hangs on its first dial, so its tick outlives the round.
+    const answer = hangCarrier(r);
+
+    const first = r.e.runRound();
+    await vi.waitFor(() => {
+      expect(planOf(r, 'camp-2')).toBeDefined();
+      expect(r.dispatch.mock.calls.some((c) => c[0].campaignId === 'camp-1')).toBe(true);
+    });
+    // 4 slots, 0 live, 3 agents each: 2 + 2. camp-2 inserted both; camp-1 one of its two.
+    expect(planOf(r, 'camp-2')!.plan!.toDial).toBe(2);
+    expect(live).toEqual({ 'camp-1': 1, 'camp-2': 2 });
+    expect(ledger(r).get('t1:a1')).toBe(1); // camp-1's second dial: granted, not yet a row
+
+    // The next round passes camp-1 by (still ticking); camp-2 ticks alone, uncontended,
+    // with one agent free. 3 rows + 1 pending = the limit: nothing for camp-2.
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(planOf(r, 'camp-2')).toMatchObject({ plan: { occupied: 4, toDial: 0, idle: 'no_slots' } });
+
+    answer();
+    await first;
+    expect(live).toEqual({ 'camp-1': 2, 'camp-2': 2 }); // never above the limit of 4
+    expect(ledger(r).size).toBe(0);
+  });
+
+  it('a hold with no progress for PACING_DIAL_HOLD_MAX_MS stops counting (a tick hung in the carrier); its end still releases it', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(4);
+    const live = insertsStayLive();
+    claimsAll();
+    const r = twoCampaigns({ agentsEach: 3 });
+    const answer = hangCarrier(r);
+
+    const first = r.e.runRound(); // 2 + 2; camp-1 hangs after its first insert, holding 1
+    await vi.waitFor(() => {
+      expect(planOf(r, 'camp-2')).toBeDefined();
+      expect(r.dispatch.mock.calls.some((c) => c[0].campaignId === 'camp-1')).toBe(true);
+    });
+    expect(ledger(r).get('t1:a1')).toBe(1);
+
+    r.clock.t += 250; // fresh: counted, so camp-2 (one agent free) gets nothing
+    await r.e.runRound();
+    expect(planOf(r, 'camp-2')).toMatchObject({ plan: { occupied: 4, toDial: 0 } });
+
+    r.clock.t += PACING_DIAL_HOLD_MAX_MS; // no progress since the insert: stale, left out
+    await r.e.runRound();
+    expect(planOf(r, 'camp-2')).toMatchObject({ plan: { occupied: 3, toDial: 1 } });
+    const [hold] = [...(r.e as any).pendingDials.get('t1:a1')];
+    expect(hold).toMatchObject({ remaining: 1, staleWarned: true }); // warned once, still held
+
+    answer(); // the hung tick ends after all: its own `finally` releases what is left
+    await first;
+    expect(ledger(r).size).toBe(0);
+    // 2 + 3 live on a limit of 4: the price of the bound when the hung tick does recover,
+    // which the account concurrency guard refuses in production.
+    expect(live).toEqual({ 'camp-1': 2, 'camp-2': 3 });
+  });
+
+  it('a campaign alone on its account sees an empty ledger: its reads and to_dial are the single-campaign law', async () => {
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1' }), agents: makeAgents({ s1: 'available', s2: 'available' }) }));
+    repos.attempt.countLiveForAccount.mockResolvedValue(3);
+    claimsAll();
+    lead(r.e);
+    await r.e.runRound();
+    expect(r.ticks.at(-1)).toMatchObject({ plan: { accountLimit: 5, occupied: 3, toDial: 2 } });
+    expect(ledger(r).size).toBe(0);
+  });
+
+  it('the ledger is released when a tick throws mid-dial', async () => {
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1' }), agents: makeAgents({ s1: 'available', s2: 'available' }) }));
+    claimsAll();
+    let atThrow: number | undefined;
+    repos.attempt.create
+      .mockImplementationOnce(async (p: any) => ({ id: `att-${p.contactId}`, caller_id: p.callerId, attempt_number: 1 }))
+      .mockImplementationOnce(async () => {
+        atThrow = ledger(r).get('t1:a1');
+        throw new Error('connection reset');
+      });
+    lead(r.e);
+    await r.e.runRound(); // the round logs the tick's failure
+    expect(repos.attempt.create).toHaveBeenCalledTimes(2);
+    expect(atThrow).toBe(1); // granted 2, one inserted
+    expect(ledger(r).size).toBe(0);
+  });
+
+  it('a pair the gates suppress gives its slot back: at the next pair, and at the latest when the tick ends', async () => {
+    const states: Record<string, string> = { s1: 'available', s2: 'available' };
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1', s2: 'camp-1' }), agents: makeAgents(states) }));
+    // Not a number: suppressed by the first gate, no attempt row.
+    const bad = { ...contact('bad'), phone_e164: 'not-a-number' };
+    repos.contact.claimDialable.mockResolvedValue([bad, contact('good')]);
+    let whileSuppressing: number | undefined;
+    repos.contact.markState.mockImplementation(async () => { whileSuppressing = ledger(r).get('t1:a1'); return null; });
+    let whileDialling: number | undefined = -1;
+    r.dispatch.mockImplementation(async () => { whileDialling = ledger(r).get('t1:a1'); });
+    lead(r.e);
+    await r.e.runRound();
+    expect(repos.contact.markState).toHaveBeenCalledWith('bad', 'suppressed', expect.anything());
+    expect(whileSuppressing).toBe(2); // both slots still held while the first pair is handled
+    expect(whileDialling).toBeUndefined(); // suppressed slot released, dialled slot is a row
+    expect(ledger(r).size).toBe(0);
+
+    // Suppressed LAST: its slot is held until the tick ends, then released.
+    repos.contact.claimDialable.mockResolvedValue([contact('good2'), { ...bad, id: 'bad2' }]);
+    states.s1 = 'available';
+    states.s2 = 'available';
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(whileSuppressing).toBe(1);
+    expect(ledger(r).size).toBe(0);
+  });
+
+  // ─── One open split per account (MC2) ─────────────────────────────────────
+
+  const camp1Reads = () => repos.session.findLiveForCampaign.mock.calls.filter((c) => c[0] === 'camp-1').length;
+  /** The engine's open splits: its entries whose split is still open (a closed one is pruned next round). */
+  const openSplits = (r: Rig) => new Map([...((r.e as any).openSplits as Map<string, { round: { isOpen(k: string): boolean } }>)]
+    .filter(([k, o]) => o.round.isOpen(k)));
+
+  it('a sibling slower than the wait: the split runs without it but stays open, so it gets the leftover, into the ledger', async () => {
+    const r = twoCampaigns({ shareWaitMs: 30 }); // limit 5, nothing live: 5 slots
+    claimsAll(); // every grant is claimed in full, so no claim-shortfall cap is set
+    const release = holdCamp2Read();
+    let heldAtDial: number | undefined;
+    r.dispatch.mockImplementation(async (cmd: any) => {
+      if (cmd.campaignId === 'camp-2' && heldAtDial === undefined) heldAtDial = ledger(r).get('t1:a1');
+    });
+    const done = r.e.runRound();
+    await vi.waitFor(() => expect(planOf(r, 'camp-1')).toBeDefined());
+    expect(planOf(r, 'camp-1')!.plan!.toDial).toBe(2); // split without camp-2 once the wait ran out
+    expect(openSplits(r).has('t1:a1')).toBe(true); // camp-2 still pending: open
+
+    // A round meanwhile starts nothing on the account: camp-2 is ticking, camp-1 is held back.
+    r.freeAll();
+    r.clock.t += 250;
+    const before = r.ticks.length;
+    await r.e.runRound();
+    expect(r.ticks.length).toBe(before);
+
+    release();
+    await done;
+    // Late while open: MIN(2, 5 − 2). Its grant went into the ledger like any other.
+    expect(planOf(r, 'camp-2')).toMatchObject({ plan: { toDial: 2 } });
+    expect(heldAtDial).toBe(1); // at its first dispatch: that dial is a row, its second still pending
+    expect(openSplits(r).size).toBe(0);
+    expect(ledger(r).size).toBe(0);
+    expect((r.e as any).demandCap.size).toBe(0);
+
+    r.freeAll();
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect([planOf(r, 'camp-1')!.plan!.toDial, planOf(r, 'camp-2')!.plan!.toDial]).toEqual([2, 2]);
+  });
+
+  it('while an account\'s split is open, the next round starts none of its campaigns; the first round after it closes does', async () => {
+    const r = twoCampaigns();
+    await (r.e as any).relinquish('camp-1');
+    const release = holdCamp2Read();
+    const first = r.e.runRound(); // camp-2 alone, its split open until it reports
+    await vi.waitFor(() => expect(repos.session.findLiveForCampaign).toHaveBeenCalledWith('camp-2'));
+    expect(openSplits(r).has('t1:a1')).toBe(true);
+
+    lead(r.e); // camp-1 of the same account, due its first tick
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.filter((t) => t.campaignId === 'camp-1')).toEqual([]); // neither ticked nor skipped
+    expect(camp1Reads()).toBe(0);
+
+    release(); // camp-2 reports, alone: its split settles and closes at once
+    await first;
+    expect(openSplits(r).size).toBe(0);
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(planOf(r, 'camp-1')).toMatchObject({ mode: 'full', cause: 'first' });
+  });
+
+  it('a round whose every participant withdraws closes the split, and the account is not held', async () => {
+    const r = track(rig({ stations: makeStations({ s1: 'camp-1' }), agents: makeAgents({ s1: 'available' }) }));
+    repos.session.findLiveForCampaign.mockRejectedValueOnce(new Error('connection reset'));
+    lead(r.e);
+    await r.e.runRound(); // the tick throws before reporting: withdrawn in `finally`
+    expect(openSplits(r).size).toBe(0);
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(r.ticks.filter((t) => t.mode === 'full')).toHaveLength(2);
+  });
+
+  it('a split nobody reports to is closed after the deadline; its stuck member then reports late', async () => {
+    const r = twoCampaigns();
+    await (r.e as any).relinquish('camp-1');
+    const release = holdCamp2Read();
+    const first = r.e.runRound();
+    await vi.waitFor(() => expect(repos.session.findLiveForCampaign).toHaveBeenCalledWith('camp-2'));
+    lead(r.e);
+    r.clock.t += 4_999;
+    await r.e.runRound();
+    expect(camp1Reads()).toBe(0); // still within the deadline
+
+    r.clock.t += 1; // 5 s (PACING_SPLIT_DEADLINE_MS) after it opened
+    await r.e.runRound();
+    expect(planOf(r, 'camp-1')).toMatchObject({ mode: 'full', cause: 'first', plan: { toDial: 2 } });
+
+    release();
+    await first;
+    expect(planOf(r, 'camp-2')).toMatchObject({ quiescent: false, plan: { toDial: 0, idle: 'no_slots' } });
+    expect(openSplits(r).size).toBe(0);
+  });
+
+  // ─── The claim-shortfall cap (MC5) ────────────────────────────────────────
+
+  it('a contended campaign that claims nothing gets at most one slot next round; the cap lifts once it fills its grant', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(4);
+    let starve = true;
+    let seq = 0;
+    repos.contact.claimDialable.mockImplementation(async (id: string, limit: number) =>
+      (id === 'camp-1' && starve ? [] : Array.from({ length: limit }, () => contact(`${id}-c${seq++}`))));
+    const r = twoCampaigns({ agentsEach: 4 });
+    const grants = () => [planOf(r, 'camp-1')!.plan!.toDial, planOf(r, 'camp-2')!.plan!.toDial];
+    const caps = () => (r.e as any).demandCap as Map<string, number>;
+
+    // Round 1: 4 slots, both want 4: 2 + 2. camp-1's claim finds nothing (a number busy on
+    // the other campaign, say): capped at MAX(1, 0).
+    await r.e.runRound();
+    expect(grants()).toEqual([2, 2]);
+    expect(caps().get('camp-1')).toBe(1);
+    expect(caps().has('camp-2')).toBe(false);
+
+    // Round 2: camp-1 states a demand of 1 (its due-contact read too), camp-2 gets the rest.
+    r.freeAll();
+    r.clock.t += 250;
+    repos.contact.countDialable.mockClear();
+    await r.e.runRound();
+    expect(repos.contact.countDialable).toHaveBeenCalledWith('camp-1', 1);
+    expect(grants()).toEqual([1, 3]);
+    expect(caps().get('camp-1')).toBe(1); // still nothing claimed
+
+    // Round 3: its contacts are claimable again; it fills its grant of 1 and the cap lifts.
+    starve = false;
+    r.freeAll();
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(grants()).toEqual([1, 3]);
+    expect(caps().has('camp-1')).toBe(false);
+
+    // Round 4: back to an even split.
+    r.freeAll();
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(grants()).toEqual([2, 2]);
+  });
+
+  it('the cap is cleared on an uncontended tick and when the campaign is given up', async () => {
+    const r = twoCampaigns();
+    const caps = () => (r.e as any).demandCap as Map<string, number>;
+    caps().set('camp-1', 1);
+    caps().set('camp-2', 1);
+    await r.e.tickOnce('camp-1'); // a forced tick is alone in its round: uncontended
+    expect(caps().has('camp-1')).toBe(false);
+    await (r.e as any).relinquish('camp-2');
+    expect(caps().has('camp-2')).toBe(false);
+  });
+
+  // ─── Who joins a round's split ────────────────────────────────────────────
+
+  it('a paused sibling woken by account_capacity_freed leaves the running campaign uncontended', async () => {
+    const paused = { ...CAMP2, status: 'paused' };
+    const r = twoCampaigns({ camp2: paused });
+    await r.e.runRound(); // camp-2's first tick finds it paused
+    r.freeAll();
+    resetAgencyCampaignSlots();
+    const before = {
+      dialable: repos.contact.countDialable.mock.calls.length,
+      byCampaign: repos.attempt.countLiveByCampaignForAccount.mock.calls.length,
+    };
+    // Its row is read again, slowly: were it a CONTENDING participant, camp-1 would find the
+    // account contended. It joins as not contending: waited for, not counted.
+    (r.e as any).campaignCache.invalidate('camp-2');
+    repos.campaign.findById.mockImplementation(async (id: string) => {
+      if (id !== 'camp-2') return CAMPAIGN;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return paused;
+    });
+    r.bus.publish({ type: 'account_capacity_freed', tenantId: 't1', accountId: 'a1' });
+    r.clock.t += 250;
+    await r.e.runRound();
+
+    expect(planOf(r, 'camp-2')).toMatchObject({ mode: 'full', cause: 'event' });
+    expect(planOf(r, 'camp-1')).toMatchObject({ plan: { toDial: 2 } });
+    expect(repos.contact.countDialable.mock.calls.length).toBe(before.dialable);
+    expect(repos.attempt.countLiveByCampaignForAccount.mock.calls.length).toBe(before.byCampaign);
+    expect(agencyCampaignSlotsSnapshot().size).toBe(0);
+  });
+
+  it('slot series stop when a campaign of a contended account next ticks with no agents (MC7)', async () => {
+    settings.getMaxConcurrentCalls.mockResolvedValue(5);
+    claimsAll();
+    const r = twoCampaigns();
+    await r.e.runRound();
+    expect(agencyCampaignSlotsSnapshot().has('camp-1')).toBe(true);
+    // Every agent is now on a call (dispatched, never handed back): `no_agents` for both.
+    r.clock.t += 250;
+    await r.e.runRound();
+    expect(planOf(r, 'camp-1')).toMatchObject({ plan: { toDial: 0, idle: 'no_agents' } });
+    expect(agencyCampaignSlotsSnapshot().size).toBe(0);
   });
 });
 

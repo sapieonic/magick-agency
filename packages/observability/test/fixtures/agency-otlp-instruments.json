@@ -140,6 +140,22 @@
     ]
   },
   {
+    "name": "agency_campaign_slots_allocated",
+    "kind": "ObservableGauge",
+    "description": "Live attempts of a running campaign plus the new dials the pacing round granted it (contended accounts only)",
+    "attributes": [
+      "campaign_id"
+    ]
+  },
+  {
+    "name": "agency_campaign_slots_in_use",
+    "kind": "ObservableGauge",
+    "description": "Live attempts of a running campaign as the pacing round read them (contended accounts only)",
+    "attributes": [
+      "campaign_id"
+    ]
+  },
+  {
     "name": "agency_insights_rollup_buckets_total",
     "kind": "Counter",
     "description": "Insights rollup buckets recomputed",
@@ -233,6 +249,14 @@
     "kind": "Counter",
     "description": "Pacing safety ticks that found work no invalidation event announced",
     "attributes": []
+  },
+  {
+    "name": "agency_pacing_share_withheld_total",
+    "kind": "Counter",
+    "description": "Dials the per-account share rule held back from a campaign while its account had headroom",
+    "attributes": [
+      "campaign_id"
+    ]
   },
   {
     "name": "agency_pacing_ticks_total",

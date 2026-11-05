@@ -171,11 +171,54 @@ describe('the roster match', () => {
     expect(d.dnc.checkEntry).not.toHaveBeenCalled();
   });
 
-  it('tagged: the account-wide guard is not asked (the tag\'s own match decides)', async () => {
-    const d = deps({ inFlight: contact('c9', 'in_flight') });
+  it('tagged: the number in flight on a sibling campaign of the account refuses, naming THAT campaign and contact (MC4)', async () => {
+    // A running retry parent (or another roster carrying the number) is ringing the
+    // customer; the tag's own match is a pending contact that would otherwise be claimed.
+    const sibling = contact('c9', 'in_flight', { campaign_id: 'camp-parent' } as Partial<AgencyContactRecord>);
+    const d = deps({ matches: [contact('c1', 'pending')], inFlight: sibling });
     const r = await runManualPredial(input(), d);
-    expect(r.ok).toBe(true);
+    expect(r.ok ? null : r.refusal).toEqual({ code: 'contact_in_flight', campaign_id: 'camp-parent', contact_id: 'c9' });
+    expect(d.findRosterMatches).toHaveBeenCalledWith('camp-1', '+919811100001');
+    expect(d.findInFlightInAccount).toHaveBeenCalledWith('+919811100001');
+    // No override reaches past it, and nothing after it is asked.
+    expect(d.dnc.checkEntry).not.toHaveBeenCalled();
+  });
+
+  it('tagged: the refusal holds with every override note given, and with no roster match on the tag', async () => {
+    const sibling = contact('c9', 'in_flight', { campaign_id: 'camp-parent' } as Partial<AgencyContactRecord>);
+    const r = await runManualPredial(
+      input({ overrides: { dnc_note: 'customer asked for this call', hours_note: 'customer asked for this call' } }),
+      deps({ matches: [], inFlight: sibling }),
+    );
+    expect(r.ok ? null : r.refusal).toEqual({ code: 'contact_in_flight', campaign_id: 'camp-parent', contact_id: 'c9' });
+  });
+
+  it('tagged: the tag\'s own in-flight match is named first, before the account-wide read', async () => {
+    const d = deps({
+      matches: [contact('c2', 'in_flight')],
+      inFlight: contact('c9', 'in_flight', { campaign_id: 'camp-parent' } as Partial<AgencyContactRecord>),
+    });
+    const r = await runManualPredial(input(), d);
+    expect(r.ok ? null : r.refusal).toEqual({ code: 'contact_in_flight', campaign_id: 'camp-1', contact_id: 'c2' });
     expect(d.findInFlightInAccount).not.toHaveBeenCalled();
+  });
+
+  it('tagged: a number connected elsewhere on the account is not refused (only in_flight is; decisions §5)', async () => {
+    // The account-wide read answers only `in_flight` rows, so a sibling's `connected`
+    // contact never reaches it: the dial goes ahead and claims the tag's pending match.
+    const d = deps({ matches: [contact('c1', 'pending')], inFlight: null });
+    const r = await runManualPredial(input(), d);
+    expect(r.ok && r.plan.contact?.id).toBe('c1');
+    expect(d.findInFlightInAccount).toHaveBeenCalledWith('+919811100001');
+  });
+
+  it('tagged: the account-wide refusal comes before the strict owner check', async () => {
+    const d = deps({
+      matches: [contact('c1', 'pending', { assigned_user_id: OTHER_AGENT })],
+      inFlight: contact('c9', 'in_flight', { campaign_id: 'camp-parent' } as Partial<AgencyContactRecord>),
+    });
+    const r = await runManualPredial(input({ tag: tag({ assignment_mode: 'strict' }) }), d);
+    expect(r.ok ? null : r.refusal.code).toBe('contact_in_flight');
   });
 });
 

@@ -16,10 +16,10 @@ import type { AgencyRetrySelector } from '../../types/agency-spine';
  *  - **`excluded`.** DNC and unusable numbers are removed from the seed
  *    unconditionally, so a supervisor selecting "everything suppressed" gets 40
  *    where they expected 300. Without the note that reads as a bug.
- *  - **The parent still running.** One account runs one campaign at a time by
- *    unique index, so the child is created but cannot be started. Told here it
- *    costs a sentence; discovered at Start it costs a refusal on a campaign
- *    they already made.
+ *  - **The parent still running.** Several campaigns may run per account
+ *    (decisions MC6), so the child can start beside its parent. What is not
+ *    obvious, and is said here, is that the two share the account's lines and
+ *    never call one customer at the same time.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -268,13 +268,14 @@ describe('the DNC and invalid exclusion', () => {
 });
 
 describe('a parent that is still running', () => {
-  it('says up front that the child cannot be started yet', async () => {
+  it('says up front that the child can run beside it, sharing the lines', async () => {
     renderDialog({ campaign: { status: 'running' } });
     const note = await screen.findByTestId('retry-parent-running');
-    expect(note.textContent).toMatch(/cannot be started/i);
-    expect(note.textContent).toMatch(/paused or stopped/i);
-    // Creation is still offered — the child is a draft, and only Start is
-    // blocked.
+    expect(note.textContent).toMatch(/start it while this one runs/i);
+    expect(note.textContent).toMatch(/share your account’s lines/i);
+    expect(note.textContent).toMatch(/never called by both at once/i);
+    // The retired rule is not stated anywhere.
+    expect(note.textContent).not.toMatch(/cannot be started|one campaign runs at a time/i);
     expect(screen.getByText('Create retry campaign')).toBeTruthy();
   });
 

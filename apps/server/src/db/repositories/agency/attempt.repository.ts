@@ -555,6 +555,29 @@ export class AgencyAttemptRepository {
   }
 
   /**
+   * The account's live attempts, per campaign: what the pacing round splits the account's
+   * headroom by when two or more of its campaigns run (decisions MC1, MC2: each free slot
+   * goes to the campaign with the fewest live calls). A campaign with none is absent from
+   * the map. Read once per account per round, and only under contention, so a lone running
+   * campaign issues no extra statement.
+   *
+   * The attempt half of {@link countLiveForAccount}, grouped: the same literal
+   * `a.state <> 'ended'` keyed on the attempt's own `tenant_id` / `account_id`, so
+   * `idx_agency_attempts_account_live` serves it. Soft-phone calls are no campaign's and
+   * are not here; they still count against the account in {@link countLiveForAccount}.
+   */
+  async countLiveByCampaignForAccount(tenantId: string, accountId: string): Promise<Map<string, number>> {
+    const { rows } = await getPool().query<{ campaign_id: string; n: string }>(
+      `SELECT a.campaign_id, COUNT(*)::text AS n
+         FROM agency_call_attempts a
+        WHERE a.tenant_id = $1::uuid AND a.account_id = $2::uuid AND a.state <> 'ended'
+        GROUP BY a.campaign_id`,
+      [tenantId, accountId],
+    );
+    return new Map(rows.map((r) => [r.campaign_id, Number(r.n)]));
+  }
+
+  /**
    * One campaign's attempts, newest first, keyset-paginated — the supervisor
    * read of the audit spine.
    *
