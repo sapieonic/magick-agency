@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.8.0...contracts-v0.9.0) (2026-11-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server,console,db,contracts:** several running campaigns per account ([#44](https://github.com/sapieonic/magick-agency/issues/44))
+
+### Features
+
+* **server,console,db,contracts:** several running campaigns per account ([#44](https://github.com/sapieonic/magick-agency/issues/44)) ([da33207](https://github.com/sapieonic/magick-agency/commit/da33207080d817c58eb63d7cdf7c4d8a310ac7f9))
+
 ## [0.8.0](https://github.com/sapieonic/magick-agency/compare/contracts-v0.7.0...contracts-v0.8.0) (2026-11-05)
 
 
