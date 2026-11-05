@@ -462,7 +462,7 @@ A request goes: app-wide limiter → session (Firebase) → tenant context → R
   sweeps close what nobody owns. Both clients have it on the same routes and station frame: the
   console's `/dialer/phone` and the agent app's Phone tab ([`mobile.md`](mobile.md)).
 - **Completion notice** (`campaign-completion-notice.ts`). When a campaign finishes, mails holders
-  of `agency.supervise`.
+  of `agency.supervise`, linking to the campaign under its own tenant and account (B26).
 
 ## The voice engine
 

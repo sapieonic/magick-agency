@@ -828,7 +828,7 @@ Files: `agency-campaign-completion.ts`, `engine/audience.ts`, `engine/catalog.ts
 
 | Test file | Cases |
 |---|---|
-| `apps/server/test/unit/notifications/agency-campaign-completion.test.ts` | 42 |
+| `apps/server/test/unit/notifications/agency-campaign-completion.test.ts` | 45 |
 | `apps/server/test/unit/notifications/agency-campaign-unsubscribe.test.ts` | 8 |
 | `apps/server/test/unit/notifications/agent-invite.template.test.ts` | 29 |
 | `apps/server/test/unit/notifications/engine/audience.test.ts` | 34 |
