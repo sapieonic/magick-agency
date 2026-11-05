@@ -1,3 +1,5 @@
+import { stripUrlScope } from './urlScope';
+
 /**
  * The post-sign-in destination, carried through either sign-in page as `?next=`,
  * and the rule deciding which of the two a given destination belongs to.
@@ -128,10 +130,14 @@ const AGENCY_SURFACE_PREFIXES = ['/agency', '/dialer', '/station'] as const;
  * ordinary path that merely shares a prefix — is not swept in. Case-insensitive
  * because react-router matches routes case-insensitively, so `/Dialer` reaches the
  * same component and must reach the same door.
+ *
+ * Read through the `/t/:tenantId/a/:accountId` scope prefix (`utils/urlScope`):
+ * `/t/x/a/y/dialer` is the same agency surface as `/dialer`.
  */
 export function isAgencySurfacePath(path: string): boolean {
+  const app = stripUrlScope(path);
   return AGENCY_SURFACE_PREFIXES.some((prefix) =>
-    new RegExp(`^${prefix}(?:[/?#]|$)`, 'i').test(path),
+    new RegExp(`^${prefix}(?:[/?#]|$)`, 'i').test(app),
   );
 }
 
@@ -254,8 +260,12 @@ export function safeReturnPath(raw: string | null | undefined): string | null {
    * `/Login` reaches the same component and would loop just as happily. Tested
    * against the CANONICAL pathname, which is what makes `/login\t` — accepted by the
    * old string check, normalised back to `/login` by the parser — refuse here.
+   *
+   * A scoped `next` (`/t/:tenantId/a/:accountId/…`, which is what `RequireAuth`
+   * sends) is accepted as it stands — the scope is the point of it — but the loop
+   * guard reads through the prefix, so `/t/x/a/y/login` is refused like `/login`.
    */
-  if (LOGIN_LOOP.test(url.pathname)) return null;
+  if (isLoginPath(url.pathname)) return null;
 
   return `${url.pathname}${url.search}${url.hash}`;
 }
@@ -342,7 +352,7 @@ const LOGIN_LOOP = new RegExp(
  * than an agent.
  */
 export function isLoginPath(pathname: string): boolean {
-  return LOGIN_LOOP.test(pathname);
+  return LOGIN_LOOP.test(stripUrlScope(pathname));
 }
 
 /**

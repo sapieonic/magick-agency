@@ -1,12 +1,15 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useUrlScope } from '../../contexts/UrlScopeContext';
 import { LoadingSpinner } from '@magick-agency/web-ui/components/LoadingSpinner';
 import { currentPath, loginPathReturningTo } from '../../utils/returnPath';
+import { withUrlScope } from '../../utils/urlScope';
 import type { ReactNode } from 'react';
 
 export default function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading, pendingEmailVerification } = useAuth();
   const location = useLocation();
+  const { scope } = useUrlScope();
 
   if (loading) {
     return (
@@ -37,8 +40,14 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
      * See `utils/returnPath.ts` for why this is a query param rather than router
      * state, and for the open-redirect validation the value goes through on the way
      * back out.
+     *
+     * `location` is the app path, without the `/t/:tenantId/a/:accountId` prefix
+     * (it is the router's basename), so the prefix is put back here. Without it a
+     * shared link opened signed out would sign the visitor in to whichever account
+     * their browser last had open — the one thing the scoped URL exists to stop.
      */
-    return <Navigate to={loginPathReturningTo(currentPath(location))} replace />;
+    const path = currentPath(location);
+    return <Navigate to={loginPathReturningTo(scope ? withUrlScope(scope, path) : path)} replace />;
   }
 
   return <>{children}</>;
