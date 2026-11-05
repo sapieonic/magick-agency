@@ -785,6 +785,55 @@ build's own calls, defaults pending Manas (`decisions.md` §4).
   `success_rate_reportable` can hold while `rates_reportable` does not (a redial's conversation in
   the window, its first dial before it), so a cell should gate on both.
 
+### Abandonment ceiling in the console 2026-11-05 (AC1–AC3)
+
+ClickUp "Campaign builder: let the supervisor set the abandonment ceiling by dragging a line
+(default 3%)". On 3 Nov two staging campaigns paused at 3.1–6.1% (2 abandoned of 33–64 answered)
+and the supervisor could not change the 3% ceiling: the server took `abandonment_ceiling_pct` on
+create and PATCH, but the console only displayed it.
+
+- The builder's "How agents work" step and the settings page's Behaviour section show an
+  abandonment meter on a fixed 0–10% scale whose ceiling line is a slider (drag, or arrow, Page and
+  Home/End keys), beside a "Pause above (%)" box. Default 3%, offered 0.5–10% in steps of 0.1,
+  an amber note above 3%. Sent on every config save; in the builder summary and review. Insights
+  draws the same meter with the rolling 24-hour rate as the fill (`AbandonmentMeter`,
+  `utils/agency/abandonmentCeiling.ts`). `AgencyCampaign` gains the field.
+- Review fixes, same day. A stored value outside the offered range (set through the API, e.g. 25
+  or 7.25) is kept as stored and no longer disables Save for other edits; only a change must land
+  in 0.5–10 with one decimal (AC1). The ceiling prints to two decimals wherever it is shown
+  (`ceilingPctText`: field, meter, summary, Insights KPI, trend and settings panel); rates stay on
+  `pct()`. Insights' read-only meter grows its scale to the next multiple of 5 when the ceiling or
+  the 24-hour rate is above 10% (`insightsScaleMaxPct`); the editable one stays on 0–10%. The
+  builder's create now carries the value when it is valid, so a draft created by an early roster
+  upload keeps the moved line. The fill, and the Insights headline's "bad" tone, turn red only
+  above the ceiling, as the guardrail pauses (`measured <= ceiling` continues); the headline's
+  80% warning no longer misses a rate of exactly 80% of the ceiling to floating point. Users without `agency.campaigns.write` see the meter as a
+  picture and the box disabled. Also: the slider's bounds take in an out-of-range stored value
+  and a key away from the range leaves it alone; one pointer owns a drag (lost capture ends it); a
+  server error on the field retires once the value changes; the amber note is in both controls'
+  `aria-describedby`; the track has an inset edge (visible on the Insights tile) and only the end
+  ticks are labelled on a narrow meter; `agency_campaign_config_saved` carries
+  `abandonment_ceiling_pct`. A simplify pass then moved the 3% default into the contract
+  (`AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT` in `campaign-defaults.ts`, which the server's
+  `DEFAULT_ABANDONMENT_CEILING_PCT` now re-exports), so the console keeps no copy of it; the
+  health strip prints the ceiling to two decimals too; one `rateAboveCeiling` / `abandonmentTone`
+  rule serves the meter and the headline.
+- The only server change is `campaign-thresholds.ts` re-exporting the contract's default (same
+  value). Server tests now pin create and PATCH through the public routes,
+  refused values, the `config_changed` row (`{ from: 3, to: 4.5 }`), the 403 for agent, viewer and
+  operator, and the guardrail pausing at a supervisor-set ceiling end to end
+  (`agency-campaign-abandonment-ceiling.test.ts`).
+- **Left open:** the public routes do not validate the field themselves; the internal handler's
+  400 is forwarded unchanged (pinned in `campaign-config-route.test.ts`). The small-sample rule
+  still pauses on 2 abandoned of 33 answered; a minimum-answered floor is a separate task if wanted.
+  The retry dialog offers no ceiling override (a retry inherits its parent's; the server would take
+  one in `config_overrides`).
+- Counts, 2026-11-05: `apps/console` 5211 (272 files) after the review fixes and the simplify pass (5173 before), lint
+  clean; `packages/contracts` 281, `contracts-literals --check` up to date; `apps/server` lint clean, the two changed unit files 119,
+  rest lane 1937 passed + 9 expected fail + 1 skipped (199 files + 1 skipped). The wall-clock lane,
+  the full server unit suite and the Dart tests were not run (no file of theirs changed; Dart is
+  not installed on the build container).
+
 ## Test counts
 
 Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
@@ -1044,6 +1093,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Duplicate column | Ratify the key rules and the one-live-call guard; decide whether the soft phone should refuse a number whose contact is `connected` |
 | Contact assignment | Ratify CA2–CA10 and CA13–CA15 (`decisions.md` §4), in particular CA5: in `strict` mode a callback whose owner stays away falls back to an unassigned contact nobody dials until a supervisor assigns it; and decide when to turn on `agency_contact_assignment_enabled` |
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
+| Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
 
 ## Deployment invariants
 

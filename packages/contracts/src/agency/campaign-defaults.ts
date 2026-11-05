@@ -1,7 +1,7 @@
 /**
  * Campaign configuration defaults the server applies and the console previews:
- * the built-in disposition catalog, its voicemail retry rule, and the our-fault
- * redial bound with its default delay.
+ * the built-in disposition catalog, its voicemail retry rule, the our-fault
+ * redial bound with its default delay, and the default abandonment ceiling.
  *
  * One declaration, read by both sides. The server's create path seeds a new
  * campaign's catalog from {@link AGENCY_DEFAULT_DISPOSITION_CATALOG} and its retry
@@ -119,3 +119,12 @@ export const AGENCY_OUR_FAULT_RETRY_DEFAULT = Object.freeze({
   delay_minutes: AGENCY_DEFAULT_OUR_FAULT_REDIAL_DELAY_MINUTES,
   max_attempts: AGENCY_OUR_FAULT_REDIAL_BOUND,
 } as const);
+
+/**
+ * The default abandonment ceiling, as a percentage: the `abandonment_ceiling_pct`
+ * column's DEFAULT, what the server applies when a create omits the field, and what
+ * the console's builder starts its abandonment limit at. A compliance threshold,
+ * so one declaration: a console that previewed one number while the guardrail
+ * fired on another would be invisible until an audit.
+ */
+export const AGENCY_DEFAULT_ABANDONMENT_CEILING_PCT = 3;

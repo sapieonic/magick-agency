@@ -1,5 +1,6 @@
 import type { AgencyStall, AgencyStallCode } from '../types/agency-campaign';
 import { formatCount, pct, plural } from './format/number';
+import { ceilingPctText } from './agency/abandonmentCeiling';
 
 /**
  * The supervisor health strip and the two read-outs beside it — as pure functions, because every sentence here is derived from wire
@@ -169,7 +170,7 @@ export function stallCopy(
     case 'auto_paused_abandonment': {
       const pausedAt = formatInstant(stall.paused_at);
       return diagnosis({
-        headline: `Paused automatically — abandonment reached ${pct(stall.measured_pct)}, over your ${pct(stall.ceiling_pct)} limit.`,
+        headline: `Paused automatically — abandonment reached ${pct(stall.measured_pct)}, over your ${ceilingPctText(stall.ceiling_pct)} limit.`,
         // "Measured at", never "currently": The server freezes this figure at the
         // instant the guardrail fired (`paused_at` / `pause_abandonment_rate_pct`). Presenting a frozen
         // number as a live one means a supervisor who has since staffed up sees

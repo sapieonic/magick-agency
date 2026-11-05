@@ -7,6 +7,7 @@ import type {
 import { hhmm } from './format/weekdays';
 import type { AgencyDispositionOverride } from '@magick-agency/contracts/agency';
 import { ASSIGNMENT_MODE_COPY } from './agencyAssignmentCopy';
+import { DEFAULT_ABANDONMENT_CEILING_PCT } from './agency/abandonmentCeiling';
 import {
   type AssignmentConfigState,
   type CampaignConfigState,
@@ -188,6 +189,8 @@ export const EMPTY_CAMPAIGN_CONFIG: CampaignConfigState = {
   wrapupSeconds: 30,
   autoReturn: true,
   allowWrapupRedial: false,
+  abandonmentCeilingPct: DEFAULT_ABANDONMENT_CEILING_PCT,
+  abandonmentCeilingStoredPct: null,
   assignment: { ...DEFAULT_ASSIGNMENT_CONFIG },
 };
 
@@ -396,6 +399,10 @@ export function configFromCampaign(campaign: AgencyCampaign): CampaignConfigStat
     autoReturn: campaign.wrapup_auto_return ?? EMPTY_CAMPAIGN_CONFIG.autoReturn,
     // Absent on a campaign read from a server that predates the setting: off.
     allowWrapupRedial: campaign.allow_wrapup_redial ?? EMPTY_CAMPAIGN_CONFIG.allowWrapupRedial,
+    // Loaded as stored and remembered as stored (`abandonmentCeiling.ts`, "The
+    // range"); the settings page re-seeds from each save's response.
+    abandonmentCeilingPct: campaign.abandonment_ceiling_pct ?? EMPTY_CAMPAIGN_CONFIG.abandonmentCeilingPct,
+    abandonmentCeilingStoredPct: campaign.abandonment_ceiling_pct ?? null,
     assignment: assignmentFromCampaign(campaign),
   };
 }
@@ -594,5 +601,10 @@ export function buildConfigPayload(
     // Sent unconditionally for the same reason: `false` must be sendable to turn
     // it back off.
     allow_wrapup_redial: state.allowWrapupRedial,
+    // Sent on every save, the builder's first one included, so the value on screen
+    // is the value the guardrail pauses at. A PATCH that changes it is written to the
+    // campaign's activity with its old and new value (`agency_campaign.config_changed`).
+    // `abandonmentCeilingStoredPct` is the form's own bookkeeping and is not sent.
+    abandonment_ceiling_pct: state.abandonmentCeilingPct,
   };
 }

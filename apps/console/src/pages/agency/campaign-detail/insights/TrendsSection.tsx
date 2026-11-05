@@ -1,5 +1,6 @@
 import type { AgencyInsightsBucket, AgencyInsightsTrendBucket, AgencyInsightsTrends } from '../../../../types/agency-insights';
 import { DISPLAY_LOCALE, formatCount, pct } from '../../../../utils/format/number';
+import { ceilingPctText } from '../../../../utils/agency/abandonmentCeiling';
 import { abandonmentRate, connectRate, insightsRate, rateText, rateValue } from '../../../../utils/agency/insights/rates';
 import { formatZoned } from '../../../../utils/agency/insights/copy';
 import { BUCKET_LABELS } from '../../../../utils/agency/insights/range';
@@ -160,8 +161,8 @@ export function TrendsSection({
                 points={abandonPoints}
                 barLabel="Abandoned"
                 lineLabel="Abandonment rate"
-                reference={{ value: ceilingPct, label: `${pct(ceilingPct)} ceiling` }}
-                description={`Abandoned calls and abandonment rate by bucket, against the ${pct(ceilingPct)} ceiling`}
+                reference={{ value: ceilingPct, label: `${ceilingPctText(ceilingPct)} ceiling` }}
+                description={`Abandoned calls and abandonment rate by bucket, against the ${ceilingPctText(ceilingPct)} ceiling`}
                 testId="trend-abandonment"
               />
             </div>

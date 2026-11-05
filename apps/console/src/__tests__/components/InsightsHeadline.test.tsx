@@ -90,6 +90,18 @@ describe('running: live now', () => {
     expect(screen.getByTestId('headline-abandonment').textContent).toContain('3% ceiling');
   });
 
+  it.each([
+    { abandoned: 23, tone: undefined }, // 2.3%: under 80% of the 3% ceiling
+    { abandoned: 24, tone: 'warn' }, // 2.4%: exactly 80% of it
+    { abandoned: 30, tone: 'warn' }, // 3.0%: AT the ceiling, which the guardrail does not pause on
+    { abandoned: 31, tone: 'bad' }, // 3.1%: above it, which it does
+  ])('tones $abandoned abandoned of 1,000 answered, against a 3% ceiling, as $tone', ({ abandoned, tone }) => {
+    const s = summary('running');
+    s.headline.running = { ...s.headline.running!, abandonment_rate_24h: { abandoned, answered: 1000 } };
+    renderHeadline(s);
+    expect(screen.getByTestId('headline-abandonment').getAttribute('data-tone')).toBe(tone ?? null);
+  });
+
   it('names the stall when there is one, and withholds a rate built on too few calls', () => {
     const s = summary('running');
     s.headline.running = {

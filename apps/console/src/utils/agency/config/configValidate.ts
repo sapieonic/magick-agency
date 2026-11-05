@@ -12,6 +12,7 @@ import {
 import { TIME_RE, comparableTime, isUsableTimezone } from './callingWindow';
 import type { AssignmentConfigState, CampaignConfigState } from './configConstants';
 import { reservedDispositionCodeMessage } from '../systemDisposition';
+import { ceilingFieldError } from '../abandonmentCeiling';
 
 /*
   The campaign builder's validation: the client half of the rules the API
@@ -102,9 +103,22 @@ export function validateConfig(state: CampaignConfigState): Record<string, strin
     errors['wrapup_seconds'] = 'Wrap-up is 0–600 seconds. 0 means no wrap-up.';
   }
 
+  const ceiling = ceilingStateError(state);
+  if (ceiling !== null) errors['abandonment_ceiling_pct'] = ceiling;
+
   Object.assign(errors, validateAssignment(state.assignment));
 
   return errors;
+}
+
+/**
+ * The form's abandonment ceiling error, or `null`: a new value must be in the
+ * offered range, the stored one is accepted as stored (`abandonmentCeiling.ts`,
+ * "The range"). The one call `validateConfig`, the builder's create and its
+ * summary share.
+ */
+export function ceilingStateError(state: CampaignConfigState): string | null {
+  return ceilingFieldError(state.abandonmentCeilingPct, state.abandonmentCeilingStoredPct);
 }
 
 /**

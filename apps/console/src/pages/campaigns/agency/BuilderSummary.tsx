@@ -1,7 +1,8 @@
-import { describeDays, type CampaignConfigState } from '../../../utils/agencyCampaignConfigForm';
+import { ceilingStateError, describeDays, type CampaignConfigState } from '../../../utils/agencyCampaignConfigForm';
 import type { AgencyIngestJob } from '../../../types/agency-campaign';
 import type { UploadPhase } from '../../../hooks/useRosterIngest';
 import type { BuilderStepId } from './builderFlow';
+import { ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
 import styles from './BuilderSummary.module.css';
 
 export interface BuilderSummaryProps {
@@ -89,6 +90,13 @@ export function BuilderSummary({
             config.wrapupSeconds === 0 ? 'no wrap-up' : `${config.wrapupSeconds}s wrap-up`
           }`}
           ready
+          current={current === 'behaviour'}
+          onClick={() => onJump('behaviour')}
+        />
+        <SummaryRow
+          label="Abandonment"
+          value={ceilingSummary(config.abandonmentCeilingPct)}
+          ready={ceilingStateError(config) === null}
           current={current === 'behaviour'}
           onClick={() => onJump('behaviour')}
         />

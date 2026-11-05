@@ -9,6 +9,7 @@ import type {
 } from '../../../../types/agency-insights';
 import type { AgencyAgentState } from '../../../../types/agency';
 import { formatCount, pct } from '../../../../utils/format/number';
+import { abandonmentTone, ceilingPctText } from '../../../../utils/agency/abandonmentCeiling';
 import { stallCopy, AGENCY_STALL_LABELS, sortStallCodes } from '../../../../utils/agencyHealthStrip';
 import {
   abandonmentRate,
@@ -167,7 +168,7 @@ export function RunningHeadline({
   const online = ONLINE_STATES.reduce((sum, state) => sum + (byState[state] ?? 0), 0);
   const abandonment = abandonmentRate(live.abandonment_rate_24h);
   const ceiling = summary.settings.abandonment_ceiling_pct;
-  const abandonTone = abandonment.kind !== 'value' ? undefined : abandonment.pct >= ceiling ? 'bad' : abandonment.pct >= ceiling * 0.8 ? 'warn' : undefined;
+  const abandonTone = abandonment.kind === 'value' ? abandonmentTone(abandonment.pct, ceiling) : undefined;
   const otherStalls = sortStallCodes(live.other_stalls);
   const ranFor = summary.started_at ? longDuration(secondsSince(summary.started_at, now)) : null;
 
@@ -216,7 +217,7 @@ export function RunningHeadline({
           <li className={styles.callout} data-tone="warn">Also: {otherStalls.map((code) => AGENCY_STALL_LABELS[code]).join(' · ')}</li>
         ) : null}
         <li className={styles.callout} data-tone={abandonTone} data-testid="headline-abandonment">
-          Abandonment over the last 24 hours: <strong>{rateText(abandonment)}</strong> against a {pct(ceiling)} ceiling
+          Abandonment over the last 24 hours: <strong>{rateText(abandonment)}</strong> against a {ceilingPctText(ceiling)} ceiling
         </li>
       </ul>
     </Panel>
@@ -239,7 +240,7 @@ export function PausedHeadline({
           label="Paused by"
           value={auto ? 'The abandonment guardrail' : actorName(paused.actor)}
           sub={auto
-            ? `Abandonment reached ${paused.abandonment_rate_pct_at_pause === null ? 'the ceiling' : pct(paused.abandonment_rate_pct_at_pause)} (ceiling ${pct(summary.settings.abandonment_ceiling_pct)}), ${formatZoned(paused.paused_at, zone)}`
+            ? `Abandonment reached ${paused.abandonment_rate_pct_at_pause === null ? 'the ceiling' : pct(paused.abandonment_rate_pct_at_pause)} (ceiling ${ceilingPctText(summary.settings.abandonment_ceiling_pct)}), ${formatZoned(paused.paused_at, zone)}`
             : `Supervisor pause, ${formatZoned(paused.paused_at, zone)}`}
           testId="kpi-paused-by"
         />

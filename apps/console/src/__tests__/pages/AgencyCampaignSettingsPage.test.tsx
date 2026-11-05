@@ -269,6 +269,62 @@ describe('campaign settings — saving', () => {
     expect(box.checked).toBe(false);
   });
 
+  it('loads the campaign’s abandonment limit and PATCHes the one the line is moved to', async () => {
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_ceiling_pct: 4.5 }));
+    renderPage();
+
+    const slider = await screen.findByRole('slider', { name: 'Abandonment limit' });
+    expect(slider.getAttribute('aria-valuenow')).toBe('4.5');
+    expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).value).toBe('4.5');
+    // 4.5% is above the common 3% rule: the note says so, and the save still goes.
+    expect(screen.getByTestId('abandonment-ceiling-warning')).toBeTruthy();
+
+    fireEvent.keyDown(slider, { key: 'PageDown' });
+    fireEvent.keyDown(slider, { key: 'ArrowDown' });
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+    await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalled());
+    expect(mocks.updateAgencyCampaign.mock.calls[0]![1].abandonment_ceiling_pct).toBe(3.4);
+
+    // Re-seeded off the response, which echoes what was sent.
+    await waitFor(() =>
+      expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).value).toBe('3.4'),
+    );
+  });
+
+  it.each([25, 7.25])(
+    'keeps a stored limit of %s outside the offered range, and still saves another edit (AC1)',
+    async (stored) => {
+      // Set through the API: legal on the server, outside what the console offers.
+      mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_ceiling_pct: stored }));
+      renderPage();
+
+      const start = await screen.findByDisplayValue('10:00');
+      expect(screen.getByTestId('abandonment-meter-value').textContent).toBe(`${stored}%`);
+      expect(screen.queryByText('Set the limit between 0.5% and 10%.')).toBeNull();
+      expect(screen.queryByText('Use at most one decimal place, like 3.5.')).toBeNull();
+
+      // Only the calling hours change.
+      fireEvent.change(start, { target: { value: '11:00' } });
+      const save = screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement;
+      expect(save.disabled).toBe(false);
+      fireEvent.click(save);
+      await waitFor(() => expect(mocks.updateAgencyCampaign).toHaveBeenCalledTimes(1));
+      const body = mocks.updateAgencyCampaign.mock.calls[0]![1];
+      expect(body.calling_window_start).toBe('11:00');
+      expect(body.abandonment_ceiling_pct).toBe(stored);
+      expect('abandonmentCeilingStoredPct' in body).toBe(false);
+
+      // Re-seeded from the response, the stored value is still accepted: Save stays on.
+      await waitFor(() => expect(mocks.showToast).toHaveBeenCalledWith('Campaign settings saved.', 'success'));
+      expect((screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement).disabled).toBe(false);
+
+      // A NEW out-of-range value is still refused.
+      fireEvent.change(screen.getByRole('spinbutton', { name: 'Pause above (%)' }), { target: { value: '30' } });
+      expect(screen.getByText('Set the limit between 0.5% and 10%.')).toBeTruthy();
+      expect((screen.getByRole('button', { name: /save settings/i }) as HTMLButtonElement).disabled).toBe(true);
+    },
+  );
+
   it('refuses to save a campaign with no name, without calling the API', async () => {
     renderPage();
 
@@ -321,6 +377,29 @@ describe('campaign settings — permissions', () => {
 
     await screen.findByLabelText(/campaign name/i);
     expect(screen.queryByRole('button', { name: /save settings/i })).toBeNull();
+  });
+
+  it('shows a role that cannot write the abandonment limit read-only, not as a live slider', async () => {
+    mocks.useTenant.mockReturnValue({
+      tenantId: 'tenant-1',
+      accountId: 'account-1',
+      role: 'viewer',
+    });
+    mocks.getAgencyCampaign.mockResolvedValue(campaign({ abandonment_ceiling_pct: 4.5 }));
+
+    renderPage();
+
+    const box = (await screen.findByRole('spinbutton', { name: 'Pause above (%)' })) as HTMLInputElement;
+    expect(box.value).toBe('4.5');
+    expect(box.disabled).toBe(true);
+    expect(screen.queryByRole('slider', { name: 'Abandonment limit' })).toBeNull();
+    expect(screen.getByTestId('abandonment-meter-value').textContent).toBe('4.5%');
+  });
+
+  it('keeps the abandonment limit live for a role that can write', async () => {
+    renderPage();
+    expect(await screen.findByRole('slider', { name: 'Abandonment limit' })).toBeTruthy();
+    expect((screen.getByRole('spinbutton', { name: 'Pause above (%)' }) as HTMLInputElement).disabled).toBe(false);
   });
 });
 

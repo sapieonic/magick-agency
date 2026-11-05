@@ -1066,3 +1066,72 @@ describe("the reserved system disposition code 'redialed'", () => {
     }
   });
 });
+
+describe('abandonment_ceiling_pct (the per-campaign auto-pause ceiling)', () => {
+  const NOT_A_NUMBER = { field: 'abandonment_ceiling_pct', message: 'abandonment_ceiling_pct must be a number.' };
+  const OUT_OF_RANGE = {
+    field: 'abandonment_ceiling_pct', message: 'abandonment_ceiling_pct must be greater than 0 and at most 100.',
+  };
+
+  it('accepts (0, 100] and refuses the rest, with the bounds of the column CHECK', async () => {
+    const { validateAgencyCampaignConfig: validate } = await import('../../../src/agency/campaign-config.js');
+    for (const ok of [0.1, 3, 4.5, 100]) expect(validate({ abandonment_ceiling_pct: ok }), String(ok)).toEqual([]);
+    expect(validate({})).toEqual([]);
+    // 0 is refused: a zero ceiling pauses on the first abandon, a kill switch posing as
+    // a strict setting. Over 100 cannot be a rate.
+    for (const bad of [0, -0.5, -1, 100.0001, 101]) {
+      expect(validate({ abandonment_ceiling_pct: bad }), String(bad)).toEqual([OUT_OF_RANGE]);
+    }
+    // `null` would reach the NOT NULL column as a 23502; a numeric string would be
+    // coerced by Postgres into a value nobody typed as a number.
+    for (const bad of ['4.5', '', null, true, {}, [], Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(validate({ abandonment_ceiling_pct: bad }), String(bad)).toEqual([NOT_A_NUMBER]);
+    }
+  });
+
+  it('POST passes it to the repository, and leaves it unset when omitted (the repository applies 3)', async () => {
+    const app = await makeApp();
+    const set = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, abandonment_ceiling_pct: 4.5 },
+    });
+    expect(set.statusCode, set.body).toBe(201);
+    expect(campaigns.create.mock.calls[0]![0].abandonment_ceiling_pct).toBe(4.5);
+
+    const omitted = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS, payload: MINIMAL,
+    });
+    expect(omitted.statusCode, omitted.body).toBe(201);
+    expect(campaigns.create.mock.calls[1]![0].abandonment_ceiling_pct).toBeUndefined();
+  });
+
+  it('POST refuses 0 and creates nothing; PATCH refuses null and writes nothing', async () => {
+    const app = await makeApp();
+    const post = await app.inject({
+      method: 'POST', url: '/api/v1/agency-campaigns', headers: HEADERS,
+      payload: { ...MINIMAL, abandonment_ceiling_pct: 0 },
+    });
+    expect(post.statusCode).toBe(400);
+    expect(post.json().details).toEqual({ abandonment_ceiling_pct: OUT_OF_RANGE.message });
+    expect(campaigns.create).not.toHaveBeenCalled();
+
+    campaigns.findById.mockResolvedValue({ ...CAMPAIGN_ROW, status: 'running' });
+    const patch = await app.inject({
+      method: 'PATCH', url: '/api/v1/agency-campaigns/camp-1', headers: HEADERS,
+      payload: { abandonment_ceiling_pct: null },
+    });
+    expect(patch.statusCode).toBe(400);
+    expect(patch.json().details).toEqual({ abandonment_ceiling_pct: NOT_A_NUMBER.message });
+    expect(campaigns.update).not.toHaveBeenCalled();
+  });
+
+  it('a recorded divergence: the public API layer\'s validator has no rule for it, so this handler\'s is the only one', async () => {
+    // The console's 400 for a bad ceiling is this handler's, forwarded through `callCore`
+    // unchanged (pinned end to end in `test/integration/api/agency-campaign-abandonment-ceiling.test.ts`).
+    // A rule added to the public layer must use these messages; this case then changes.
+    const pub = await import('../../../src/agency/agency-campaign-config.js');
+    const internal = await import('../../../src/agency/campaign-config.js');
+    expect(pub.validateAgencyCampaignConfig({ abandonment_ceiling_pct: 0 })).toEqual([]);
+    expect(internal.validateAgencyCampaignConfig({ abandonment_ceiling_pct: 0 })).toEqual([OUT_OF_RANGE]);
+  });
+});

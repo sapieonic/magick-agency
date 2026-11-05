@@ -26,6 +26,12 @@ describe('format/number', () => {
     expect(pct(0)).toBe('0%');
   });
 
+  it('takes more decimals when asked, still trimming trailing zeros', () => {
+    expect(pct(7.25, 2)).toBe('7.25%');
+    expect(pct(4.5, 2)).toBe('4.5%');
+    expect(pct(3, 2)).toBe('3%');
+  });
+
   it('agrees a count with its noun', () => {
     expect(plural(1, 'dial')).toBe('1 dial');
     expect(plural(2, 'dial')).toBe('2 dials');

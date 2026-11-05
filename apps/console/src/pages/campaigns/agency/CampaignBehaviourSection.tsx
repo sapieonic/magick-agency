@@ -5,15 +5,17 @@ import { CallingHoursFields } from './CallingHoursFields';
 import { DispositionCatalogEditor } from './DispositionCatalogEditor';
 import { RetryPolicyTable } from './RetryPolicyTable';
 import { WrapupFields } from './WrapupFields';
+import { AbandonmentCeilingFields } from './AbandonmentCeilingFields';
 import { AssignmentFields } from './AssignmentFields';
 
 /**
  * Campaign configuration: calling hours, the
- * disposition catalog, the retry policy and wrap-up.
+ * disposition catalog, the retry policy, wrap-up and the abandonment limit.
  *
  * Every rule lives in `utils/agencyCampaignConfigForm.ts`. This file assembles
- * four editors — `CallingHoursFields`, `DispositionCatalogEditor`,
- * `RetryPolicyTable` and `WrapupFields` — around one set of field errors
+ * five editors — `CallingHoursFields`, `DispositionCatalogEditor`,
+ * `RetryPolicyTable`, `WrapupFields` and `AbandonmentCeilingFields` (rules in
+ * `utils/agency/abandonmentCeiling.ts`) — around one set of field errors
  * (`configFieldErrors.tsx`), and the notes below are about the copy in them that
  * is itself the feature:
  *
@@ -85,6 +87,13 @@ export interface CampaignBehaviourSectionProps {
    * campaign is not draft or paused, so its mode cannot change now.
    */
   assignment?: { modeLocked: boolean };
+  /**
+   * The viewer cannot write campaigns (the settings page hides Save). Only the
+   * abandonment limit honours it so far (a draggable line with no Save reads as a
+   * setting that took effect); the other editors stay live, as before, and save
+   * nothing.
+   */
+  readOnly?: boolean;
 }
 
 export function CampaignBehaviourSection({
@@ -95,6 +104,7 @@ export function CampaignBehaviourSection({
   layout = 'sections',
   include = ['hours', 'behaviour'],
   assignment,
+  readOnly = false,
 }: CampaignBehaviourSectionProps) {
   const errors = useConfigFieldErrors(fieldErrors);
   const showHours = include.includes('hours');
@@ -128,6 +138,13 @@ export function CampaignBehaviourSection({
         allowRedial={state.allowWrapupRedial}
         onChange={(patch) => onChange({ ...state, ...patch })}
         errors={errors}
+      />
+      <AbandonmentCeilingFields
+        ceilingPct={state.abandonmentCeilingPct}
+        storedPct={state.abandonmentCeilingStoredPct}
+        onChange={(abandonmentCeilingPct) => onChange({ ...state, abandonmentCeilingPct })}
+        errors={errors}
+        readOnly={readOnly}
       />
       {assignment ? (
         <AssignmentFields
@@ -163,8 +180,8 @@ export function CampaignBehaviourSection({
         <ComposerSection
           title="Behaviour"
           helper={assignment
-            ? 'Outcomes agents can pick, how retries work, wrap-up, and how contacts are assigned.'
-            : 'Outcomes agents can pick, how retries work, and wrap-up.'}
+            ? 'Outcomes agents can pick, how retries work, wrap-up, when the campaign pauses itself, and how contacts are assigned.'
+            : 'Outcomes agents can pick, how retries work, wrap-up, and when the campaign pauses itself.'}
         >
           {behaviour}
         </ComposerSection>

@@ -106,6 +106,19 @@ describe('breachedRows — the decision, with no I/O', () => {
     ]);
   });
 
+  it('a raised 5% ceiling holds at 4% (which pauses at the default 3%) and pauses over 5%', () => {
+    // 2/50 = 4%. Two abandons, so refusal 4 (one abandon in a coarse sample) is not
+    // what decides it: the default ceiling pauses this row, the campaign's 5% does not.
+    expect(breachedRows([row({ answered: 50, abandoned: 2, ceiling_pct: DEFAULT_ABANDONMENT_CEILING_PCT })]))
+      .toEqual([{ tenant_id: 't1', campaign_id: 'camp-1', measured_pct: 4, ceiling_pct: 3 }]);
+    expect(breachedRows([row({ answered: 50, abandoned: 2, ceiling_pct: 5 })])).toEqual([]);
+    // Exactly at the ceiling (5/100 = 5%) still holds; 3/50 = 6% pauses.
+    expect(breachedRows([row({ answered: 100, abandoned: 5, ceiling_pct: 5 })])).toEqual([]);
+    expect(breachedRows([row({ answered: 50, abandoned: 3, ceiling_pct: 5 })])).toEqual([
+      { tenant_id: 't1', campaign_id: 'camp-1', measured_pct: 6, ceiling_pct: 5 },
+    ]);
+  });
+
   it.each(['paused', 'stopping', 'stopped', 'completed', 'draft'])(
     'does not auto-pause a campaign in %s',
     (status) => {

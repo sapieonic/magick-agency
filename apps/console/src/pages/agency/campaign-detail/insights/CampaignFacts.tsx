@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import type { AgencyInsightsSummary } from '../../../../types/agency-insights';
-import { formatCount, pct } from '../../../../utils/format/number';
+import { formatCount } from '../../../../utils/format/number';
+import { ceilingPctText } from '../../../../utils/agency/abandonmentCeiling';
 import { describeIsoDays, hhmm } from '../../../../utils/format/weekdays';
 import { actorName, ASSIGNMENT_MODE_LABELS, formatZoned } from '../../../../utils/agency/insights/copy';
 import { settingsLink } from '../../../../utils/agency/insights/links';
@@ -56,7 +57,7 @@ export function CampaignSettingsPanel({ summary }: { summary: AgencyInsightsSumm
     ['Outcome overrides', s.override_outcomes.length ? s.override_outcomes.map((o) => o.label).join(', ') : 'None'],
     ['Recording', s.record_calls ? 'On' : 'Off'],
     ['Call analysis', s.analysis_profile ? (s.analysis_profile.name ?? 'On') : 'Off'],
-    ['Abandonment ceiling', pct(s.abandonment_ceiling_pct)],
+    ['Abandonment ceiling', ceilingPctText(s.abandonment_ceiling_pct)],
     ['Assignment', ASSIGNMENT_MODE_LABELS[s.assignment_mode]],
   ];
   return (

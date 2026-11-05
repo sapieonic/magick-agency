@@ -29,6 +29,7 @@ import {
   emptyCampaignConfig,
   buildConfigPayload,
   callingWindowEcho,
+  ceilingStateError,
   configBlockReason,
   isBuiltInCode,
   validateConfig,
@@ -49,6 +50,7 @@ import {
 } from './builderFlow';
 import { BuilderStepper } from './BuilderStepper';
 import { BuilderSummary } from './BuilderSummary';
+import { ceilingAboveReference, ceilingSummary } from '../../../utils/agency/abandonmentCeiling';
 import styles from './CampaignBuilderPage.module.css';
 
 /**
@@ -122,6 +124,17 @@ export default function CampaignBuilderPage() {
     trackAgencyCampaignBuilderStepViewed({ step: next, step_index: stepIndex(next) });
   }, []);
 
+  /*
+    The ceiling rides on the create, not only on the config save's PATCH: a roster
+    upload creates the draft before any config save, and a draft that is never
+    config-saved would otherwise keep the server's 3% however far the line was
+    moved. Sent only when the value passes the field's own check; an emptied box
+    (NaN) or an out-of-range value is left out, so the server's default applies
+    and the config save that follows is where the field's error is met.
+  */
+  // `undefined` is dropped from the JSON body, so the server's default applies.
+  const ceilingForCreate = ceilingStateError(config) === null ? config.abandonmentCeilingPct : undefined;
+
   /** Create the campaign on first need, so a draft exists to attach the roster to. */
   const ensureCampaign = useCallback(async (): Promise<string> => {
     if (campaignId) return campaignId;
@@ -137,13 +150,14 @@ export default function CampaignBuilderPage() {
         // would dial on the wrong provider from a VoiceLink-only pool.
         caller_ids: callerIds,
         telephony_provider: AGENCY_TELEPHONY_PROVIDER,
+        abandonment_ceiling_pct: ceilingForCreate,
       },
       tenantId ?? undefined,
       accountId ?? undefined,
     );
     setCampaignId(created.id);
     return created.id;
-  }, [campaignId, name, callerIds, tenantId, accountId]);
+  }, [campaignId, name, callerIds, ceilingForCreate, tenantId, accountId]);
 
   const {
     limits,
@@ -246,6 +260,7 @@ export default function CampaignBuilderPage() {
           wrapup_seconds: config.wrapupSeconds,
           auto_return: config.autoReturn,
           wrapup_redial: config.allowWrapupRedial,
+          abandonment_ceiling_pct: config.abandonmentCeilingPct,
           ...(assignmentEnabled
             ? {
               assignment_mode: config.assignment.mode,
@@ -681,6 +696,12 @@ export default function CampaignBuilderPage() {
                       onEdit={() => goTo('behaviour')}
                     />
                   ) : null}
+                  <ReviewRow
+                    label="Abandonment limit"
+                    value={ceilingSummary(config.abandonmentCeilingPct)}
+                    warning={ceilingAboveReference(config.abandonmentCeilingPct)}
+                    onEdit={() => goTo('behaviour')}
+                  />
                   <ReviewRow
                     label="Recording"
                     value={recordCalls ? 'Every call is recorded' : 'Off'}
