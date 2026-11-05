@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { StrictMode, useEffect } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import type { Account, Membership, Tenant } from '../../types/auth';
@@ -94,11 +95,21 @@ function signOut() {
 
 // ─── the app under test ─────────────────────────────────────────────────────
 
+/**
+ * How many times each page has MOUNTED. A page torn down and built again (the gate
+ * swapping it for a spinner for a render) counts twice; a page that only
+ * re-renders counts once.
+ */
+const mounts = new Map<string, number>();
+
 /** What a page sees: its app path and the context's ids, plus the switchers. */
 function Page({ name }: { name: string }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { tenantId, accountId, setActiveAccountId, setActiveTenantId, reloadAccounts } = useTenant();
+  useEffect(() => {
+    mounts.set(name, (mounts.get(name) ?? 0) + 1);
+  }, [name]);
   return (
     <div>
       <h1>{name}</h1>
@@ -107,6 +118,26 @@ function Page({ name }: { name: string }) {
       <Link to="/agency/dnc">DNC link</Link>
       <button type="button" onClick={() => setActiveAccountId('acct-2')}>Switch to acct-2</button>
       <button type="button" onClick={() => setActiveTenantId('t-b')}>Switch to t-b</button>
+      {/* A switch and a navigation in ONE handler, as the soft phone's "Go to
+          station" does for a session in a sibling account. */}
+      <button
+        type="button"
+        onClick={() => {
+          setActiveAccountId('acct-2');
+          navigate('/agency/dnc');
+        }}
+      >
+        Switch to acct-2 and open DNC
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setActiveTenantId('t-b');
+          navigate('/agency/dnc');
+        }}
+      >
+        Switch to t-b and open DNC
+      </button>
       <button type="button" onClick={() => navigate('/login')}>Go to login</button>
       <button type="button" onClick={reloadAccounts}>Reload accounts</button>
     </div>
@@ -123,8 +154,8 @@ function SignInPage({ name }: { name: string }) {
   );
 }
 
-function TestApp() {
-  return (
+function TestApp({ strict = false }: { strict?: boolean }) {
+  const app = (
     <UrlScopeProvider>
       <TenantProvider>
         <ScopedRouter>
@@ -142,11 +173,12 @@ function TestApp() {
       </TenantProvider>
     </UrlScopeProvider>
   );
+  return strict ? <StrictMode>{app}</StrictMode> : app;
 }
 
-function openAt(url: string) {
+function openAt(url: string, { strict = false }: { strict?: boolean } = {}) {
   window.history.replaceState(null, '', url);
-  return render(<TestApp />);
+  return render(<TestApp strict={strict} />);
 }
 
 const address = () => `${window.location.pathname}${window.location.search}`;
@@ -155,6 +187,7 @@ const ids = () => screen.getByTestId('ids').textContent;
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  mounts.clear();
   mocks.listAccounts.mockImplementation(async (tenantId: string) => ACCOUNTS[tenantId] ?? []);
   mocks.listMyAccounts.mockResolvedValue([]);
   signIn();
@@ -392,5 +425,162 @@ describe('signed out on a scoped URL', () => {
     const next = new URLSearchParams(window.location.search).get(RETURN_PATH_PARAM);
     expect(next).toBe('/t/t-a/a/acct-2/app/settings');
     expect(mocks.listAccounts).not.toHaveBeenCalled();
+  });
+});
+
+// ─── review fixes (9068451): state and URL must not drift apart ──────────────
+
+/** A failure that is NOT a permission refusal: the narrowed list is `'degraded'`. */
+function outage(): Error {
+  return Object.assign(new Error('Bad gateway'), { statusCode: 502 });
+}
+
+describe('a switch and a navigate() in one handler', () => {
+  it('an account switch then navigate lands on the new account at the new path', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns');
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2 and open DNC' }));
+
+    // Before the fix the navigate() joined the STALE basename and pushed
+    // `/t/t-a/a/acct-1/agency/dnc`, with state on acct-2: the gate span forever.
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/dnc'));
+    await screen.findByRole('heading', { name: 'dnc' });
+    expect(screen.queryByRole('status', { name: 'Loading' })).toBeNull();
+    expect(ids()).toBe('t-a/acct-2');
+  });
+
+  it('a tenant switch then navigate lands on the new tenant’s first account at the new path', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns');
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to t-b and open DNC' }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-b/a/acct-b1/agency/dnc'));
+    await screen.findByRole('heading', { name: 'dnc' });
+    expect(screen.queryByRole('status', { name: 'Loading' })).toBeNull();
+    expect(ids()).toBe('t-b/acct-b1');
+  });
+});
+
+describe('a retry opens the account the link names', () => {
+  it('"Try again" on a narrowed list that lacked the account opens it once the full list loads', async () => {
+    mocks.listAccounts.mockRejectedValue(outage());
+    mocks.listMyAccounts.mockImplementation(async (tenantId: string) =>
+      (ACCOUNTS[tenantId] ?? []).filter((a) => a.id === 'acct-1'),
+    );
+    openAt('/t/t-a/a/acct-2/agency/campaigns');
+
+    await screen.findByText('You can’t open this account');
+    const retry = screen.getByRole('button', { name: 'Try again' });
+
+    mocks.listAccounts.mockImplementation(async (tenantId: string) => ACCOUNTS[tenantId] ?? []);
+    fireEvent.click(retry);
+
+    // Before the fix the context stayed on acct-1 and the gate waited forever.
+    await screen.findByRole('heading', { name: 'campaigns' });
+    expect(ids()).toBe('t-a/acct-2');
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns');
+    expect(screen.queryByText('You can’t open this account')).toBeNull();
+  });
+
+  it('a retry after an outage keeps the linked account rather than opening the first', async () => {
+    mocks.listAccounts.mockRejectedValue(outage());
+    mocks.listMyAccounts.mockRejectedValue(outage());
+    openAt('/t/t-a/a/acct-2/agency/campaigns');
+
+    // Resolution 'error': the gate renders the page, which owns the retry.
+    await screen.findByRole('heading', { name: 'campaigns' });
+    expect(ids()).toBe('t-a/null');
+
+    mocks.listAccounts.mockImplementation(async (tenantId: string) => ACCOUNTS[tenantId] ?? []);
+    mocks.listMyAccounts.mockImplementation(async (tenantId: string) => ACCOUNTS[tenantId] ?? []);
+    fireEvent.click(screen.getByRole('button', { name: 'Reload accounts' }));
+
+    await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns');
+    expect(screen.getByRole('heading', { name: 'campaigns' })).toBeTruthy();
+  });
+});
+
+describe('a cold load of a scoped sign-in URL', () => {
+  it.each([
+    ['without StrictMode', false],
+    ['under StrictMode', true],
+  ])('lands on the bare sign-in page, not a blank one (%s)', async (_label, strict) => {
+    signOut();
+
+    openAt('/t/x/a/y/login?next=%2Fdialer', { strict });
+
+    await screen.findByRole('heading', { name: 'login page' });
+    expect(address()).toBe('/login?next=%2Fdialer');
+    expect(screen.getByTestId('signin-search').textContent).toBe('?next=%2Fdialer');
+  });
+});
+
+describe('back/forward between accounts', () => {
+  /**
+   * "No tear-down" is asserted as the page's MOUNT count. The page sits under the
+   * gate's `<Outlet />`; react-router keeps the same element at the same position
+   * across a basename change, so the only way the page can mount a second time is
+   * the gate replacing it with its spinner for a render (which unmounts it) and then
+   * rendering it again. A count of 1 after the round trip therefore means the gate
+   * never swapped it out, which is the defect: before the fix the URL moved on POP
+   * one render ahead of the context, the gate waited, and every page was rebuilt.
+   */
+  it('does not tear the page down', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns');
+    await screen.findByRole('heading', { name: 'campaigns' });
+    expect(mounts.get('campaigns')).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns'));
+    await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
+    expect(mounts.get('campaigns')).toBe(1);
+
+    act(() => window.history.back());
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns'));
+    await waitFor(() => expect(ids()).toBe('t-a/acct-1'));
+
+    act(() => window.history.forward());
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns'));
+    await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
+
+    expect(mounts.get('campaigns')).toBe(1);
+  });
+});
+
+describe('under StrictMode', () => {
+  it('an unscoped URL is scoped to the active account', async () => {
+    openAt('/agency/campaigns', { strict: true });
+
+    await screen.findByRole('heading', { name: 'campaigns' });
+    expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns');
+    expect(ids()).toBe('t-a/acct-1');
+  });
+
+  it('an account switch moves the URL, and back restores the old account', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2' }));
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/campaigns'));
+    await waitFor(() => expect(ids()).toBe('t-a/acct-2'));
+
+    act(() => window.history.back());
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-1/agency/campaigns'));
+    await waitFor(() => expect(ids()).toBe('t-a/acct-1'));
+    expect(screen.getByRole('heading', { name: 'campaigns' })).toBeTruthy();
+  });
+
+  it('an account switch then navigate in one handler lands on the new account', async () => {
+    openAt('/t/t-a/a/acct-1/agency/campaigns', { strict: true });
+    await screen.findByRole('heading', { name: 'campaigns' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch to acct-2 and open DNC' }));
+
+    await waitFor(() => expect(window.location.pathname).toBe('/t/t-a/a/acct-2/agency/dnc'));
+    await screen.findByRole('heading', { name: 'dnc' });
+    expect(ids()).toBe('t-a/acct-2');
   });
 });
