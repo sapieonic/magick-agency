@@ -13,12 +13,15 @@
  * The same statement releases the number dedicated to the agent on each of those campaigns,
  * whatever its `on_unstaff` (DN7): one `agency_campaign.agent_caller_id_cleared` row
  * (`cause: 'unstaff'`) per campaign where one was released, under the campaign's account, with
- * the same actor; nothing where none was set.
+ * the same actor; nothing where none was set. A campaign the agent has been staffed on again
+ * by the time it runs keeps its row (see `returnOnUnstaff`).
  *
  * Never throws: it follows a staffing change that has already committed, and a failure
  * leaves contacts with a former agent (visible on the progress screen, reassignable), never
- * a wrong permission. A dedication left behind by a failure is used only for contacts the
- * former agent still owns (DN2), and a supervisor can clear it.
+ * a wrong permission. A dedication left behind by a failure is never used: it stopped counting
+ * when the staffing closed (`EFFECTIVE_DEDICATION_SQL`, DN1), so it is not dialled, listed or
+ * guarded, does not revive if the agent is staffed again, and is replaced by the next PUT or
+ * deleted by the next unstaff's release.
  */
 import { createChildLogger } from '@magick-agency/observability';
 import { AGENCY_AGENT_CALLER_ID_AUDIT_ACTIONS } from '@magick-agency/contracts/api/agency/agent-caller-id';

@@ -185,11 +185,57 @@ describe('caller ID: a matched contact whose owner has a dedicated number (DN4)'
       const r = await runManualPredial(input({ tag: tagged }), deps({ matches, dedicated: DEDICATED }));
       // The rotation: the pool minus both dedicated numbers.
       expect(r.ok && r.plan.callerId, JSON.stringify(matches)).toBe('+919000000001');
+      // Another agent's dedicated number requested: not dialled for a contact that is not
+      // theirs; the rotation's number instead.
       const requested = await runManualPredial(input({ tag: tagged, requestedCallerId: '+919000000003' }), deps({ matches, dedicated: DEDICATED }));
-      expect(requested.ok && requested.plan.callerId).toBe('+919000000003');
+      expect(requested.ok && requested.plan.callerId, JSON.stringify(matches)).toBe('+919000000001');
       const outside = await runManualPredial(input({ tag: tagged, requestedCallerId: '+15550000000' }), deps({ matches, dedicated: DEDICATED }));
       expect(outside.ok ? null : outside.refusal).toEqual({ code: 'caller_id_not_allowed', allowed_codes: POOL });
     }
+  });
+
+  it('an unowned contact with another agent\'s dedicated number requested goes out from the rotation', () => {
+    // The mobile app's default caller_ids[0], a console hand-pick or a redial resending the
+    // old number: none of them dials agent-2's number for a contact that is not agent-2's.
+    const rotationOnly = tag({ caller_ids: ['+919000000002', '+919000000001'] });
+    for (const ownerUserId of [null, undefined]) {
+      expect(selectCallerId({
+        tag: rotationOnly, accountNumbers: [], settingsDefault: null, requested: '+919000000002',
+        dedicated: new Map([[OTHER_AGENT, '+919000000002']]), ownerUserId,
+      })).toEqual({ ok: true, callerId: '+919000000001' });
+    }
+  });
+
+  it('owned by an agent without a number, with another agent\'s number requested: the rotation', () => {
+    expect(selectCallerId({
+      tag: tagged, accountNumbers: [], settingsDefault: null, requested: '+919000000002',
+      dedicated: DEDICATED, ownerUserId: AGENT,
+    })).toEqual({ ok: true, callerId: '+919000000001' });
+  });
+
+  it('a requested rotation number is kept', () => {
+    const fourNumbers = tag({ caller_ids: [...POOL, '+919000000004'] });
+    for (const ownerUserId of [null, AGENT]) {
+      expect(selectCallerId({
+        tag: fourNumbers, accountNumbers: [], settingsDefault: null, requested: ' +919000000004 ',
+        dedicated: DEDICATED, ownerUserId,
+      })).toEqual({ ok: true, callerId: '+919000000004' });
+    }
+  });
+
+  it('every number dedicated: the rotation is the whole list (DN3), so the requested number is kept', () => {
+    const allDedicated = tag({ caller_ids: ['+919000000002', '+919000000003'] });
+    for (const requested of ['+919000000002', '+919000000003']) {
+      expect(selectCallerId({
+        tag: allDedicated, accountNumbers: [], settingsDefault: null, requested,
+        dedicated: DEDICATED, ownerUserId: null,
+      })).toEqual({ ok: true, callerId: requested });
+    }
+    // The owner's number still wins over the request.
+    expect(selectCallerId({
+      tag: allDedicated, accountNumbers: [], settingsDefault: null, requested: '+919000000003',
+      dedicated: DEDICATED, ownerUserId: OTHER_AGENT,
+    })).toEqual({ ok: true, callerId: '+919000000002' });
   });
 
   it('an owner\'s number the campaign no longer has does not count', async () => {

@@ -14,9 +14,11 @@
  *  3. The caller ID, in the allowed set: tagged, the campaign's `caller_ids`
  *     (`usableCallerIds`, the pacing engine's definition); untagged, the account's
  *     assigned numbers (`findAvailableForAccount`). Not allowed → `caller_id_not_allowed`
- *     with the set. Tagged, when the number matches a contact of the tag (step 4's pick)
- *     whose OWNER has a dedicated caller ID on it that is still usable, the call goes out
- *     from that number whatever in-set number was requested (decision DN4). Absent: tagged,
+ *     with the set. Tagged, an in-set request goes through the dial paths' one rule
+ *     (`resolveCallerId`, decision DN4): the OWNER of the matched contact (step 4's pick)
+ *     has a dedicated caller ID still on the tag → that number, whatever was requested;
+ *     else the requested number while it is in the rotation (never another agent's
+ *     dedicated number); else the rotation's pick. Absent: tagged,
  *     the dial paths' one rule (`resolveCallerId`: the owner's dedicated number, else the
  *     rotation's round-robin pick, as pacing dials); untagged, the settings'
  *     `default_caller_id` when it is still allowed, else the account's default
@@ -70,7 +72,6 @@ import { normalizePhoneToE164 } from '../../utils/phone-normalizer.js';
 import { normalizeE164, type DncRegistry } from '../dnc-registry.js';
 import { callingWindowState, nextWindowOpen, resolveCallingWindow } from '../calling-hours.js';
 import {
-  dedicatedCallerIdOf,
   NO_DEDICATED_CALLER_IDS,
   resolveCallerId,
   usableCallerIds,
@@ -177,13 +178,15 @@ export function normalizeDialledNumber(to: unknown, defaultCountryCode: string):
 /**
  * Step 3: the allowed set and the caller ID the dial uses (DN4). Tagged, the allowed set is
  * always the tag's usable caller IDs: a requested number outside it is refused
- * (`caller_id_not_allowed` with the set). When the matched contact's owner (`ownerUserId`)
- * has a dedicated number still on the tag (`dedicated`), the call goes out from THAT number
- * whatever in-set number was requested: both clients send the tag's first caller ID by default
- * (the mobile app cannot be changed here), and the response's `caller_id` reports what was
- * dialled. With nothing requested, the dial paths' rule (`resolveCallerId`): the owner's
- * number, else the rotation's pick. Untagged: the account's numbers, the request or the
- * settings' default, else the first.
+ * (`caller_id_not_allowed` with the set). An in-set request goes through the dial paths' one
+ * rule (`resolveCallerId`) as its `sticky`: the matched contact's owner's (`ownerUserId`)
+ * dedicated number while the tag still has it, whatever was requested; else the requested
+ * number while it is in the rotation; else the rotation's pick. So another agent's dedicated
+ * number is never dialled for a contact that is not theirs, whichever client sent it (the
+ * mobile app sends the tag's first caller ID by default, a console redial resends the old
+ * one), and the response's `caller_id` reports what was dialled. With nothing requested, the
+ * same rule without a sticky. Untagged: the account's numbers, the request or the settings'
+ * default, else the first.
  */
 export function selectCallerId(input: {
   tag: AgencyCampaignRecord | null;
@@ -202,9 +205,18 @@ export function selectCallerId(input: {
     if (typeof input.requested !== 'string') return refuse;
     const requested = input.requested.trim();
     if (!allowed.includes(requested)) return refuse;
-    // In the set: the owner's dedicated number replaces it (DN4).
-    const own = usable ? dedicatedCallerIdOf(usable, dedicated, input.ownerUserId) : null;
-    return { ok: true, callerId: own ?? requested };
+    if (!usable) return { ok: true, callerId: requested };
+    // Tagged and in the set (DN4): the owner's dedicated number, else the requested number
+    // while it is in the rotation (never another agent's dedicated number), else the
+    // rotation's pick.
+    const picked = resolveCallerId({
+      usable,
+      dedicated,
+      ownerUserId: input.ownerUserId,
+      offset: 0,
+      sticky: requested,
+    });
+    return picked ? { ok: true, callerId: picked } : refuse;
   }
   if (usable) {
     const picked = resolveCallerId({ usable, dedicated, ownerUserId: input.ownerUserId, offset: 0 });

@@ -50,11 +50,11 @@ describe('the campaign PATCH’s caller_id_dedicated', () => {
 
   it('names one number, several, or none', () => {
     expect(callerIdDedicatedMessage(['+912200000001']))
-      .toBe('+91 22000 00001 is dedicated to an agent. Clear it on the Agents tab first.');
+      .toBe('+91 22000 00001 is dedicated to an agent. Release it on the Agents tab first (“Use shared rotation”).');
     expect(callerIdDedicatedMessage(['+912200000001', '+912200000002', '+14155550100']))
-      .toBe('+91 22000 00001, +91 22000 00002 and +14155550100 are dedicated to agents. Clear them on the Agents tab first.');
+      .toBe('+91 22000 00001, +91 22000 00002 and +14155550100 are dedicated to agents. Release them on the Agents tab first (“Use shared rotation”).');
     expect(callerIdDedicatedMessage([]))
-      .toBe('A number you removed is dedicated to an agent. Clear it on the Agents tab first.');
+      .toBe('A number you removed is dedicated to an agent. Release it on the Agents tab first (“Use shared rotation”).');
   });
 });
 

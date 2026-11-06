@@ -251,6 +251,15 @@ interface DialHold {
 export const PACING_DIAL_HOLD_MAX_MS = 60_000;
 
 /**
+ * While a campaign's dedicated caller-ID read keeps failing (a database blip), how often its
+ * error is logged again. The first failure logs at once; the ones after it within this
+ * interval are only counted, and the next log carries the count. The first successful read
+ * logs the recovery and resets it. Without this a DB blip logged every 250 ms tick of every
+ * dialling campaign.
+ */
+export const DEDICATION_READ_FAILURE_LOG_MS = 60_000;
+
+/**
  * Why a tick dialled nothing. Closed set — it is a metric label.
  *
  * The first four are the benign states a healthy campaign spends most of its day
@@ -489,6 +498,13 @@ export class PacingEngine {
    * flushed when a campaign is given up, closed (one last flush, bounded) by `halt()`.
    */
   private readonly history: PacingHistoryAccumulator;
+
+  /**
+   * Per campaign whose dedicated caller-ID read is failing: when it was last logged and how
+   * many failures since ({@link DEDICATION_READ_FAILURE_LOG_MS}). Cleared by the next
+   * successful read, and pruned with the other per-campaign maps.
+   */
+  private readonly dedicationReadFailing = new Map<string, { loggedAt: number; unlogged: number; total: number }>();
 
   /** Per campaign: whether its own calling window was closed, decided once a minute per row. */
   private readonly windowClosedAt = new Map<string, { minute: number; row: AgencyCampaignRecord; closed: boolean }>();
@@ -918,6 +934,7 @@ export class PacingEngine {
     for (const id of this.drainOnly) if (!known.has(id)) this.drainOnly.delete(id);
     for (const id of this.queueSent.keys()) if (!known.has(id)) this.queueSent.delete(id);
     for (const id of this.fallbackSweptAt.keys()) if (!known.has(id)) this.fallbackSweptAt.delete(id);
+    for (const id of this.dedicationReadFailing.keys()) if (!known.has(id)) this.dedicationReadFailing.delete(id);
     // `revoked` too, which `beginLeading` alone used to clear — except under a tick
     // still in flight, whose dial sites are what the mark exists to stop. A campaign
     // absent from `findActive` is neither running nor stopping, so no later tick of
@@ -1047,6 +1064,7 @@ export class PacingEngine {
     this.campaignCache.invalidate(campaignId);
     this.queueSent.delete(campaignId);
     this.fallbackSweptAt.delete(campaignId);
+    this.dedicationReadFailing.delete(campaignId);
     this.windowClosedAt.delete(campaignId);
     // What this campaign counted goes out now rather than at the next interval (a stop, a
     // completion, a lost lease). Off the path: never awaited, never rejects.
@@ -1835,6 +1853,42 @@ export class PacingEngine {
   }
 
   /**
+   * A failed dedicated caller-ID read: logged at once the first time for the campaign, then at
+   * most once per {@link DEDICATION_READ_FAILURE_LOG_MS} while it keeps failing, with how many
+   * batches were returned undialled since the last log. Logging only: the batch has already
+   * been returned.
+   */
+  private noteDedicationReadFailed(campaign: AgencyCampaignRecord, err: unknown, abandoned: number): void {
+    const now = this.now();
+    const failing = this.dedicationReadFailing.get(campaign.id);
+    if (failing && now - failing.loggedAt < DEDICATION_READ_FAILURE_LOG_MS) {
+      failing.unlogged += 1;
+      failing.total += 1;
+      return;
+    }
+    const suppressed = failing?.unlogged ?? 0;
+    const total = (failing?.total ?? 0) + 1;
+    this.dedicationReadFailing.set(campaign.id, { loggedAt: now, unlogged: 0, total });
+    log.error(
+      { err, campaignId: campaign.id, tenantId: campaign.tenant_id, abandoned, failedReads: total, unloggedSinceLast: suppressed },
+      failing
+        ? 'Still cannot read the campaign\'s dedicated caller IDs — returning each batch undialled'
+        : 'Could not read the campaign\'s dedicated caller IDs — returning the batch undialled',
+    );
+  }
+
+  /** A successful dedicated caller-ID read: the end of a failing run, logged once. */
+  private noteDedicationReadOk(campaign: AgencyCampaignRecord): void {
+    const failing = this.dedicationReadFailing.get(campaign.id);
+    if (!failing) return;
+    this.dedicationReadFailing.delete(campaign.id);
+    log.info(
+      { campaignId: campaign.id, tenantId: campaign.tenant_id, failedReads: failing.total },
+      'The campaign\'s dedicated caller IDs can be read again — dialling resumes',
+    );
+  }
+
+  /**
    * Start the owner sweeps (`pacing/callback-fallback.ts`): the unstaffed-owner return (CA6,
    * with `on_unstaff = 'return_to_pool'`) and the callback grace/fallback (CA5, with
    * `callback_fallback = 'pool'`), at most every {@link CALLBACK_FALLBACK_SWEEP_MS} per
@@ -1970,18 +2024,17 @@ export class PacingEngine {
     // OWNER's dedicated one, else the rotation's (`resolveCallerId`, DN2). A failed read
     // returns the whole batch undialled, as a halt does: dialling an owned contact from a
     // rotation number would break the promise the dedication makes, and the next tick reads
-    // again.
+    // again. The log is throttled per campaign ({@link noteDedicationReadFailed}); the unwind
+    // is not.
     let dedicated: DedicatedCallerIds;
     try {
       dedicated = await agencyAgentCallerIdRepository.mapForCampaign(campaign.id);
     } catch (err) {
       await this.abortRemainder(contacts, sessions);
-      log.error(
-        { err, campaignId: campaign.id, tenantId: campaign.tenant_id, abandoned: contacts.length },
-        'Could not read the campaign\'s dedicated caller IDs — returning the batch undialled',
-      );
+      this.noteDedicationReadFailed(campaign, err, contacts.length);
       return 0;
     }
+    this.noteDedicationReadOk(campaign);
     const usable = usableCallerIds(campaign);
 
     let dialed = 0;

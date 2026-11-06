@@ -331,6 +331,9 @@ describe('the unstaff release (DN7) in CA6\'s statement', () => {
     // Agent a holds an open contact on `keep`, nothing on `campaign`.
     await insertAgencyContact(keep.id, { assigned_user_id: a, assigned_at: new Date(), state: 'pending' });
 
+    // The release runs after the staffing closed, as every unstaff path calls it.
+    await closeStaffing(a);
+    await closeStaffing(a, keep.id);
     const rows = await release(a, [campaign.id, keep.id, untouched.id]);
     expect(rows.map((r) => ({ c: r.campaign_id, held: r.held, released: r.released_caller_id, kept: r.kept, moved: r.moved }))
       .sort((p, q) => p.c.localeCompare(q.c)))
@@ -341,5 +344,49 @@ describe('the unstaff release (DN7) in CA6\'s statement', () => {
     expect(await repo.mapForCampaign(campaign.id)).toEqual(new Map());
     // Only the unstaffed agent's number goes.
     expect(await repo.mapForCampaign(keep.id)).toEqual(new Map([[b, X]]));
+  });
+
+  it('an agent staffed again (and given a number) before the release runs keeps the new number; nothing is reported released', async () => {
+    await set(a, X);
+    await closeStaffing(a);
+    await new Promise((r) => setTimeout(r, 5));
+    await staff(a);
+    // The new staffing's PUT replaces the old row in place.
+    expect(await set(a, Y)).toMatchObject({ ok: true, row: { caller_id: Y } });
+    // The first unstaff's release, late.
+    const rows = await release(a);
+    expect(rows.map((r) => r.released_caller_id)).toEqual([]);
+    expect(await storedRows()).toEqual([[a, Y]]);
+    expect(await repo.mapForCampaign(campaign.id)).toEqual(new Map([[a, Y]]));
+  });
+
+  it('an agent staffed again without a new number: the late release leaves the old row, which stays not effective', async () => {
+    await set(a, X);
+    await closeStaffing(a);
+    await new Promise((r) => setTimeout(r, 5));
+    await staff(a);
+    expect((await release(a)).map((r) => r.released_caller_id)).toEqual([]);
+    expect(await storedRows()).toEqual([[a, X]]);
+    expect(await repo.mapForCampaign(campaign.id)).toEqual(new Map());
+  });
+
+  it('a row an earlier failed release left behind is deleted silently; only the closed staffing\'s own number is reported', async () => {
+    // Staffing 1: a number, closed without its release.
+    await set(a, X);
+    await closeStaffing(a);
+    await new Promise((r) => setTimeout(r, 5));
+    // Staffing 2: no number of its own, then unstaffed with the release.
+    await staff(a);
+    await closeStaffing(a);
+    expect((await release(a)).map((r) => r.released_caller_id)).toEqual([]);
+    expect(await storedRows()).toEqual([]);
+
+    // Staffing 3: a number set on it is reported when it closes.
+    await new Promise((r) => setTimeout(r, 5));
+    await staff(a);
+    await set(a, Y);
+    await closeStaffing(a);
+    expect((await release(a)).map((r) => r.released_caller_id)).toEqual([Y]);
+    expect(await storedRows()).toEqual([]);
   });
 });

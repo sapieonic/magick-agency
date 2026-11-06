@@ -5,8 +5,8 @@ import bcrypt from 'bcryptjs';
 /**
  * ─── Dedicated caller IDs through the real app and real Postgres (DN1–DN10) ─────────
  *
- * The supervisor's routes (list, set, release) with every refusal, the flag-off 403 and the
- * audit rows; the campaign PATCH's `caller_id_dedicated` through the public route; the agent's
+ * The supervisor's routes (list, set, release) with every refusal, the flag (only the PUT is
+ * gated; the list and the release work with it off, DN9) and the audit rows; the campaign PATCH's `caller_id_dedicated` through the public route; the agent's
  * My contacts summary `caller_id`; and the release on all three unstaff paths (a supervisor's
  * DELETE, a tenant admin removing a membership, a super admin revoking one), whatever the
  * campaign's `on_unstaff`. Session middleware with Firebase stubbed, tenant context, RBAC, the
@@ -192,7 +192,7 @@ describe('the supervisor\'s routes', () => {
     expect(rows[0]!.details).toEqual({ campaign_id: A(), user_id: agent(2).id, caller_id: Y, cause: 'supervisor' });
   });
 
-  it('refuses an agent (RBAC), another tenant\'s campaign (404), a malformed campaign id (404), and a tenant without the flag (403)', async () => {
+  it('refuses an agent (RBAC), another tenant\'s campaign (404), a malformed campaign id (404), and a PUT in a tenant without the flag (403)', async () => {
     const asAgent = await call(app(), 'GET', listUrl(), agent(0), floor);
     expect(asAgent.statusCode).toBe(403);
     expect(asAgent.json().message).toMatch(/^Insufficient permissions/);
@@ -208,14 +208,49 @@ describe('the supervisor\'s routes', () => {
     const otherCampaign = other.campaigns[0]!;
     const asOther = (method: 'GET' | 'PUT' | 'DELETE', url: string, body?: unknown) =>
       call(app(), method, url, other.supervisors[0]!, other, body);
-    for (const res of [
-      await asOther('GET', listUrl(otherCampaign)),
-      await asOther('PUT', agentUrl(other.agents[0]!.id, otherCampaign), { caller_id: '+919000000001' }),
-      await asOther('DELETE', agentUrl(other.agents[0]!.id, otherCampaign)),
-    ]) {
-      expect(res.statusCode).toBe(403);
-      expect(res.json()).toEqual({ error: 'Forbidden', code: 'assignment_disabled', message: expect.any(String) });
-    }
+    const res = await asOther('PUT', agentUrl(other.agents[0]!.id, otherCampaign), { caller_id: '+919000000001' });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ error: 'Forbidden', code: 'assignment_disabled', message: expect.any(String) });
+  });
+
+  it('with the flag off, a dedication made while it was on can still be listed and released (DN9); setting one is 403', async () => {
+    const other = floors[1]!;
+    const otherCampaign = other.campaigns[0]!;
+    const otherSup = other.supervisors[0]!;
+    const holder = other.agents[1]!;
+    const asOther = (method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, body?: unknown) =>
+      call(app(), method, url, otherSup, other, body);
+    await getTestPool().query('UPDATE agency_campaigns SET caller_ids = $2 WHERE id = $1', [otherCampaign, POOL]);
+    const staffed = await asOther('POST', `/proxy/agency/campaigns/${otherCampaign}/agents`, { user_id: holder.id });
+    expect(staffed.statusCode, staffed.body).toBe(201);
+    // Stored while the flag was on (a direct write here: the PUT is gated), after the staffing.
+    await getTestPool().query(
+      `INSERT INTO agency_campaign_agent_caller_ids (tenant_id, account_id, campaign_id, user_id, caller_id, set_at)
+       VALUES ($1, $2, $3, $4, $5, clock_timestamp())`,
+      [other.tenant, other.account, otherCampaign, holder.id, Y]);
+
+    const listed = await asOther('GET', listUrl(otherCampaign));
+    expect(listed.statusCode, listed.body).toBe(200);
+    expect(listed.json()).toMatchObject({
+      campaign_id: otherCampaign, caller_ids: POOL, rotation: [X, Z], all_dedicated: false,
+      dedicated: [{ user_id: holder.id, caller_id: Y, in_campaign: true }],
+    });
+
+    const setting = await asOther('PUT', agentUrl(holder.id, otherCampaign), { caller_id: Z });
+    expect(setting.statusCode).toBe(403);
+    expect(setting.json()).toMatchObject({ code: 'assignment_disabled' });
+    expect(await stored(otherCampaign)).toEqual({ [holder.id]: Y });
+
+    const released = await asOther('DELETE', agentUrl(holder.id, otherCampaign));
+    expect(released.statusCode, released.body).toBe(204);
+    expect(await stored(otherCampaign)).toEqual({});
+    const rows = (await audits('agency_campaign.agent_caller_id_cleared')).filter((r) => r.campaign_id === otherCampaign);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ account_id: other.account, actor_type: 'human', user_id: otherSup.id });
+    expect(rows[0]!.details).toEqual({ campaign_id: otherCampaign, user_id: holder.id, caller_id: Y, cause: 'supervisor' });
+    // Idempotent, flag or not.
+    expect((await asOther('DELETE', agentUrl(holder.id, otherCampaign))).statusCode).toBe(204);
+    expect((await asOther('GET', listUrl(otherCampaign))).json()).toMatchObject({ dedicated: [], rotation: POOL });
   });
 
   it('a unique-violation race is caller_id_taken, never a 500', async () => {

@@ -129,10 +129,13 @@ Owned by `AgencyRuntime`. One call at a time per session.
    default the rotation's round-robin pick as pacing dials; when the number matches a contact of the
    tag, the one the roster guard below would pick, whose owner has a dedicated caller ID on the
    campaign that it still has, the call goes out from that number whatever in-set caller ID was
-   requested or defaulted, and the response's `caller_id` reports it: decisions DN4, the dial paths'
-   one rule `resolveCallerId`; the mobile app sends the campaign's first caller ID by default
-   (the console's tagged default is Automatic, sending none, and a redial resends the number it
-   went from), so a request is replaced rather than refused; the match is read first, its refusals answered in their
+   requested or defaulted; otherwise an in-set request is kept only while it is in the rotation,
+   else the rotation's pick, so another agent's dedicated number never goes out for a contact that
+   is not theirs; the response's `caller_id` reports what was dialled: decisions DN4, the dial
+   paths' one rule `resolveCallerId` with the request as its sticky number; the mobile app sends
+   the campaign's first caller ID by default (the console's tagged default is Automatic, sending
+   none, and a redial resends the number it went from), so a request is replaced rather than
+   refused; the match is read first, its refusals answered in their
    own place, so a caller ID outside the set is still refused before `contact_in_flight`; untagged: the account's assigned numbers, `findAvailableForAccount`, default the
    settings' `default_caller_id` while still assigned, else the account's default number); roster
    guard, one live call per number across the account (decisions MC4) — tagged, the match on the

@@ -47,7 +47,7 @@ export const AGENT_CALLER_ID_REFUSAL_COPY: Record<AgencyAgentCallerIdErrorCode, 
   assignment_disabled: 'Contact assignment is turned off for this account.',
   caller_id_invalid: 'That isn’t a caller ID this campaign can use. Pick one from the list.',
   campaign_not_found: 'This campaign no longer exists, or isn’t in this account.',
-  agent_not_staffed: 'This agent is no longer on this campaign. Refresh the list.',
+  agent_not_staffed: 'This agent is no longer on this campaign.',
   caller_id_not_in_campaign:
     'That number is no longer one of this campaign’s caller IDs. Refresh and pick another.',
   caller_id_taken: 'That number is already dedicated to another agent on this campaign.',
@@ -83,15 +83,21 @@ export function dedicatedCallerIdsOf(err: unknown): string[] | null {
   return Array.isArray(listed) ? listed.filter((n): n is string => typeof n === 'string') : [];
 }
 
-/** The settings page's answer to `409 caller_id_dedicated`, naming the numbers. */
+/**
+ * The settings page's answer to `409 caller_id_dedicated`, naming the numbers.
+ * It names the release ("Use shared rotation") rather than a picker, because
+ * the Agents tab offers that action whatever `agency_contact_assignment_enabled`
+ * says: with the flag off it is the only caller-ID control there.
+ */
 export function callerIdDedicatedMessage(numbers: readonly string[]): string {
+  const release = 'on the Agents tab first (“Use shared rotation”).';
   if (numbers.length === 0) {
-    return 'A number you removed is dedicated to an agent. Clear it on the Agents tab first.';
+    return `A number you removed is dedicated to an agent. Release it ${release}`;
   }
   const named = joinAnd(numbers.map(formatPhone));
   return numbers.length === 1
-    ? `${named} is dedicated to an agent. Clear it on the Agents tab first.`
-    : `${named} are dedicated to agents. Clear them on the Agents tab first.`;
+    ? `${named} is dedicated to an agent. Release it ${release}`
+    : `${named} are dedicated to agents. Release them ${release}`;
 }
 
 /**

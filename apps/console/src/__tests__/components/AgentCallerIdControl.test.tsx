@@ -12,7 +12,8 @@ import type {
  * that carries them: each staffed agent's number or "Shared rotation", the stale
  * flag, the picker (numbers another agent holds offered disabled with the
  * holder's name), set and clear, every refusal in words, the all-dedicated
- * warning, and nothing at all with the flag off.
+ * warning; and with the flag off, a dedication shown with only its release, or
+ * nothing at all when there is none.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -102,7 +103,9 @@ async function openEditor(name: string) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // Reset, not clear: a `…Once` a test queued but never used must not leak into
+  // the next test.
+  vi.resetAllMocks();
   mocks.useTenant.mockReturnValue({ tenantId: 'tenant-1', accountId: 'account-1', role: 'account_admin' });
   mocks.listCampaignAgents.mockResolvedValue({ agents: [ASHA, RAVI, MEERA] });
   mocks.getAgentCallerIds.mockResolvedValue(STATE);
@@ -158,12 +161,71 @@ describe('the caller ID on each staffed agent', () => {
     expect(screen.queryByRole('button', { name: /Change caller ID/ })).toBeNull();
   });
 
-  it('with the flag off, reads nothing and shows no caller ID', async () => {
+});
+
+describe('with the contact-assignment flag off', () => {
+  const NONE: AgencyAgentCallerIds = { ...STATE, dedicated: [], rotation: [N1, N2, N3] };
+
+  it('with no dedications, renders nothing new (the one read is made, and answers none)', async () => {
+    mocks.getAgentCallerIds.mockResolvedValue(NONE);
     renderPanel(false);
     await screen.findByText('Asha');
-    expect(mocks.getAgentCallerIds).not.toHaveBeenCalled();
+    // The read happens: it is how the panel learns there is nothing to release.
+    await waitFor(() => expect(mocks.getAgentCallerIds).toHaveBeenCalledTimes(1));
+    expect(mocks.getAgentCallerIds).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
     expect(screen.queryByTestId('caller-id-u-asha')).toBeNull();
+    expect(screen.queryByTestId('caller-ids-flag-off')).toBeNull();
     expect(screen.queryByText(/caller ID/i)).toBeNull();
+    expect(screen.queryByText('Shared rotation')).toBeNull();
+  });
+
+  it('a failed read renders nothing new either: no error, no "Unavailable"', async () => {
+    mocks.getAgentCallerIds.mockRejectedValue(refusal(403, 'assignment_disabled'));
+    renderPanel(false);
+    await screen.findByText('Asha');
+    await waitFor(() => expect(mocks.getAgentCallerIds).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText(/caller ID/i)).toBeNull();
+    expect(screen.queryByText('Unavailable')).toBeNull();
+  });
+
+  it('shows a dedicated number with only its release, which calls DELETE', async () => {
+    mocks.getAgentCallerIds
+      .mockResolvedValueOnce({ ...STATE, dedicated: [STATE.dedicated[0]!], rotation: [N2, N3] })
+      .mockResolvedValueOnce(NONE);
+    renderPanel(false);
+    await waitFor(() => expect(screen.getByTestId('caller-id-u-asha').textContent).toContain('+91 22000 00001'));
+    expect(screen.getByTestId('caller-ids-flag-off').textContent).toContain('no new caller IDs can be dedicated');
+    // Only the agent who holds one: nobody else's row gains anything.
+    expect(screen.queryByTestId('caller-id-u-ravi')).toBeNull();
+    expect(screen.queryByTestId('caller-id-u-meera')).toBeNull();
+    // No picker, no Dedicate, no way into one.
+    expect(screen.queryByRole('combobox', { name: /Number for/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dedicate' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Change caller ID/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Use shared rotation for Asha' }));
+    await waitFor(() => expect(mocks.clearAgentCallerId)
+      .toHaveBeenCalledWith('camp-1', 'u-asha', 'tenant-1', 'account-1'));
+    expect(mocks.setAgentCallerId).not.toHaveBeenCalled();
+    await waitFor(() => expect(mocks.showToast)
+      .toHaveBeenCalledWith('Asha’s contacts are back on the shared rotation.', 'success'));
+    // Read again, it answers none: the row is as it was before dedicated caller IDs.
+    await waitFor(() => expect(screen.queryByTestId('caller-id-u-asha')).toBeNull());
+    expect(screen.queryByTestId('caller-ids-flag-off')).toBeNull();
+  });
+
+  it('flags a stale dedication, and a refused release says why in place', async () => {
+    mocks.getAgentCallerIds.mockResolvedValue({
+      ...STATE,
+      caller_ids: [N2, N3],
+      dedicated: [dedication({ user_id: 'u-asha', agent_name: 'Asha', caller_id: N1, in_campaign: false })],
+    });
+    mocks.clearAgentCallerId.mockRejectedValueOnce(refusal(404, 'campaign_not_found'));
+    renderPanel(false);
+    expect(await screen.findByTestId('caller-id-stale-u-asha')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Use shared rotation for Asha' }));
+    expect((await screen.findByTestId('caller-id-refusal-u-asha')).textContent)
+      .toBe('This campaign no longer exists, or isn’t in this account.');
   });
 });
 
@@ -256,7 +318,7 @@ describe('refusals, in words', () => {
   it('agent_not_staffed', async () => {
     mocks.setAgentCallerId.mockRejectedValueOnce(refusal(404, 'agent_not_staffed'));
     expect((await dedicateN3ToMeera()).textContent)
-      .toBe('This agent is no longer on this campaign. Refresh the list.');
+      .toBe('This agent is no longer on this campaign.');
   });
 
   it('an unknown code falls through to the server’s message, and reads nothing again', async () => {
@@ -289,13 +351,51 @@ describe('refusals, in words', () => {
     ).toBe(true));
   });
 
+  it('agent_not_staffed also reads the staffed agents again, so the unstaffed row goes', async () => {
+    mocks.listCampaignAgents
+      .mockResolvedValueOnce({ agents: [ASHA, RAVI, MEERA] })
+      .mockResolvedValueOnce({ agents: [ASHA, RAVI] });
+    mocks.setAgentCallerId.mockRejectedValueOnce(refusal(404, 'agent_not_staffed'));
+    renderPanel();
+    const editor = await openEditor('Meera');
+    fireEvent.change(within(editor).getByRole('combobox'), { target: { value: N3 } });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Dedicate' }));
+    await waitFor(() => expect(mocks.listCampaignAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Meera')).toBeNull());
+    expect(screen.queryByTestId('caller-id-u-meera')).toBeNull();
+    expect(screen.getByText('Asha')).toBeTruthy();
+    expect(mocks.showToast).toHaveBeenCalledWith('Meera is no longer on this campaign.', 'info');
+  });
+
+  it.each([
+    ['caller_id_taken', 409],
+    ['caller_id_not_in_campaign', 409],
+    ['something_new', 500],
+  ])('after %s, the staffed agents are not read again', async (code, status) => {
+    mocks.setAgentCallerId.mockRejectedValueOnce(refusal(status, code));
+    await dedicateN3ToMeera();
+    expect(mocks.listCampaignAgents).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Meera')).toBeTruthy();
+  });
+
+  it('a flag-off release refused with agent_not_staffed reads the staffed agents again', async () => {
+    mocks.listCampaignAgents
+      .mockResolvedValueOnce({ agents: [ASHA, RAVI, MEERA] })
+      .mockResolvedValueOnce({ agents: [RAVI, MEERA] });
+    mocks.clearAgentCallerId.mockRejectedValueOnce(refusal(404, 'agent_not_staffed'));
+    renderPanel(false);
+    fireEvent.click(await screen.findByRole('button', { name: 'Use shared rotation for Asha' }));
+    await waitFor(() => expect(mocks.listCampaignAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Asha')).toBeNull());
+  });
+
   it('a refused clear that means the list is stale reads it again too', async () => {
     mocks.clearAgentCallerId.mockRejectedValueOnce(refusal(404, 'agent_not_staffed'));
     renderPanel();
     const editor = await openEditor('Asha');
     fireEvent.click(within(editor).getByRole('button', { name: 'Use shared rotation' }));
     expect((await screen.findByTestId('caller-id-refusal-u-asha')).textContent)
-      .toBe('This agent is no longer on this campaign. Refresh the list.');
+      .toBe('This agent is no longer on this campaign.');
     await waitFor(() => expect(mocks.getAgentCallerIds).toHaveBeenCalledTimes(2));
   });
 });

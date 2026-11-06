@@ -20,10 +20,15 @@ export const RINGING_HANGUP_WARNING =
 export const AUTOMATIC_CALLER_ID_LABEL = 'Automatic';
 export const AUTOMATIC_CALLER_ID_HINT = 'Automatic: the contact’s agent number, else the campaign’s rotation.';
 
-/** The hint under "Call from" for a number picked by hand. */
+/**
+ * The hint under "Call from" for a number picked by hand. On a tagged call the
+ * server keeps the pick only while it is the contact's agent number or in the
+ * campaign's rotation (DN4): the contact's agent number wins, and a number
+ * dedicated to another agent goes out from the rotation instead.
+ */
 export function pickedCallerIdHint(campaignName: string | null): string {
   return campaignName
-    ? `From ${campaignName}’s caller IDs, unless the contact has an agent number.`
+    ? `From ${campaignName}’s caller IDs. The contact’s agent number wins; another agent’s number gives way to the rotation.`
     : 'From the numbers assigned to your account';
 }
 

@@ -78,9 +78,11 @@ export interface CampaignAgentAssignmentsProps {
   liveAgentUserIds: readonly string[] | null;
   /**
    * The `agency_contact_assignment_enabled` flag, read by the page. With it on,
-   * each row also carries the agent's dedicated caller ID and its control (DN1):
-   * those routes sit behind the same flag and `agency.supervise`, so with it off
-   * nothing is read and nothing extra renders.
+   * each row also carries the agent's dedicated caller ID and its control (DN1).
+   * With it off the dedications are still read (the list and the release are
+   * not behind the flag, only setting one is): an agent who holds a number shows
+   * it with only "Use shared rotation", and a campaign with none renders as it
+   * would without dedicated caller IDs at all.
    */
   assignmentEnabled?: boolean;
 }
@@ -122,10 +124,14 @@ function AssignmentPanel({
   // (`agency.station.connect` floors at `agent`), so nobody is filtered out on
   // capability — only on being assigned here already.
   const { members, error: membersError } = useTeam();
-  // Dedicated caller IDs: read only behind the flag (this panel is already
-  // behind `agency.supervise`), so a page view with it off issues no request.
-  const callerIds = useAgentCallerIds(campaignId, assignmentEnabled);
+  // Dedicated caller IDs: read whatever the flag (this panel is already behind
+  // `agency.supervise`, the routes' gate), so a dedication made while it was on
+  // can still be seen and released with it off. The PATCH refuses to drop a
+  // dedicated number, and its copy sends the supervisor here either way.
+  const callerIds = useAgentCallerIds(campaignId, true);
   const reloadCallerIds = callerIds.reload;
+  /** Flag off: anything to show at all (a failed read shows nothing new). */
+  const hasDedications = (callerIds.data?.dedicated.length ?? 0) > 0;
 
   const [agents, setAgents] = useState<AgencyAssignedAgent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -187,14 +193,14 @@ function AssignmentPanel({
         showToast('Removed from this campaign.', 'success');
         await load();
         // Taking someone off the campaign releases their dedicated number.
-        if (assignmentEnabled) await reloadCallerIds();
+        await reloadCallerIds();
       } catch (err: unknown) {
         showErrorToast(err, 'Could not remove that person.');
       } finally {
         setBusyUserId(null);
       }
     },
-    [campaignId, tenantId, accountId, load, showToast, showErrorToast, assignmentEnabled, reloadCallerIds],
+    [campaignId, tenantId, accountId, load, showToast, showErrorToast, reloadCallerIds],
   );
 
   return (
@@ -223,6 +229,19 @@ function AssignmentPanel({
           {callerIds.error ? (
             <ErrorAlert message={callerIds.error} onRetry={() => void callerIds.reload()} />
           ) : null}
+          {callerIds.data?.all_dedicated ? (
+            <p className={styles.warning} role="status" data-testid="caller-ids-all-dedicated">
+              <AlertTriangle size={15} aria-hidden="true" />
+              <span>{ALL_DEDICATED_WARNING}</span>
+            </p>
+          ) : null}
+        </>
+      ) : hasDedications ? (
+        <>
+          <p className={styles.description} data-testid="caller-ids-flag-off">
+            Contact assignment is off, so no new caller IDs can be dedicated. Calls to these
+            agents’ contacts still go out from their numbers until you release them.
+          </p>
           {callerIds.data?.all_dedicated ? (
             <p className={styles.warning} role="status" data-testid="caller-ids-all-dedicated">
               <AlertTriangle size={15} aria-hidden="true" />
@@ -333,11 +352,13 @@ function AssignmentPanel({
                 <UserMinus size={15} aria-hidden="true" />
                 Remove
               </button>
-              {assignmentEnabled ? (
+              {assignmentEnabled || hasDedications ? (
                 <AgentCallerIdControl
                   userId={agent.user_id}
                   agentName={agent.name ?? agent.email ?? agent.user_id}
                   resource={callerIds}
+                  releaseOnly={!assignmentEnabled}
+                  onAgentUnstaffed={load}
                 />
               ) : null}
             </li>

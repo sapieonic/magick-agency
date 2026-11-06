@@ -12,9 +12,11 @@ import type {
  * which number, the campaign's usable numbers, and whether the rotation is
  * sharing dedicated ones (`all_dedicated`).
  *
- * `enabled` must be the gate the caller renders on (`agency.supervise` and the
- * `agency_contact_assignment_enabled` flag): the routes answer 403 otherwise, so
- * with it false nothing is requested and `data` stays `null`.
+ * `enabled` must be the gate the caller renders on, `agency.supervise`: the
+ * routes answer 403 otherwise, so with it false nothing is requested and `data`
+ * stays `null`. The read and the release work whatever
+ * `agency_contact_assignment_enabled` says; only `set` is refused with it off
+ * (`assignment_disabled`), so a flag-off caller offers only `clear`.
  *
  * `set` and `clear` reload on success and throw the `ApiError` on a refusal, for
  * the caller to word with `agentCallerIdRefusal`.

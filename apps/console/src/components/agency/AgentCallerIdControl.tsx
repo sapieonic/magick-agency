@@ -27,8 +27,13 @@ import styles from './AgentCallerIdControl.module.css';
  * false`) is flagged on the row: the dial path ignores it, so "+91… " alone would
  * claim calls go out from a number they do not.
  *
- * Rendered by `CampaignAgentAssignments` only for a supervisor with
- * `agency_contact_assignment_enabled` on, the gate on the routes.
+ * Rendered by `CampaignAgentAssignments` for a supervisor. With
+ * `agency_contact_assignment_enabled` on it is the full control. With it off
+ * (`releaseOnly`) the server still lists and releases dedications but refuses a
+ * new one (DN9: the flag gates setting, never the dial path), so the row shows
+ * only an agent who HAS a number, with "Use shared rotation" and no picker:
+ * a supervisor can still see and free a number the campaign PATCH refuses to
+ * drop (`caller_id_dedicated`). An agent without one renders nothing.
  */
 
 /**
@@ -47,9 +52,25 @@ export interface AgentCallerIdControlProps {
   /** For labels and toasts: the staffing row's name for this person. */
   agentName: string;
   resource: AgentCallerIdsResource;
+  /**
+   * Flag off: show the agent's dedicated number with only a release, or nothing
+   * when they have none or the read has not answered.
+   */
+  releaseOnly?: boolean;
+  /**
+   * Read the staffed-agent list again: called after `agent_not_staffed`, so the
+   * row of an agent unstaffed meanwhile goes without a page refresh.
+   */
+  onAgentUnstaffed?: () => unknown;
 }
 
-export function AgentCallerIdControl({ userId, agentName, resource }: AgentCallerIdControlProps) {
+export function AgentCallerIdControl({
+  userId,
+  agentName,
+  resource,
+  releaseOnly = false,
+  onAgentUnstaffed,
+}: AgentCallerIdControlProps) {
   const { data, error, byUser, set, clear, reload } = resource;
   const { showToast } = useToast();
   const current = byUser.get(userId) ?? null;
@@ -63,6 +84,23 @@ export function AgentCallerIdControl({ userId, agentName, resource }: AgentCalle
   const holders = useMemo(
     () => new Map<string, AgencyAgentCallerId>((data?.dedicated ?? []).map((row) => [row.caller_id, row])),
     [data],
+  );
+
+  /**
+   * A refusal that means the lists are stale: read them again. An unstaffed
+   * agent's row goes with the staffing read, its in-place refusal with it, so a
+   * toast says why.
+   */
+  const refreshAfter = useCallback(
+    (err: unknown) => {
+      const code = errorCode(err) ?? '';
+      if (STALE_PICKER_CODES.has(code)) void reload();
+      if (code === 'agent_not_staffed' && onAgentUnstaffed) {
+        showToast(`${agentName} is no longer on this campaign.`, 'info');
+        void onAgentUnstaffed();
+      }
+    },
+    [reload, onAgentUnstaffed, showToast, agentName],
   );
 
   const open = useCallback(() => {
@@ -81,11 +119,11 @@ export function AgentCallerIdControl({ userId, agentName, resource }: AgentCalle
       setEditing(false);
     } catch (err: unknown) {
       setRefusal(agentCallerIdRefusal(err, 'Could not set that caller ID.'));
-      if (STALE_PICKER_CODES.has(errorCode(err) ?? '')) void reload();
+      refreshAfter(err);
     } finally {
       setBusy(false);
     }
-  }, [picked, set, userId, agentName, showToast, reload]);
+  }, [picked, set, userId, agentName, showToast, refreshAfter]);
 
   const onClear = useCallback(async () => {
     setBusy(true);
@@ -96,11 +134,45 @@ export function AgentCallerIdControl({ userId, agentName, resource }: AgentCalle
       setEditing(false);
     } catch (err: unknown) {
       setRefusal(agentCallerIdRefusal(err, 'Could not clear that caller ID.'));
-      if (STALE_PICKER_CODES.has(errorCode(err) ?? '')) void reload();
+      refreshAfter(err);
     } finally {
       setBusy(false);
     }
-  }, [clear, userId, agentName, showToast, reload]);
+  }, [clear, userId, agentName, showToast, refreshAfter]);
+
+  if (releaseOnly) {
+    // Nothing new on a flag-off row unless the agent holds a number: a pending
+    // or failed read, or no dedication, renders as the row did before.
+    if (!data || !current) return null;
+    return (
+      <div className={styles.wrap}>
+        <div className={styles.cell} data-testid={`caller-id-${userId}`}>
+          <span className={styles.label}>Caller ID</span>
+          <span className={styles.value}>{formatPhone(current.caller_id)}</span>
+          {!current.in_campaign ? (
+            <span className={styles.stale} data-testid={`caller-id-stale-${userId}`}>
+              <AlertTriangle size={13} aria-hidden="true" />
+              {STALE_CALLER_ID_FLAG}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className={styles.change}
+            onClick={() => void onClear()}
+            disabled={busy}
+            aria-label={`Use shared rotation for ${agentName}`}
+          >
+            Use shared rotation
+          </button>
+        </div>
+        {refusal ? (
+          <p className={styles.refusal} role="alert" data-testid={`caller-id-refusal-${userId}`}>
+            {refusal}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   if (!data) {
     // Unknown is not "Shared rotation": a failed or pending read says nothing

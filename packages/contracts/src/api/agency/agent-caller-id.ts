@@ -2,12 +2,18 @@
  * Dedicated caller IDs: a supervisor gives an agent one of the campaign's caller IDs, and every
  * dial to a contact that agent owns on that campaign goes out from it (decisions DN1–DN10,
  * `docs/decisions.md`). The routes live beside the contact-assignment routes, under
- * `/proxy/agency`, behind the same `agency_contact_assignment_enabled` flag and `agency.supervise`.
+ * `/proxy/agency`, behind `agency.supervise`.
  *
  *  - `GET    /campaigns/:id/agent-caller-ids`                → {@link AgencyAgentCallerIds}
  *  - `PUT    /campaigns/:id/agents/:userId/caller-id`        body {@link AgencySetAgentCallerIdRequest}
  *                                                            → 200 {@link AgencyAgentCallerId}
  *  - `DELETE /campaigns/:id/agents/:userId/caller-id`        → 204 (also when none was set)
+ *
+ * The flag (DN9): only the PUT is behind `agency_contact_assignment_enabled` (403
+ * `assignment_disabled` when it is off). The GET and the DELETE answer whatever the flag says,
+ * because the dial paths honour a stored dedication whatever it says and the campaign PATCH
+ * still refuses to drop a dedicated number: with the flag off a client lists the dedications
+ * and offers release only (putting a setting back to its default is always allowed, CA9).
  *
  * Refusals are {@link AgencyAgentCallerIdErrorResponse}. The campaign PATCH refuses to drop a
  * dedicated number from `caller_ids` with `409 caller_id_dedicated`
@@ -57,7 +63,7 @@ export interface AgencySetAgentCallerIdRequest {
 
 /** Refusals of the dedicated caller ID routes. */
 export type AgencyAgentCallerIdErrorCode =
-  /** 403. The `agency_contact_assignment_enabled` flag is off for this tenant / account. */
+  /** 403, PUT only. The `agency_contact_assignment_enabled` flag is off for this tenant / account. */
   | 'assignment_disabled'
   /** 400. The body is malformed (`details` per field). */
   | 'caller_id_invalid'

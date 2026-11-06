@@ -8,8 +8,11 @@
  *  - `DELETE /campaigns/:id/agents/:userId/caller-id`   release it (204, also when none was set)
  *
  * Guards, as the other supervisor routes: `agency.supervise`, the campaign id's shape (404),
- * `agency_contact_assignment_enabled` (403 `assignment_disabled`, DN9: the runtime honours stored
- * rows whatever the flag), the ownership probe (`supervisedCampaign`). Audited
+ * the ownership probe (`supervisedCampaign`). `agency_contact_assignment_enabled` gates the PUT
+ * only (403 `assignment_disabled`, DN9): the runtime honours stored rows whatever the flag, so
+ * reading and releasing them work whatever it says (CA9: putting a setting back to its default
+ * is always allowed); otherwise a dedication made while the flag was on could neither be seen
+ * nor released while the PATCH still refuses to drop its number (DN6). Audited
  * `agency_campaign.agent_caller_id_set` / `_cleared` (`cause: 'supervisor'`), ids and the number
  * only (DN10). Part of `proxy-agency-assignment.routes.ts`.
  */
@@ -124,13 +127,20 @@ export function agentCallerIdsBody(
 type CampaignParams = { Params: { id: string } };
 type AgentParams = { Params: { id: string; userId: string } };
 
-/** Id shape → flag → ownership, as the other supervisor routes. Null once it has replied. */
-async function guardCampaign(request: FastifyRequest<CampaignParams>, reply: FastifyReply): Promise<AgencyCampaignRecord | null> {
+/**
+ * Id shape → flag (when `gated`) → ownership, as the other supervisor routes. Only setting a
+ * number is gated (DN9); the read and the release are not. Null once it has replied.
+ */
+async function guardCampaign(
+  request: FastifyRequest<CampaignParams>,
+  reply: FastifyReply,
+  opts: { gated: boolean },
+): Promise<AgencyCampaignRecord | null> {
   if (!isUuid(request.params.id)) {
     refuse(reply, 404, 'campaign_not_found', AGENT_CALLER_ID_MESSAGES.campaign_not_found);
     return null;
   }
-  if (!(await requireAssignmentEnabled(request, reply))) return null;
+  if (opts.gated && !(await requireAssignmentEnabled(request, reply))) return null;
   return supervisedCampaign(request, reply, request.params.id.toLowerCase());
 }
 
@@ -147,11 +157,11 @@ async function namesFor(ids: readonly string[], tenantId: string): Promise<Map<s
 }
 
 export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise<void> {
-  /** GET /campaigns/:id/agent-caller-ids — every dedicated number and the rotation. */
+  /** GET /campaigns/:id/agent-caller-ids — every dedicated number and the rotation. Not flag-gated (DN9). */
   app.get<CampaignParams>('/campaigns/:id/agent-caller-ids', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const campaign = await guardCampaign(request, reply);
+    const campaign = await guardCampaign(request, reply, { gated: false });
     if (!campaign) return reply;
     const rows = await agencyAgentCallerIdRepository.listForCampaign(campaign.tenant_id, campaign.id);
     const names = await namesFor(rows.map((r) => r.user_id), campaign.tenant_id);
@@ -162,12 +172,13 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
    * PUT /campaigns/:id/agents/:userId/caller-id — dedicate one of the campaign's caller IDs to
    * a staffed agent, replacing the number they held. 404 `agent_not_staffed`, 409
    * `caller_id_not_in_campaign` (`details.caller_ids`), 409 `caller_id_taken` (`details.user_id`,
-   * `details.agent_name`; also when a concurrent PUT took it first).
+   * `details.agent_name`; also when a concurrent PUT took it first). The one flag-gated route
+   * of the three (403 `assignment_disabled`, DN9).
    */
   app.put<AgentParams>('/campaigns/:id/agents/:userId/caller-id', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const campaign = await guardCampaign(request, reply);
+    const campaign = await guardCampaign(request, reply, { gated: true });
     if (!campaign) return reply;
     const body = parseSetAgentCallerIdBody(request.body);
     if (!body.ok) return refuse(reply, 400, 'caller_id_invalid', AGENT_CALLER_ID_MESSAGES.caller_id_invalid, body.details);
@@ -223,11 +234,14 @@ export async function registerAgentCallerIdRoutes(app: FastifyInstance): Promise
     return reply.code(200).send(agentCallerIdOf(outcome.row, outcome.caller_ids, name));
   });
 
-  /** DELETE /campaigns/:id/agents/:userId/caller-id — release the agent's number. 204, idempotent. */
+  /**
+   * DELETE /campaigns/:id/agents/:userId/caller-id — release the agent's number. 204,
+   * idempotent. Not flag-gated (DN9): releasing puts the setting back to its default.
+   */
   app.delete<AgentParams>('/campaigns/:id/agents/:userId/caller-id', {
     preHandler: requirePermission('agency.supervise'),
   }, async (request, reply) => {
-    const campaign = await guardCampaign(request, reply);
+    const campaign = await guardCampaign(request, reply, { gated: false });
     if (!campaign) return reply;
     const userId = request.params.userId;
     // Nothing can be dedicated to a malformed id: nothing to release.

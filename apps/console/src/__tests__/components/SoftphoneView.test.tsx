@@ -254,7 +254,10 @@ describe('Ready', () => {
       fireEvent.change(screen.getByTestId('log-to-select'), { target: { value: 'camp-1' } });
       fireEvent.change(caller(), { target: { value: '+912248901121' } });
       expect(caller().value).toBe('+912248901121');
-      expect(screen.getByTestId('caller-id-hint').textContent).toBe(pickedCallerIdHint(CAMPAIGN.campaign_name));
+      expect(screen.getByTestId('caller-id-hint').textContent).toBe(
+        'From Home Loan Renewals’s caller IDs. The contact’s agent number wins; another agent’s number gives way to the rotation.',
+      );
+      expect(pickedCallerIdHint(CAMPAIGN.campaign_name)).toBe(screen.getByTestId('caller-id-hint').textContent);
       fireEvent.change(caller(), { target: { value: '' } });
       expect(screen.getByTestId('caller-id-hint').textContent).toBe(AUTOMATIC_CALLER_ID_HINT);
       fireEvent.change(caller(), { target: { value: '+912248901121' } });

@@ -886,8 +886,7 @@ work is recorded (see the last bullet).
 ClickUp "Dedicated caller ID per agent allocation". A supervisor dedicates one of a campaign's
 caller IDs to an agent staffed on it, and every dial to a contact that agent owns on the campaign
 goes out from that number. Design and defaults: [`decisions.md`](decisions.md) §4, "Dedicated
-caller ID per agent". Server, db, contracts and console are built and merged on one branch; the
-review follow-ups below are in.
+caller ID per agent". Server, db, contracts and console.
 
 - Migration `0016_agent_caller_ids.sql`: `agency_campaign_agent_caller_ids`, one number per agent
   and one agent per number on a campaign (DN1). A row counts only while its agent is staffed on
@@ -896,49 +895,55 @@ review follow-ups below are in.
 - One rule for every dial path, `resolveCallerId` (`agency/pacing/caller-id-pool.ts`): the
   contact owner's dedicated number while the campaign still has it, else the rotation (the usable
   numbers minus the dedicated ones, or all of them when every one is dedicated). Pacing reads the
-  campaign's dedications once per dialling batch; the agent's own call, the wrap-up redial (WR7's
-  "same number" kept only while it is in the rotation) and the soft phone tagged to a campaign
-  read them per dial (DN2–DN4). The soft phone refuses a caller ID outside the campaign's set as
-  before, and dials a matched owned contact from the owner's number whatever in-set caller ID was
-  sent (the mobile app sends the campaign's first by default; the console's tagged default is
-  Automatic, sending none); the response's `caller_id` says which.
+  campaign's dedications once per dialling batch (a failed read returns the batch undialled; its
+  log is throttled per campaign, once a minute while it keeps failing); the agent's own call, the
+  wrap-up redial (WR7's "same number" kept only while it is in the rotation) and the soft phone
+  tagged to a campaign read them per dial (DN2–DN4).
+- The soft phone tagged to a campaign refuses a caller ID outside the campaign's set as before.
+  An in-set request goes through the same rule as the redial's previous number: the matched
+  contact owner's dedicated number whatever was requested, else the requested number while it is
+  in the rotation, else the rotation's pick, so another agent's dedicated number never goes out
+  for a contact that is not theirs (the mobile app sends the campaign's first caller ID by
+  default; the console's tagged default is Automatic, sending none). The response's `caller_id`
+  says which number was dialled.
 - Supervisor routes `GET /campaigns/:id/agent-caller-ids`, `PUT` / `DELETE
-  /campaigns/:id/agents/:userId/caller-id` beside the contact-assignment routes, behind
-  `agency_contact_assignment_enabled`; audited `agency_campaign.agent_caller_id_set` /
-  `_cleared` (DN5, DN9, DN10). The PUT checks the staffing and the campaign's caller IDs inside
-  its transaction, under locks an unstaff and a campaign PATCH meet. The campaign PATCH refuses
-  to drop a dedicated number (`caller_id_dedicated`, DN6), checked under the campaign row's lock.
-  Unstaff releases the number on all three paths whatever `on_unstaff` says (DN7). The agent's My
-  contacts summary carries `caller_id`. The console's campaign Agents tab sets and releases the
+  /campaigns/:id/agents/:userId/caller-id` beside the contact-assignment routes; audited
+  `agency_campaign.agent_caller_id_set` / `_cleared` (DN5, DN10). Only the PUT is behind
+  `agency_contact_assignment_enabled` (403 `assignment_disabled`); the list and the release work
+  with the flag off, so a dedication made while it was on can be seen and released (DN9). The PUT
+  checks the staffing and the campaign's caller IDs inside its transaction, under locks an
+  unstaff and a campaign PATCH meet. The campaign PATCH refuses to drop a dedicated number
+  (`caller_id_dedicated`, DN6), checked under the campaign row's lock.
+- Unstaff releases the number on all three paths whatever `on_unstaff` says (DN7), except on a
+  campaign the agent has been staffed on again by the time the release runs; it audits only a
+  number that was effective on the staffing that closed, and deletes an older stale row silently.
+- The agent's My contacts summary carries `caller_id` (null when the read fails, with a warning,
+  rather than failing the summary). The console's campaign Agents tab sets and releases the
   numbers; the agent's My contacts panel names theirs.
-- Counts (2026-11-06, the merged branch after the review follow-ups, from inside each package):
-  `apps/server` unit 8200 passed + 42 skipped (409 files), rest lane 2016 passed + 9 expected fail
-  + 1 skipped (206 files + 1 skipped), wall-clock lane 15 (3 files); `packages/db` unit 428 (25
-  files), integration 573 (55 files); `apps/console` 5424 (284 files); `packages/contracts` 301
-  (11 files); `apps/super-admin` 446, `packages/web-ui` 235, `packages/domain` 61,
-  `packages/observability` 14; `pnpm lint` clean at the root; `pnpm test:grafana` 33 and
-  `pnpm test:release` 10 pass; console and server builds clean. One full run had a plan-shape
-  assertion fail in each of `db/attempt-indexes-migration.test.ts` and
-  `agency/insights-reads.test.ts` (both pass alone, 3 of 3, and in the full rerun these counts
-  come from); neither touches this change's code.
+- Counts (2026-11-06, from inside each package): `apps/server` unit 8207 passed + 42 skipped (410 files), rest lane
+  2022 passed + 9 expected fail + 1 skipped (206 files + 1 skipped), wall-clock lane 15 (3 files); `packages/db` unit 428 (25 files), integration 573 (55 files);
+  `packages/contracts` 301 (11 files), `contracts-literals --check` up to date; `apps/console`
+  5424 (284 files); `pnpm lint` clean in `apps/server` and `packages/contracts`.
 - Not run: the mobile app's `agency_wire` `dart test` (no Dart toolchain on the build machine;
   the summary fixture gained `caller_id`, which the Dart decoder ignores as an unknown key).
-- Follow-ups: the mobile app showing the agent's dedicated number; the mobile soft phone's
-  default for an unowned or unmatched number is still the campaign's `caller_ids[0]`, which may be
-  another agent's dedicated number, until the app omits `caller_id` by default and lets the server
-  pick from the rotation (an owned contact is already dialled from its owner's number).
+- Follow-ups ([`decisions.md`](decisions.md) §5): per-number concurrency (`phone_numbers.max_concurrent_calls`
+  is enforced on no dial path, and a dedication concentrates traffic on one number); the mobile
+  app omitting `caller_id` by default (its `caller_ids[0]` default is now kept only while it is in
+  the rotation) and showing the agent's dedicated number.
 
 ## Test counts
 
-Latest run, 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`) after the
-review fixes, from inside each package (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33
-and `pnpm test:release` 10 pass; `pnpm build` clean). Integration on `05e988e`; unit, release,
-Grafana and build again after merging `main` (#36):
+Latest run of `apps/server` and `packages/db`, 2026-11-06, the dedicated caller ID branch
+(DN1–DN10) after its review fixes, from inside each package (`pnpm lint` clean in `apps/server`).
+The other rows are from 2026-11-04, the campaign insights branch (`sapieonic/magick-agency#39`)
+after the review fixes (`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
+`pnpm test:release` 10 pass; `pnpm build` clean; integration on `05e988e`; unit, release, Grafana
+and build again after merging `main` (#36)):
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 8036 passed + 42 skipped (404 files) | rest lane 1916 passed + 9 expected fail + 1 skipped (198 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 562 (53 files) |
+| `apps/server` | 8207 passed + 42 skipped (410 files) | rest lane 2022 passed + 9 expected fail + 1 skipped (206 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 573 (55 files) |
 | `apps/console` | 5122 (270 files) | — |
 | `apps/super-admin` | 436 | — |
 | `packages/contracts` | 281, `contracts-literals --check` up to date | — |

@@ -576,6 +576,13 @@ export class AgencyAssignmentRepository {
    * together. Returns a row per campaign where the agent held an open contact (or one on a
    * call), `held`, or had a number released, `released_caller_id`, so the caller audits
    * exactly those.
+   *
+   * The release skips a campaign the agent has been staffed on AGAIN by the time it runs (an
+   * active staffing row exists): a number set since that re-staffing is theirs now, and a row
+   * older than it is already not effective (DN1) and is replaced by the next PUT. Of the rows it
+   * deletes, only one effective for the staffing that just closed (set at or after that row's
+   * `assigned_at`) is reported as released, and so audited; an older row a failed release left
+   * behind is deleted silently (it was never effective, so nothing was released).
    */
   async returnOnUnstaff(input: {
     tenantId: string;
@@ -610,11 +617,21 @@ export class AgencyAssignmentRepository {
            (tenant_id, campaign_id, contact_id, from_user_id, to_user_id, actor_user_id, reason, batch_id)
          SELECT $1::uuid, u.campaign_id, u.id, $2::uuid, NULL, $4::uuid, 'unstaffed', u.batch_id FROM upd u
          RETURNING campaign_id),
-       rel AS (
+       rel_all AS (
          DELETE FROM agency_campaign_agent_caller_ids d
           USING camp
           WHERE d.campaign_id = camp.id AND d.user_id = $2::uuid
-         RETURNING d.campaign_id, d.caller_id)
+            AND NOT EXISTS (
+              SELECT 1 FROM agency_campaign_agents s
+               WHERE s.campaign_id = d.campaign_id AND s.user_id = d.user_id AND s.unassigned_at IS NULL)
+         RETURNING d.campaign_id, d.caller_id, d.set_at),
+       rel AS (
+         SELECT r.campaign_id, r.caller_id FROM rel_all r
+          WHERE r.set_at >= (
+            SELECT s.assigned_at FROM agency_campaign_agents s
+             WHERE s.campaign_id = r.campaign_id AND s.user_id = $2::uuid AND s.unassigned_at IS NOT NULL
+             ORDER BY s.unassigned_at DESC, s.assigned_at DESC
+             LIMIT 1))
        SELECT camp.id::text AS campaign_id, camp.account_id::text AS account_id, camp.on_unstaff,
               camp.batch_id::text AS batch_id,
               (SELECT count(*) FROM ins WHERE ins.campaign_id = camp.id)::int AS moved,

@@ -1242,12 +1242,32 @@ describe('campaign detail — dedicated caller IDs on the staffing list', () => 
     expect(mocks.getAgentCallerIds).toHaveBeenCalledWith('camp-1', 'tenant-1', 'account-1');
   });
 
-  it('with the flag off, nothing is read and no caller ID is shown', async () => {
+  it('with the flag off and no dedications, the caller IDs are read once and nothing is shown', async () => {
     mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
     renderPage('agents');
     await screen.findByText('Ravi');
+    // Read whatever the flag, so a dedication made while it was on can be released.
+    await waitFor(() => expect(mocks.getAgentCallerIds).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId('caller-id-usr_person')).toBeNull();
-    expect(mocks.getAgentCallerIds).not.toHaveBeenCalled();
+    expect(screen.queryByText(/caller ID/i)).toBeNull();
+  });
+
+  it('with the flag off, a dedicated number is shown with only its release', async () => {
+    mocks.listCampaignAgents.mockResolvedValue({ agents: [AGENT] });
+    mocks.getAgentCallerIds.mockResolvedValue({
+      campaign_id: 'camp-1',
+      caller_ids: ['+912200000001'],
+      dedicated: [{
+        campaign_id: 'camp-1', user_id: 'usr_person', agent_name: 'Ravi', caller_id: '+912200000001',
+        in_campaign: true, set_at: '2026-11-02T09:00:00.000Z', set_by_user_id: 'usr_sup',
+      }],
+      rotation: ['+912200000001'],
+      all_dedicated: true,
+    });
+    renderPage('agents');
+    await waitFor(() => expect(screen.getByTestId('caller-id-usr_person').textContent).toContain('+91 22000 00001'));
+    expect(screen.getByRole('button', { name: 'Use shared rotation for Ravi' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Change caller ID/ })).toBeNull();
   });
 
   it.each(['agent', 'viewer', 'operator'])('%s with the flag on issues no caller ID read', async (role) => {

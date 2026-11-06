@@ -1096,7 +1096,8 @@ export function useSoftphone(options: UseSoftphoneOptions): SoftphoneState {
       setTagDraft(tagOk ? tagId : null);
       // The number it went from, tagged or not: a redial goes out from the same number
       // (as WR7's wrap-up redial). On a tagged call the server still dials from the
-      // contact's agent number when it has one (DN4), whatever is sent. A number the
+      // contact's agent number when it has one (DN4), whatever is sent, and from the
+      // rotation instead of a number since dedicated to another agent. A number the
       // campaign no longer has falls back to the default (`draftCallerId`'s check).
       setCallerDraft(from.caller_id);
       setDialError(null);
