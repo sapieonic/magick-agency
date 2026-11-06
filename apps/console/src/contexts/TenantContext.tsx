@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useAuth } from './AuthContext';
 import { useUrlScope } from './UrlScopeContext';
+import { loadPage } from '../utils/pageLoad';
+import { isUnscopedPagePath, withUrlScope } from '../utils/urlScope';
 import { listAccounts, listMyAccounts } from '../api/accounts';
 import type { Tenant, TenantAccount, Membership, Role } from '../types/auth';
 
@@ -76,8 +78,16 @@ interface TenantContextValue {
   accountResolution: AccountResolution;
   /** What to tell the user when `accountResolution` is `'error'` or `'degraded'`. */
   accountError: string | null;
+  /**
+   * Switch tenant. Inside the app this RELOADS the console at the new tenant's
+   * home (its last-used or first account); see `setActiveTenantId` below.
+   */
   setActiveTenantId: (id: string) => void;
-  setActiveAccountId: (id: string | null) => void;
+  /**
+   * Switch account. Inside the app this RELOADS the console under the account, at
+   * its home or at `options.path` (an app path, e.g. `/station?campaign=…`).
+   */
+  setActiveAccountId: (id: string | null, options?: { path?: string }) => void;
   reloadAccounts: () => void;
 }
 
@@ -92,11 +102,11 @@ const TenantContext = createContext<TenantContextValue | null>(null);
  *  - **URL → state.** A scope in the URL is adopted, on load and whenever it
  *    changes (a pasted link, the back button). An account the URL names is
  *    preferred over the one this browser last used.
- *  - **state → URL.** `setActiveTenantId` and `setActiveAccountId` (the switchers)
- *    move the URL as well as the state, so the address bar never names an
- *    account other than the one on screen. A tenant switch leaves the scope
- *    (the new tenant's account is not known until its accounts load) and
- *    `ScopeGate` re-enters it once one is picked.
+ *  - **Switching reloads.** `setActiveTenantId` and `setActiveAccountId` (the
+ *    switchers) load the console afresh at the new account's home — not the page
+ *    the user was on, whose record (a campaign, a call) belongs to the account
+ *    being left, and not in place, so nothing built for that account (contexts,
+ *    caches, polls, sockets) carries over.
  *
  * `localStorage` is still written and read, as the fallback for a URL that names
  * no scope (an old `/dialer` bookmark, `/` after sign-in) or one this person
@@ -108,7 +118,7 @@ const TenantContext = createContext<TenantContextValue | null>(null);
  */
 export function TenantProvider({ children }: { children: ReactNode }) {
   const { tenants, memberships, user } = useAuth();
-  const { scope: urlScope, go } = useUrlScope();
+  const { scope: urlScope, go, history: urlHistory } = useUrlScope();
   /** The URL's scope NOW, for async work and callbacks that must not re-run on it. */
   const urlScopeRef = useRef(urlScope);
   urlScopeRef.current = urlScope;
@@ -160,6 +170,9 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       ? urlScope.accountId
       : null;
   const activeAccountId = urlAccountId ?? selectedAccountId;
+  /** The active account NOW, for callbacks that must not be rebuilt on it. */
+  const activeAccountIdRef = useRef(activeAccountId);
+  activeAccountIdRef.current = activeAccountId;
 
   /**
    * Resolve the tenant's accounts, **preferring the full list and falling back to
@@ -396,12 +409,30 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   const role = tenantMembership?.role ?? accountMembership?.role;
 
   /**
-   * Switch tenant. On a scoped page this also LEAVES the scope, keeping the app
-   * path: the new tenant's account is not known until its accounts load, and
-   * `ScopeGate` puts the URL back under `/t/<new>/a/<account>` once it is.
+   * Whether a switch should reload the console: it is running under the app's
+   * router (`UrlScopeProvider`, so there is a page to reload) and the page is an
+   * app page rather than a sign-in or invite page. On those (the invite claim
+   * picks the tenant it just joined, then navigates) the choice is only recorded,
+   * and `ScopeGate` scopes the next app page by it.
+   */
+  const switchReloads = useCallback(
+    () => urlHistory !== null && !isUnscopedPagePath(urlHistory.location.pathname),
+    [urlHistory],
+  );
+
+  /**
+   * Switch tenant. Inside the app: a full reload at the unscoped root, with the
+   * new tenant recorded as this browser's choice, so the console opens it at its
+   * home on the account it last used there (or its first) — the account is not
+   * known until the tenant's accounts load. Elsewhere: state only.
    */
   const setActiveTenantId = useCallback((id: string) => {
-    if (urlScopeRef.current && urlScopeRef.current.tenantId !== id) go(null);
+    if (switchReloads()) {
+      if (id === activeTenantRef.current) return;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ tenantId: id }));
+      loadPage('/');
+      return;
+    }
     setActiveTenantIdState(id);
     setActiveAccountIdState(null);
     setAccounts([]);
@@ -410,17 +441,29 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     setAccountResolution('loading');
     setAccountError(null);
     accountsLoadedForTenant.current = null; // Force re-fetch for new tenant
-  }, [go]);
+  }, [switchReloads]);
 
   /**
-   * Switch account. On a scoped page the URL moves with it — pushed, so the back
-   * button returns to the account the user came from — keeping the app path.
+   * Switch account. Inside the app: a full reload under the account's scope, at
+   * its home — or at `options.path`, for a caller that knows where the user is
+   * going (the soft phone's "Go to station" for a session in a sibling account).
+   * A push, so the back button returns to the account the user came from.
+   * Choosing the account already open is not a switch: no reload, though a
+   * `path` is still followed. Elsewhere: state only.
    */
-  const setActiveAccountId = useCallback((id: string | null) => {
-    setActiveAccountIdState(id);
+  const setActiveAccountId = useCallback((id: string | null, options?: { path?: string }) => {
     const tenant = activeTenantRef.current;
-    if (id && tenant && urlScopeRef.current) go({ tenantId: tenant, accountId: id });
-  }, [go]);
+    if (id && tenant && switchReloads()) {
+      const target = { tenantId: tenant, accountId: id };
+      if (id === activeAccountIdRef.current) {
+        if (options?.path) go(target, options.path);
+        return;
+      }
+      loadPage(withUrlScope(target, options?.path ?? '/'));
+      return;
+    }
+    setActiveAccountIdState(id);
+  }, [switchReloads, go]);
 
   /**
    * Re-resolve. Doubles as the **Retry** behind the terminal error screen, which
