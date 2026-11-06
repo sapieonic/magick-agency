@@ -7,21 +7,19 @@ import type {
 import type { AgencyAttemptOutcome } from '@magick-agency/contracts/agency/enums';
 import { attemptOutcomeLabel } from '@magick-agency/contracts/api/agency/agency-spine';
 import { CHANNEL_LABELS } from '../../../utils/customerHistoryCopy';
+import { isInvertedDayRange } from '../../../utils/agencyAttemptFilters';
+import { actorName } from '../../../utils/agency/insights/copy';
 import styles from './CustomerHistory.module.css';
 
-/** `YYYY-MM-DD` (a date input's value) → the reader's local midnight, as an ISO instant. */
-export function dayStartIso(day: string): string | undefined {
+/**
+ * `YYYY-MM-DD` (a date input's value), moved on `plusDays`, as the reader's local
+ * midnight in an ISO instant. `to` passes 1: the range is half-open, so the day
+ * after includes the whole chosen day.
+ */
+function localDayIso(day: string, plusDays = 0): string | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return undefined;
   const [y, m, d] = day.split('-').map(Number) as [number, number, number];
-  const date = new Date(y, m - 1, d);
-  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
-}
-
-/** The day after, so `to` (half-open) includes the whole chosen day. */
-export function dayEndExclusiveIso(day: string): string | undefined {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return undefined;
-  const [y, m, d] = day.split('-').map(Number) as [number, number, number];
-  const date = new Date(y, m - 1, d + 1);
+  const date = new Date(y, m - 1, d + plusDays);
   return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
 }
 
@@ -51,9 +49,9 @@ export const EMPTY_FILTER_FORM: CustomerTimelineFilterForm = {
 export function filtersFromForm(form: CustomerTimelineFilterForm): CustomerTimelineFilters {
   const filters: CustomerTimelineFilters = {};
   if (form.campaignId) filters.campaign_ids = [form.campaignId];
-  const from = form.fromDay ? dayStartIso(form.fromDay) : undefined;
+  const from = localDayIso(form.fromDay);
   if (from) filters.from = from;
-  const to = form.toDay ? dayEndExclusiveIso(form.toDay) : undefined;
+  const to = localDayIso(form.toDay, 1);
   if (to) filters.to = to;
   if (form.outcome) filters.outcomes = [form.outcome as AgencyAttemptOutcome];
   if (form.dispositionCode) filters.disposition_codes = [form.dispositionCode];
@@ -64,15 +62,44 @@ export function filtersFromForm(form: CustomerTimelineFilterForm): CustomerTimel
 }
 
 /** The British-English refusal for a "To" day before the "From" day; never sent to the server. */
-export const REVERSED_RANGE_MESSAGE = 'The end date must be on or after the start date.';
+const REVERSED_RANGE_MESSAGE = 'The end date must be on or after the start date.';
 
 /** Both days set and the end before the start (`YYYY-MM-DD` compares as text). */
 export function isReversedRange(form: Pick<CustomerTimelineFilterForm, 'fromDay' | 'toDay'>): boolean {
-  return form.fromDay !== '' && form.toDay !== '' && form.toDay < form.fromDay;
+  return isInvertedDayRange(form.fromDay, form.toDay);
 }
 
 export function hasAnyFilter(form: CustomerTimelineFilterForm): boolean {
   return Object.keys(filtersFromForm(form)).length > 0;
+}
+
+/** A labelled `<select>` whose first option, `''`, means "no filter"; option keys are their values. */
+function FilterSelect({
+  id,
+  label,
+  allLabel,
+  value,
+  options,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  allLabel: string;
+  value: string;
+  options: readonly (readonly [value: string, label: string])[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className={styles.filter}>
+      <label htmlFor={id}>{label}</label>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{allLabel}</option>
+        {options.map(([v, text]) => (
+          <option key={v} value={v}>{text}</option>
+        ))}
+      </select>
+    </div>
+  );
 }
 
 export function CustomerTimelineFiltersBar({
@@ -95,15 +122,14 @@ export function CustomerTimelineFiltersBar({
   return (
     <fieldset className={styles.filters} disabled={disabled}>
       <legend className="sr-only">Filter the timeline</legend>
-      <div className={styles.filter}>
-        <label htmlFor={`${id}-campaign`}>Campaign</label>
-        <select id={`${id}-campaign`} value={form.campaignId} onChange={(e) => set('campaignId', e.target.value)}>
-          <option value="">All campaigns</option>
-          {options.campaigns.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-      </div>
+      <FilterSelect
+        id={`${id}-campaign`}
+        label="Campaign"
+        allLabel="All campaigns"
+        value={form.campaignId}
+        options={options.campaigns.map((c) => [c.id, c.name])}
+        onChange={(v) => set('campaignId', v)}
+      />
       <div className={styles.filter}>
         <label htmlFor={`${id}-from`}>From</label>
         <input
@@ -128,33 +154,30 @@ export function CustomerTimelineFiltersBar({
           aria-describedby={reversed ? rangeErrorId : undefined}
         />
       </div>
-      <div className={styles.filter}>
-        <label htmlFor={`${id}-outcome`}>Outcome</label>
-        <select id={`${id}-outcome`} value={form.outcome} onChange={(e) => set('outcome', e.target.value)}>
-          <option value="">All outcomes</option>
-          {options.outcomes.map((o) => (
-            <option key={o} value={o}>{attemptOutcomeLabel(o)}</option>
-          ))}
-        </select>
-      </div>
-      <div className={styles.filter}>
-        <label htmlFor={`${id}-code`}>Outcome code</label>
-        <select id={`${id}-code`} value={form.dispositionCode} onChange={(e) => set('dispositionCode', e.target.value)}>
-          <option value="">All codes</option>
-          {options.disposition_codes.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-      </div>
-      <div className={styles.filter}>
-        <label htmlFor={`${id}-agent`}>Agent</label>
-        <select id={`${id}-agent`} value={form.agentUserId} onChange={(e) => set('agentUserId', e.target.value)}>
-          <option value="">All agents</option>
-          {options.agents.map((a) => (
-            <option key={a.user_id} value={a.user_id}>{a.name ?? 'A former user'}</option>
-          ))}
-        </select>
-      </div>
+      <FilterSelect
+        id={`${id}-outcome`}
+        label="Outcome"
+        allLabel="All outcomes"
+        value={form.outcome}
+        options={options.outcomes.map((o) => [o, attemptOutcomeLabel(o)])}
+        onChange={(v) => set('outcome', v)}
+      />
+      <FilterSelect
+        id={`${id}-code`}
+        label="Outcome code"
+        allLabel="All codes"
+        value={form.dispositionCode}
+        options={options.disposition_codes.map((c) => [c, c])}
+        onChange={(v) => set('dispositionCode', v)}
+      />
+      <FilterSelect
+        id={`${id}-agent`}
+        label="Agent"
+        allLabel="All agents"
+        value={form.agentUserId}
+        options={options.agents.map((a) => [a.user_id, actorName(a)])}
+        onChange={(v) => set('agentUserId', v)}
+      />
       <div className={styles.filter}>
         <label htmlFor={`${id}-channel`}>Channel</label>
         <select

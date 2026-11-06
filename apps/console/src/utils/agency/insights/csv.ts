@@ -51,7 +51,11 @@ export function insightsCsvFilename(campaignName: string | null | undefined, sec
 
 /** Hand the text to the browser as a download. */
 export function downloadCsv(filename: string, csv: string): void {
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(filename, new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+}
+
+/** Hand a blob to the browser as a download. */
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

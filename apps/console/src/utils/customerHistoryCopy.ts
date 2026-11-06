@@ -38,7 +38,7 @@ function retryWait(seconds: number | null | undefined): string {
 }
 
 /** CH11: the per-user search cap, hit by a search. */
-export function customerSearchRateLimitMessage(seconds: number | null | undefined): string {
+function customerSearchRateLimitMessage(seconds: number | null | undefined): string {
   return `You've searched a lot of numbers in a short time. ${retryWait(seconds)}`;
 }
 
@@ -51,7 +51,7 @@ export function customerSearchRateLimitMessage(seconds: number | null | undefine
  */
 export type CustomerHistoryRequestKind = 'search' | 'export' | 'timeline';
 
-export function customerHistoryRateLimitMessage(kind: CustomerHistoryRequestKind, seconds: number | null | undefined): string {
+function customerHistoryRateLimitMessage(kind: CustomerHistoryRequestKind, seconds: number | null | undefined): string {
   switch (kind) {
     case 'search':
     case 'export':
@@ -65,9 +65,9 @@ export function customerHistoryRateLimitMessage(kind: CustomerHistoryRequestKind
 export const CONTACTS_TRUNCATED_NOTE =
   'Showing the 2,000 most recent roster rows for this number. The timeline still includes every call.';
 
-export const SEARCH_EXPIRED_MESSAGE = 'This search has expired. Search the number again.';
+const SEARCH_EXPIRED_MESSAGE = 'This search has expired. Search the number again.';
 
-export type CustomerHistoryRefusal =
+type CustomerHistoryRefusal =
   | { kind: 'rate_limited'; message: string }
   | { kind: 'search_expired'; message: string }
   | { kind: 'refused'; code: CustomerHistoryErrorCode; message: string }

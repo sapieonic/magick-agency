@@ -4,6 +4,7 @@ import { Check, Copy, Download, History } from 'lucide-react';
 import type {
   CustomerSearchResponse,
   CustomerTimelineEntry,
+  CustomerTimelineFilters,
 } from '@magick-agency/contracts/api/agency/customer-history';
 import { EmptyState } from '@magick-agency/web-ui/components/EmptyState';
 import { ErrorAlert } from '@magick-agency/web-ui/components/ErrorAlert';
@@ -33,6 +34,7 @@ import {
   type CustomerHistoryLocationState,
 } from '../../utils/customerHistoryStore';
 import { customerHistoryRefusal, type CustomerHistoryRequestKind } from '../../utils/customerHistoryCopy';
+import { downloadBlob } from '../../utils/agency/insights/csv';
 import styles from '../../components/agency/customers/CustomerHistory.module.css';
 
 /**
@@ -89,6 +91,11 @@ function CopyNumberButton({ value }: { value: string }) {
       {copied ? <Check size={14} aria-hidden="true" /> : <Copy size={14} aria-hidden="true" />}
     </button>
   );
+}
+
+/** The request's `filters`, left out when none is set. */
+function withFilters(filters: CustomerTimelineFilters): { filters?: CustomerTimelineFilters } {
+  return Object.keys(filters).length > 0 ? { filters } : {};
 }
 
 /** The filters a "Search again" carried onto this search id, when they are a form. */
@@ -175,12 +182,8 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
       }
       setLoading(true);
       try {
-        const nextFilters = filtersFromForm(next);
         const page = await getCustomerTimeline(
-          {
-            search_id: answer.search_id,
-            ...(Object.keys(nextFilters).length > 0 ? { filters: nextFilters } : {}),
-          },
+          { search_id: answer.search_id, ...withFilters(filtersFromForm(next)) },
           tenant,
           account,
         );
@@ -212,11 +215,7 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
     setError(null);
     try {
       const page = await getCustomerTimeline(
-        {
-          search_id: answer.search_id,
-          cursor: nextCursor,
-          ...(Object.keys(filters).length > 0 ? { filters } : {}),
-        },
+        { search_id: answer.search_id, cursor: nextCursor, ...withFilters(filters) },
         tenant,
         account,
       );
@@ -238,16 +237,11 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
     setError(null);
     try {
       const result = await exportCustomerHistory(
-        { search_id: answer.search_id, ...(Object.keys(filters).length > 0 ? { filters } : {}) },
+        { search_id: answer.search_id, ...withFilters(filters) },
         tenant,
         account,
       );
-      const url = URL.createObjectURL(result.blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = result.filename;
-      link.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(result.filename, result.blob);
       setExportNote(
         result.truncated
           ? 'Export downloaded, but this history is longer than one file holds: only the newest rows are in it. Narrow the filters to export the rest.'

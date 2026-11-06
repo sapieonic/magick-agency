@@ -297,7 +297,6 @@ describe('the live preview and the refusals', () => {
         for (const f of [typing, revealed]) {
           expect(f, row.input).toEqual({
             kind: 'preview',
-            text: `We'll search for ${row.formatted}`,
             formatted: row.formatted,
             e164: row.e164,
           });

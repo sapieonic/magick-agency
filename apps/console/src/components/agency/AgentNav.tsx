@@ -42,28 +42,27 @@ const ICONS: Record<AgentSurfaceId, typeof ListChecks> = {
   customers: Search,
 };
 
+/**
+ * The caller's role, failing closed (`undefined`) with no provider above, the same
+ * reasoning as `useFeatureFlagEnabled`: `useTenant` reads its context before it
+ * throws, so the hook order is stable.
+ */
+function useRoleOrNone(): ReturnType<typeof useTenant>['role'] {
+  try {
+    return useTenant().role;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Whether this caller may search customer history (`agency.customer_history.read`, CH1). */
 export function useCustomerHistoryAvailable(): boolean {
-  // Fails closed with no provider above, as `useSoftphoneAvailable` does.
-  let role: ReturnType<typeof useTenant>['role'];
-  try {
-    role = useTenant().role;
-  } catch {
-    role = undefined;
-  }
-  return hasPermission(role, 'agency.customer_history.read');
+  return hasPermission(useRoleOrNone(), 'agency.customer_history.read');
 }
 
 /** Whether this caller gets the soft phone: the flag on for the account, and `agency.softphone.dial`. */
 export function useSoftphoneAvailable(): boolean {
-  // Fails closed with no provider above (the same reasoning as `useFeatureFlagEnabled`):
-  // `useTenant` reads its context before it throws, so the hook order is stable.
-  let role: ReturnType<typeof useTenant>['role'];
-  try {
-    role = useTenant().role;
-  } catch {
-    role = undefined;
-  }
+  const role = useRoleOrNone();
   const flagOn = useFeatureFlagEnabled(SOFTPHONE_FLAG);
   return flagOn && hasPermission(role, 'agency.softphone.dial');
 }

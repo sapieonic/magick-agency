@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { memo, useMemo, type ReactNode } from 'react';
 import type {
   CustomerTimelineCampaignCall,
   CustomerTimelineEntry,
@@ -15,13 +15,9 @@ import {
   formatWhen,
   overrideAppliedLabel,
 } from '../../../utils/customerHistoryCopy';
+import { actorName } from '../../../utils/agency/insights/copy';
 import { CustomerCallLink } from './CustomerCallLink';
 import styles from './CustomerHistory.module.css';
-
-function agentName(agent: { name: string | null } | null): string {
-  if (!agent) return 'No agent';
-  return agent.name ?? 'A former user';
-}
 
 function Notes({ notes, hidden }: { notes: string | null; hidden: boolean }) {
   if (hidden) return <p className={styles.muted} data-testid="customer-notes-hidden">Notes hidden</p>;
@@ -32,7 +28,7 @@ function Notes({ notes, hidden }: { notes: string | null; hidden: boolean }) {
 function CallFacts({ entry }: { entry: CustomerTimelineCampaignCall | CustomerTimelineSoftphoneCall }) {
   return (
     <ul className={styles.meta}>
-      <li>{agentName(entry.agent)}</li>
+      <li>{actorName(entry.agent, 'No agent')}</li>
       <li>{attemptOutcomeLabel(entry.outcome)}</li>
       {entry.disposition_code && <li>Outcome code: {entry.disposition_code}</li>}
       {entry.talk_seconds != null && entry.talk_seconds > 0 && <li>Talk time {durationWords(entry.talk_seconds)}</li>}
@@ -159,10 +155,10 @@ function SoftphoneCallRow({ entry }: { entry: CustomerTimelineSoftphoneCall }) {
   );
 }
 
-export function CustomerTimelineRow({ entry, chains }: { entry: CustomerTimelineEntry; chains?: RedialChains }) {
+function CustomerTimelineRow({ entry, chains }: { entry: CustomerTimelineEntry; chains: RedialChains }) {
   switch (entry.kind) {
     case 'campaign_call':
-      return <CampaignCallRow entry={entry} chains={chains ?? redialChains([entry])} />;
+      return <CampaignCallRow entry={entry} chains={chains} />;
     case 'softphone_call':
       return <SoftphoneCallRow entry={entry} />;
     case 'callback':
@@ -171,7 +167,7 @@ export function CustomerTimelineRow({ entry, chains }: { entry: CustomerTimeline
           <ul className={styles.meta}>
             <li>Due {formatWhen(entry.due_at)}</li>
             {entry.campaign && <li>{entry.campaign.name}</li>}
-            <li>Booked by {agentName(entry.booked_by)}</li>
+            <li>Booked by {actorName(entry.booked_by, 'No agent')}</li>
             {entry.dialled_at && <li>Next call {formatWhen(entry.dialled_at)}</li>}
           </ul>
         </Row>
@@ -201,7 +197,8 @@ export function CustomerTimelineRow({ entry, chains }: { entry: CustomerTimeline
   }
 }
 
-export function CustomerTimelineList({ entries }: { entries: CustomerTimelineEntry[] }) {
+/** Memoised: the page re-renders on every loading or export flag, and `entries` only changes with the rows. */
+export const CustomerTimelineList = memo(function CustomerTimelineList({ entries }: { entries: CustomerTimelineEntry[] }) {
   const chains = useMemo(() => redialChains(entries), [entries]);
   return (
     <ol className={styles.timeline} aria-label="Timeline, newest first">
@@ -210,4 +207,4 @@ export function CustomerTimelineList({ entries }: { entries: CustomerTimelineEnt
       ))}
     </ol>
   );
-}
+});

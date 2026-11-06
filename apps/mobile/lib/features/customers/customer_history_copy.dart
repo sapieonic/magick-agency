@@ -45,7 +45,6 @@ abstract final class CustomerHistoryCopy {
 
   // The summary.
   static const liveNow = 'Live now';
-  static const totals = 'Calls';
   static String totalsLine(int calls, int connected) =>
       '$calls call${calls == 1 ? '' : 's'} placed · $connected connected';
   static const neverContacted = 'Never contacted';

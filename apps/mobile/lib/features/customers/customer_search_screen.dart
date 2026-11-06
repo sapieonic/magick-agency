@@ -53,10 +53,10 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
 
   CustomerHistoryController get _controller => ref.read(customerHistoryControllerProvider.notifier);
 
-  Future<void> _search([String? raw]) async {
+  Future<void> _search() async {
     FocusScope.of(context).unfocus();
     setState(() => _submitted = true);
-    final found = await _controller.search(raw ?? _text.text);
+    final found = await _controller.search(_text.text);
     if (!found || !mounted) return;
     unawaited(context.push<void>(Routes.customerHistory));
   }
@@ -207,7 +207,7 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
                 enabled: !s.searching,
                 onTap: () {
                   _text.text = r.e164;
-                  unawaited(_search(r.e164));
+                  unawaited(_search());
                 },
               ),
           ],

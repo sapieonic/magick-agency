@@ -31,7 +31,7 @@ import {
 import styles from './CustomerSearchBox.module.css';
 
 export type CustomerSearchFeedback =
-  | { kind: 'preview'; text: string; formatted: string; e164: string }
+  | { kind: 'preview'; formatted: string; e164: string }
   | { kind: 'error'; text: string }
   | null;
 
@@ -52,7 +52,7 @@ export type CustomerSearchFeedback =
 export function customerSearchFeedback(raw: string, country: SearchCountry, revealed: boolean): CustomerSearchFeedback {
   const result = parseSearchNumber(raw, country);
   if (result.ok) {
-    return { kind: 'preview', text: customerSearchPreview(result.formatted), formatted: result.formatted, e164: result.e164 };
+    return { kind: 'preview', formatted: result.formatted, e164: result.e164 };
   }
   if ((result.code === 'empty' || result.code === 'too_short') && !revealed) return null;
   return { kind: 'error', text: result.message };

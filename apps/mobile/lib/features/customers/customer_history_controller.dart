@@ -348,9 +348,6 @@ class CustomerHistoryController extends Notifier<CustomerHistoryState> {
     }
   }
 
-  /// Searches a recent number again (its E.164, so any picked country reads it).
-  Future<bool> searchRecent(RecentSearch recent) => search(recent.e164);
-
   /// After `search_expired`: the same number, a new search id.
   Future<bool> searchAgain() {
     final key = state.result?.key;
