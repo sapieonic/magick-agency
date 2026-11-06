@@ -680,7 +680,8 @@ a rate-limit key and never an auth input.
   stay unscoped (`isUnscopedPagePath` in `utils/returnPath.ts`). `/t` and `/a` because `/tenants` and
   `/accounts` are API prefixes in nginx and the Vite proxy. PostHog sees the prefix as
   `/t/:tenant/a/:account` (`analytics/redact.ts`); the ids travel as its `tenant` and `account`
-  groups.
+  groups. The prefix's shape is `packages/contracts` (`api/platform/console-urls.ts`), which the
+  server's campaign-completion link builds with too.
 - **Super-admin console** (`apps/super-admin`). Tenants (and their accounts), users, admins, phone
   numbers, feature flags, usage and audit; `saFetch` with the JWT in `sessionStorage`; a dev proxy for `/super-admin`. Same
   branding guard.

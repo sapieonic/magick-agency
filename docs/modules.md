@@ -1148,11 +1148,13 @@ _No dedicated test files._
 
 ### `packages/contracts/src/api/platform/`
 
-Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, super-admin and usage. `super-admin-telephony-credentials.ts` also exports `TELEPHONY_CREDENTIAL_ERROR_CODES`, the runtime list of its error-code union with an exhaustiveness guard (snapshot in `exports.test.ts`).
+Wire types for the platform API: auth and session, team, invites, notifications, settings, feature flags, super-admin and usage. `console-urls.ts` is the console's tenant/account URL scope (B26): `consoleScopePrefix` builds `/t/:tenantId/a/:accountId` and `CONSOLE_SCOPE_PREFIX_RE` matches it, used by the console's `utils/urlScope.ts` and by the server's campaign-completion link, so the two build one shape. `super-admin-telephony-credentials.ts` also exports `TELEPHONY_CREDENTIAL_ERROR_CODES`, the runtime list of its error-code union with an exhaustiveness guard (snapshot in `exports.test.ts`).
 
-Files: `auth.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-telephony-credentials.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
+Files: `auth.ts`, `console-urls.ts`, `feature-flags.ts`, `index.ts`, `invite.ts`, `notifications.ts`, `settings.ts`, `super-admin-telephony-credentials.ts`, `super-admin-usage.ts`, `super-admin.ts`, `team.ts`
 
-_No dedicated test files._
+| Test file | Cases |
+|---|---|
+| `packages/contracts/test/console-urls.test.ts` | 15 |
 
 ## `packages/db`
 
@@ -1438,7 +1440,7 @@ Files: `ProductSurface.tsx`, `events.ts`, `posthog.ts`, `redact.ts`, `useProduct
 | `apps/console/src/__tests__/analytics/events.test.ts` | 10 |
 | `apps/console/src/__tests__/analytics/posthog.test.ts` | 23 |
 | `apps/console/src/__tests__/analytics/productSurface.test.tsx` | 12 |
-| `apps/console/src/__tests__/analytics/redact.test.ts` | 21 |
+| `apps/console/src/__tests__/analytics/redact.test.ts` | 22 |
 
 ### `apps/console/src/api/`
 
@@ -1554,7 +1556,7 @@ Files: `agency/AbandonmentMeter.module.css`, `agency/AbandonmentMeter.tsx` (the 
 | `apps/console/src/components/common/DateRangeFilter.timezone.test.tsx` | 1 |
 | `apps/console/src/components/common/Logo.test.tsx` | 5 |
 | `apps/console/src/__tests__/routing/appRouteTable.test.ts` | 13 |
-| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 31 |
+| `apps/console/src/__tests__/routing/scopedRouting.test.tsx` | 37 |
 
 ### `apps/console/src/components/softphone/`
 
@@ -1570,7 +1572,7 @@ Files: `CallDetailsColumn.tsx`, `CallFieldsForm.tsx`, `DialPad.tsx`, `OutcomeCol
 
 ### `apps/console/src/contexts/`
 
-React contexts: auth, tenant, theme and the rest (the toast context is in `packages/web-ui`). `AuthContext.tsx`'s invite-credential flow is in `authInvite.ts` (`useInviteJoin`, `useInviteCredentialFlow`) and its 6-hour cap check in `useSessionWatchdog.ts`; the context API is unchanged. `UrlScopeContext.tsx` owns the browser history and the tenant/account scope its URL carries; its `go` is the one way between scopes. `TenantContext` adopts the URL's tenant and account, reloads the console at the new account's home on a switch (`utils/pageLoad.ts`), and falls back to the saved choice in `localStorage` only on an unscoped URL.
+React contexts: auth, tenant, theme and the rest (the toast context is in `packages/web-ui`). `AuthContext.tsx`'s invite-credential flow is in `authInvite.ts` (`useInviteJoin`, `useInviteCredentialFlow`) and its 6-hour cap check in `useSessionWatchdog.ts`; the context API is unchanged. `UrlScopeContext.tsx` owns the browser history and the tenant/account scope its URL carries, in two contexts: the scope (`useUrlScope`; `useUrlHistory` where the real history is required) changes only with the tenant or account, the location (`useUrlLocation`, for `ScopedRouter`) on every navigation. Its `go` is the one way between scopes. `TenantContext` requires that provider, adopts the URL's tenant and account, reloads the console at the new account's home on a switch (`utils/pageLoad.ts`; a tenant switch resolves the tenant's first account first and loads its scope), and falls back to the saved choice in `localStorage` only on an unscoped URL or one the viewer cannot open, which it never saves.
 
 Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `TenantContext.tsx`, `ThemeContext.tsx`, `UrlScopeContext.tsx`, `authInvite.ts`, `useSessionWatchdog.ts`
 
@@ -1580,7 +1582,7 @@ Files: `AuthContext.tsx`, `FeatureFlagsContext.tsx`, `GovernanceContext.tsx`, `T
 | `apps/console/src/__tests__/contexts/AuthContext.test.tsx` | 46 |
 | `apps/console/src/__tests__/contexts/FeatureFlagsContext.test.tsx` | 16 |
 | `apps/console/src/__tests__/contexts/GovernanceContext.test.tsx` | 6 |
-| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 34 |
+| `apps/console/src/__tests__/contexts/TenantContext.test.tsx` | 35 |
 
 ### `apps/console/src/hooks/`
 

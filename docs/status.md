@@ -1199,11 +1199,28 @@ account their browser last had open. Every signed-in console page is now served 
   the gate.
 - 2026-11-06: a tenant or account switch no longer keeps the page the user was on (a record page
   carried into an account it does not belong to showed its not-found state). Inside the app it is a
-  full page load: an account switch at `/t/<tenant>/a/<account>`, a tenant switch at `/` with the
-  tenant recorded, so it opens on its last-used or first account (`utils/pageLoad.ts`). The soft
+  full page load: an account switch at `/t/<tenant>/a/<account>`, a tenant switch at the new
+  tenant's first account (`utils/pageLoad.ts`; refined in review, next bullet). The soft
   phone's two cross-account moves name their destination (the station, the soft phone); the invite
   claim, on an unscoped page, still only records the tenant it joined. The duplicate decision ID is
   gone: the invite-claims ruling keeps B25 and the API-on-its-own-host decision is B27.
+- 2026-11-06, review of [sapieonic/magick-agency#48](https://github.com/sapieonic/magick-agency/pull/48),
+  each fix pinned by a test that fails on the code before it:
+  - Retry no longer re-points a refused link at the first account. It re-points only a URL
+    whose account was open and has since gone, and lands at the replacement's home, not on the old record's page.
+  - A link to a tenant or account the viewer cannot open falls back to the workspace this
+    browser last had, not the session's first tenant, and is never saved. "Go to my workspace" is a full load of `/`.
+  - A tenant switch resolves the new tenant's accounts first and loads its scope directly. It
+    no longer writes `localStorage` before the browser commits the load, so cancelling the station's leave-page prompt changes nothing.
+    A tenant with no account to open is switched to in place, at `/`.
+  - The tenant adoption re-runs when the session's tenants change, so `ScopeGate`'s wait for
+    it ends.
+  - `TenantProvider` requires `UrlScopeProvider`, so no test drives a switch path production
+    never takes.
+  - The scope and location contexts are split, so a navigation re-renders only the router.
+  - The URL prefix's shape moved to `packages/contracts` (`console-urls`) for the console and
+    the server's email link alike.
+  - PostHog redaction skips its scope passes for strings with no `/t/` or `%2Ft%2F`.
 - **Left open:** signing out and in as a different user keeps the first user's scoped `next`, which the second user may
   be refused (the refusal offers a way out). The history comes from react-router's
   `UNSAFE_createBrowserHistory`; the routing tests exercise it, so an upgrade that breaks it goes red.
