@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -14,11 +15,12 @@ import 'customer_history_controller.dart';
 import 'customer_history_copy.dart';
 
 /// One number's history (`docs/customer-history.md` §3–§5): who it belongs
-/// to in each campaign (hero fields and state), the totals, its DNC status,
-/// what is open (callbacks, overrides, a call live now), and one timeline,
-/// newest first, with "Load more". An agent never gets a call page (CH8), so
-/// nothing here opens one; hidden notes say "Notes hidden", a purged
-/// recording "Recording expired".
+/// to in each campaign (hero fields, the campaign's status and the contact's
+/// state), the totals, its DNC status, what is open (callbacks, overrides
+/// with their follow-up, a call live now), and one timeline, newest first,
+/// with the console's filters and "Load more". An agent never gets a call
+/// page (CH8), so nothing here opens one; hidden notes say "Notes hidden", a
+/// purged recording "Recording expired".
 ///
 /// Reads the answer [customerHistoryControllerProvider] holds; with none (a
 /// restart, another workspace) it offers to search.
@@ -54,12 +56,14 @@ class CustomerHistoryScreen extends ConsumerWidget {
 
     final controller = ref.read(customerHistoryControllerProvider.notifier);
     final summary = result.summary;
+    final showAccounts = _severalAccounts(result);
     return Scaffold(
       appBar: AppBar(
         title: Semantics(
           header: true,
           child: Text(CustomerHistoryCopy.resultsFor(result.key.display), key: const Key('customer-results-title')),
         ),
+        actions: [_CopyNumberButton(value: result.key.value)],
       ),
       body: ListView(
         key: const Key('customer-history'),
@@ -69,15 +73,22 @@ class CustomerHistoryScreen extends ConsumerWidget {
             _Notice(
               key: const Key('customer-expired'),
               message: CustomerHistoryCopy.expired,
+              // A "Search again" that failed (the cap, offline) says why here.
+              error: s.searchError,
               action: CustomerHistoryCopy.searchAgain,
+              busy: s.searching,
               onAction: s.searching ? null : () => unawaited(controller.searchAgain()),
             ),
             const SizedBox(height: Space.md),
           ],
-          if (result.isEmpty)
-            const _Empty()
-          else ...[
-            for (final live in summary.open.liveCalls) ...[_LiveCall(live), const SizedBox(height: Space.sm)],
+          if (_isEmptyHistory(result)) ...[
+            const _Empty(),
+            _Dnc(summary.dnc),
+          ] else ...[
+            for (final (i, live) in summary.open.liveCalls.indexed) ...[
+              _LiveCall(live, index: i),
+              const SizedBox(height: Space.sm),
+            ],
             _Totals(summary.totals),
             const SizedBox(height: Space.md),
             _Dnc(summary.dnc),
@@ -86,19 +97,31 @@ class CustomerHistoryScreen extends ConsumerWidget {
               const SectionLabel(CustomerHistoryCopy.open),
               const SizedBox(height: Space.sm),
               for (final c in summary.open.callbacks) _OpenCallback(c),
-              for (final o in summary.open.overrides) _OpenOverride(o),
+              for (final (i, o) in summary.open.overrides.indexed) _OpenOverride(o, index: i),
             ],
             if (summary.contacts.isNotEmpty) ...[
               const SizedBox(height: Space.lg),
               const SectionLabel(CustomerHistoryCopy.contacts),
               const SizedBox(height: Space.sm),
-              for (final c in summary.contacts) ...[_Contact(c), const SizedBox(height: Space.sm)],
+              for (final c in summary.contacts) ...[
+                _Contact(c, showAccount: showAccounts),
+                const SizedBox(height: Space.sm),
+              ],
+              // More roster rows than the summary lists: the oldest were left out
+              // (the timeline still has every one).
+              if (summary.contactsTruncated)
+                Text(
+                  CustomerHistoryCopy.contactsTruncated,
+                  key: const Key('customer-contacts-truncated'),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
             ],
             const SizedBox(height: Space.lg),
             const SectionLabel(CustomerHistoryCopy.history),
             const SizedBox(height: Space.sm),
             _Filters(
               filter: s.filter,
+              options: summary.filterOptions,
               enabled: !s.expired,
               onChanged: (f) => unawaited(controller.applyFilter(f)),
             ),
@@ -126,23 +149,31 @@ class CustomerHistoryScreen extends ConsumerWidget {
         _Notice(
           key: const Key('customer-timeline-error'),
           message: error,
-          action: 'Try again',
+          action: CustomerHistoryCopy.tryAgain,
           onAction: () => unawaited(controller.applyFilter(s.filter)),
         ),
       ];
     }
+    final moreError = s.moreError;
     return [
-      if (s.entries.isEmpty && s.filter.isFiltered)
+      // After expiry the page knows nothing more: neither "nothing matches"
+      // nor "the whole history" is true then.
+      if (s.entries.isEmpty && s.filter.isFiltered && !s.expired)
         Padding(
           padding: const EdgeInsets.all(Space.lg),
-          child: Text(CustomerHistoryCopy.noEntriesFiltered, textAlign: TextAlign.center, style: text.bodySmall),
+          child: Text(
+            CustomerHistoryCopy.noEntriesFiltered,
+            key: const Key('customer-timeline-none'),
+            textAlign: TextAlign.center,
+            style: text.bodySmall,
+          ),
         ),
-      for (final e in s.entries) _Entry(e),
-      if (s.moreError != null && !s.expired)
+      ..._entryRows(s.entries),
+      if (moreError != null && !s.expired)
         _Notice(
           key: const Key('customer-more-error'),
-          message: s.moreError!,
-          action: 'Try again',
+          message: moreError,
+          action: CustomerHistoryCopy.tryAgain,
           onAction: () => unawaited(controller.loadMore()),
         )
       else if (s.hasMore && !s.expired)
@@ -156,7 +187,7 @@ class CustomerHistoryScreen extends ConsumerWidget {
                 : const Text(CustomerHistoryCopy.loadMore),
           ),
         )
-      else if (s.entries.isNotEmpty)
+      else if (s.entries.isNotEmpty && !s.expired)
         Padding(
           padding: const EdgeInsets.all(Space.lg),
           child: Text(
@@ -170,7 +201,48 @@ class CustomerHistoryScreen extends ConsumerWidget {
   }
 }
 
+/// No history, the console's rule (`isEmptyCustomerHistory`): no timeline
+/// entry of any kind (a call, a callback, a DNC mark, a roster entry), no call
+/// live now and no roster row.
+bool _isEmptyHistory(CustomerSearchResponse r) =>
+    r.timeline.entries.isEmpty && r.summary.open.liveCalls.isEmpty && r.summary.contacts.isEmpty;
+
+/// Whether the answer spans more than one account: only then is each
+/// contact's account named, as the console does.
+bool _severalAccounts(CustomerSearchResponse r) {
+  final ids = <String>{
+    for (final c in r.summary.contacts) c.accountId,
+    for (final d in r.summary.dnc) ?d.accountId,
+    for (final e in r.timeline.entries) ?e.accountId,
+  };
+  return ids.length > 1;
+}
+
 // ─── Summary ────────────────────────────────────────────────────────────────
+
+/// Copies the searched number. No event is sent for it: the number never goes
+/// to analytics.
+class _CopyNumberButton extends StatelessWidget {
+  const _CopyNumberButton({required this.value});
+
+  final String value;
+
+  Future<void> _copy(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text(CustomerHistoryCopy.numberCopied)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      key: const Key('customer-copy-number'),
+      tooltip: CustomerHistoryCopy.copyNumber,
+      icon: const Icon(Icons.copy_outlined),
+      onPressed: () => unawaited(_copy(context)),
+    );
+  }
+}
 
 class _Empty extends StatelessWidget {
   const _Empty();
@@ -195,9 +267,12 @@ class _Empty extends StatelessWidget {
 }
 
 class _LiveCall extends StatelessWidget {
-  const _LiveCall(this.call);
+  const _LiveCall(this.call, {required this.index});
 
   final CustomerHistoryLiveCall call;
+
+  /// Its place in `open.live_calls`: one number can be on two calls at once.
+  final int index;
 
   @override
   Widget build(BuildContext context) {
@@ -206,7 +281,7 @@ class _LiveCall extends StatelessWidget {
         (call.channel == CustomerTimelineChannel.softphone ? 'Soft phone' : '');
     final who = call.agent == null ? null : personName(call.agent);
     return AppCard(
-      key: const Key('customer-live'),
+      key: Key('customer-live-$index'),
       color: t.emberSubtle,
       borderColor: t.emberSubtle,
       child: Row(
@@ -262,6 +337,8 @@ class _Totals extends StatelessWidget {
   }
 }
 
+/// The number's DNC status, always shown: where it applies, when, by whom
+/// and why, or "Not on any do-not-call list".
 class _Dnc extends StatelessWidget {
   const _Dnc(this.entries);
 
@@ -327,7 +404,8 @@ class _OpenCallback extends StatelessWidget {
         [
           'Callback due ${EnIn.timestamp(callback.dueAt)}',
           callback.campaign.name,
-          'for ${personName(callback.owner, none: CustomerHistoryCopy.pool)}',
+          if (callback.owner == null) 'for the shared pool' else 'for ${personName(callback.owner)}',
+          if (callback.bookedBy != null) 'booked by ${personName(callback.bookedBy)}',
         ].join(' · '),
         key: Key('customer-open-callback-${callback.contactId}'),
         style: text.bodyMedium,
@@ -337,23 +415,30 @@ class _OpenCallback extends StatelessWidget {
 }
 
 class _OpenOverride extends StatelessWidget {
-  const _OpenOverride(this.grant);
+  const _OpenOverride(this.grant, {required this.index});
 
   final CustomerHistoryOpenOverride grant;
+
+  /// Its place in `open.overrides`: one contact can hold more than one grant.
+  final int index;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    final parts = [
-      if (grant.extraAttempts > 0) '+${grant.extraAttempts} tr${grant.extraAttempts == 1 ? 'y' : 'ies'}',
-      if (grant.retryDelay) 'Call early',
-      if (grant.callingHours) 'Outside calling hours',
-    ];
+    final followUp = grant.followUpAt;
     return Padding(
       padding: const EdgeInsets.only(bottom: Space.xs),
       child: Text(
-        ['Override from ${grant.dispositionCode}', grant.campaign.name, ...parts].join(' · '),
-        key: Key('customer-open-override-${grant.contactId}'),
+        [
+          'Override from ${grant.dispositionCode}',
+          grant.campaign.name,
+          overrideGrantLabel(grant),
+          if (followUp != null)
+            CustomerHistoryCopy.followUp(EnIn.timestamp(followUp))
+          else
+            CustomerHistoryCopy.noFollowUp,
+        ].join(' · '),
+        key: Key('customer-open-override-${grant.contactId}-$index'),
         style: text.bodyMedium,
       ),
     );
@@ -361,25 +446,30 @@ class _OpenOverride extends StatelessWidget {
 }
 
 class _Contact extends StatelessWidget {
-  const _Contact(this.contact);
+  const _Contact(this.contact, {required this.showAccount});
 
   final CustomerHistoryContact contact;
+
+  /// Name the account: only when the answer spans more than one.
+  final bool showAccount;
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
     final c = contact;
     final hero = c.fields.map((f) => f.value).where((v) => v.trim().isNotEmpty).join(' · ');
-    final suppressed = c.suppressedReason == null ? null : (suppressedReasonLabels[c.suppressedReason] ?? c.suppressedReason);
+    final suppressed =
+        c.suppressedReason == null ? null : (suppressedReasonLabels[c.suppressedReason] ?? c.suppressedReason);
     final meta = [
-      ?c.accountName,
-      '${c.attemptCount} call${c.attemptCount == 1 ? '' : 's'}',
-      'Owner: ${personName(c.assignedTo, none: CustomerHistoryCopy.pool)}',
+      if (showAccount && c.accountName != null) c.accountName!,
+      '${c.attemptCount} call${c.attemptCount == 1 ? '' : 's'} placed',
+      if (c.assignedTo == null)
+        CustomerHistoryCopy.pool
+      else
+        CustomerHistoryCopy.assignedTo(personName(c.assignedTo)),
     ].join(' · ');
-    final entered = [
-      'Added ${EnIn.timestamp(c.enteredAt)}',
-      ?c.uploadFileName,
-    ].join(' · ');
+    final file = c.uploadFileName;
+    final entered = 'Added ${EnIn.timestamp(c.enteredAt)}${file == null ? '' : ' from $file'}';
     return AppCard(
       key: Key('customer-contact-${c.contactId}'),
       child: Column(
@@ -399,7 +489,18 @@ class _Contact extends StatelessWidget {
             ],
           ),
           const SizedBox(height: Space.xs),
-          Text(c.campaign.name, style: text.bodyMedium),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: Text(c.campaign.name, style: text.bodyMedium)),
+              const SizedBox(width: Space.sm),
+              StatusPill(
+                campaignStatusLabel(c.campaign),
+                key: Key('customer-campaign-status-${c.contactId}'),
+                tone: campaignStatusTone(c.campaign.status),
+              ),
+            ],
+          ),
           if (c.campaigns.length > 1)
             Text(
               'Chain: ${c.campaigns.map((x) => x.name).join(' → ')}',
@@ -416,12 +517,26 @@ class _Contact extends StatelessWidget {
 
 // ─── Timeline ───────────────────────────────────────────────────────────────
 
+/// The channel and connected-only chips on the page; the campaign, the days,
+/// the outcome, the code and the agent in a sheet ("Filters"), so the page
+/// stays one column on a phone. Every change reads the first page again.
 class _Filters extends StatelessWidget {
-  const _Filters({required this.filter, required this.enabled, required this.onChanged});
+  const _Filters({required this.filter, required this.options, required this.enabled, required this.onChanged});
 
   final CustomerHistoryFilter filter;
+  final CustomerHistoryFilterOptions options;
   final bool enabled;
   final ValueChanged<CustomerHistoryFilter> onChanged;
+
+  Future<void> _openSheet(BuildContext context) async {
+    final picked = await showModalBottomSheet<CustomerHistoryFilter>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (context) => _FiltersSheet(initial: filter, options: options),
+    );
+    if (picked != null) onChanged(picked);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -431,9 +546,11 @@ class _Filters extends StatelessWidget {
       selected: filter.channel == value,
       onSelected: enabled ? (_) => onChanged(filter.withChannel(value)) : null,
     );
+    final more = filter.sheetCount;
     return Wrap(
       spacing: Space.sm,
       runSpacing: Space.xs,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         channel(CustomerHistoryCopy.all, null, 'customer-filter-all'),
         channel(CustomerHistoryCopy.campaignCalls, CustomerTimelineChannel.campaign, 'customer-filter-campaign'),
@@ -444,7 +561,300 @@ class _Filters extends StatelessWidget {
           selected: filter.connectedOnly,
           onSelected: enabled ? (on) => onChanged(filter.withConnectedOnly(on)) : null,
         ),
+        FilterChip(
+          key: const Key('customer-filter-more'),
+          avatar: const Icon(Icons.tune, size: 18),
+          label: Text(more == 0 ? CustomerHistoryCopy.filters : CustomerHistoryCopy.filtersSet(more)),
+          selected: more > 0,
+          showCheckmark: false,
+          onSelected: enabled ? (_) => unawaited(_openSheet(context)) : null,
+        ),
+        if (filter.isFiltered)
+          TextButton(
+            key: const Key('customer-filter-clear'),
+            onPressed: enabled ? () => onChanged(CustomerHistoryFilter.none) : null,
+            child: const Text(CustomerHistoryCopy.clearFilters),
+          ),
       ],
+    );
+  }
+}
+
+/// The sheet's filters, each one choice from the summary's `filter_options`,
+/// applied together. The channel and connected-only chips are kept as they
+/// are on the page.
+class _FiltersSheet extends StatefulWidget {
+  const _FiltersSheet({required this.initial, required this.options});
+
+  final CustomerHistoryFilter initial;
+  final CustomerHistoryFilterOptions options;
+
+  @override
+  State<_FiltersSheet> createState() => _FiltersSheetState();
+}
+
+class _FiltersSheetState extends State<_FiltersSheet> {
+  // A choice the options no longer list is dropped as the sheet opens, so
+  // Apply never sends it again.
+  late String? _campaignId = _listed(widget.initial.campaignId, widget.options.campaigns.map((c) => c.id));
+  late DateTime? _fromDay = widget.initial.fromDay;
+  late DateTime? _toDay = widget.initial.toDay;
+  late AttemptOutcome? _outcome =
+      _listed(widget.initial.outcome, widget.options.outcomes.where((o) => !o.isUnknown));
+  late String? _code = _listed(widget.initial.dispositionCode, widget.options.dispositionCodes);
+  late String? _agent = _listed(widget.initial.agentUserId, widget.options.agents.map((a) => a.userId));
+
+  static T? _listed<T extends Object>(T? value, Iterable<T> options) =>
+      value != null && options.contains(value) ? value : null;
+
+  CustomerHistoryFilter get _draft => CustomerHistoryFilter(
+    channel: widget.initial.channel,
+    connectedOnly: widget.initial.connectedOnly,
+    campaignId: _campaignId,
+    fromDay: _fromDay,
+    toDay: _toDay,
+    outcome: _outcome,
+    dispositionCode: _code,
+    agentUserId: _agent,
+  );
+
+  Future<void> _pickDay({required bool from}) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final first = DateTime(now.year - 5);
+    final current = from ? _fromDay : _toDay;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current == null || current.isAfter(today) || current.isBefore(first) ? today : current,
+      firstDate: first,
+      lastDate: today,
+      helpText: from ? CustomerHistoryCopy.from : CustomerHistoryCopy.to,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      if (from) {
+        _fromDay = picked;
+      } else {
+        _toDay = picked;
+      }
+    });
+  }
+
+  void _reset() {
+    setState(() {
+      _campaignId = null;
+      _fromDay = null;
+      _toDay = null;
+      _outcome = null;
+      _code = null;
+      _agent = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final t = context.tokens;
+    final draft = _draft;
+    final problem = draft.dateProblem;
+    final o = widget.options;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.85),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: Space.lg),
+              child: SectionLabel(CustomerHistoryCopy.filtersTitle),
+            ),
+            Flexible(
+              child: ListView(
+                key: const Key('customer-filters-sheet'),
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(horizontal: Space.lg),
+                children: [
+                  _Choice<String?>(
+                    id: 'customer-filter-campaign-choice',
+                    label: CustomerHistoryCopy.campaign,
+                    value: _campaignId,
+                    items: [
+                      (null, CustomerHistoryCopy.allCampaigns),
+                      for (final c in o.campaigns) (c.id, c.name ?? CustomerHistoryCopy.unnamedCampaign),
+                    ],
+                    onChanged: (v) => setState(() => _campaignId = v),
+                  ),
+                  _DayButton(
+                    id: 'customer-filter-from',
+                    label: CustomerHistoryCopy.from,
+                    day: _fromDay,
+                    onPick: () => unawaited(_pickDay(from: true)),
+                    onClear: () => setState(() => _fromDay = null),
+                  ),
+                  _DayButton(
+                    id: 'customer-filter-to',
+                    label: CustomerHistoryCopy.to,
+                    day: _toDay,
+                    onPick: () => unawaited(_pickDay(from: false)),
+                    onClear: () => setState(() => _toDay = null),
+                  ),
+                  if (problem != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: Space.xs),
+                      child: Text(
+                        problem,
+                        key: const Key('customer-filter-date-problem'),
+                        style: text.bodySmall!.copyWith(color: t.danger),
+                      ),
+                    ),
+                  _Choice<AttemptOutcome?>(
+                    id: 'customer-filter-outcome-choice',
+                    label: CustomerHistoryCopy.outcome,
+                    value: _outcome,
+                    items: [
+                      (null, CustomerHistoryCopy.allOutcomes),
+                      for (final outcome in o.outcomes)
+                        if (!outcome.isUnknown) (outcome, attemptOutcomeLabels[outcome] ?? outcome.wire),
+                    ],
+                    onChanged: (v) => setState(() => _outcome = v),
+                  ),
+                  _Choice<String?>(
+                    id: 'customer-filter-code-choice',
+                    label: CustomerHistoryCopy.outcomeCode,
+                    value: _code,
+                    items: [
+                      (null, CustomerHistoryCopy.allCodes),
+                      for (final code in o.dispositionCodes) (code, code),
+                    ],
+                    onChanged: (v) => setState(() => _code = v),
+                  ),
+                  _Choice<String?>(
+                    id: 'customer-filter-agent-choice',
+                    label: CustomerHistoryCopy.agent,
+                    value: _agent,
+                    items: [
+                      (null, CustomerHistoryCopy.allAgents),
+                      for (final a in o.agents) (a.userId, personName(a)),
+                    ],
+                    onChanged: (v) => setState(() => _agent = v),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.lg),
+              child: Row(
+                children: [
+                  if (draft.sheetCount > 0)
+                    TextButton(
+                      key: const Key('customer-filters-reset'),
+                      onPressed: _reset,
+                      child: const Text(CustomerHistoryCopy.clearFilters),
+                    ),
+                  const Spacer(),
+                  FilledButton(
+                    key: const Key('customer-filters-apply'),
+                    onPressed: problem == null ? () => Navigator.pop(context, draft) : null,
+                    child: const Text(CustomerHistoryCopy.apply),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One single-choice filter: a labelled dropdown, the first item "All …".
+class _Choice<T> extends StatelessWidget {
+  const _Choice({
+    required this.id,
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  final String id;
+  final String label;
+  final T value;
+  final List<(T, String)> items;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    // A choice the options no longer list reads as the first ("All …").
+    final shown = items.any((i) => i.$1 == value) ? value : items.first.$1;
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.md),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          contentPadding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.xs),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<T>(
+            key: Key(id),
+            value: shown,
+            isExpanded: true,
+            items: [
+              for (final (v, l) in items)
+                DropdownMenuItem<T>(value: v, child: Text(l, overflow: TextOverflow.ellipsis)),
+            ],
+            onChanged: (v) => onChanged(v as T),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A calendar day for the date range, "Any day" when open, with a way to
+/// open it again.
+class _DayButton extends StatelessWidget {
+  const _DayButton({
+    required this.id,
+    required this.label,
+    required this.day,
+    required this.onPick,
+    required this.onClear,
+  });
+
+  final String id;
+  final String label;
+  final DateTime? day;
+  final VoidCallback onPick;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final day = this.day;
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.md),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              key: Key(id),
+              onPressed: onPick,
+              child: Text(
+                '$label: ${day == null ? CustomerHistoryCopy.anyDay : EnIn.dayMonthYear(day)}',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          if (day != null)
+            IconButton(
+              key: Key('$id-clear'),
+              tooltip: CustomerHistoryCopy.clearDay(label),
+              icon: const Icon(Icons.close),
+              onPressed: onClear,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -465,6 +875,83 @@ String _recordingLabel(CustomerRecordingState r) => switch (r) {
 
 /// `a · b · c`, empty parts left out.
 String _joined(List<String?> parts) => parts.whereType<String>().where((p) => p.isNotEmpty).join(' · ');
+
+/// The timeline's rows. A wrap-up redial names its chain's first attempt
+/// (`chain_attempt_id`) and the dial it redialled (`redial_of_attempt_id`):
+/// each says which call it redialled, the first says how often it was
+/// redialled (the console's words), and a chain whose rows sit together
+/// (newest first) is drawn as one, joined down the side.
+List<Widget> _entryRows(List<CustomerTimelineEntry> entries) {
+  final firsts = <String, CustomerTimelineCampaignCall>{};
+  final redials = <String, int>{};
+  for (final e in entries) {
+    if (e is! CustomerTimelineCampaignCall) continue;
+    if (e.redialOfAttemptId != null) {
+      redials[e.chainAttemptId] = (redials[e.chainAttemptId] ?? 0) + 1;
+    } else if (e.attemptId == e.chainAttemptId) {
+      firsts[e.attemptId] = e;
+    }
+  }
+  String? chainLine(CustomerTimelineEntry e) {
+    if (e is! CustomerTimelineCampaignCall) return null;
+    if (e.redialOfAttemptId != null) {
+      final first = firsts[e.chainAttemptId];
+      return CustomerHistoryCopy.wrapUpRedialOf(e.redialNumber, first == null ? null : EnIn.timestamp(first.at));
+    }
+    final n = redials[e.attemptId] ?? 0;
+    return n == 0 ? null : CustomerHistoryCopy.redialledInWrapUp(n);
+  }
+
+  final rows = <Widget>[];
+  var i = 0;
+  while (i < entries.length) {
+    final e = entries[i];
+    if (e is CustomerTimelineCampaignCall) {
+      var j = i + 1;
+      while (j < entries.length) {
+        final next = entries[j];
+        if (next is! CustomerTimelineCampaignCall || next.chainAttemptId != e.chainAttemptId) break;
+        j++;
+      }
+      if (j - i > 1) {
+        rows.add(
+          _Chain(
+            // A chain split by other rows (or a page break) is drawn more than
+            // once: its first row's key tells the pieces apart.
+            id: '${e.chainAttemptId}-${e.key}',
+            children: [for (final x in entries.sublist(i, j)) _Entry(x, chainLine: chainLine(x))],
+          ),
+        );
+        i = j;
+        continue;
+      }
+    }
+    rows.add(_Entry(e, chainLine: chainLine(e)));
+    i++;
+  }
+  return rows;
+}
+
+/// A campaign call and its wrap-up redials, joined by a rule down the side.
+class _Chain extends StatelessWidget {
+  const _Chain({required this.id, required this.children});
+
+  final String id;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return DecoratedBox(
+      key: Key('customer-chain-$id'),
+      decoration: BoxDecoration(border: Border(left: BorderSide(color: t.borderStrong, width: 2))),
+      child: Padding(
+        padding: const EdgeInsets.only(left: Space.sm),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
+      ),
+    );
+  }
+}
 
 /// One timeline entry, worded for its row.
 @immutable
@@ -492,17 +979,14 @@ _EntryView _viewOf(CustomerTimelineEntry entry) => switch (entry) {
     title: 'Campaign call · ${c.campaign.name}',
     lines: [
       _joined([
-        'try ${c.attemptNumber}',
-        if (c.redialNumber > 0) 'redial ${c.redialNumber}',
+        CustomerHistoryCopy.attempt(c.attemptNumber),
         if (c.agent != null) personName(c.agent),
         if (c.talkSeconds != null) EnIn.talkTime(c.talkSeconds),
       ]),
       _joined([c.dispositionCode, _recordingLabel(c.recording)]),
       if (c.callbackAt != null) 'Callback booked for ${EnIn.timestamp(c.callbackAt)}',
-      _joined([
-        for (final k in c.overrideApplied) overrideKindLabels[k],
-        if (c.overrideApplied.isNotEmpty) c.overrideNote,
-      ]),
+      if (c.overrideApplied.isNotEmpty)
+        _joined([CustomerHistoryCopy.overrideUsed(overrideAppliedLabel(c)), c.overrideNote]),
     ],
     pill: _outcomePill(c.outcome, c.outcomeRaw),
     notes: c.notes,
@@ -518,7 +1002,10 @@ _EntryView _viewOf(CustomerTimelineEntry entry) => switch (entry) {
       ]),
       _joined([c.dispositionCode, _recordingLabel(c.recording)]),
       if (c.callbackAt != null) 'Callback booked for ${EnIn.timestamp(c.callbackAt)}',
-      _joined([c.dncOverrideNote, c.hoursOverrideNote]),
+      // The call fields, hidden with the notes where the reader may not see them (CH8).
+      for (final f in (c.fields ?? const <String, Object?>{}).entries) '${f.key}: ${fieldValueLabel(f.value)}',
+      if (c.dncOverrideNote != null) CustomerHistoryCopy.dncOverride(c.dncOverrideNote!),
+      if (c.hoursOverrideNote != null) CustomerHistoryCopy.hoursOverride(c.hoursOverrideNote!),
     ],
     pill: _outcomePill(c.outcome, c.outcomeRaw),
     notes: c.notes,
@@ -547,23 +1034,27 @@ _EntryView _viewOf(CustomerTimelineEntry entry) => switch (entry) {
   ),
   final CustomerTimelineRosterEntry r => _EntryView(
     icon: Icons.playlist_add,
-    title: 'Added to ${r.campaign.name}',
-    lines: [_joined([r.uploadFileName])],
+    title: r.uploadFileName == null
+        ? 'Added to ${r.campaign.name}'
+        : 'Added to ${r.campaign.name} from ${r.uploadFileName}',
   ),
   CustomerTimelineUnknownEntry() => const _EntryView(icon: Icons.more_horiz, title: CustomerHistoryCopy.unknownEntry),
 };
 
 class _Entry extends StatelessWidget {
-  const _Entry(this.entry);
+  const _Entry(this.entry, {this.chainLine});
 
   final CustomerTimelineEntry entry;
+
+  /// Where a campaign call sits in its wrap-up redial chain, if it is in one.
+  final String? chainLine;
 
   @override
   Widget build(BuildContext context) {
     final view = _viewOf(entry);
     final text = Theme.of(context).textTheme;
     final t = context.tokens;
-    final lines = view.lines.where((l) => l.isNotEmpty).toList();
+    final lines = [...view.lines.take(1), ?chainLine, ...view.lines.skip(1)].where((l) => l.isNotEmpty).toList();
     final notes = view.notes;
     final pill = view.pill;
     return Padding(
@@ -604,16 +1095,31 @@ class _Entry extends StatelessWidget {
   }
 }
 
+/// A warning with one action: an expired search ("Search again", with why a
+/// search again failed in [error]), a page that did not load ("Try again").
 class _Notice extends StatelessWidget {
-  const _Notice({super.key, required this.message, required this.action, required this.onAction});
+  const _Notice({
+    super.key,
+    required this.message,
+    required this.action,
+    required this.onAction,
+    this.error,
+    this.busy = false,
+  });
 
   final String message;
+  final String? error;
   final String action;
   final VoidCallback? onAction;
+
+  /// The action is running: a spinner in its place.
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final text = Theme.of(context).textTheme;
+    final error = this.error;
     return AppCard(
       color: t.warningSubtle,
       borderColor: t.warningSubtle,
@@ -621,9 +1127,32 @@ class _Notice extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Semantics(liveRegion: true, child: Text(message, style: Theme.of(context).textTheme.bodySmall)),
+            child: Semantics(
+              liveRegion: true,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(message, style: text.bodySmall),
+                  if (error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: Space.xs),
+                      child: Text(
+                        error,
+                        key: const Key('customer-notice-error'),
+                        style: text.bodySmall!.copyWith(color: t.danger),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
-          TextButton(onPressed: onAction, child: Text(action)),
+          TextButton(
+            onPressed: onAction,
+            child: busy
+                ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(action),
+          ),
         ],
       ),
     );

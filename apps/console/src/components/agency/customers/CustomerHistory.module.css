@@ -258,6 +258,29 @@
   border-bottom: none;
 }
 
+/* A wrap-up redial, set in under the chain it belongs to. */
+.chained {
+  margin-left: 16px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border-light);
+}
+
+.fieldError {
+  margin: 0;
+  flex-basis: 100%;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.resultsTitle:focus {
+  outline: none;
+}
+
+.resultsTitle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .entryHead {
   display: flex;
   justify-content: space-between;

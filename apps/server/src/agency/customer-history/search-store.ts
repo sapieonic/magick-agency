@@ -32,7 +32,7 @@ export interface CustomerSearchStore {
 
 export const SEARCH_ID_RE = /^chs_[0-9a-f]{32}$/;
 
-export function newSearchId(): string {
+function newSearchId(): string {
   return `chs_${randomBytes(16).toString('hex')}`;
 }
 

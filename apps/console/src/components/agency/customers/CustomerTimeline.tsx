@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type {
   CustomerTimelineCampaignCall,
   CustomerTimelineEntry,
@@ -41,9 +41,25 @@ function CallFacts({ entry }: { entry: CustomerTimelineCampaignCall | CustomerTi
   );
 }
 
-function Row({ entry, title, children }: { entry: CustomerTimelineEntry; title: ReactNode; children?: ReactNode }) {
+function Row({
+  entry,
+  title,
+  children,
+  chain,
+}: {
+  entry: CustomerTimelineEntry;
+  title: ReactNode;
+  children?: ReactNode;
+  /** A wrap-up redial chain's first attempt, on the chain's rows. */
+  chain?: { id: string; redial: boolean };
+}) {
   return (
-    <li className={styles.entry} data-testid="customer-timeline-entry" data-kind={entry.kind}>
+    <li
+      className={chain?.redial ? `${styles.entry} ${styles.chained}` : styles.entry}
+      data-testid="customer-timeline-entry"
+      data-kind={entry.kind}
+      data-chain={chain?.id}
+    >
       <div className={styles.entryHead}>
         <span className={styles.entryTitle}>{title}</span>
         <time className={styles.entryWhen} dateTime={entry.at}>{formatWhen(entry.at)}</time>
@@ -53,14 +69,51 @@ function Row({ entry, title, children }: { entry: CustomerTimelineEntry; title: 
   );
 }
 
-function CampaignCallRow({ entry }: { entry: CustomerTimelineCampaignCall }) {
+/**
+ * The wrap-up redial chains among the loaded rows: each chain's first attempt, and
+ * how many of its redials are loaded. A redial names `chain_attempt_id` (the
+ * chain's first attempt) and `redial_of_attempt_id` (the dial it redialled).
+ */
+interface RedialChains {
+  firsts: Map<string, CustomerTimelineCampaignCall>;
+  redials: Map<string, number>;
+}
+
+function redialChains(entries: readonly CustomerTimelineEntry[]): RedialChains {
+  const firsts = new Map<string, CustomerTimelineCampaignCall>();
+  const redials = new Map<string, number>();
+  for (const e of entries) {
+    if (e.kind !== 'campaign_call') continue;
+    if (e.redial_of_attempt_id) redials.set(e.chain_attempt_id, (redials.get(e.chain_attempt_id) ?? 0) + 1);
+    else if (e.attempt_id === e.chain_attempt_id) firsts.set(e.attempt_id, e);
+  }
+  return { firsts, redials };
+}
+
+function CampaignCallRow({ entry, chains }: { entry: CustomerTimelineCampaignCall; chains: RedialChains }) {
+  const isRedial = entry.redial_of_attempt_id !== null;
+  const first = isRedial ? chains.firsts.get(entry.chain_attempt_id) : undefined;
+  const redialsLoaded = isRedial ? 0 : chains.redials.get(entry.attempt_id) ?? 0;
+  const inChain = isRedial || redialsLoaded > 0;
   return (
-    <Row entry={entry} title={<>Campaign call · {entry.campaign.name}</>}>
+    <Row
+      entry={entry}
+      title={<>Campaign call · {entry.campaign.name}</>}
+      chain={inChain ? { id: entry.chain_attempt_id, redial: isRedial } : undefined}
+    >
       <CallFacts entry={entry} />
       <ul className={styles.meta}>
         <li>Attempt {entry.attempt_number}</li>
-        {entry.redial_of_attempt_id && (
-          <li data-testid="customer-redial">Wrap-up redial {entry.redial_number}</li>
+        {isRedial && (
+          <li data-testid="customer-redial">
+            Wrap-up redial {entry.redial_number} of{' '}
+            {first ? `the call at ${formatWhen(first.at)}` : 'an earlier call'}
+          </li>
+        )}
+        {redialsLoaded > 0 && (
+          <li data-testid="customer-redial-first">
+            Redialled in wrap-up {redialsLoaded === 1 ? 'once' : `${redialsLoaded} times`}
+          </li>
         )}
         {entry.callback_at && <li>Callback booked for {formatWhen(entry.callback_at)}</li>}
       </ul>
@@ -106,10 +159,10 @@ function SoftphoneCallRow({ entry }: { entry: CustomerTimelineSoftphoneCall }) {
   );
 }
 
-export function CustomerTimelineRow({ entry }: { entry: CustomerTimelineEntry }) {
+export function CustomerTimelineRow({ entry, chains }: { entry: CustomerTimelineEntry; chains?: RedialChains }) {
   switch (entry.kind) {
     case 'campaign_call':
-      return <CampaignCallRow entry={entry} />;
+      return <CampaignCallRow entry={entry} chains={chains ?? redialChains([entry])} />;
     case 'softphone_call':
       return <SoftphoneCallRow entry={entry} />;
     case 'callback':
@@ -149,10 +202,11 @@ export function CustomerTimelineRow({ entry }: { entry: CustomerTimelineEntry })
 }
 
 export function CustomerTimelineList({ entries }: { entries: CustomerTimelineEntry[] }) {
+  const chains = useMemo(() => redialChains(entries), [entries]);
   return (
     <ol className={styles.timeline} aria-label="Timeline, newest first">
       {entries.map((entry) => (
-        <CustomerTimelineRow key={entry.key} entry={entry} />
+        <CustomerTimelineRow key={entry.key} entry={entry} chains={chains} />
       ))}
     </ol>
   );

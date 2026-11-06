@@ -297,9 +297,24 @@ export class AgencyAssignmentReadRepository {
   }
 }
 
-export function projectMyContact(r: MyContactRaw): AgencyMyContact {
-  const overrideUnspent = r.override_disposition !== null
+/**
+ * Whether a contact's outcome override still grants something. The grant's code
+ * (`override_disposition`) is never cleared when it is spent: the dial decrements
+ * `override_extra_attempts` and resets `override_retry_delay` / `override_calling_hours` once
+ * used, so a grant with all three spent is over.
+ */
+export function isOverrideUnspent(r: {
+  override_disposition: string | null;
+  override_extra_attempts: number;
+  override_retry_delay: boolean;
+  override_calling_hours: boolean;
+}): boolean {
+  return r.override_disposition !== null
     && (r.override_extra_attempts > 0 || r.override_retry_delay || r.override_calling_hours);
+}
+
+export function projectMyContact(r: MyContactRaw): AgencyMyContact {
+  const overrideUnspent = isOverrideUnspent(r);
   return {
     id: r.id,
     campaign_id: r.campaign_id,

@@ -124,6 +124,7 @@ const CUSTOMER_HISTORY = {
   timeline_page_last: fits<AgencyApi.CustomerTimelinePage>()(customerHistory.timeline_page_last),
   error_invalid_number: fits<AgencyApi.CustomerHistoryErrorResponse>()(customerHistory.error_invalid_number),
   error_search_expired: fits<AgencyApi.CustomerHistoryErrorResponse>()(customerHistory.error_search_expired),
+  options_response: fits<AgencyApi.CustomerSearchOptionsResponse>()(customerHistory.options_response),
 };
 
 // The station frames are the dialer runtime's own shapes (the proxy relays them unchanged).

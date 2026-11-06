@@ -771,9 +771,12 @@ CH9).
 
 - **`idx_agency_manual_calls_destination`** `(tenant_id, account_id, destination_e164,
   created_at DESC, id DESC)`: every soft-phone call to one number in the accounts the caller can
-  see, logged to a campaign or not (an untagged call has no contact, only `destination_e164`),
-  newest first with no sort. `destination_e164` is already normalised to E.164 at pre-dial, the
-  form the search produces.
+  see, logged to a campaign or not (an untagged call has no contact, only `destination_e164`).
+  The history's timeline walks it once per visible account, keyset on `(created_at, id)` with the
+  cursor in the index condition and no sort (`CUSTOMER_HISTORY_SQL.pageManualCalls`; pinned by
+  `test/integration/db/customer-history-indexes-migration.test.ts` and EXPLAINed whole by the
+  server's `test/integration/api/customer-history.test.ts`). `destination_e164` is already
+  normalised to E.164 at pre-dial, the form the search produces.
 - **Locking.** Plain `CREATE INDEX` (SHARE on `agency_manual_calls`, one scan); one transaction, at
   container start.
 

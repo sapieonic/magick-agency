@@ -542,14 +542,15 @@ export async function registerRateLimit(
  * `error-handler.middleware.ts` keeps its label and `retryAfter`. One builder for both
  * limiters, so a client reads one shape whichever bucket refused it.
  */
-function rateLimitErrorBody(ttlMs: number): {
+function rateLimitErrorBody(ttlMs: number, message?: (retryAfterSeconds: number) => string): {
   error: string; message: string; statusCode: 429; retryAfter: number;
 } {
+  const seconds = Math.round(ttlMs / 1000);
   return {
     error: 'Too Many Requests',
-    message: `Rate limit exceeded. Try again in ${Math.round(ttlMs / 1000)} seconds.`,
+    message: message ? message(seconds) : `Rate limit exceeded. Try again in ${seconds} seconds.`,
     statusCode: 429,
-    retryAfter: Math.round(ttlMs / 1000),
+    retryAfter: seconds,
   };
 }
 
@@ -613,7 +614,13 @@ export function registerUserRateLimit(app: FastifyInstance, opts?: UserRateLimit
  */
 export function createUserRateLimit(
   app: FastifyInstance,
-  opts: { namespace: string; max: number; timeWindow?: string | number },
+  opts: {
+    namespace: string;
+    max: number;
+    timeWindow?: string | number;
+    /** The 429's `message`, from the seconds to wait; default "Rate limit exceeded. Try again in N seconds." */
+    message?: (retryAfterSeconds: number) => string;
+  },
 ): ChargeUserRateLimit {
   if (!app.hasDecorator('createRateLimit')) {
     throw new Error('createUserRateLimit needs @fastify/rate-limit registered first (registerRateLimit)');
@@ -638,6 +645,6 @@ export function createUserRateLimit(
     void reply.header('x-ratelimit-remaining', 0);
     void reply.header('x-ratelimit-reset', result.ttlInSeconds);
     void reply.header('retry-after', result.ttlInSeconds);
-    throw rateLimitErrorBody(result.ttl);
+    throw rateLimitErrorBody(result.ttl, opts.message);
   };
 }

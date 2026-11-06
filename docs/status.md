@@ -881,46 +881,57 @@ work is recorded (see the last bullet).
   this work is recorded, so the case counts beside its test files in [`modules.md`](modules.md)
   are read from the source, not from a run, and nothing here claims a pass.
 
-### Customer history 2026-11-06 (CH1–CH12, [`customer-history.md`](customer-history.md))
+### Customer history 2026-11-06 (CH1–CH13, [`customer-history.md`](customer-history.md))
 
 ClickUp "Customer history: search one phone number and see every interaction across the tenant's
-campaigns". Built on the server, the console and the agent app; Manas's decisions CH1–CH5 as
-asked, the build's own calls CH6–CH12.
+campaigns". Built on the server, the console and the agent app (`001c3b6`), then reviewed and fixed
+the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–CH13.
 
 - **Number rule** (CH4, CH5): `packages/domain/src/customer-search-number.ts`, run by the
   console's preview and the server's search, with a Dart port in `agency_wire`; one table
-  (`fixtures/agent/customer-search-numbers.json`) holds all three. Full numbers only.
-- **Server**: `POST /proxy/agency/customers/{search,timeline,export}` (`proxy-agency-customers`),
-  permission `agency.customer_history.read` (agent floor), every read bound to the caller's
-  accounts in SQL and on an index (migration `0016` adds the soft-phone destination index), a
-  30-minute search id so the number never reaches a URL, audit rows for every search and export,
-  a per-user cap (30 a minute). The export is CSV.
-- **Console**: a "Search a number" box in the agency top bar and on the agent surfaces, the page
-  at `/agency/customers` and `/dialer/customers`.
-- **Agent app**: the search and the page from My calls. **Not yet run under Dart or Flutter**
-  (the SDK could not be installed where it was built); the mobile CI job is the first run.
+  (`fixtures/agent/customer-search-numbers.json`) holds all three. Full numbers only; validity is
+  judged on length, not on a mobile prefix.
+- **Server**: `POST /proxy/agency/customers/{search,timeline,export}` and
+  `GET /proxy/agency/customers/options` (the picker's default calling code) in
+  `proxy-agency-customers`, permission `agency.customer_history.read` (agent floor), every read
+  bound to the caller's accounts in SQL and on an index (migration `0016` adds the soft-phone
+  destination index), a 30-minute search id so the number never reaches a URL, audit rows for every
+  successful search and export, a per-user cap (30 a minute) whose 429 carries the friendly
+  message. Each timeline page is one keyset query per source; the summary is built once from
+  aggregates; the export is one page as large as its cap.
+- **Review fixes** (same day): campaign DNC marks scoped through their campaign's account (an
+  account-B viewer saw account A's mark before); hero fields by the contact panel's rule
+  (`packages/domain/src/context-hero.ts`); the upload file of a tenant-level uploader found; only
+  unspent overrides, with their follow-up; "Recording expired" only when a recording was asked for;
+  queued attempts no longer live; real keyset paging; the roster-row cap reported
+  (`contacts_truncated`); unknown countries and non-JSON bodies refused with the family's code; the
+  console's and the app's behaviour as in `customer-history.md` §5.
+- **Measured** (spec §6): on a 1,000,020-contact tenant with the number on 20 campaigns and 580
+  calls, a search (summary and first page) takes 15.1 ms median / 17.6 ms p95 for a tenant-level
+  owner and 6.3 / 10.2 ms for an account-scoped supervisor; a later page 4–5 ms; no full scan in
+  any plan (`customer-history.md` §4, `apps/server/scripts/bench-customer-history.ts`).
+- **Console**: a "Search a number" box in the agency top bar, and a "Search a number" entry in the
+  agent navigation; the page at `/agency/customers` and `/dialer/customers`.
+- **Agent app**: the search and the page from My calls, with every console filter (the channel and
+  connected-only on the page, the rest in a sheet) and a copy button; no CSV export (CH13). **Not
+  yet run under Dart or Flutter** (the SDK could not be installed where it was built or fixed); the
+  mobile CI job is the first run.
 - **Found, not fixed** (CH12 e): the roster ingest keeps a bracketed trunk `(0)` that the search
   and the soft phone drop, so `+44 (0)20 …` typed in a roster is not found; pinned `it.fails`.
 - **Not shown** (CH12 a): DNC removals (a hard delete whose audit row carries no number).
+- **Inferred, not stored** (CH12 b): the upload file a contact came from is the campaign's import
+  whose run window covers the contact's creation; no column links them.
+- **Never "Removed from roster"** (CH12 c): roster replace does not remove contacts (B15, no
+  supersede), so the history never shows a row as removed.
 
 ## Test counts
 
-Latest run, 2026-11-06, the customer-history branch (`001c3b6`), from inside each package
-(`pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and `pnpm test:release` 10 pass;
-`pnpm build` clean). The agent app's Dart suites did not run (no SDK where it was built; the
-mobile CI job is their first run):
+Latest run, 2026-11-06, the customer-history branch after its review fixes. The agent app's Dart
+suites did not run (no SDK where it was built or fixed; the mobile CI job is their first run), so
+there is no `apps/mobile` row for this run: the app's last recorded Dart run predates this feature
+(the contact-assignment branch, PR #33), and nothing of customer history's Dart side has run.
 
-| Package | Unit | Integration |
-|---|---|---|
-| `apps/server` | 8206 passed + 1 expected fail + 42 skipped (410 files) | rest lane 1998 passed + 9 expected fail + 1 skipped (204 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 571 (55 files) |
-| `apps/console` | 5457 (287 files) | — |
-| `apps/super-admin` | 446 | — |
-| `packages/contracts` | 329, `contracts-literals --check` up to date | — |
-| `packages/web-ui` | 235 | — |
-| `packages/domain` | 109 | — |
-| `packages/observability` | 14 | — |
-| `apps/mobile` | `flutter test` 1404, `agency_wire` 399, `flutter analyze` and `dart analyze` (`agency_wire`) clean, Flutter 3.47.7 | — |
+COUNTS: filled in by the main session
 
 After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
 `/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8
@@ -1164,7 +1175,7 @@ The full list is [`decisions.md`](decisions.md), §5. In short, all with Manas:
 | Wrap-up redial | Ratify the **default, pending Manas** rows WR1, WR3, WR4, WR7–WR13 (`decisions.md` §4), including the ask's open question: redials do not spend `max_attempts` (WR3) |
 | Abandonment ceiling | Ratify AC1–AC3 (`decisions.md` §4): the console offers 0.5–10%; above 3% it warns but no extra role is needed |
 | Several running campaigns | Ratify MC1–MC7 (`decisions.md` §4): equal fair share, fewest live calls first, decided in the pacing round; the busy-number check widened to the account, the soft phone's tagged dials included. Weights and a per-campaign cap were left for later. Decide MC3's two-process overlap (live attempt rows above the limit while two processes lead campaigns of one account, the concurrency guard refusing the excess calls): an account-level lease or a Redis slot reservation, or accept it |
-| Customer history | Ratify CH6–CH11 (`decisions.md` §4), in particular the 30-a-minute cap and the 30-minute search id. Decide whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on) |
+| Customer history | Ratify CH6–CH11, CH12 b–d and CH13 (`decisions.md` §4), in particular the 30-a-minute cap, the 30-minute search id, the audit coverage (refusals and timeline pages are not audited) and the export being the console's only. Decide CH12 a, whether DNC removals must appear in a number's history (they would need the number kept on removal, today deliberately not recorded), and CH12 e, whether the roster ingest should drop a bracketed trunk `(0)` as the soft phone and the search do (it changes what existing rosters dedupe on). CH12 b (the upload file inferred from the import window) and CH12 c (no row is ever "Removed from roster" until B15's supersede) are what the schema allows today |
 | Account creation | Ratify AA1–AA3, AA5, AA6 (`decisions.md` §4): tenant admins need a tenant-wide seat to create accounts; names unique in the tenant ignoring case; creates in one tenant serialised; accounts listed oldest first; no rename or delete yet. AA4 is decided: a tenant admin's new account has zero call capacity until a super admin sets it |
 
 ## Deployment invariants

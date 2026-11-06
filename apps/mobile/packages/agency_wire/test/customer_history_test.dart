@@ -26,7 +26,7 @@ void main() {
       expect(s.contacts[1].suppressedReason, 'dnc');
       expect(s.contacts[1].assignedTo, isNull);
 
-      expect(s.totals.calls, 4);
+      expect(s.totals.calls, 5);
       expect(s.totals.connected, 2);
       expect(s.totals.lastContacted?.channel, CustomerTimelineChannel.softphone);
       expect(s.totals.lastContacted?.outcome, AttemptOutcome.connected);
@@ -35,6 +35,9 @@ void main() {
       expect(s.dnc.single.campaign?.name, 'October dues');
       expect(s.open.callbacks.single.dueAt, DateTime.utc(2026, 11, 7, 5, 30));
       expect(s.open.overrides.single.extraAttempts, 2);
+      expect(s.open.overrides.single.followUpAt, DateTime.utc(2026, 11, 7, 5, 30));
+      expect(s.filterOptions.agents.map((a) => a.name), ['Karan Shah', 'Priya Nair']);
+      expect(s.contactsTruncated, isFalse);
       expect(s.open.liveCalls.single.agent, isNull);
       expect(s.filterOptions.outcomes, [AttemptOutcome.connected, AttemptOutcome.noAnswer]);
 
@@ -46,6 +49,28 @@ void main() {
         CustomerTimelineKind.rosterEntry,
       ]);
       expect(r.timeline.hasMore, isTrue);
+    });
+
+    test('an override with no follow-up scheduled', () {
+      final json = fixture(file, 'search_response');
+      final summary = json['summary']! as Map<String, Object?>;
+      final open = summary['open']! as Map<String, Object?>;
+      final override = (open['overrides']! as List<Object?>).single! as Map<String, Object?>;
+      final o = CustomerHistoryOpenOverride.fromJson({...override, 'follow_up_at': null});
+      expect(o.followUpAt, isNull);
+      expect(o, isNot(CustomerHistoryOpenOverride.fromJson(override)));
+    });
+
+    test('a summary cut at the roster-row cap says so; absent means not cut', () {
+      final summary = fixture(file, 'search_response')['summary']! as Map<String, Object?>;
+      expect(CustomerHistorySummary.fromJson(summary).contactsTruncated, isFalse);
+      final cut = CustomerHistorySummary.fromJson({...summary, 'contacts_truncated': true});
+      expect(cut.contactsTruncated, isTrue);
+      expect(cut, isNot(CustomerHistorySummary.fromJson(summary)));
+      expect(
+        () => CustomerHistorySummary.fromJson({...summary, 'contacts_truncated': 'yes'}),
+        throwsA(isA<WireFormatException>().having((e) => e.key, 'key', 'contacts_truncated')),
+      );
     });
 
     test('nothing in the accounts the caller can see', () {
@@ -126,6 +151,18 @@ void main() {
       expect(
         () => CustomerTimelineEntry.fromJson(json),
         throwsA(isA<WireFormatException>().having((e) => e.key, 'key', 'campaign')),
+      );
+    });
+  });
+
+  group('CustomerSearchOptionsResponse', () {
+    test('the platform default calling code', () {
+      final o = CustomerSearchOptionsResponse.fromJson(fixture(file, 'options_response'));
+      expect(o.defaultCountryCode, '+91');
+      expect(o, const CustomerSearchOptionsResponse(defaultCountryCode: '+91'));
+      expect(
+        () => CustomerSearchOptionsResponse.fromJson(const <String, Object?>{}),
+        throwsA(isA<WireFormatException>().having((e) => e.key, 'key', 'default_country_code')),
       );
     });
   });

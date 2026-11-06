@@ -6,12 +6,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { CustomerSearchResponse } from '@magick-agency/contracts/api/agency/customer-history';
 import { CUSTOMER_TIMELINE_PAGE_SIZE } from '@magick-agency/contracts/api/agency/customer-history';
-import { parseSearchNumber, resolveSearchCountry } from '@magick-agency/domain/customer-search-number';
+import { parseSearchNumber, resolveSearchCountry, searchCountryByIso } from '@magick-agency/domain/customer-search-number';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { defaultPhoneCountryCode } from '../../../utils/phone-normalizer.js';
-import { customerSearchRequestSchema } from '../../../agency/customer-history/requests.js';
-import { buildSummary, buildTimeline, pageTimeline } from '../../../agency/customer-history/assemble.js';
-import { loadCustomerHistory, resolveViewer } from '../../../agency/customer-history/service.js';
+import { customerSearchRequestSchema, toTimelineFilter } from '../../../agency/customer-history/requests.js';
+import { loadCustomerSummary, loadTimelinePage, resolveViewer } from '../../../agency/customer-history/service.js';
 import {
   auditCustomerHistory,
   guardCustomerRoute,
@@ -29,6 +28,10 @@ export async function registerCustomerSearchRoute(app: FastifyInstance, deps: Cu
     const body = await parseBody(customerSearchRequestSchema, request, reply);
     if (!body) return reply;
 
+    // A country the picker does not list is refused, never searched as the default's number.
+    if (body.country !== undefined && !searchCountryByIso(body.country)) {
+      return reply.code(400).send(refusal('invalid_search_request', 'country: not a country the search offers'));
+    }
     const country = resolveSearchCountry(body.country, defaultPhoneCountryCode());
     const number = parseSearchNumber(body.value, country);
     if (!number.ok) {
@@ -36,10 +39,12 @@ export async function registerCustomerSearchRoute(app: FastifyInstance, deps: Cu
     }
 
     const tenantId = request.tenantId!;
+    const now = new Date();
     const viewer = await resolveViewer(request.user!.id, tenantId);
-    const data = await loadCustomerHistory(viewer, tenantId, number.e164);
-    const items = buildTimeline(data);
-    const summary = buildSummary(data);
+    const [{ summary, resultCount }, timeline] = await Promise.all([
+      loadCustomerSummary(viewer, tenantId, number.e164, now),
+      loadTimelinePage(viewer, tenantId, number.e164, toTimelineFilter(undefined), null, CUSTOMER_TIMELINE_PAGE_SIZE, now),
+    ]);
 
     const { id, record } = await deps.store.save({
       tenant_id: tenantId,
@@ -54,7 +59,7 @@ export async function registerCustomerSearchRoute(app: FastifyInstance, deps: Cu
       searchId: id,
       record,
       viewer,
-      resultCount: items.length,
+      resultCount,
     });
 
     const answer: CustomerSearchResponse = {
@@ -62,7 +67,7 @@ export async function registerCustomerSearchRoute(app: FastifyInstance, deps: Cu
       expires_at: record.expires_at,
       key: { by: record.by, value: record.value, display: record.display },
       summary,
-      timeline: pageTimeline(items, null, CUSTOMER_TIMELINE_PAGE_SIZE),
+      timeline,
     };
     noStore(reply);
     return reply.code(200).send(answer);

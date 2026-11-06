@@ -362,6 +362,22 @@ void main() {
       expect(h.auth.currentUser, isNull);
     });
 
+    const searched = '[{"e164":"+919876543210","display":"+91 98765 43210"}]';
+
+    test('nobody signed in at start-up: recent searches left on the phone are forgotten', () async {
+      h.store.values[SessionStore.recentSearchesKey] = searched;
+      expect(await startGate(h.container()), const GateSignedOut());
+      expect(h.store.values.containsKey(SessionStore.recentSearchesKey), isFalse);
+    });
+
+    test('a session refused at start-up signs out and forgets the recent searches', () async {
+      h.server.json('POST', '/auth/session', {'error': 'Bad Request', 'message': 'Refused'}, status: 400);
+      signedIn();
+      h.store.values[SessionStore.recentSearchesKey] = searched;
+      expect(await startGate(h.container()), isA<GateSignedOut>());
+      expect(h.store.values.containsKey(SessionStore.recentSearchesKey), isFalse);
+    });
+
     test('a 401 reported anywhere signs out with the expiry notice', () async {
       signedIn();
       final c = h.container();

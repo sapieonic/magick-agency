@@ -63,6 +63,14 @@ export function filtersFromForm(form: CustomerTimelineFilterForm): CustomerTimel
   return filters;
 }
 
+/** The British-English refusal for a "To" day before the "From" day; never sent to the server. */
+export const REVERSED_RANGE_MESSAGE = 'The end date must be on or after the start date.';
+
+/** Both days set and the end before the start (`YYYY-MM-DD` compares as text). */
+export function isReversedRange(form: Pick<CustomerTimelineFilterForm, 'fromDay' | 'toDay'>): boolean {
+  return form.fromDay !== '' && form.toDay !== '' && form.toDay < form.fromDay;
+}
+
 export function hasAnyFilter(form: CustomerTimelineFilterForm): boolean {
   return Object.keys(filtersFromForm(form)).length > 0;
 }
@@ -79,6 +87,8 @@ export function CustomerTimelineFiltersBar({
   disabled?: boolean;
 }) {
   const id = useId();
+  const reversed = isReversedRange(form);
+  const rangeErrorId = `${id}-range-error`;
   const set = <K extends keyof CustomerTimelineFilterForm>(key: K, value: CustomerTimelineFilterForm[K]) =>
     onChange({ ...form, [key]: value });
 
@@ -96,11 +106,27 @@ export function CustomerTimelineFiltersBar({
       </div>
       <div className={styles.filter}>
         <label htmlFor={`${id}-from`}>From</label>
-        <input id={`${id}-from`} type="date" value={form.fromDay} onChange={(e) => set('fromDay', e.target.value)} />
+        <input
+          id={`${id}-from`}
+          type="date"
+          value={form.fromDay}
+          max={form.toDay || undefined}
+          onChange={(e) => set('fromDay', e.target.value)}
+          aria-invalid={reversed ? true : undefined}
+          aria-describedby={reversed ? rangeErrorId : undefined}
+        />
       </div>
       <div className={styles.filter}>
         <label htmlFor={`${id}-to`}>To</label>
-        <input id={`${id}-to`} type="date" value={form.toDay} onChange={(e) => set('toDay', e.target.value)} />
+        <input
+          id={`${id}-to`}
+          type="date"
+          value={form.toDay}
+          min={form.fromDay || undefined}
+          onChange={(e) => set('toDay', e.target.value)}
+          aria-invalid={reversed ? true : undefined}
+          aria-describedby={reversed ? rangeErrorId : undefined}
+        />
       </div>
       <div className={styles.filter}>
         <label htmlFor={`${id}-outcome`}>Outcome</label>
@@ -150,6 +176,11 @@ export function CustomerTimelineFiltersBar({
         />
         <label htmlFor={`${id}-connected`}>Connected calls only</label>
       </div>
+      {reversed && (
+        <p id={rangeErrorId} className={styles.fieldError} role="alert" data-testid="customer-filter-range-error">
+          {REVERSED_RANGE_MESSAGE}
+        </p>
+      )}
       {hasAnyFilter(form) && (
         <button type="button" className="btn-secondary" onClick={() => onChange(EMPTY_FILTER_FORM)}>
           Clear filters

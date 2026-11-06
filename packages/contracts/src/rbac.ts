@@ -32,11 +32,12 @@ export type MembershipRole = Role;
  * `viewer`. The hierarchy is linear and PERMISSION_MATRIX maps each permission
  * to a *minimum* role, so a floor of `viewer` (10) or higher is unreachable at
  * level 5. Every permission that predates the agency feature floors at `viewer`
- * or above, which means an `agent` membership grants access to exactly the five
- * agent-floored `agency.*` action permissions below (the four station ones and
- * `agency.softphone.dial`), PLUS `agency.flags.read` and `agency.customer_history.read` (one
- * number's history, with media and other agents' notes withheld; see its matrix entry), and to nothing else — no campaign list, no analytics, no contacts, no recordings, and no
- * other `/proxy/*` route. That is the design, not an oversight: agent actions
+ * or above, which means an `agent` membership grants access to exactly the six
+ * agent-floored `agency.*` action permissions below (the four station ones,
+ * `agency.softphone.dial` and `agency.contacts.own`), PLUS `agency.flags.read` and
+ * `agency.customer_history.read` (one number's history, with media, other agents' notes and
+ * DNC reasons withheld; see its matrix entry), and to nothing else — no campaign list, no
+ * analytics, no contacts beyond the agent's own, no recordings, and no other `/proxy/*` route. That is the design, not an oversight: agent actions
  * get agency-native routes that can additionally verify the caller is the
  * reserved agent for the attempt.
  *

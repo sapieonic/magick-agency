@@ -2,7 +2,7 @@
  * What the customer-history routes share: the guard chain after the permission, the refusal
  * bodies, the search lookup and the audit row. Part of `proxy-agency-customers.routes.ts`.
  */
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { z } from 'zod';
 import type { UserRecord } from '@magick-agency/db/models/user.model';
 import type {
@@ -17,8 +17,6 @@ import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import type { CustomerSearchRecord, CustomerSearchStore } from '../../../agency/customer-history/search-store.js';
 import type { CustomerHistoryViewer } from '../../../agency/customer-history/visibility.js';
 import { DIALER_DISABLED_BODY } from '../proxy-agency-insights/shared.js';
-
-export { DIALER_DISABLED_BODY };
 
 /** What every route of the family is given at registration. */
 export interface CustomerRoutesDeps {
@@ -43,7 +41,7 @@ export function refusal(
   return { error: ERROR_LABEL[code], code, message, ...(numberError ? { number_error: numberError } : {}) };
 }
 
-export const SEARCH_EXPIRED_BODY = refusal('search_expired', 'This search has expired. Search the number again.');
+const SEARCH_EXPIRED_BODY = refusal('search_expired', 'This search has expired. Search the number again.');
 export const INVALID_CURSOR_BODY = refusal('invalid_cursor', 'This page of results is no longer valid. Load the history again.');
 
 /**
@@ -69,12 +67,34 @@ export async function guardCustomerRoute(
   return true;
 }
 
-/** The body, or the family's `400 invalid_search_request` (the first problem, by path). */
+/** What the family's JSON parser hands on for a body that is not JSON (see {@link useFamilyJsonParser}). */
+const MALFORMED_BODY: unique symbol = Symbol('customer-history: malformed JSON body');
+
+/**
+ * The family's own `application/json` parser (this plugin's scope only): Fastify's default parser
+ * (prototype and constructor poisoning refused, the app's body limit), except that a body that
+ * is not JSON is handed on as a marker instead of failing the request before the handler, so
+ * {@link parseBody} answers the contract's `400 invalid_search_request` rather than the app's
+ * generic 400 without a `code`.
+ */
+export function useFamilyJsonParser(app: FastifyInstance): void {
+  const json = app.getDefaultJsonParser('error', 'error');
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
+    json(request, body as string, (err, parsed) => done(null, err ? MALFORMED_BODY : parsed));
+  });
+}
+
+/** The body, or the family's `400 invalid_search_request` (not JSON, or the first problem, by path). */
 export async function parseBody<S extends z.ZodTypeAny>(
   schema: S,
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<z.infer<S> | null> {
+  if (request.body === MALFORMED_BODY) {
+    await reply.code(400).send(refusal('invalid_search_request', 'The request body is not valid JSON.'));
+    return null;
+  }
   const parsed = schema.safeParse(request.body ?? {});
   if (parsed.success) return parsed.data as z.infer<S>;
   const issue = parsed.error.issues[0];

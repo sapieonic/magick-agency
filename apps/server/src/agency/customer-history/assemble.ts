@@ -1,18 +1,16 @@
 /**
  * The customer-history answer, assembled from the rows the repository read
  * (`docs/customer-history.md` §3 the summary, §4 the timeline). PURE: no I/O. The rows are already
- * scoped to the visible accounts in SQL (CH2); this file applies what is shown of each row (CH8),
- * groups retry chains (CH7), judges callbacks and recordings, merges every source into one
- * timeline in one order, filters it and cuts pages from it.
+ * scoped to the visible accounts in SQL (CH2), filtered and cut at the cursor in SQL; this file
+ * applies what is shown of each row (CH8), groups retry chains (CH7), judges callbacks and
+ * recordings, merges the sources' heads into one page in one order, and builds the summary from
+ * the SQL aggregates.
  *
- * ── Why the merge is here and not in SQL ─────────────────────────────────────────
- * Every source is read whole for the ONE number (each read an exact-match index probe,
- * CH9), because three things on a page need rows the page itself does not show: a callback's
- * status is judged by the NEXT call placed to the number, a redial names its chain's FIRST
- * attempt, and the summary's totals and filter options cover every call. With every row in hand
- * the order (`at DESC, key DESC`) is one comparison over one list, so a page never skips or
- * repeats an entry, whatever the filters, and entries sharing one instant to the microsecond are
- * split by `key` alone.
+ * ── The order ───────────────────────────────────────────────────────────────────
+ * `at DESC, key DESC` over every source: `at` is the entry's instant at microsecond precision,
+ * `key` is `<kind>:<id>`. Each source statement returns the rows strictly after the cursor in that
+ * order (`sourceBound`), so the top `n` of the merged heads is the page, and a page never skips or
+ * repeats an entry, whatever the filters; entries sharing one instant are split by `key` alone.
  */
 import type {
   CustomerCallbackStatus,
@@ -26,74 +24,51 @@ import type {
   CustomerHistorySummary,
   CustomerHistoryUser,
   CustomerRecordingState,
-  CustomerTimelineChannel,
   CustomerTimelineEntry,
+  CustomerTimelineKind,
   CustomerTimelinePage,
 } from '@magick-agency/contracts/api/agency/customer-history';
-import type { AgencyAttemptOutcome, AgencyCampaignStatus, AgencyContactState } from '@magick-agency/contracts/agency';
-import type { AgencyDisposition } from '@magick-agency/contracts/agency';
+import type {
+  AgencyAttemptOutcome,
+  AgencyCampaignStatus,
+  AgencyContactState,
+  AgencyDisposition,
+  AgencyOverrideKind,
+} from '@magick-agency/contracts/agency';
 import type { DncSource } from '@magick-agency/contracts/api/agency/dnc';
+import { contextValueText, heroColumnsFor } from '@magick-agency/domain/context-hero';
 import type {
   CustomerHistoryAttemptRow,
+  CustomerHistoryCallbackRow,
+  CustomerHistoryCallStatsRow,
   CustomerHistoryCampaignRow,
   CustomerHistoryContactRow,
   CustomerHistoryDncRow,
+  CustomerHistoryLastPlacedRow,
+  CustomerHistoryLiveCallRow,
   CustomerHistoryManualCallRow,
+  CustomerHistorySummaryContactRow,
   CustomerHistoryUploadRow,
 } from '../../db/repositories/agency.repository.js';
-import { callbackCodes, heroColumns } from '../../db/repositories/agency.repository.js';
-import type { AgencyCampaignRecord } from '../../db/models/agency.model.js';
+import { callbackCodes, isOverrideUnspent, UUID_MAX, UUID_NIL } from '../../db/repositories/agency.repository.js';
 import { dncEntryScope } from '../dnc-registry.js';
 import { userIdOf } from '../insights/shared.js';
-import { encodeTimelineCursor, isAfter, compareTimeline, toWireInstant, type TimelinePosition } from './cursor.js';
-import type { TimelineFilter } from './requests.js';
-import {
-  canOpenCallPage,
-  canSeeCallNotes,
-  canSeeDncDetail,
-  type CustomerHistoryViewer,
-} from './visibility.js';
+import { compareTimeline, encodeTimelineCursor, toWireInstant, type TimelinePosition } from './cursor.js';
+import { canOpenCallPage, canSeeCallNotes, canSeeDncDetail, type CustomerHistoryViewer } from './visibility.js';
 
 /** A callback is kept when the next call is placed by its time plus this (inclusive; insights IN4). */
-export const CALLBACK_ON_TIME_MS = 15 * 60_000;
-/** Columns of a row shown when its campaign names no hero columns. */
-export const FALLBACK_FIELD_COUNT = 4;
-
-/** Everything one number's history is built from. */
-export interface CustomerHistoryData {
-  now: Date;
-  viewer: CustomerHistoryViewer;
-  contacts: readonly CustomerHistoryContactRow[];
-  campaigns: ReadonlyMap<string, CustomerHistoryCampaignRow>;
-  attempts: readonly CustomerHistoryAttemptRow[];
-  manualCalls: readonly CustomerHistoryManualCallRow[];
-  dnc: readonly CustomerHistoryDncRow[];
-  /** Media legs that still exist (`agency_calls`), by id. */
-  mediaLegs: ReadonlyMap<string, { recording_url: string | null }>;
-  uploads: readonly CustomerHistoryUploadRow[];
-  /** Display names by user id (NULL when unresolved). */
-  names: ReadonlyMap<string, string | null>;
-}
-
-/** One timeline entry with what the order and the filters read. */
-export interface TimelineItem extends TimelinePosition {
-  entry: CustomerTimelineEntry;
-  /** The entry's root campaign (CH7), NULL when it has none (an untagged call, a tenant DNC entry). */
-  root: string | null;
-  /** A call entry's facts for the call-only filters; NULL for the other kinds. */
-  call: { channel: CustomerTimelineChannel; outcome: string | null; code: string | null; agent: string | null } | null;
-}
+const CALLBACK_ON_TIME_MS = 15 * 60_000;
 
 // ─── Small pieces ────────────────────────────────────────────────────────────
 
 const iso = (d: Date | null | undefined): string | null => (d ? d.toISOString() : null);
 
-export function userOf(id: string | null | undefined, names: ReadonlyMap<string, string | null>): CustomerHistoryUser | null {
+function userOf(id: string | null | undefined, names: ReadonlyMap<string, string | null>): CustomerHistoryUser | null {
   if (!id) return null;
   return { user_id: id, name: names.get(id) ?? null };
 }
 
-export function campaignWire(row: CustomerHistoryCampaignRow): CustomerHistoryCampaign {
+function campaignWire(row: CustomerHistoryCampaignRow): CustomerHistoryCampaign {
   return {
     id: row.id,
     name: row.name,
@@ -105,77 +80,67 @@ export function campaignWire(row: CustomerHistoryCampaignRow): CustomerHistoryCa
 }
 
 /**
- * The recording state (§4): `no_call` with no media leg, `expired` when retention purged the leg
- * (its `agency_calls` row is gone), `available` when the leg has a recording, else `not_recorded`.
+ * The recording state (§4): `no_call` with no media leg; a leg that still exists is `available`
+ * with a recording, else `not_recorded`; a leg retention purged (its `agency_calls` row is gone)
+ * is `expired` only when the call asked for a recording (`recorded`: the campaign's
+ * `record_calls`, a soft-phone call's `recording_requested`), else `not_recorded`: retention purges
+ * every old leg, recorded or not, and "Recording expired" must not claim a recording existed.
  */
 export function recordingState(
   webrtcCallId: string | null,
   legs: ReadonlyMap<string, { recording_url: string | null }>,
+  recorded: boolean,
 ): CustomerRecordingState {
   if (!webrtcCallId) return 'no_call';
   const leg = legs.get(webrtcCallId);
-  if (!leg) return 'expired';
+  if (!leg) return recorded ? 'expired' : 'not_recorded';
   return leg.recording_url ? 'available' : 'not_recorded';
 }
 
 /**
- * Whether a booked callback was kept (§4): the next call placed to the number after the booking.
- * Placed by `due + 15 min` (inclusive, an early call included) → `kept`; later → `late`; none
- * yet: `upcoming` before `due`, `due` within 15 minutes after it, `missed` past that.
- *
- * @param placed every placed call to the number (`dialed_at`), the booking call among them
+ * Whether a booked callback was kept (§4), from the next call placed to the number after the
+ * booking (`nextDialledAtMs`, NULL when none yet): placed by `due + 15 min` (inclusive, an early
+ * call included) → `kept`; later → `late`; none yet: `upcoming` before `due`, `due` within 15
+ * minutes after it, `missed` past that.
  */
 export function callbackStatus(input: {
-  bookingCallId: string;
-  bookedAtMs: number;
   dueAtMs: number;
-  placed: ReadonlyArray<{ id: string; dialedAtMs: number }>;
+  nextDialledAtMs: number | null;
   nowMs: number;
-}): { status: CustomerCallbackStatus; dialledAtMs: number | null } {
-  let next: number | null = null;
-  for (const p of input.placed) {
-    if (p.id === input.bookingCallId || p.dialedAtMs <= input.bookedAtMs) continue;
-    if (next === null || p.dialedAtMs < next) next = p.dialedAtMs;
-  }
+}): CustomerCallbackStatus {
   const deadline = input.dueAtMs + CALLBACK_ON_TIME_MS;
-  if (next !== null) return { status: next <= deadline ? 'kept' : 'late', dialledAtMs: next };
-  if (input.nowMs < input.dueAtMs) return { status: 'upcoming', dialledAtMs: null };
-  if (input.nowMs <= deadline) return { status: 'due', dialledAtMs: null };
-  return { status: 'missed', dialledAtMs: null };
+  if (input.nextDialledAtMs !== null) return input.nextDialledAtMs <= deadline ? 'kept' : 'late';
+  if (input.nowMs < input.dueAtMs) return 'upcoming';
+  if (input.nowMs <= deadline) return 'due';
+  return 'missed';
 }
 
-/** The first attempt of a wrap-up redial chain: follow `redial_of_attempt_id` back as far as it is known. */
-export function chainAttemptId(
-  attempt: Pick<CustomerHistoryAttemptRow, 'id' | 'redial_of_attempt_id'>,
-  byId: ReadonlyMap<string, Pick<CustomerHistoryAttemptRow, 'id' | 'redial_of_attempt_id'>>,
-): string {
-  let current = attempt;
-  const seen = new Set<string>([current.id]);
-  while (current.redial_of_attempt_id) {
-    const prev = byId.get(current.redial_of_attempt_id);
-    if (!prev || seen.has(prev.id)) return current.redial_of_attempt_id;
-    seen.add(prev.id);
-    current = prev;
+/** The columns of a row's import, newest import first: the row's campaign's, else its chain root's. */
+function columnOrderFor(campaign: CustomerHistoryCampaignRow | null, uploads: readonly CustomerHistoryUploadRow[]): string[] | null {
+  if (!campaign) return null;
+  for (const id of [campaign.id, campaign.root_id]) {
+    const own = uploads.filter((u) => u.campaign_id === id && Array.isArray(u.context_columns) && u.context_columns.length > 0);
+    const newest = own[own.length - 1];
+    if (newest) return newest.context_columns;
   }
-  return current.id;
+  return null;
 }
 
-const cell = (v: unknown): string | null => {
-  if (v === null || v === undefined) return null;
-  if (typeof v === 'string') return v.trim().length > 0 ? v : null;
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-  return JSON.stringify(v);
-};
-
-/** The row's hero columns (the campaign's `context_display.hero`), else its first columns. */
-export function contactFields(context: Record<string, unknown> | null, campaign: CustomerHistoryCampaignRow | null): CustomerHistoryField[] {
-  const ctx = context && typeof context === 'object' ? context : {};
-  const hero = campaign ? heroColumns({ context_display: (campaign.context_display ?? {}) as AgencyCampaignRecord['context_display'] }) : [];
-  const columns = hero.length > 0 ? hero : Object.keys(ctx).slice(0, FALLBACK_FIELD_COUNT);
+/**
+ * The row's hero fields (`heroColumnsFor`, `packages/domain/src/context-hero.ts`): the campaign's
+ * `context_display.hero`, else the heuristic, else its first columns in the import's order, never
+ * a `hidden` column; columns with no value are left out.
+ */
+export function contactFields(
+  context: Record<string, unknown> | null,
+  campaign: CustomerHistoryCampaignRow | null,
+  columnOrder: readonly string[] | null = null,
+): CustomerHistoryField[] {
+  const ctx = context && typeof context === 'object' && !Array.isArray(context) ? context : {};
   const out: CustomerHistoryField[] = [];
-  for (const column of columns) {
-    const value = cell(ctx[column]);
-    if (value !== null) out.push({ column, value });
+  for (const column of heroColumnsFor(ctx, campaign?.context_display ?? null, columnOrder)) {
+    const value = contextValueText(ctx[column]);
+    if (value !== null && value.trim().length > 0) out.push({ column, value });
   }
   return out;
 }
@@ -202,76 +167,132 @@ function dncAddedBy(raw: string | null, names: ReadonlyMap<string, string | null
   return raw;
 }
 
-function dncEntry(row: CustomerHistoryDncRow, data: CustomerHistoryData): CustomerHistoryDncEntry {
-  const detail = canSeeDncDetail(data.viewer, row.account_id);
-  const campaign = row.campaign_id ? data.campaigns.get(row.campaign_id) ?? null : null;
+/**
+ * One DNC entry as the caller sees it. Its account is its own, else its campaign's (a campaign
+ * mark is written with no account); who added it and why need `agency.dnc.read` in THAT account
+ * (CH8), or, for a tenant-wide entry, in any account the caller sees (the registry's own read).
+ */
+function dncEntry(
+  row: CustomerHistoryDncRow,
+  viewer: CustomerHistoryViewer,
+  campaigns: ReadonlyMap<string, CustomerHistoryCampaignRow>,
+  names: ReadonlyMap<string, string | null>,
+): CustomerHistoryDncEntry {
+  const accountId = row.effective_account_id;
+  const detail = canSeeDncDetail(viewer, accountId);
+  const campaign = row.campaign_id ? campaigns.get(row.campaign_id) ?? null : null;
   return {
     id: row.id,
     scope: dncEntryScope(row),
-    account_id: row.account_id,
-    account_name: row.account_id ? data.viewer.accounts.get(row.account_id)?.name ?? null : null,
+    account_id: accountId,
+    account_name: accountId ? viewer.accounts.get(accountId)?.name ?? null : null,
     campaign: row.campaign_id ? { id: row.campaign_id, name: campaign?.name ?? null } : null,
     source: row.source as DncSource,
     reason: detail ? row.reason : null,
-    added_by: detail ? dncAddedBy(row.added_by, data.names) : null,
+    added_by: detail ? dncAddedBy(row.added_by, names) : null,
     created_at: row.created_at.toISOString(),
   };
 }
 
-/** Every user id the answer names, for one name lookup. */
-export function userIdsOf(data: Pick<CustomerHistoryData, 'contacts' | 'attempts' | 'manualCalls' | 'dnc'>): string[] {
+// ─── Timeline pages ──────────────────────────────────────────────────────────
+
+/** One page's rows, each source already cut at the cursor and filtered in SQL. */
+export interface TimelineSourceRows {
+  attempts: readonly CustomerHistoryAttemptRow[];
+  manualCalls: readonly CustomerHistoryManualCallRow[];
+  callbacks: readonly CustomerHistoryCallbackRow[];
+  dnc: readonly CustomerHistoryDncRow[];
+  contacts: readonly CustomerHistoryContactRow[];
+}
+
+export const EMPTY_SOURCES: TimelineSourceRows = { attempts: [], manualCalls: [], callbacks: [], dnc: [], contacts: [] };
+
+/**
+ * Where a source of `kind` resumes after `cursor`: its rows strictly after the cursor in
+ * `at DESC, key DESC` are `(at, id) < (cursor.at, id)` with `id` the cursor's own id when the
+ * cursor is of this kind; at the cursor's instant, every row of a kind that sorts before the
+ * cursor's (its keys are smaller: {@link UUID_MAX}) and none of a kind after it ({@link UUID_NIL}).
+ * No cursor: everything.
+ */
+export function sourceBound(kind: CustomerTimelineKind, cursor: TimelinePosition | null): { at: string; id: string } {
+  if (!cursor) return { at: 'infinity', id: UUID_MAX };
+  const sep = cursor.key.indexOf(':');
+  const cursorKind = cursor.key.slice(0, sep);
+  if (kind === cursorKind) return { at: cursor.at, id: cursor.key.slice(sep + 1) };
+  return { at: cursor.at, id: kind < cursorKind ? UUID_MAX : UUID_NIL };
+}
+
+const positionsOf = (rows: TimelineSourceRows): TimelinePosition[] => [
+  ...rows.attempts.map((r) => ({ at: r.at, key: `campaign_call:${r.id}` })),
+  ...rows.manualCalls.map((r) => ({ at: r.at, key: `softphone_call:${r.id}` })),
+  ...rows.callbacks.map((r) => ({ at: r.at, key: `callback:${r.id}` })),
+  ...rows.dnc.map((r) => ({ at: r.at, key: `dnc_mark:${r.id}` })),
+  ...rows.contacts.map((r) => ({ at: r.at, key: `roster_entry:${r.id}` })),
+];
+
+/**
+ * The page out of each source's head: the first `limit` entries of the merge, the rows behind
+ * them, the last one's position, and whether anything follows. Each source returned up to
+ * `limit + 1` rows after the cursor, so more than `limit` merged means a next page exists.
+ */
+export function cutPage(rows: TimelineSourceRows, limit: number): { rows: TimelineSourceRows; last: TimelinePosition | null; hasMore: boolean } {
+  const all = positionsOf(rows).sort(compareTimeline);
+  const kept = all.slice(0, limit);
+  const keys = new Set(kept.map((p) => p.key));
+  return {
+    rows: {
+      attempts: rows.attempts.filter((r) => keys.has(`campaign_call:${r.id}`)),
+      manualCalls: rows.manualCalls.filter((r) => keys.has(`softphone_call:${r.id}`)),
+      callbacks: rows.callbacks.filter((r) => keys.has(`callback:${r.id}`)),
+      dnc: rows.dnc.filter((r) => keys.has(`dnc_mark:${r.id}`)),
+      contacts: rows.contacts.filter((r) => keys.has(`roster_entry:${r.id}`)),
+    },
+    last: kept[kept.length - 1] ?? null,
+    hasMore: all.length > limit,
+  };
+}
+
+/** What one page's entries are built from: the page's rows and what they name. */
+export interface TimelinePageData extends TimelineSourceRows {
+  now: Date;
+  viewer: CustomerHistoryViewer;
+  campaigns: ReadonlyMap<string, CustomerHistoryCampaignRow>;
+  /** Media legs that still exist (`agency_calls`), by id. */
+  mediaLegs: ReadonlyMap<string, { recording_url: string | null }>;
+  uploads: readonly CustomerHistoryUploadRow[];
+  /** Display names by user id (NULL when unresolved). */
+  names: ReadonlyMap<string, string | null>;
+  /** Each callback's next placed call to the number, by booking call id (NULL: none yet). */
+  callbackNext: ReadonlyMap<string, Date | null>;
+}
+
+/** Every user id a page names, for one name lookup. */
+export function pageUserIds(rows: TimelineSourceRows): string[] {
   const ids = new Set<string>();
   const add = (id: string | null | undefined) => { if (id) ids.add(id); };
-  for (const c of data.contacts) add(c.assigned_user_id);
-  for (const a of data.attempts) { add(a.agent_user_id); add(a.dispositioned_by_user_id); }
-  for (const m of data.manualCalls) { add(m.agent_user_id); add(m.dispositioned_by_user_id); }
-  for (const d of data.dnc) add(userIdOf(d.added_by));
+  for (const a of rows.attempts) add(a.agent_user_id);
+  for (const m of rows.manualCalls) add(m.agent_user_id);
+  for (const c of rows.callbacks) add(c.booked_by_user_id);
+  for (const d of rows.dnc) add(userIdOf(d.added_by));
   return [...ids];
 }
 
-/** Every placed call to the number (either channel), for the callback judgement. */
-function placedCalls(data: CustomerHistoryData): Array<{ id: string; dialedAtMs: number }> {
-  const out: Array<{ id: string; dialedAtMs: number }> = [];
-  for (const a of data.attempts) if (a.dialed_at) out.push({ id: a.id, dialedAtMs: a.dialed_at.getTime() });
-  for (const m of data.manualCalls) if (m.dialed_at) out.push({ id: m.id, dialedAtMs: m.dialed_at.getTime() });
-  return out;
+/** The campaigns a page names. */
+export function pageCampaignIds(rows: TimelineSourceRows): string[] {
+  const ids = new Set<string>();
+  for (const a of rows.attempts) ids.add(a.campaign_id);
+  for (const m of rows.manualCalls) if (m.campaign_id) ids.add(m.campaign_id);
+  for (const c of rows.callbacks) if (c.campaign_id) ids.add(c.campaign_id);
+  for (const d of rows.dnc) if (d.campaign_id) ids.add(d.campaign_id);
+  for (const c of rows.contacts) ids.add(c.campaign_id);
+  return [...ids];
 }
 
-// ─── The timeline ────────────────────────────────────────────────────────────
-
-/** Every entry the caller can see, in the timeline's order (`at DESC, key DESC`). */
-export function buildTimeline(data: CustomerHistoryData): TimelineItem[] {
+/** The page's entries, in the timeline's order (`at DESC, key DESC`). */
+export function buildTimeline(data: TimelinePageData): CustomerTimelineEntry[] {
   const { viewer, names, campaigns } = data;
-  const items: TimelineItem[] = [];
-  const attemptsById = new Map(data.attempts.map((a) => [a.id, a]));
-  const placed = placedCalls(data);
+  const items: Array<{ at: string; key: string; entry: CustomerTimelineEntry }> = [];
   const nowMs = data.now.getTime();
-
-  const pushCallback = (input: {
-    channel: CustomerTimelineChannel; id: string; accountId: string; campaign: CustomerHistoryCampaignRow | null;
-    callbackAt: Date; bookedAt: string; bookedBy: string | null;
-  }) => {
-    const judged = callbackStatus({
-      bookingCallId: input.id,
-      bookedAtMs: Date.parse(input.bookedAt),
-      dueAtMs: input.callbackAt.getTime(),
-      placed,
-      nowMs,
-    });
-    const key = `callback:${input.id}`;
-    items.push({
-      at: input.bookedAt, key, root: input.campaign?.root_id ?? null, call: null,
-      entry: {
-        key, kind: 'callback', at: toWireInstant(input.bookedAt), account_id: input.accountId,
-        source: { channel: input.channel, id: input.id },
-        campaign: input.campaign ? campaignWire(input.campaign) : null,
-        due_at: input.callbackAt.toISOString(),
-        booked_by: userOf(input.bookedBy, names),
-        status: judged.status,
-        dialled_at: judged.dialledAtMs === null ? null : new Date(judged.dialledAtMs).toISOString(),
-      },
-    });
-  };
 
   for (const a of data.attempts) {
     const campaign = campaigns.get(a.campaign_id);
@@ -280,8 +301,7 @@ export function buildTimeline(data: CustomerHistoryData): TimelineItem[] {
     const hadNotes = (a.notes !== null && a.notes.length > 0) || (a.override_note !== null && a.override_note.length > 0);
     const key = `campaign_call:${a.id}`;
     items.push({
-      at: a.at, key, root: campaign.root_id,
-      call: { channel: 'campaign', outcome: a.outcome, code: a.disposition_code, agent: a.agent_user_id },
+      at: a.at, key,
       entry: {
         key, kind: 'campaign_call', at: toWireInstant(a.at), account_id: a.account_id,
         attempt_id: a.id,
@@ -296,22 +316,16 @@ export function buildTimeline(data: CustomerHistoryData): TimelineItem[] {
         notes_hidden: !showNotes && hadNotes,
         callback_at: iso(a.callback_at),
         redial_of_attempt_id: a.redial_of_attempt_id,
-        chain_attempt_id: chainAttemptId(a, attemptsById),
+        chain_attempt_id: a.chain_attempt_id,
         redial_number: a.redial_number,
-        override_applied: a.override_applied,
+        override_applied: a.override_applied as AgencyOverrideKind[],
         override_note: showNotes ? a.override_note : null,
-        recording: recordingState(a.webrtc_call_id, data.mediaLegs),
+        recording: recordingState(a.webrtc_call_id, data.mediaLegs, a.record_calls),
         call_page: canOpenCallPage(viewer, a.account_id)
           ? { account_id: a.account_id, campaign_id: a.campaign_id, attempt_id: a.id }
           : null,
       },
     });
-    if (a.callback_at) {
-      pushCallback({
-        channel: 'campaign', id: a.id, accountId: a.account_id, campaign, callbackAt: a.callback_at,
-        bookedAt: a.booked_at, bookedBy: a.dispositioned_by_user_id ?? a.agent_user_id,
-      });
-    }
   }
 
   for (const m of data.manualCalls) {
@@ -322,8 +336,7 @@ export function buildTimeline(data: CustomerHistoryData): TimelineItem[] {
       || m.dnc_override_note !== null || m.hours_override_note !== null;
     const key = `softphone_call:${m.id}`;
     items.push({
-      at: m.at, key, root: campaign?.root_id ?? null,
-      call: { channel: 'softphone', outcome: m.outcome, code: m.disposition_code, agent: m.agent_user_id },
+      at: m.at, key,
       entry: {
         key, kind: 'softphone_call', at: toWireInstant(m.at), account_id: m.account_id,
         manual_call_id: m.id,
@@ -339,24 +352,35 @@ export function buildTimeline(data: CustomerHistoryData): TimelineItem[] {
         dnc_override_note: showNotes ? m.dnc_override_note : null,
         hours_override_note: showNotes ? m.hours_override_note : null,
         callback_at: iso(m.callback_at),
-        recording: recordingState(m.webrtc_call_id, data.mediaLegs),
+        recording: recordingState(m.webrtc_call_id, data.mediaLegs, m.recording_requested),
         call_page: canOpenCallPage(viewer, m.account_id) ? { account_id: m.account_id, manual_call_id: m.id } : null,
       },
     });
-    if (m.callback_at) {
-      pushCallback({
-        channel: 'softphone', id: m.id, accountId: m.account_id, campaign, callbackAt: m.callback_at,
-        bookedAt: m.booked_at, bookedBy: m.dispositioned_by_user_id ?? m.agent_user_id,
-      });
-    }
+  }
+
+  for (const c of data.callbacks) {
+    const campaign = c.campaign_id ? campaigns.get(c.campaign_id) ?? null : null;
+    const next = data.callbackNext.get(c.id) ?? null;
+    const key = `callback:${c.id}`;
+    items.push({
+      at: c.at, key,
+      entry: {
+        key, kind: 'callback', at: toWireInstant(c.at), account_id: c.account_id,
+        source: { channel: c.channel, id: c.id },
+        campaign: campaign ? campaignWire(campaign) : null,
+        due_at: c.callback_at.toISOString(),
+        booked_by: userOf(c.booked_by_user_id, names),
+        status: callbackStatus({ dueAtMs: c.callback_at.getTime(), nextDialledAtMs: next ? next.getTime() : null, nowMs }),
+        dialled_at: iso(next),
+      },
+    });
   }
 
   for (const d of data.dnc) {
-    const campaign = d.campaign_id ? campaigns.get(d.campaign_id) ?? null : null;
     const key = `dnc_mark:${d.id}`;
     items.push({
-      at: d.at, key, root: campaign?.root_id ?? null, call: null,
-      entry: { key, kind: 'dnc_mark', at: toWireInstant(d.at), account_id: d.account_id, entry: dncEntry(d, data) },
+      at: d.at, key,
+      entry: { key, kind: 'dnc_mark', at: toWireInstant(d.at), account_id: d.effective_account_id, entry: dncEntry(d, viewer, campaigns, names) },
     });
   }
 
@@ -365,7 +389,7 @@ export function buildTimeline(data: CustomerHistoryData): TimelineItem[] {
     if (!campaign) continue;
     const key = `roster_entry:${c.id}`;
     items.push({
-      at: c.at, key, root: campaign.root_id, call: null,
+      at: c.at, key,
       entry: {
         key, kind: 'roster_entry', at: toWireInstant(c.at), account_id: c.account_id,
         contact_id: c.id,
@@ -375,60 +399,90 @@ export function buildTimeline(data: CustomerHistoryData): TimelineItem[] {
     });
   }
 
-  return items.sort(compareTimeline);
+  return items.sort(compareTimeline).map((i) => i.entry);
 }
 
-/** The entries the filters keep (§4 "Filters"). */
-export function filterTimeline(items: readonly TimelineItem[], f: TimelineFilter): TimelineItem[] {
-  return items.filter((item) => {
-    if (f.campaignRoots && (item.root === null || !f.campaignRoots.has(item.root))) return false;
-    if (f.fromAt && item.at < f.fromAt) return false;
-    if (f.toAt && item.at >= f.toAt) return false;
-    if (!f.callsOnly) return true;
-    const call = item.call;
-    if (!call) return false;
-    if (f.channel && call.channel !== f.channel) return false;
-    if (f.connectedOnly && call.outcome !== 'connected') return false;
-    if (f.outcomes && (call.outcome === null || !f.outcomes.has(call.outcome))) return false;
-    if (f.dispositionCodes && (call.code === null || !f.dispositionCodes.has(call.code))) return false;
-    if (f.agentUserIds && (call.agent === null || !f.agentUserIds.has(call.agent))) return false;
-    return true;
-  });
-}
-
-/** One page: every entry strictly after `cursor`, at most `limit`, and the cursor of the next. */
-export function pageTimeline(items: readonly TimelineItem[], cursor: TimelinePosition | null, limit: number): CustomerTimelinePage {
-  const after = cursor ? items.filter((i) => isAfter(i, cursor)) : items;
-  const page = after.slice(0, limit);
-  const last = page[page.length - 1];
+/** The wire page: the entries and, when more follow, the cursor after the last one. */
+export function timelinePage(entries: CustomerTimelineEntry[], cut: { last: TimelinePosition | null; hasMore: boolean }): CustomerTimelinePage {
   return {
-    entries: page.map((i) => i.entry),
-    next_cursor: after.length > limit && last ? encodeTimelineCursor({ at: last.at, key: last.key }) : null,
+    entries,
+    next_cursor: cut.hasMore && cut.last ? encodeTimelineCursor(cut.last) : null,
   };
 }
 
 // ─── The summary ─────────────────────────────────────────────────────────────
 
+/** Everything the summary is built from: roster rows and the SQL aggregates over the calls. */
+export interface CustomerHistorySummaryData {
+  now: Date;
+  viewer: CustomerHistoryViewer;
+  /** Newest first, at most the cap. */
+  contacts: readonly CustomerHistorySummaryContactRow[];
+  contactsTruncated: boolean;
+  campaigns: ReadonlyMap<string, CustomerHistoryCampaignRow>;
+  stats: CustomerHistoryCallStatsRow;
+  lastPlaced: CustomerHistoryLastPlacedRow | null;
+  liveCalls: readonly CustomerHistoryLiveCallRow[];
+  /** Who booked each contact's latest callback, by contact id. */
+  bookings: ReadonlyMap<string, string | null>;
+  dnc: readonly CustomerHistoryDncRow[];
+  uploads: readonly CustomerHistoryUploadRow[];
+  names: ReadonlyMap<string, string | null>;
+}
+
 const byCreatedDesc = (a: CustomerHistoryContactRow, b: CustomerHistoryContactRow) =>
   (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
-const isLiveCallState = (state: string) => state !== 'ended';
 const isLiveContactState = (state: string) => state === 'in_flight' || state === 'connected';
 
-export function buildSummary(data: CustomerHistoryData): CustomerHistorySummary {
+/** Every user id the summary names, for one name lookup. */
+export function summaryUserIds(data: Pick<CustomerHistorySummaryData, 'contacts' | 'stats' | 'lastPlaced' | 'liveCalls' | 'bookings' | 'dnc'>): string[] {
+  const ids = new Set<string>();
+  const add = (id: string | null | undefined) => { if (id) ids.add(id); };
+  for (const c of data.contacts) add(c.assigned_user_id);
+  for (const id of data.stats.agent_ids) add(id);
+  add(data.lastPlaced?.agent_user_id);
+  for (const l of data.liveCalls) add(l.agent_user_id);
+  for (const b of data.bookings.values()) add(b);
+  for (const d of data.dnc) add(userIdOf(d.added_by));
+  return [...ids];
+}
+
+/** The campaigns the summary names (their chain roots are read after them). */
+export function summaryCampaignIds(data: Pick<CustomerHistorySummaryData, 'contacts' | 'stats' | 'liveCalls' | 'dnc'>): string[] {
+  const ids = new Set<string>(data.stats.campaign_ids);
+  for (const c of data.contacts) ids.add(c.campaign_id);
+  for (const l of data.liveCalls) if (l.campaign_id) ids.add(l.campaign_id);
+  for (const d of data.dnc) if (d.campaign_id) ids.add(d.campaign_id);
+  return [...ids];
+}
+
+/** The contacts with an open callback (`buildSummary`'s rule), whose booking is looked up. */
+export function contactsAwaitingCallback(
+  contacts: readonly CustomerHistoryContactRow[],
+  campaigns: ReadonlyMap<string, CustomerHistoryCampaignRow>,
+): CustomerHistoryContactRow[] {
+  return contacts.filter((c) => {
+    const campaign = campaigns.get(c.campaign_id);
+    if (!campaign) return false;
+    const codes = callbackCodes(campaign.disposition_catalog as AgencyDisposition[] | null);
+    return c.state === 'pending'
+      && c.last_disposition !== null && codes.includes(c.last_disposition)
+      && c.last_outcome === 'connected'
+      && !isLiveContactState(c.state);
+  });
+}
+
+export function buildSummary(data: CustomerHistorySummaryData): CustomerHistorySummary {
   const { viewer, names, campaigns } = data;
 
   // CH7: one row per retry chain (`root_contact_id`).
-  const chains = new Map<string, CustomerHistoryContactRow[]>();
+  const chains = new Map<string, CustomerHistorySummaryContactRow[]>();
   for (const c of data.contacts) {
     if (!campaigns.has(c.campaign_id)) continue;
     const list = chains.get(c.root_contact_id) ?? [];
     list.push(c);
     chains.set(c.root_contact_id, list);
-  }
-  const placedByContact = new Map<string, number>();
-  for (const a of data.attempts) {
-    if (a.dialed_at) placedByContact.set(a.contact_id, (placedByContact.get(a.contact_id) ?? 0) + 1);
   }
 
   const contacts: Array<CustomerHistoryContact & { _at: string; _id: string }> = [];
@@ -451,8 +505,8 @@ export function buildSummary(data: CustomerHistoryData): CustomerHistorySummary 
       campaigns: chainCampaigns,
       state: newest.state as AgencyContactState,
       suppressed_reason: newest.suppressed_reason,
-      attempt_count: ordered.reduce((n, r) => n + (placedByContact.get(r.id) ?? 0), 0),
-      fields: contactFields(newest.context, campaign),
+      attempt_count: ordered.reduce((n, r) => n + r.placed, 0),
+      fields: contactFields(newest.context, campaign, columnOrderFor(campaign, data.uploads)),
       assigned_to: userOf(newest.assigned_user_id, names),
       entered_at: oldest.created_at.toISOString(),
       upload_file_name: uploadFileName(oldest.campaign_id, oldest.created_at, data.uploads, data.now),
@@ -460,83 +514,47 @@ export function buildSummary(data: CustomerHistoryData): CustomerHistorySummary 
   }
   contacts.sort((a, b) => (a._at < b._at ? 1 : a._at > b._at ? -1 : a._id < b._id ? 1 : -1));
 
-  // Totals: calls placed (either channel), connected, the newest placed call.
-  type Placed = { at: Date; channel: CustomerTimelineChannel; agent: string | null; outcome: string | null; code: string | null; id: string };
-  const placed: Placed[] = [];
-  for (const a of data.attempts) {
-    if (a.dialed_at && campaigns.has(a.campaign_id)) {
-      placed.push({ at: a.dialed_at, channel: 'campaign', agent: a.agent_user_id, outcome: a.outcome, code: a.disposition_code, id: a.id });
-    }
-  }
-  for (const m of data.manualCalls) {
-    if (m.dialed_at) placed.push({ at: m.dialed_at, channel: 'softphone', agent: m.agent_user_id, outcome: m.outcome, code: m.disposition_code, id: m.id });
-  }
-  placed.sort((a, b) => b.at.getTime() - a.at.getTime() || (a.id < b.id ? 1 : -1));
-  const last = placed[0];
-
   // Open callbacks: a contact waiting on one (its last disposition is a callback code of its
   // campaign's catalog, its last call connected) and not live; due at `next_attempt_at`.
-  const bookedBy = new Map<string, { at: string; user: string | null }>();
-  const noteBooking = (contactId: string | null, at: string, user: string | null) => {
-    if (!contactId) return;
-    const prev = bookedBy.get(contactId);
-    if (!prev || prev.at < at) bookedBy.set(contactId, { at, user });
-  };
-  for (const a of data.attempts) if (a.callback_at) noteBooking(a.contact_id, a.booked_at, a.dispositioned_by_user_id ?? a.agent_user_id);
-  for (const m of data.manualCalls) if (m.callback_at) noteBooking(m.contact_id, m.booked_at, m.dispositioned_by_user_id ?? m.agent_user_id);
+  const callbacks: CustomerHistoryOpenCallback[] = contactsAwaitingCallback([...data.contacts].sort(byCreatedDesc), campaigns)
+    .map((c) => ({
+      contact_id: c.id,
+      campaign: campaignWire(campaigns.get(c.campaign_id)!),
+      due_at: c.next_attempt_at.toISOString(),
+      owner: userOf(c.assigned_user_id, names),
+      booked_by: userOf(data.bookings.get(c.id) ?? null, names),
+      disposition_code: c.last_disposition,
+    }))
+    .sort((a, b) => (a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : 0));
 
-  const callbacks: CustomerHistoryOpenCallback[] = [];
+  // Open overrides: a grant that still grants something (the dialer's own rule, `isOverrideUnspent`);
+  // its follow-up is the contact's next dial while it waits for one.
   const overrides: CustomerHistoryOpenOverride[] = [];
   for (const c of [...data.contacts].sort(byCreatedDesc)) {
     const campaign = campaigns.get(c.campaign_id);
-    if (!campaign) continue;
-    const codes = callbackCodes(campaign.disposition_catalog as AgencyDisposition[] | null);
-    if (
-      c.state === 'pending'
-      && c.last_disposition !== null && codes.includes(c.last_disposition)
-      && c.last_outcome === 'connected'
-      && !isLiveContactState(c.state)
-    ) {
-      callbacks.push({
-        contact_id: c.id,
-        campaign: campaignWire(campaign),
-        due_at: c.next_attempt_at.toISOString(),
-        owner: userOf(c.assigned_user_id, names),
-        booked_by: userOf(bookedBy.get(c.id)?.user ?? null, names),
-        disposition_code: c.last_disposition,
-      });
-    }
-    if (c.override_disposition) {
-      overrides.push({
-        contact_id: c.id,
-        campaign: campaignWire(campaign),
-        disposition_code: c.override_disposition,
-        granted_at: (c.override_granted_at ?? c.created_at).toISOString(),
-        extra_attempts: c.override_extra_attempts,
-        retry_delay: c.override_retry_delay,
-        calling_hours: c.override_calling_hours,
-      });
-    }
+    if (!campaign || !isOverrideUnspent(c) || c.override_disposition === null) continue;
+    overrides.push({
+      contact_id: c.id,
+      campaign: campaignWire(campaign),
+      disposition_code: c.override_disposition,
+      granted_at: (c.override_granted_at ?? c.created_at).toISOString(),
+      follow_up_at: c.state === 'pending' ? c.next_attempt_at.toISOString() : null,
+      extra_attempts: c.override_extra_attempts,
+      retry_delay: c.override_retry_delay,
+      calling_hours: c.override_calling_hours,
+    });
   }
-  callbacks.sort((a, b) => (a.due_at < b.due_at ? -1 : a.due_at > b.due_at ? 1 : 0));
 
-  const liveCalls: CustomerHistoryLiveCall[] = [];
-  for (const a of data.attempts) {
-    const campaign = campaigns.get(a.campaign_id);
-    if (!campaign || !isLiveCallState(a.state)) continue;
-    liveCalls.push({ channel: 'campaign', campaign: campaignWire(campaign), agent: userOf(a.agent_user_id, names), started_at: (a.dialed_at ?? a.created_at).toISOString() });
-  }
-  for (const m of data.manualCalls) {
-    if (!isLiveCallState(m.state)) continue;
-    const campaign = m.campaign_id ? campaigns.get(m.campaign_id) ?? null : null;
-    liveCalls.push({ channel: 'softphone', campaign: campaign ? campaignWire(campaign) : null, agent: userOf(m.agent_user_id, names), started_at: (m.dialed_at ?? m.created_at).toISOString() });
-  }
-  liveCalls.sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0));
+  const liveCalls: CustomerHistoryLiveCall[] = data.liveCalls
+    .map((l) => {
+      const campaign = l.campaign_id ? campaigns.get(l.campaign_id) ?? null : null;
+      return { channel: l.channel, campaign: campaign ? campaignWire(campaign) : null, agent: userOf(l.agent_user_id, names), started_at: l.started_at.toISOString() };
+    })
+    .sort((a, b) => (a.started_at < b.started_at ? 1 : a.started_at > b.started_at ? -1 : 0));
 
   // Filter options: root campaigns, agents, outcomes and codes seen in the history.
   const rootIds = new Set<string>();
-  for (const c of data.contacts) { const g = campaigns.get(c.campaign_id); if (g) rootIds.add(g.root_id); }
-  for (const m of data.manualCalls) { const g = m.campaign_id ? campaigns.get(m.campaign_id) : undefined; if (g) rootIds.add(g.root_id); }
+  for (const id of data.stats.campaign_ids) { const g = campaigns.get(id); if (g) rootIds.add(g.root_id); }
   for (const d of data.dnc) { const g = d.campaign_id ? campaigns.get(d.campaign_id) : undefined; if (g) rootIds.add(g.root_id); }
   const rootCampaigns = [...rootIds]
     .map((id) => {
@@ -548,40 +566,28 @@ export function buildSummary(data: CustomerHistoryData): CustomerHistorySummary 
       return { id, name: gens[0]?.name ?? '' };
     })
     .sort((a, b) => a.name.localeCompare(b.name) || (a.id < b.id ? -1 : 1));
-  const agentIds = new Set<string>();
-  const outcomes = new Set<string>();
-  const codes = new Set<string>();
-  for (const a of data.attempts) {
-    if (!campaigns.has(a.campaign_id)) continue;
-    if (a.agent_user_id) agentIds.add(a.agent_user_id);
-    if (a.outcome) outcomes.add(a.outcome);
-    if (a.disposition_code) codes.add(a.disposition_code);
-  }
-  for (const m of data.manualCalls) {
-    agentIds.add(m.agent_user_id);
-    if (m.outcome) outcomes.add(m.outcome);
-    if (m.disposition_code) codes.add(m.disposition_code);
-  }
-  const agents = [...agentIds]
+  const agents = data.stats.agent_ids
     .map((id) => userOf(id, names)!)
     .sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '') || (a.user_id < b.user_id ? -1 : 1));
 
   const dnc = [...data.dnc]
     .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : -1))
-    .map((d) => dncEntry(d, data));
+    .map((d) => dncEntry(d, viewer, campaigns, names));
 
+  const last = data.lastPlaced;
   return {
     contacts: contacts.map(({ _at, _id, ...c }) => { void _at; void _id; return c; }),
+    ...(data.contactsTruncated ? { contacts_truncated: true as const } : {}),
     totals: {
-      calls: placed.length,
-      connected: placed.filter((p) => p.outcome === 'connected').length,
+      calls: data.stats.calls,
+      connected: data.stats.connected,
       last_contacted: last
         ? {
-            at: last.at.toISOString(),
+            at: last.dialed_at.toISOString(),
             channel: last.channel,
-            agent: userOf(last.agent, names),
+            agent: userOf(last.agent_user_id, names),
             outcome: last.outcome as AgencyAttemptOutcome | null,
-            disposition_code: last.code,
+            disposition_code: last.disposition_code,
           }
         : null,
     },
@@ -590,8 +596,13 @@ export function buildSummary(data: CustomerHistoryData): CustomerHistorySummary 
     filter_options: {
       campaigns: rootCampaigns,
       agents,
-      outcomes: [...outcomes].sort() as AgencyAttemptOutcome[],
-      disposition_codes: [...codes].sort(),
+      outcomes: [...data.stats.outcomes].sort() as AgencyAttemptOutcome[],
+      disposition_codes: [...data.stats.disposition_codes].sort(),
     },
   };
+}
+
+/** How many timeline entries the caller can see (the audit's `result_count`). */
+export function entryCount(stats: CustomerHistoryCallStatsRow, dncRows: number): number {
+  return stats.contact_entries + stats.call_entries + stats.callback_entries + dncRows;
 }

@@ -9,6 +9,7 @@
 /// |---|---|---|
 /// | `POST /proxy/agency/customers/search` | [CustomerSearchRequest] | [CustomerSearchResponse] |
 /// | `POST /proxy/agency/customers/timeline` | [CustomerTimelineRequest] | [CustomerTimelinePage] |
+/// | `GET /proxy/agency/customers/options` | — | [CustomerSearchOptionsResponse] |
 ///
 /// The number never travels in a URL: the search is a `POST` with the raw
 /// text in the body, and the timeline pages name the search by the opaque
@@ -620,6 +621,7 @@ final class CustomerHistoryOpenOverride {
     required this.campaign,
     required this.dispositionCode,
     required this.grantedAt,
+    this.followUpAt,
     required this.extraAttempts,
     required this.retryDelay,
     required this.callingHours,
@@ -630,6 +632,7 @@ final class CustomerHistoryOpenOverride {
     campaign: CustomerHistoryCampaign.fromJson(j.obj('campaign')),
     dispositionCode: j.str('disposition_code'),
     grantedAt: j.time('granted_at'),
+    followUpAt: j.timeOrNull('follow_up_at'),
     extraAttempts: j.integer('extra_attempts'),
     retryDelay: j.boolean('retry_delay'),
     callingHours: j.boolean('calling_hours'),
@@ -639,6 +642,10 @@ final class CustomerHistoryOpenOverride {
   final CustomerHistoryCampaign campaign;
   final String dispositionCode;
   final DateTime grantedAt;
+
+  /// The follow-up: when the contact is next due to be dialled
+  /// (`next_attempt_at`); null when none is scheduled.
+  final DateTime? followUpAt;
   final int extraAttempts;
   final bool retryDelay;
   final bool callingHours;
@@ -650,13 +657,14 @@ final class CustomerHistoryOpenOverride {
       other.campaign == campaign &&
       other.dispositionCode == dispositionCode &&
       other.grantedAt == grantedAt &&
+      other.followUpAt == followUpAt &&
       other.extraAttempts == extraAttempts &&
       other.retryDelay == retryDelay &&
       other.callingHours == callingHours;
 
   @override
   int get hashCode =>
-      Object.hash(contactId, campaign, dispositionCode, grantedAt, extraAttempts, retryDelay, callingHours);
+      Object.hash(contactId, campaign, dispositionCode, grantedAt, followUpAt, extraAttempts, retryDelay, callingHours);
 }
 
 /// A call to the number live right now.
@@ -871,6 +879,7 @@ final class CustomerHistoryFilterOptions {
 final class CustomerHistorySummary {
   CustomerHistorySummary({
     required List<CustomerHistoryContact> contacts,
+    this.contactsTruncated = false,
     required this.totals,
     required List<CustomerHistoryDncEntry> dnc,
     required this.open,
@@ -880,14 +889,19 @@ final class CustomerHistorySummary {
 
   factory CustomerHistorySummary.fromJson(Map<String, Object?> j) => CustomerHistorySummary(
     contacts: j.list('contacts', CustomerHistoryContact.fromJson),
+    contactsTruncated: j.boolOrNull('contacts_truncated') ?? false,
     totals: CustomerHistoryTotals.fromJson(j.obj('totals')),
     dnc: j.list('dnc', CustomerHistoryDncEntry.fromJson),
     open: CustomerHistoryOpen.fromJson(j.obj('open')),
     filterOptions: CustomerHistoryFilterOptions.fromJson(j.obj('filter_options')),
   );
 
-  /// Newest first.
+  /// Newest first, at most 2,000 roster rows.
   final List<CustomerHistoryContact> contacts;
+
+  /// The number is on more roster rows than [contacts] lists (`contacts_truncated`, sent only
+  /// when true): the oldest were left out of the summary. The timeline still has every row.
+  final bool contactsTruncated;
   final CustomerHistoryTotals totals;
 
   /// Every entry covering the number; empty = not on any do-not-call list.
@@ -899,13 +913,14 @@ final class CustomerHistorySummary {
   bool operator ==(Object other) =>
       other is CustomerHistorySummary &&
       listEquals(other.contacts, contacts) &&
+      other.contactsTruncated == contactsTruncated &&
       other.totals == totals &&
       listEquals(other.dnc, dnc) &&
       other.open == open &&
       other.filterOptions == filterOptions;
 
   @override
-  int get hashCode => Object.hash(listHash(contacts), totals, listHash(dnc), open, filterOptions);
+  int get hashCode => Object.hash(listHash(contacts), contactsTruncated, totals, listHash(dnc), open, filterOptions);
 }
 
 // ─── The timeline ───────────────────────────────────────────────────────────
@@ -1508,6 +1523,31 @@ final class CustomerTimelinePage {
 
   @override
   int get hashCode => Object.hash(listHash(entries), nextCursor);
+}
+
+// ─── The search box's options ───────────────────────────────────────────────
+
+/// `GET /proxy/agency/customers/options`: what the search box needs before
+/// the first search. [defaultCountryCode] is the platform default in the soft
+/// phone bootstrap's form (`+91`: `+` and digits); the country picker starts
+/// on the listed country with that calling code.
+///
+/// Contract: `CustomerSearchOptionsResponse`.
+@immutable
+final class CustomerSearchOptionsResponse {
+  const CustomerSearchOptionsResponse({required this.defaultCountryCode});
+
+  factory CustomerSearchOptionsResponse.fromJson(Map<String, Object?> j) =>
+      CustomerSearchOptionsResponse(defaultCountryCode: j.str('default_country_code'));
+
+  final String defaultCountryCode;
+
+  @override
+  bool operator ==(Object other) =>
+      other is CustomerSearchOptionsResponse && other.defaultCountryCode == defaultCountryCode;
+
+  @override
+  int get hashCode => defaultCountryCode.hashCode;
 }
 
 // ─── The answer ─────────────────────────────────────────────────────────────

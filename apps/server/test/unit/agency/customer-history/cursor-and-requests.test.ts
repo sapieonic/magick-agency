@@ -3,8 +3,6 @@ import {
   compareTimeline,
   decodeTimelineCursor,
   encodeTimelineCursor,
-  isAfter,
-  toMicroInstant,
   toWireInstant,
 } from '../../../../src/agency/customer-history/cursor.js';
 import {
@@ -46,21 +44,15 @@ describe('the timeline cursor', () => {
     }
   });
 
-  it('orders at DESC then key DESC, and "after" is strictly after', () => {
+  it('orders at DESC then key DESC', () => {
     const a = { at: '2026-11-04T07:56:00.000002Z', key: `roster_entry:${ID}` };
     const b = { at: '2026-11-04T07:56:00.000001Z', key: `softphone_call:${ID}` };
     const c = { at: '2026-11-04T07:56:00.000001Z', key: `campaign_call:${ID}` };
     expect([c, a, b].sort(compareTimeline)).toEqual([a, b, c]);
-    expect(isAfter(b, a)).toBe(true);
-    expect(isAfter(c, b)).toBe(true);
-    expect(isAfter(b, b)).toBe(false);
-    expect(isAfter(a, b)).toBe(false);
+    expect(compareTimeline(b, b)).toBe(0);
   });
 
-  it('converts between the wire instant and the microsecond form', () => {
-    expect(toMicroInstant('2026-11-04T07:56:00.123Z')).toBe('2026-11-04T07:56:00.123000Z');
-    expect(toMicroInstant('2026-11-04T09:56:00+02:00')).toBe('2026-11-04T07:56:00.000000Z');
-    expect(toMicroInstant('nope')).toBeNull();
+  it('the wire instant is the microsecond form cut to milliseconds', () => {
     expect(toWireInstant('2026-11-04T07:56:00.123456Z')).toBe('2026-11-04T07:56:00.123Z');
   });
 });
@@ -91,16 +83,18 @@ describe('the request bodies', () => {
       { search_id: 's', filters: { from: 'yesterday' } },
       { search_id: 's', filters: { from: '2026-11-07T00:00:00Z', to: '2026-11-01T00:00:00Z' } },
       { search_id: 's', filters: { agent_user_ids: Array.from({ length: 101 }, () => ID) } },
+      { search_id: 's', filters: { disposition_codes: ['x'.repeat(51)] } },
+      { search_id: 's', filters: { disposition_codes: [''] } },
     ]) {
       expect(customerTimelineRequestSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
     }
     expect(pageLimit(undefined)).toBe(50);
   });
 
-  it('the filters: any call-only filter keeps only calls; from/to in the microsecond form', () => {
+  it('the filters: any call-only filter keeps only calls; from/to as sent; lists de-duplicated, empty = none', () => {
     expect(toTimelineFilter(undefined).callsOnly).toBe(false);
-    expect(toTimelineFilter({ campaign_ids: [ID], from: '2026-10-01T00:00:00Z' })).toMatchObject({
-      callsOnly: false, fromAt: '2026-10-01T00:00:00.000000Z', toAt: null,
+    expect(toTimelineFilter({ campaign_ids: [ID, ID], from: '2026-10-01T00:00:00Z' })).toMatchObject({
+      callsOnly: false, campaignRoots: [ID], from: '2026-10-01T00:00:00Z', to: null, outcomes: null,
     });
     for (const f of [{ outcomes: ['connected' as const] }, { disposition_codes: ['x'] }, { agent_user_ids: [ID] }, { connected_only: true }, { channel: 'softphone' as const }]) {
       expect(toTimelineFilter(f).callsOnly, JSON.stringify(f)).toBe(true);

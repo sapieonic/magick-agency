@@ -6,17 +6,22 @@ import type { RouteOptions } from 'fastify';
 /**
  * ─── Customer history through the real app and real Postgres ───────────────────
  *
- * `POST /proxy/agency/customers/{search,timeline,export}` (`docs/customer-history.md`): session
- * middleware with Firebase stubbed, tenant context, RBAC, the dialer flag, the per-user search cap,
- * the Redis search store and the repository's reads on real Postgres.
+ * `POST /proxy/agency/customers/{search,timeline,export}` and `GET …/options`
+ * (`docs/customer-history.md`): session middleware with Firebase stubbed, tenant context, RBAC,
+ * the dialer flag, the per-user search cap, the Redis search store and the repository's reads on
+ * real Postgres.
  *
  * One number (`+919876543210`) in two accounts of one tenant and in another tenant: an
  * account-scoped caller sees only their account's rows (never counted as hidden), a tenant-level
- * caller sees both, and the other tenant's never; every timeline kind in one order, a wrap-up
- * redial chain, a tagged and an untagged soft-phone call, DNC marks, a callback; keyset pages with
- * no duplicates or skips across entries sharing one instant; the filters; what an agent is shown
- * (CH8); the search id bound to its user; the audit rows; the rate limit; the export; an EXPLAIN
- * per read (CH9); and the number never in a URL (CH6).
+ * caller sees both, and the other tenant's never; campaign DNC marks written as the dialer writes
+ * them (no account, a campaign) scoped through their campaign; every timeline kind in one order,
+ * a wrap-up redial chain, a tagged and an untagged soft-phone call, DNC marks, a callback; keyset
+ * pages (SQL per source) with no duplicates or skips across entries sharing one instant to the
+ * microsecond; the filters; what an agent is shown (CH8); hero fields that respect `hidden` and the
+ * import's column order; the uploader's file for a tenant-level import; open overrides and live
+ * calls; the search id bound to its user and tenant; the audit rows; the rate limit and its
+ * message; the export; an EXPLAIN per statement on analysed tables (CH9); the number never in a
+ * URL (CH6).
  */
 
 const mocks = vi.hoisted(() => {
@@ -24,18 +29,39 @@ const mocks = vi.hoisted(() => {
   return { verifyIdToken: vi.fn() };
 });
 vi.mock('../../../src/auth/firebase.js', () => ({ initFirebase: vi.fn(), verifyIdToken: mocks.verifyIdToken }));
+// Tag each RBAC pre-handler with the permission it checks, so the route table can be asked.
+vi.mock('../../../src/rbac/rbac.middleware.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../../src/rbac/rbac.middleware.js')>();
+  return {
+    ...real,
+    requirePermission: (permission: Parameters<typeof real.requirePermission>[0]) =>
+      Object.assign(real.requirePermission(permission), { permission }),
+  };
+});
 
 import { getTestPool, truncateAll } from '../../../../../packages/db/test/helpers/test-db.js';
 import {
   drainAudits, headersFor, seedFloor, startLoadApp, stopLoadApp, verifyTestToken,
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
-import { agencyCustomerHistoryRepository, CUSTOMER_HISTORY_SQL } from '../../../src/db/repositories/agency.repository.js';
+import {
+  agencyCustomerHistoryRepository,
+  CUSTOMER_HISTORY_MAX_CONTACT_ROWS,
+  CUSTOMER_HISTORY_SQL,
+  UUID_MAX,
+  type CustomerHistoryPageQuery,
+} from '../../../src/db/repositories/agency.repository.js';
 
-const SEARCH_MAX = 12;
+const SEARCH_MAX = 40;
 const EXPORT_MAX = 15;
 const NUMBER = '+919876543210';
 const TYPED = '098765-43210';
+/** Live calls: a queued attempt and a ringing soft-phone call. */
+const NUMBER_LIVE = '+919811111111';
+/** Entries sharing one millisecond, apart by microseconds, across kinds. */
+const NUMBER_MICRO = '+919822222222';
+/** On more roster rows than the summary lists. */
+const NUMBER_CAP = '+919833333333';
 
 let loaded: LoadApp;
 let floors: TenantFloor[];
@@ -51,21 +77,29 @@ let campaignB: string;
 let retryCampaign: string;
 let owner: Actor; // tenant-level tenant_owner
 let rateUser: Actor;
+let viewerB: Actor; // viewer in account B only
+let twoTenants: Actor; // an agent in floor 0's account and in floor 1's
 const sup = () => floor.supervisors[0]!;
 const agent = (i: number) => floor.agents[i]!;
+const inB = () => ({ 'x-account-id': accountB });
 
 const ids = {
   cA: randomUUID(), cAr: randomUUID(), cB: randomUUID(), noise: randomUUID(), foreign: randomUUID(),
   a1: randomUUID(), a2: randomUUID(), a3: randomUUID(), bA1: randomUUID(),
   shared: Array.from({ length: 6 }, () => randomUUID()),
   m1: randomUUID(), m2: randomUUID(), mB: randomUUID(), mB2: randomUUID(),
-  dncA: randomUUID(), dncTenant: randomUUID(), dncB: randomUUID(),
-  leg1: randomUUID(), leg2: randomUUID(), legB: randomUUID(),
+  dncA: randomUUID(), dncTenant: randomUUID(), dncB: randomUUID(), dncBc: randomUUID(), dncForeign: randomUUID(),
+  leg1: randomUUID(), leg2: randomUUID(), legB: randomUUID(), legM1: randomUUID(),
+  cLive: randomUUID(), aQueued: randomUUID(), mRinging: randomUUID(),
+  cMicro: randomUUID(), mu: Array.from({ length: 3 }, () => randomUUID()), muCb: randomUUID(), mMicro: randomUUID(), dncMicro: randomUUID(),
 };
 
 const DAY = 86_400_000;
 const T0 = new Date(Date.now() - 30 * DAY);
 const at = (ms: number) => new Date(T0.getTime() + ms);
+/** `at(12 days)` to the millisecond, then `µs` microseconds into it, as Postgres reads it. */
+const MICRO_BASE = at(12 * DAY).toISOString().slice(0, 23);
+const micro = (us: number) => `${MICRO_BASE}${String(us).padStart(3, '0')}Z`;
 
 async function post(path: string, actor: Actor, body: unknown, f: TenantFloor = floor, extra: Record<string, string> = {}) {
   const url = `/proxy/agency/customers/${path}`;
@@ -74,7 +108,7 @@ async function post(path: string, actor: Actor, body: unknown, f: TenantFloor = 
     method: 'POST',
     url,
     headers: headersFor(actor, f, { 'content-type': 'application/json', ...extra }),
-    payload: JSON.stringify(body),
+    payload: typeof body === 'string' ? body : JSON.stringify(body),
   });
 }
 
@@ -101,7 +135,7 @@ async function allPages(actor: Actor, searchId: string, limit: number, filters?:
 
 async function user(role: string, accountId: string | null, name: string): Promise<Actor> {
   const id = randomUUID();
-  const uid = `ch-${name}-${id.slice(0, 8)}`;
+  const uid = `ch-${name.replace(/\W/g, '')}-${id.slice(0, 8)}`;
   await q(`INSERT INTO users (id, firebase_uid, email, display_name, status) VALUES ($1, $2, $3, $4, 'active')`,
     [id, uid, `${uid}@load.example.com`, name]);
   await q(`INSERT INTO memberships (id, user_id, tenant_id, account_id, role, status) VALUES ($1, $2, $3, $4, $5, 'active')`,
@@ -123,9 +157,14 @@ async function softphoneSession(accountId: string, agentId: string): Promise<str
   return id;
 }
 
-async function contact(id: string, f: { tenant: string }, accountId: string, campaignId: string, phone: string, createdAt: Date, extra: Record<string, unknown> = {}) {
+const ASHA = { Name: 'Asha Rao', 'Loan No': 'LN-0042' };
+
+async function contact(
+  id: string, f: { tenant: string }, accountId: string, campaignId: string, phone: string, createdAt: Date | string,
+  extra: Record<string, unknown> = {}, context: Record<string, unknown> = ASHA,
+) {
   const cols = ['id', 'tenant_id', 'account_id', 'campaign_id', 'phone_e164', 'context', 'created_at', ...Object.keys(extra)];
-  const vals = [id, f.tenant, accountId, campaignId, phone, JSON.stringify({ Name: 'Asha Rao', 'Loan No': 'LN-0042' }), createdAt, ...Object.values(extra)];
+  const vals = [id, f.tenant, accountId, campaignId, phone, JSON.stringify(context), createdAt, ...Object.values(extra)];
   await q(`INSERT INTO agency_contacts (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`, vals);
 }
 
@@ -141,6 +180,11 @@ async function manualCall(row: Record<string, unknown>) {
   const full = { ...base, ...row };
   const cols = Object.keys(full);
   await q(`INSERT INTO agency_manual_calls (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(full));
+}
+
+async function dncRow(row: Record<string, unknown>) {
+  const cols = Object.keys(row);
+  await q(`INSERT INTO dnc_entries (${cols.join(', ')}) VALUES (${cols.map((_, i) => `$${i + 1}`).join(', ')})`, Object.values(row));
 }
 
 beforeAll(async () => {
@@ -161,15 +205,17 @@ beforeAll(async () => {
     [floors[2]!.tenant]);
 
   const C0 = floor.campaigns[0]!;
-  await q(`UPDATE agency_campaigns SET name = 'October dues', context_display = '{"hero":["Name","Loan No"]}'::jsonb WHERE id = $1`, [C0]);
+  await q(`UPDATE agency_campaigns SET name = 'October dues', context_display = '{"hero":["Name","Loan No"]}'::jsonb, record_calls = true
+            WHERE id = $1`, [C0]);
 
-  // Account B in the same tenant, with its own campaign and supervisor.
+  // Account B in the same tenant, with its own campaign: no heroes, `Aadhaar` hidden.
   accountB = randomUUID();
   await q(`INSERT INTO accounts (id, tenant_id, name, slug, settings, status) VALUES ($1, $2, 'South', $3, '{}'::jsonb, 'active')`,
     [accountB, floor.tenant, `south-${accountB.slice(0, 8)}`]);
   campaignB = randomUUID();
   await q(`INSERT INTO agency_campaigns
-           SELECT (jsonb_populate_record(c, jsonb_build_object('id', $2::uuid, 'account_id', $3::uuid, 'name', 'South campaign'))).*
+           SELECT (jsonb_populate_record(c, jsonb_build_object('id', $2::uuid, 'account_id', $3::uuid, 'name', 'South campaign',
+                   'context_display', '{"hidden":["Aadhaar"]}'::jsonb))).*
              FROM agency_campaigns c WHERE c.id = $1`, [C0, campaignB, accountB]);
   // A retry of C0.
   retryCampaign = randomUUID();
@@ -180,6 +226,10 @@ beforeAll(async () => {
 
   owner = await user('tenant_owner', null, 'Owner');
   rateUser = await user('agent', floor.account, 'Rate');
+  viewerB = await user('viewer', accountB, 'B viewer');
+  twoTenants = await user('agent', floor.account, 'Two tenants');
+  await q(`INSERT INTO memberships (id, user_id, tenant_id, account_id, role, status) VALUES ($1, $2, $3, $4, 'agent', 'active')`,
+    [randomUUID(), twoTenants.id, other.tenant, other.account]);
 
   const a0 = agent(0).id;
   const a1 = agent(1).id;
@@ -187,7 +237,10 @@ beforeAll(async () => {
   const sRetry = await session(floor, retryCampaign, a0);
 
   // ── Account A ──
-  await contact(ids.cA, floor, floor.account, C0, NUMBER, T0);
+  // cA's override is fully spent (the code stays, every grant is used): not open.
+  await contact(ids.cA, floor, floor.account, C0, NUMBER, T0, {
+    override_disposition: 'ptp', override_extra_attempts: 0, override_granted_at: at(DAY),
+  });
   await attempt({ id: ids.a1, campaign_id: C0, contact_id: ids.cA, attempt_number: 1, reserved_agent_id: s0,
     outcome: 'connected', disposition_code: 'ptp', notes: 'A1 notes', webrtc_call_id: ids.leg1,
     dialed_at: at(DAY), ended_at: at(DAY + 60_000), created_at: at(DAY) });
@@ -202,35 +255,44 @@ beforeAll(async () => {
   }
   await q(`INSERT INTO agency_calls (id, tenant_id, account_id, caller_id, destination_phone, recording_url)
            VALUES ($1, $2, $3, '+919000000001', $4, 'https://recordings.example.com/1')`, [ids.leg1, floor.tenant, floor.account, NUMBER]);
-  // leg2 has no agency_calls row: purged by retention → "expired".
-  await q(`INSERT INTO dnc_entries (id, tenant_id, account_id, campaign_id, phone_e164, source, reason, added_by, created_at)
-           VALUES ($1, $2, $3, $4, $5, 'agent', 'Asked not to be called', $6, $7)`,
-    [ids.dncA, floor.tenant, floor.account, C0, NUMBER, sup().id, at(2 * DAY)]);
-  await q(`INSERT INTO dnc_entries (id, tenant_id, account_id, campaign_id, phone_e164, source, reason, added_by, created_at)
-           VALUES ($1, $2, NULL, NULL, $3, 'regulator', 'National registry', 'import:registry.csv', $4)`,
-    [ids.dncTenant, floor.tenant, NUMBER, at(7 * DAY)]);
-  // The retry chain: a copy of cA in the retry campaign, its callback booked by agent 0.
+  // leg2 has no agency_calls row: purged by retention; C0 records its calls → "expired".
+  // A campaign mark, as the dialer writes it: no account, the campaign.
+  await dncRow({ id: ids.dncA, tenant_id: floor.tenant, account_id: null, campaign_id: C0, phone_e164: NUMBER, source: 'agent',
+    reason: 'Asked not to be called', added_by: sup().id, created_at: at(2 * DAY) });
+  await dncRow({ id: ids.dncTenant, tenant_id: floor.tenant, account_id: null, campaign_id: null, phone_e164: NUMBER, source: 'regulator',
+    reason: 'National registry', added_by: 'import:registry.csv', created_at: at(7 * DAY) });
+  // The retry chain: a copy of cA in the retry campaign, its callback booked by agent 0; its PTP
+  // grant has one extra attempt left (open, its follow-up the next dial).
   await contact(ids.cAr, floor, floor.account, retryCampaign, NUMBER, at(10 * DAY), {
     root_contact_id: ids.cA, source_contact_id: ids.cA, last_disposition: 'callback', last_outcome: 'connected',
     next_attempt_at: new Date(Date.now() + DAY), assigned_user_id: a0, assigned_at: at(10 * DAY),
+    override_disposition: 'ptp', override_extra_attempts: 1, override_granted_at: at(20 * DAY),
   });
   await attempt({ id: ids.a3, campaign_id: retryCampaign, contact_id: ids.cAr, attempt_number: 1, reserved_agent_id: sRetry,
     outcome: 'connected', disposition_code: 'callback', notes: 'A3 notes', callback_at: new Date(Date.now() + DAY),
     dispositioned_by_user_id: a0, dispositioned_at: at(20 * DAY + 120_000),
     dialed_at: at(20 * DAY), ended_at: at(20 * DAY + 60_000), created_at: at(20 * DAY) });
-  // Soft phone: a tagged call (agent 1, logged to cA) and an untagged one (agent 0).
+  // Soft phone: a tagged call (agent 1, logged to cA) and an untagged one (agent 0), whose leg was
+  // purged but which never asked for a recording ("not recorded", never "expired").
   await manualCall({ id: ids.m2, session_id: await softphoneSession(floor.account, a1), agent_user_id: a1,
     campaign_id: C0, contact_id: ids.cA, outcome: 'no_answer', notes: 'M2 notes', fields: JSON.stringify({ promised: 5 }),
     disposition_source: 'campaign', disposition_code: 'ptp',
     dialed_at: at(15 * DAY), ended_at: at(15 * DAY), settled_at: at(15 * DAY), created_at: at(15 * DAY) });
   await manualCall({ id: ids.m1, session_id: await softphoneSession(floor.account, a0), agent_user_id: a0,
-    outcome: 'connected', notes: 'M1 mine', fields: JSON.stringify({ amount: 10 }),
+    outcome: 'connected', notes: 'M1 mine', fields: JSON.stringify({ amount: 10 }), webrtc_call_id: ids.legM1, recording_requested: false,
     dialed_at: at(25 * DAY), ended_at: at(25 * DAY), settled_at: at(25 * DAY), created_at: at(25 * DAY) });
   // Noise: another number in A.
   await contact(ids.noise, floor, floor.account, C0, '+919876543211', at(6 * DAY));
 
   // ── Account B ──
-  await contact(ids.cB, floor, accountB, campaignB, NUMBER, at(3 * DAY));
+  // Its row's columns come back from Postgres in JSONB order (`a1`, `bb`, `Aadhaar`); the import
+  // kept the file's (`bb`, `Aadhaar`, `a1`); `Aadhaar` is hidden.
+  await contact(ids.cB, floor, accountB, campaignB, NUMBER, at(3 * DAY), {}, { a1: 'first', Aadhaar: '1234 5678 9012', bb: 'second' });
+  // The roster import, by the tenant-level owner: the job's account is NULL.
+  await q(`INSERT INTO agency_ingest_jobs (tenant_id, account_id, campaign_id, s3_key, file_name, phone_column, status,
+                                           context_columns, started_at, finished_at, created_at)
+           VALUES ($1, NULL, $2, 'k/south', 'south.csv', 'phone', 'completed', ARRAY['bb', 'Aadhaar', 'a1'], $3, $4, $3)`,
+    [floor.tenant, campaignB, at(3 * DAY - 60_000), at(3 * DAY + 60_000)]);
   await attempt({ id: ids.bA1, account_id: accountB, campaign_id: campaignB, contact_id: ids.cB, attempt_number: 1,
     outcome: 'connected', notes: 'B notes', dialed_at: at(4 * DAY), ended_at: at(4 * DAY), created_at: at(4 * DAY) });
   await manualCall({ id: ids.mB, account_id: accountB, session_id: await softphoneSession(accountB, owner.id), agent_user_id: owner.id,
@@ -239,11 +301,40 @@ beforeAll(async () => {
   await manualCall({ id: ids.mB2, account_id: accountB, session_id: await softphoneSession(accountB, owner.id), agent_user_id: owner.id,
     campaign_id: campaignB, contact_id: ids.cB, destination_e164: '+919876543299', outcome: 'busy',
     dialed_at: at(4 * DAY + 2000), ended_at: at(4 * DAY + 2000), settled_at: at(4 * DAY + 2000), created_at: at(4 * DAY + 2000) });
-  await q(`INSERT INTO dnc_entries (id, tenant_id, account_id, phone_e164, source, created_at) VALUES ($1, $2, $3, $4, 'api', $5)`,
-    [ids.dncB, floor.tenant, accountB, NUMBER, at(8 * DAY)]);
+  await dncRow({ id: ids.dncB, tenant_id: floor.tenant, account_id: accountB, phone_e164: NUMBER, source: 'api', created_at: at(8 * DAY) });
+  // B's campaign mark, as the dialer writes it: account-A callers must never see it.
+  await dncRow({ id: ids.dncBc, tenant_id: floor.tenant, account_id: null, campaign_id: campaignB, phone_e164: NUMBER, source: 'agent',
+    reason: 'B reason', added_by: owner.id, created_at: at(9 * DAY) });
 
   // ── Another tenant, the same number ──
   await contact(ids.foreign, other, other.account, other.campaigns[0]!, NUMBER, at(9 * DAY));
+  // Its registry entry is tenant-wide (no account, no campaign): only the tenant predicate keeps it out.
+  await dncRow({ id: ids.dncForeign, tenant_id: other.tenant, account_id: null, campaign_id: null, phone_e164: NUMBER, source: 'regulator',
+    reason: 'Other tenant registry', created_at: at(11 * DAY) });
+
+  // ── Live calls: a queued attempt (never dialled) and a ringing soft-phone call ──
+  await contact(ids.cLive, floor, floor.account, C0, NUMBER_LIVE, at(26 * DAY));
+  await attempt({ id: ids.aQueued, campaign_id: C0, contact_id: ids.cLive, attempt_number: 1, state: 'queued', created_at: at(27 * DAY) });
+  await manualCall({ id: ids.mRinging, session_id: await softphoneSession(floor.account, a0), agent_user_id: a0, destination_e164: NUMBER_LIVE,
+    state: 'ringing', created_at: at(27 * DAY + 1000) });
+
+  // ── One millisecond, three kinds, apart by microseconds ──
+  await contact(ids.cMicro, floor, floor.account, C0, NUMBER_MICRO, micro(1));
+  for (const [i, id] of ids.mu.entries()) {
+    await attempt({ id, campaign_id: C0, contact_id: ids.cMicro, attempt_number: i + 1, outcome: 'no_answer',
+      dialed_at: micro(i + 1), ended_at: micro(i + 1), created_at: micro(i + 1) });
+  }
+  await attempt({ id: ids.muCb, campaign_id: C0, contact_id: ids.cMicro, attempt_number: 9, outcome: 'connected', disposition_code: 'callback',
+    callback_at: new Date(Date.now() + DAY), dialed_at: micro(1), ended_at: micro(1), dispositioned_at: micro(2), created_at: micro(1) });
+  await manualCall({ id: ids.mMicro, session_id: await softphoneSession(floor.account, a0), agent_user_id: a0, destination_e164: NUMBER_MICRO,
+    dialed_at: micro(2), ended_at: micro(2), settled_at: micro(2), created_at: micro(2) });
+  await dncRow({ id: ids.dncMicro, tenant_id: floor.tenant, account_id: null, campaign_id: C0, phone_e164: NUMBER_MICRO, source: 'agent',
+    created_at: micro(3) });
+
+  // ── A placeholder number on more roster rows than the summary lists ──
+  await q(`INSERT INTO agency_contacts (tenant_id, account_id, campaign_id, phone_e164, context, created_at)
+           SELECT $1, $2, $3, $4, '{}'::jsonb, $5::timestamptz + (g || ' seconds')::interval FROM generate_series(1, $6::int) g`,
+    [floor.tenant, floor.account, C0, NUMBER_CAP, at(13 * DAY), CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 2]);
 }, 120_000);
 
 afterAll(async () => {
@@ -268,7 +359,9 @@ function expectedA(): string[] {
   ];
 }
 
-const accountBIds = () => [accountB, campaignB, ids.cB, ids.bA1, ids.mB, ids.mB2, ids.dncB];
+const accountBIds = () => [accountB, campaignB, ids.cB, ids.bA1, ids.mB, ids.mB2, ids.dncB, ids.dncBc];
+const accountBEntries = () => [`roster_entry:${ids.cB}`, `campaign_call:${ids.bA1}`, `softphone_call:${ids.mB}`,
+  `softphone_call:${ids.mB2}`, `dnc_mark:${ids.dncB}`, `dnc_mark:${ids.dncBc}`];
 
 describe('scoped by account, inside the query (CH2)', () => {
   it('an account-scoped supervisor sees only their account; the other account is not even counted', async () => {
@@ -284,59 +377,244 @@ describe('scoped by account, inside the query (CH2)', () => {
       fields: [{ column: 'Name', value: 'Asha Rao' }, { column: 'Loan No', value: 'LN-0042' }],
       assigned_to: { user_id: agent(0).id },
     });
+    expect(body.summary).not.toHaveProperty('contacts_truncated');
     const text = JSON.stringify(body);
-    for (const id of [...accountBIds(), other.tenant, other.account, ids.foreign, ids.noise]) expect(text).not.toContain(id);
+    for (const id of [...accountBIds(), other.tenant, other.account, ids.foreign, ids.noise, ids.dncForeign]) expect(text).not.toContain(id);
     expect(text).not.toContain('B notes');
+    expect(text).not.toContain('B reason');
     // 9 attempts + 2 soft-phone calls, all placed.
     expect(body.summary.totals).toMatchObject({ calls: 11, connected: 4 });
     expect(body.summary.dnc.map((d: { id: string }) => d.id)).toEqual([ids.dncTenant, ids.dncA]);
+    // The campaign mark belongs to its campaign's account.
+    expect(body.summary.dnc[1]).toMatchObject({ scope: 'campaign', account_id: floor.account, account_name: 'Load Account 0',
+      reason: 'Asked not to be called' });
   });
 
   it('a tenant-level owner sees both accounts, never the other tenant', async () => {
     const body = await search(owner);
     expect(body.summary.contacts.map((c: { contact_id: string }) => c.contact_id).sort()).toEqual([ids.cAr, ids.cB].sort());
     const keys = await allPages(owner, body.search_id, 100);
-    for (const k of [`roster_entry:${ids.cB}`, `campaign_call:${ids.bA1}`, `softphone_call:${ids.mB}`, `softphone_call:${ids.mB2}`, `dnc_mark:${ids.dncB}`]) {
-      expect(keys).toContain(k);
-    }
-    expect(keys).toHaveLength(expectedA().length + 5);
+    for (const k of accountBEntries()) expect(keys).toContain(k);
+    expect(keys).toHaveLength(expectedA().length + accountBEntries().length);
+    expect(body.summary.dnc.map((d: { id: string }) => d.id)).toEqual([ids.dncBc, ids.dncB, ids.dncTenant, ids.dncA]);
+    expect(body.summary.dnc[0]).toMatchObject({ scope: 'campaign', account_id: accountB, account_name: 'South', reason: 'B reason' });
     const text = JSON.stringify(body);
-    for (const id of [other.tenant, other.account, ids.foreign, ids.noise]) expect(text).not.toContain(id);
+    for (const id of [other.tenant, other.account, ids.foreign, ids.noise, ids.dncForeign]) expect(text).not.toContain(id);
+  });
+
+  it('a viewer in account B sees B\'s campaign mark with its reason, never account A\'s campaign mark', async () => {
+    const body = await search(viewerB, TYPED, floor, inB());
+    expect(body.summary.dnc.map((d: { id: string }) => d.id)).toEqual([ids.dncBc, ids.dncB, ids.dncTenant]);
+    expect(body.summary.dnc[0]).toMatchObject({ reason: 'B reason', added_by: 'Owner' });
+    const keys = await allPages(viewerB, body.search_id, 3, undefined, inB());
+    expect(keys).toContain(`dnc_mark:${ids.dncBc}`);
+    expect(keys).not.toContain(`dnc_mark:${ids.dncA}`);
+    const text = JSON.stringify(body);
+    for (const leak of [ids.dncA, 'Asked not to be called', floor.campaigns[0]!, ids.cA, ids.dncForeign]) expect(text).not.toContain(leak);
   });
 });
 
 /**
- * Each read on its own, scoped to account A only: no row of account B comes back from ANY of them.
- * The assembler drops a row whose campaign it was not given, so the route-level test above would
- * stay green with one predicate missing; this one goes red (mutation-checked).
+ * Each statement on its own, scoped to account A only: no row of account B comes back from ANY of
+ * them. The assembler drops a row whose campaign it was not given, so a route-level test can stay
+ * green with one predicate missing; these go red (mutation-checked), one statement per test.
  */
 describe('every read binds the visible accounts in SQL (CH2)', () => {
-  it('contacts, attempts, soft-phone calls, DNC, campaigns, media legs, uploads: account A only', async () => {
-    const repo = agencyCustomerHistoryRepository;
-    const onlyA = { tenantId: floor.tenant, accountIds: [floor.account] };
-    const both = { tenantId: floor.tenant, accountIds: [floor.account, accountB] };
-    const contacts = await repo.contactsForNumber(onlyA, NUMBER);
-    expect(contacts.map((c) => c.id).sort()).toEqual([ids.cA, ids.cAr].sort());
-    expect((await repo.contactsForNumber(both, NUMBER)).map((c) => c.id)).toContain(ids.cB);
-    // Asked for B's contact by id, under A's scope: nothing.
-    expect((await repo.attemptsForContacts(onlyA, [ids.cB])).map((a) => a.id)).toEqual([]);
-    expect((await repo.attemptsForContacts(both, [ids.cB])).map((a) => a.id)).toEqual([ids.bA1]);
-    expect((await repo.manualCallsForNumber(onlyA, NUMBER, [ids.cB])).map((m) => m.id).sort()).toEqual([ids.m1, ids.m2].sort());
-    expect((await repo.manualCallsForNumber(both, NUMBER, [])).map((m) => m.id)).toContain(ids.mB);
-    expect((await repo.manualCallsForNumber(both, NUMBER, [ids.cB])).map((m) => m.id)).toContain(ids.mB2);
-    expect((await repo.dncForNumber(onlyA, NUMBER)).map((d) => d.id).sort()).toEqual([ids.dncA, ids.dncTenant].sort());
-    expect((await repo.campaignsByIds(onlyA, [campaignB, floor.campaigns[0]!])).map((g) => g.id)).toEqual([floor.campaigns[0]]);
-    await q(`INSERT INTO agency_calls (id, tenant_id, account_id, caller_id, destination_phone) VALUES ($1, $2, $3, '+919000000001', $4)`,
-      [ids.legB, floor.tenant, accountB, NUMBER]);
-    expect((await repo.mediaLegs(onlyA, [ids.leg1, ids.legB])).map((l) => l.id)).toEqual([ids.leg1]);
-    await q(`INSERT INTO agency_ingest_jobs (tenant_id, account_id, campaign_id, s3_key, file_name, phone_column) VALUES ($1, $2, $3, 'k', 'south.csv', 'phone')`,
-      [floor.tenant, accountB, campaignB]);
-    expect(await repo.uploads(onlyA, [campaignB])).toEqual([]);
-    expect((await repo.uploads(both, [campaignB])).map((u) => u.file_name)).toEqual(['south.csv']);
-    // No visible account: nothing at all (never "every account").
+  const repo = agencyCustomerHistoryRepository;
+  const onlyA = () => ({ tenantId: floor.tenant, accountIds: [floor.account] });
+  const both = () => ({ tenantId: floor.tenant, accountIds: [floor.account, accountB] });
+  const firstPage = (over: Partial<CustomerHistoryPageQuery> = {}): CustomerHistoryPageQuery => ({
+    cursorAt: 'infinity', cursorId: UUID_MAX, limit: 100, from: null, to: null, campaignRoots: null,
+    outcomes: null, dispositionCodes: null, agentUserIds: null, connectedOnly: false, ...over,
+  });
+
+  it('summary contacts', async () => {
+    expect((await repo.summaryContacts(onlyA(), NUMBER, 100)).map((c) => c.id).sort()).toEqual([ids.cA, ids.cAr].sort());
+    expect((await repo.summaryContacts(both(), NUMBER, 100)).map((c) => c.id)).toContain(ids.cB);
+  });
+
+  it('call aggregates', async () => {
+    const a = await repo.callStats(onlyA(), NUMBER);
+    expect(a).toMatchObject({ contact_entries: 2, call_entries: 11, callback_entries: 1, calls: 11, connected: 4 });
+    expect(a.agent_ids).not.toContain(owner.id);
+    expect(a.campaign_ids).not.toContain(campaignB);
+    const ab = await repo.callStats(both(), NUMBER);
+    expect(ab).toMatchObject({ contact_entries: 3, call_entries: 14 });
+    expect(ab.agent_ids).toContain(owner.id);
+  });
+
+  it('the newest placed call and the live calls', async () => {
+    expect((await repo.lastPlaced(onlyA(), NUMBER))?.id).toBe(ids.m1);
+    expect((await repo.liveCalls(onlyA(), NUMBER))).toEqual([]);
+  });
+
+  it('who booked a contact\'s callback', async () => {
+    expect(await repo.latestBookings(onlyA(), [ids.cAr])).toEqual([{ contact_id: ids.cAr, booked_by_user_id: agent(0).id }]);
+    // Asked for B's contact under A's scope: nothing.
+    await q(`UPDATE agency_call_attempts SET callback_at = now() WHERE id = $1`, [ids.bA1]);
+    try {
+      expect(await repo.latestBookings(onlyA(), [ids.cB])).toEqual([]);
+      expect(await repo.latestBookings(both(), [ids.cB])).toHaveLength(1);
+    } finally {
+      await q(`UPDATE agency_call_attempts SET callback_at = NULL WHERE id = $1`, [ids.bA1]);
+    }
+  });
+
+  it('DNC (summary and page): account entries, campaign marks through their campaign, tenant-wide; never another tenant', async () => {
+    expect((await repo.dncForNumber(onlyA(), NUMBER)).map((d) => d.id).sort()).toEqual([ids.dncA, ids.dncTenant].sort());
+    expect((await repo.pageDnc(onlyA(), NUMBER, firstPage())).map((d) => d.id).sort()).toEqual([ids.dncA, ids.dncTenant].sort());
+    expect((await repo.dncForNumber(both(), NUMBER)).map((d) => d.id).sort())
+      .toEqual([ids.dncA, ids.dncTenant, ids.dncB, ids.dncBc].sort());
+    const bc = (await repo.dncForNumber(both(), NUMBER)).find((d) => d.id === ids.dncBc);
+    expect(bc).toMatchObject({ account_id: null, campaign_id: campaignB, effective_account_id: accountB });
+    // No visible account: the tenant-wide entry only (never "every account").
     const none = { tenantId: floor.tenant, accountIds: [] };
-    expect(await repo.contactsForNumber(none, NUMBER)).toEqual([]);
     expect((await repo.dncForNumber(none, NUMBER)).map((d) => d.id)).toEqual([ids.dncTenant]);
+    expect((await repo.pageDnc(none, NUMBER, firstPage())).map((d) => d.id)).toEqual([ids.dncTenant]);
+    // The other tenant's tenant-wide entry, from its own tenant only.
+    const otherScope = { tenantId: other.tenant, accountIds: [other.account] };
+    expect((await repo.dncForNumber(otherScope, NUMBER)).map((d) => d.id)).toEqual([ids.dncForeign]);
+  });
+
+  it('timeline attempts and the callbacks booked on them', async () => {
+    const a = (await repo.pageAttempts(onlyA(), NUMBER, firstPage())).map((r) => r.id);
+    expect(a).toHaveLength(9);
+    expect(a).not.toContain(ids.bA1);
+    expect((await repo.pageAttempts(both(), NUMBER, firstPage())).map((r) => r.id)).toContain(ids.bA1);
+    expect((await repo.pageAttemptCallbacks(onlyA(), NUMBER, firstPage())).map((r) => r.id)).toEqual([ids.a3]);
+  });
+
+  it('an attempt or a logged soft-phone call of another account on a visible contact is still not read (each statement binds the accounts itself)', async () => {
+    // Rows the dialer never writes (an attempt's account is its contact's): the predicate on the
+    // call table itself is what keeps them out, not the contact it hangs off.
+    const stray = randomUUID();
+    const strayCall = randomUUID();
+    await attempt({ id: stray, account_id: accountB, campaign_id: floor.campaigns[0], contact_id: ids.cA, attempt_number: 99,
+      outcome: 'connected', callback_at: at(29 * DAY), dialed_at: at(29 * DAY), ended_at: at(29 * DAY), created_at: at(29 * DAY) });
+    await manualCall({ id: strayCall, account_id: accountB, session_id: await softphoneSession(accountB, owner.id), agent_user_id: owner.id,
+      campaign_id: floor.campaigns[0], contact_id: ids.cA, destination_e164: '+919876543298', outcome: 'busy', callback_at: at(29 * DAY),
+      dialed_at: at(29 * DAY), ended_at: at(29 * DAY), settled_at: at(29 * DAY), created_at: at(29 * DAY) });
+    try {
+      expect((await repo.pageAttempts(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(stray);
+      expect((await repo.pageAttemptCallbacks(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(stray);
+      expect((await repo.pageManualCalls(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(strayCall);
+      expect((await repo.pageManualCallbacks(onlyA(), NUMBER, firstPage())).map((r) => r.id)).not.toContain(strayCall);
+      expect(await repo.callStats(onlyA(), NUMBER)).toMatchObject({ call_entries: 11, callback_entries: 1, calls: 11 });
+      expect((await repo.lastPlaced(onlyA(), NUMBER))?.id).toBe(ids.m1);
+      expect(await repo.latestBookings(onlyA(), [ids.cA])).toEqual([]);
+      const booking = [{ id: ids.a3, at: at(26 * DAY).toISOString().replace('Z', '000Z') }];
+      expect((await repo.callbackNext(onlyA(), NUMBER, booking)).get(ids.a3)).toBeNull();
+      // Read with B visible, they are there: the rows are real, the scope is what hid them.
+      expect((await repo.pageAttempts(both(), NUMBER, firstPage())).map((r) => r.id)).toContain(stray);
+      expect((await repo.pageManualCalls(both(), NUMBER, firstPage())).map((r) => r.id)).toContain(strayCall);
+    } finally {
+      await q('DELETE FROM agency_call_attempts WHERE id = $1', [stray]);
+      await q('DELETE FROM agency_manual_calls WHERE id = $1', [strayCall]);
+    }
+  });
+
+  it('timeline soft-phone calls, by destination and by contact, and the callbacks booked on them', async () => {
+    expect((await repo.pageManualCalls(onlyA(), NUMBER, firstPage())).map((m) => m.id)).toEqual([ids.m1, ids.m2]);
+    const ab = (await repo.pageManualCalls(both(), NUMBER, firstPage())).map((m) => m.id);
+    expect(ab).toContain(ids.mB); // by destination
+    expect(ab).toContain(ids.mB2); // by contact only
+    expect(await repo.pageManualCallbacks(onlyA(), NUMBER, firstPage())).toEqual([]);
+    await q(`UPDATE agency_manual_calls SET callback_at = now() WHERE id = ANY($1::uuid[])`, [[ids.mB, ids.mB2]]);
+    try {
+      expect(await repo.pageManualCallbacks(onlyA(), NUMBER, firstPage())).toEqual([]);
+      expect((await repo.pageManualCallbacks(both(), NUMBER, firstPage())).map((m) => m.id).sort()).toEqual([ids.mB, ids.mB2].sort());
+    } finally {
+      await q(`UPDATE agency_manual_calls SET callback_at = NULL WHERE id = ANY($1::uuid[])`, [[ids.mB, ids.mB2]]);
+    }
+  });
+
+  it('timeline roster rows', async () => {
+    expect((await repo.pageContacts(onlyA(), NUMBER, firstPage())).map((c) => c.id)).toEqual([ids.cAr, ids.cA]);
+    expect((await repo.pageContacts(both(), NUMBER, firstPage())).map((c) => c.id)).toContain(ids.cB);
+  });
+
+  it('a callback\'s next placed call counts only visible calls', async () => {
+    const booking = [{ id: ids.a3, at: at(3 * DAY).toISOString().replace('Z', '000Z') }];
+    // After day 3, A's next placed call is the shared instant (day 5); B's attempt (day 4) is not A's.
+    expect((await repo.callbackNext(onlyA(), NUMBER, booking)).get(ids.a3)).toEqual(at(5 * DAY));
+    expect((await repo.callbackNext(both(), NUMBER, booking)).get(ids.a3)).toEqual(at(4 * DAY));
+  });
+
+  it('campaigns by id', async () => {
+    expect((await repo.campaignsByIds(onlyA(), [campaignB, floor.campaigns[0]!])).map((g) => g.id)).toEqual([floor.campaigns[0]]);
+  });
+
+  it('media legs by id', async () => {
+    await q(`INSERT INTO agency_calls (id, tenant_id, account_id, caller_id, destination_phone) VALUES ($1, $2, $3, '+919000000001', $4)
+             ON CONFLICT (id) DO NOTHING`, [ids.legB, floor.tenant, accountB, NUMBER]);
+    expect((await repo.mediaLegs(onlyA(), [ids.leg1, ids.legB])).map((l) => l.id)).toEqual([ids.leg1]);
+  });
+
+  it('uploads: by the campaign\'s account, so a tenant-level uploader\'s import (no account) is found', async () => {
+    expect(await repo.uploads(onlyA(), [campaignB])).toEqual([]);
+    expect((await repo.uploads(both(), [campaignB])).map((u) => u.file_name)).toEqual(['south.csv']);
+  });
+
+  it('no visible account reads nothing (never "every account")', async () => {
+    const none = { tenantId: floor.tenant, accountIds: [] };
+    expect(await repo.summaryContacts(none, NUMBER, 100)).toEqual([]);
+    expect(await repo.pageAttempts(none, NUMBER, firstPage())).toEqual([]);
+    expect(await repo.pageManualCalls(none, NUMBER, firstPage())).toEqual([]);
+  });
+});
+
+describe('the summary (§3)', () => {
+  it('hero fields: never a hidden column; with no heroes, the import\'s column order, not JSONB\'s; the tenant-level uploader\'s file', async () => {
+    const body = await search(owner);
+    const cB = body.summary.contacts.find((c: { contact_id: string }) => c.contact_id === ids.cB);
+    expect(cB.fields).toEqual([{ column: 'bb', value: 'second' }, { column: 'a1', value: 'first' }]);
+    expect(JSON.stringify(body)).not.toContain('1234 5678 9012');
+    expect(cB.upload_file_name).toBe('south.csv');
+    // Filtered to B's campaign: A's attempts, the untagged call and the account-level mark drop out.
+    const keys = await allPages(owner, body.search_id, 1, { campaign_ids: [campaignB] });
+    expect(keys).toEqual([`dnc_mark:${ids.dncBc}`, `softphone_call:${ids.mB2}`, `campaign_call:${ids.bA1}`, `roster_entry:${ids.cB}`]);
+    const page = await post('timeline', owner, { search_id: body.search_id, filters: { campaign_ids: [campaignB] }, limit: 100 });
+    const roster = page.json().entries.find((e: { key: string }) => e.key === `roster_entry:${ids.cB}`);
+    expect(roster).toMatchObject({ upload_file_name: 'south.csv' });
+  });
+
+  it('open items: only an override that still grants something, with its follow-up', async () => {
+    const body = await search(sup());
+    expect(body.summary.open.overrides).toEqual([expect.objectContaining({
+      contact_id: ids.cAr, disposition_code: 'ptp', extra_attempts: 1,
+      follow_up_at: expect.stringMatching(/^\d{4}-/), granted_at: at(20 * DAY).toISOString(),
+    })]);
+    expect(body.summary.open.callbacks).toEqual([expect.objectContaining({ contact_id: ids.cAr, owner: { user_id: agent(0).id, name: 'agent 0.0' },
+      booked_by: { user_id: agent(0).id, name: 'agent 0.0' } })]);
+  });
+
+  it('live calls: a ringing soft-phone call is live; a queued attempt was never dialled and is not', async () => {
+    const body = await search(sup(), '98111 11111');
+    expect(body.summary.open.live_calls).toEqual([{ channel: 'softphone', campaign: null, agent: { user_id: agent(0).id, name: 'agent 0.0' },
+      started_at: at(27 * DAY + 1000).toISOString() }]);
+    // The queued attempt is still on the timeline as a call not placed.
+    expect(body.timeline.entries.map((e: { key: string }) => e.key)).toContain(`campaign_call:${ids.aQueued}`);
+    expect(body.summary.totals).toMatchObject({ calls: 0, last_contacted: null });
+  });
+
+  it('the roster-row cap: the summary reads and lists the newest 2,000 and says so; the timeline and the count have every row', async () => {
+    const read = vi.spyOn(agencyCustomerHistoryRepository, 'summaryContacts');
+    let body;
+    try {
+      body = await search(sup(), '98333 33333');
+      // The SQL itself is cut (one row past the cap, to know there are more), not the answer only.
+      expect(read).toHaveBeenCalledWith(expect.anything(), NUMBER_CAP, CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1);
+      expect((await read.mock.results[0]!.value).length).toBe(CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1);
+    } finally {
+      read.mockRestore();
+    }
+    expect(body.summary.contacts).toHaveLength(CUSTOMER_HISTORY_MAX_CONTACT_ROWS);
+    expect(body.summary.contacts_truncated).toBe(true);
+    expect(body.timeline.entries).toHaveLength(50);
+    expect(body.timeline.next_cursor).not.toBeNull();
+    await drainAudits();
+    const { rows } = await q(`SELECT details FROM platform_audit_log WHERE resource_id = $1`, [body.search_id]);
+    expect(rows[0]!.details).toMatchObject({ result_count: CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 2 });
   });
 });
 
@@ -353,15 +631,16 @@ describe('the timeline (§4)', () => {
       agent: { user_id: agent(1).id }, call_page: { account_id: floor.account, campaign_id: floor.campaigns[0], attempt_id: ids.a1 } });
     expect(byKey.get(`campaign_call:${ids.a2}`)).toMatchObject({ recording: 'expired', redial_of_attempt_id: ids.a1, chain_attempt_id: ids.a1, redial_number: 1 });
     expect(byKey.get(`campaign_call:${ids.a3}`)).toMatchObject({ recording: 'no_call' });
+    // Purged, but never asked for a recording: not "expired".
+    expect(byKey.get(`softphone_call:${ids.m1}`)).toMatchObject({ campaign: null, contact_id: null, notes: 'M1 mine', recording: 'not_recorded' });
     // The next call placed after the booking is the untagged soft-phone call, days before the
     // callback's time: an early call counts as kept (§4, the insights rule IN4).
     expect(byKey.get(`callback:${ids.a3}`)).toMatchObject({ status: 'kept', dialled_at: at(25 * DAY).toISOString(),
       booked_by: { user_id: agent(0).id }, source: { channel: 'campaign', id: ids.a3 } });
-    expect(byKey.get(`softphone_call:${ids.m1}`)).toMatchObject({ campaign: null, contact_id: null, notes: 'M1 mine' });
     expect(byKey.get(`softphone_call:${ids.m2}`)).toMatchObject({ campaign: { id: floor.campaigns[0] }, contact_id: ids.cA });
-    expect(byKey.get(`dnc_mark:${ids.dncA}`)).toMatchObject({ entry: { scope: 'campaign', reason: 'Asked not to be called', added_by: 'account_admin 0.0' } });
+    expect(byKey.get(`dnc_mark:${ids.dncA}`)).toMatchObject({ account_id: floor.account,
+      entry: { scope: 'campaign', reason: 'Asked not to be called', added_by: 'account_admin 0.0' } });
     expect(byKey.get(`dnc_mark:${ids.dncTenant}`)).toMatchObject({ account_id: null, entry: { scope: 'tenant', added_by: 'import:registry.csv' } });
-    expect(body.summary.open.callbacks).toEqual([expect.objectContaining({ contact_id: ids.cAr, owner: { user_id: agent(0).id, name: 'agent 0.0' } })]);
   });
 
   it('keyset pages: no duplicates, no skips, across entries sharing one instant', async () => {
@@ -371,17 +650,36 @@ describe('the timeline (§4)', () => {
     }
   });
 
+  it('keyset pages at microsecond precision: entries one microsecond apart, across kinds, paged one at a time', async () => {
+    const body = await search(sup(), '98222 22222');
+    const expected = [
+      [micro(3), `dnc_mark:${ids.dncMicro}`],
+      [micro(3), `campaign_call:${ids.mu[2]}`],
+      [micro(2), `softphone_call:${ids.mMicro}`],
+      [micro(2), `campaign_call:${ids.mu[1]}`],
+      [micro(2), `callback:${ids.muCb}`],
+      [micro(1), `roster_entry:${ids.cMicro}`],
+      [micro(1), ...[`campaign_call:${ids.mu[0]}`, `campaign_call:${ids.muCb}`].sort().reverse()],
+    ].flatMap(([, ...keys]) => keys);
+    expect(body.timeline.entries.map((e: { key: string }) => e.key)).toEqual(expected);
+    for (const limit of [1, 2, 3]) {
+      expect(await allPages(sup(), body.search_id, limit), `limit ${limit}`).toEqual(expected);
+    }
+  });
+
   it('filters: a root campaign includes its retry; from/to; call-only filters', async () => {
     const body = await search(sup());
     const id = body.search_id;
     const all = expectedA();
     expect(await allPages(sup(), id, 100, { campaign_ids: [floor.campaigns[0]] }))
       .toEqual(all.filter((k) => ![`softphone_call:${ids.m1}`, `dnc_mark:${ids.dncTenant}`].includes(k)));
-    expect(await allPages(sup(), id, 100, { channel: 'softphone' })).toEqual([`softphone_call:${ids.m1}`, `softphone_call:${ids.m2}`]);
+    expect(await allPages(sup(), id, 1, { channel: 'softphone' })).toEqual([`softphone_call:${ids.m1}`, `softphone_call:${ids.m2}`]);
     expect(await allPages(sup(), id, 100, { connected_only: true, channel: 'campaign' }))
       .toEqual([`campaign_call:${ids.a3}`, `campaign_call:${ids.a2}`, `campaign_call:${ids.a1}`]);
     expect(await allPages(sup(), id, 100, { agent_user_ids: [agent(0).id] })).toEqual([`softphone_call:${ids.m1}`, `campaign_call:${ids.a3}`]);
     expect(await allPages(sup(), id, 100, { disposition_codes: ['callback'] })).toEqual([`campaign_call:${ids.a3}`]);
+    expect(await allPages(sup(), id, 100, { outcomes: ['no_answer'] }))
+      .toEqual([`softphone_call:${ids.m2}`, ...ids.shared.map((s) => `campaign_call:${s}`).sort().reverse()]);
     expect(await allPages(sup(), id, 2, { from: at(5 * DAY).toISOString(), to: at(15 * DAY).toISOString() }))
       .toEqual(all.filter((k) => [`roster_entry:${ids.cAr}`, `dnc_mark:${ids.dncTenant}`].includes(k) || ids.shared.some((s) => k.endsWith(s))));
   });
@@ -414,6 +712,15 @@ describe('refusals', () => {
     expect(exp.statusCode).toBe(404);
   });
 
+  it('the same user\'s search id replayed in another tenant is 404 search_expired (the Redis store binds the tenant)', async () => {
+    const mine = await search(twoTenants);
+    expect((await post('timeline', twoTenants, { search_id: mine.search_id })).statusCode).toBe(200);
+    const replay = await post('timeline', twoTenants, { search_id: mine.search_id }, other);
+    expect(replay.statusCode, replay.body).toBe(404);
+    expect(replay.json()).toMatchObject({ code: 'search_expired' });
+    expect((await post('export', twoTenants, { search_id: mine.search_id }, other)).statusCode).toBe(404);
+  });
+
   it('a partial number is invalid_number / too_short; a bad body invalid_search_request; a bad cursor invalid_cursor', async () => {
     const short = await post('search', sup(), { by: 'phone', value: '43210', country: 'IN' });
     expect(short.statusCode).toBe(400);
@@ -432,6 +739,25 @@ describe('refusals', () => {
     expect(limit.json()).toMatchObject({ code: 'invalid_search_request' });
   });
 
+  it('a country the search does not offer is refused, never searched as an Indian number', async () => {
+    const res = await post('search', sup(), { by: 'phone', value: '2079460018', country: 'ZZ' });
+    expect(res.statusCode, res.body).toBe(400);
+    expect(res.json()).toEqual({ error: 'Bad Request', code: 'invalid_search_request', message: 'country: not a country the search offers' });
+  });
+
+  it('a body that is not JSON is the family\'s invalid_search_request, on every POST', async () => {
+    for (const path of ['search', 'timeline', 'export']) {
+      for (const raw of ['{"by": "phone", "value": ', '']) {
+        const res = await post(path, sup(), raw);
+        expect(res.statusCode, `${path} ${JSON.stringify(raw)}`).toBe(400);
+        expect(res.json()).toEqual({ error: 'Bad Request', code: 'invalid_search_request', message: 'The request body is not valid JSON.' });
+      }
+    }
+    // Prototype poisoning is still refused by the same parser.
+    const poisoned = await post('search', sup(), '{"by":"phone","value":"9876543210","__proto__":{"x":1}}');
+    expect(poisoned.json()).toMatchObject({ code: 'invalid_search_request' });
+  });
+
   it('403 feature_disabled while the dialer flag is off', async () => {
     const off = floors[2]!;
     const res = await post('search', off.supervisors[0]!, { by: 'phone', value: TYPED }, off);
@@ -440,19 +766,28 @@ describe('refusals', () => {
   });
 });
 
+describe('the search box\'s options', () => {
+  it('GET /customers/options answers the platform default calling code, to any member, without charging the cap', async () => {
+    const res = await loaded.app.inject({ method: 'GET', url: '/proxy/agency/customers/options', headers: headersFor(rateUser, floor) });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ default_country_code: '+91' });
+  });
+});
+
 describe('audit (CH10) and export', () => {
-  it('a search and an export each write a row with the E.164 and the result count', async () => {
+  it('a search and an export each write a row with the account context, the E.164 and the result count', async () => {
     const body = await search(sup());
     const exp = await post('export', sup(), { search_id: body.search_id, filters: { channel: 'softphone' } });
     expect(exp.statusCode, exp.body).toBe(200);
     await drainAudits();
     const { rows } = await q(
-      `SELECT action, resource_type, user_id, actor_type, details FROM platform_audit_log
+      `SELECT action, resource_type, user_id, actor_type, account_id, details FROM platform_audit_log
         WHERE tenant_id = $1 AND resource_id = $2 ORDER BY action DESC`, [floor.tenant, body.search_id]);
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({ action: 'agency_customer_history.searched', resource_type: 'customer_history', user_id: sup().id, actor_type: 'human',
+      account_id: floor.account,
       details: { by: 'phone', value: NUMBER, result_count: expectedA().length, accounts: [floor.account], role: 'account_admin' } });
-    expect(rows[1]).toMatchObject({ action: 'agency_customer_history.exported', resource_type: 'customer_history',
+    expect(rows[1]).toMatchObject({ action: 'agency_customer_history.exported', resource_type: 'customer_history', account_id: floor.account,
       details: { by: 'phone', value: NUMBER, result_count: expectedA().length, rows: 2, filters: { channel: 'softphone' }, truncated: false } });
   });
 
@@ -482,33 +817,42 @@ describe('audit (CH10) and export', () => {
     const small = await post('export', owner, { search_id: body.search_id, filters: { channel: 'softphone' } });
     expect(small.headers['x-export-truncated']).toBeUndefined();
     expect(small.headers['x-export-rows']).toBe('4');
+    // The newest rows come first, in the timeline's order.
+    const full = await post('timeline', owner, { search_id: body.search_id, limit: EXPORT_MAX });
+    expect(lines.slice(1).map((l: string) => l.slice(0, 24)))
+      .toEqual(full.json().entries.map((e: { at: string }) => e.at));
   });
 });
 
 describe('the rate limit (CH11)', () => {
-  it('refuses the search after the configured max a minute, per user, with retryAfter', async () => {
+  it('refuses the search after the configured max a minute, per user, with retryAfter and a friendly message', async () => {
     for (let i = 0; i < SEARCH_MAX; i++) {
       const res = await post('search', rateUser, { by: 'phone', value: TYPED });
       expect(res.statusCode, `search ${i + 1}`).toBe(200);
     }
     const refused = await post('search', rateUser, { by: 'phone', value: TYPED });
     expect(refused.statusCode).toBe(429);
-    expect(refused.json()).toMatchObject({ error: 'Too Many Requests', retryAfter: expect.any(Number) });
+    const body = refused.json();
+    expect(body).toMatchObject({ error: 'Too Many Requests', retryAfter: expect.any(Number) });
+    expect(body.message).toMatch(/^You've searched a lot of numbers in a short time\. Try again in (\d+ seconds?|a minute)\.$/);
     expect(refused.headers['retry-after']).toBeDefined();
-    // The export is charged to the same bucket; the timeline is not.
+    // The export is charged to the same bucket; the timeline and the options are not.
     const exp = await post('export', rateUser, { search_id: 'chs_00112233445566778899aabbccddeeff' });
     expect(exp.statusCode).toBe(429);
     const page = await post('timeline', rateUser, { search_id: 'chs_00112233445566778899aabbccddeeff' });
     expect(page.statusCode).toBe(404);
+    const options = await loaded.app.inject({ method: 'GET', url: '/proxy/agency/customers/options', headers: headersFor(rateUser, floor) });
+    expect(options.statusCode).toBe(200);
     // Another user is not affected.
     expect((await post('search', agent(1), { by: 'phone', value: TYPED })).statusCode).toBe(200);
   });
 });
 
-describe('the number never travels in a URL (CH6)', () => {
-  it('the family is three POSTs with no params, and no request this suite sent carried the number', async () => {
-    const family = routes.filter((r) => r.url.startsWith('/proxy/agency/customers'));
+describe('the route table', () => {
+  it('the number never travels in a URL (CH6): three POSTs and one GET, no params; no request this suite sent carried the number', async () => {
+    const family = routes.filter((r) => r.url.startsWith('/proxy/agency/customers') && r.method !== 'HEAD');
     expect(family.map((r) => `${String(r.method)} ${r.url}`).sort()).toEqual([
+      'GET /proxy/agency/customers/options',
       'POST /proxy/agency/customers/export', 'POST /proxy/agency/customers/search', 'POST /proxy/agency/customers/timeline',
     ]);
     for (const r of family) expect(r.url).not.toContain(':');
@@ -520,36 +864,63 @@ describe('the number never travels in a URL (CH6)', () => {
       expect(url).not.toMatch(/9876543210|98765|43210/);
     }
   });
+
+  it('every route of the family checks agency.customer_history.read in its pre-handler', () => {
+    const family = routes.filter((r) => r.url.startsWith('/proxy/agency/customers') && r.method !== 'HEAD');
+    expect(family).toHaveLength(4);
+    for (const r of family) {
+      const handlers = [r.preHandler].flat().filter(Boolean) as Array<{ name?: string; permission?: string }>;
+      expect(handlers.map((h) => [h.name, h.permission]), `${String(r.method)} ${r.url}`)
+        .toContainEqual(['rbacPreHandler', 'agency.customer_history.read']);
+    }
+  });
 });
 
 // ─── CH9: every read uses an index ─────────────────────────────────────────────
 
+/** The plan of `sql` as the repository runs it: every plan type allowed, on analysed tables. */
 async function planOf(sql: string, params: unknown[]): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
-    await client.query('BEGIN');
-    await client.query('SET LOCAL enable_seqscan = off');
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`, params);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
   } finally {
-    await client.query('ROLLBACK');
     client.release();
   }
 }
 
+const BIG_TABLES = /Seq Scan on (agency_contacts|agency_call_attempts|agency_manual_calls|dnc_entries|agency_calls|agency_ingest_jobs|agency_campaigns|agency_agent_sessions)\b/;
+
 describe('every read uses its index (CH9)', () => {
   const accounts = () => [floor.account, accountB];
+  const pageParams = () => [floor.tenant, NUMBER, accounts(), 'infinity', UUID_MAX, 51, null, null, null];
+  const callParams = () => [...pageParams(), null, null, null, false];
 
-  // Real statistics, as production has: on a never-analysed table the planner prices every index
-  // from defaults and can pick a broader one for a handful of rows.
-  // A tenant with a real amount of other rows (other numbers' DNC entries, other campaigns, other
-  // calls' media legs, other imports), and real statistics, as production has: on a near-empty,
-  // never-analysed table the planner prices a broad index (the tenant's) the same as the exact one,
-  // and the plan says nothing about production.
+  // A tenant with a real amount of other rows (other numbers' contacts, attempts, soft-phone calls
+  // and DNC entries, other campaigns, other calls' media legs, other imports), and real
+  // statistics, as production has: on a near-empty, never-analysed table the planner prices a
+  // full scan below any index, and the plan says nothing about production. Nothing is disabled:
+  // these are the plans the repository gets.
   beforeAll(async () => {
     const C0 = floor.campaigns[0]!;
+    const sess = await session(floor, C0, agent(0).id);
+    const soft = await softphoneSession(floor.account, agent(0).id);
+    await q(`INSERT INTO agency_contacts (id, tenant_id, account_id, campaign_id, phone_e164, context)
+             SELECT ('00000000-0000-4000-9000-' || lpad(g::text, 12, '0'))::uuid, $1, $2, $3, '+9171' || lpad(g::text, 8, '0'), '{}'::jsonb
+               FROM generate_series(1, 6000) g`, [floor.tenant, floor.account, C0]);
+    await q(`INSERT INTO agency_call_attempts (tenant_id, account_id, campaign_id, contact_id, attempt_number, caller_id, state,
+                                               reserved_agent_id, dialed_at, ended_at, callback_at)
+             SELECT $1, $2, $3, ('00000000-0000-4000-9000-' || lpad(((g % 6000) + 1)::text, 12, '0'))::uuid, g / 6000 + 1, '+919000000001',
+                    'ended', $4, now(), now(), CASE WHEN g % 10 = 0 THEN now() END
+               FROM generate_series(1, 18000) g`, [floor.tenant, floor.account, C0, sess]);
+    await q(`INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id, state,
+                                              dialed_at, ended_at, settled_at)
+             SELECT $1, $2, $3, $4, '+9172' || lpad((g % 3000)::text, 8, '0'), '+919000000001', 'ended', now(), now(), now()
+               FROM generate_series(1, 6000) g`, [floor.tenant, floor.account, soft, agent(0).id]);
     await q(`INSERT INTO dnc_entries (tenant_id, account_id, phone_e164, source)
              SELECT $1, $2, '+9170' || lpad(g::text, 8, '0'), 'api' FROM generate_series(1, 3000) g`, [floor.tenant, floor.account]);
+    await q(`INSERT INTO agency_agent_sessions (tenant_id, account_id, campaign_id, agent_user_id, state, left_at)
+             SELECT $1, $2, $3, gen_random_uuid(), 'offline', now() FROM generate_series(1, 3000) g`, [floor.tenant, floor.account, C0]);
     await q(`INSERT INTO agency_campaigns
              SELECT (jsonb_populate_record(c, jsonb_build_object('id', gen_random_uuid(), 'name', 'Bulk ' || g))).*
                FROM agency_campaigns c, generate_series(1, 3000) g WHERE c.id = $1`, [C0]);
@@ -558,39 +929,85 @@ describe('every read uses its index (CH9)', () => {
     await q(`INSERT INTO agency_ingest_jobs (tenant_id, account_id, campaign_id, s3_key, file_name, phone_column, status)
              SELECT $1, $2, gen_random_uuid(), 'k/' || g, 'bulk-' || g || '.csv', 'phone', 'completed' FROM generate_series(1, 3000) g`,
       [floor.tenant, floor.account]);
-    await q('ANALYZE agency_contacts, agency_call_attempts, agency_manual_calls, dnc_entries, agency_campaigns, agency_calls, agency_ingest_jobs');
-  });
+    await q(`ANALYZE agency_contacts, agency_call_attempts, agency_manual_calls, dnc_entries, agency_campaigns, agency_calls,
+             agency_ingest_jobs, agency_agent_sessions`);
+  }, 120_000);
 
-  it('contacts: idx_agency_contacts_phone', async () => {
-    const plan = await planOf(CUSTOMER_HISTORY_SQL.contacts, [floor.tenant, NUMBER, accounts(), 2000]);
-    expect(plan).toContain('idx_agency_contacts_phone');
+  const noFullScan = (plan: string) => expect(plan, plan).not.toMatch(BIG_TABLES);
+
+  it('summary contacts: idx_agency_contacts_phone; each row\'s placed attempts by uq_agency_attempt_number', async () => {
+    const plan = await planOf(CUSTOMER_HISTORY_SQL.summaryContacts, [floor.tenant, NUMBER, accounts(), 2001]);
+    expect(plan).toMatch(/Index Scan using idx_agency_contacts_phone/);
     expect(plan).toMatch(/Index Cond: .*phone_e164/);
-  });
-
-  it('attempts: uq_agency_attempt_number by contact', async () => {
-    const plan = await planOf(CUSTOMER_HISTORY_SQL.attempts, [floor.tenant, accounts(), [ids.cA, ids.cAr]]);
     expect(plan).toContain('uq_agency_attempt_number');
-    expect(plan).toMatch(/Index Cond: .*contact_id/);
+    noFullScan(plan);
   });
 
-  it('soft-phone calls: the destination index and the contact-history index', async () => {
-    const plan = await planOf(CUSTOMER_HISTORY_SQL.manualCalls, [floor.tenant, accounts(), NUMBER, [ids.cA, ids.cAr]]);
-    expect(plan).toContain('idx_agency_manual_calls_destination');
+  it('call aggregates, the newest placed call, live calls, the callback judgement: contacts, attempts and both soft-phone indexes', async () => {
+    for (const [name, sql, params] of [
+      ['callStats', CUSTOMER_HISTORY_SQL.callStats, [floor.tenant, NUMBER, accounts()]],
+      ['lastPlaced', CUSTOMER_HISTORY_SQL.lastPlaced, [floor.tenant, NUMBER, accounts()]],
+      ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, [floor.tenant, NUMBER, accounts()]],
+      ['callbackNext', CUSTOMER_HISTORY_SQL.callbackNext, [floor.tenant, NUMBER, accounts(), [ids.a3], [at(3 * DAY).toISOString()]]],
+    ] as const) {
+      const plan = await planOf(sql, [...params]);
+      expect(plan, name).toContain('idx_agency_contacts_phone');
+      expect(plan, name).toMatch(/uq_agency_attempt_(number|live)/);
+      expect(plan, name).toContain('idx_agency_manual_calls_destination');
+      expect(plan, name).toContain('idx_agency_manual_calls_contact_history');
+      noFullScan(plan);
+    }
+  });
+
+  it('who booked a callback: attempts and soft-phone calls by contact', async () => {
+    const plan = await planOf(CUSTOMER_HISTORY_SQL.latestBookings, [floor.tenant, accounts(), [ids.cA, ids.cAr]]);
+    expect(plan).toContain('uq_agency_attempt_number');
     expect(plan).toContain('idx_agency_manual_calls_contact_history');
-    expect(plan).toMatch(/Index Cond: .*destination_e164/);
+    noFullScan(plan);
   });
 
-  it('DNC: idx_dnc_entries_tenant_phone', async () => {
-    const plan = await planOf(CUSTOMER_HISTORY_SQL.dnc, [floor.tenant, NUMBER, accounts()]);
-    expect(plan).toContain('idx_dnc_entries_tenant_phone');
+  it('DNC (summary and page): idx_dnc_entries_tenant_phone, the mark\'s campaign by primary key', async () => {
+    for (const [sql, params] of [[CUSTOMER_HISTORY_SQL.dnc, [floor.tenant, NUMBER, accounts()]], [CUSTOMER_HISTORY_SQL.pageDnc, pageParams()]] as const) {
+      const plan = await planOf(sql, [...params]);
+      expect(plan).toContain('idx_dnc_entries_tenant_phone');
+      noFullScan(plan);
+    }
+  });
+
+  it('timeline attempts and their callbacks: the number\'s contacts, then attempts by contact', async () => {
+    for (const [sql, params] of [[CUSTOMER_HISTORY_SQL.pageAttempts, callParams()], [CUSTOMER_HISTORY_SQL.pageAttemptCallbacks, pageParams()]] as const) {
+      const plan = await planOf(sql, [...params]);
+      expect(plan).toContain('idx_agency_contacts_phone');
+      expect(plan).toContain('uq_agency_attempt_number');
+      noFullScan(plan);
+    }
+  });
+
+  it('timeline soft-phone calls: each account\'s destination slice and each contact\'s calls walked in keyset order, the cursor in the index condition, no sort under the limit', async () => {
+    const plan = await planOf(CUSTOMER_HISTORY_SQL.pageManualCalls, callParams());
+    expect(plan).toMatch(/Limit\n\s+->\s+Index (Only )?Scan using idx_agency_manual_calls_destination/);
+    expect(plan).toMatch(/Limit\n\s+->\s+Index (Only )?Scan using idx_agency_manual_calls_contact_history/);
+    expect(plan).toMatch(/Index Cond: .*destination_e164.*ROW\(created_at, id\) < ROW\(/);
+    noFullScan(plan);
+    const callbacks = await planOf(CUSTOMER_HISTORY_SQL.pageManualCallbacks, pageParams());
+    expect(callbacks).toContain('idx_agency_manual_calls_destination');
+    expect(callbacks).toContain('idx_agency_manual_calls_contact_history');
+    noFullScan(callbacks);
+  });
+
+  it('timeline roster rows: idx_agency_contacts_phone', async () => {
+    const plan = await planOf(CUSTOMER_HISTORY_SQL.pageContacts, pageParams());
+    expect(plan).toContain('idx_agency_contacts_phone');
+    noFullScan(plan);
   });
 
   it('campaigns, media legs by primary key; uploads by idx_agency_ingest_jobs_campaign', async () => {
-    expect(await planOf(CUSTOMER_HISTORY_SQL.campaigns, [floor.tenant, accounts(), [floor.campaigns[0], retryCampaign]]))
-      .toContain('agency_campaigns_pkey');
-    expect(await planOf(CUSTOMER_HISTORY_SQL.mediaLegs, [floor.tenant, accounts(), [ids.leg1, ids.leg2]]))
-      .toContain('agency_calls_pkey');
-    expect(await planOf(CUSTOMER_HISTORY_SQL.uploads, [floor.tenant, accounts(), [floor.campaigns[0]]]))
-      .toContain('idx_agency_ingest_jobs_campaign');
+    const campaigns = await planOf(CUSTOMER_HISTORY_SQL.campaigns, [floor.tenant, accounts(), [floor.campaigns[0], retryCampaign]]);
+    expect(campaigns).toContain('agency_campaigns_pkey');
+    const legs = await planOf(CUSTOMER_HISTORY_SQL.mediaLegs, [floor.tenant, accounts(), [ids.leg1, ids.leg2]]);
+    expect(legs).toContain('agency_calls_pkey');
+    const uploads = await planOf(CUSTOMER_HISTORY_SQL.uploads, [floor.tenant, accounts(), [floor.campaigns[0], campaignB]]);
+    expect(uploads).toContain('idx_agency_ingest_jobs_campaign');
+    for (const plan of [campaigns, legs, uploads]) noFullScan(plan);
   });
 });

@@ -77,6 +77,7 @@ export {
   agencyAssignmentReadRepository,
   emptyBucketCounts,
   heroColumns,
+  isOverrideUnspent,
 } from './agency/assignment-reads.repository.js';
 export type { MyContactsTally, OwnerTally, ProgressRaw } from './agency/assignment-reads.repository.js';
 export { agentAbsent } from './agency/assignment-reads.repository.js';
@@ -157,14 +158,23 @@ export {
   agencyCustomerHistoryRepository,
   CUSTOMER_HISTORY_MAX_CONTACT_ROWS,
   CUSTOMER_HISTORY_SQL,
+  UUID_MAX,
+  UUID_NIL,
 } from './agency/customer-history.repository.js';
 export type {
   CustomerHistoryAttemptRow,
+  CustomerHistoryBookingRow,
+  CustomerHistoryCallbackRow,
+  CustomerHistoryCallStatsRow,
   CustomerHistoryCampaignRow,
   CustomerHistoryContactRow,
   CustomerHistoryDncRow,
+  CustomerHistoryLastPlacedRow,
+  CustomerHistoryLiveCallRow,
   CustomerHistoryManualCallRow,
   CustomerHistoryMediaLegRow,
+  CustomerHistoryPageQuery,
   CustomerHistoryScope,
+  CustomerHistorySummaryContactRow,
   CustomerHistoryUploadRow,
 } from './agency/customer-history.repository.js';

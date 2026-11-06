@@ -151,6 +151,7 @@ const EXPECTED_AGENT_REACHABLE = [
   // Customer history (docs/customer-history.md CH1): `agency.customer_history.read` floors at
   // `agent`. What an agent sees there is cut to their own visibility (CH8): no call page, no
   // other agents' notes, no DNC reasons.
+  'GET /proxy/agency/customers/options',
   'POST /proxy/agency/customers/export',
   'POST /proxy/agency/customers/search',
   'POST /proxy/agency/customers/timeline',

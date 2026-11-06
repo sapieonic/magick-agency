@@ -5,6 +5,7 @@ import { captureApiError } from './error-analytics';
 import { retryAfterSecondsFromUnknown } from '../utils/poll-backoff';
 import type {
   CustomerExportRequest,
+  CustomerSearchOptionsResponse,
   CustomerSearchRequest,
   CustomerSearchResponse,
   CustomerTimelinePage,
@@ -27,18 +28,31 @@ import type {
 
 const AGENCY_BASE = `${API_BASE}/proxy/agency`;
 
-/** Search one number. `value` is the raw text as typed; the server cleans it with the box's rule. */
+/**
+ * Search one number. `value` is the raw text as typed; the server cleans it with the box's rule.
+ * `signal` lets the box abandon a search nobody is waiting for any more (the panel closed, the
+ * page left), so a slow answer cannot navigate the person away from where they went.
+ */
 export async function searchCustomers(
   request: CustomerSearchRequest,
   tenantId?: string,
   accountId?: string,
+  signal?: AbortSignal,
 ): Promise<CustomerSearchResponse> {
   return apiFetch<CustomerSearchResponse>(
     `${AGENCY_BASE}/customers/search`,
-    { method: 'POST', body: JSON.stringify(request) },
+    { method: 'POST', body: JSON.stringify(request), ...(signal ? { signal } : {}) },
     tenantId,
     accountId,
   );
+}
+
+/** `GET /proxy/agency/customers/options`: the platform's default calling code, for the country picker. */
+export async function getCustomerSearchOptions(
+  tenantId?: string,
+  accountId?: string,
+): Promise<CustomerSearchOptionsResponse> {
+  return apiFetch<CustomerSearchOptionsResponse>(`${AGENCY_BASE}/customers/options`, {}, tenantId, accountId);
 }
 
 /** A later timeline page, or the first page under new filters. */
@@ -66,18 +80,38 @@ export interface CustomerHistoryCsvDownload {
 /** The fallback name: no number in it, since the file may be saved somewhere shared. */
 export const CUSTOMER_HISTORY_CSV_FALLBACK_NAME = 'customer-history.csv';
 
-/** `attachment; filename="x.csv"` or `filename*=UTF-8''x.csv` → `x.csv`. */
+/** An RFC 5987 `charset'language'value` (`filename*`), decoded; null when it cannot be read. */
+function decodeExtValue(raw: string): string | null {
+  const ext = /^([^']*)'[^']*'(.*)$/.exec(raw.trim().replace(/^"|"$/g, ''));
+  const charset = (ext?.[1] ?? 'utf-8').toLowerCase();
+  const value = ext ? ext[2]! : raw.trim();
+  try {
+    if (charset === 'utf-8' || charset === '') return decodeURIComponent(value) || null;
+    if (charset === 'iso-8859-1') {
+      // One byte per `%XX`, each byte its own code point.
+      return value.replace(/%([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16))) || null;
+    }
+  } catch {
+    // A malformed escape.
+  }
+  return null;
+}
+
+/**
+ * The download's name from `Content-Disposition`, in every form RFC 6266 allows:
+ * `filename="x.csv"`, `filename=x.csv`, and the RFC 5987 `filename*=UTF-8''x.csv` (or another
+ * charset), preferred when present. The server sends both (`csvAttachmentHeader`):
+ * `attachment; filename="customer-history-2026-11-06.csv"; filename*=UTF-8''customer-history-2026-11-06.csv`.
+ */
 export function filenameFromContentDisposition(header: string | null): string | null {
   if (!header) return null;
-  const star = /filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i.exec(header);
+  const star = /filename\*\s*=\s*([^;]+)/i.exec(header);
   if (star?.[1]) {
-    try {
-      return decodeURIComponent(star[1].trim().replace(/^"|"$/g, '')) || null;
-    } catch {
-      // A malformed escape: fall through to the plain parameter.
-    }
+    const decoded = decodeExtValue(star[1]);
+    if (decoded) return decoded;
   }
-  const plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
+  // `(?:^|;)` so the plain parameter is never read out of `filename*=`.
+  const plain = /(?:^|;)\s*filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
   const name = (plain?.[2] ?? plain?.[1] ?? '').trim();
   return name.length > 0 ? name : null;
 }

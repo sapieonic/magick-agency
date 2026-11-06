@@ -208,6 +208,7 @@ final Map<String, Map<String, Decoder>> decoders = {
     'timeline_page_last': CustomerTimelinePage.fromJson,
     'error_invalid_number': CustomerHistoryRefusal.fromJson,
     'error_search_expired': CustomerHistoryRefusal.fromJson,
+    'options_response': CustomerSearchOptionsResponse.fromJson,
   },
 };
 

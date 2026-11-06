@@ -24,6 +24,7 @@ import {
   CUSTOMER_HISTORY_CSV_FALLBACK_NAME,
   exportCustomerHistory,
   filenameFromContentDisposition,
+  getCustomerSearchOptions,
   getCustomerTimeline,
   searchCustomers,
 } from '../../api/customerHistory';
@@ -63,6 +64,25 @@ describe('searchCustomers', () => {
     expect(tenantId).toBe('tenant-1');
     expect(accountId).toBe('account-1');
   });
+
+  it('passes an abort signal through, so the box can abandon a search', async () => {
+    mocks.apiFetch.mockResolvedValue(fixture.search_response);
+    const controller = new AbortController();
+    await searchCustomers(fixture.search_request, 't', 'a', controller.signal);
+    expect((mocks.apiFetch.mock.calls[0]![1] as RequestInit).signal).toBe(controller.signal);
+  });
+});
+
+describe('getCustomerSearchOptions', () => {
+  it('GETs /proxy/agency/customers/options with the scope headers and no body', async () => {
+    mocks.apiFetch.mockResolvedValue({ default_country_code: '+44' });
+    expect(await getCustomerSearchOptions('t', 'a')).toEqual({ default_country_code: '+44' });
+    const [url, init, tenantId, accountId] = mocks.apiFetch.mock.calls[0]!;
+    expect(url).toBe('/proxy/agency/customers/options');
+    expect((init as RequestInit).method ?? 'GET').toBe('GET');
+    expect((init as RequestInit).body).toBeUndefined();
+    expect([tenantId, accountId]).toEqual(['t', 'a']);
+  });
 });
 
 describe('getCustomerTimeline', () => {
@@ -84,7 +104,9 @@ describe('exportCustomerHistory', () => {
   it('POSTs the search id and filters, and reads the filename and truncation from the headers', async () => {
     mocks.fetch.mockResolvedValue(
       csvResponse({
-        'content-disposition': 'attachment; filename="customer-history-2026-11-06.csv"',
+        // Exactly what the server's `csvAttachmentHeader(customerExportFileName(now))` sends.
+        'content-disposition':
+          "attachment; filename=\"customer-history-2026-11-06.csv\"; filename*=UTF-8''customer-history-2026-11-06.csv",
         'x-export-truncated': 'true',
       }),
     );
@@ -149,5 +171,27 @@ describe('filenameFromContentDisposition', () => {
     expect(filenameFromContentDisposition("attachment; filename*=UTF-8''hist%C3%B3ry.csv")).toBe('históry.csv');
     expect(filenameFromContentDisposition(null)).toBeNull();
     expect(filenameFromContentDisposition('attachment')).toBeNull();
+  });
+
+  it("reads the server's two-parameter form, preferring filename*", () => {
+    expect(
+      filenameFromContentDisposition(
+        "attachment; filename=\"customer-history-2026-11-06.csv\"; filename*=UTF-8''customer-history-2026-11-06.csv",
+      ),
+    ).toBe('customer-history-2026-11-06.csv');
+    // filename* first, and a name only filename* can carry.
+    expect(
+      filenameFromContentDisposition("attachment; filename*=UTF-8''r%C3%A9sum%C3%A9.csv; filename=\"resume.csv\""),
+    ).toBe('résumé.csv');
+  });
+
+  it('decodes another RFC 5987 charset, and a language tag, rather than keeping them in the name', () => {
+    expect(filenameFromContentDisposition("attachment; filename*=ISO-8859-1'en'r%E9sum%E9.csv")).toBe('résumé.csv');
+    expect(filenameFromContentDisposition("attachment; filename*=utf-8'en'x.csv")).toBe('x.csv');
+  });
+
+  it('falls back to the plain name when filename* cannot be read', () => {
+    expect(filenameFromContentDisposition("attachment; filename*=UTF-8''bad%E0%A4.csv; filename=\"ok.csv\"")).toBe('ok.csv');
+    expect(filenameFromContentDisposition("attachment; filename*=KOI8-R''x.csv; filename=\"ok.csv\"")).toBe('ok.csv');
   });
 });

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -12,13 +11,18 @@ import '../../ui/primitives.dart';
 import 'customer_history_controller.dart';
 import 'customer_history_copy.dart';
 
-/// Customer history's search box, from the Calls tab: a country picker
-/// (India by default), the number box with its always-visible helper text, a
-/// live preview of the number the search will run on ("We'll search for
-/// +91 98765 43210", from the same rule the server runs), the refusals, and
-/// the last five numbers searched on this phone. A found number opens its
-/// history ([Routes.customerHistory]); the number itself never goes in a
-/// route.
+/// Customer history's search box, from the Calls tab: a country picker (the
+/// platform default, India until it is read), the number box with its
+/// always-visible helper text, a live preview of the number the search will
+/// run on ("We'll search for +91 98765 43210", from the same rule the server
+/// runs), the refusals, and the last five numbers searched on this phone. A
+/// found number opens its history ([Routes.customerHistory]); the number
+/// itself never goes in a route.
+///
+/// The refusals follow the console's timing: letters, symbols, a number a
+/// spreadsheet shortened and one too long are refused as they are typed; an
+/// empty box and a number still too short only once Search was pressed (until
+/// the box is emptied again), so nobody is told off for a number half typed.
 class CustomerSearchScreen extends ConsumerStatefulWidget {
   const CustomerSearchScreen({super.key});
 
@@ -28,6 +32,18 @@ class CustomerSearchScreen extends ConsumerStatefulWidget {
 
 class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
   final _text = TextEditingController();
+
+  /// Search was pressed since the box was last empty.
+  bool _submitted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // After the first frame: providers are not changed while the tree builds.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _controller.rereadDefaultIfFailed();
+    });
+  }
 
   @override
   void dispose() {
@@ -39,6 +55,7 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
 
   Future<void> _search([String? raw]) async {
     FocusScope.of(context).unfocus();
+    setState(() => _submitted = true);
     final found = await _controller.search(raw ?? _text.text);
     if (!found || !mounted) return;
     unawaited(context.push<void>(Routes.customerHistory));
@@ -81,8 +98,13 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
     final country = s.country;
     final text = Theme.of(context).textTheme;
     final t = context.tokens;
-    final typed = _text.text;
-    final preview = typed.trim().isEmpty ? null : parseSearchNumber(typed, country);
+    final parsed = parseSearchNumber(_text.text, country);
+    final liveError = switch (parsed) {
+      SearchNumberRefused(:final code, :final message)
+          when _submitted || (code != CustomerSearchNumberError.empty && code != CustomerSearchNumberError.tooShort) =>
+        message,
+      _ => null,
+    };
 
     return Scaffold(
       appBar: AppBar(title: Semantics(header: true, child: const Text(CustomerHistoryCopy.searchTitle))),
@@ -118,15 +140,18 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
                   textInputAction: TextInputAction.search,
                   autocorrect: false,
                   enableSuggestions: false,
-                  inputFormatters: [LengthLimitingTextInputFormatter(customerSearchValueMax)],
+                  maxLength: customerSearchValueMax,
                   decoration: InputDecoration(
                     labelText: CustomerHistoryCopy.numberLabel,
-                    errorText: s.searchError,
+                    errorText: liveError ?? s.searchError,
                     errorMaxLines: 3,
+                    counterText: '',
                   ),
-                  onChanged: (_) {
+                  onChanged: (raw) {
                     _controller.editing();
-                    setState(() {});
+                    setState(() {
+                      if (raw.trim().isEmpty) _submitted = false;
+                    });
                   },
                   onSubmitted: (_) => unawaited(_search()),
                 ),
@@ -134,13 +159,17 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
             ],
           ),
           const SizedBox(height: Space.sm),
-          Text(CustomerHistoryCopy.helper(country.callingCode), key: const Key('customer-helper'), style: text.bodySmall),
+          Text(
+            CustomerHistoryCopy.helper(country.callingCode),
+            key: const Key('customer-helper'),
+            style: text.bodySmall,
+          ),
           const SizedBox(height: Space.xs),
           Text(CustomerHistoryCopy.helperOtherCountry, style: text.bodySmall),
           const SizedBox(height: Space.md),
           Semantics(
             liveRegion: true,
-            child: switch (preview) {
+            child: switch (parsed) {
               SearchNumberOk(:final formatted) => Text(
                 CustomerHistoryCopy.preview(formatted),
                 key: const Key('customer-preview'),

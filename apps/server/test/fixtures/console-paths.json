@@ -2500,6 +2500,13 @@
       "reason": "campaign insights read, served by the public API layer at the console path (decision B16; contracts api/agency/insights.ts, docs/insights.md)"
     },
     {
+      "method": "GET",
+      "path": "/proxy/agency/customers/options",
+      "source": "apps/console/src/api/customerHistory.ts",
+      "status": "served",
+      "reason": "customer history: the search box's default calling code (DEFAULT_PHONE_COUNTRY_CODE) for the country picker, served by the public API layer (contracts api/agency/customer-history.ts, docs/customer-history.md)"
+    },
+    {
       "method": "POST",
       "path": "/proxy/agency/customers/search",
       "source": "apps/console/src/api/customerHistory.ts",

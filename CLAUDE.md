@@ -105,7 +105,7 @@ The mobile app builds with Flutter, not pnpm: see `apps/mobile/CLAUDE.md`.
 
 CI: `.github/workflows/ci.yml` (lint, unit, grafana, release guard, build; integration as three
 parallel jobs: db, server, server wall-clock), `mobile.yml` (path-filtered on `apps/mobile`,
-`packages/contracts` and the literal extractor), `pr-title.yml`, `release-please.yml`.
+`packages/contracts`, the literal extractor and the number rule the Dart port mirrors), `pr-title.yml`, `release-please.yml`.
 
 The repo's `.mcp.json` adds the Grafana Cloud MCP server (stack `sapieonic`) for live metrics,
 logs and alerts.

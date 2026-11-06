@@ -61,7 +61,7 @@ function notesCell(notes: string | null, hidden: boolean): string {
 }
 
 /** One CSV row for one entry. `accountName` resolves an account id to its name. */
-export function customerHistoryCsvRow(
+function customerHistoryCsvRow(
   entry: CustomerTimelineEntry,
   number: string,
   accountName: (id: string | null) => string | null,
@@ -70,7 +70,7 @@ export function customerHistoryCsvRow(
   switch (entry.kind) {
     case 'campaign_call': {
       const details: string[] = [`Attempt ${entry.attempt_number}`];
-      if (entry.redial_number > 0) details.push(`Redial ${entry.redial_number} of ${entry.chain_attempt_id}`);
+      if (entry.redial_number > 0) details.push(`Wrap-up redial ${entry.redial_number}`);
       if (entry.override_applied.length > 0) details.push(`Overrides: ${entry.override_applied.join(', ')}`);
       if (entry.override_note) details.push(`Override note: ${entry.override_note}`);
       return [

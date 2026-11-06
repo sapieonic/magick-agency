@@ -1,19 +1,38 @@
 /**
  * The customer-history reads, composed (`docs/customer-history.md`): who the caller is in the
- * tenant (CH2), and every row the visible accounts hold about one number, read through the
- * repository's indexed, account-scoped statements (CH9) and handed to the pure assembler
- * (`./assemble.ts`).
+ * tenant (CH2); the summary, built once at search time from roster rows and SQL aggregates; and
+ * one timeline page, read as keyset heads per source, merged, cut and enriched by primary key
+ * (CH9). The pure halves are in `./assemble.ts`.
  */
 import { accountRepository } from '@magick-agency/db/repositories/account.repository';
 import { membershipRepository } from '@magick-agency/db/repositories/membership.repository';
+import type { CustomerHistorySummary, CustomerTimelineKind, CustomerTimelinePage } from '@magick-agency/contracts/api/agency/customer-history';
 import {
   agencyCustomerHistoryRepository,
+  CUSTOMER_HISTORY_MAX_CONTACT_ROWS,
   type CustomerHistoryCampaignRow,
+  type CustomerHistoryPageQuery,
   type CustomerHistoryScope,
 } from '../../db/repositories/agency.repository.js';
 import { namesIn } from '../insights/shared.js';
 import { buildViewer, isTenantWide, membershipAccountIds, type CustomerHistoryViewer } from './visibility.js';
-import { userIdsOf, type CustomerHistoryData } from './assemble.js';
+import {
+  buildSummary,
+  buildTimeline,
+  contactsAwaitingCallback,
+  cutPage,
+  entryCount,
+  pageCampaignIds,
+  pageUserIds,
+  sourceBound,
+  summaryCampaignIds,
+  summaryUserIds,
+  timelinePage,
+} from './assemble.js';
+import type { TimelinePosition } from './cursor.js';
+import type { TimelineFilter } from './requests.js';
+
+const repo = agencyCustomerHistoryRepository;
 
 /** The caller's visible accounts and role in each, from their active memberships in the tenant. */
 export async function resolveViewer(userId: string, tenantId: string): Promise<CustomerHistoryViewer> {
@@ -28,56 +47,133 @@ export async function resolveViewer(userId: string, tenantId: string): Promise<C
   );
 }
 
-/** Every row about `phone` (E.164) in the viewer's accounts. */
-export async function loadCustomerHistory(
+const scopeOf = (viewer: CustomerHistoryViewer, tenantId: string): CustomerHistoryScope =>
+  ({ tenantId, accountIds: [...viewer.accounts.keys()] });
+
+/** Campaign rows by id, plus each one's chain root (CH7: the filter names roots). */
+async function campaignsWithRoots(scope: CustomerHistoryScope, ids: readonly string[]): Promise<Map<string, CustomerHistoryCampaignRow>> {
+  const campaigns = new Map<string, CustomerHistoryCampaignRow>();
+  for (const g of await repo.campaignsByIds(scope, ids)) campaigns.set(g.id, g);
+  const missingRoots = [...new Set([...campaigns.values()].map((g) => g.root_id))].filter((id) => !campaigns.has(id));
+  for (const g of await repo.campaignsByIds(scope, missingRoots)) campaigns.set(g.id, g);
+  return campaigns;
+}
+
+/**
+ * The summary of `phone` (E.164) in the viewer's accounts, and how many timeline entries the
+ * viewer can see (the audit's `result_count`). Read once, at search time.
+ */
+export async function loadCustomerSummary(
   viewer: CustomerHistoryViewer,
   tenantId: string,
   phone: string,
   now: Date = new Date(),
-): Promise<CustomerHistoryData> {
-  const repo = agencyCustomerHistoryRepository;
-  const scope: CustomerHistoryScope = { tenantId, accountIds: [...viewer.accounts.keys()] };
-
-  const [contacts, dnc] = await Promise.all([repo.contactsForNumber(scope, phone), repo.dncForNumber(scope, phone)]);
-  const contactIds = contacts.map((c) => c.id);
-  const [attempts, manualCalls] = await Promise.all([
-    repo.attemptsForContacts(scope, contactIds),
-    repo.manualCallsForNumber(scope, phone, contactIds),
+): Promise<{ summary: CustomerHistorySummary; resultCount: number }> {
+  const scope = scopeOf(viewer, tenantId);
+  const [contactRows, stats, lastPlaced, liveCalls, dnc] = await Promise.all([
+    repo.summaryContacts(scope, phone, CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1),
+    repo.callStats(scope, phone),
+    repo.lastPlaced(scope, phone),
+    repo.liveCalls(scope, phone),
+    repo.dncForNumber(scope, phone),
   ]);
+  const contactsTruncated = contactRows.length > CUSTOMER_HISTORY_MAX_CONTACT_ROWS;
+  const contacts = contactsTruncated ? contactRows.slice(0, CUSTOMER_HISTORY_MAX_CONTACT_ROWS) : contactRows;
 
-  // Campaigns: every one a row names, then any chain root not among them (CH7's filter names roots).
-  const campaignIds = new Set<string>();
-  for (const c of contacts) campaignIds.add(c.campaign_id);
-  for (const a of attempts) campaignIds.add(a.campaign_id);
-  for (const m of manualCalls) if (m.campaign_id) campaignIds.add(m.campaign_id);
-  for (const d of dnc) if (d.campaign_id) campaignIds.add(d.campaign_id);
-  const campaigns = new Map<string, CustomerHistoryCampaignRow>();
-  for (const g of await repo.campaignsByIds(scope, [...campaignIds])) campaigns.set(g.id, g);
-  const missingRoots = [...new Set([...campaigns.values()].map((g) => g.root_id))].filter((id) => !campaigns.has(id));
-  for (const g of await repo.campaignsByIds(scope, missingRoots)) campaigns.set(g.id, g);
+  const campaigns = await campaignsWithRoots(scope, summaryCampaignIds({ contacts, stats, liveCalls, dnc }));
+  const awaiting = contactsAwaitingCallback(contacts, campaigns).map((c) => c.id);
+  const uploadCampaigns = new Set<string>();
+  for (const c of contacts) {
+    uploadCampaigns.add(c.campaign_id);
+    const root = campaigns.get(c.campaign_id)?.root_id;
+    if (root) uploadCampaigns.add(root);
+  }
+  const [bookingRows, uploads] = await Promise.all([
+    repo.latestBookings(scope, awaiting),
+    repo.uploads(scope, [...uploadCampaigns]),
+  ]);
+  const bookings = new Map(bookingRows.map((b) => [b.contact_id, b.booked_by_user_id]));
+  const names = await namesIn(summaryUserIds({ contacts, stats, lastPlaced, liveCalls, bookings, dnc }), tenantId);
 
-  const legIds = [
-    ...attempts.map((a) => a.webrtc_call_id),
-    ...manualCalls.map((m) => m.webrtc_call_id),
-  ].filter((id): id is string => typeof id === 'string');
-  const contactCampaignIds = [...new Set(contacts.map((c) => c.campaign_id))];
-  const [legs, uploads] = await Promise.all([
+  const summary = buildSummary({
+    now, viewer, contacts, contactsTruncated, campaigns, stats, lastPlaced, liveCalls, bookings, dnc, uploads, names,
+  });
+  return { summary, resultCount: entryCount(stats, dnc.length) };
+}
+
+/** How many timeline entries the viewer can see of `phone` (the export audit's `result_count`). */
+export async function countCustomerEntries(viewer: CustomerHistoryViewer, tenantId: string, phone: string): Promise<number> {
+  const scope = scopeOf(viewer, tenantId);
+  const [stats, dnc] = await Promise.all([repo.callStats(scope, phone), repo.dncForNumber(scope, phone)]);
+  return entryCount(stats, dnc.length);
+}
+
+/**
+ * One timeline page: each source's rows strictly after `cursor` under the filters, at most
+ * `limit + 1` each (keyset, in SQL), merged; the first `limit` are enriched and returned with the
+ * cursor of the next page. A source a filter rules out is not read: the call-only filters read
+ * only the call sources, `channel` only its own.
+ */
+export async function loadTimelinePage(
+  viewer: CustomerHistoryViewer,
+  tenantId: string,
+  phone: string,
+  filter: TimelineFilter,
+  cursor: TimelinePosition | null,
+  limit: number,
+  now: Date = new Date(),
+): Promise<CustomerTimelinePage> {
+  const scope = scopeOf(viewer, tenantId);
+  const q = (kind: CustomerTimelineKind): CustomerHistoryPageQuery => {
+    const bound = sourceBound(kind, cursor);
+    return {
+      cursorAt: bound.at,
+      cursorId: bound.id,
+      limit: limit + 1,
+      from: filter.from,
+      to: filter.to,
+      campaignRoots: filter.campaignRoots,
+      outcomes: filter.outcomes,
+      dispositionCodes: filter.dispositionCodes,
+      agentUserIds: filter.agentUserIds,
+      connectedOnly: filter.connectedOnly,
+    };
+  };
+  const campaignCalls = filter.channel === null || filter.channel === 'campaign';
+  const softphoneCalls = filter.channel === null || filter.channel === 'softphone';
+  const others = !filter.callsOnly;
+  const none = Promise.resolve([] as never[]);
+
+  const [attempts, manualCalls, attemptCallbacks, manualCallbacks, dnc, contacts] = await Promise.all([
+    campaignCalls ? repo.pageAttempts(scope, phone, q('campaign_call')) : none,
+    softphoneCalls ? repo.pageManualCalls(scope, phone, q('softphone_call')) : none,
+    others ? repo.pageAttemptCallbacks(scope, phone, q('callback')) : none,
+    others ? repo.pageManualCallbacks(scope, phone, q('callback')) : none,
+    others ? repo.pageDnc(scope, phone, q('dnc_mark')) : none,
+    others ? repo.pageContacts(scope, phone, q('roster_entry')) : none,
+  ]);
+  const cut = cutPage({ attempts, manualCalls, callbacks: [...attemptCallbacks, ...manualCallbacks], dnc, contacts }, limit);
+  const rows = cut.rows;
+
+  const legIds = [...rows.attempts.map((a) => a.webrtc_call_id), ...rows.manualCalls.map((m) => m.webrtc_call_id)]
+    .filter((id): id is string => typeof id === 'string');
+  const [campaignRows, legs, uploads, callbackNext, names] = await Promise.all([
+    repo.campaignsByIds(scope, pageCampaignIds(rows)),
     repo.mediaLegs(scope, legIds),
-    repo.uploads(scope, contactCampaignIds),
+    repo.uploads(scope, rows.contacts.map((c) => c.campaign_id)),
+    repo.callbackNext(scope, phone, rows.callbacks.map((c) => ({ id: c.id, at: c.at }))),
+    namesIn(pageUserIds(rows), tenantId),
   ]);
 
-  const names = await namesIn(userIdsOf({ contacts, attempts, manualCalls, dnc }), tenantId);
-
-  return {
+  const entries = buildTimeline({
+    ...rows,
     now,
     viewer,
-    contacts,
-    campaigns,
-    attempts,
-    manualCalls,
-    dnc,
+    campaigns: new Map(campaignRows.map((g) => [g.id, g])),
     mediaLegs: new Map(legs.map((l) => [l.id, { recording_url: l.recording_url }])),
     uploads,
     names,
-  };
+    callbackNext,
+  });
+  return timelinePage(entries, cut);
 }

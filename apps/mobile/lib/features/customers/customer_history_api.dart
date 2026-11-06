@@ -5,9 +5,10 @@ import '../../app/providers.dart';
 import '../../core/api/api_client.dart';
 import '../performance/performance_api.dart' show decodeBody;
 
-/// Customer history's routes, both `POST`s through [ApiClient]: the number is
-/// in the body, never in a path or a query (CH6), and the API client never
-/// logs a body. The CSV export is the console's only.
+/// Customer history's routes through [ApiClient]: the search and its pages
+/// are `POST`s with the number in the body, never in a path or a query (CH6),
+/// and the API client never logs a body. The options read carries no number.
+/// The CSV export is the console's only.
 ///
 /// Contract: `packages/contracts/src/api/agency/customer-history.ts`.
 class CustomerHistoryApi {
@@ -17,6 +18,14 @@ class CustomerHistoryApi {
 
   static const searchPath = '/proxy/agency/customers/search';
   static const timelinePath = '/proxy/agency/customers/timeline';
+  static const optionsPath = '/proxy/agency/customers/options';
+
+  /// `GET /customers/options`: the platform's default calling code, for the
+  /// country picker.
+  Future<CustomerSearchOptionsResponse> options() async {
+    final body = await _api.get(optionsPath);
+    return decodeBody(optionsPath, body, CustomerSearchOptionsResponse.fromJson);
+  }
 
   /// `POST /customers/search`: the summary and the first timeline page.
   Future<CustomerSearchResponse> search(CustomerSearchRequest request) async {

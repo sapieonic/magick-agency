@@ -35,13 +35,18 @@ Map<String, Object?> campaignJson({String id = 'c1', String name = 'October dues
     };
 
 /// A campaign call as an agent reads it: no call page, by default notes
-/// hidden and the recording purged.
+/// hidden and the recording purged. [redialOf] makes it a wrap-up redial in
+/// that attempt's chain.
 Map<String, Object?> campaignCallJson(
   int n, {
   bool notesHidden = true,
   String? notes,
   String recording = 'expired',
   String? outcome = 'connected',
+  String? redialOf,
+  int redialNumber = 0,
+  List<String> overrideApplied = const [],
+  String? overrideNote,
 }) =>
     {
       'key': 'campaign_call:a$n',
@@ -59,16 +64,22 @@ Map<String, Object?> campaignCallJson(
       'notes': notes,
       'notes_hidden': notesHidden,
       'callback_at': null,
-      'redial_of_attempt_id': null,
-      'chain_attempt_id': 'a$n',
-      'redial_number': 0,
-      'override_applied': <String>[],
-      'override_note': null,
+      'redial_of_attempt_id': redialOf,
+      'chain_attempt_id': redialOf ?? 'a$n',
+      'redial_number': redialNumber,
+      'override_applied': overrideApplied,
+      'override_note': overrideNote,
       'recording': recording,
       'call_page': null,
     };
 
-Map<String, Object?> softphoneCallJson(int n, {String? notes = 'Will pay on Friday'}) => {
+Map<String, Object?> softphoneCallJson(
+  int n, {
+  String? notes = 'Will pay on Friday',
+  Map<String, Object?>? fields,
+  String? dncOverrideNote,
+}) =>
+    {
       'key': 'softphone_call:m$n',
       'kind': 'softphone_call',
       'at': DateTime.utc(2026, 11, 5, 11).subtract(Duration(hours: n)).toIso8601String(),
@@ -82,8 +93,8 @@ Map<String, Object?> softphoneCallJson(int n, {String? notes = 'Will pay on Frid
       'talk_seconds': 184,
       'notes': notes,
       'notes_hidden': false,
-      'fields': null,
-      'dnc_override_note': null,
+      'fields': fields,
+      'dnc_override_note': dncOverrideNote,
       'hours_override_note': null,
       'callback_at': null,
       'recording': 'available',
@@ -102,16 +113,102 @@ Map<String, Object?> dncJson() => {
       'created_at': '2026-10-03T10:00:00.000Z',
     };
 
+Map<String, Object?> dncMarkJson() => {
+      'key': 'dnc_mark:d1',
+      'kind': 'dnc_mark',
+      'at': '2026-10-03T10:00:00.000Z',
+      'account_id': 'a1',
+      'entry': dncJson(),
+    };
+
+Map<String, Object?> callbackJson({String status = 'missed'}) => {
+      'key': 'callback:cb1',
+      'kind': 'callback',
+      'at': '2026-11-01T09:00:00.000Z',
+      'account_id': 'a1',
+      'source': {'channel': 'campaign', 'id': 'a1'},
+      'campaign': campaignJson(),
+      'due_at': '2026-11-02T10:30:00.000Z',
+      'booked_by': {'user_id': 'u2', 'name': 'Karan Shah'},
+      'status': status,
+      'dialled_at': null,
+    };
+
+Map<String, Object?> rosterJson() => {
+      'key': 'roster_entry:k1',
+      'kind': 'roster_entry',
+      'at': '2026-10-01T09:00:00.000Z',
+      'account_id': 'a1',
+      'contact_id': 'k1',
+      'campaign': campaignJson(),
+      'upload_file_name': 'october-dues.csv',
+    };
+
+/// A kind this build does not know (one the server adds later).
+Map<String, Object?> unknownEntryJson() => {
+      'key': 'sms:s1',
+      'kind': 'sms',
+      'at': '2026-10-02T09:00:00.000Z',
+      'account_id': 'a1',
+    };
+
+Map<String, Object?> liveCallJson() => {
+      'channel': 'campaign',
+      'campaign': campaignJson(),
+      'agent': {'user_id': 'u2', 'name': 'Karan Shah'},
+      'started_at': '2026-11-06T09:00:00.000Z',
+    };
+
+Map<String, Object?> openCallbackJson() => {
+      'contact_id': 'k1',
+      'campaign': campaignJson(),
+      'due_at': '2026-11-07T10:30:00.000Z',
+      'owner': {'user_id': 'u1', 'name': 'Priya Nair'},
+      'booked_by': {'user_id': 'u2', 'name': 'Karan Shah'},
+      'disposition_code': 'callback',
+    };
+
+Map<String, Object?> openOverrideJson({String contactId = 'k1', String? followUpAt}) => {
+      'contact_id': contactId,
+      'campaign': campaignJson(),
+      'disposition_code': 'ptp',
+      'granted_at': '2026-11-04T07:00:00.000Z',
+      'follow_up_at': followUpAt,
+      'extra_attempts': 1,
+      'retry_delay': true,
+      'calling_hours': false,
+    };
+
+/// What the summary offers the filters.
+Map<String, Object?> filterOptionsJson() => {
+      'campaigns': [
+        {'id': 'c1', 'name': 'October dues'},
+        {'id': 'c2', 'name': 'November dues'},
+      ],
+      'agents': [
+        {'user_id': 'u1', 'name': 'Priya Nair'},
+        {'user_id': 'u2', 'name': 'Karan Shah'},
+      ],
+      'outcomes': ['connected', 'no_answer'],
+      'disposition_codes': ['callback', 'ptp'],
+    };
+
 CustomerTimelinePage timelinePage(List<Map<String, Object?>> entries, {String? next}) =>
     CustomerTimelinePage.fromJson({'entries': entries, 'next_cursor': next});
 
-/// The search's answer. [empty] is a number nobody in the visible accounts has.
+/// The search's answer. [empty] is a number nobody in the visible accounts
+/// has: no contact, no call (its timeline is [entries], none by default).
 CustomerSearchResponse answer({
   String searchId = 'chs_1',
   List<Map<String, Object?>>? entries,
   String? next,
   List<Map<String, Object?>> dnc = const [],
   bool empty = false,
+  List<Map<String, Object?>> liveCalls = const [],
+  List<Map<String, Object?>> callbacks = const [],
+  List<Map<String, Object?>> overrides = const [],
+  Map<String, Object?>? filterOptions,
+  bool contactsTruncated = false,
 }) =>
     CustomerSearchResponse.fromJson({
       'search_id': searchId,
@@ -141,6 +238,7 @@ CustomerSearchResponse answer({
                   'upload_file_name': 'october-dues.csv',
                 },
               ],
+        if (contactsTruncated) 'contacts_truncated': true,
         'totals': {
           'calls': empty ? 0 : 4,
           'connected': empty ? 0 : 2,
@@ -155,16 +253,17 @@ CustomerSearchResponse answer({
                 },
         },
         'dnc': dnc,
-        'open': {'callbacks': <Object?>[], 'overrides': <Object?>[], 'live_calls': <Object?>[]},
-        'filter_options': {
-          'campaigns': <Object?>[],
-          'agents': <Object?>[],
-          'outcomes': <Object?>[],
-          'disposition_codes': <Object?>[],
-        },
+        'open': {'callbacks': callbacks, 'overrides': overrides, 'live_calls': liveCalls},
+        'filter_options': filterOptions ??
+            {
+              'campaigns': <Object?>[],
+              'agents': <Object?>[],
+              'outcomes': <Object?>[],
+              'disposition_codes': <Object?>[],
+            },
       },
       'timeline': {
-        'entries': empty ? <Object?>[] : (entries ?? [softphoneCallJson(1), campaignCallJson(1)]),
+        'entries': entries ?? (empty ? <Object?>[] : [softphoneCallJson(1), campaignCallJson(1)]),
         'next_cursor': empty ? null : next,
       },
     });
@@ -180,6 +279,19 @@ class FakeCustomerHistoryApi implements CustomerHistoryApi {
   CustomerSearchResponse? autoSearch;
   Object? searchError;
   CustomerTimelinePage? autoTimeline;
+
+  /// What `/customers/options` answers, or [optionsError] to fail it.
+  String defaultCountryCode = '+91';
+  Object? optionsError;
+  int optionsReads = 0;
+
+  @override
+  Future<CustomerSearchOptionsResponse> options() {
+    optionsReads++;
+    final error = optionsError;
+    if (error != null) return Future<CustomerSearchOptionsResponse>.error(error);
+    return Future.value(CustomerSearchOptionsResponse(defaultCountryCode: defaultCountryCode));
+  }
 
   @override
   Future<CustomerSearchResponse> search(CustomerSearchRequest request) {

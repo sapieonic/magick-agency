@@ -9,8 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { auditFilters, customerExportRequestSchema, toTimelineFilter } from '../../../agency/customer-history/requests.js';
-import { buildTimeline, filterTimeline } from '../../../agency/customer-history/assemble.js';
-import { loadCustomerHistory, resolveViewer } from '../../../agency/customer-history/service.js';
+import { countCustomerEntries, loadTimelinePage, resolveViewer } from '../../../agency/customer-history/service.js';
 import { customerHistoryCsv } from '../../../agency/customer-history/csv.js';
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
 import {
@@ -23,7 +22,7 @@ import {
 } from './shared.js';
 
 /** `customer-history-2026-11-06`: the export's file name (no number in it, CH6). */
-export function customerExportFileName(now: Date): string {
+function customerExportFileName(now: Date): string {
   return `customer-history-${now.toISOString().slice(0, 10)}`;
 }
 
@@ -40,23 +39,25 @@ export async function registerCustomerExportRoute(app: FastifyInstance, deps: Cu
     const tenantId = request.tenantId!;
     const now = new Date();
     const viewer = await resolveViewer(request.user!.id, tenantId);
-    const data = await loadCustomerHistory(viewer, tenantId, record.value, now);
-    const all = buildTimeline(data);
-    const kept = filterTimeline(all, toTimelineFilter(body.filters));
-    const truncated = kept.length > deps.exportMaxRows;
-    const rows = truncated ? kept.slice(0, deps.exportMaxRows) : kept;
+    // One keyset page as large as the cap: each source reads at most `exportMaxRows + 1` rows.
+    const [page, resultCount] = await Promise.all([
+      loadTimelinePage(viewer, tenantId, record.value, toTimelineFilter(body.filters), null, deps.exportMaxRows, now),
+      countCustomerEntries(viewer, tenantId, record.value),
+    ]);
+    const truncated = page.next_cursor !== null;
+    const rows = page.entries;
 
     auditCustomerHistory(request, {
       action: 'agency_customer_history.exported',
       searchId: body.search_id,
       record,
       viewer,
-      resultCount: all.length,
+      resultCount,
       extra: { rows: rows.length, filters: auditFilters(body.filters), truncated },
     });
 
     const csv = customerHistoryCsv(
-      rows.map((r) => r.entry),
+      rows,
       record.value,
       (id) => (id ? viewer.accounts.get(id)?.name ?? null : null),
     );

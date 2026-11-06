@@ -1,11 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   RECENT_CUSTOMER_SEARCHES_KEY,
   clearRecentCustomerSearches,
   readRecentCustomerSearches,
   rememberCustomerSearch,
+  subscribeRecentCustomerSearches,
 } from '../../utils/customerSearchRecent';
 import {
+  carriedCustomerHistoryFilters,
+  carryCustomerHistoryFilters,
   clearCustomerSearchAnswers,
   customerSearchAnswer,
   rememberCustomerSearchAnswer,
@@ -36,6 +39,19 @@ function memoryStorage(): Storage & { data: Map<string, string> } {
 }
 
 describe('recent customer searches', () => {
+  it('tells every subscriber after a remember and after a clear (sign-out included), until unsubscribed', () => {
+    const storage = memoryStorage();
+    const listener = vi.fn();
+    const unsubscribe = subscribeRecentCustomerSearches(listener);
+    rememberCustomerSearch(storage, { e164: '+919876543210', country: 'IN' });
+    expect(listener).toHaveBeenCalledTimes(1);
+    clearRecentCustomerSearches(storage);
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+    rememberCustomerSearch(storage, { e164: '+919876543210', country: 'IN' });
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
   it('keeps the last five, newest first, without duplicates', () => {
     const storage = memoryStorage();
     for (let i = 0; i < 7; i += 1) rememberCustomerSearch(storage, { e164: `+9198765432${10 + i}`, country: 'IN' });
@@ -106,5 +122,14 @@ describe('the in-memory answers', () => {
     expect(searchIdFromLocationState({ searchId: 5 })).toBeNull();
     expect(searchIdFromLocationState(null)).toBeNull();
     expect(searchIdFromLocationState('chs_1')).toBeNull();
+  });
+});
+
+describe('filters carried onto a fresh search id', () => {
+  it('are held in memory with the answers and emptied with them at sign-out', () => {
+    carryCustomerHistoryFilters('chs_fresh', { channel: 'softphone' });
+    expect(carriedCustomerHistoryFilters('chs_fresh')).toEqual({ channel: 'softphone' });
+    clearCustomerSearchAnswers();
+    expect(carriedCustomerHistoryFilters('chs_fresh')).toBeUndefined();
   });
 });

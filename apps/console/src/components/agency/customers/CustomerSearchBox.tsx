@@ -1,4 +1,4 @@
-import { useCallback, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, X } from 'lucide-react';
 import {
@@ -12,11 +12,14 @@ import { CUSTOMER_SEARCH_VALUE_MAX } from '@magick-agency/contracts/api/agency/c
 import { searchCustomers } from '../../../api/customerHistory';
 import { useTenant } from '../../../contexts/TenantContext';
 import { usePermission } from '../../../hooks/usePermission';
+import { useCustomerSearchDefaultCallingCode } from '../../../hooks/useCustomerSearchDefaultCallingCode';
 import {
   browserStorage,
   clearRecentCustomerSearches,
   readRecentCustomerSearches,
   rememberCustomerSearch,
+  subscribeRecentCustomerSearches,
+  RECENT_CUSTOMER_SEARCHES_KEY,
   type RecentCustomerSearch,
 } from '../../../utils/customerSearchRecent';
 import { rememberCustomerSearchAnswer, type CustomerHistoryLocationState } from '../../../utils/customerHistoryStore';
@@ -27,30 +30,54 @@ import {
 } from '../../../utils/customerHistoryCopy';
 import styles from './CustomerSearchBox.module.css';
 
-/**
- * The platform's default calling code (`DEFAULT_PHONE_COUNTRY_CODE`, +91). The
- * console has no copy of the platform setting outside the soft phone's bootstrap,
- * which is flag-gated, so the picker defaults to the same value the server falls
- * back to when the request carries no `country`.
- */
-export const DEFAULT_SEARCH_CALLING_CODE = '91';
+export type CustomerSearchFeedback =
+  | { kind: 'preview'; text: string; formatted: string; e164: string }
+  | { kind: 'error'; text: string }
+  | null;
 
 /**
  * What the box shows under the input, from the shared number rule
  * (`packages/domain/src/customer-search-number.ts`) and nothing else, so the
  * preview never promises a number the server would not search (CH5).
  *
- * `null`: nothing to say yet (empty, and not submitted).
+ * `revealed`: the person submitted (Enter / Search) or left the field. Until then
+ * a number that is merely not finished yet (`empty`, `too_short`) says nothing
+ * beyond the always-visible helper lines: every correct number is "too short"
+ * for its first nine keystrokes, and an error there would be read out by the live
+ * region on each of them. A refusal that more typing cannot cure
+ * (`invalid_characters`, `spreadsheet_number`, `invalid_for_country`) shows at once.
+ *
+ * `null`: nothing to say yet.
  */
-export function customerSearchFeedback(
-  raw: string,
-  country: SearchCountry,
-  submitted: boolean,
-): { kind: 'preview'; text: string; e164: string } | { kind: 'error'; text: string } | null {
+export function customerSearchFeedback(raw: string, country: SearchCountry, revealed: boolean): CustomerSearchFeedback {
   const result = parseSearchNumber(raw, country);
-  if (result.ok) return { kind: 'preview', text: customerSearchPreview(result.formatted), e164: result.e164 };
-  if (result.code === 'empty' && !submitted) return null;
+  if (result.ok) {
+    return { kind: 'preview', text: customerSearchPreview(result.formatted), formatted: result.formatted, e164: result.e164 };
+  }
+  if ((result.code === 'empty' || result.code === 'too_short') && !revealed) return null;
   return { kind: 'error', text: result.message };
+}
+
+/**
+ * The recent list, shared by every mounted box (the page's own and the top bar's
+ * panel) and with other tabs: re-read whenever any box remembers or clears.
+ */
+function useRecentCustomerSearches(store: Storage | undefined): RecentCustomerSearch[] {
+  const [recent, setRecent] = useState<RecentCustomerSearch[]>(() => readRecentCustomerSearches(store));
+  useEffect(() => {
+    const reread = () => setRecent(readRecentCustomerSearches(store));
+    reread();
+    const unsubscribe = subscribeRecentCustomerSearches(reread);
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === null || event.key === RECENT_CUSTOMER_SEARCHES_KEY) reread();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      unsubscribe();
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [store]);
+  return recent;
 }
 
 export interface CustomerSearchBoxProps {
@@ -72,15 +99,27 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
   const allowed = usePermission('agency.customer_history.read');
   const { tenantId, accountId } = useTenant();
   const navigate = useNavigate();
-  const store = storage ?? browserStorage();
+  const store = useMemo(() => storage ?? browserStorage(), [storage]);
+  const defaultCallingCode = useCustomerSearchDefaultCallingCode();
 
   const [raw, setRaw] = useState('');
-  const [countryIso, setCountryIso] = useState(() => resolveSearchCountry(undefined, DEFAULT_SEARCH_CALLING_CODE).iso);
-  const [submitted, setSubmitted] = useState(false);
+  /** `null` until the person picks: the picker follows the platform default until then. */
+  const [countryIso, setCountryIso] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [recent, setRecent] = useState<RecentCustomerSearch[]>(() => readRecentCustomerSearches(store));
+  const recent = useRecentCustomerSearches(store);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** The search in flight; aborted when the box unmounts (the panel closed, the page left). */
+  const inflight = useRef<AbortController | null>(null);
+
+  useEffect(
+    () => () => {
+      inflight.current?.abort();
+      inflight.current = null;
+    },
+    [],
+  );
 
   const id = useId();
   const inputId = `${id}-number`;
@@ -88,12 +127,15 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
   const helpId = `${id}-help`;
   const feedbackId = `${id}-feedback`;
 
-  const country = useMemo(() => resolveSearchCountry(countryIso, DEFAULT_SEARCH_CALLING_CODE), [countryIso]);
-  const feedback = customerSearchFeedback(raw, country, submitted);
+  const country = useMemo(() => resolveSearchCountry(countryIso, defaultCallingCode), [countryIso, defaultCallingCode]);
+  const feedback = customerSearchFeedback(raw, country, revealed);
   const [helpLine1, helpLine2] = customerSearchHelperLines(country);
 
   const run = useCallback(
     async (value: string, iso: string) => {
+      inflight.current?.abort();
+      const controller = new AbortController();
+      inflight.current = controller;
       setBusy(true);
       setServerError(null);
       try {
@@ -101,18 +143,25 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
           { by: 'phone', value, country: iso },
           tenantId ?? undefined,
           accountId ?? undefined,
+          controller.signal,
         );
+        // Nobody is waiting for this answer any more: never navigate them away from where they went.
+        if (controller.signal.aborted) return;
         rememberCustomerSearchAnswer(answer);
-        setRecent(rememberCustomerSearch(store, { e164: answer.key.value, country: iso }));
+        rememberCustomerSearch(store, { e164: answer.key.value, country: iso });
         setRaw('');
-        setSubmitted(false);
+        setRevealed(false);
         const state: CustomerHistoryLocationState = { searchId: answer.search_id };
         navigate(resultsPath, { state });
         onSearched?.();
       } catch (err: unknown) {
-        setServerError(customerHistoryRefusal(err, 'Could not search this number. Try again.').message);
+        if (controller.signal.aborted) return;
+        setServerError(customerHistoryRefusal(err, 'Could not search this number. Try again.', 'search').message);
       } finally {
-        setBusy(false);
+        if (inflight.current === controller) {
+          inflight.current = null;
+          setBusy(false);
+        }
       }
     },
     [tenantId, accountId, store, navigate, resultsPath, onSearched],
@@ -121,7 +170,7 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
   const onSubmit = useCallback(
     (event: FormEvent) => {
       event.preventDefault();
-      setSubmitted(true);
+      setRevealed(true);
       if (busy) return;
       const result = parseSearchNumber(raw, country);
       if (!result.ok) {
@@ -136,7 +185,6 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
 
   const onClearRecent = useCallback(() => {
     clearRecentCustomerSearches(store);
-    setRecent([]);
   }, [store]);
 
   if (!allowed) return null;
@@ -144,7 +192,24 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
   const errorShown = feedback?.kind === 'error' ? feedback.text : serverError;
 
   return (
-    <form className={styles.box} onSubmit={onSubmit} role="search" aria-label="Search a number" noValidate>
+    /*
+      `ph-no-capture`: everything in this box is a customer's phone number (what is
+      typed, the preview, the recent searches' button text), and PostHog
+      autocapture, rage and dead clicks are on (`analytics/posthog.ts`), recording a
+      clicked element's text and attributes. The class on an ancestor stops
+      posthog-js from capturing anything inside it (`analytics/autocaptureOptOut.test.ts`
+      pins that the pinned version still honours it; `InviteJoinScreen` explains
+      the mechanism). The whole box rather than chosen elements, so a line added
+      to it later is covered too (CH6: the number never reaches analytics).
+    */
+    <form
+      className={`${styles.box} ph-no-capture`}
+      onSubmit={onSubmit}
+      role="search"
+      aria-label="Search a number"
+      noValidate
+      data-testid="customer-search-box"
+    >
       <div className={styles.row}>
         <div className={styles.countryField}>
           <label htmlFor={countryId} className={styles.label}>Country</label>
@@ -180,7 +245,11 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
             onChange={(e) => {
               setRaw(e.target.value);
               setServerError(null);
-              if (e.target.value.trim() === '') setSubmitted(false);
+              // Typing again: an unfinished number goes quiet until the next submit or blur.
+              setRevealed(false);
+            }}
+            onBlur={() => {
+              if (raw.trim() !== '') setRevealed(true);
             }}
             aria-describedby={`${helpId} ${feedbackId}`}
             aria-invalid={errorShown ? true : undefined}
@@ -201,7 +270,10 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
         {errorShown ? (
           <p className={styles.error} data-testid="customer-search-error">{errorShown}</p>
         ) : feedback?.kind === 'preview' ? (
-          <p className={styles.preview} data-testid="customer-search-preview">{feedback.text}</p>
+          <p className={styles.preview} data-testid="customer-search-preview">
+            {customerSearchPreview('')}
+            <strong>{feedback.formatted}</strong>
+          </p>
         ) : null}
       </div>
 
@@ -209,7 +281,7 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
         <div className={styles.recent} data-testid="customer-search-recent">
           <div className={styles.recentHeader}>
             <span className={styles.recentTitle} id={`${id}-recent`}>Recent searches on this device</span>
-            <button type="button" className={styles.clear} onClick={onClearRecent}>
+            <button type="button" className={styles.clear} onClick={onClearRecent} aria-label="Clear recent searches">
               <X size={13} aria-hidden="true" />
               Clear
             </button>

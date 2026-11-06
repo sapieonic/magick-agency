@@ -18,10 +18,10 @@ TypeScript source (B2); `tsc --noEmit` covers `src` and tests in each package (B
 | Package | Responsibility |
 |---|---|
 | `apps/server` | The one Fastify process: identity, tenancy, super-admin auth, the HTTP API, the station WebSocket, carrier webhooks and the media WebSocket, the voice engine, concurrency guard, dialer runtime, analysis worker, sweeps and retention. Bundled by esbuild to `dist/index.js` (`scripts/build.mjs`, CommonJS, B5) |
-| `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, accounts, settings |
+| `apps/console` | Vite + React SPA: agent station, supervisor pages, team, invites, accounts, settings, customer history. Imports `packages/domain` for the customer-search number rule (the live preview runs the server's rule), so `docker/web.Dockerfile` copies it into the web build |
 | `apps/super-admin` | Vite + React SPA (the super-admin console): tenants and their accounts, users, admins, phone numbers, feature flags, usage, audit |
 | `packages/contracts` | Wire contract shared by the server and both UIs: dialer types (`agency.ts`, a barrel over `agency/`, including the campaign config defaults and rate floors), console wire types (`api/`, re-exported or derived from the dialer types), error-code unions (`errors.ts`), feature flags (`flags.ts`), roles and permissions (`rbac.ts`) |
-| `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, keyset cursor, rates, retry bounds and summary, success disposition, timers |
+| `packages/domain` | Pure dialer rules with no imports beyond contracts: abandonment predicate, break manager, the customer-search number rule (`customer-search-number.ts`, run by the server's search and the console's preview, ported to Dart in `agency_wire`), a roster row's hero fields (`context-hero.ts`, the contact panel's rule, used by the customer-history summary), keyset cursor, rates, retry bounds and summary, success disposition, timers. Imported by the server and the console |
 | `packages/db` | pg pool (`connection.ts`), shared repositories and models, the baseline migration, `BASELINE.md` |
 | `packages/observability` | pino logger, log context, PII masking, OTel meter and `@Traced`, metric declarations per module area under `src/metrics/` |
 | `packages/web-ui` | UI pieces shared by both SPAs, consumed as TypeScript source: the 15 common components and `AppVersion` (the sidebar version footer) with their CSS modules, `ToastContext`, `global.css`, error and format helpers, `parseApiErrorBody` (both API clients), the telephony-provider aliases, `mapWithConcurrency`, `useAsyncResource`, `useDialogFocus` (the one focus trap). React, the router and `lucide-react` are peer dependencies; its own no-parent-brand scan (B17). Decision B23 |
@@ -623,7 +623,10 @@ deliberately coarse. Only the PRESENCE of a bearer picks `ip_auth`; it is not ve
 value is never a key, so a forged bearer buys the larger coarse bucket and is then refused 401 (Q9,
 amended 2026-11-01). A route may add its own tighter per-user cap in its own namespace
 (`createUserRateLimit`): `POST /client-config/uplink-probe` allows 6 per user per window (`up:<id>`),
-charged with its authentication in `preParsing`, so no body is read for a caller who fails either.
+charged with its authentication in `preParsing`, so no body is read for a caller who fails either;
+customer history's search and export share `AGENCY_CUSTOMER_SEARCH_PER_MINUTE` a minute per user
+(`chs:<id>`), whose 429 carries the route's own `message` (the optional `message` option; the
+default reads "Rate limit exceeded. Try again in N seconds.").
 Super-admin routes (their own JWT, no `request.user`) stay on the IP buckets.
 
 The defaults are sized for ~500 agents and ~50 supervisors behind one office NAT, at 500
@@ -739,6 +742,13 @@ and every rule: [`scaling.md`](scaling.md). In short (`apps/server/src/cluster/`
 - **Logs**: pino (`packages/observability/src/logger.ts`), service name `magick-agency`, PII masking,
   secret-bearing headers redacted. JSON to stdout; with the SDK running, also OTLP through its
   `instrumentation-pino` bridge.
+- **No request log.** Fastify's own logger is off (`buildApp`'s `logger` defaults to `false` in
+  `apps/server/src/app.ts`, and `src/index.ts` passes `false`), so no line per request is written
+  and no request body is ever logged. The error handler (`api/middleware/error-handler.middleware.ts`)
+  logs the method and the URL (through `redactUrl`) of an error it handles, never the body, and
+  pg spans carry no bound parameter values (`enhancedDatabaseReporting: false`,
+  `utils/otel-sdk-config.ts`). A route that carries personal data keeps it in the body for this
+  reason (customer history's number, CH6).
 - **Metrics and traces**: declared per module area in `packages/observability/src/metrics/`; spans
   via `@Traced` plus the SDK's auto-instrumentations (http, undici, pg, ioredis, …). Credentials in
   URLs (`?token=`, `sig=`, `*verify_token=`, signed-URL keys, media-stream path tokens) are

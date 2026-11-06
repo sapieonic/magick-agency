@@ -4,7 +4,8 @@
  * A LEAF: no I/O. `next_cursor` is an opaque base64url of `{ at, key }`: `at` is the last entry's
  * ordering instant at MICROSECOND precision (as `keysetAtSql` renders it, so the cursor never
  * floors a timestamp and skips rows inside the cut millisecond), `key` its `<kind>:<id>`. The
- * page after it is every entry strictly after it in the order `at DESC, key DESC`.
+ * page after it is every entry strictly after it in the order `at DESC, key DESC`, read in SQL
+ * per source (`sourceBound` in `./assemble.ts`).
  *
  * `decodeTimelineCursor` answers null for anything this server did not mint; the route answers
  * `400 invalid_cursor` on null, never "page one again" (that would read as duplicate rows).
@@ -61,18 +62,6 @@ export function compareTimeline(a: TimelinePosition, b: TimelinePosition): numbe
   if (a.at !== b.at) return a.at < b.at ? 1 : -1;
   if (a.key !== b.key) return a.key < b.key ? 1 : -1;
   return 0;
-}
-
-/** Whether `entry` comes strictly after `cursor` in the timeline order. */
-export function isAfter(entry: TimelinePosition, cursor: TimelinePosition): boolean {
-  return compareTimeline(entry, cursor) > 0;
-}
-
-/** An ISO instant (millisecond or coarser) as the microsecond form `at` is compared in. */
-export function toMicroInstant(iso: string): string | null {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.toISOString().slice(0, 23)}000Z`;
 }
 
 /** A microsecond `at` as the wire's millisecond ISO string. */

@@ -8,9 +8,11 @@ import { DNC_SOURCE_LABELS } from '@magick-agency/contracts/api/agency/dnc';
 import { AgencyCampaignStatusBadge } from '../../../pages/agency/AgencyCampaignStatusBadge';
 import {
   CHANNEL_LABELS,
+  CONTACTS_TRUNCATED_NOTE,
   campaignChainLabel,
   dncScopeLabel,
   formatWhen,
+  overrideFollowUpLabel,
   overrideGrantLabel,
 } from '../../../utils/customerHistoryCopy';
 import styles from './CustomerHistory.module.css';
@@ -70,8 +72,9 @@ export function DncStatus({ entries }: { entries: CustomerHistoryDncEntry[] }) {
               <strong>{dncScopeLabel(entry)}</strong>
               <span className={styles.muted}>
                 {' · '}
+                {/* The source label already says who in general ("Marked by an agent"); the person follows it. */}
                 {DNC_SOURCE_LABELS[entry.source] ?? entry.source}
-                {entry.added_by ? ` by ${entry.added_by}` : ''}
+                {entry.added_by ? ` · ${entry.added_by}` : ''}
                 {' · '}
                 {formatWhen(entry.created_at)}
               </span>
@@ -93,6 +96,9 @@ export function CustomerHistorySummary({ summary, showAccounts }: { summary: Sum
     <div className={styles.summary}>
       <section className={`card ${styles.section}`} aria-labelledby="customer-contacts-heading">
         <h2 id="customer-contacts-heading" className={styles.sectionTitle}>Who this number belongs to</h2>
+        {summary.contacts_truncated && (
+          <p className={styles.muted} data-testid="customer-contacts-truncated">{CONTACTS_TRUNCATED_NOTE}</p>
+        )}
         {contacts.length === 0 ? (
           <p className={styles.muted}>This number is not on any roster you can see.</p>
         ) : (
@@ -148,7 +154,8 @@ export function CustomerHistorySummary({ summary, showAccounts }: { summary: Sum
             {open.overrides.map((o) => (
               <li key={`ov-${o.contact_id}-${o.granted_at}`} data-testid="customer-open-override">
                 <strong>Override from {o.disposition_code}</strong> · {o.campaign.name} · {overrideGrantLabel(o)} · granted{' '}
-                {formatWhen(o.granted_at)}
+                {formatWhen(o.granted_at)} ·{' '}
+                <span data-testid="customer-open-override-follow-up">{overrideFollowUpLabel(o)}</span>
               </li>
             ))}
           </ul>

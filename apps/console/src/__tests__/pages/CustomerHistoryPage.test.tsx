@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import type { CustomerSearchResponse } from '@magick-agency/contracts/api/agency/customer-history';
+import type {
+  CustomerSearchResponse,
+  CustomerTimelineCampaignCall,
+  CustomerTimelinePage,
+} from '@magick-agency/contracts/api/agency/customer-history';
 import { customerHistoryFixture } from '../helpers/customerHistory';
 
 /**
@@ -10,8 +14,9 @@ import { customerHistoryFixture } from '../helpers/customerHistory';
  * Pinned: the summary (who the number belongs to, totals, DNC at every level, open
  * items), one row per timeline kind with CH8's visibility (notes hidden, a call
  * link only when the server gave a call page, through `go` for another account),
- * "Load more" by cursor, filters that re-query from the first page, the CSV export,
- * the empty history, an expired search and the rate-limit copy.
+ * "Load more" by cursor, filters that re-query from the first page (and never mix
+ * with an older query's rows or answers), the CSV export, the empty history, an
+ * expired search, the rate-limit copy, and that none of it reaches analytics.
  */
 
 const mocks = vi.hoisted(() => ({
@@ -30,6 +35,7 @@ vi.mock('../../api/customerHistory', () => ({
   searchCustomers: mocks.searchCustomers,
   getCustomerTimeline: mocks.getCustomerTimeline,
   exportCustomerHistory: mocks.exportCustomerHistory,
+  getCustomerSearchOptions: vi.fn().mockResolvedValue({ default_country_code: '+91' }),
 }));
 vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
   SOFTPHONE_FLAG: 'agency_softphone_enabled',
@@ -39,6 +45,20 @@ vi.mock('../../hooks/useFeatureFlagEnabled', () => ({
 import CustomerHistoryPage, { AgentCustomerHistoryPage } from '../../pages/agency/CustomerHistoryPage';
 import { clearCustomerSearchAnswers, rememberCustomerSearchAnswer } from '../../utils/customerHistoryStore';
 import { ApiError } from '../../api/client';
+import { formatWhen } from '../../utils/customerHistoryCopy';
+
+/** A promise the test settles itself, to choose which of two requests answers last. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (err: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const CAMPAIGN_ROOT = '6b0d8f1a-2c3e-4f4a-9b5c-6d7e8f9a0b1c';
 
 const ACCOUNT = '0f4e3d2c-1b0a-4987-8654-3210fedcba98';
 const OTHER_ACCOUNT = '11111111-2222-4333-8444-555555555555';
@@ -74,17 +94,23 @@ beforeEach(() => {
 
 
 describe('the header and the summary', () => {
-  it('echoes the number the server searched, with a copy button', () => {
+  it('echoes the number the server searched, with a copy button whose label carries no number', () => {
     renderPage(customerHistoryFixture().search_response);
     expect(screen.getByTestId('customer-results-title').textContent).toBe('Results for +91 98765 43210');
-    expect(screen.getByRole('button', { name: 'Copy +91 98765 43210' })).toBeTruthy();
+    const copy = screen.getByRole('button', { name: 'Copy number' });
+    for (const attr of copy.getAttributeNames()) expect(copy.getAttribute(attr)).not.toMatch(/\d{5}/);
+  });
+
+  it('moves focus to the results heading when a search opens', () => {
+    renderPage(customerHistoryFixture().search_response);
+    expect(document.activeElement).toBe(screen.getByTestId('customer-results-title'));
   });
 
   it('copies the E.164', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
     renderPage(customerHistoryFixture().search_response);
-    fireEvent.click(screen.getByRole('button', { name: 'Copy +91 98765 43210' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Copy number' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith('+919876543210'));
   });
 
@@ -108,6 +134,39 @@ describe('the header and the summary', () => {
     expect(first.textContent).not.toContain('Collections North');
   });
 
+  it('shows several people on one number in one campaign as separate rows, never merged (CH7)', () => {
+    const answer = customerHistoryFixture().search_response;
+    const [first, second] = answer.summary.contacts as [
+      CustomerSearchResponse['summary']['contacts'][number],
+      CustomerSearchResponse['summary']['contacts'][number],
+    ];
+    // A household line: two roster rows, same campaign, same number.
+    second.campaign = first.campaign;
+    second.campaigns = first.campaigns;
+    renderPage(answer);
+    const contacts = screen.getAllByTestId('customer-contact');
+    expect(contacts).toHaveLength(2);
+    expect(contacts[0]!.textContent).toContain('Asha Rao');
+    expect(contacts[0]!.textContent).not.toContain('Ravi Rao');
+    expect(contacts[1]!.textContent).toContain('Ravi Rao');
+    expect(contacts[1]!.textContent).not.toContain('Asha Rao');
+    for (const c of contacts) expect(c.textContent).toContain('October dues → October dues (retry 1)');
+  });
+
+  it('says nothing about truncation when every roster row came back', () => {
+    renderPage(customerHistoryFixture().search_response);
+    expect(screen.queryByTestId('customer-contacts-truncated')).toBeNull();
+  });
+
+  it('notes when the server cut the roster rows at 2,000', () => {
+    const answer = customerHistoryFixture().search_response;
+    answer.summary.contacts_truncated = true;
+    renderPage(answer);
+    expect(screen.getByTestId('customer-contacts-truncated').textContent).toBe(
+      'Showing the 2,000 most recent roster rows for this number. The timeline still includes every call.',
+    );
+  });
+
   it('names the account when the answer spans several', () => {
     const answer = customerHistoryFixture().search_response;
     answer.summary.contacts[1]!.account_id = OTHER_ACCOUNT;
@@ -118,7 +177,7 @@ describe('the header and the summary', () => {
 
   it('shows the totals and the last contact', () => {
     renderPage(customerHistoryFixture().search_response);
-    expect(screen.getByTestId('customer-total-calls').textContent).toBe('4');
+    expect(screen.getByTestId('customer-total-calls').textContent).toBe('5');
     expect(screen.getByTestId('customer-total-connected').textContent).toBe('2');
     const last = screen.getByTestId('customer-last-contacted').textContent ?? '';
     expect(last).toContain('by Priya Nair');
@@ -131,7 +190,8 @@ describe('the header and the summary', () => {
     renderPage(customerHistoryFixture().search_response);
     const entry = screen.getByTestId('customer-dnc-entry');
     expect(entry.textContent).toContain('Campaign: October dues (Collections North)');
-    expect(entry.textContent).toContain('Marked by an agent by Priya Nair');
+    expect(entry.textContent).toContain('Marked by an agent · Priya Nair');
+    expect(entry.textContent).not.toContain('by Priya Nair');
     expect(entry.textContent).toContain('Asked not to be called');
     expect(screen.queryByTestId('customer-dnc-none')).toBeNull();
   });
@@ -142,6 +202,16 @@ describe('the header and the summary', () => {
     expect(screen.getByTestId('customer-open-override').textContent).toContain('Override from ptp');
     expect(screen.getByTestId('customer-open-override').textContent).toContain('2 extra attempts, retry delay waived');
     expect(screen.getByTestId('customer-live-call').textContent).toContain('Live now');
+  });
+
+  it("shows an open override's follow-up, or says none is scheduled", () => {
+    const answer = customerHistoryFixture().search_response;
+    const override = answer.summary.open.overrides[0]!;
+    override.follow_up_at = '2026-11-07T09:30:00.000Z';
+    answer.summary.open.overrides.push({ ...override, contact_id: 'other-contact', follow_up_at: null });
+    renderPage(answer);
+    const followUps = screen.getAllByTestId('customer-open-override-follow-up').map((e) => e.textContent);
+    expect(followUps).toEqual([`Follow-up ${formatWhen('2026-11-07T09:30:00.000Z')}`, 'No follow-up scheduled']);
   });
 });
 
@@ -171,10 +241,39 @@ describe('the timeline', () => {
     expect(campaign.textContent).toContain('Connected');
     expect(campaign.textContent).toContain('Outcome code: callback');
     expect(campaign.textContent).toContain('Talk time 1m 35s');
-    expect(within(campaign).getByTestId('customer-redial').textContent).toBe('Wrap-up redial 1');
+    // Its first attempt is not among the loaded rows.
+    expect(within(campaign).getByTestId('customer-redial').textContent).toBe('Wrap-up redial 1 of an earlier call');
     expect(within(campaign).getByTestId('customer-override').textContent).toContain(
       'Customer asked to be called after salary day',
     );
+  });
+
+  it('links a wrap-up redial to its chain: names the first call and sets the redial in under it', () => {
+    const answer = customerHistoryFixture().search_response;
+    const redial = answer.timeline.entries[2] as CustomerTimelineCampaignCall;
+    const first: CustomerTimelineCampaignCall = {
+      ...redial,
+      key: `campaign_call:${redial.chain_attempt_id}`,
+      at: '2026-11-04T07:50:00.000Z',
+      attempt_id: redial.chain_attempt_id,
+      redial_of_attempt_id: null,
+      redial_number: 0,
+    };
+    answer.timeline.entries.splice(3, 0, first);
+    renderPage(answer);
+
+    const rows = entries();
+    expect(within(rows[2]!).getByTestId('customer-redial').textContent).toBe(
+      `Wrap-up redial 1 of the call at ${formatWhen('2026-11-04T07:50:00.000Z')}`,
+    );
+    expect(within(rows[3]!).getByTestId('customer-redial-first').textContent).toBe('Redialled in wrap-up once');
+    expect(within(rows[3]!).queryByTestId('customer-redial')).toBeNull();
+    // One chain: both rows carry its first attempt, and only the redial is set in.
+    expect(rows[2]!.getAttribute('data-chain')).toBe(redial.chain_attempt_id);
+    expect(rows[3]!.getAttribute('data-chain')).toBe(redial.chain_attempt_id);
+    expect(rows[2]!.className).not.toBe(rows[3]!.className);
+    // A call outside any chain carries none.
+    expect(rows[0]!.hasAttribute('data-chain')).toBe(false);
   });
 
   it('says "Recording expired" rather than offering a player, and the other recording states', () => {
@@ -185,7 +284,7 @@ describe('the timeline', () => {
   });
 
   it.each([
-    ['no_call', 'No call was connected'],
+    ['no_call', 'No call placed'],
     ['not_recorded', 'Not recorded'],
   ] as const)('labels recording %s', (state, label) => {
     const answer = customerHistoryFixture().search_response;
@@ -299,6 +398,103 @@ describe('the timeline', () => {
   });
 });
 
+describe('filters that fail, and answers that arrive late', () => {
+  it('drops the old rows and cursor when a filter change fails, so Load more cannot mix two queries', async () => {
+    const answer = customerHistoryFixture().search_response;
+    mocks.getCustomerTimeline.mockRejectedValueOnce(new ApiError(503, { message: 'Service Unavailable' }));
+    renderPage(answer);
+    expect(entries()).toHaveLength(5);
+    expect(screen.getByRole('button', { name: 'Load more' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'softphone' } });
+
+    expect(await screen.findByText('Service Unavailable')).toBeTruthy();
+    expect(entries()).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    expect(screen.queryByTestId('customer-timeline-empty')).toBeNull();
+
+    // Try again re-runs the filters on screen, from the first page.
+    mocks.getCustomerTimeline.mockResolvedValueOnce({ entries: answer.timeline.entries.slice(0, 1), next_cursor: null });
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(kinds()).toEqual(['softphone_call']));
+    expect(mocks.getCustomerTimeline).toHaveBeenLastCalledWith(
+      { search_id: answer.search_id, filters: { channel: 'softphone' } },
+      'tenant-1',
+      ACCOUNT,
+    );
+  });
+
+  it('refuses a "To" date before the "From" date on the page, and never sends it', async () => {
+    renderPage(customerHistoryFixture().search_response);
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-11-10' } });
+    await waitFor(() => expect(mocks.getCustomerTimeline).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-11-05' } });
+
+    expect(screen.getByTestId('customer-filter-range-error').textContent).toBe(
+      'The end date must be on or after the start date.',
+    );
+    expect(screen.getByLabelText('To').getAttribute('aria-invalid')).toBe('true');
+    expect(mocks.getCustomerTimeline).toHaveBeenCalledTimes(1);
+    expect(entries()).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+    expect((screen.getByRole('button', { name: 'Export CSV' }) as HTMLButtonElement).disabled).toBe(true);
+    // The pickers steer away from it too.
+    expect(screen.getByLabelText('To').getAttribute('min')).toBe('2026-11-10');
+    expect(screen.getByLabelText('From').getAttribute('max')).toBe('2026-11-05');
+
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-11-12' } });
+    await waitFor(() => expect(mocks.getCustomerTimeline).toHaveBeenCalledTimes(2));
+    expect(screen.queryByTestId('customer-filter-range-error')).toBeNull();
+  });
+
+  it("shows the server's refusal of a bad filter in the page's words, not the validator's", async () => {
+    mocks.getCustomerTimeline.mockRejectedValue(
+      new ApiError(400, { error: 'Bad Request', code: 'invalid_search_request', message: 'from must be before to' }),
+    );
+    renderPage(customerHistoryFixture().search_response);
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'campaign' } });
+    expect(await screen.findByText('Could not load the timeline.')).toBeTruthy();
+    expect(screen.queryByText('from must be before to')).toBeNull();
+  });
+
+  it('shows the answer to the LATEST filter when an earlier one answers last', async () => {
+    const answer = customerHistoryFixture().search_response;
+    const pageA = deferred<CustomerTimelinePage>();
+    const pageB = deferred<CustomerTimelinePage>();
+    mocks.getCustomerTimeline.mockReturnValueOnce(pageA.promise).mockReturnValueOnce(pageB.promise);
+    renderPage(answer);
+
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'campaign' } });
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'softphone' } });
+
+    await act(async () => pageB.resolve({ entries: answer.timeline.entries.slice(0, 1), next_cursor: null }));
+    expect(kinds()).toEqual(['softphone_call']);
+
+    // Filter A's answer arrives after B's: it belongs to filters nobody is looking at.
+    await act(async () => pageA.resolve({ entries: answer.timeline.entries.slice(2, 3), next_cursor: 'cursor-of-a' }));
+    expect(kinds()).toEqual(['softphone_call']);
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('drops a Load more page that arrives after the filters changed', async () => {
+    const answer = customerHistoryFixture().search_response;
+    const more = deferred<CustomerTimelinePage>();
+    mocks.getCustomerTimeline
+      .mockReturnValueOnce(more.promise)
+      .mockResolvedValueOnce({ entries: answer.timeline.entries.slice(0, 1), next_cursor: null });
+    renderPage(answer);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'softphone' } });
+    await waitFor(() => expect(kinds()).toEqual(['softphone_call']));
+
+    const older = answer.timeline.entries.map((e) => ({ ...e, key: `${e.key}-older` }));
+    await act(async () => more.resolve({ entries: older, next_cursor: 'cursor-unfiltered' }));
+    expect(kinds()).toEqual(['softphone_call']);
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+});
+
 describe('the export', () => {
   function stubDownload() {
     const createObjectURL = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:x');
@@ -332,6 +528,31 @@ describe('the export', () => {
     restore();
   });
 
+  it('says so when the export fails, and keeps the timeline', async () => {
+    mocks.exportCustomerHistory.mockRejectedValue(new TypeError(''));
+    renderPage(customerHistoryFixture().search_response);
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    expect(await screen.findByText('Could not export this history.')).toBeTruthy();
+    expect(screen.queryByTestId('customer-export-note')).toBeNull();
+    expect(entries()).toHaveLength(5);
+    expect((screen.getByRole('button', { name: 'Export CSV' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("says the search cap was hit on a 429: an export is charged to it, as the server's own message says", async () => {
+    mocks.exportCustomerHistory.mockRejectedValue(
+      new ApiError(429, {
+        error: 'Too Many Requests',
+        message: "You've searched a lot of numbers in a short time. Try again in 12 seconds.",
+        retryAfter: 12,
+      }),
+    );
+    renderPage(customerHistoryFixture().search_response);
+    fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
+    expect(
+      await screen.findByText("You've searched a lot of numbers in a short time. Try again in 12 seconds."),
+    ).toBeTruthy();
+  });
+
   it('says when the file was cut short', async () => {
     const { restore } = stubDownload();
     mocks.exportCustomerHistory.mockResolvedValue({ blob: new Blob(['x']), filename: 'h.csv', truncated: true });
@@ -350,12 +571,41 @@ describe('the empty history', () => {
     expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 
+  it('is not empty while an untagged soft-phone call to the number is live', () => {
+    const answer = customerHistoryFixture().search_response_empty;
+    answer.summary.open.live_calls = [
+      { channel: 'softphone', campaign: null, agent: { user_id: 'u1', name: 'Priya Nair' }, started_at: '2026-11-06T10:00:00.000Z' },
+    ];
+    renderPage(answer);
+    expect(screen.queryByText('No calls to this number in the accounts you can see')).toBeNull();
+    expect(screen.getByTestId('customer-live-call').textContent).toContain('Priya Nair');
+    expect(screen.getByTestId('customer-dnc-none')).toBeTruthy();
+  });
+
+  it('is not empty with only a DNC mark or an unplaced soft-phone call in the timeline: shows them, and the export', () => {
+    const full = customerHistoryFixture().search_response;
+    const answer = customerHistoryFixture().search_response_empty;
+    const softphone = full.timeline.entries[0]!;
+    if (softphone.kind === 'softphone_call') {
+      softphone.recording = 'no_call';
+      softphone.talk_seconds = null;
+    }
+    answer.timeline.entries = [softphone, full.timeline.entries[3]!];
+    answer.summary.dnc = full.summary.dnc;
+    renderPage(answer);
+    expect(screen.queryByText('No calls to this number in the accounts you can see')).toBeNull();
+    expect(kinds()).toEqual(['softphone_call', 'dnc_mark']);
+    expect(screen.getByTestId('customer-dnc-entry')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeTruthy();
+  });
+
   it('shows the DNC entry on an otherwise empty history', () => {
     const answer = customerHistoryFixture().search_response_empty;
     answer.summary.dnc = customerHistoryFixture().search_response.summary.dnc;
     renderPage(answer);
     expect(screen.getByText('No calls to this number in the accounts you can see')).toBeTruthy();
     expect(screen.getByTestId('customer-dnc-entry')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Export CSV' })).toBeNull();
   });
 });
 
@@ -378,15 +628,58 @@ describe('refusals', () => {
     await waitFor(() => expect(screen.queryByTestId('customer-search-expired')).toBeNull());
   });
 
+  it('keeps the filters when searching again after an expiry', async () => {
+    const answer = customerHistoryFixture().search_response;
+    const fresh = { ...customerHistoryFixture().search_response, search_id: 'chs_fresh' };
+    mocks.searchCustomers.mockResolvedValue(fresh);
+    mocks.getCustomerTimeline
+      .mockRejectedValueOnce(new ApiError(404, customerHistoryFixture().error_search_expired))
+      .mockResolvedValue({ entries: answer.timeline.entries.slice(0, 1), next_cursor: null });
+    renderPage(answer);
+
+    fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'softphone' } });
+    const banner = await screen.findByTestId('customer-search-expired');
+    fireEvent.click(within(banner).getByRole('button', { name: 'Search again' }));
+
+    await waitFor(() =>
+      expect(mocks.getCustomerTimeline).toHaveBeenLastCalledWith(
+        { search_id: 'chs_fresh', filters: { channel: 'softphone' } },
+        'tenant-1',
+        ACCOUNT,
+      ),
+    );
+    await waitFor(() => expect(kinds()).toEqual(['softphone_call']));
+    expect((screen.getByLabelText('Channel') as HTMLSelectElement).value).toBe('softphone');
+    expect(screen.queryByTestId('customer-search-expired')).toBeNull();
+  });
+
   it('says how long to wait on a 429', async () => {
     mocks.getCustomerTimeline.mockRejectedValue(
       new ApiError(429, { error: 'Too Many Requests', message: 'Rate limit exceeded', retryAfter: 30 }),
     );
     renderPage(customerHistoryFixture().search_response);
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
-    expect(
-      await screen.findByText("You've searched a lot of numbers in a short time. Try again in 30 seconds."),
-    ).toBeTruthy();
+    // Timeline pages are not charged to the search cap: the general limit, not "searched a lot".
+    expect(await screen.findByText('Too many requests in a short time. Try again in 30 seconds.')).toBeTruthy();
+    expect(screen.queryByText(/searched a lot/)).toBeNull();
+  });
+});
+
+describe('what analytics may see', () => {
+  it('keeps the results (number, people, notes, fields) inside a ph-no-capture boundary', () => {
+    renderPage(customerHistoryFixture().search_response);
+    const results = screen.getByTestId('customer-results');
+    expect(results.classList.contains('ph-no-capture')).toBe(true);
+    for (const el of [
+      screen.getByTestId('customer-results-title'),
+      screen.getByRole('button', { name: 'Copy number' }),
+      ...screen.getAllByTestId('customer-contact'),
+      ...entries(),
+    ]) {
+      expect(el.closest('.ph-no-capture')).toBe(results);
+    }
+    // The page's own search box (its recent list included) is its own boundary.
+    expect(screen.getByLabelText('Phone number').closest('.ph-no-capture')).toBe(screen.getByTestId('customer-search-box'));
   });
 });
 

@@ -33,8 +33,9 @@ cheaper pacing) leaves server 7430 unit / 1511 integration + 10 expected fail; p
 analysis worker processes over IPC) is next. Contact assignment (2026-11-03, behind a flag: supervisors
 assign contacts, agents work their own queue, agent retry and outcome overrides, decisions
 CA1–CA15) leaves server 7876 unit / 1732 integration + 9 expected fail; console 5136; app 1392. Customer history
-(2026-11-06: one number searched across the tenant's campaigns, CH1–CH12) leaves server 8206 unit /
-1998 rest-lane integration + 9 expected fail; console 5457; the app's Dart side not yet run.
+(2026-11-06: one number searched across the tenant's campaigns, CH1–CH13, reviewed and fixed the
+same day; a search measured at 15 ms median on a 1M-contact tenant) is built on the server, the
+console and the app; its test counts are in `status.md`, and the app's Dart side has not run yet.
 
 **Not done.** The launch (importing existing tenants and data, the DNC rollback mirror, dashboards).
 Agency's alert rules and dashboard are written (`grafana/`) but not applied to Grafana yet. The production image and compose file exist (`docker/`)
@@ -63,7 +64,7 @@ Details and next steps: [`status.md`](status.md).
 | [`seams.md`](seams.md) | Where files go, module-area files and config keys, the cross-module seams, shared infrastructure |
 | [`mobile.md`](mobile.md) | The agent mobile app (`apps/mobile`, Flutter): V1 scope, the foreground rule and `device_away`, how it talks to the server and the station socket (`client=mobile`, `media=alaw8`), the app's structure, builds and releases, what is not verified |
 | [`softphone.md`](softphone.md) | The soft phone: manual calls outside pacing, the campaign tag, roster settlement, DNC and hours overrides, the switch from a campaign; Manas's rulings SP1–SP7 |
-| [`customer-history.md`](customer-history.md) | Customer history: one phone number searched across the tenant's campaigns and the soft phone; decisions CH1–CH12, the number rule shared by console, server and app, the API (`POST` only, a short-lived search id), the summary and the timeline, visibility, audit and rate limit, the v2 key-column design |
+| [`customer-history.md`](customer-history.md) | Customer history: one phone number searched across the tenant's campaigns and the soft phone; decisions CH1–CH13, the number rule shared by console, server and app, the API (the number only in `POST` bodies, a short-lived search id), the summary and the timeline, visibility, audit and rate limit, the v2 key-column design |
 | [`insights.md`](insights.md) | The campaign Insights tab: decisions IN1–IN8, the shape (as-of-now reads, the 15-minute rollup recomputed from attempts, pacing history per minute), the API routes and their guards, the drill-downs whose list totals equal the numbers, costs at 1M |
 | [`scaling.md`](scaling.md) | Several processes on one host (`MEDIA_WORKERS`, `ANALYSIS_WORKERS`; built 2026-11-02, off by default): a primary that accepts every request and hands WebSocket upgrades to media workers over `child_process` IPC, analysis worker processes, the call's life across processes, the IPC protocol, failure and shutdown, config, tests, build plan, and where the build departed from the design |
 | [`operations.md`](operations.md) | Config essentials and defaults, deployment invariants, shutdown, migrations, recordings, TLS, proxy count, releases and per-component versioning |

@@ -2,7 +2,7 @@
  * The customer-history box's recent searches: the last five numbers searched on
  * THIS device (`docs/customer-history.md` §5).
  *
- * Per browser, not per user, and cleared by the box's "Clear" and on sign-out
+ * Per browser, not per user, and cleared by the box's "Clear recent searches" and on sign-out
  * (`AuthContext`): a phone number is personal data, and a shared machine must not
  * hand the next person the last one's customers. Only the E.164 the server
  * searched and the picked country are kept; never the raw text typed.
@@ -24,6 +24,26 @@ export const RECENT_CUSTOMER_SEARCHES_KEY = 'magick-agency.customerSearch.recent
 export const RECENT_CUSTOMER_SEARCHES_MAX = 5;
 
 const E164 = /^\+\d{8,15}$/;
+
+/**
+ * Every mounted box shows the same list: the page's own box stays mounted while a
+ * search runs from the top bar's panel, and "Clear recent searches" in one box
+ * must empty the other. Writes and clears here tell each subscriber to re-read;
+ * another tab's writes arrive as a `storage` event (`useRecentCustomerSearches`).
+ */
+const listeners = new Set<() => void>();
+
+function notifyRecentCustomerSearches(): void {
+  for (const listener of [...listeners]) listener();
+}
+
+/** Called after every remember or clear; returns the unsubscribe. */
+export function subscribeRecentCustomerSearches(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
 const ISO = /^[A-Z]{2}$/;
 
 function normalize(value: unknown): RecentCustomerSearch[] {
@@ -67,10 +87,11 @@ export function rememberCustomerSearch(
   } catch {
     // A full or blocked store: the list lasts for this page only.
   }
+  notifyRecentCustomerSearches();
   return next;
 }
 
-/** "Clear", and sign-out. Never throws. */
+/** "Clear recent searches", and sign-out. Never throws. */
 export function clearRecentCustomerSearches(storage: Pick<Storage, 'removeItem'> | undefined): void {
   if (!storage) return;
   try {
@@ -78,6 +99,7 @@ export function clearRecentCustomerSearches(storage: Pick<Storage, 'removeItem'>
   } catch {
     // Blocked storage held nothing to clear.
   }
+  notifyRecentCustomerSearches();
 }
 
 /** `window.localStorage`, or `undefined` where reading it throws. */

@@ -8,6 +8,7 @@ import type {
   CustomerTimelineChannel,
 } from '@magick-agency/contracts/api/agency/customer-history';
 import { CUSTOMER_HISTORY_ERROR_CODES } from '@magick-agency/contracts/api/agency/customer-history';
+import type { AgencyOverrideKind } from '@magick-agency/contracts/agency/session';
 import type { SearchCountry } from '@magick-agency/domain/customer-search-number';
 import { getErrorMessage } from '@magick-agency/web-ui/errors';
 import { ApiError } from '../api/client';
@@ -30,14 +31,39 @@ export function customerSearchPreview(formatted: string): string {
   return `We'll search for ${formatted}`;
 }
 
-/** CH11: the per-user search cap. */
-export function customerSearchRateLimitMessage(seconds: number | null | undefined): string {
-  const wait =
-    seconds != null && Number.isFinite(seconds) && seconds > 0
-      ? `Try again in ${Math.ceil(seconds)} ${Math.ceil(seconds) === 1 ? 'second' : 'seconds'}.`
-      : 'Try again in a minute.';
-  return `You've searched a lot of numbers in a short time. ${wait}`;
+function retryWait(seconds: number | null | undefined): string {
+  return seconds != null && Number.isFinite(seconds) && seconds > 0
+    ? `Try again in ${Math.ceil(seconds)} ${Math.ceil(seconds) === 1 ? 'second' : 'seconds'}.`
+    : 'Try again in a minute.';
 }
+
+/** CH11: the per-user search cap, hit by a search. */
+export function customerSearchRateLimitMessage(seconds: number | null | undefined): string {
+  return `You've searched a lot of numbers in a short time. ${retryWait(seconds)}`;
+}
+
+/**
+ * Which request was refused, for a 429's words. The search cap (`chs:<user id>`,
+ * CH11) is charged by `search` and `export`, and the server's 429 on either reads
+ * "You've searched a lot of numbers in a short time" (an export is a lookup of
+ * the number too), so both say that here. `timeline` pages are not charged to the
+ * cap: a 429 there is the general per-user limit and must not blame searching.
+ */
+export type CustomerHistoryRequestKind = 'search' | 'export' | 'timeline';
+
+export function customerHistoryRateLimitMessage(kind: CustomerHistoryRequestKind, seconds: number | null | undefined): string {
+  switch (kind) {
+    case 'search':
+    case 'export':
+      return customerSearchRateLimitMessage(seconds);
+    case 'timeline':
+      return `Too many requests in a short time. ${retryWait(seconds)}`;
+  }
+}
+
+/** `summary.contacts_truncated`: the server kept the newest 2,000 roster rows (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS`). */
+export const CONTACTS_TRUNCATED_NOTE =
+  'Showing the 2,000 most recent roster rows for this number. The timeline still includes every call.';
 
 export const SEARCH_EXPIRED_MESSAGE = 'This search has expired. Search the number again.';
 
@@ -51,17 +77,28 @@ function isFamilyCode(code: unknown): code is CustomerHistoryErrorCode {
   return typeof code === 'string' && (CUSTOMER_HISTORY_ERROR_CODES as readonly string[]).includes(code);
 }
 
-/** Any error from `api/customerHistory.ts`, as the words to show. */
-export function customerHistoryRefusal(err: unknown, fallback: string): CustomerHistoryRefusal {
+/**
+ * Any error from `api/customerHistory.ts`, as the words to show. Only
+ * `invalid_number`'s message is shown as the server wrote it: it is the shared
+ * rule's British-English refusal (`searchNumberErrorMessage`). The other family
+ * codes carry a validator's developer text ("from must be before to"), so they
+ * show `fallback`.
+ */
+export function customerHistoryRefusal(
+  err: unknown,
+  fallback: string,
+  kind: CustomerHistoryRequestKind,
+): CustomerHistoryRefusal {
   if (err instanceof ApiError) {
     if (err.statusCode === 429) {
-      return { kind: 'rate_limited', message: customerSearchRateLimitMessage(err.retryAfterSeconds) };
+      return { kind: 'rate_limited', message: customerHistoryRateLimitMessage(kind, err.retryAfterSeconds) };
     }
     const details = (typeof err.details === 'object' && err.details !== null ? err.details : {}) as Record<string, unknown>;
     const code = details['code'];
     if (code === 'search_expired') return { kind: 'search_expired', message: SEARCH_EXPIRED_MESSAGE };
     if (isFamilyCode(code)) {
-      const message = typeof details['message'] === 'string' && details['message'] ? details['message'] : fallback;
+      const serverMessage = typeof details['message'] === 'string' ? details['message'] : '';
+      const message = code === 'invalid_number' && serverMessage ? serverMessage : fallback;
       return { kind: 'refused', code, message };
     }
   }
@@ -92,7 +129,8 @@ export const RECORDING_LABELS: Record<CustomerRecordingState, string> = {
   available: 'Recording available',
   not_recorded: 'Not recorded',
   expired: 'Recording expired',
-  no_call: 'No call was connected',
+  // The contract: `no_call` means nothing was placed, so there was no call to record.
+  no_call: 'No call placed',
 };
 
 export const CALLBACK_STATUS_LABELS: Record<CustomerCallbackStatus, string> = {
@@ -131,14 +169,20 @@ export function overrideGrantLabel(override: CustomerHistoryOpenOverride): strin
   return parts.length > 0 ? parts.join(', ') : 'no extra allowance';
 }
 
-/** The override names a campaign call spent (`extra_attempts | retry_delay | calling_hours`). */
-export function overrideAppliedLabel(applied: readonly string[]): string {
-  const words: Record<string, string> = {
-    extra_attempts: 'extra attempt',
-    retry_delay: 'retry delay waived',
-    calling_hours: 'calling hours waived',
-  };
-  return applied.map((a) => words[a] ?? a).join(', ');
+/** An open override's follow-up: when the contact is next due to be dialled. */
+export function overrideFollowUpLabel(override: Pick<CustomerHistoryOpenOverride, 'follow_up_at'>): string {
+  return override.follow_up_at ? `Follow-up ${formatWhen(override.follow_up_at)}` : 'No follow-up scheduled';
+}
+
+const OVERRIDE_APPLIED_WORDS: Record<AgencyOverrideKind, string> = {
+  extra_attempts: 'extra attempt',
+  retry_delay: 'retry delay waived',
+  calling_hours: 'calling hours waived',
+};
+
+/** The overrides a campaign call spent. */
+export function overrideAppliedLabel(applied: readonly AgencyOverrideKind[]): string {
+  return applied.map((a) => OVERRIDE_APPLIED_WORDS[a] ?? a).join(', ');
 }
 
 /** A soft-phone call field's value, for display. */

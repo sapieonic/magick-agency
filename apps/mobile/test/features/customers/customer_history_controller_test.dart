@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:agency_wire/agency_wire.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,6 +33,50 @@ void main() {
   test('the picker starts on India', () {
     final c = container();
     expect(stateOf(c).country.iso, 'IN');
+  });
+
+  test('the picker moves to the platform default once it is read; once per workspace', () async {
+    api.defaultCountryCode = '+44';
+    final c = container();
+    expect(stateOf(c).country.iso, 'IN', reason: 'India while it loads');
+    await pumpEventQueue();
+    expect(stateOf(c).country.iso, 'GB');
+    expect(api.optionsReads, 1);
+  });
+
+  test('the platform default cannot be read: India stays', () async {
+    api.optionsError = const ApiHttpError(status: 500, code: null, message: '', body: {}, requestId: null);
+    final c = container();
+    await pumpEventQueue();
+    expect(stateOf(c).country.iso, 'IN');
+  });
+
+  test('a failed read is not kept: the search box opening reads it again', () async {
+    api.optionsError = const ApiHttpError(status: 500, code: null, message: '', body: {}, requestId: null);
+    final c = container();
+    await pumpEventQueue();
+    expect(stateOf(c).country.iso, 'IN');
+    expect(api.optionsReads, 1);
+
+    api.optionsError = null;
+    api.defaultCountryCode = '+44';
+    controllerOf(c).rereadDefaultIfFailed();
+    await pumpEventQueue();
+    expect(api.optionsReads, 2);
+    expect(stateOf(c).country.iso, 'GB');
+
+    // Read: nothing more is asked.
+    controllerOf(c).rereadDefaultIfFailed();
+    await pumpEventQueue();
+    expect(api.optionsReads, 2);
+  });
+
+  test('a country the agent picked is not moved by the platform default', () async {
+    api.defaultCountryCode = '+44';
+    final c = container();
+    controllerOf(c).pickCountry(searchCountryByIso('AE')!);
+    await pumpEventQueue();
+    expect(stateOf(c).country.iso, 'AE');
   });
 
   test('a number the shared rule refuses is not sent; the refusal says what to do', () async {
@@ -77,6 +123,20 @@ void main() {
     await controllerOf(c).clearRecent();
     expect(stateOf(c).recent, isEmpty);
     expect(store.values.containsKey(SessionStore.recentSearchesKey), isFalse);
+  });
+
+  test('a read of the recent searches that ends after a search does not put the older list back', () async {
+    final held = _HeldFirstRead();
+    held.values[SessionStore.recentSearchesKey] = '[{"e164":"+919800000001","display":"old"}]';
+    store = held;
+    final c = container();
+    api.autoSearch = answer();
+    expect(await controllerOf(c).search('9876543210'), isTrue);
+    await pumpEventQueue();
+    expect(stateOf(c).recent.map((r) => r.display), [searchedDisplay, 'old']);
+    held.release.complete();
+    await pumpEventQueue();
+    expect(stateOf(c).recent.map((r) => r.display), [searchedDisplay, 'old']);
   });
 
   test('a damaged stored value reads as no recent searches', () async {
@@ -146,6 +206,91 @@ void main() {
     expect(stateOf(c).hasMore, isFalse);
   });
 
+  test('every filter goes on the wire; the days are whole calendar days, the last one included', () async {
+    final c = container();
+    api.autoSearch = answer();
+    await controllerOf(c).search('9876543210');
+    final filter = CustomerHistoryFilter(
+      channel: CustomerTimelineChannel.campaign,
+      connectedOnly: true,
+      campaignId: 'c2',
+      fromDay: DateTime(2026, 11, 3),
+      toDay: DateTime(2026, 11, 4),
+      outcome: AttemptOutcome.noAnswer,
+      dispositionCode: 'ptp',
+      agentUserId: 'u2',
+    );
+    expect(filter.sheetCount, 5);
+    expect(filter.dateProblem, isNull);
+    api.autoTimeline = timelinePage([]);
+    await controllerOf(c).applyFilter(filter);
+    final wire = api.timelines.single.filters!;
+    expect(wire.from, DateTime(2026, 11, 3));
+    expect(wire.to, DateTime(2026, 11, 5), reason: 'half-open: the day after the last day');
+    expect(wire.toJson(), {
+      'campaign_ids': ['c2'],
+      'from': DateTime(2026, 11, 3).toUtc().toIso8601String(),
+      'to': DateTime(2026, 11, 5).toUtc().toIso8601String(),
+      'outcomes': ['no_answer'],
+      'disposition_codes': ['ptp'],
+      'agent_user_ids': ['u2'],
+      'connected_only': true,
+      'channel': 'campaign',
+    });
+    expect(api.timelines.single.cursor, isNull);
+    expect(stateOf(c).filter, filter);
+  });
+
+  test('one open end of the days is enough; the same day twice is that whole day', () {
+    expect(CustomerHistoryFilter(fromDay: DateTime(2026, 11, 3)).toWire()?.toJson().keys, ['from']);
+    final oneDay = CustomerHistoryFilter(fromDay: DateTime(2026, 11, 3), toDay: DateTime(2026, 11, 3));
+    expect(oneDay.dateProblem, isNull);
+    expect(oneDay.toWire()?.to, DateTime(2026, 11, 4));
+  });
+
+  test('a first day after the last is refused and never sent', () async {
+    final c = container();
+    api.autoSearch = answer();
+    await controllerOf(c).search('9876543210');
+    final backwards = CustomerHistoryFilter(fromDay: DateTime(2026, 11, 5), toDay: DateTime(2026, 11, 4));
+    expect(backwards.dateProblem, CustomerHistoryCopy.dateOrder);
+    await controllerOf(c).applyFilter(backwards);
+    expect(api.timelines, isEmpty);
+    expect(stateOf(c).filter, CustomerHistoryFilter.none);
+  });
+
+  test('a refused page: a 429 does not blame searching; a validator\'s words are not shown', () async {
+    final c = container();
+    api.autoSearch = answer(next: 'cur-1');
+    await controllerOf(c).search('9876543210');
+    final more = controllerOf(c).loadMore();
+    api.pendingTimelines.single.completeError(
+      const ApiHttpError(
+        status: 429,
+        code: null,
+        message: 'Rate limit exceeded',
+        body: {'error': 'Too Many Requests', 'retryAfter': 5},
+        requestId: null,
+      ),
+    );
+    await more;
+    expect(stateOf(c).moreError, 'Too many requests in a short time. Try again in 5 seconds.');
+
+    final applying = controllerOf(c).applyFilter(const CustomerHistoryFilter(connectedOnly: true));
+    api.pendingTimelines.last.completeError(
+      const ApiHttpError(
+        status: 400,
+        code: 'invalid_search_request',
+        message: 'from must be before to',
+        body: {'error': 'Bad Request', 'code': 'invalid_search_request', 'message': 'from must be before to'},
+        requestId: null,
+      ),
+    );
+    await applying;
+    expect(stateOf(c).timelineError, CustomerHistoryCopy.timelineFailed);
+    expect(stateOf(c).expired, isFalse);
+  });
+
   test('a page for a filter no longer on screen is dropped', () async {
     final c = container();
     api.autoSearch = answer(next: 'cur-1');
@@ -172,7 +317,11 @@ void main() {
         status: 404,
         code: 'search_expired',
         message: 'This search has expired. Search the number again.',
-        body: {'error': 'Not Found', 'code': 'search_expired', 'message': 'This search has expired. Search the number again.'},
+        body: {
+          'error': 'Not Found',
+          'code': 'search_expired',
+          'message': 'This search has expired. Search the number again.',
+        },
         requestId: null,
       ),
     );
@@ -198,4 +347,19 @@ void main() {
     expect(stateOf(c).result, isNull);
     expect(stateOf(c).entries, isEmpty);
   });
+}
+
+/// A store whose first read takes the value at once but answers only when
+/// [release] completes: a slow read of the recent searches.
+class _HeldFirstRead extends MemoryStore {
+  final release = Completer<void>();
+  var _reads = 0;
+
+  @override
+  Future<String?> getString(String key) async {
+    final first = _reads++ == 0;
+    final value = await super.getString(key);
+    if (first) await release.future;
+    return value;
+  }
 }

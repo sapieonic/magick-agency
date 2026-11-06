@@ -13,14 +13,13 @@ import {
   CUSTOMER_TIMELINE_CHANNELS,
   CUSTOMER_TIMELINE_PAGE_MAX,
   CUSTOMER_TIMELINE_PAGE_SIZE,
+  CUSTOMER_FILTER_LIST_MAX,
+  CUSTOMER_FILTER_CODE_MAX,
   type CustomerTimelineFilters,
 } from '@magick-agency/contracts/api/agency/customer-history';
 import { AGENCY_MANUAL_CALL_OUTCOMES } from '@magick-agency/contracts/agency';
 import { UUID_RE } from '../../utils/uuid.js';
-import { toMicroInstant } from './cursor.js';
 
-/** The most values one list filter takes. */
-export const CUSTOMER_FILTER_LIST_MAX = 100;
 
 const uuid = z.string().regex(UUID_RE, 'must be a UUID').transform((s) => s.toLowerCase());
 const instant = z.string().datetime({ offset: true });
@@ -36,7 +35,7 @@ export const customerTimelineFiltersSchema = z.object({
   from: instant.optional(),
   to: instant.optional(),
   outcomes: z.array(z.enum(AGENCY_MANUAL_CALL_OUTCOMES)).max(CUSTOMER_FILTER_LIST_MAX).optional(),
-  disposition_codes: z.array(z.string().min(1).max(50)).max(CUSTOMER_FILTER_LIST_MAX).optional(),
+  disposition_codes: z.array(z.string().min(1).max(CUSTOMER_FILTER_CODE_MAX)).max(CUSTOMER_FILTER_LIST_MAX).optional(),
   agent_user_ids: z.array(uuid).max(CUSTOMER_FILTER_LIST_MAX).optional(),
   connected_only: z.boolean().optional(),
   channel: z.enum(CUSTOMER_TIMELINE_CHANNELS).optional(),
@@ -59,38 +58,39 @@ export const customerExportRequestSchema = z.object({
   filters: customerTimelineFiltersSchema.optional(),
 });
 
-export type ParsedSearchRequest = z.infer<typeof customerSearchRequestSchema>;
-export type ParsedTimelineRequest = z.infer<typeof customerTimelineRequestSchema>;
-export type ParsedExportRequest = z.infer<typeof customerExportRequestSchema>;
-
-/** The filters as the timeline applies them: sets, and `from` / `to` in the microsecond form `at` is compared in. */
+/**
+ * The filters as the timeline's SQL applies them (`CUSTOMER_HISTORY_SQL.page*`): lists (NULL when
+ * absent or empty), `from` / `to` as the ISO instants sent (Postgres reads them as
+ * `timestamptz`, half-open `[from, to)`).
+ */
 export interface TimelineFilter {
-  campaignRoots: ReadonlySet<string> | null;
-  fromAt: string | null;
-  toAt: string | null;
-  outcomes: ReadonlySet<string> | null;
-  dispositionCodes: ReadonlySet<string> | null;
-  agentUserIds: ReadonlySet<string> | null;
+  /** ROOT campaigns: a retry is filtered with its root (CH7). */
+  campaignRoots: readonly string[] | null;
+  from: string | null;
+  to: string | null;
+  outcomes: readonly string[] | null;
+  dispositionCodes: readonly string[] | null;
+  agentUserIds: readonly string[] | null;
   connectedOnly: boolean;
   channel: 'campaign' | 'softphone' | null;
-  /** Any call-only filter set: only call entries are kept. */
+  /** Any call-only filter set: only the call sources are read. */
   callsOnly: boolean;
 }
 
-const setOf = (values: readonly string[] | undefined): ReadonlySet<string> | null =>
-  values && values.length > 0 ? new Set(values) : null;
+const listOf = (values: readonly string[] | undefined): readonly string[] | null =>
+  values && values.length > 0 ? [...new Set(values)] : null;
 
 export function toTimelineFilter(filters: CustomerTimelineFilters | undefined): TimelineFilter {
   const f = filters ?? {};
-  const outcomes = setOf(f.outcomes);
-  const dispositionCodes = setOf(f.disposition_codes);
-  const agentUserIds = setOf(f.agent_user_ids);
+  const outcomes = listOf(f.outcomes);
+  const dispositionCodes = listOf(f.disposition_codes);
+  const agentUserIds = listOf(f.agent_user_ids);
   const connectedOnly = f.connected_only === true;
   const channel = f.channel ?? null;
   return {
-    campaignRoots: setOf(f.campaign_ids),
-    fromAt: f.from ? toMicroInstant(f.from) : null,
-    toAt: f.to ? toMicroInstant(f.to) : null,
+    campaignRoots: listOf(f.campaign_ids),
+    from: f.from ?? null,
+    to: f.to ?? null,
     outcomes,
     dispositionCodes,
     agentUserIds,

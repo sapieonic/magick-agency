@@ -16,6 +16,12 @@ import type { CustomerSearchResponse } from '@magick-agency/contracts/api/agency
 
 const MAX_KEPT = 10;
 const answers = new Map<string, CustomerSearchResponse>();
+/**
+ * The page's filter form carried onto a fresh search id ("Search again" after an
+ * expiry keeps the filters). Memory only, like the answers, and never in the
+ * history state, which holds the search id alone. Opaque here: the page owns its shape.
+ */
+const carriedFilters = new Map<string, unknown>();
 
 export function rememberCustomerSearchAnswer(answer: CustomerSearchResponse): void {
   answers.delete(answer.search_id);
@@ -24,7 +30,17 @@ export function rememberCustomerSearchAnswer(answer: CustomerSearchResponse): vo
     const oldest = answers.keys().next().value;
     if (oldest === undefined) break;
     answers.delete(oldest);
+    carriedFilters.delete(oldest);
   }
+}
+
+/** Open `searchId` with these filters rather than none. */
+export function carryCustomerHistoryFilters(searchId: string, filters: unknown): void {
+  carriedFilters.set(searchId, filters);
+}
+
+export function carriedCustomerHistoryFilters(searchId: string): unknown {
+  return carriedFilters.get(searchId);
 }
 
 export function customerSearchAnswer(searchId: string | null | undefined): CustomerSearchResponse | null {
@@ -35,6 +51,7 @@ export function customerSearchAnswer(searchId: string | null | undefined): Custo
 /** Sign-out: nothing searched by one person stays for the next. */
 export function clearCustomerSearchAnswers(): void {
   answers.clear();
+  carriedFilters.clear();
 }
 
 /** The history state the page reads; nothing else may go in it. */

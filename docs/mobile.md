@@ -20,9 +20,16 @@ locally: `apps/mobile/README.md`. As of 2026-11-01.
 - My performance and My calls (campaign calls and soft-phone calls);
 - customer history: search one full number (the search icon on My calls) and see its contacts,
   DNC status, open items and timeline across the accounts the agent belongs to, with the console's
-  number rule (country picker, helper text, preview, refusals). See [`customer-history.md`](customer-history.md);
-  the app never opens a call page (CH8). Recent searches (last five) stay on the device until
-  Clear or sign-out;
+  number rule (country picker, helper text, preview, refusals). See [`customer-history.md`](customer-history.md) §5.
+  The picker starts on the platform default (`GET /proxy/agency/customers/options`, +91 while it
+  loads or when it cannot be read). The page has the console's content: a copy button, every
+  console filter (the channel and "Connected calls only" on the page, campaign, days, outcome,
+  outcome code and agent in a "Filters (N)" sheet), redial chains, the follow-up of an open
+  override, and the console's empty-state rule. Two differences: no CSV export (the console's only,
+  CH13), and the app never opens a call page (CH8). The empty box and "too short" refusals show
+  when Search is pressed, the others as typed. Recent searches (last five) stay on the device
+  until Clear or any route to the signed-out state (sign-out, a refused session, start-up with
+  nobody signed in);
 - the Me tab: account switch, email preferences, the dark theme switch, sound and vibration,
   diagnostics, sign out.
 
@@ -437,6 +444,7 @@ packages/
   - `packages/contracts/fixtures/agent/*.json` samples are type-checked against the TS contract (`agent-fixtures.test.ts`) and decoded by the Dart tests.
   - `tooling/contracts-literals.mjs` regenerates `literals.json`, the literal unions the app switches on (38, the soft phone's included). `--check` fails when it is stale, and so does `pnpm test` in contracts.
   - Every Dart enum has an `unknown` member, and the raw wire string is kept beside it, so a newer server never crashes an older app.
+  - Customer history's types are `customer_history.dart` (the number rule's port is `customer_search_number.dart`); the review round of 2026-11-06 added three shapes, each decoded from the shared fixture: `CustomerHistoryOpenOverride.followUpAt` (`follow_up_at`, nullable), `CustomerHistorySummary.contactsTruncated` (`contacts_truncated`, false when absent) and `CustomerSearchOptionsResponse` (`default_country_code`, the options read). Not yet run ("Not verified yet").
 
 ## Performance and UX rules the code keeps
 
@@ -470,7 +478,7 @@ packages/
 ## Not verified yet
 
 - **iOS has not compiled yet.** CI's first iOS build (on `main`, 2026-11-01) stopped at package resolution: `firebase_core` 5.1.0 needs `gtm-session-fetcher` 4–6 and `google_sign_in_ios` 6.3.8 needs 3.x. The Firebase pin ("Builds and releases", iOS) fixes the resolution: SwiftPM reproduced the conflict with the plugins' constraints and resolved them with the pin. That check ran on Linux, so no Swift or Objective-C was compiled. The next `main` build is the first compile, and the Swift engine and CallKit code (the Swift ringback written to the shared vectors and CallKit for soft-phone calls included) is reviewed against the SDK headers only until it passes.
-- **Customer history (2026-11-06) has not run under Dart or Flutter.** The wire types, the number-rule port, the controller and the two screens were written and reviewed in an environment without the SDK; no `dart test`, `flutter test` or `flutter analyze` ran. A Python transcription of the port passed every row of the shared table. The mobile CI job (path-filtered on `apps/mobile` and `packages/contracts`) is the first run.
+- **Customer history (2026-11-06) has not run under Dart or Flutter.** The wire types, the number-rule port, the controller and the two screens were written, reviewed and then fixed (the filters sheet, the copy button, the options read, the three wire additions) in an environment without the SDK; no `dart test`, `flutter test` or `flutter analyze` ran. A Python transcription of the port passed every row of the shared table. The mobile CI job (path-filtered on `apps/mobile`, `packages/contracts` and `packages/domain/src/customer-search-number.ts`) is the first run.
 - **No real device or carrier.** Nothing has run on a real phone, a real carrier call, or a real Firebase or Google sign-in. Without a carrier a soft-phone dial ends `failed` and unplaced, which tests only that path; ringing, the answer and A-law media need the VoiceLink sandbox.
 - **A network change while a soft-phone call rings ends it** (no grace before the answer), and with SP3 the customer's phone may keep ringing. More likely on a phone than in a browser; accepted, not changed.
 - **Untested behaviour:** echo cancellation on low-end Android phones on speaker, and Bluetooth rate switches on iOS, need field testing.

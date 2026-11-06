@@ -8,6 +8,7 @@
  * | `POST /proxy/agency/customers/search` | {@link CustomerSearchRequest} | {@link CustomerSearchResponse} |
  * | `POST /proxy/agency/customers/timeline` | {@link CustomerTimelineRequest} | {@link CustomerTimelinePage} |
  * | `POST /proxy/agency/customers/export` | {@link CustomerExportRequest} | `text/csv` attachment |
+ * | `GET /proxy/agency/customers/options` | — | {@link CustomerSearchOptionsResponse} |
  *
  * ── Rules ───────────────────────────────────────────────────────────────────
  * - **The number never travels in a URL.** The search is a `POST` with the raw text in the
@@ -27,12 +28,14 @@
  *   read the account's campaigns (`agency.campaigns.read`), or the agent who placed the call;
  *   otherwise `notes` is null and `notes_hidden` says there were some. The call page (recording,
  *   transcript, analysis): `agency.supervise` in the call's account, as today; `call_page` is null
- *   otherwise.
+ *   otherwise. Who added a DNC entry and why: `agency.dnc.read` in the entry's account, else
+ *   `reason` and `added_by` are null (an agent never sees them).
  * - **Timeline order** is `at DESC, key DESC`, one order across every source; pages are keyset
  *   (`next_cursor`), never offset.
  * - Wire codes are never respelled (`canceled`); console copy is British English.
  */
 import type { AgencyAttemptOutcome, AgencyCampaignStatus, AgencyContactState } from '../../agency/enums';
+import type { AgencyOverrideKind } from '../../agency/session';
 import type { AgencyDncEntryScope } from '../../agency/softphone';
 import type { AllListed } from '../../primitives';
 import type { DncSource } from './dnc';
@@ -52,6 +55,16 @@ export interface CustomerSearchRequest {
   country?: string;
 }
 
+/**
+ * `GET /proxy/agency/customers/options`: what the search box needs before the first search.
+ * `default_country_code` is the platform default (`DEFAULT_PHONE_COUNTRY_CODE`, `+91` unless
+ * configured), in the soft phone bootstrap's form (`+` and digits); the country picker starts on
+ * the listed country with that calling code (`resolveSearchCountry`).
+ */
+export interface CustomerSearchOptionsResponse {
+  default_country_code: string;
+}
+
 /** Which channel a call came through. */
 export type CustomerTimelineChannel = 'campaign' | 'softphone';
 export const CUSTOMER_TIMELINE_CHANNELS = ['campaign', 'softphone'] as const;
@@ -60,7 +73,9 @@ export const CUSTOMER_TIMELINE_CHANNELS = ['campaign', 'softphone'] as const;
  * The timeline's filters. `campaign_ids` names ROOT campaigns: a retry campaign is filtered
  * with its parent (CH7). `from` / `to` are ISO-8601 instants, half-open `[from, to)`. The
  * call-only filters (`outcomes`, `disposition_codes`, `agent_user_ids`, `connected_only`,
- * `channel`) keep only call entries (`campaign_call`, `softphone_call`).
+ * `channel`) keep only call entries (`campaign_call`, `softphone_call`). Each list takes at most
+ * {@link CUSTOMER_FILTER_LIST_MAX} values, and each disposition code 1 to
+ * {@link CUSTOMER_FILTER_CODE_MAX} characters; past that the request is `400 invalid_search_request`.
  */
 export interface CustomerTimelineFilters {
   campaign_ids?: string[];
@@ -90,6 +105,10 @@ export interface CustomerExportRequest {
 }
 
 export const CUSTOMER_TIMELINE_PAGE_SIZE = 50;
+/** The most values one list filter of {@link CustomerTimelineFilters} takes. */
+export const CUSTOMER_FILTER_LIST_MAX = 100;
+/** The longest disposition code a filter takes (`agency_call_attempts.disposition_code` is 50). */
+export const CUSTOMER_FILTER_CODE_MAX = 50;
 export const CUSTOMER_TIMELINE_PAGE_MAX = 100;
 /** The longest raw search text the server reads. */
 export const CUSTOMER_SEARCH_VALUE_MAX = 64;
@@ -212,7 +231,11 @@ export interface CustomerHistoryContact {
   upload_file_name: string | null;
 }
 
-/** A DNC entry that covers the number, at its level. */
+/**
+ * A DNC entry that covers the number, at its level. `account_id` is the account the entry belongs
+ * to: its own, or its campaign's for a campaign mark (stored without one); NULL only for a
+ * tenant-wide entry.
+ */
 export interface CustomerHistoryDncEntry {
   id: string;
   scope: AgencyDncEntryScope;
@@ -220,8 +243,12 @@ export interface CustomerHistoryDncEntry {
   account_name: string | null;
   campaign: { id: string; name: string | null } | null;
   source: DncSource;
+  /** NULL when the caller lacks `agency.dnc.read` in the entry's account (a tenant-wide entry: in their highest role in the tenant) (CH8). */
   reason: string | null;
-  /** The person who added it, resolved from a user id; else the stored text (an import, an API key). */
+  /**
+   * The person who added it, resolved from a user id; else the stored text (an import, an API key).
+   * NULL when the caller lacks `agency.dnc.read` there, as `reason`.
+   */
   added_by: string | null;
   created_at: string;
 }
@@ -243,6 +270,8 @@ export interface CustomerHistoryOpenOverride {
   campaign: CustomerHistoryCampaign;
   disposition_code: string;
   granted_at: string;
+  /** The follow-up: when the contact is next due to be dialled (`next_attempt_at`); NULL when none is scheduled. */
+  follow_up_at: string | null;
   extra_attempts: number;
   retry_delay: boolean;
   calling_hours: boolean;
@@ -270,7 +299,14 @@ export interface CustomerHistoryTotals {
 }
 
 export interface CustomerHistorySummary {
+  /** Newest first, at most 2,000 roster rows (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS` on the server). */
   contacts: CustomerHistoryContact[];
+  /**
+   * Present, and `true`, only when the number is on more roster rows than `contacts` lists (a
+   * placeholder number pasted into rosters thousands of times): the oldest were left out of the
+   * summary. The timeline still pages through every row.
+   */
+  contacts_truncated?: true;
   totals: CustomerHistoryTotals;
   /** Every entry covering the number at tenant, account or campaign level; empty = not on DNC. */
   dnc: CustomerHistoryDncEntry[];
@@ -320,7 +356,7 @@ export interface CustomerTimelineCampaignCall extends CustomerTimelineBase {
   chain_attempt_id: string;
   redial_number: number;
   /** Overrides spent on this dial (`extra_attempts | retry_delay | calling_hours`) and the agent's note. */
-  override_applied: string[];
+  override_applied: AgencyOverrideKind[];
   override_note: string | null;
   recording: CustomerRecordingState;
   /** Where the call page lives; NULL when the caller cannot open it (CH8). */

@@ -1,7 +1,11 @@
 // Real Postgres: migrations/0016_customer_history_indexes.sql (docs/customer-history.md, CH9).
 // globalSetup has applied every migration. Pins the soft-phone destination index by definition
-// AND by the planner using it for the history's read (account-scoped, newest first, no sort),
-// then down (the index is gone) and up again.
+// AND by the planner walking it for the history's keyset read: the per-account probe of
+// `CUSTOMER_HISTORY_SQL.pageManualCalls` (apps/server/src/db/repositories/agency/
+// customer-history.repository.ts), copied here verbatim because this package cannot import the
+// server; the server's own suite EXPLAINs the whole statement. The trailing `created_at DESC,
+// id DESC` columns are what put the cursor in the index condition and leave no sort. Then down
+// (the index is gone) and up again.
 import { readdirSync } from 'node:fs';
 import type { PoolClient } from 'pg';
 import { runner } from 'node-pg-migrate';
@@ -9,7 +13,7 @@ import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { MIGRATIONS_DIR } from '../../../src/migrations-dir.js';
 import { TEST_DB_URL } from '../../helpers/test-db.js';
 import { closeTestPool, getTestPool, truncateAll } from '../setup/test-utils.js';
-import { ACCOUNT, TENANT } from '../fixtures.js';
+import { ACCOUNT, insertSoftphoneSession, TENANT } from '../fixtures.js';
 
 const pool = () => getTestPool();
 
@@ -28,19 +32,38 @@ async function indexDef(name: string): Promise<string | undefined> {
   return rows[0]?.indexdef;
 }
 
-/** The plan for `sql` with sequential scans priced out (see attempt-indexes-migration.test.ts). */
-async function planOf(sql: string): Promise<string> {
+/** The plan for `sql`, every plan type allowed, on analysed tables. */
+async function planOf(sql: string, params: unknown[]): Promise<string> {
   const client: PoolClient = await pool().connect();
   try {
-    await client.query('BEGIN');
-    await client.query('SET LOCAL enable_seqscan = off');
-    const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
+    const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`, params);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
   } finally {
-    await client.query('ROLLBACK');
     client.release();
   }
 }
+
+/**
+ * The destination branch of `CUSTOMER_HISTORY_SQL.pageManualCalls`, verbatim (its filters
+ * expanded): one account's calls to the number strictly after the cursor, newest first. $1 tenant,
+ * $2 phone, $3 accounts, $4/$5 the cursor, $6 limit, $7/$8 from/to, $9 root campaigns, $10–$13 the
+ * call-only filters.
+ */
+const DESTINATION_PROBE = `
+      SELECT d.id, d.created_at FROM unnest($3::uuid[]) AS acc(id)
+      CROSS JOIN LATERAL (
+        SELECT m.id, m.created_at FROM agency_manual_calls m
+         WHERE m.tenant_id = $1::uuid AND m.account_id = acc.id AND m.destination_e164 = $2::text
+           AND (m.created_at, m.id) < ($4::timestamptz, $5::uuid)
+           AND ($7::timestamptz IS NULL OR m.created_at >= $7::timestamptz) AND ($8::timestamptz IS NULL OR m.created_at < $8::timestamptz)
+           AND ($9::uuid[] IS NULL OR EXISTS (
+         SELECT 1 FROM agency_campaigns g9 WHERE g9.id = m.campaign_id AND COALESCE(g9.root_campaign_id, g9.id) = ANY($9::uuid[])))
+           AND ($10::text[] IS NULL OR m.outcome = ANY($10::text[]))
+       AND ($11::text[] IS NULL OR m.disposition_code = ANY($11::text[]))
+       AND ($12::uuid[] IS NULL OR m.agent_user_id = ANY($12::uuid[]))
+       AND (NOT $13::boolean OR m.outcome = 'connected')
+         ORDER BY m.created_at DESC, m.id DESC
+         LIMIT $6::int) d`;
 
 describe('0016 — customer history indexes', () => {
   it('the soft-phone destination index: (tenant, account, destination, created_at DESC, id DESC)', async () => {
@@ -49,14 +72,23 @@ describe('0016 — customer history indexes', () => {
       + '(tenant_id, account_id, destination_e164, created_at DESC, id DESC)');
   });
 
-  it('the history\'s soft-phone read is served by it, keys bound and no sort', async () => {
-    const plan = await planOf(
-      `SELECT id FROM agency_manual_calls
-        WHERE tenant_id = '${TENANT}'::uuid AND account_id = ANY(ARRAY['${ACCOUNT}']::uuid[])
-          AND destination_e164 = '+919876543210'
-        ORDER BY created_at DESC, id DESC LIMIT 50`);
-    expect(plan).toContain(INDEX);
-    expect(plan).toMatch(/Index Cond: .*destination_e164/);
+  it('the history\'s keyset probe walks it in order: keys and cursor in the index condition, no sort', async () => {
+    // A tenant with a real amount of soft-phone calls to other numbers, analysed.
+    const session = await insertSoftphoneSession();
+    await pool().query(
+      `INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id,
+                                        state, ended_at, settled_at, created_at)
+       SELECT $1, $2, $3, gen_random_uuid(), '+9170' || lpad((g % 1500)::text, 8, '0'), '+14155550100',
+              'ended', now(), now(), now() - (g || ' minutes')::interval
+         FROM generate_series(1, 6000) g`, [TENANT, ACCOUNT, session.id]);
+    await pool().query('ANALYZE agency_manual_calls');
+    const plan = await planOf(DESTINATION_PROBE, [
+      TENANT, '+917000000042', [ACCOUNT], '2026-11-06T10:00:00.123456Z', 'ffffffff-ffff-ffff-ffff-ffffffffffff', 51,
+      null, null, null, null, null, null, false,
+    ]);
+    expect(plan).toMatch(new RegExp(`Limit\\n\\s+->\\s+Index (Only )?Scan using ${INDEX}`));
+    expect(plan).toMatch(/Index Cond: .*destination_e164.*ROW\(created_at, id\) < ROW\(/);
+    expect(plan).not.toMatch(/\bSort\b/);
   });
 
   it('down drops the index; up re-applies it', async () => {

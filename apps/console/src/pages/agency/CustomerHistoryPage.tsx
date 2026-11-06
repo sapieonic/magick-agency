@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Check, Copy, Download, History } from 'lucide-react';
 import type {
@@ -21,15 +21,18 @@ import {
   EMPTY_FILTER_FORM,
   filtersFromForm,
   hasAnyFilter,
+  isReversedRange,
   type CustomerTimelineFilterForm,
 } from '../../components/agency/customers/CustomerTimelineFiltersBar';
 import {
+  carriedCustomerHistoryFilters,
+  carryCustomerHistoryFilters,
   customerSearchAnswer,
   rememberCustomerSearchAnswer,
   searchIdFromLocationState,
   type CustomerHistoryLocationState,
 } from '../../utils/customerHistoryStore';
-import { customerHistoryRefusal } from '../../utils/customerHistoryCopy';
+import { customerHistoryRefusal, type CustomerHistoryRequestKind } from '../../utils/customerHistoryCopy';
 import styles from '../../components/agency/customers/CustomerHistory.module.css';
 
 /**
@@ -64,13 +67,14 @@ function accountsSeen(answer: CustomerSearchResponse): number {
   return ids.size;
 }
 
-function CopyNumberButton({ value, display }: { value: string; display: string }) {
+function CopyNumberButton({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
       className={styles.copy}
-      aria-label={copied ? 'Number copied' : `Copy ${display}`}
+      // No number in the label: attributes are what analytics and assistive logs pick up first.
+      aria-label={copied ? 'Number copied' : 'Copy number'}
       title="Copy the number"
       onClick={async () => {
         try {
@@ -87,31 +91,67 @@ function CopyNumberButton({ value, display }: { value: string; display: string }
   );
 }
 
+/** The filters a "Search again" carried onto this search id, when they are a form. */
+function carriedForm(searchId: string): CustomerTimelineFilterForm | null {
+  const carried = carriedCustomerHistoryFilters(searchId);
+  if (typeof carried !== 'object' || carried === null) return null;
+  return { ...EMPTY_FILTER_FORM, ...(carried as Partial<CustomerTimelineFilterForm>) };
+}
+
+/**
+ * No history at all: nothing in the timeline (no call, placed or not, no callback,
+ * no DNC mark, no roster row) and nothing live. A number with only an untagged
+ * soft-phone call ringing, or only DNC marks, is NOT empty: its summary and
+ * timeline show, and the export with them.
+ */
+export function isEmptyCustomerHistory(answer: CustomerSearchResponse): boolean {
+  return (
+    answer.timeline.entries.length === 0 &&
+    answer.summary.open.live_calls.length === 0 &&
+    answer.summary.contacts.length === 0
+  );
+}
+
 function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearchResponse; resultsPath: string }) {
   const { tenantId, accountId } = useTenant();
   const navigate = useNavigate();
-  const [entries, setEntries] = useState<CustomerTimelineEntry[]>(answer.timeline.entries);
-  const [nextCursor, setNextCursor] = useState<string | null>(answer.timeline.next_cursor);
-  const [form, setForm] = useState<CustomerTimelineFilterForm>(EMPTY_FILTER_FORM);
+  const [initialForm] = useState(() => carriedForm(answer.search_id));
+  const startsFiltered = initialForm !== null && hasAnyFilter(initialForm);
+  const [entries, setEntries] = useState<CustomerTimelineEntry[]>(startsFiltered ? [] : answer.timeline.entries);
+  const [nextCursor, setNextCursor] = useState<string | null>(startsFiltered ? null : answer.timeline.next_cursor);
+  const [form, setForm] = useState<CustomerTimelineFilterForm>(initialForm ?? EMPTY_FILTER_FORM);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expired, setExpired] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
   const [researching, setResearching] = useState(false);
+  /**
+   * The stale-response guard: bumped by every filter change. An answer whose
+   * number is no longer current belongs to filters nobody is looking at.
+   */
   const seq = useRef(0);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   const tenant = tenantId ?? undefined;
   const account = accountId ?? undefined;
   const filters = useMemo(() => filtersFromForm(form), [form]);
   const filtered = hasAnyFilter(form);
+  const rangeInvalid = isReversedRange(form);
   const showAccounts = useMemo(() => accountsSeen(answer) > 1, [answer]);
   const { summary } = answer;
-  const isEmptyHistory = summary.contacts.length === 0 && summary.totals.calls === 0;
+  const isEmptyHistory = isEmptyCustomerHistory(answer);
 
-  const onRefusal = useCallback((err: unknown, fallback: string) => {
-    const refusal = customerHistoryRefusal(err, fallback);
+  // A new answer: focus its heading, so a keyboard or screen-reader user lands on
+  // the results rather than on <body> (the top bar's panel, and its input, are gone).
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
+  const onRefusal = useCallback((err: unknown, fallback: string, kind: CustomerHistoryRequestKind) => {
+    const refusal = customerHistoryRefusal(err, fallback, kind);
     if (refusal.kind === 'search_expired') setExpired(true);
     else setError(refusal.message);
   }, []);
@@ -121,7 +161,18 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
       setForm(next);
       setError(null);
       setExportNote(null);
+      setLoadFailed(false);
       const mine = ++seq.current;
+      // The rows on screen answer the previous filters, and so does their cursor:
+      // dropped now, so that whatever happens next "Load more" can never append rows
+      // of the new filters after rows of the old ones.
+      setEntries([]);
+      setNextCursor(null);
+      // A reversed range is refused here, not sent (the bar says why).
+      if (isReversedRange(next)) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const nextFilters = filtersFromForm(next);
@@ -138,13 +189,21 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
         setNextCursor(page.next_cursor);
       } catch (err: unknown) {
         if (mine !== seq.current) return;
-        onRefusal(err, 'Could not load the timeline.');
+        setLoadFailed(true);
+        onRefusal(err, 'Could not load the timeline.', 'timeline');
       } finally {
         if (mine === seq.current) setLoading(false);
       }
     },
     [answer.search_id, tenant, account, onRefusal],
   );
+
+  // Opened by "Search again" with filters: the answer's first page is unfiltered.
+  useEffect(() => {
+    if (startsFiltered && initialForm) void applyForm(initialForm);
+    // Once, on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadMore = useCallback(async () => {
     if (!nextCursor || loadingMore) return;
@@ -167,7 +226,7 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
       setNextCursor(page.next_cursor);
     } catch (err: unknown) {
       if (mine !== seq.current) return;
-      onRefusal(err, 'Could not load more of the timeline.');
+      onRefusal(err, 'Could not load more of the timeline.', 'timeline');
     } finally {
       setLoadingMore(false);
     }
@@ -195,35 +254,66 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
           : 'Export downloaded.',
       );
     } catch (err: unknown) {
-      onRefusal(err, 'Could not export this history.');
+      onRefusal(err, 'Could not export this history.', 'export');
     } finally {
       setExporting(false);
     }
   }, [answer.search_id, filters, tenant, account, onRefusal]);
 
-  /** The search id lapsed (30 minutes): search the same number again, from memory. */
+  /** The search id lapsed (30 minutes): search the same number again, from memory, keeping the filters. */
   const searchAgain = useCallback(async () => {
     setResearching(true);
     setError(null);
     try {
       const fresh = await searchCustomers({ by: answer.key.by, value: answer.key.value }, tenant, account);
       rememberCustomerSearchAnswer(fresh);
+      if (hasAnyFilter(form)) carryCustomerHistoryFilters(fresh.search_id, form);
       const state: CustomerHistoryLocationState = { searchId: fresh.search_id };
       navigate(resultsPath, { state, replace: true });
     } catch (err: unknown) {
-      setError(customerHistoryRefusal(err, 'Could not search this number again.').message);
+      setError(customerHistoryRefusal(err, 'Could not search this number again.', 'search').message);
     } finally {
       setResearching(false);
     }
-  }, [answer.key, tenant, account, navigate, resultsPath]);
+  }, [answer.key, form, tenant, account, navigate, resultsPath]);
+
+  let timelineBody;
+  if (loading) {
+    timelineBody = <LoadingSpinner />;
+  } else if (rangeInvalid) {
+    // The bar shows the refusal; there are no rows for a range that cannot hold any.
+    timelineBody = null;
+  } else if (loadFailed) {
+    timelineBody = (
+      <div className={styles.loadMore}>
+        <button type="button" className="btn-secondary" onClick={() => void applyForm(form)} disabled={expired}>
+          Try again
+        </button>
+      </div>
+    );
+  } else if (entries.length === 0) {
+    timelineBody = (
+      <p className={styles.muted} data-testid="customer-timeline-empty">
+        {filtered ? 'Nothing in this history matches these filters.' : 'Nothing to show yet.'}
+      </p>
+    );
+  } else {
+    timelineBody = <CustomerTimelineList entries={entries} />;
+  }
 
   return (
-    <div className={styles.results}>
+    /*
+      `ph-no-capture`: the number, the names and loan numbers of the people it
+      belongs to, notes and call fields are all on this panel, and PostHog
+      autocapture records a clicked element's text and attributes. See
+      `CustomerSearchBox` for the mechanism and its pins (CH6).
+    */
+    <div className={`${styles.results} ph-no-capture`} data-testid="customer-results">
       <div className={styles.resultsHeader}>
-        <h2 className={styles.resultsTitle} data-testid="customer-results-title">
+        <h2 ref={headingRef} tabIndex={-1} className={styles.resultsTitle} data-testid="customer-results-title">
           Results for <span className={styles.number}>{answer.key.display}</span>
         </h2>
-        <CopyNumberButton value={answer.key.value} display={answer.key.display} />
+        <CopyNumberButton value={answer.key.value} />
       </div>
 
       {expired && (
@@ -257,7 +347,7 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
                 type="button"
                 className="btn-secondary"
                 onClick={onExport}
-                disabled={exporting || expired}
+                disabled={exporting || expired || rangeInvalid}
               >
                 <Download size={14} aria-hidden="true" />
                 {exporting ? 'Exporting…' : 'Export CSV'}
@@ -274,15 +364,7 @@ function CustomerHistoryResults({ answer, resultsPath }: { answer: CustomerSearc
               disabled={expired}
             />
 
-            {loading ? (
-              <LoadingSpinner />
-            ) : entries.length === 0 ? (
-              <p className={styles.muted} data-testid="customer-timeline-empty">
-                {filtered ? 'Nothing in this history matches these filters.' : 'Nothing to show yet.'}
-              </p>
-            ) : (
-              <CustomerTimelineList entries={entries} />
-            )}
+            {timelineBody}
 
             {!loading && nextCursor && (
               <div className={styles.loadMore}>
