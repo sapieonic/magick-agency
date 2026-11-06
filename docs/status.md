@@ -1180,8 +1180,9 @@ account their browser last had open. Every signed-in console page is now served 
 
 - The prefix is the router's basename (`components/routing/ScopedRouter`, over the history
   `contexts/UrlScopeContext` owns), so no route, link or `navigate()` changed. `TenantContext`
-  derives the active account from the URL whenever it names a listed account and moves the URL on a
-  switch (pushed: back returns to the previous account); `localStorage` is only the fallback.
+  derives the active account from the URL whenever it names a listed account; `localStorage` is only
+  the fallback. A tenant or account switch reloads the console at the new account's home (2026-11-06,
+  below).
   `components/routing/ScopeGate` re-points an unscoped URL (an old `/dialer` bookmark) at the
   active account and refuses a link to a tenant or account the viewer cannot open ("You can’t
   open this workspace / account", with Go to my workspace and Sign out). Sign-in, invite and
@@ -1196,9 +1197,14 @@ account their browser last had open. Every signed-in console page is now served 
   linked one; a cold load of a scoped sign-in URL rendered a blank page. Back/forward between
   accounts no longer remounts the page. `appRouteTable.test.ts` pins every signed-in route inside
   the gate.
-- **Left open:** a tenant or account switch keeps the current app path, as before, so a record
-  page (`/agency/campaigns/:id`) carried into another account shows its not-found state. Signing
-  out and in as a different user keeps the first user's scoped `next`, which the second user may
+- 2026-11-06: a tenant or account switch no longer keeps the page the user was on (a record page
+  carried into an account it does not belong to showed its not-found state). Inside the app it is a
+  full page load: an account switch at `/t/<tenant>/a/<account>`, a tenant switch at `/` with the
+  tenant recorded, so it opens on its last-used or first account (`utils/pageLoad.ts`). The soft
+  phone's two cross-account moves name their destination (the station, the soft phone); the invite
+  claim, on an unscoped page, still only records the tenant it joined. The duplicate decision ID is
+  gone: the invite-claims ruling keeps B25 and the API-on-its-own-host decision is B27.
+- **Left open:** signing out and in as a different user keeps the first user's scoped `next`, which the second user may
   be refused (the refusal offers a way out). The history comes from react-router's
   `UNSAFE_createBrowserHistory`; the routing tests exercise it, so an upgrade that breaks it goes red.
 - Counts, 2026-11-05: `apps/console` 5371 (281 files), lint clean, build clean; `apps/server` lint
@@ -1231,7 +1237,7 @@ account their browser last had open. Every signed-in console page is now served 
       them; a failure stops the container).
 - [ ] Firebase: agency's domain in the authorised domains, `FIREBASE_PROJECT_ID` set (no service
       account: tokens are verified against Google's public keys).
-- [ ] API on its own host only (B25, `DEPLOYMENT.md` 7.3): `web` built with `CONSOLE_API_BASE_URL`,
+- [ ] API on its own host only (B27, `DEPLOYMENT.md` 7.3): `web` built with `CONSOLE_API_BASE_URL`,
       every origin the console is served from in `CORS_ALLOWED_ORIGINS`, the preflight `curl` in 7.3
       names the app's origin, and the mobile app's link host is the console's name.
 - [ ] VoiceLink: account, numbers in the super-admin inventory, `VOICELINK_*` set,

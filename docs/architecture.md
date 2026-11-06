@@ -672,8 +672,8 @@ a rate-limit key and never an auth input.
   receives it. `UrlScopeProvider` (`contexts/UrlScopeContext.tsx`) owns the browser history;
   `ScopedRouter` (`components/routing/`) is a `<Router>` over it whose basename is that prefix, so
   routes, links and `navigate()` are written without it and `useLocation()` reads the app path.
-  `TenantContext` takes the active tenant and account from the URL and moves the URL when the
-  switchers change them; the choice saved in `localStorage` is only the fallback for an unscoped
+  `TenantContext` takes the active tenant and account from the URL; a switch reloads the console
+  at the new account's home, so nothing built for the old account carries over. The choice saved in `localStorage` is only the fallback for an unscoped
   URL (an old bookmark, `/` after sign-in). `ScopeGate`, the layout route around every signed-in
   route, scopes an unscoped URL to the active account and refuses a link to a tenant or account the
   viewer cannot open rather than showing another one. Sign-in, invite and email-verification pages
