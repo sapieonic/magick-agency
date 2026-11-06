@@ -374,7 +374,7 @@ The chain is now client → Caddy → nginx → server, which is what `TRUST_PRO
 
 By default the console calls the API on its own origin (`agency.example.com/auth/...`), and nginx
 proxies the API paths. You can instead give each part its own name, which keeps the bare domain
-free for a marketing site (decision B25):
+free for a marketing site (decision B27):
 
 | Name | What it serves | Caddy sends it to |
 |---|---|---|

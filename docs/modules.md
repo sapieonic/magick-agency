@@ -446,7 +446,7 @@ Files: `agency-id-guard.ts`, `agency.plugin.ts`, `analysis.plugin.ts`, `core-dis
 
 ### `apps/server/src/api/middleware/`
 
-App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request), and CORS for the API on its own host (`cors.ts`, registered only when `CORS_ALLOWED_ORIGINS` is set; B25).
+App-wide middleware: rate limiter and its buckets (per IP, the bearer `ip_auth` bucket, and the per-user bucket the session middleware charges), error handler with the `22P02` backstop, 5xx error mask, session and tenant-context middleware, the membership cache key the tenant context reads and the routes that change a membership delete (`membership-cache-key.ts`), internal tenancy headers, the `X-Client` log context (`client-log-context.ts`: `client` on every log line of a request), and CORS for the API on its own host (`cors.ts`, registered only when `CORS_ALLOWED_ORIGINS` is set; B27).
 
 Files: `agency-error-handler.ts`, `auth.middleware.ts`, `client-log-context.ts`, `cors.ts`, `error-handler.middleware.ts`, `error-mask.middleware.ts`, `headers.ts`, `membership-cache-key.ts`, `rate-limit-defaults.ts`, `rate-limit.middleware.ts`, `tenant-context.middleware.ts`
 

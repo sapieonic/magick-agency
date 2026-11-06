@@ -44,7 +44,7 @@ decoder packages and the absence of ffmpeg.
 ### What nginx serves
 
 The two UIs can't share an origin, because both own `/` and call the API on their own origin
-(`VITE_API_BASE_URL` empty; the console's can point at a separate API host instead, B25 and
+(`VITE_API_BASE_URL` empty; the console's can point at a separate API host instead, B27 and
 "API on its own host" below). So each one gets its own server block:
 
 - **:8080, console and carrier.** The SPA, plus a proxy for the console's API prefixes (the dev
@@ -110,7 +110,7 @@ this wrong are silent:
 - **:8080 reachable without going through the terminator:** a client chooses its own
   `request.ip` by sending `X-Forwarded-For`.
 
-**API on its own host (B25).** The terminator may send a second name (`api.example.com`) to
+**API on its own host (B27).** The terminator may send a second name (`api.example.com`) to
 the same :8080 block. The console, built with `CONSOLE_API_BASE_URL`, then calls that name
 cross-origin and the server answers CORS for the origins in `CORS_ALLOWED_ORIGINS`. The chain and
 the hop count are unchanged. The super-admin keeps calling its own origin: :8081 is the only block
@@ -196,7 +196,7 @@ production.
 | `TRUST_PROXY_HOPS` | `1` (min 1) | Number of reverse proxies in front (Q9) |
 | `WS_MAX_PAYLOAD_BYTES` | `65536` (min 42708) | Largest inbound WebSocket message on every route; past it the socket closes 1009. Sized in `apps/server/src/utils/ws-limits.ts` |
 | `AGENCY_INSIGHTS_ROLLUP_INTERVAL_MS`, `AGENCY_INSIGHTS_ROLLUP_BATCH_SIZE` | `15000` (1000–600000), `200` (1–5000) | The insights rollup job (`docs/insights.md`): how often a pass recomputes the dirty 15-minute buckets, and how many a batch claims. The page's range sections lag the attempts by about one interval; `agency_insights_rollup_dirty_buckets` and `_oldest_dirty_seconds` say how far |
-| `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B25); the web image is then built with `CONSOLE_API_BASE_URL` |
+| `CORS_ALLOWED_ORIGINS` | unset (no CORS) | Origins allowed to call the API cross-origin, comma separated, bare origins only (`*` refused). Only for the API on its own host (`DEPLOYMENT.md` 7.3, decision B27); the web image is then built with `CONSOLE_API_BASE_URL` |
 | `READYZ_DETAIL_TOKEN` | unset (detail off) | Bearer for `GET /readyz?detail=1` ("Health"); at least 32 characters. Plain `/readyz` needs nothing (D13) |
 | `DB_POOL_MIN`, `DB_POOL_MAX` | `2`, `30` | pg pool of the server process (the primary, with workers), one for every area. 30 for a 500-agent floor. **Per process**: worker processes open their own pools (`MEDIA_WORKER_DB_POOL_MAX` below; an analysis worker `min(DB_POOL_MAX, DIALER_ANALYSIS_CONCURRENCY + 2)`), and the sum must fit Postgres's `max_connections` with room for migrations and an operator ("Sizing the media workers", *Postgres connections*). Saturation: `db_pool_clients_waiting`, `db_pool_acquire_seconds` |
 | `DB_SSL_CA` | unset (Node's roots) | PEM text of a private CA, not a path; `\n` escapes allowed |
