@@ -144,12 +144,11 @@ export function TenantProvider({ children }: { children: ReactNode }) {
   const urlScopeRef = useRef(urlScope);
   urlScopeRef.current = urlScope;
 
-  // The URL's tenant when the session lists it (or has not arrived yet: the
-  // effects below correct it then), else this browser's last.
-  const [activeTenantId, setActiveTenantIdState] = useState<string | null>(() =>
-    urlScope && (tenants.length === 0 || tenants.some(t => t.id === urlScope.tenantId))
-      ? urlScope.tenantId
-      : readStoredSelection().tenantId,
+  // The URL's tenant, else this browser's last. One this person is not in is
+  // replaced by the selection effect below before any of its accounts are asked
+  // for (`fallbackTenantId`).
+  const [activeTenantId, setActiveTenantIdState] = useState<string | null>(
+    () => urlScope?.tenantId ?? readStoredSelection().tenantId,
   );
 
   /** The account chosen in state: by the switchers, the restore, or the fallback. */

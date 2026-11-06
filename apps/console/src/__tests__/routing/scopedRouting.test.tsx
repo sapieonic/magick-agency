@@ -492,9 +492,17 @@ describe('a scope this person cannot open', () => {
     expect(mocks.listMyAccounts).not.toHaveBeenCalledWith('t-zzz');
   });
 
-  it('falls back to this browser’s own workspace underneath, and never records the fallback', async () => {
+  it.each([
+    ['the session is already there', false],
+    ['the session arrives after the link', true],
+  ])('falls back to this browser’s own workspace underneath, and never records the fallback (%s)', async (_label, late) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ tenantId: 't-b', accountId: 'acct-b2' }));
-    openAt('/t/t-zzz/a/acct-1/agency/campaigns');
+    if (late) sessionLoading();
+    const { rerender } = openAt('/t/t-zzz/a/acct-1/agency/campaigns');
+    if (late) {
+      signIn();
+      rerender(<TestApp />);
+    }
 
     await screen.findByText('You can’t open this workspace');
     // The stored tenant, not the session's first one.
