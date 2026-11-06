@@ -16,7 +16,7 @@
 export interface RecentCustomerSearch {
   /** The number searched, E.164 (`+919876543210`). */
   e164: string;
-  /** ISO of the country picked when it was searched. */
+  /** ISO of the country picked when it was searched; empty for the platform default the picker does not list. */
   country: string;
 }
 
@@ -44,7 +44,7 @@ export function subscribeRecentCustomerSearches(listener: () => void): () => voi
     listeners.delete(listener);
   };
 }
-const ISO = /^[A-Z]{2}$/;
+const ISO = /^(?:[A-Z]{2})?$/;
 
 function normalize(value: unknown): RecentCustomerSearch[] {
   if (!Array.isArray(value)) return [];

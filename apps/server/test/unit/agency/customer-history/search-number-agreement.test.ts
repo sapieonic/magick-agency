@@ -15,7 +15,7 @@ import { normalizeDialledNumber } from '../../../../src/agency/softphone/manual-
  * E.164 whenever they accept the input at all.
  */
 
-interface Case { input: string; country: string; e164?: string; error?: string }
+interface Case { input: string; country: string | null; defaultCallingCode?: string; e164?: string; error?: string }
 
 const TABLE = JSON.parse(readFileSync(
   fileURLToPath(new URL('../../../../../../packages/contracts/fixtures/agent/customer-search-numbers.json', import.meta.url)),
@@ -60,5 +60,59 @@ describe('the search number agrees with what the server stores', () => {
 
   it('the pinned defect is still in the table', () => {
     for (const input of ROSTER_KEEPS_TRUNK) expect(okIndia.some((c) => c.input === input), input).toBe(true);
+  });
+});
+
+/**
+ * A platform default the picker does not list (`DEFAULT_PHONE_COUNTRY_CODE=27`): the search's
+ * country is the default's own entry (search.ts: `resolveSearchCountry(body.country,
+ * defaultPhoneCountryCode())` with no `country`), never India, and for a number typed without `+`
+ * or `00` it gives EXACTLY what the roster ingest and the soft phone give, refusal included: the
+ * same rule, not merely the same answer where both accept.
+ */
+describe('an unlisted platform default agrees with the roster ingest exactly', () => {
+  const searchCountry = (code: string) => resolveSearchCountry(undefined, code);
+
+  it('is the default\'s own country, not India', () => {
+    expect(searchCountry('27')).toMatchObject({ callingCode: '27', unlisted: true });
+  });
+
+  const national = (input: string) => !/^\s*(\+|00)/.test(input);
+
+  const agree = (input: string, code: string) => {
+    const searched = parseSearchNumber(input, searchCountry(code));
+    const roster = normalizeE164(normalizePhoneToE164(input, { defaultCountryCode: code }));
+    const softphone = normalizeDialledNumber(input, code);
+    expect(searched.ok ? searched.e164 : null, `search ${input} (+${code})`).toBe(roster);
+    expect(softphone, `soft phone ${input} (+${code})`).toBe(roster);
+  };
+
+  const unlisted = TABLE.cases.filter((c) => c.country === null);
+  it('the table has unlisted-default cases', () => {
+    expect(unlisted.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it.each(unlisted.filter((c) => national(c.input)).map((c) => [c.input, c.defaultCallingCode!.replace(/^\+/, '')] as const))(
+    'table: %s (+%s)', (input, code) => agree(input, code),
+  );
+
+  it('the table\'s international forms give what the ingest stores', () => {
+    for (const c of unlisted.filter((x) => !national(x.input) && x.e164)) {
+      const code = c.defaultCallingCode!.replace(/^\+/, '');
+      expect(normalizeE164(normalizePhoneToE164(c.input.replace(/^00/, '+'), { defaultCountryCode: code })), c.input).toBe(c.e164);
+    }
+  });
+
+  it('every national length, with and without the calling code and a trunk 0, for 1-, 2- and 3-digit codes', () => {
+    for (const code of ['7', '27', '234']) {
+      for (let n = 1; n <= 17; n++) {
+        const body = '8123456789012345678'.slice(0, n);
+        for (const digits of [body, `${code}${body}`.slice(0, n)]) {
+          agree(digits, code);
+          agree(`0${digits}`, code);
+          agree(`0${digits.slice(0, 3)} ${digits.slice(3)}`, code);
+        }
+      }
+    }
   });
 });

@@ -10,8 +10,10 @@ import { useTenant } from '../contexts/TenantContext';
  * Never blocks typing: until the answer arrives, and if it never does (an error,
  * an older server), the picker uses {@link FALLBACK_SEARCH_CALLING_CODE}, the same
  * value the server falls back to. The answer is a platform setting, the same for
- * every tenant and user, so one read serves the whole session, and a failed read is
- * not retried on every panel open.
+ * every tenant and user, so one successful read serves the whole session. A failed
+ * read is NOT kept: a network blip, a 429, a 5xx or a 403 (the first account with
+ * the dialer off) would otherwise pin +91 until a reload; the next box to mount
+ * reads it again, as the agent app does when its search box opens.
  */
 
 /** `+91`: the platform's own default when nothing else says otherwise. */
@@ -22,10 +24,14 @@ const CALLING_CODE = /^\+?\d{1,4}$/;
 let cached: string | null = null;
 let pending: Promise<string> | null = null;
 
-/** The default calling code (`+91` form), fetched at most once; resolves to the fallback on any failure. */
+/**
+ * The default calling code (`+91` form), fetched once per session once a read succeeds;
+ * resolves to the fallback on any failure, and forgets the failure, so the next call reads again.
+ */
 export function loadCustomerSearchDefaultCallingCode(tenantId?: string, accountId?: string): Promise<string> {
   if (cached) return Promise.resolve(cached);
-  pending ??= Promise.resolve()
+  if (pending) return pending;
+  const read: Promise<string> = Promise.resolve()
     .then(() => getCustomerSearchOptions(tenantId, accountId))
     .then(
       (options) => {
@@ -34,11 +40,13 @@ export function loadCustomerSearchDefaultCallingCode(tenantId?: string, accountI
         return cached;
       },
       () => {
-        cached = FALLBACK_SEARCH_CALLING_CODE;
-        return cached;
+        // Not cached: the next box to mount asks again.
+        if (pending === read) pending = null;
+        return FALLBACK_SEARCH_CALLING_CODE;
       },
     );
-  return pending;
+  pending = read;
+  return read;
 }
 
 /** Tests only: forget the session's answer. */

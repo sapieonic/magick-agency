@@ -62,6 +62,7 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
   }
 
   Future<void> _pickCountry(SearchCountry current) async {
+    final options = _controller.countryOptions;
     final picked = await showModalBottomSheet<SearchCountry>(
       context: context,
       showDragHandle: true,
@@ -74,11 +75,12 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
               padding: const EdgeInsets.fromLTRB(Space.lg, 0, Space.lg, Space.sm),
               child: Text(CustomerHistoryCopy.pickCountry, style: Theme.of(context).textTheme.titleMedium),
             ),
-            for (final c in searchCountries)
+            for (final c in options)
               ListTile(
-                key: Key('customer-country-${c.iso}'),
+                key: Key('customer-country-${c.unlisted ? 'default' : c.iso}'),
                 title: Text(c.name),
-                trailing: Text('+${c.callingCode}'),
+                // The platform default the picker does not list is named by its code already.
+                trailing: c.unlisted ? null : Text('+${c.callingCode}'),
                 selected: c == current,
                 onTap: () => Navigator.of(context).pop(c),
               ),
@@ -124,7 +126,10 @@ class _CustomerSearchScreenState extends ConsumerState<CustomerSearchScreen> {
                     excludeSemantics: true,
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
-                      children: [Text('${country.iso} +${country.callingCode}'), const Icon(Icons.arrow_drop_down)],
+                      children: [
+                        Text(country.unlisted ? country.name : '${country.iso} +${country.callingCode}'),
+                        const Icon(Icons.arrow_drop_down),
+                      ],
                     ),
                   ),
                 ),

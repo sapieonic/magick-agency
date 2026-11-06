@@ -87,10 +87,10 @@ export async function loadCustomerSummary(
     namesIn(userIds, tenantId),
   ]);
   const bookings = new Map(bookingRows.map((b) => [b.contact_id, b.booked_by_user_id]));
-  // A callback's booker the summary names nowhere else (usually none) is looked up after.
-  const named = new Set(userIds);
-  const bookers = [...bookings.values()].filter((id): id is string => id !== null && !named.has(id));
-  for (const [id, name] of await namesIn(bookers, tenantId)) names.set(id, name);
+  // The bookers' names come with their bookings (same rule as `namesIn`): no second lookup.
+  for (const b of bookingRows) {
+    if (b.booked_by_user_id && !names.has(b.booked_by_user_id)) names.set(b.booked_by_user_id, b.booked_by_name);
+  }
 
   const summary = buildSummary({
     now, viewer, contacts, contactsTruncated, campaigns, stats, lastPlaced, liveCalls, bookings, dnc, uploads, names,
@@ -98,9 +98,14 @@ export async function loadCustomerSummary(
   return { summary, resultCount: entryCount(stats, dnc.length) };
 }
 
-/** How many timeline entries the viewer can see of `phone` (the export audit's `result_count`). */
+/**
+ * How many timeline entries the viewer can see of `phone` (the export audit's `result_count`):
+ * the search's own count, from the same two reads (`callStats` and the DNC entries).
+ */
 export async function countCustomerEntries(viewer: CustomerHistoryViewer, tenantId: string, phone: string): Promise<number> {
-  return repo.entryCount(scopeOf(viewer, tenantId), phone);
+  const scope = scopeOf(viewer, tenantId);
+  const [stats, dnc] = await Promise.all([repo.callStats(scope, phone), repo.dncForNumber(scope, phone)]);
+  return entryCount(stats, dnc.length);
 }
 
 /**
@@ -144,7 +149,7 @@ export async function loadTimelinePage(
     repo.campaignsByIds(scope, pageCampaignIds(rows)),
     repo.mediaLegs(scope, legIds),
     repo.uploads(scope, rows.contacts.map((c) => c.campaign_id)),
-    repo.callbackNext(scope, phone, rows.callbacks.map((c) => ({ id: c.id, at: c.at }))),
+    repo.callbackNext(scope, phone, rows.callbacks.map((c) => ({ id: c.id, at: c.booked_at }))),
     namesIn(pageUserIds(rows), tenantId),
   ]);
 

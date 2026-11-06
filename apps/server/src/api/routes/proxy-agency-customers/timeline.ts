@@ -9,7 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { customerTimelineRequestSchema, pageLimit, toTimelineFilter } from '../../../agency/customer-history/requests.js';
 import { decodeTimelineCursor } from '../../../agency/customer-history/cursor.js';
-import { loadTimelinePage, resolveViewer } from '../../../agency/customer-history/service.js';
+import { loadTimelinePage } from '../../../agency/customer-history/service.js';
 import { settledValue } from '../helpers/settled.js';
 import {
   guardCustomerRoute,
@@ -17,6 +17,7 @@ import {
   noStore,
   ownSearch,
   parseBody,
+  resolveDialerViewer,
   type CustomerRoutesDeps,
 } from './shared.js';
 
@@ -32,7 +33,7 @@ export async function registerCustomerTimelineRoute(app: FastifyInstance, deps: 
     // search's 404 first, then the cursor's 400, then a viewer read that threw.
     const [recordRead, viewerRead] = await Promise.allSettled([
       ownSearch(deps.store, body.search_id, request, reply),
-      resolveViewer(request.user!.id, tenantId),
+      resolveDialerViewer(request.user!.id, tenantId),
     ]);
     const record = settledValue(recordRead);
     if (!record) return reply;

@@ -49,7 +49,8 @@ final class CustomerSearchRequest {
   final String value;
 
   /// ISO 3166-1 alpha-2 of the country picked next to the box; null = the
-  /// platform default.
+  /// platform default (the only way to name a default the picker does not
+  /// list, which has no ISO entry).
   final String? country;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -899,8 +900,8 @@ final class CustomerHistorySummary {
   /// Newest first, at most 2,000 roster rows.
   final List<CustomerHistoryContact> contacts;
 
-  /// The number is on more roster rows than [contacts] lists (`contacts_truncated`, sent only
-  /// when true): the oldest were left out of the summary. The timeline still has every row.
+  /// The number is on more than 2,000 roster rows (`contacts_truncated`, sent only when true):
+  /// this history (summary, totals, timeline) covers the 2,000 most recent of them.
   final bool contactsTruncated;
   final CustomerHistoryTotals totals;
 
@@ -1321,7 +1322,8 @@ final class CustomerCallbackSource {
   int get hashCode => Object.hash(channelRaw, id);
 }
 
-/// A callback booked on a call. [at] is when it was booked.
+/// A callback booked on a call. [at] is the start of the call it was booked on (re-booking
+/// never moves it); [dueAt] is when the callback is due.
 ///
 /// Contract: `CustomerTimelineCallback`.
 @immutable
@@ -1530,7 +1532,8 @@ final class CustomerTimelinePage {
 /// `GET /proxy/agency/customers/options`: what the search box needs before
 /// the first search. [defaultCountryCode] is the platform default in the soft
 /// phone bootstrap's form (`+91`: `+` and digits); the country picker starts
-/// on the listed country with that calling code.
+/// on the listed country with that calling code, else on an entry of its own
+/// named by the code (`resolveSearchCountry`).
 ///
 /// Contract: `CustomerSearchOptionsResponse`.
 @immutable

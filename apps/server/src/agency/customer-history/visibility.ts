@@ -5,6 +5,8 @@
  *    sees every account of the tenant that is not deleted; otherwise the accounts of their active
  *    account memberships. The caller's role in an account is the higher of their tenant-level role
  *    and their role in that account.
+ *  - **The dialer flag is a data boundary (CH2).** Of those, only the accounts where
+ *    `agency_dialer_enabled` is on are read ({@link narrowViewer}; the routes resolve the flag).
  *  - **Notes and call fields (CH8)** need `agency.campaigns.read` in the call's account, or the
  *    call is the caller's own.
  *  - **The call page** (recording, transcript, analysis) needs `agency.supervise` in the call's account.
@@ -29,8 +31,13 @@ export interface CustomerHistoryViewer {
   userId: string;
   /** Visible accounts, keyed by id, with the caller's effective role in each. */
   accounts: ReadonlyMap<string, VisibleAccount>;
-  /** The caller's highest role in the tenant (a tenant-wide DNC entry's role, the audit's `role`). */
+  /**
+   * The caller's highest role in the tenant (a tenant-wide DNC entry's role, the audit's `role`):
+   * the higher of `tenantRole` and their role in each visible account.
+   */
   highestRole: MembershipRole;
+  /** The caller's tenant-level role, null without a tenant-level membership. */
+  tenantRole: MembershipRole | null;
 }
 
 const higher = (a: MembershipRole | null, b: MembershipRole | null): MembershipRole | null => {
@@ -80,7 +87,24 @@ export function buildViewer(
     visible.set(a.id, { id: a.id, name: a.name, role });
     highest = higher(highest, role);
   }
-  return { userId, accounts: visible, highestRole: highest ?? 'agent' };
+  return { userId, accounts: visible, highestRole: highest ?? 'agent', tenantRole };
+}
+
+/**
+ * The viewer narrowed to the accounts `keep` holds (the accounts where the dialer flag is on,
+ * CH2): every other account is dropped as if it were not visible, and the highest role is worked
+ * out again from the tenant-level role and the accounts kept, so a role held only in a dropped
+ * account grants nothing (not a tenant-wide DNC entry's detail, not the audit's `role`).
+ */
+export function narrowViewer(viewer: CustomerHistoryViewer, keep: ReadonlySet<string>): CustomerHistoryViewer {
+  const accounts = new Map<string, VisibleAccount>();
+  let highest: MembershipRole | null = viewer.tenantRole;
+  for (const [id, account] of viewer.accounts) {
+    if (!keep.has(id)) continue;
+    accounts.set(id, account);
+    highest = higher(highest, account.role);
+  }
+  return { ...viewer, accounts, highestRole: highest ?? 'agent' };
 }
 
 /** The caller's role for a row of `accountId`; a tenant-wide row (null) takes the highest role. */

@@ -26,9 +26,14 @@ export interface CustomerHistoryFixture {
   error_search_expired: CustomerHistoryErrorResponse;
 }
 
-export type CustomerSearchNumberCase =
-  | { input: string; country: string; e164: string; formatted: string; countryIso: string | null }
-  | { input: string; country: string; error: string; message: string };
+/**
+ * A row of the shared number table. `country` is a listed ISO, or null for a platform default the
+ * picker does not list, named by `defaultCallingCode` (`+27`).
+ */
+export type CustomerSearchNumberCase = { input: string; country: string | null; defaultCallingCode?: string } & (
+  | { e164: string; formatted: string; countryIso: string | null }
+  | { error: string; message: string }
+);
 
 /** A fresh deep copy on every call, so a test that edits it cannot leak into the next. */
 export function customerHistoryFixture(): CustomerHistoryFixture {

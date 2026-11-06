@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { searchCountryByIso } from '@magick-agency/domain/customer-search-number';
+import { platformDefaultSearchCountry, searchCountryByIso } from '@magick-agency/domain/customer-search-number';
 import { customerHistoryFixture, customerSearchNumberCases } from '../helpers/customerHistory';
 
 /**
@@ -117,7 +117,9 @@ describe('the helper text and the country picker', () => {
     renderBox();
     expect(country().value).toBe('IN');
     const isos = [...country().options].map((o) => o.value);
-    for (const c of customerSearchNumberCases()) expect(isos).toContain(c.country);
+    for (const c of customerSearchNumberCases()) if (c.country !== null) expect(isos).toContain(c.country);
+    // A listed default adds no entry of its own.
+    expect(isos).not.toContain('');
     await waitFor(() => expect(mocks.getCustomerSearchOptions).toHaveBeenCalledTimes(1));
   });
 
@@ -135,16 +137,26 @@ describe('the helper text and the country picker', () => {
     expect(mocks.getCustomerSearchOptions).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps +91 when the options route fails, and does not ask again', async () => {
-    mocks.getCustomerSearchOptions.mockRejectedValue(new ApiError(404, { message: 'Not Found' }));
+  it('uses +91 when the options read fails, and reads it again when the next box mounts', async () => {
+    mocks.getCustomerSearchOptions.mockRejectedValueOnce(new ApiError(503, { message: 'Service Unavailable' }));
+    mocks.getCustomerSearchOptions.mockResolvedValueOnce({ default_country_code: '+44' });
     const { unmount } = renderBox();
     await waitFor(() => expect(mocks.getCustomerSearchOptions).toHaveBeenCalledTimes(1));
     await act(async () => {});
     expect(country().value).toBe('IN');
     unmount();
+
+    // The failure was not kept for the session: this mount asks again and gets the real default.
+    const second = renderBox();
+    await waitFor(() => expect(country().value).toBe('GB'));
+    expect(mocks.getCustomerSearchOptions).toHaveBeenCalledTimes(2);
+    second.unmount();
+
+    // Once read, it is kept: no third read.
     renderBox();
+    expect(country().value).toBe('GB');
     await act(async () => {});
-    expect(mocks.getCustomerSearchOptions).toHaveBeenCalledTimes(1);
+    expect(mocks.getCustomerSearchOptions).toHaveBeenCalledTimes(2);
   });
 
   it('never moves a country the person picked when the default arrives', async () => {
@@ -255,12 +267,28 @@ describe('the live preview and the refusals', () => {
    * `customer-search-numbers.json` goes through the box as a person would type it,
    * and the box must show exactly the row's preview or refusal.
    */
-  it('shows, for every row of the shared number table, exactly what the table says', () => {
-    const cases = customerSearchNumberCases();
-    expect(cases.length).toBeGreaterThan(30);
-    renderBox();
+  it('shows, for every row of the shared number table, exactly what the table says', async () => {
+    const all = customerSearchNumberCases();
+    expect(all.length).toBeGreaterThan(30);
+    await runTableThroughBox(all.filter((row) => row.country !== null), '+91');
+  });
+
+  it('shows, for every row of an unlisted platform default, exactly what the table says', async () => {
+    const rows = customerSearchNumberCases().filter((row) => row.country === null);
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    for (const code of new Set(rows.map((row) => row.defaultCallingCode!))) {
+      resetCustomerSearchDefaultCallingCode();
+      mocks.getCustomerSearchOptions.mockResolvedValue({ default_country_code: code });
+      await runTableThroughBox(rows.filter((row) => row.defaultCallingCode === code), code);
+    }
+  });
+
+  /** Each row typed into one box opened on `defaultCallingCode`, its country picked (the default's own entry for a null country). */
+  async function runTableThroughBox(cases: ReturnType<typeof customerSearchNumberCases>, defaultCallingCode: string) {
+    const { unmount } = renderBox();
+    await waitFor(() => expect(country().value).toBe(platformDefaultSearchCountry(defaultCallingCode).iso));
     for (const row of cases) {
-      fireEvent.change(country(), { target: { value: row.country } });
+      fireEvent.change(country(), { target: { value: row.country ?? '' } });
       type(row.input);
       // An unfinished number speaks only once submitted; the rest speak as typed.
       if ('error' in row && (row.error === 'empty' || row.error === 'too_short')) {
@@ -279,7 +307,8 @@ describe('the live preview and the refusals', () => {
       type('');
     }
     expect(mocks.searchCustomers).not.toHaveBeenCalled();
-  });
+    unmount();
+  }
 
   /**
    * When each refusal may speak, over the whole table: `empty` and `too_short` only
@@ -290,7 +319,7 @@ describe('the live preview and the refusals', () => {
   it('holds back only the "not finished yet" refusals until revealed, row by row', () => {
     const codes = new Set<string>();
     for (const row of customerSearchNumberCases()) {
-      const c = searchCountryByIso(row.country)!;
+      const c = row.country === null ? platformDefaultSearchCountry(row.defaultCallingCode!) : searchCountryByIso(row.country)!;
       const typing = customerSearchFeedback(row.input, c, false);
       const revealed = customerSearchFeedback(row.input, c, true);
       if ('e164' in row) {
@@ -311,6 +340,75 @@ describe('the live preview and the refusals', () => {
     // The table exercises both sides of the rule.
     expect(codes).toContain('too_short');
     expect(codes).toContain('invalid_characters');
+  });
+});
+
+/**
+ * A platform default the picker does not list (`DEFAULT_PHONE_COUNTRY_CODE=27`) is never shown or
+ * searched as India: the picker opens on an entry of its own named by the calling code, the
+ * number is read by the roster ingest's rule for it, and the search names it by sending no
+ * `country` (absent = the platform default).
+ */
+describe('an unlisted platform default', () => {
+  beforeEach(() => {
+    mocks.getCustomerSearchOptions.mockResolvedValue({ default_country_code: '+27' });
+  });
+
+  it('opens on its own entry, first in the picker, labelled by its calling code', async () => {
+    renderBox();
+    await waitFor(() => expect(country().value).toBe(''));
+    const options = [...country().options];
+    expect(options[0]!.textContent).toBe('+27');
+    expect(options[0]!.selected).toBe(true);
+    expect(options[1]!.textContent).toBe('India (+91)');
+    expect(
+      screen.getByText('Type the full mobile number. You can include or leave out +27, spaces, dashes or a leading 0.'),
+    ).toBeTruthy();
+    type('27 82 123 4567');
+    expect(screen.getByTestId('customer-search-preview').textContent).toBe("We'll search for +27821234567");
+  });
+
+  it('searches with no country, and remembers it with no ISO', async () => {
+    const { storage } = renderBox();
+    await waitFor(() => expect(country().value).toBe(''));
+    type('27821234567');
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByTestId('results-page');
+    expect(mocks.searchCustomers).toHaveBeenCalledWith(
+      { by: 'phone', value: '27821234567' },
+      'tenant-1',
+      'account-1',
+      expect.any(AbortSignal),
+    );
+    expect(JSON.parse(storage.getItem(RECENT_CUSTOMER_SEARCHES_KEY)!)[0]).toMatchObject({ country: '' });
+  });
+
+  it('a recent search made in it runs again with no country', async () => {
+    renderBox(memoryStorage({ [RECENT_CUSTOMER_SEARCHES_KEY]: JSON.stringify([{ e164: '+27821234567', country: '' }]) }));
+    await waitFor(() => expect(country().value).toBe(''));
+    fireEvent.click(screen.getByRole('button', { name: '+27821234567' }));
+    await screen.findByTestId('results-page');
+    expect(mocks.searchCustomers).toHaveBeenCalledWith(
+      { by: 'phone', value: '+27821234567' },
+      'tenant-1',
+      'account-1',
+      expect.any(AbortSignal),
+    );
+  });
+
+  it('a listed country picked over it is sent by its ISO', async () => {
+    renderBox();
+    await waitFor(() => expect(country().value).toBe(''));
+    fireEvent.change(country(), { target: { value: 'GB' } });
+    type('020 7946 0018');
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
+    await screen.findByTestId('results-page');
+    expect(mocks.searchCustomers).toHaveBeenCalledWith(
+      { by: 'phone', value: '020 7946 0018', country: 'GB' },
+      'tenant-1',
+      'account-1',
+      expect.any(AbortSignal),
+    );
   });
 });
 

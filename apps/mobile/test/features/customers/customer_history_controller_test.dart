@@ -71,6 +71,33 @@ void main() {
     expect(api.optionsReads, 2);
   });
 
+  test('an unlisted platform default is its own country, never India; the search sends no country', () async {
+    api.defaultCountryCode = '+27';
+    final c = container();
+    await pumpEventQueue();
+    final country = stateOf(c).country;
+    expect(country.unlisted, isTrue);
+    expect(country.name, '+27');
+    expect(controllerOf(c).countryOptions.first, country);
+    expect(controllerOf(c).countryOptions.skip(1).toList(), searchCountries);
+
+    api.autoSearch = answer();
+    expect(await controllerOf(c).search(' 27 82 123 4567 '), isTrue);
+    expect(api.searches.single.toJson(), {'by': 'phone', 'value': '27 82 123 4567'});
+  });
+
+  test('an unlisted platform default refuses a national number the roster ingest refuses', () async {
+    api.defaultCountryCode = '+27';
+    final c = container();
+    await pumpEventQueue();
+    expect(await controllerOf(c).search('821234567890'), isFalse);
+    expect(api.searches, isEmpty);
+    expect(
+      stateOf(c).searchError,
+      "This doesn't look like a valid +27 number. Check the digits, or pick another country.",
+    );
+  });
+
   test('a country the agent picked is not moved by the platform default', () async {
     api.defaultCountryCode = '+44';
     final c = container();

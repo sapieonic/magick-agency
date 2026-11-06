@@ -22,11 +22,15 @@ async function indexDef(name: string): Promise<string | undefined> {
  * make a scan cheaper than any index. What remains is whether the index is USABLE for the
  * predicate — the property a partial index can silently lack.
  */
-async function planOf(sql: string): Promise<string> {
+async function planOf(sql: string, without: string[] = []): Promise<string> {
   const client: PoolClient = await getTestPool().connect();
   try {
     await client.query('BEGIN');
     await client.query('SET LOCAL enable_seqscan = off');
+    // An equally usable index the test does not ask about, dropped inside the rolled-back
+    // transaction: on a near-empty table the two tie, and the planner's pick follows whatever
+    // rows earlier files left.
+    for (const index of without) await client.query(`DROP INDEX ${index}`);
     const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (COSTS OFF) ${sql}`);
     return rows.map((r) => r['QUERY PLAN']).join('\n');
   } finally {
@@ -42,14 +46,18 @@ describe('0003 — agency attempt and contact indexes', () => {
     expect(await indexDef('idx_agency_attempts_live')).toMatch(
       /ON public\.agency_call_attempts USING btree \(campaign_id\) WHERE \(\(state\)::text <> 'ended'::text\)/,
     );
-    // countLive's own text (AgencyAttemptRepository.countLive).
+    // countLive's own text (AgencyAttemptRepository.countLive). 0005's account-wide live index
+    // carries the same predicate and ties with this one on the test's near-empty table.
+    const tie = ['idx_agency_attempts_account_live'];
     expect(await planOf(
       `SELECT COUNT(*)::text AS n FROM agency_call_attempts WHERE campaign_id = ${CAMPAIGN} AND state <> 'ended'`,
+      tie,
     )).toContain('idx_agency_attempts_live');
     // The reaper's `state = ANY(<live states>)` implies the new predicate too.
     expect(await planOf(
       `SELECT * FROM agency_call_attempts WHERE campaign_id = ${CAMPAIGN}
           AND state = ANY('{queued,dialing,ringing,answered,bridged}'::varchar[])`,
+      tie,
     )).toContain('idx_agency_attempts_live');
   });
 

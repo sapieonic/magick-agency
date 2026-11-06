@@ -445,7 +445,7 @@ export interface CustomerHistorySummaryData {
 const byAtIdDesc = (a: { at: string; id: string }, b: { at: string; id: string }) =>
   (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
 
-/** Every user id the summary names except the callbacks' bookers, for one name lookup. */
+/** Every user id the summary names except the callbacks' bookers (named with their bookings), for one name lookup. */
 export function summaryUserIds(data: Pick<CustomerHistorySummaryData, 'contacts' | 'stats' | 'lastPlaced' | 'liveCalls' | 'dnc'>): string[] {
   const ids = new Set<string>();
   const add = (id: string | null | undefined) => { if (id) ids.add(id); };
@@ -617,7 +617,10 @@ export function buildSummary(data: CustomerHistorySummaryData): CustomerHistoryS
   };
 }
 
-/** How many timeline entries the caller can see (the audit's `result_count`). */
+/**
+ * How many timeline entries the caller can see (the audit's `result_count`, the search's and the
+ * export's): the covered roster rows, the calls, the callbacks booked on them and the DNC entries.
+ */
 export function entryCount(stats: CustomerHistoryCallStatsRow, dncRows: number): number {
   return stats.contact_entries + stats.call_entries + stats.callback_entries + dncRows;
 }

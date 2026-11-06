@@ -5,12 +5,13 @@ soft phone, in one place: who the number belongs to in each campaign, its DNC st
 callbacks and overrides, a call live right now, and one timeline, newest first. Built 2026-11-06
 from the ClickUp task "Customer history: search one phone number and see every interaction across
 the tenant's campaigns", then reviewed and fixed the same day; Manas's five decisions are CH1–CH5
-below, the build's own calls CH6–CH13.
+below, the build's own calls CH6–CH14.
 
 Wire: `packages/contracts/src/api/agency/customer-history.ts`. Number rule:
 `packages/domain/src/customer-search-number.ts` (Dart port in `apps/mobile/packages/agency_wire`),
 held to one table, `packages/contracts/fixtures/agent/customer-search-numbers.json`. Hero fields:
-`packages/domain/src/context-hero.ts`. Migration `0016_customer_history_indexes.sql`. Permission
+`packages/domain/src/context-hero.ts`. Migrations `0016_customer_history_indexes.sql` and
+`0017_customer_history_contacts_index.sql`. Permission
 `agency.customer_history.read`.
 
 ## 1. Decisions
@@ -21,18 +22,19 @@ pending Manas** (built with the recommended option, not yet ratified), **open** 
 | ID | Decision | Status |
 |---|---|---|
 | CH1 | **Everyone can search**: agents, supervisors, account owners, tenant owners. New permission `agency.customer_history.read` floored at `agent`, its own permission so its floor can be raised later without touching the routes. | **Decided** (Manas) |
-| CH2 | **Scoped by account, inside the query.** The visible accounts are every account of the tenant (not `deleted`) for a caller with a tenant-level membership (`account_id IS NULL`), else the accounts of the caller's active account memberships in the tenant. Every read binds `account_id = ANY($visible)`; rows of other accounts are left out entirely, never counted as hidden. Two kinds of row are scoped through what they name: a DNC mark on a campaign is stored with no account (`account_id NULL`, `campaign_id` set, as the dialer's mark writes it), so it belongs to its campaign's account, resolved through `agency_campaigns`; a roster import belongs to its campaign's account (the ingest job's own `account_id` is the uploader's membership, NULL for a tenant-level uploader). Only a DNC entry with neither an account nor a campaign is tenant-wide. The caller's role in an account is the higher of their tenant-level role and their role in that account. | **Decided** (Manas) |
+| CH2 | **Scoped by account, inside the query.** The visible accounts are every account of the tenant (not `deleted`) for a caller with a tenant-level membership (`account_id IS NULL`), else the accounts of the caller's active account memberships in the tenant. Every read binds `account_id = ANY($visible)`; rows of other accounts are left out entirely, never counted as hidden. Two kinds of row are scoped through what they name: a DNC mark on a campaign is stored with no account (`account_id NULL`, `campaign_id` set, as the dialer's mark writes it), so it belongs to its campaign's account, resolved through `agency_campaigns`; a roster import belongs to its campaign's account (the ingest job's own `account_id` is the uploader's membership, NULL for a tenant-level uploader). Only a DNC entry with neither an account nor a campaign is tenant-wide. The caller's role in an account is the higher of their tenant-level role and their role in that account. **The dialer flag is a data boundary**: of those accounts, only the ones where `agency_dialer_enabled` resolves on (each for its own account, as the gate resolves it) are visible, on the search, every timeline page and the export alike, and the audit's `accounts` lists only them; so a tenant-level caller asking in an account with the dialer on never reads one where it is off (which would answer them `403 feature_disabled` themselves). The caller's highest role is worked out from their tenant-level role and the accounts kept, so a role held only in a dropped account grants nothing (CH8). Soft-phone calls of a dropped account are left out with the rest of it, even where `agency_softphone_enabled` is on there: the family is behind the dialer flag. Each request narrows again, so a flag turned off under a live search drops that account from its next page (`resolveDialerViewer`, `api/routes/proxy-agency-customers/shared.ts`; `narrowViewer`, `agency/customer-history/visibility.ts`). | **Decided** (Manas) |
 | CH3 | **v1 searches by phone only; the API and page allow other keys.** The request is `{ by, value }` with `by: 'phone'`; a key-column search is designed in §6, not built. Nothing in the answer assumes the key is a phone number (each contact row carries its own `phone_e164`). | **Decided** (Manas) |
 | CH4 | **Full number only.** A number shorter than the country's national length is refused `invalid_number` / `too_short` ("Enter the full number. Searching by the last few digits isn't supported."). Every read is an exact match on E.164; nothing searches by a number's ending. "Not a valid number" is judged on length (and a leading 0) only: there is no check of a mobile prefix, so a 10-digit Indian number starting `1` is searched. | **Decided** (Manas) |
-| CH5 | **The box explains how to enter a number**: a country picker, always-visible helper text, a live preview ("We'll search for +91 98765 43210"), and refusals that say what to do. The picker starts on the platform default: both clients read it from `GET /proxy/agency/customers/options` (the server's `DEFAULT_PHONE_COUNTRY_CODE`, `+91` unless configured) and use +91 while it loads or when it cannot be read; it never replaces a country the user picked. The preview and the server run ONE rule (`parseSearchNumber`), held to one shared test table; the app's Dart port runs the same table. The server's answer is final and echoed ("Results for +91 98765 43210"). | **Decided** (Manas) |
+| CH5 | **The box explains how to enter a number**: a country picker, always-visible helper text, a live preview ("We'll search for +91 98765 43210"), and refusals that say what to do. The picker starts on the platform default: both clients read it from `GET /proxy/agency/customers/options` (the server's `DEFAULT_PHONE_COUNTRY_CODE`, `+91` unless configured) and use +91 while it loads or when it cannot be read (a failed read is not kept: both read it again when a search box next opens); it never replaces a country the user picked. A default the picker does not list (`27`) is never shown or searched as India: it is an entry of its own, named by its code ("+27", first in the picker), whose numbers typed without `+` follow the roster ingest's own rule for its default exactly (`normalizePhoneToE164`: ten digits take the code, digits already starting with the code are taken whole, 7 to 15 digits in all, a trunk `0` dropped; anything else refused), so the search finds what the ingest and the soft phone stored; the request names it by sending no `country`. The preview and the server run ONE rule (`parseSearchNumber`), held to one shared test table; the app's Dart port runs the same table. The server's answer is final and echoed ("Results for +91 98765 43210"). | **Decided** (Manas) |
 | CH6 | **The number never travels in a URL or a log.** The search is `POST /proxy/agency/customers/search` with the raw text in the body. It answers a `search_id` (`chs_` + 32 hex, 30 minutes, bound to the tenant and the user, held in Redis); the timeline pages and the export name the search by that id. An unknown, expired or other user's id, or one replayed under another tenant, is `404 search_expired`. The console's page is `/agency/customers` for the agency screens and `/dialer/customers` for agents (no number in either URL); the last answer is held in memory, and a reload shows the empty search. Request bodies are never logged: Fastify's own request log is off (`docs/architecture.md` "Observability"), and the error handler logs the URL only. | **default, pending Manas** |
 | CH7 | **A retry chain is one row.** Contacts are grouped by `root_contact_id` (a retry copy and its parent are one person in one campaign chain); the campaign filter takes root campaigns and includes their retries. Several roster rows carrying the number in one campaign (a household line) stay separate rows. | **default, pending Manas** |
-| CH8 | **Visibility follows the screens the caller can already open**, per account: notes, override notes (a campaign dial's, a soft-phone call's DNC and hours overrides) and soft-phone call fields need `agency.campaigns.read` there, or the call is the caller's own (withheld otherwise, with `notes_hidden: true` when any of them existed); the call page (recording, transcript, analysis) needs `agency.supervise` there (`call_page: null` otherwise). Who added a DNC entry and why (`added_by`, `reason`) need `agency.dnc.read` in the account the entry belongs to (a campaign mark: its campaign's account); for a tenant-wide entry, in the caller's highest role in the tenant, as the DNC registry reads it. An agent never sees them. | **default, pending Manas** |
-| CH9 | **Every read uses an index.** Contacts by `idx_agency_contacts_phone (tenant_id, phone_e164)`; attempts by `contact_id` (`uq_agency_attempt_number`); soft-phone calls by the new `idx_agency_manual_calls_destination (tenant_id, account_id, destination_e164, created_at DESC, id DESC)` (migration 0016: an untagged call has no contact), walked once per visible account in keyset order, and by `idx_agency_manual_calls_contact_history`; DNC by `idx_dnc_entries_tenant_phone`; imports by `idx_agency_ingest_jobs_campaign`; campaigns, sessions and media legs by primary key. The server's integration suite EXPLAINs every statement exactly as the repository runs it, on bulk-seeded, analysed tables with no plan type disabled; the migration's own test asserts the soft-phone keyset probe is an index scan directly under the `Limit`, the cursor in the index condition, with no sort. Measured at the spec's scale in §4. | **default, pending Manas** |
+| CH8 | **Visibility follows the screens the caller can already open**, per account: notes, override notes (a campaign dial's, a soft-phone call's DNC and hours overrides) and soft-phone call fields need `agency.campaigns.read` there, or the call is the caller's own (withheld otherwise, with `notes_hidden: true` when any of them existed); the call page (recording, transcript, analysis) needs `agency.supervise` there (`call_page: null` otherwise). Who added a DNC entry and why (`added_by`, `reason`) need `agency.dnc.read` in the account the entry belongs to (a campaign mark: its campaign's account); for a tenant-wide entry, in the caller's highest role in the tenant (counting only the accounts with the dialer on, CH2), as the DNC registry reads it. An agent never sees them. | **default, pending Manas** |
+| CH9 | **Every read uses an index.** Contacts by `idx_agency_contacts_customer_history (tenant_id, account_id, phone_e164, created_at DESC, id DESC) INCLUDE (campaign_id)` (migration 0017), walked once per visible account newest first and stopped at the cap (CH14); attempts by `contact_id` (`uq_agency_attempt_number`); soft-phone calls by the new `idx_agency_manual_calls_destination (tenant_id, account_id, destination_e164, created_at DESC, id DESC)` (migration 0016: an untagged call has no contact), walked once per visible account in keyset order, and by `idx_agency_manual_calls_contact_history`; DNC by `idx_dnc_entries_tenant_phone`; imports by `idx_agency_ingest_jobs_campaign`; campaigns, sessions and media legs by primary key. The server's integration suite EXPLAINs every statement exactly as the repository runs it, on bulk-seeded, analysed tables with no plan type disabled; the migration's own test asserts the soft-phone keyset probe is an index scan directly under the `Limit`, the cursor in the index condition, with no sort. Measured at the spec's scale in §4. | **default, pending Manas** |
 | CH10 | **Every successful search and export is audited** (`platform_audit_log`): `agency_customer_history.searched` and `agency_customer_history.exported`, resource type `customer_history`, `resource_id` the search id, the tenant, the account context (`account_id`, when the request named one), the actor, and `details { by, value (the E.164 searched), result_count (timeline entries visible, unfiltered), accounts (the visible account ids), role (the caller's highest) }`; an export adds `rows`, `filters` (bounded by `boundedSelector`, `api/routes/helpers/audit-bounds.ts`, as the retry routes' audit rows: up to 50 values per list and 200 characters per value, a cut marked `…[N more truncated]`) and `truncated`. A search with zero results is audited. Not audited: refusals (400, 403, 404 `search_expired`, 429), timeline pages, the options read. Best-effort, as every platform audit row: buffered and written in the background, so the answer never waits on it. Not a campaign action, so it is outside the campaign activity filter. | **default, pending Manas** |
 | CH11 | **Rate limit per user**: `AGENCY_CUSTOMER_SEARCH_PER_MINUTE` (default 30) searches and exports a minute per user, its own bucket (`chs:<user id>`) besides the general per-user one. Its 429 carries `retryAfter` and the message "You've searched a lot of numbers in a short time. Try again in N seconds." (the server's own words; the console and the app show the same). Timeline pages and the options read are not charged to it. | **default, pending Manas** |
 | CH12 | **What the schema cannot show, and what is shown instead.** (a) A DNC removal is a hard `DELETE` whose audit row deliberately carries no number, so the timeline shows DNC marks (current entries) only, not removals. (b) No column links a contact to its upload; `upload_file_name` is the campaign's non-dry-run import whose run window covers the contact's `created_at`, else null. (c) Roster replace does not remove contacts (B15: there is no supersede), so no row is ever "Removed from roster"; when supersede lands it marks the row and the history keeps it. (d) Callbacks are `callback_at` on the call that booked them; kept / late / missed is judged by the next call placed to the number (§4). (e) The roster ingest keeps a bracketed trunk `0` (`+44 (0)20 7946 0018` is stored `+4402079460018`) where the search and the soft phone drop it, so such a row is not found; pinned `it.fails` in `search-number-agreement.test.ts`. Fixing the ingest changes what existing rosters dedupe on. Every Indian form agrees. | (b)–(d) **default, pending Manas**; (a) and (e) **open** |
 | CH13 | **The CSV export is the console's only in v1.** The agent app has the search and the page but no export: it has no file-sharing plugin, and adding one is a dependency change that was not made while the app could not be built (no Flutter SDK where it was written). An agent who needs the file uses the console. | **default, pending Manas** |
+| CH14 | **The history covers a number's newest 2,000 roster rows** (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS`), in the summary, the totals and filter options, every timeline source that reaches calls through a contact, the export and the audit's `result_count` alike. A placeholder pasted down a roster (`9999999999` on 200,000 rows) made every search, page and export read every roster row of the number and every one's attempts; now each statement walks each visible account's slice of `idx_agency_contacts_customer_history` newest first and stops at the cap (at most `accounts × 2,000` index entries, then a top-N over those), so a page's cost no longer grows with the number's roster rows. Past the cap the summary carries `contacts_truncated: true` and the clients say "This number is on more than 2,000 roster rows. This history covers the 2,000 most recent." Older rows, and the calls reached only through them (campaign attempts; soft-phone calls logged to them but dialled elsewhere), are left out; soft-phone calls dialled to the number are found by destination and are all included (walked per account on their own index, 0016). Per account rather than one walk filtered by account: an account-scoped caller's walk is bounded too, even when the placeholder's rows sit in accounts they cannot see. | **default, pending Manas** |
 
 ## 2. API
 
@@ -44,7 +46,8 @@ pending Manas** (built with the recommended option, not yet ratified), **open** 
 | `GET /proxy/agency/customers/options` | — | `CustomerSearchOptionsResponse { default_country_code }` (`+91` unless `DEFAULT_PHONE_COUNTRY_CODE` says otherwise): what the box needs before the first search. No number in it; not charged to the search cap, not audited |
 
 Guards, in order: session, tenant context, `agency.customer_history.read`, the dialer flag
-(`agency_dialer_enabled` for the request's tenant and account, `403 feature_disabled`), the
+(`agency_dialer_enabled` for the request's tenant and account, `403 feature_disabled`; the reads
+then cover only the visible accounts where it is on, CH2), the
 per-user search cap (search and export only), then the body (`400 invalid_search_request`), then,
 for a search, the country and the number (`400 invalid_search_request`, `400 invalid_number` with
 `number_error`), for a page or an export the search id (`404 search_expired`), and for a page
@@ -61,7 +64,8 @@ refused, and how:
   characters (`CUSTOMER_FILTER_CODE_MAX`), `limit` 1 to 100, and `from` must be before `to`. The
   clients show their own words for this code, not the validator's.
 - **A country the picker does not list** is `400 invalid_search_request` "country: not a country
-  the search offers", never searched as a number of the default country.
+  the search offers", never searched as a number of the default country. A platform default the
+  picker does not list has no ISO: a request with no `country` searches in it (CH5).
 - **A number the rule refuses** is `400 invalid_number` with the rule's own message and its
   `number_error` (`empty`, `invalid_characters`, `spreadsheet_number`, `too_short`,
   `invalid_for_country`).
@@ -82,13 +86,14 @@ call row is shipped to build it (`loadCustomerSummary`).
 - **contacts**: one row per retry chain (CH7) carrying the number, in the visible accounts:
   the chain's newest campaign and every campaign of the chain, the contact's state there and
   suppressed reason, attempts placed across the chain, the row's hero fields, the owning agent,
-  when it entered the roster and the upload file (CH12 b). Newest first. At most the newest 2,000
-  roster rows are listed (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS`, a guard against a placeholder number
-  pasted down a roster); past that the answer carries `contacts_truncated: true` and the clients
-  say "Showing the 2,000 most recent roster rows for this number. The timeline still includes
-  every call." The timeline pages through every row whatever the cap.
-- **Hero fields** follow the contact panel's rule (`heroColumnsFor`,
-  `packages/domain/src/context-hero.ts`): the campaign's `context_display.hero` columns, matched
+  when it entered the roster and the upload file (CH12 b). Newest first. The history covers the
+  newest 2,000 roster rows of the number (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS`, CH14, a guard
+  against a placeholder number pasted down a roster): the summary, the totals, the timeline and
+  the export alike. Past that the answer carries `contacts_truncated: true` and the clients say
+  "This number is on more than 2,000 roster rows. This history covers the 2,000 most recent."
+- **Hero fields** follow the contact panel's rule, one copy for both (`heroColumnsFor`,
+  `packages/domain/src/context-hero.ts`; the panel's `resolveContextFields` calls it with the
+  last stage off, the agent's own-contacts list reads its first stage, `configuredHeroNames`): the campaign's `context_display.hero` columns, matched
   case-insensitively, at most four; else one column per heuristic group (a name, an amount, an
   identifier, a place); else the first four columns with a value. A column in
   `context_display.hidden` is never chosen. "First" is the order of the columns in the newest
@@ -117,18 +122,21 @@ call row is shipped to build it (`loadCustomerSummary`).
 
 One list, newest first, ordered `at DESC, key DESC` (`key` is `<kind>:<id>`, unique across
 kinds). This is the spec's `created_at DESC, id DESC` carried across sources: `at` is each kind's
-own instant (a callback's is its booking time, not the call's `created_at`). Kinds:
+own instant (a callback's is the `created_at` of the call it was booked on: its booking time is
+rewritten by a re-booking, and a keyset position that moves is an entry skipped or shown twice).
+Kinds:
 
 | Kind | Source | `at` |
 |---|---|---|
 | `campaign_call` | `agency_call_attempts` of the number's contacts; wrap-up redials carry `redial_of_attempt_id`, their place in the chain (`redial_number`) and the chain's first attempt (`chain_attempt_id`). Campaign attempts have no call fields (only soft-phone calls carry `fields`) | `created_at` |
 | `softphone_call` | `agency_manual_calls` to the number (`destination_e164`), tagged or not, plus those logged to the number's contacts | `created_at` |
-| `callback` | a call with `callback_at` (campaign or soft phone) | when booked: `dispositioned_at`, else the call's `ended_at`, else `created_at` |
+| `callback` | a call with `callback_at` (campaign or soft phone) | the call's `created_at`, so it sits under the call it was booked on |
 | `dnc_mark` | `dnc_entries` covering the number that the caller may see (CH2) | `created_at` |
 | `roster_entry` | each contact row (a retry copy included, so the chain's campaigns show) | the row's `created_at` |
 
 **Callback status** (the insights page's 15-minute window): the next call placed to the number
-(either channel) after the booking. Placed by `due_at + 15 min` → `kept`; placed later →
+(either channel) after the booking (its latest: `dispositioned_at`, else the call's `ended_at`,
+else `created_at`; judged per page, never a paging key). Placed by `due_at + 15 min` → `kept`; placed later →
 `late`; none yet: `upcoming` before `due_at`, `due` within 15 minutes after it, `missed` past
 that.
 
@@ -158,13 +166,15 @@ key (campaigns, media legs, names, the upload file) and judges the page's callba
 of the cursor's kind, else takes every row of a kind that sorts before the cursor's and none of a
 kind after it (`sourceBound`), so a page never skips or repeats an entry. A page reads O(page) rows
 per source, plus the index entries of the number's own rows where a source has no index in
-timeline order (campaign attempts: a top-N sort over the number's attempts, found by contact).
+timeline order (campaign attempts: a top-N sort over the attempts of the covered roster rows,
+found by contact; CH14 bounds those rows at 2,000 whatever the number's roster).
 Entries' `at` is sent at millisecond precision; the cursor keeps the microseconds.
 
 **The export** is one keyset page as large as the cap (`AGENCY_CUSTOMER_EXPORT_MAX_ROWS`, default
 10,000): each source reads at most cap + 1 rows, and a further entry sets `X-Export-Truncated:
-true`. Its `result_count` for the audit counts what the search's aggregates count, in one
-count-only statement (`countCustomerEntries`, `CUSTOMER_HISTORY_SQL.entryCount`). CSV columns are British English; a wrap-up redial's "Details" cell reads
+true`. Its `result_count` for the audit is the search's own count, from the same reads
+(`countCustomerEntries`: `callStats` and the DNC entries, run together, summed by `entryCount`).
+CSV columns are British English; a wrap-up redial's "Details" cell reads
 "Wrap-up redial N"; every cell goes through the spreadsheet-formula guard.
 
 **Measured at the spec's scale** (spec §6: a number with 500+ calls across 20 campaigns, first page
@@ -181,7 +191,14 @@ them untagged), a tenant-wide DNC entry and three campaign marks. 30 timed runs 
 
 `EXPLAIN (ANALYZE, BUFFERS)` of every statement on that data, with nothing disabled: no full scan
 of any table; the slowest statements were `callStats` and `uploads` (1.5 ms each) and `lastPlaced`
-(1.0 ms), the rest under 0.7 ms. No index beyond migration 0016 was needed.
+(1.0 ms), the rest under 0.7 ms. No index beyond migration 0016 was needed for this number.
+
+Re-measured after migration 0017 (CH14), same data, 30 runs: a search 16.1 / 19.8 ms (owner) and
+6.6 / 9.2 ms (supervisor), a later page 5.7 / 6.9 and 4.1 / 6.1 ms, no full scan. A placeholder
+on 200,000 roster rows of one account with an attempt each (seeded and rolled back inside one
+transaction): every statement that reaches calls through a contact walked 2,000 roster rows, no
+full scan of `agency_contacts` or `agency_call_attempts`; `summaryContacts` 26.5 ms, `callStats`
+13.2 ms, `lastPlaced` 10.7 ms, the timeline's statements 2.6–8.8 ms each.
 
 The measurement is `apps/server/scripts/bench-customer-history.ts`: opt-in, never run by CI, on its
 own database, which it refuses unless it is `localhost:5436/magick_agency_test_bench` (it drops
@@ -197,7 +214,9 @@ BENCH_RESEED=0 pnpm tsx scripts/bench-customer-history.ts   # time the data alre
 dev stack's superuser, `magick_agency` (`docker/docker-compose.dev.yml`). `BENCH_DB_URL` is the app's connection (default: the dev stack's
 `magick_agency` user), `BENCH_CONTACTS` the tenant's size (default 1,000,000), `BENCH_RUNS` the
 timed runs per caller (default 20), `BENCH_PLANS_FILE` where the full plans go (default the OS
-temporary directory).
+temporary directory), `BENCH_PLACEHOLDER_ROWS` the placeholder's roster rows (default 200,000, rolled
+back after; 0 skips it). After a new migration, `BENCH_RESEED=0` needs `pnpm migrate:up` on the
+bench database first (from `packages/db`, `DATABASE_URL` the bench's).
 
 ## 5. Clients
 
@@ -206,7 +225,8 @@ temporary directory).
   `AgentNav` that opens `/dialer/customers`; both open the Customer history page
   (`/agency/customers`, and `/dialer/customers` for agents). The country picker starts on the
   answer of `GET /proxy/agency/customers/options`, read once per page load
-  (`hooks/useCustomerSearchDefaultCallingCode.ts`). The box shows the helper text and the live
+  (`hooks/useCustomerSearchDefaultCallingCode.ts`); a failed read is not kept, so the next box to
+  mount reads it again. The box shows the helper text and the live
   preview as you type; a refusal that more digits cannot cure (letters, a number Excel shortened,
   too long for the country) shows as typed, while the empty box and "Enter the full number…" show
   only after Search, Enter or leaving the field (`aria-invalid` only then). A search still in
@@ -278,8 +298,15 @@ CREATE TABLE agency_contact_keys (
 ## 7. Tests
 
 - Number rule: `packages/domain/test/unit/agency/customer-search-number.test.ts` and the Dart
-  port's test run the shared table; the server's unit test checks the roster normaliser agrees.
-  Hero fields: `packages/domain/test/unit/agency/context-hero.test.ts`.
+  port's test run the shared table, `packages/contracts/fixtures/agent/customer-search-numbers.json`
+  (its `countries` are the picker's list; each case names a listed `country`, or `"country": null`
+  with the unlisted platform default its `defaultCallingCode` names, `+27`); the console runs every
+  row through the box. The server's unit test (`search-number-agreement.test.ts`) checks the roster
+  normaliser and the soft phone agree on every Indian row, and, for an unlisted default, give
+  exactly the search's answer, refusal included, for the table's rows and every national length
+  under 1-, 2- and 3-digit codes.
+  Hero fields: `packages/domain/test/unit/agency/context-hero.test.ts` (the panel's options
+  included; the panel's own: `apps/console/src/__tests__/utils/agencyContext.test.ts`).
 - Contract: `packages/contracts/test/errors.test.ts` pins the family's error codes and the other
   customer-history literal lists with a hand-written snapshot and a two-way type guard;
   `agent-fixtures.test.ts` holds `fixtures/agent/customer-history.json` (the options answer
@@ -294,6 +321,19 @@ CREATE TABLE agency_contact_keys (
   rules, refusals (a search id replayed under another tenant, a malformed body, an unknown
   country), audit rows with their account context, the rate limit and its message, every route
   checking `agency.customer_history.read`, and an `EXPLAIN` of every statement on analysed bulk
-  data with nothing disabled.
-- Migration: `packages/db/test/integration/db/customer-history-indexes-migration.test.ts`.
+  data with nothing disabled. CH14: the cap test (the summary, the timeline, the totals, the export
+  and the audit count cover the newest 2,000 rows; an attempt on an older row is left out, a
+  soft-phone call dialled to the number is not), and an `EXPLAIN ANALYZE` of every statement that
+  reaches a contact on a placeholder of 5,000 rows among 200,000 (seeded in a rolled-back
+  transaction): the walk is a `Limit` over the index, at most the cap read, no sort of every
+  match. A callback re-booked between two pages appears exactly once (both channels). The booker's
+  name comes with the booking (`latestBookings`), by `namesIn`'s rule. The dialer flag as a data boundary (CH2):
+  `test/unit/agency/customer-history/visibility.test.ts`,
+  `test/unit/api/routes/customer-history-dialer-viewer.test.ts` and, on real Postgres,
+  `test/integration/api/customer-history-dialer-flag.test.ts` (account B's dialer off: a
+  tenant-level owner in A sees only A on every route and in the audit; on: both; off again under a
+  live search: its next page and export drop B).
+- Migrations: `packages/db/test/integration/db/customer-history-indexes-migration.test.ts` (0016)
+  and `customer-history-contacts-index-migration.test.ts` (0017: the definition, the walk stopping
+  at the cap on a 5,000-row placeholder, down then up).
 - Scale: `apps/server/scripts/bench-customer-history.ts` (§4; opt-in, not a test).

@@ -27,6 +27,12 @@
  * a bracketed trunk `(0)` (`+44 (0)20 7946 0018` → `+4402079460018`) where this rule and the soft
  * phone drop it, so a roster row written that way is not found (CH12 e; pinned `it.fails` in
  * `apps/server/test/unit/agency/customer-history/search-number-agreement.test.ts`).
+ *
+ * A platform default the picker does not list (`DEFAULT_PHONE_COUNTRY_CODE=27`) is never read as
+ * India: it becomes a country of its own, named by its calling code ({@link platformDefaultSearchCountry}),
+ * whose national numbers follow the roster ingest's own rule for its default exactly
+ * ({@link parseUnlistedNational}), since no length table exists for it. The request names it by
+ * sending no `country` (absent = the platform default).
  */
 
 import {
@@ -36,7 +42,10 @@ import {
 
 /** A country the picker offers. `nationalLengths` is the national significant number's length range. */
 export interface SearchCountry {
-  /** ISO 3166-1 alpha-2, as the request's `country` carries it. */
+  /**
+   * ISO 3166-1 alpha-2, as the request's `country` carries it; empty for the platform default the
+   * picker does not list (`unlisted`), which the request names by sending no `country`.
+   */
   iso: string;
   name: string;
   /** Digits only, no `+`. */
@@ -47,6 +56,11 @@ export interface SearchCountry {
   numberLabel: string;
   /** Digit groups for the formatted number, keyed by national length. */
   groups: Readonly<Record<number, readonly number[]>>;
+  /**
+   * Only on the platform default's own entry ({@link platformDefaultSearchCountry}) when no listed
+   * country has its calling code: national numbers follow the roster ingest's rule, not a length table.
+   */
+  unlisted?: true;
 }
 
 /**
@@ -92,10 +106,46 @@ const ALLOWED = /^[\d\s+\-().]+$/;
 /** A bracketed trunk `(0)` directly after `+cc` or `00cc`, as the soft phone drops it. */
 const TRUNK_AFTER_COUNTRY_CODE = /^(\s*(?:\+|00)\s*\d{1,3})\s*\(\s*0\s*\)/;
 
-/** The country the picker defaults to: the one whose calling code is the platform default. */
+/** The national length the roster ingest gives the platform default's code (`normalizePhoneToE164`). */
+const INGEST_NATIONAL_LENGTH = 10;
+/** E.164 as the roster ingest checks it: 7 to 15 digits after the `+` (`E164_REGEX`). */
+const INGEST_MIN_DIGITS = 7;
+const INGEST_MAX_DIGITS = 15;
+/** A calling code: one to three digits, never starting with 0. */
+const CALLING_CODE = /^[1-9]\d{0,2}$/;
+
+/** The listed country whose calling code is this one (`91` or `+91`). */
 function searchCountryForCallingCode(callingCode: string): SearchCountry | null {
   const cc = callingCode.replace(/^\+/, '');
   return SEARCH_COUNTRIES.find((c) => c.callingCode === cc) ?? null;
+}
+
+/**
+ * The country the picker defaults to: the listed one with the platform default's calling code;
+ * else, for a calling code the picker does not list, a country of its own named by the code
+ * (`+27`, `unlisted`, no ISO); else (no calling code at all) India.
+ */
+export function platformDefaultSearchCountry(defaultCallingCode: string): SearchCountry {
+  const listed = searchCountryForCallingCode(defaultCallingCode);
+  if (listed) return listed;
+  const cc = defaultCallingCode.trim().replace(/^\+/, '');
+  if (!CALLING_CODE.test(cc)) return SEARCH_COUNTRIES[0]!;
+  return {
+    iso: '',
+    name: `+${cc}`,
+    callingCode: cc,
+    minNationalLength: INGEST_NATIONAL_LENGTH,
+    maxNationalLength: INGEST_NATIONAL_LENGTH,
+    numberLabel: `+${cc} number`,
+    groups: {},
+    unlisted: true,
+  };
+}
+
+/** The picker's countries: the platform default's own entry first when it is unlisted, then the listed ones. */
+export function searchCountryOptions(defaultCallingCode: string): readonly SearchCountry[] {
+  const fallback = platformDefaultSearchCountry(defaultCallingCode);
+  return fallback.unlisted ? [fallback, ...SEARCH_COUNTRIES] : SEARCH_COUNTRIES;
 }
 
 export function searchCountryByIso(iso: string): SearchCountry | null {
@@ -165,11 +215,29 @@ function checkInternational(digits: string): SearchNumberResult {
 }
 
 /**
- * The picked country: the ISO code when the picker lists it, else the country of the platform's
- * default calling code, else India.
+ * The picked country: the ISO code when the picker lists it, else the platform default
+ * ({@link platformDefaultSearchCountry}: the listed country with its calling code, else its own
+ * unlisted entry).
  */
 export function resolveSearchCountry(iso: string | null | undefined, defaultCallingCode: string): SearchCountry {
-  return (iso ? searchCountryByIso(iso) : null) ?? searchCountryForCallingCode(defaultCallingCode) ?? SEARCH_COUNTRIES[0]!;
+  return (iso ? searchCountryByIso(iso) : null) ?? platformDefaultSearchCountry(defaultCallingCode);
+}
+
+/**
+ * National digits (trunk zeros already dropped) under an UNLISTED platform default, by the roster
+ * ingest's own rule for its default (`normalizePhoneToE164`), so the search finds exactly what the
+ * ingest and the soft phone stored, and refuses what they refuse: ten digits take the calling
+ * code; digits that already start with it are taken whole; either way 7 to 15 digits in all.
+ */
+function parseUnlistedNational(national: string, country: SearchCountry): SearchNumberResult {
+  let digits: string;
+  if (national.length === INGEST_NATIONAL_LENGTH) digits = `${country.callingCode}${national}`;
+  else if (national.startsWith(country.callingCode)) digits = national;
+  else return refuse(national.length < INGEST_NATIONAL_LENGTH ? 'too_short' : 'invalid_for_country', country);
+  if (digits.length < INGEST_MIN_DIGITS) return refuse('too_short', country);
+  if (digits.length > INGEST_MAX_DIGITS) return refuse('invalid_for_country', country);
+  const e164 = `+${digits}`;
+  return { ok: true, e164, formatted: formatSearchNumber(e164), countryIso: countryOfInternational(digits)?.iso ?? null };
 }
 
 /** The raw search text and the picked country, as one E.164 number or a refusal. */
@@ -191,6 +259,7 @@ export function parseSearchNumber(raw: string, country: SearchCountry): SearchNu
   // National: a leading trunk 0 dropped.
   const national = digits.replace(/^0+/, '');
   if (national.length === 0) return refuse('too_short', country);
+  if (country.unlisted) return parseUnlistedNational(national, country);
   // The country code typed without `+`: only when the digits are too long to be a national number
   // and what follows the code is a whole national number (`91 9876543210`).
   if (

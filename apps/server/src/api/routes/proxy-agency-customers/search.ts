@@ -10,13 +10,14 @@ import { parseSearchNumber, resolveSearchCountry, searchCountryByIso } from '@ma
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { defaultPhoneCountryCode } from '../../../utils/phone-normalizer.js';
 import { customerSearchRequestSchema, toTimelineFilter } from '../../../agency/customer-history/requests.js';
-import { loadCustomerSummary, loadTimelinePage, resolveViewer } from '../../../agency/customer-history/service.js';
+import { loadCustomerSummary, loadTimelinePage } from '../../../agency/customer-history/service.js';
 import {
   auditCustomerHistory,
   guardCustomerRoute,
   noStore,
   parseBody,
   refusal,
+  resolveDialerViewer,
   type CustomerRoutesDeps,
 } from './shared.js';
 
@@ -40,7 +41,7 @@ export async function registerCustomerSearchRoute(app: FastifyInstance, deps: Cu
 
     const tenantId = request.tenantId!;
     const now = new Date();
-    const viewer = await resolveViewer(request.user!.id, tenantId);
+    const viewer = await resolveDialerViewer(request.user!.id, tenantId);
     const [{ summary, resultCount }, timeline] = await Promise.all([
       loadCustomerSummary(viewer, tenantId, number.e164, now),
       loadTimelinePage(viewer, tenantId, number.e164, toTimelineFilter(undefined), null, CUSTOMER_TIMELINE_PAGE_SIZE, now),

@@ -16,6 +16,16 @@
  *  - a roster import (`agency_ingest_jobs.account_id` is the UPLOADER's membership account, NULL
  *    for a tenant-level member) belongs to its campaign's account.
  *
+ * ── The newest 2,000 roster rows (CH14) ─────────────────────────────────────────
+ * Every read covers the number's newest {@link CUSTOMER_HISTORY_MAX_CONTACT_ROWS} roster rows in
+ * the visible accounts and no others: the summary, the aggregates, every timeline source that
+ * reaches calls through a contact, and the export. They are chosen by an index walk that stops at
+ * the cap ({@link newestContacts}), so a placeholder number pasted down a roster costs at most
+ * `accounts × cap` index entries per statement, never one per roster row. Soft-phone calls dialled
+ * to the number are found by destination whatever their contact, so the cap does not bound them;
+ * they are walked per account on their own index. Past the cap the summary says
+ * `contacts_truncated`.
+ *
  * ── Two kinds of read ───────────────────────────────────────────────────────────
  *  - **The summary** (once, at search time): the roster rows (newest first, capped), the DNC
  *    entries, and SQL aggregates over the number's calls (totals, the newest placed call, what
@@ -30,9 +40,11 @@
  *    its callbacks judged ({@link CUSTOMER_HISTORY_SQL}.`callbackNext`).
  *
  * ── Every read uses an index (CH9) ─────────────────────────────────────────────
- *  - contacts: `idx_agency_contacts_phone (tenant_id, phone_e164)`, an exact match on E.164;
- *  - attempts: `uq_agency_attempt_number (contact_id, attempt_number)` by the number's contacts,
- *    then a top-N sort over that number's attempts (no index orders attempts by contact and time);
+ *  - contacts: `idx_agency_contacts_customer_history (tenant_id, account_id, phone_e164,
+ *    created_at DESC, id DESC) INCLUDE (campaign_id)` (migration 0017), walked once per visible
+ *    account newest first and stopped at the cap, an exact match on E.164;
+ *  - attempts: `uq_agency_attempt_number (contact_id, attempt_number)` by the number's (capped)
+ *    contacts, then a top-N sort over their attempts (no index orders attempts by contact and time);
  *  - soft-phone calls: `idx_agency_manual_calls_destination (tenant_id, account_id,
  *    destination_e164, created_at DESC, id DESC)` (migration 0016) walked once per visible account
  *    in keyset order with the cursor as an index condition (no sort), and
@@ -158,7 +170,10 @@ export interface CustomerHistoryManualCallRow {
   at: string;
 }
 
-/** A callback booked on a call (campaign or soft phone). `at` is when it was booked, microseconds. */
+/**
+ * A callback booked on a call (campaign or soft phone). `at` is the booking call's `created_at`,
+ * microseconds: its timeline position, which a re-booking never moves.
+ */
 export interface CustomerHistoryCallbackRow {
   channel: 'campaign' | 'softphone';
   /** The call it was booked on (attempt or manual call id). */
@@ -169,6 +184,8 @@ export interface CustomerHistoryCallbackRow {
   /** Who booked it: the dispositioning user, else the call's agent. */
   booked_by_user_id: string | null;
   at: string;
+  /** When it was (last) booked: the disposition, else the call's end, else its start; microseconds. Judges it, never orders it. */
+  booked_at: string;
 }
 
 export interface CustomerHistoryDncRow {
@@ -201,7 +218,7 @@ export interface CustomerHistoryUploadRow {
 
 /** The number's calls, aggregated: the summary's totals and filter options, and the audit's count. */
 export interface CustomerHistoryCallStatsRow {
-  /** Roster rows carrying the number (each a `roster_entry`). */
+  /** Roster rows carrying the number that the history covers (each a `roster_entry`; at most the cap). */
   contact_entries: number;
   /** Campaign attempts and soft-phone calls (each a call entry). */
   call_entries: number;
@@ -237,13 +254,19 @@ export interface CustomerHistoryLiveCallRow {
 export interface CustomerHistoryBookingRow {
   contact_id: string;
   booked_by_user_id: string | null;
+  /**
+   * The booker's display name by `namesIn`'s rule (display name, else email; a member of the
+   * tenant, not deleted); NULL when there is no booker or they cannot be named.
+   */
+  booked_by_name: string | null;
 }
 
 /**
- * The most roster rows the SUMMARY lists. A number pasted into a roster thousands of times (a
- * placeholder like `9999999999`) must not turn one search into a list of every copy; newest
- * first, so what is cut is the oldest. The answer says so (`contacts_truncated`). The timeline
- * pages through every row whatever this is.
+ * The most roster rows of one number the history covers (CH14). A number pasted into a roster
+ * thousands of times (a placeholder like `9999999999`) must not make every read of the history
+ * O(roster rows): the summary, the aggregates, the timeline and the export all read the newest
+ * this many rows and no older one (what is cut is the oldest). The summary says so
+ * (`contacts_truncated`).
  */
 export const CUSTOMER_HISTORY_MAX_CONTACT_ROWS = 2000;
 
@@ -260,15 +283,35 @@ const LIVE_STATES_SQL = AGENCY_ATTEMPT_LIVE_STATES
 export const UUID_MAX = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 export const UUID_NIL = '00000000-0000-0000-0000-000000000000';
 
+/**
+ * When a callback was booked: the disposition, else the call's end, else its start. MUTABLE (a
+ * same-code re-disposition or an outcome override rewrites `dispositioned_at`), so it judges the
+ * callback (the next call placed after it) and is never a keyset position: a callback entry is
+ * ordered and paged on its call's `created_at`, which nothing rewrites.
+ */
 const BOOKED = (alias: string) => `COALESCE(${alias}.dispositioned_at, ${alias}.ended_at, ${alias}.created_at)`;
 
-/** A roster row (alias `c`) carrying the number in a visible account. $1 tenant, $2 phone, $3 accounts. */
-const CONTACT_WHERE = 'c.tenant_id = $1::uuid AND c.phone_e164 = $2::text AND c.account_id = ANY($3::uuid[])';
+/**
+ * The number's newest roster rows in the visible accounts, at most `limit` (CH14): each visible
+ * account's slice of `idx_agency_contacts_customer_history` walked newest first and stopped at
+ * `limit` (no sort, the walk ends early), then the newest `limit` of those (a top-N over at most
+ * `accounts × limit` rows). `columns` of contact `c` (default `id`, `campaign_id`, `created_at`,
+ * all in the index; they must include `id` and `created_at`). $1 tenant, $2 phone, $3 accounts
+ * (distinct: the viewer's account map's keys).
+ */
+const newestContacts = (limit: string, columns = 'c.id, c.campaign_id, c.created_at') => `
+      SELECT w.* FROM unnest($3::uuid[]) AS acc(id)
+      CROSS JOIN LATERAL (
+        SELECT ${columns} FROM agency_contacts c
+         WHERE c.tenant_id = $1::uuid AND c.account_id = acc.id AND c.phone_e164 = $2::text
+         ORDER BY c.created_at DESC, c.id DESC
+         LIMIT ${limit}) w
+      ORDER BY w.created_at DESC, w.id DESC
+      LIMIT ${limit}`;
 
-/** The number's roster rows in the visible accounts. $1 tenant, $2 phone, $3 accounts. */
+/** The roster rows the history covers: {@link newestContacts} at the cap. $1 tenant, $2 phone, $3 accounts. */
 const CONTACTS_CTE = `
-    ct AS MATERIALIZED (
-      SELECT c.id, c.campaign_id FROM agency_contacts c WHERE ${CONTACT_WHERE})`;
+    ct AS MATERIALIZED (${newestContacts(String(CUSTOMER_HISTORY_MAX_CONTACT_ROWS))})`;
 
 /**
  * The number's soft-phone calls in the visible accounts: dialled to it, or logged to one of its
@@ -335,17 +378,20 @@ const MANUAL_WALK_TAIL = `
 
 /**
  * One channel's arm of `pageCallbacks`: the calls (alias `x`, read `from`) with a callback booked,
- * at their booking instant, after the cursor, top `n` of their own. `bookedBy`: who booked it.
+ * at their call's `created_at` (immutable: re-booking rewrites `dispositioned_at`, and a keyset
+ * position that moves is an entry skipped or shown twice), after the cursor, top `n` of their
+ * own. `booked_at` is {@link BOOKED}, for judging the callback only. `bookedBy`: who booked it.
  */
 const callbackArm = (channel: 'campaign' | 'softphone', x: string, from: string, bookedBy: string) => `
       (SELECT '${channel}' AS channel, ${x}.id, ${x}.account_id, ${x}.campaign_id, ${x}.callback_at,
-              ${bookedBy} AS booked_by_user_id, ${BOOKED(x)} AS booked, ${keysetAtSql(BOOKED(x))} AS at
+              ${bookedBy} AS booked_by_user_id, ${x}.created_at AS created, ${keysetAtSql(`${x}.created_at`)} AS at,
+              ${keysetAtSql(BOOKED(x))} AS booked_at
        ${from}
          AND ${x}.callback_at IS NOT NULL
-         AND ${keyset(BOOKED(x), `${x}.id`)}
-         AND ${timeWindow(BOOKED(x))}
+         AND ${keyset(`${x}.created_at`, `${x}.id`)}
+         AND ${timeWindow(`${x}.created_at`)}
          AND ${rootOf(`${x}.campaign_id`)}
-       ORDER BY ${BOOKED(x)} DESC, ${x}.id DESC
+       ORDER BY ${x}.created_at DESC, ${x}.id DESC
        LIMIT $6::int)`;
 
 const CONTACT_COLUMNS = `c.id, c.root_contact_id, c.campaign_id, c.account_id, c.phone_e164, c.context, c.state,
@@ -395,18 +441,17 @@ export const CUSTOMER_HISTORY_SQL = {
   // ─── The summary ────────────────────────────────────────────────────────────
 
   /**
-   * The summary's roster rows, newest first, with each row's placed attempts:
-   * `idx_agency_contacts_phone`. $1 tenant, $2 phone, $3 accounts, $4 cap.
+   * The summary's roster rows, newest first, with each row's placed attempts: {@link newestContacts}
+   * (`idx_agency_contacts_customer_history`, each row read by the walk itself). $1 tenant,
+   * $2 phone, $3 accounts, $4 how many (the cap + 1, to know there are more).
    */
   summaryContacts: `
-    SELECT ${CONTACT_COLUMNS},
+    SELECT n.*,
            (SELECT count(*) FROM agency_call_attempts a
-             WHERE a.contact_id = c.id AND a.dialed_at IS NOT NULL
+             WHERE a.contact_id = n.id AND a.dialed_at IS NOT NULL
                AND a.tenant_id = $1::uuid AND a.account_id = ANY($3::uuid[]))::int AS placed
-      FROM agency_contacts c
-     WHERE ${CONTACT_WHERE}
-     ORDER BY c.created_at DESC, c.id DESC
-     LIMIT $4::int`,
+      FROM (${newestContacts('$4::int', CONTACT_COLUMNS)}) n
+     ORDER BY n.created_at DESC, n.id DESC`,
 
   /** The number's calls aggregated (see {@link CustomerHistoryCallStatsRow}). $1 tenant, $2 phone, $3 accounts. */
   callStats: `
@@ -428,21 +473,6 @@ export const CUSTOMER_HISTORY_SQL = {
              SELECT campaign_id AS x FROM ct
              UNION SELECT m.campaign_id ${MANUAL_FROM} AND m.campaign_id IS NOT NULL) u) AS campaign_ids
       FROM calls`,
-
-  /**
-   * How many timeline entries the caller can see (the export audit's `result_count`): roster rows,
-   * calls, the callbacks booked on them and DNC entries, counted only (the sum of `callStats`'s
-   * entry counts and the `dnc` rows). $1 tenant, $2 phone, $3 accounts.
-   */
-  entryCount: `
-    WITH ${CONTACTS_CTE},${MANUAL_CTE},
-    calls AS (
-      SELECT a.callback_at ${ATTEMPTS_FROM}
-      UNION ALL
-      SELECT m.callback_at ${MANUAL_FROM})
-    SELECT ((SELECT count(*) FROM ct)
-          + (SELECT count(*) + count(callback_at) FROM calls)
-          + (SELECT count(*) ${DNC_FROM}))::int AS entries`,
 
   /** The newest placed call to the number, either channel. $1 tenant, $2 phone, $3 accounts. */
   lastPlaced: `
@@ -466,11 +496,18 @@ export const CUSTOMER_HISTORY_SQL = {
     ${MANUAL_FROM} AND m.state IN (${LIVE_STATES_SQL})`,
 
   /**
-   * Who booked each contact's latest callback (campaign or soft phone): by contact id
-   * (`uq_agency_attempt_number`, `idx_agency_manual_calls_contact_history`). $1 tenant,
-   * $2 accounts, $3 contact ids.
+   * Who booked each contact's latest callback (campaign or soft phone), with their name: by
+   * contact id (`uq_agency_attempt_number`, `idx_agency_manual_calls_contact_history`), the
+   * name by primary key under `findDisplayNamesInTenant`'s rule (display name trimmed, else
+   * email; only a user with a membership in the tenant who is not deleted), so the search needs
+   * no second name lookup. $1 tenant, $2 accounts, $3 contact ids.
    */
   latestBookings: `
+    SELECT b.contact_id, b.booked_by_user_id,
+           (SELECT COALESCE(NULLIF(btrim(u.display_name, E' \\t\\n\\r\\f'), ''), u.email) FROM users u
+             WHERE u.id = b.booked_by_user_id AND u.status <> 'deleted'
+               AND EXISTS (SELECT 1 FROM memberships mm WHERE mm.user_id = u.id AND mm.tenant_id = $1::uuid)) AS booked_by_name
+      FROM (
     SELECT DISTINCT ON (x.contact_id) x.contact_id, x.booked_by_user_id FROM (
       SELECT a.contact_id, COALESCE(a.dispositioned_by_user_id, s.agent_user_id) AS booked_by_user_id,
              ${BOOKED('a')} AS booked, a.id
@@ -483,7 +520,7 @@ export const CUSTOMER_HISTORY_SQL = {
         FROM agency_manual_calls m
        WHERE m.contact_id = ANY($3::uuid[]) AND m.callback_at IS NOT NULL
          AND m.tenant_id = $1::uuid AND m.account_id = ANY($2::uuid[])) x
-     ORDER BY x.contact_id, x.booked DESC, x.id DESC`,
+     ORDER BY x.contact_id, x.booked DESC, x.id DESC) b`,
 
   /** Every DNC entry covering the number that the caller may see: `idx_dnc_entries_tenant_phone`. $1 tenant, $2 phone, $3 accounts. */
   dnc: `
@@ -524,15 +561,15 @@ export const CUSTOMER_HISTORY_SQL = {
      ORDER BY a.created_at DESC, a.id DESC`,
 
   /**
-   * Callbacks booked on campaign attempts and on soft-phone calls (`callback`), at their booking
-   * instant: each channel's top `n`, then the top `n` of both. $1–$9.
+   * Callbacks booked on campaign attempts and on soft-phone calls (`callback`), at their call's
+   * `created_at` (see {@link callbackArm}): each channel's top `n`, then the top `n` of both. $1–$9.
    */
   pageCallbacks: `
     WITH ${CONTACTS_CTE},${MANUAL_CTE}
-    SELECT x.channel, x.id, x.account_id, x.campaign_id, x.callback_at, x.booked_by_user_id, x.at
+    SELECT x.channel, x.id, x.account_id, x.campaign_id, x.callback_at, x.booked_by_user_id, x.at, x.booked_at
       FROM (${callbackArm('campaign', 'a', ATTEMPTS_FROM, 'COALESCE(a.dispositioned_by_user_id, s.agent_user_id)')}
       UNION ALL${callbackArm('softphone', 'm', MANUAL_FROM, 'COALESCE(m.dispositioned_by_user_id, m.agent_user_id)')}) x
-     ORDER BY x.booked DESC, x.id DESC
+     ORDER BY x.created DESC, x.id DESC
      LIMIT $6::int`,
 
   /**
@@ -566,17 +603,21 @@ export const CUSTOMER_HISTORY_SQL = {
      ORDER BY d.created_at DESC, d.id DESC
      LIMIT $6::int`,
 
-  /** Roster rows (`roster_entry`): `idx_agency_contacts_phone`. $1–$9. */
+  /**
+   * Roster rows (`roster_entry`): the covered rows ({@link CONTACTS_CTE}, so an entry older than
+   * the cap is never paged to), cut at the cursor, top `n`, then each by primary key. $1–$9.
+   */
   pageContacts: `
+    WITH ${CONTACTS_CTE}
     SELECT ${CONTACT_COLUMNS}
-      FROM agency_contacts c
-      JOIN agency_campaigns g ON g.id = c.campaign_id
-     WHERE ${CONTACT_WHERE}
-       AND ${keyset('c.created_at', 'c.id')}
-       AND ${timeWindow('c.created_at')}
-       AND ${ROOT_OF_G}
-     ORDER BY c.created_at DESC, c.id DESC
-     LIMIT $6::int`,
+      FROM (SELECT ct.id FROM ct
+             WHERE ${keyset('ct.created_at', 'ct.id')}
+               AND ${timeWindow('ct.created_at')}
+               AND ${rootOf('ct.campaign_id')}
+             ORDER BY ct.created_at DESC, ct.id DESC
+             LIMIT $6::int) heads
+      JOIN agency_contacts c ON c.id = heads.id
+     ORDER BY c.created_at DESC, c.id DESC`,
 
   // ─── Enrichment, by primary key ─────────────────────────────────────────────
 
@@ -694,7 +735,7 @@ const campaignRow = (r: CustomerHistoryCampaignRow): CustomerHistoryCampaignRow 
 
 /**
  * An empty visible-account set reads nothing and runs no statement, except where a DNC entry is
- * read (a tenant-wide entry covers every account): the DNC reads and the entry count.
+ * read (a tenant-wide entry covers every account): the DNC reads.
  */
 export class AgencyCustomerHistoryRepository {
   // ─── The summary ──────────────────────────────────────────────────────────
@@ -709,12 +750,6 @@ export class AgencyCustomerHistoryRepository {
     if (noIds(scope.accountIds)) return emptyCallStats();
     const [row] = await read<CustomerHistoryCallStatsRow>(CUSTOMER_HISTORY_SQL.callStats, numberParams(scope, phone));
     return row ?? emptyCallStats();
-  }
-
-  /** How many timeline entries the caller can see; tenant-wide DNC entries even with no visible account. */
-  async entryCount(scope: CustomerHistoryScope, phone: string): Promise<number> {
-    const [row] = await read<{ entries: number }>(CUSTOMER_HISTORY_SQL.entryCount, numberParams(scope, phone));
-    return row?.entries ?? 0;
   }
 
   async lastPlaced(scope: CustomerHistoryScope, phone: string): Promise<CustomerHistoryLastPlacedRow | null> {
@@ -768,7 +803,7 @@ export class AgencyCustomerHistoryRepository {
 
   // ─── Enrichment ───────────────────────────────────────────────────────────
 
-  /** Each booking's next placed call (NULL: none yet), by booking call id. */
+  /** Each booking's next placed call (NULL: none yet), by booking call id; `at` is when it was booked (`booked_at`). */
   async callbackNext(
     scope: CustomerHistoryScope,
     phone: string,

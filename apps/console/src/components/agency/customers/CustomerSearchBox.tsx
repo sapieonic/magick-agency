@@ -2,10 +2,10 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEven
 import { useNavigate } from 'react-router-dom';
 import { Search, X } from 'lucide-react';
 import {
-  SEARCH_COUNTRIES,
   formatSearchNumber,
   parseSearchNumber,
   resolveSearchCountry,
+  searchCountryOptions,
   type SearchCountry,
 } from '@magick-agency/domain/customer-search-number';
 import { CUSTOMER_SEARCH_VALUE_MAX } from '@magick-agency/contracts/api/agency/customer-history';
@@ -128,6 +128,7 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
   const feedbackId = `${id}-feedback`;
 
   const country = useMemo(() => resolveSearchCountry(countryIso, defaultCallingCode), [countryIso, defaultCallingCode]);
+  const countries = useMemo(() => searchCountryOptions(defaultCallingCode), [defaultCallingCode]);
   const feedback = customerSearchFeedback(raw, country, revealed);
   const [helpLine1, helpLine2] = customerSearchHelperLines(country);
 
@@ -139,8 +140,9 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
       setBusy(true);
       setServerError(null);
       try {
+        // The platform default the picker does not list has no ISO: no `country` names it.
         const answer = await searchCustomers(
-          { by: 'phone', value, country: iso },
+          iso ? { by: 'phone', value, country: iso } : { by: 'phone', value },
           tenantId ?? undefined,
           accountId ?? undefined,
           controller.signal,
@@ -222,9 +224,9 @@ export function CustomerSearchBox({ resultsPath, onSearched, autoFocus = false, 
               setServerError(null);
             }}
           >
-            {SEARCH_COUNTRIES.map((c) => (
+            {countries.map((c) => (
               <option key={c.iso} value={c.iso}>
-                {c.name} (+{c.callingCode})
+                {c.unlisted ? c.name : `${c.name} (+${c.callingCode})`}
               </option>
             ))}
           </select>

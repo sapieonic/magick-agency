@@ -107,6 +107,30 @@ void main() {
       expect(find.textContaining('leave out +971,'), findsOneWidget);
     });
 
+    testWidgets('an unlisted platform default: its own entry, first in the sheet, never India', (tester) async {
+      api.defaultCountryCode = '+27';
+      await open(tester);
+      expect(find.text('+27'), findsOneWidget);
+      expect(find.text('IN +91'), findsNothing);
+      expect(find.textContaining('leave out +27,'), findsOneWidget);
+      await tester.enterText(field(), '27 82 123 4567');
+      await tester.pump();
+      expect(find.text("We'll search for +27821234567"), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('customer-country')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('customer-country-default')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('customer-country-IN')));
+      await tester.pumpAndSettle();
+      expect(find.text('IN +91'), findsOneWidget);
+      // The same digits read as an Indian number are refused: India is never the unlisted default's stand-in.
+      expect(find.byKey(const Key('customer-preview')), findsNothing);
+      expect(
+        find.text("This doesn't look like a valid Indian mobile number. Check the digits, or pick another country."),
+        findsOneWidget,
+      );
+    });
+
     testWidgets('the platform default cannot be read: India', (tester) async {
       api.optionsError = const ApiHttpError(status: 500, code: null, message: '', body: {}, requestId: null);
       await open(tester);
@@ -214,11 +238,11 @@ void main() {
       expect(find.textContaining('from october-dues.csv'), findsOneWidget);
     });
 
-    testWidgets('more roster rows than the summary lists: it says so', (tester) async {
+    testWidgets('more roster rows than the history covers: it says so', (tester) async {
       api.autoSearch = answer(contactsTruncated: true);
       await searched(tester);
       expect(
-        find.text('Showing the 2,000 most recent roster rows for this number. The timeline still includes every call.'),
+        find.text('This number is on more than 2,000 roster rows. This history covers the 2,000 most recent.'),
         findsOneWidget,
       );
     });

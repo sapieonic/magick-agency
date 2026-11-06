@@ -68,6 +68,7 @@ const ALL_MIGRATIONS = [
   '0008_wrapup_redial', '0009_contact_assignment', '0010_contact_assignment_index_and_checks',
   '0011_insights_foundation', '0012_insights_rollup', '0013_insights_pacing_history',
   '0014_insights_rollup_first_dials_carrier_errors', '0015_multiple_running_campaigns', '0016_customer_history_indexes',
+  '0017_customer_history_contacts_index',
 ];
 
 /** The CHECKs 0009 adds NOT VALID on the big tables and 0010 validates. */

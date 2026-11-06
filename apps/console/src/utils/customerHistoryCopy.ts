@@ -61,9 +61,12 @@ function customerHistoryRateLimitMessage(kind: CustomerHistoryRequestKind, secon
   }
 }
 
-/** `summary.contacts_truncated`: the server kept the newest 2,000 roster rows (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS`). */
+/**
+ * `summary.contacts_truncated`: the history (summary, timeline and export) covers the number's newest 2,000
+ * roster rows (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS`, CH14).
+ */
 export const CONTACTS_TRUNCATED_NOTE =
-  'Showing the 2,000 most recent roster rows for this number. The timeline still includes every call.';
+  'This number is on more than 2,000 roster rows. This history covers the 2,000 most recent.';
 
 const SEARCH_EXPIRED_MESSAGE = 'This search has expired. Search the number again.';
 

@@ -301,6 +301,15 @@ class CustomerHistoryController extends Notifier<CustomerHistoryState> {
     if (current.hasError && !current.isLoading) ref.invalidate(defaultCode);
   }
 
+  /// The picker's countries, as the sheet opens: the listed ones, after the
+  /// platform default's own entry when no listed country has its calling
+  /// code (`searchCountryOptions`).
+  List<SearchCountry> get countryOptions {
+    final workspace = ref.read(agentWorkspaceProvider);
+    final code = workspace == null ? null : ref.read(customerSearchDefaultCodeProvider(workspace)).value;
+    return searchCountryOptions(code ?? defaultSearchCallingCode);
+  }
+
   void pickCountry(SearchCountry country) {
     _countryPicked = true;
     if (country == state.country && state.searchError == null) return;
@@ -326,7 +335,10 @@ class CustomerHistoryController extends Notifier<CustomerHistoryState> {
     final mine = ++_generation;
     state = state.copyWith(searching: true, clearSearchError: true);
     try {
-      final answer = await _api.search(CustomerSearchRequest(value: raw.trim(), country: country.iso));
+      // The platform default the picker does not list has no ISO: no `country` names it.
+      final answer = await _api.search(
+        CustomerSearchRequest(value: raw.trim(), country: country.unlisted ? null : country.iso),
+      );
       if (!ref.mounted || mine != _generation) return false;
       state = CustomerHistoryState(
         country: country,

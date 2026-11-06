@@ -1,5 +1,5 @@
 {
-  "_comment": "One table for the customer-history search box: packages/domain (console preview and server) and the agent app (agency_wire) both run every case. Regenerate deliberately; review every changed row.",
+  "_comment": "One table for the customer-history search box: packages/domain (console preview and server) and the agent app (agency_wire) both run every case. Regenerate deliberately; review every changed row. A case with \"country\": null runs in the platform default its \"defaultCallingCode\" names (a calling code the picker does not list: national numbers follow the roster ingest's rule for its default).",
   "countries": [
     {
       "iso": "IN",
@@ -412,6 +412,89 @@
       "e164": "+44207946001",
       "formatted": "+44 207 946 001",
       "countryIso": "GB"
+    },
+    {
+      "input": "27 82 123 4567",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "e164": "+27821234567",
+      "formatted": "+27821234567",
+      "countryIso": null
+    },
+    {
+      "input": "27821234567",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "e164": "+27821234567",
+      "formatted": "+27821234567",
+      "countryIso": null
+    },
+    {
+      "input": "+27 82 123 4567",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "e164": "+27821234567",
+      "formatted": "+27821234567",
+      "countryIso": null
+    },
+    {
+      "input": "0027 82 123 4567",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "e164": "+27821234567",
+      "formatted": "+27821234567",
+      "countryIso": null
+    },
+    {
+      "input": "082 123 45678",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "e164": "+278212345678",
+      "formatted": "+278212345678",
+      "countryIso": null
+    },
+    {
+      "input": "27 1234 5678",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "e164": "+272712345678",
+      "formatted": "+272712345678",
+      "countryIso": null
+    },
+    {
+      "input": "0821234567",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "82123",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "27123",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "error": "too_short",
+      "message": "Enter the full number. Searching by the last few digits isn't supported."
+    },
+    {
+      "input": "821234567890",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "error": "invalid_for_country",
+      "message": "This doesn't look like a valid +27 number. Check the digits, or pick another country."
+    },
+    {
+      "input": "2782123456789012",
+      "country": null,
+      "defaultCallingCode": "+27",
+      "error": "invalid_for_country",
+      "message": "This doesn't look like a valid +27 number. Check the digits, or pick another country."
     }
   ]
 }

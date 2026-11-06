@@ -27,6 +27,11 @@
  *    untagged, 30 logged to its contacts), a tenant-wide DNC entry and three campaign marks.
  * Two callers: a tenant-level owner (every account: the soft-phone read walks 10 account slices)
  * and an account-scoped supervisor (one account).
+ *
+ * Then a placeholder (CH14, `BENCH_PLACEHOLDER_ROWS`, default 200,000; 0 skips it): that many roster
+ * rows of `+919999999999` in one account with one placed attempt each, seeded inside a transaction
+ * that is rolled back, and `EXPLAIN ANALYZE` of every statement that reaches calls through the
+ * number's contacts, for the tenant-level owner: each must walk at most the cap of them.
  */
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -42,8 +47,11 @@ const RESEED = process.env['BENCH_RESEED'] !== '0';
 const CONTACTS = Number(process.env['BENCH_CONTACTS'] ?? 1_000_000);
 const RUNS = Number(process.env['BENCH_RUNS'] ?? 20);
 const PLANS_FILE = process.env['BENCH_PLANS_FILE'] ?? join(tmpdir(), 'bench-customer-history-plans.txt');
+const PLACEHOLDER_ROWS = Number(process.env['BENCH_PLACEHOLDER_ROWS'] ?? 200_000);
 
 const NUMBER = '+919876543210';
+/** A placeholder pasted down a roster (CH14): measured on its own, seeded and rolled back. */
+const PLACEHOLDER = '+919999999999';
 const CAMPAIGNS = 20;
 const ACCOUNTS = 10;
 const ATTEMPTS_PER_CONTACT = 26;
@@ -281,7 +289,6 @@ async function measure(): Promise<void> {
   const statements: Array<[string, string, unknown[]]> = [
     ['summaryContacts', CUSTOMER_HISTORY_SQL.summaryContacts, [ids.tenant, NUMBER, accounts, 2001]],
     ['callStats', CUSTOMER_HISTORY_SQL.callStats, [ids.tenant, NUMBER, accounts]],
-    ['entryCount', CUSTOMER_HISTORY_SQL.entryCount, [ids.tenant, NUMBER, accounts]],
     ['lastPlaced', CUSTOMER_HISTORY_SQL.lastPlaced, [ids.tenant, NUMBER, accounts]],
     ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, [ids.tenant, NUMBER, accounts]],
     ['latestBookings', CUSTOMER_HISTORY_SQL.latestBookings, [ids.tenant, accounts, contactIds]],
@@ -311,9 +318,67 @@ async function measure(): Promise<void> {
     console.log(`  ${name.padEnd(24)} ${exec.padStart(8)} ms  ${scan ? `FULL SCAN: ${scan}` : 'no full scan'}${sorts ? `  [${sorts}]` : ''}`);
     plans.push(`── ${name}\n${plan}\n`);
   }
+  if (PLACEHOLDER_ROWS > 0) await measurePlaceholder(getPool(), accounts, CUSTOMER_HISTORY_SQL, UUID_MAX, plans);
   writeFileSync(PLANS_FILE, plans.join('\n'));
   console.log(`\nfull plans: ${PLANS_FILE}`);
   await closePool();
+}
+
+/**
+ * The placeholder's statements on the real data, in one transaction that is rolled back (the
+ * service reads through the pool and cannot see uncommitted rows, so only the statements are timed).
+ */
+async function measurePlaceholder(
+  pool: pg.Pool,
+  accounts: string[],
+  SQL: Record<string, string>,
+  uuidMax: string,
+  plans: string[],
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let t = performance.now();
+    await client.query(`INSERT INTO agency_contacts (id, root_contact_id, tenant_id, account_id, campaign_id, phone_e164, context, created_at)
+      SELECT id, id, $1::uuid, '0b100000-0000-4000-8000-000000000000'::uuid, '0b300000-0000-4000-8000-000000000000'::uuid, $2,
+             '{}'::jsonb, now() - (g || ' seconds')::interval
+        FROM (SELECT gen_random_uuid() AS id, g FROM generate_series(1, $3::int) g) x`, [ids.tenant, PLACEHOLDER, PLACEHOLDER_ROWS]);
+    await client.query(`INSERT INTO agency_call_attempts (tenant_id, account_id, campaign_id, contact_id, attempt_number, caller_id, state,
+                                     outcome, dialed_at, ended_at, callback_at, created_at)
+      SELECT c.tenant_id, c.account_id, c.campaign_id, c.id, 1, '+919000000001', 'ended', 'no_answer', c.created_at, c.created_at,
+             CASE WHEN abs(hashtext(c.id::text)) % 10 = 0 THEN now() END, c.created_at
+        FROM agency_contacts c WHERE c.tenant_id = $1::uuid AND c.phone_e164 = $2`, [ids.tenant, PLACEHOLDER]);
+    await client.query('ANALYZE agency_contacts, agency_call_attempts');
+    console.log(`\nplaceholder ${PLACEHOLDER}: ${PLACEHOLDER_ROWS} roster rows and attempts seeded (rolled back after) in `
+      + `${((performance.now() - t) / 1000).toFixed(1)} s; EXPLAIN (ANALYZE, BUFFERS), tenant-level owner:`);
+    const page = [ids.tenant, PLACEHOLDER, accounts, 'infinity', uuidMax, 51, null, null, null];
+    const calls = [...page, null, null, null, false];
+    const number = [ids.tenant, PLACEHOLDER, accounts];
+    const statements: Array<[string, string, unknown[]]> = [
+      ['summaryContacts', SQL['summaryContacts']!, [...number, 2001]],
+      ['callStats', SQL['callStats']!, number],
+      ['lastPlaced', SQL['lastPlaced']!, number],
+      ['liveCalls', SQL['liveCalls']!, number],
+      ['pageAttempts', SQL['pageAttempts']!, calls],
+      ['pageCallbacks', SQL['pageCallbacks']!, page],
+      ['pageManualCalls', SQL['pageManualCalls']!, calls],
+      ['pageContacts', SQL['pageContacts']!, page],
+    ];
+    for (const [name, sql, params] of statements) {
+      t = performance.now();
+      const { rows } = await client.query<{ 'QUERY PLAN': string }>(`EXPLAIN (ANALYZE, BUFFERS) ${sql}`, params);
+      const plan = rows.map((r) => r['QUERY PLAN']).join('\n');
+      const exec = /Execution Time: ([\d.]+) ms/.exec(plan)?.[1] ?? '?';
+      const walked = [...plan.matchAll(/Scan using idx_agency_contacts_customer_history[^\n]*actual time=[^ ]+ rows=(\d+) loops=(\d+)/g)]
+        .reduce((n, m) => n + Number(m[1]) * Number(m[2]), 0);
+      const scan = /Seq Scan on (agency_contacts|agency_call_attempts)\b/.exec(plan)?.[0];
+      console.log(`  ${name.padEnd(18)} ${exec.padStart(8)} ms  roster rows walked ${walked}${scan ? `  FULL SCAN: ${scan}` : ''}`);
+      plans.push(`── placeholder ${name}\n${plan}\n`);
+    }
+  } finally {
+    await client.query('ROLLBACK');
+    client.release();
+  }
 }
 
 async function main(): Promise<void> {

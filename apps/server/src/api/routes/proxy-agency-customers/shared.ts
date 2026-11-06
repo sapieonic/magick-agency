@@ -1,6 +1,7 @@
 /*
- * What the customer-history routes share: the guard chain after the permission, the refusal
- * bodies, the search lookup and the audit row. Part of `proxy-agency-customers.routes.ts`.
+ * What the customer-history routes share: the guard chain after the permission, the viewer (its
+ * accounts narrowed to the dialer's), the refusal bodies, the search lookup and the audit row.
+ * Part of `proxy-agency-customers.routes.ts`.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { z } from 'zod';
@@ -14,7 +15,9 @@ import type { ChargeUserRateLimit } from '../../middleware/rate-limit.middleware
 import { platformAuditLogger } from '../../../audit/platform/audit-logger.js';
 import { requestAuditActor } from '../../../audit/platform/audit-actor.js';
 import type { CustomerSearchRecord, CustomerSearchStore } from '../../../agency/customer-history/search-store.js';
-import type { CustomerHistoryViewer } from '../../../agency/customer-history/visibility.js';
+import { narrowViewer, type CustomerHistoryViewer } from '../../../agency/customer-history/visibility.js';
+import { resolveViewer } from '../../../agency/customer-history/service.js';
+import { getFeatureFlagService, FLAGS } from '../../../feature-flags/index.js';
 import { dialerEnabled } from '../helpers/dialer-gate.js';
 
 /** What every route of the family is given at registration. */
@@ -57,6 +60,31 @@ export async function guardCustomerRoute(
   if (!(await dialerEnabled(request, reply))) return false;
   if (cap) await cap(request as FastifyRequest & { user: UserRecord }, reply);
   return true;
+}
+
+/**
+ * The accounts of `accountIds` where the dialer flag (`agency_dialer_enabled`) is on, each
+ * resolved as the gate resolves it (account → tenant → global → env → default). The reads run
+ * together, each over the flag service's cached tenant snapshot; a read that fails resolves the
+ * registry default (off), so the account is left out: the boundary fails closed.
+ */
+export async function dialerAccountIds(tenantId: string, accountIds: Iterable<string>): Promise<Set<string>> {
+  const flags = getFeatureFlagService();
+  const ids = [...accountIds];
+  const on = await Promise.all(ids.map((accountId) => flags.isEnabled(FLAGS.agency_dialer_enabled, { tenantId, accountId })));
+  return new Set(ids.filter((_, i) => on[i]));
+}
+
+/**
+ * The caller's viewer for every route of the family: the visible accounts (CH2) narrowed to those
+ * where the dialer flag is on. The flag is a data boundary, not only the request's gate: a
+ * tenant-level caller in an account with the dialer on never reads an account where it is off,
+ * which would answer them `403 feature_disabled` themselves. So the search, every timeline page,
+ * the export and the audit's `accounts` cover the same accounts.
+ */
+export async function resolveDialerViewer(userId: string, tenantId: string): Promise<CustomerHistoryViewer> {
+  const viewer = await resolveViewer(userId, tenantId);
+  return narrowViewer(viewer, await dialerAccountIds(tenantId, viewer.accounts.keys()));
 }
 
 /** What the family's JSON parser hands on for a body that is not JSON (see {@link useFamilyJsonParser}). */

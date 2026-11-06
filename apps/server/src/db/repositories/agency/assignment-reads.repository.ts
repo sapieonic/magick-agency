@@ -10,6 +10,7 @@
  * its attempts to their owners (`last_activity_at`): a supervisor screen, not a hot path.
  */
 import { getPool } from '@magick-agency/db';
+import { configuredHeroNames } from '@magick-agency/domain/context-hero';
 import { keysetAtSql, type AgencyKeysetPosition } from '@magick-agency/domain/keyset-cursor';
 import type { AgencyKeysetPage } from '@magick-agency/contracts/agency';
 import {
@@ -38,12 +39,13 @@ export function emptyBucketCounts(): AgencyContactBucketCounts {
   return Object.fromEntries(AGENCY_MY_CONTACT_BUCKETS.map((b) => [b, 0])) as AgencyContactBucketCounts;
 }
 
-/** The campaign's hero columns, in order, minus hidden ones. */
+/**
+ * The campaign's configured hero columns, in order, minus hidden ones (`configuredHeroNames`,
+ * the hero rule's first stage in `@magick-agency/domain/context-hero`, read without a row). The
+ * own-contacts list matches them to each row in SQL, by exact key, and neither guesses nor caps.
+ */
 export function heroColumns(campaign: Pick<AgencyCampaignRecord, 'context_display'>): string[] {
-  const display = campaign.context_display ?? {};
-  const hidden = new Set(Array.isArray(display.hidden) ? display.hidden : []);
-  const hero = Array.isArray(display.hero) ? display.hero : [];
-  return [...new Set(hero.filter((h): h is string => typeof h === 'string' && h.length > 0 && !hidden.has(h)))];
+  return configuredHeroNames(campaign.context_display);
 }
 
 /** One owner's (or the pool's) contacts, folded. */

@@ -895,10 +895,21 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
   `GET /proxy/agency/customers/options` (the picker's default calling code) in
   `proxy-agency-customers`, permission `agency.customer_history.read` (agent floor), every read
   bound to the caller's accounts in SQL and on an index (migration `0016` adds the soft-phone
-  destination index), a 30-minute search id so the number never reaches a URL, audit rows for every
+  destination index, `0017` the roster index), a 30-minute search id so the number never reaches a URL, audit rows for every
   successful search and export, a per-user cap (30 a minute) whose 429 carries the friendly
   message. Each timeline page is one keyset query per source; the summary is built once from
   aggregates; the export is one page as large as its cap.
+- **PR #50 review fixes**: the history covers a number's newest 2,000 roster rows everywhere
+  (CH14, migration `0017`: a per-account index walk that stops at the cap, so a placeholder on
+  200,000 rows no longer makes every search, page and export read all of them); a callback entry
+  is paged on its call's `created_at`, so a re-booking between pages no longer skips or repeats it;
+  the booker's name comes with the booking (one round trip fewer per search); the export's count is
+  the search's own (`callStats` and the DNC reads), its separate count statement gone. Only accounts
+  with the agency dialer on are read (the flag is a data boundary, CH2); a platform default calling
+  code that is not one of the listed countries is its own picker entry and follows the roster
+  ingest's rule (no longer India); the console re-reads the default after a failed read; the
+  hero-field rule has one copy (`packages/domain/src/context-hero.ts`), the contact panel's
+  differences expressed as options.
 - **Review fixes** (same day): campaign DNC marks scoped through their campaign's account (an
   account-B viewer saw account A's mark before); hero fields by the contact panel's rule
   (`packages/domain/src/context-hero.ts`); the upload file of a tenant-level uploader found; only
@@ -913,9 +924,10 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
 - **Console**: a "Search a number" box in the agency top bar, and a "Search a number" entry in the
   agent navigation; the page at `/agency/customers` and `/dialer/customers`.
 - **Agent app**: the search and the page from My calls, with every console filter (the channel and
-  connected-only on the page, the rest in a sheet) and a copy button; no CSV export (CH13). **Not
-  yet run under Dart or Flutter** (the SDK could not be installed where it was built or fixed); the
-  mobile CI job is the first run.
+  connected-only on the page, the rest in a sheet) and a copy button; no CSV export (CH13). First
+  run under Dart and Flutter by the mobile CI job on PR #50 (`flutter analyze`, `flutter test`,
+  `agency_wire` `dart test` 493, the Android build), green; the review fixes after it are checked by
+  the job's next run.
 - **Found, not fixed** (CH12 e): the roster ingest keeps a bracketed trunk `(0)` that the search
   and the soft phone drop, so `+44 (0)20 …` typed in a roster is not found; pinned `it.fails`.
 - **Not shown** (CH12 a): DNC removals (a hard delete whose audit row carries no number).
@@ -926,10 +938,11 @@ the same day; Manas's decisions CH1–CH5 as asked, the build's own calls CH6–
 
 ## Test counts
 
-Latest run, 2026-11-06, the customer-history branch after its review fixes. The agent app's Dart
-suites did not run (no SDK where it was built or fixed; the mobile CI job is their first run), so
-there is no `apps/mobile` row for this run: the app's last recorded Dart run predates this feature
-(the contact-assignment branch, PR #33), and nothing of customer history's Dart side has run.
+Latest run, 2026-11-06, the customer-history branch after its PR #50 review fixes. The agent app's
+Dart suites cannot run where it was built (no SDK), so there is no `apps/mobile` row for this run.
+The mobile CI job on PR #50 ran them before the review fixes, green (`flutter analyze`,
+`flutter test`, `agency_wire` `dart test` 493, `agent_audio` 124, the Android build); the review
+fixes' Dart changes are checked by its next run.
 
 From inside each package: `pnpm lint` clean in 8 packages; `pnpm test:grafana` 33 and
 `pnpm test:release` 10 pass; `pnpm build` clean; `contracts-literals --check` up to date (51
@@ -937,13 +950,13 @@ vocabularies).
 
 | Package | Unit | Integration |
 |---|---|---|
-| `apps/server` | 8209 passed + 1 expected fail + 42 skipped (410 files) | rest lane 2028 passed + 9 expected fail + 1 skipped (204 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
-| `packages/db` | 428 (25 files) | 571 (55 files) |
-| `apps/console` | 5494 (287 files) | — |
+| `apps/server` | 8231 passed + 1 expected fail + 42 skipped (412 files) | rest lane 2036 passed + 9 expected fail + 1 skipped (205 files + 1 opt-in scale file skipped); wall-clock lane 15 (3 files) |
+| `packages/db` | 428 (25 files) | 574 (56 files) |
+| `apps/console` | 5500 (287 files) | — |
 | `apps/super-admin` | 446 (33 files) | — |
 | `packages/contracts` | 332 (10 files) | — |
 | `packages/web-ui` | 235 (20 files) | — |
-| `packages/domain` | 115 (8 files) | — |
+| `packages/domain` | 137 (8 files) | — |
 | `packages/observability` | 14 (3 files) | — |
 
 Two earlier full rest-lane runs of this work failed `insights-reads.test.ts`'s pace plan case:
@@ -958,6 +971,16 @@ statement, a count-only export statement, the shared audit bounds and dialer gat
 run failed `softphone-policy-routes.test.ts`'s emoji note case only because a stand-in local
 Postgres had a `SQL_ASCII` database (byte lengths, not characters); recreated as UTF8, as the
 Docker image is, the lane above is green.
+
+The counts above are after the PR #50 review fixes. Two plan tests outside this feature tied on
+the test database's near-empty tables and followed whatever rows earlier files left (the file
+order changed with the new files): 0003's `countLive` plan (0005's `idx_agency_attempts_account_live`
+carries the same predicate; the test now drops it inside its rolled-back transaction) and
+`insights-reads.test.ts`'s pace (its contacts side now ANALYZEd inside the rolled-back
+transaction too). The CH14 placeholder seeds (200,000 rows, rolled back) are followed by a
+`VACUUM`, so their dead pages do not size a later file's tables. One run failed
+`local-cache-invalidation.test.ts` and `agent-transition-ordering.test.ts` (Redis and timing;
+green alone and in the full rerun) and one `load/voicelink-media-ws-load.test.ts` (seed 24301).
 
 After the per-campaign connect rate (`by_campaign[]` connect counts and `rates_reportable`,
 `/stats` `first_dials_placed`, the console and the agent app reading them): `pnpm lint` clean in 8

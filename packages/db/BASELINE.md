@@ -783,6 +783,26 @@ CH9).
 **Down** drops the index. **Tests**: `test/integration/db/customer-history-indexes-migration.test.ts`
 (definition, the planner using it for the history's read, down then up) and the down → up suite.
 
+### 0017 — `migrations/0017_customer_history_contacts_index.sql`
+
+Customer history: every read bounded to a number's newest 2,000 roster rows
+(`docs/customer-history.md`, CH9 and CH14).
+
+- **`idx_agency_contacts_customer_history`** `(tenant_id, account_id, phone_e164, created_at DESC,
+  id DESC) INCLUDE (campaign_id)`: a placeholder number pasted down a roster made every
+  customer-history read O(roster rows). The history now covers the newest
+  `CUSTOMER_HISTORY_MAX_CONTACT_ROWS` (2,000) rows of the number in the visible accounts, chosen by
+  walking this index once per account newest first under a `LIMIT` (`newestContacts`,
+  `CUSTOMER_HISTORY_SQL`): the walk stops at the cap, with no sort of every match. `campaign_id` is
+  included so the walk can be answered from the index. `idx_agency_contacts_phone` stays (the DNC
+  sweeps and the dialer's cross-campaign lookups).
+- **Locking.** Plain `CREATE INDEX` (SHARE on `agency_contacts`, one scan); one transaction, at
+  container start.
+
+**Down** drops the index. **Tests**: `test/integration/db/customer-history-contacts-index-migration.test.ts`
+(definition, the walk stopping at the cap on a 5,000-row placeholder among 200,000 rows, down then
+up) and the down → up suite.
+
 ## Tests
 
 `pnpm test:integration` in `packages/db` runs `test/integration/baseline.test.ts` and

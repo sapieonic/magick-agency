@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { contextValueText, heroColumnsFor, isBlankContextValue, MAX_HERO_FIELDS } from '../../../src/context-hero';
+import {
+  configuredHeroNames, contextValueText, heroColumnsFor, isBlankContextValue, MAX_HERO_FIELDS,
+} from '../../../src/context-hero';
 
 /**
  * A roster row's hero columns (`src/context-hero.ts`): the configured heroes, else one per
@@ -35,11 +37,39 @@ describe('heroColumnsFor', () => {
     expect(heroColumnsFor(jsonbOrder, null)).toEqual(['a', 'bb', 'dddd', 'eeeee']);
   });
 
+  it('max: the surface\'s cap, at every stage', () => {
+    expect(heroColumnsFor(row, { hero: ['Name', 'Loan No', 'City'] }, null, { max: 2 })).toEqual(['Name', 'Loan No']);
+    expect(heroColumnsFor(row, {}, ['Name', 'Loan No', 'Id', 'Aadhaar', 'City'], { max: 2 })).toEqual(['Name', 'Loan No']);
+    expect(heroColumnsFor({ a: '1', bb: '2', ccc: '3' }, null, null, { max: 2 })).toEqual(['a', 'bb']);
+  });
+
+  it('fallbackToFirstColumns: false (the contact panel) pins nothing when nothing is configured or guessed', () => {
+    const plain = { a: '1', bb: '2' };
+    expect(heroColumnsFor(plain, null)).toEqual(['a', 'bb']);
+    expect(heroColumnsFor(plain, null, null, { fallbackToFirstColumns: false })).toEqual([]);
+    // Stages 1 and 2 are unchanged by it.
+    expect(heroColumnsFor(row, { hero: ['City'] }, null, { fallbackToFirstColumns: false })).toEqual(['City']);
+    expect(heroColumnsFor({ ...plain, City: 'Pune' }, {}, null, { fallbackToFirstColumns: false })).toEqual(['City']);
+  });
+
   it('values: text as is, scalars stringified, placeholders blank', () => {
     expect(contextValueText(5)).toBe('5');
     expect(contextValueText({ a: 1 })).toBe('{"a":1}');
     expect(contextValueText(null)).toBeNull();
     for (const blank of ['', ' N/A ', '-', 'none', null, undefined]) expect(isBlankContextValue(blank)).toBe(true);
     expect(isBlankContextValue(0)).toBe(false);
+  });
+});
+
+describe('configuredHeroNames (the first stage, without a row)', () => {
+  it('the hero names as written, in order, blank and repeated names dropped, never capped', () => {
+    expect(configuredHeroNames({ hero: ['Name', '', '  ', 7, 'Loan No', 'Name', 'a', 'b', 'c'] }))
+      .toEqual(['Name', 'Loan No', 'a', 'b', 'c']);
+    expect(configuredHeroNames(null)).toEqual([]);
+    expect(configuredHeroNames({ hero: 'Name' })).toEqual([]);
+  });
+
+  it('minus hidden, matched case-insensitively: a hidden column is never a hero', () => {
+    expect(configuredHeroNames({ hero: ['Name', 'Aadhaar', 'City'], hidden: [' aadhaar ', 'CITY'] })).toEqual(['Name']);
   });
 });

@@ -107,8 +107,8 @@ class CustomerHistoryScreen extends ConsumerWidget {
                 _Contact(c, showAccount: showAccounts),
                 const SizedBox(height: Space.sm),
               ],
-              // More roster rows than the summary lists: the oldest were left out
-              // (the timeline still has every one).
+              // More roster rows than the history covers: the oldest were left out
+              // of the summary, the timeline and the counts alike (CH14).
               if (summary.contactsTruncated)
                 Text(
                   CustomerHistoryCopy.contactsTruncated,

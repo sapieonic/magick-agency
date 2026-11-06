@@ -57,7 +57,7 @@ abstract final class CustomerHistoryCopy {
   static const pool = 'Shared pool';
   static String assignedTo(String name) => 'Assigned to $name';
   static const contactsTruncated =
-      'Showing the 2,000 most recent roster rows for this number. The timeline still includes every call.';
+      'This number is on more than 2,000 roster rows. This history covers the 2,000 most recent.';
   static String followUp(String when) => 'Follow-up $when';
   static const noFollowUp = 'No follow-up scheduled';
 

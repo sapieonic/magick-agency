@@ -163,7 +163,7 @@ describe('the header and the summary', () => {
     answer.summary.contacts_truncated = true;
     renderPage(answer);
     expect(screen.getByTestId('customer-contacts-truncated').textContent).toBe(
-      'Showing the 2,000 most recent roster rows for this number. The timeline still includes every call.',
+      'This number is on more than 2,000 roster rows. This history covers the 2,000 most recent.',
     );
   });
 

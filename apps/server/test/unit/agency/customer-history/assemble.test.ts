@@ -96,7 +96,7 @@ function manual(id: string, createdIso: string, over: Partial<CustomerHistoryMan
 function callback(id: string, bookedIso: string, over: Partial<CustomerHistoryCallbackRow> = {}): CustomerHistoryCallbackRow {
   return {
     channel: 'campaign', id, account_id: ACC_A, campaign_id: RETRY, callback_at: new Date('2026-11-07T05:30:00Z'),
-    booked_by_user_id: OTHER, at: micro(bookedIso), ...over,
+    booked_by_user_id: OTHER, at: micro(bookedIso), booked_at: micro(bookedIso), ...over,
   };
 }
 

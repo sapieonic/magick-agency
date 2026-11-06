@@ -51,7 +51,10 @@ export interface CustomerSearchRequest {
   by: CustomerSearchBy;
   /** The raw text as typed: `098765-43210`, `+91 98765 43210`, … At most 64 characters. */
   value: string;
-  /** ISO 3166-1 alpha-2 of the country picked next to the box; absent = the platform default. */
+  /**
+   * ISO 3166-1 alpha-2 of the country picked next to the box; absent = the platform default (the
+   * only way to name a default the picker does not list, which has no ISO entry).
+   */
   country?: string;
 }
 
@@ -59,7 +62,8 @@ export interface CustomerSearchRequest {
  * `GET /proxy/agency/customers/options`: what the search box needs before the first search.
  * `default_country_code` is the platform default (`DEFAULT_PHONE_COUNTRY_CODE`, `+91` unless
  * configured), in the soft phone bootstrap's form (`+` and digits); the country picker starts on
- * the listed country with that calling code (`resolveSearchCountry`).
+ * the listed country with that calling code, else on an entry of its own named by the code
+ * (`resolveSearchCountry`).
  */
 export interface CustomerSearchOptionsResponse {
   default_country_code: string;
@@ -302,9 +306,11 @@ export interface CustomerHistorySummary {
   /** Newest first, at most 2,000 roster rows (`CUSTOMER_HISTORY_MAX_CONTACT_ROWS` on the server). */
   contacts: CustomerHistoryContact[];
   /**
-   * Present, and `true`, only when the number is on more roster rows than `contacts` lists (a
-   * placeholder number pasted into rosters thousands of times): the oldest were left out of the
-   * summary. The timeline still pages through every row.
+   * Present, and `true`, only when the number is on more than 2,000 roster rows in the accounts the
+   * caller can see (a placeholder number pasted into rosters thousands of times): this history
+   * covers the 2,000 most recent of them. The summary, the totals, the timeline and the export
+   * alike leave out the older rows and the calls reached only through them (campaign calls are);
+   * every soft-phone call dialled to the number is still included.
    */
   contacts_truncated?: true;
   totals: CustomerHistoryTotals;
@@ -388,7 +394,10 @@ export interface CustomerTimelineSoftphoneCall extends CustomerTimelineBase {
 export type CustomerCallbackStatus = 'kept' | 'late' | 'missed' | 'upcoming' | 'due';
 export const CUSTOMER_CALLBACK_STATUSES = ['kept', 'late', 'missed', 'upcoming', 'due'] as const;
 
-/** A callback booked on a call. `at` is when it was booked. */
+/**
+ * A callback booked on a call. `at` is the start of the call it was booked on (its place in the
+ * timeline, which re-booking never moves); `due_at` is when the callback is due.
+ */
 export interface CustomerTimelineCallback extends CustomerTimelineBase {
   kind: 'callback';
   /** The call it was booked on. */

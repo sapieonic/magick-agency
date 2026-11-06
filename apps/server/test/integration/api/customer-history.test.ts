@@ -45,6 +45,7 @@ import {
   type Actor, type LoadApp, type TenantFloor,
 } from '../load/load-harness.js';
 import {
+  agencyAttemptRepository,
   agencyCustomerHistoryRepository,
   CUSTOMER_HISTORY_MAX_CONTACT_ROWS,
   CUSTOMER_HISTORY_SQL,
@@ -52,6 +53,10 @@ import {
   type CustomerHistoryPageQuery,
   type CustomerHistoryScope,
 } from '../../../src/db/repositories/agency.repository.js';
+import { countCustomerEntries, resolveViewer } from '../../../src/agency/customer-history/service.js';
+import { entryCount } from '../../../src/agency/customer-history/assemble.js';
+import { buildViewer } from '../../../src/agency/customer-history/visibility.js';
+import { namesIn } from '../../../src/agency/insights/shared.js';
 
 const SEARCH_MAX = 40;
 const EXPORT_MAX = 15;
@@ -61,8 +66,10 @@ const TYPED = '098765-43210';
 const NUMBER_LIVE = '+919811111111';
 /** Entries sharing one millisecond, apart by microseconds, across kinds. */
 const NUMBER_MICRO = '+919822222222';
-/** On more roster rows than the summary lists. */
+/** On more roster rows than the history covers. */
 const NUMBER_CAP = '+919833333333';
+/** A placeholder on 5,000 roster rows of one account, for the bounded walk's plan (CH14). */
+const NUMBER_PLACEHOLDER = '+919999999999';
 
 let loaded: LoadApp;
 let floors: TenantFloor[];
@@ -332,7 +339,7 @@ beforeAll(async () => {
   await dncRow({ id: ids.dncMicro, tenant_id: floor.tenant, account_id: null, campaign_id: C0, phone_e164: NUMBER_MICRO, source: 'agent',
     created_at: micro(3) });
 
-  // ── A placeholder number on more roster rows than the summary lists ──
+  // ── A placeholder number on more roster rows than the history covers ──
   await q(`INSERT INTO agency_contacts (tenant_id, account_id, campaign_id, phone_e164, context, created_at)
            SELECT $1, $2, $3, $4, '{}'::jsonb, $5::timestamptz + (g || ' seconds')::interval FROM generate_series(1, $6::int) g`,
     [floor.tenant, floor.account, C0, NUMBER_CAP, at(13 * DAY), CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 2]);
@@ -347,8 +354,9 @@ function expectedA(): string[] {
   const shared = ids.shared.map((id) => `campaign_call:${id}`).sort().reverse();
   return [
     `softphone_call:${ids.m1}`,
-    `callback:${ids.a3}`,
+    // The callback sits at its call's created_at (CH14 keyset), after the call: `campaign_call` > `callback`.
     `campaign_call:${ids.a3}`,
+    `callback:${ids.a3}`,
     `softphone_call:${ids.m2}`,
     `roster_entry:${ids.cAr}`,
     `dnc_mark:${ids.dncTenant}`,
@@ -446,16 +454,17 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
     expect(ab.agent_ids).toContain(owner.id);
   });
 
-  it('the export\'s entry count: the aggregates\' entry counts and the DNC rows, in one statement', async () => {
-    const apart = async (scope: CustomerHistoryScope) => {
-      const s = await repo.callStats(scope, NUMBER);
-      return s.contact_entries + s.call_entries + s.callback_entries + (await repo.dncForNumber(scope, NUMBER)).length;
-    };
-    const none = { tenantId: floor.tenant, accountIds: [] };
-    for (const scope of [onlyA(), both(), none]) expect(await repo.entryCount(scope, NUMBER)).toBe(await apart(scope));
-    expect(await repo.entryCount(onlyA(), NUMBER)).toBe(ENTRIES_ONLY_A);
+  it('the export\'s entry count is the search\'s: the aggregates\' entry counts and the DNC rows', async () => {
+    const apart = async (scope: CustomerHistoryScope) =>
+      entryCount(await repo.callStats(scope, NUMBER), (await repo.dncForNumber(scope, NUMBER)).length);
+    const viewerA = await resolveViewer(sup().id, floor.tenant);
+    const viewerAll = await resolveViewer(owner.id, floor.tenant);
+    expect(await countCustomerEntries(viewerA, floor.tenant, NUMBER)).toBe(await apart(onlyA()));
+    expect(await countCustomerEntries(viewerA, floor.tenant, NUMBER)).toBe(ENTRIES_ONLY_A);
+    expect(await countCustomerEntries(viewerAll, floor.tenant, NUMBER)).toBe(await apart(both()));
+    expect(await countCustomerEntries(viewerAll, floor.tenant, NUMBER)).toBe(ENTRIES_ONLY_A + accountBEntries().length);
     // No visible account: the tenant-wide DNC entry only.
-    expect(await repo.entryCount(none, NUMBER)).toBe(1);
+    expect(await countCustomerEntries(buildViewer(sup().id, [], []), floor.tenant, NUMBER)).toBe(1);
   });
 
   it('the newest placed call and the live calls', async () => {
@@ -464,7 +473,8 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
   });
 
   it('who booked a contact\'s callback', async () => {
-    expect(await repo.latestBookings(onlyA(), [ids.cAr])).toEqual([{ contact_id: ids.cAr, booked_by_user_id: agent(0).id }]);
+    expect(await repo.latestBookings(onlyA(), [ids.cAr]))
+      .toEqual([{ contact_id: ids.cAr, booked_by_user_id: agent(0).id, booked_by_name: 'agent 0.0' }]);
     // Asked for B's contact under A's scope: nothing.
     await q(`UPDATE agency_call_attempts SET callback_at = now() WHERE id = $1`, [ids.bA1]);
     try {
@@ -472,6 +482,36 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
       expect(await repo.latestBookings(both(), [ids.cB])).toHaveLength(1);
     } finally {
       await q(`UPDATE agency_call_attempts SET callback_at = NULL WHERE id = $1`, [ids.bA1]);
+    }
+  });
+
+  it('the booker\'s name comes with the booking, by namesIn\'s rule: display name, else email; never a deleted user or a stranger to the tenant', async () => {
+    const booker = async (userId: string) => {
+      await q('UPDATE agency_call_attempts SET dispositioned_by_user_id = $2 WHERE id = $1', [ids.a3, userId]);
+      return (await repo.latestBookings(onlyA(), [ids.cAr]))[0];
+    };
+    const blank = await user('agent', floor.account, 'Blank');
+    await q(`UPDATE users SET display_name = '  ' WHERE id = $1`, [blank.id]);
+    const gone = await user('agent', floor.account, 'Gone');
+    await q(`UPDATE users SET status = 'deleted' WHERE id = $1`, [gone.id]);
+    const stranger = randomUUID();
+    await q(`INSERT INTO users (id, firebase_uid, email, display_name, status) VALUES ($1, $2, $3, 'Stranger', 'active')`,
+      [stranger, `ch-stranger-${stranger.slice(0, 8)}`, `stranger-${stranger.slice(0, 8)}@load.example.com`]);
+    await q(`INSERT INTO memberships (id, user_id, tenant_id, account_id, role, status) VALUES ($1, $2, $3, $4, 'agent', 'active')`,
+      [randomUUID(), stranger, other.tenant, other.account]);
+    try {
+      expect(await booker(blank.id)).toMatchObject({ booked_by_user_id: blank.id, booked_by_name: `${blank.uid}@load.example.com` });
+      expect(await booker(gone.id)).toMatchObject({ booked_by_user_id: gone.id, booked_by_name: null });
+      expect(await booker(stranger)).toMatchObject({ booked_by_user_id: stranger, booked_by_name: null });
+      // The same answers as the name lookup the rest of the search uses.
+      expect(await namesIn([blank.id, gone.id, stranger], floor.tenant)).toEqual(new Map([[blank.id, `${blank.uid}@load.example.com`]]));
+      // The search names the booker from the booking alone (no second lookup).
+      const body = await search(sup());
+      expect(body.summary.open.callbacks[0].booked_by).toEqual({ user_id: stranger, name: null });
+      await booker(blank.id);
+      expect((await search(sup())).summary.open.callbacks[0].booked_by).toEqual({ user_id: blank.id, name: `${blank.uid}@load.example.com` });
+    } finally {
+      await q('UPDATE agency_call_attempts SET dispositioned_by_user_id = $2 WHERE id = $1', [ids.a3, agent(0).id]);
     }
   });
 
@@ -517,7 +557,7 @@ describe('every read binds the visible accounts in SQL (CH2)', () => {
       expect(callbacks).not.toContain(stray);
       expect(callbacks).not.toContain(strayCall);
       expect(await repo.callStats(onlyA(), NUMBER)).toMatchObject({ call_entries: 11, callback_entries: 1, calls: 11 });
-      expect(await repo.entryCount(onlyA(), NUMBER)).toBe(ENTRIES_ONLY_A);
+      expect(await countCustomerEntries(await resolveViewer(sup().id, floor.tenant), floor.tenant, NUMBER)).toBe(ENTRIES_ONLY_A);
       expect((await repo.lastPlaced(onlyA(), NUMBER))?.id).toBe(ids.m1);
       expect(await repo.latestBookings(onlyA(), [ids.cA])).toEqual([]);
       const booking = [{ id: ids.a3, at: at(26 * DAY).toISOString().replace('Z', '000Z') }];
@@ -636,24 +676,61 @@ describe('the summary (§3)', () => {
     expect(body.summary.totals).toMatchObject({ calls: 0, last_contacted: null });
   });
 
-  it('the roster-row cap: the summary reads and lists the newest 2,000 and says so; the timeline and the count have every row', async () => {
+  it('the roster-row cap (CH14): the summary, the timeline, the aggregates and the count cover the newest 2,000 rows; a call dialled to the number is found whatever its contact', async () => {
+    const C0 = floor.campaigns[0]!;
+    const byAge = (dir: 'ASC' | 'DESC') => q(
+      `SELECT id FROM agency_contacts WHERE tenant_id = $1 AND phone_e164 = $2 ORDER BY created_at ${dir}, id ${dir} LIMIT 2`,
+      [floor.tenant, NUMBER_CAP]);
+    const oldest = (await byAge('ASC')).rows.map((r) => r.id as string);
+    const newest = (await byAge('DESC')).rows[0]!.id as string;
+    // A call reached only through the oldest row (beyond the cap), one on the newest row, and a
+    // soft-phone call logged to the oldest row but dialled to the number (found by destination).
+    const beyond = randomUUID();
+    const covered = randomUUID();
+    const dialled = randomUUID();
+    await attempt({ id: beyond, campaign_id: C0, contact_id: oldest[0], attempt_number: 1, outcome: 'no_answer',
+      dialed_at: at(14 * DAY), ended_at: at(14 * DAY), created_at: at(14 * DAY) });
+    await attempt({ id: covered, campaign_id: C0, contact_id: newest, attempt_number: 1, outcome: 'no_answer',
+      dialed_at: at(14 * DAY + 1000), ended_at: at(14 * DAY + 1000), created_at: at(14 * DAY + 1000) });
+    await manualCall({ id: dialled, session_id: await softphoneSession(floor.account, agent(0).id), agent_user_id: agent(0).id,
+      campaign_id: C0, contact_id: oldest[0], destination_e164: NUMBER_CAP, outcome: 'busy',
+      dialed_at: at(14 * DAY + 2000), ended_at: at(14 * DAY + 2000), settled_at: at(14 * DAY + 2000), created_at: at(14 * DAY + 2000) });
     const read = vi.spyOn(agencyCustomerHistoryRepository, 'summaryContacts');
-    let body;
     try {
-      body = await search(sup(), '98333 33333');
-      // The SQL itself is cut (one row past the cap, to know there are more), not the answer only.
-      expect(read).toHaveBeenCalledWith(expect.anything(), NUMBER_CAP, CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1);
-      expect((await read.mock.results[0]!.value).length).toBe(CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1);
+      let body;
+      try {
+        body = await search(sup(), '98333 33333');
+        // The SQL itself is cut (one row past the cap, to know there are more), not the answer only.
+        expect(read).toHaveBeenCalledWith(expect.anything(), NUMBER_CAP, CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1);
+        expect((await read.mock.results[0]!.value).length).toBe(CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1);
+      } finally {
+        read.mockRestore();
+      }
+      expect(body.summary.contacts).toHaveLength(CUSTOMER_HISTORY_MAX_CONTACT_ROWS);
+      expect(body.summary.contacts_truncated).toBe(true);
+      // Two placed calls covered: the newest row's attempt and the dialled soft-phone call.
+      expect(body.summary.totals).toMatchObject({ calls: 2 });
+      const keys = await allPages(sup(), body.search_id, 100);
+      expect(new Set(keys).size).toBe(keys.length);
+      expect(keys.filter((k) => k.startsWith('roster_entry:'))).toHaveLength(CUSTOMER_HISTORY_MAX_CONTACT_ROWS);
+      for (const id of oldest) expect(keys).not.toContain(`roster_entry:${id}`);
+      expect(keys).not.toContain(`campaign_call:${beyond}`);
+      expect(keys).toContain(`campaign_call:${covered}`);
+      expect(keys).toContain(`softphone_call:${dialled}`);
+      expect(keys).toHaveLength(CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 2);
+      // The export reads the same rows and counts the same.
+      const exp = await post('export', sup(), { search_id: body.search_id, filters: { channel: 'campaign' } });
+      expect(exp.headers['x-export-rows']).toBe('1');
+      await drainAudits();
+      const { rows } = await q(`SELECT action, details FROM platform_audit_log WHERE resource_id = $1 ORDER BY action DESC`, [body.search_id]);
+      expect(rows.map((r) => [r.action, r.details.result_count])).toEqual([
+        ['agency_customer_history.searched', CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 2],
+        ['agency_customer_history.exported', CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 2],
+      ]);
     } finally {
-      read.mockRestore();
+      await q('DELETE FROM agency_call_attempts WHERE id = ANY($1::uuid[])', [[beyond, covered]]);
+      await q('DELETE FROM agency_manual_calls WHERE id = $1', [dialled]);
     }
-    expect(body.summary.contacts).toHaveLength(CUSTOMER_HISTORY_MAX_CONTACT_ROWS);
-    expect(body.summary.contacts_truncated).toBe(true);
-    expect(body.timeline.entries).toHaveLength(50);
-    expect(body.timeline.next_cursor).not.toBeNull();
-    await drainAudits();
-    const { rows } = await q(`SELECT details FROM platform_audit_log WHERE resource_id = $1`, [body.search_id]);
-    expect(rows[0]!.details).toMatchObject({ result_count: CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 2 });
   });
 });
 
@@ -696,13 +773,59 @@ describe('the timeline (§4)', () => {
       [micro(3), `campaign_call:${ids.mu[2]}`],
       [micro(2), `softphone_call:${ids.mMicro}`],
       [micro(2), `campaign_call:${ids.mu[1]}`],
-      [micro(2), `callback:${ids.muCb}`],
       [micro(1), `roster_entry:${ids.cMicro}`],
       [micro(1), ...[`campaign_call:${ids.mu[0]}`, `campaign_call:${ids.muCb}`].sort().reverse()],
+      // Booked at micro(2), but paged at its call's created_at (micro(1)), which a re-booking never moves.
+      [micro(1), `callback:${ids.muCb}`],
     ].flatMap(([, ...keys]) => keys);
     expect(body.timeline.entries.map((e: { key: string }) => e.key)).toEqual(expected);
     for (const limit of [1, 2, 3]) {
       expect(await allPages(sup(), body.search_id, limit), `limit ${limit}`).toEqual(expected);
+    }
+  });
+
+  it('a callback re-booked between pages (the same outcome, a new time) is shown exactly once, on either channel', async () => {
+    const body = await search(sup());
+    const m2Before = (await q('SELECT callback_at, dispositioned_at FROM agency_manual_calls WHERE id = $1', [ids.m2])).rows[0];
+    const a3Before = (await q(`SELECT callback_at, dispositioned_at, dispositioned_by_user_id, dispositioned_on_behalf
+                                 FROM agency_call_attempts WHERE id = $1`, [ids.a3])).rows[0];
+    // A soft-phone callback too, booked on m2 a minute after it started.
+    await q('UPDATE agency_manual_calls SET callback_at = $2, dispositioned_at = $3 WHERE id = $1',
+      [ids.m2, new Date(Date.now() + DAY), at(15 * DAY + 60_000)]);
+    try {
+      const first = await post('timeline', sup(), { search_id: body.search_id, limit: 1 });
+      const page1 = first.json();
+      expect(page1.entries.map((e: { key: string }) => e.key)).toEqual([`softphone_call:${ids.m1}`]);
+      // Both re-booked after page 1 was read: dispositioned_at moves to now, above the cursor.
+      const rebooked = await agencyAttemptRepository.recordDisposition({
+        attemptId: ids.a3, dispositionCode: 'callback', notes: null, callbackAt: new Date(Date.now() + 2 * DAY),
+        actorUserId: agent(0).id, onBehalf: false,
+      });
+      expect(rebooked!.dispositioned_at!.getTime()).toBeGreaterThan(at(25 * DAY).getTime());
+      // As the soft phone's same-code re-disposition writes it (`recordDisposition` in manual-call.repository.ts).
+      await q('UPDATE agency_manual_calls SET callback_at = $2, dispositioned_at = now() WHERE id = $1', [ids.m2, new Date(Date.now() + 2 * DAY)]);
+      const keys: string[] = page1.entries.map((e: { key: string }) => e.key);
+      let cursor: string | null = page1.next_cursor;
+      for (let i = 0; cursor && i < 100; i++) {
+        const res = await post('timeline', sup(), { search_id: body.search_id, limit: 1, cursor });
+        expect(res.statusCode, res.body).toBe(200);
+        keys.push(...res.json().entries.map((e: { key: string }) => e.key));
+        cursor = res.json().next_cursor;
+      }
+      expect(keys.filter((k) => k === `callback:${ids.a3}`)).toHaveLength(1);
+      expect(keys.filter((k) => k === `callback:${ids.m2}`)).toHaveLength(1);
+      expect(new Set(keys).size).toBe(keys.length);
+      expect(keys).toHaveLength(expectedA().length + 1);
+      // Judged on the new booking: the next call placed after it is none yet, and the time is ahead.
+      const page = await post('timeline', sup(), { search_id: body.search_id, limit: 100 });
+      const cb = page.json().entries.find((e: { key: string }) => e.key === `callback:${ids.a3}`);
+      expect(cb).toMatchObject({ at: at(20 * DAY).toISOString(), status: 'upcoming', dialled_at: null });
+    } finally {
+      await q('UPDATE agency_manual_calls SET callback_at = $2, dispositioned_at = $3 WHERE id = $1',
+        [ids.m2, m2Before.callback_at, m2Before.dispositioned_at]);
+      await q(`UPDATE agency_call_attempts SET callback_at = $2, dispositioned_at = $3, dispositioned_by_user_id = $4,
+                                                dispositioned_on_behalf = $5 WHERE id = $1`,
+        [ids.a3, a3Before.callback_at, a3Before.dispositioned_at, a3Before.dispositioned_by_user_id, a3Before.dispositioned_on_behalf]);
     }
   });
 
@@ -952,6 +1075,9 @@ async function planOf(sql: string, params: unknown[]): Promise<string> {
   }
 }
 
+/** The contact walk (CH14): an account's slice of the 0017 index, newest first, directly under its `Limit` (no sort). */
+const CONTACT_WALK = /Limit[^\n]*\n\s+->\s+Index (Only )?Scan using idx_agency_contacts_customer_history/;
+
 const BIG_TABLES = /Seq Scan on (agency_contacts|agency_call_attempts|agency_manual_calls|dnc_entries|agency_calls|agency_ingest_jobs|agency_campaigns|agency_agent_sessions)\b/;
 
 describe('every read uses its index (CH9)', () => {
@@ -996,25 +1122,26 @@ describe('every read uses its index (CH9)', () => {
 
   const noFullScan = (plan: string) => expect(plan, plan).not.toMatch(BIG_TABLES);
 
-  it('summary contacts: idx_agency_contacts_phone; each row\'s placed attempts by uq_agency_attempt_number', async () => {
+  it('summary contacts: each account\'s slice of idx_agency_contacts_customer_history under its limit; each row\'s placed attempts by uq_agency_attempt_number', async () => {
     const plan = await planOf(CUSTOMER_HISTORY_SQL.summaryContacts, [floor.tenant, NUMBER, accounts(), 2001]);
-    expect(plan).toMatch(/Index Scan using idx_agency_contacts_phone/);
-    expect(plan).toMatch(/Index Cond: .*phone_e164/);
+    expect(plan).toMatch(CONTACT_WALK);
+    expect(plan).toMatch(/Index Cond: .*account_id = acc\.id.*phone_e164/);
     expect(plan).toContain('uq_agency_attempt_number');
     noFullScan(plan);
   });
 
-  it('call aggregates, the entry count, the newest placed call, live calls, the callback judgement: contacts, attempts and both soft-phone indexes', async () => {
+  it('call aggregates, the newest placed call, live calls, the callback judgement: contacts, attempts and both soft-phone indexes', async () => {
     for (const [name, sql, params] of [
       ['callStats', CUSTOMER_HISTORY_SQL.callStats, [floor.tenant, NUMBER, accounts()]],
-      ['entryCount', CUSTOMER_HISTORY_SQL.entryCount, [floor.tenant, NUMBER, accounts()]],
       ['lastPlaced', CUSTOMER_HISTORY_SQL.lastPlaced, [floor.tenant, NUMBER, accounts()]],
       ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, [floor.tenant, NUMBER, accounts()]],
       ['callbackNext', CUSTOMER_HISTORY_SQL.callbackNext, [floor.tenant, NUMBER, accounts(), [ids.a3], [at(3 * DAY).toISOString()]]],
     ] as const) {
       const plan = await planOf(sql, [...params]);
-      expect(plan, name).toContain('idx_agency_contacts_phone');
-      expect(plan, name).toMatch(/uq_agency_attempt_(number|live)/);
+      expect(plan, name).toMatch(CONTACT_WALK);
+      // Live attempts may come by contact or from a live-only partial index (a tenant's live calls;
+      // 0005's idx_agency_attempts_account_live is one, chosen when the statistics favour it).
+      expect(plan, name).toMatch(/uq_agency_attempt_(number|live)|idx_agency_attempts_(agent|live|account_live)\b/);
       expect(plan, name).toContain('idx_agency_manual_calls_destination');
       expect(plan, name).toContain('idx_agency_manual_calls_contact_history');
       noFullScan(plan);
@@ -1028,11 +1155,10 @@ describe('every read uses its index (CH9)', () => {
     noFullScan(plan);
   });
 
-  it('DNC (summary, page and the entry count): idx_dnc_entries_tenant_phone, the mark\'s campaign by primary key', async () => {
+  it('DNC (summary and page): idx_dnc_entries_tenant_phone, the mark\'s campaign by primary key', async () => {
     for (const [sql, params] of [
       [CUSTOMER_HISTORY_SQL.dnc, [floor.tenant, NUMBER, accounts()]],
       [CUSTOMER_HISTORY_SQL.pageDnc, pageParams()],
-      [CUSTOMER_HISTORY_SQL.entryCount, [floor.tenant, NUMBER, accounts()]],
     ] as const) {
       const plan = await planOf(sql, [...params]);
       expect(plan).toContain('idx_dnc_entries_tenant_phone');
@@ -1043,7 +1169,7 @@ describe('every read uses its index (CH9)', () => {
   it('timeline attempts and their callbacks: the number\'s contacts, then attempts by contact', async () => {
     for (const [sql, params] of [[CUSTOMER_HISTORY_SQL.pageAttempts, callParams()], [CUSTOMER_HISTORY_SQL.pageCallbacks, pageParams()]] as const) {
       const plan = await planOf(sql, [...params]);
-      expect(plan).toContain('idx_agency_contacts_phone');
+      expect(plan).toMatch(CONTACT_WALK);
       expect(plan).toContain('uq_agency_attempt_number');
       noFullScan(plan);
     }
@@ -1061,11 +1187,96 @@ describe('every read uses its index (CH9)', () => {
     noFullScan(callbacks);
   });
 
-  it('timeline roster rows: idx_agency_contacts_phone', async () => {
+  it('timeline roster rows: the covered rows by idx_agency_contacts_customer_history, then by primary key', async () => {
     const plan = await planOf(CUSTOMER_HISTORY_SQL.pageContacts, pageParams());
-    expect(plan).toContain('idx_agency_contacts_phone');
+    expect(plan).toMatch(CONTACT_WALK);
+    expect(plan).toContain('agency_contacts_pkey');
     noFullScan(plan);
   });
+
+  it('a placeholder on 5,000 roster rows (CH14): every statement walks at most the cap of them, newest first, and sorts no more', async () => {
+    const C0 = floor.campaigns[0]!;
+    const sess = await session(floor, C0, agent(0).id);
+    const soft = await softphoneSession(floor.account, agent(0).id);
+    const client: PoolClient = await getTestPool().connect();
+    const plans: Array<[string, string]> = [];
+    try {
+      // Everything is seeded and planned inside one transaction that is rolled back: no row and no
+      // statistic of this seed outlives the test.
+      await client.query('BEGIN');
+      // A roster table of a realistic size around the placeholder: at 13,000 rows, reading the whole
+      // table costs less than fetching 2,000 rows by index, which at production size (a million
+      // roster rows) is never true.
+      await client.query(`INSERT INTO agency_contacts (tenant_id, account_id, campaign_id, phone_e164, context)
+               SELECT $1, $2, $3, '+9173' || lpad(g::text, 8, '0'), '{}'::jsonb FROM generate_series(1, 200000) g`,
+        [floor.tenant, floor.account, C0]);
+      // 5,000 roster rows of the placeholder in account A, one placed attempt each (a callback on every
+      // tenth), and soft-phone calls dialled to it.
+      await client.query(`INSERT INTO agency_contacts (id, tenant_id, account_id, campaign_id, phone_e164, context, created_at)
+               SELECT ('00000000-0000-4000-9100-' || lpad(g::text, 12, '0'))::uuid, $1, $2, $3, $4, '{}'::jsonb,
+                      $5::timestamptz + (g || ' seconds')::interval
+                 FROM generate_series(1, 5000) g`, [floor.tenant, floor.account, C0, NUMBER_PLACEHOLDER, at(2 * DAY)]);
+      await client.query(`INSERT INTO agency_call_attempts (tenant_id, account_id, campaign_id, contact_id, attempt_number, caller_id, state,
+                                                 reserved_agent_id, outcome, dialed_at, ended_at, callback_at, created_at)
+               SELECT $1, $2, $3, ('00000000-0000-4000-9100-' || lpad(g::text, 12, '0'))::uuid, 1, '+919000000001', 'ended', $4,
+                      'connected', $5::timestamptz + (g || ' seconds')::interval, $5::timestamptz + (g || ' seconds')::interval,
+                      CASE WHEN g % 10 = 0 THEN now() END, $5::timestamptz + (g || ' seconds')::interval
+                 FROM generate_series(1, 5000) g`, [floor.tenant, floor.account, C0, sess, at(3 * DAY)]);
+      await client.query(`INSERT INTO agency_manual_calls (tenant_id, account_id, session_id, agent_user_id, destination_e164, caller_id, state,
+                                                dialed_at, ended_at, settled_at, created_at)
+               SELECT $1, $2, $3, $4, $5, '+919000000001', 'ended', now(), now(), now(), $6::timestamptz + (g || ' seconds')::interval
+                 FROM generate_series(1, 20) g`, [floor.tenant, floor.account, soft, agent(0).id, NUMBER_PLACEHOLDER, at(4 * DAY)]);
+      const oldestAttempt = (await client.query(
+        `SELECT id FROM agency_call_attempts WHERE contact_id = '00000000-0000-4000-9100-000000000001'`)).rows[0]!.id;
+      await client.query(`ANALYZE ${PLANNED_TABLES}`);
+
+      const onlyA = [floor.account];
+      const page = [floor.tenant, NUMBER_PLACEHOLDER, onlyA, 'infinity', UUID_MAX, 51, null, null, null];
+      const calls = [...page, null, null, null, false];
+      const number = [floor.tenant, NUMBER_PLACEHOLDER, onlyA];
+      for (const [name, sql, params] of [
+        ['summaryContacts', CUSTOMER_HISTORY_SQL.summaryContacts, [...number, CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1]],
+        ['callStats', CUSTOMER_HISTORY_SQL.callStats, number],
+        ['lastPlaced', CUSTOMER_HISTORY_SQL.lastPlaced, number],
+        ['liveCalls', CUSTOMER_HISTORY_SQL.liveCalls, number],
+        ['callbackNext', CUSTOMER_HISTORY_SQL.callbackNext, [...number, [oldestAttempt], [at(3 * DAY).toISOString()]]],
+        ['pageAttempts', CUSTOMER_HISTORY_SQL.pageAttempts, calls],
+        ['pageCallbacks', CUSTOMER_HISTORY_SQL.pageCallbacks, page],
+        ['pageManualCalls', CUSTOMER_HISTORY_SQL.pageManualCalls, calls],
+        ['pageContacts', CUSTOMER_HISTORY_SQL.pageContacts, page],
+      ] as const) {
+        const { rows } = await client.query<{ 'QUERY PLAN': string }>(
+          `EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF) ${sql}`, [...params]);
+        plans.push([name, rows.map((r) => r['QUERY PLAN']).join('\n')]);
+      }
+    } finally {
+      await client.query('ROLLBACK');
+      // The rolled-back seed still leaves its pages behind, and the planner sizes a table by its
+      // pages: a later file's plan (insights-reads' pace) saw a 200,000-row roster table. VACUUM
+      // removes the dead rows and gives back the empty pages.
+      await client.query('VACUUM agency_contacts, agency_call_attempts, agency_manual_calls');
+      client.release();
+    }
+    for (const [name, plan] of plans) {
+      const why = `${name}\n${plan}`;
+      expect(plan, why).toMatch(CONTACT_WALK);
+      expect(plan, why).not.toMatch(/Seq Scan on agency_contacts\b/);
+      // Every read of the roster table stops at the cap (+1: the summary's look-ahead): the walk, one loop
+      // for the one visible account, and any read of covered rows by primary key.
+      const walks = [...plan.matchAll(/Index (?:Only )?Scan using idx_agency_contacts_customer_history[^\n]*\(actual rows=(\d+) loops=(\d+)\)/g)];
+      expect(walks.length, why).toBeGreaterThan(0);
+      for (const [, rows, loops] of plan.matchAll(/ on agency_contacts \w+ \(actual rows=(\d+) loops=(\d+)\)/g)) {
+        expect(Number(rows) * Number(loops), why).toBeLessThanOrEqual(CUSTOMER_HISTORY_MAX_CONTACT_ROWS + 1);
+      }
+      // No sort of every match, nor of every match's attempt: what is sorted is the covered rows and their calls.
+      for (const [, rows, loops] of plan.matchAll(/Sort \(actual rows=(\d+) loops=(\d+)\)/g)) {
+        expect(Number(rows) * Number(loops), why).toBeLessThan(5000);
+      }
+      // How the covered rows' attempts are joined is the planner's call at this size (23,000 attempts:
+      // one hash join over them is cheaper than 2,000 probes); on the ordinary number above, and at
+      // the bench's scale, they are probed by contact (uq_agency_attempt_number).
+    }
+  }, 120_000);
 
   it('campaigns (and with their roots), media legs by primary key; uploads by idx_agency_ingest_jobs_campaign', async () => {
     const campaigns = await planOf(CUSTOMER_HISTORY_SQL.campaigns, [floor.tenant, accounts(), [floor.campaigns[0], retryCampaign]]);

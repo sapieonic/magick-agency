@@ -21,6 +21,12 @@
 /// and the rest is a whole national number); and, as the soft phone does, a
 /// bracketed trunk `(0)` directly after the country code is dropped:
 /// `+44 (0)20 7946 0018` → `+442079460018`.
+///
+/// A platform default the picker does not list (`DEFAULT_PHONE_COUNTRY_CODE=27`)
+/// is never read as India: it becomes a country of its own, named by its
+/// calling code ([platformDefaultSearchCountry]), whose national numbers
+/// follow the roster ingest's own rule for its default exactly, since no
+/// length table exists for it. The request names it by sending no `country`.
 library;
 
 import 'dart:math' as math;
@@ -42,9 +48,12 @@ final class SearchCountry {
     required this.maxNationalLength,
     required this.numberLabel,
     required this.groups,
+    this.unlisted = false,
   });
 
-  /// ISO 3166-1 alpha-2, as the search request's `country` carries it.
+  /// ISO 3166-1 alpha-2, as the search request's `country` carries it; empty
+  /// for the platform default the picker does not list ([unlisted]), which
+  /// the request names by sending no `country`.
   final String iso;
   final String name;
 
@@ -61,14 +70,19 @@ final class SearchCountry {
   /// Digit groups for the formatted number, keyed by national length.
   final Map<int, List<int>> groups;
 
-  @override
-  bool operator ==(Object other) => other is SearchCountry && other.iso == iso;
+  /// Only on the platform default's own entry ([platformDefaultSearchCountry])
+  /// when no listed country has its calling code: national numbers follow
+  /// the roster ingest's rule, not a length table.
+  final bool unlisted;
 
   @override
-  int get hashCode => iso.hashCode;
+  bool operator ==(Object other) => other is SearchCountry && other.iso == iso && other.callingCode == callingCode;
 
   @override
-  String toString() => 'SearchCountry($iso)';
+  int get hashCode => Object.hash(iso, callingCode);
+
+  @override
+  String toString() => 'SearchCountry(${unlisted ? '+$callingCode' : iso})';
 }
 
 /// The countries the picker offers, in the picker's order. A number typed
@@ -249,6 +263,17 @@ final _allowed = RegExp(r'^[\d\s+\-().]+$');
 /// A bracketed trunk `(0)` directly after `+cc` or `00cc`, as the soft phone drops it.
 final _trunkAfterCountryCode = RegExp(r'^(\s*(?:\+|00)\s*\d{1,3})\s*\(\s*0\s*\)');
 
+/// The national length the roster ingest gives the platform default's code
+/// (`normalizePhoneToE164`).
+const _ingestNationalLength = 10;
+
+/// E.164 as the roster ingest checks it: 7 to 15 digits after the `+`.
+const _ingestMinDigits = 7;
+const _ingestMaxDigits = 15;
+
+/// A calling code: one to three digits, never starting with 0.
+final _callingCode = RegExp(r'^[1-9]\d{0,2}$');
+
 final _whitespace = RegExp(r'\s');
 final _nonDigit = RegExp(r'\D');
 final _leadingZeros = RegExp(r'^0+');
@@ -261,6 +286,34 @@ SearchCountry? searchCountryForCallingCode(String callingCode) {
     if (c.callingCode == cc) return c;
   }
   return null;
+}
+
+/// The country the picker defaults to: the listed one with the platform
+/// default's calling code; else, for a calling code the picker does not
+/// list, a country of its own named by the code (`+27`, [SearchCountry.unlisted],
+/// no ISO); else (no calling code at all) India.
+SearchCountry platformDefaultSearchCountry(String defaultCallingCode) {
+  final listed = searchCountryForCallingCode(defaultCallingCode);
+  if (listed != null) return listed;
+  final cc = defaultCallingCode.trim().replaceFirst(_leadingPlus, '');
+  if (!_callingCode.hasMatch(cc)) return searchCountries.first;
+  return SearchCountry(
+    iso: '',
+    name: '+$cc',
+    callingCode: cc,
+    minNationalLength: _ingestNationalLength,
+    maxNationalLength: _ingestNationalLength,
+    numberLabel: '+$cc number',
+    groups: const {},
+    unlisted: true,
+  );
+}
+
+/// The picker's countries: the platform default's own entry first when it
+/// is unlisted, then the listed ones.
+List<SearchCountry> searchCountryOptions(String defaultCallingCode) {
+  final fallback = platformDefaultSearchCountry(defaultCallingCode);
+  return fallback.unlisted ? [fallback, ...searchCountries] : searchCountries;
 }
 
 /// The listed country with this ISO code, in any letter case.
@@ -343,11 +396,40 @@ SearchNumberResult _checkInternational(String digits) {
 }
 
 /// The picked country: the ISO code when the picker lists it, else the
-/// country of the platform's default calling code, else India.
+/// platform default ([platformDefaultSearchCountry]: the listed country with
+/// its calling code, else its own unlisted entry).
 SearchCountry resolveSearchCountry(String? iso, String defaultCallingCode) =>
     (iso != null && iso.isNotEmpty ? searchCountryByIso(iso) : null) ??
-    searchCountryForCallingCode(defaultCallingCode) ??
-    searchCountries.first;
+    platformDefaultSearchCountry(defaultCallingCode);
+
+/// National digits (trunk zeros already dropped) under an UNLISTED platform
+/// default, by the roster ingest's own rule for its default, so the search
+/// finds exactly what the ingest and the soft phone stored, and refuses what
+/// they refuse: ten digits take the calling code; digits that already start
+/// with it are taken whole; either way 7 to 15 digits in all.
+SearchNumberResult _parseUnlistedNational(String national, SearchCountry country) {
+  final String digits;
+  if (national.length == _ingestNationalLength) {
+    digits = '${country.callingCode}$national';
+  } else if (national.startsWith(country.callingCode)) {
+    digits = national;
+  } else {
+    return _refuse(
+      national.length < _ingestNationalLength
+          ? CustomerSearchNumberError.tooShort
+          : CustomerSearchNumberError.invalidForCountry,
+      country,
+    );
+  }
+  if (digits.length < _ingestMinDigits) return _refuse(CustomerSearchNumberError.tooShort, country);
+  if (digits.length > _ingestMaxDigits) return _refuse(CustomerSearchNumberError.invalidForCountry, country);
+  final e164 = '+$digits';
+  return SearchNumberOk(
+    e164: e164,
+    formatted: formatSearchNumber(e164),
+    countryIso: _countryOfInternational(digits)?.iso,
+  );
+}
 
 /// The raw search text and the picked country, as one E.164 number or a refusal.
 SearchNumberResult parseSearchNumber(String raw, SearchCountry country) {
@@ -370,6 +452,7 @@ SearchNumberResult parseSearchNumber(String raw, SearchCountry country) {
   // National: a leading trunk 0 dropped.
   final national = digits.replaceFirst(_leadingZeros, '');
   if (national.isEmpty) return _refuse(CustomerSearchNumberError.tooShort, country);
+  if (country.unlisted) return _parseUnlistedNational(national, country);
   // The country code typed without `+`: only when the digits are too long to
   // be a national number and what follows the code is a whole national
   // number (`91 9876543210`).

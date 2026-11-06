@@ -19,6 +19,22 @@ Map<String, Object?> countryAsJson(SearchCountry c) => {
   'groups': {for (final e in c.groups.entries) '${e.key}': e.value},
 };
 
+/// The country case [c] runs in: a listed ISO, or (`"country": null`) the
+/// platform default its `defaultCallingCode` names, one the picker does not
+/// list. A typo fails rather than falling back to a default.
+SearchCountry caseCountry(Map<String, Object?> c) {
+  final iso = c['country'] as String?;
+  if (iso != null) {
+    final listed = searchCountryByIso(iso);
+    expect(listed, isNotNull, reason: '$iso is not a listed country');
+    return listed!;
+  }
+  final code = c['defaultCallingCode']! as String;
+  final own = platformDefaultSearchCountry(code);
+  expect(own.unlisted, isTrue, reason: '$code is a listed calling code');
+  return own;
+}
+
 void main() {
   final table = loadFixtureFile('customer-search-numbers.json');
   final countries = (table['countries']! as List<Object?>).cast<Map<String, Object?>>();
@@ -40,11 +56,9 @@ void main() {
   group('every case of the table', () {
     for (final (i, c) in cases.indexed) {
       final input = c['input']! as String;
-      final iso = c['country']! as String;
-      test('#$i "$input" ($iso)', () {
-        final country = searchCountryByIso(iso);
-        expect(country, isNotNull, reason: '$iso is not a listed country');
-        final result = parseSearchNumber(input, country!);
+      final where = c['country'] ?? c['defaultCallingCode'];
+      test('#$i "$input" ($where)', () {
+        final result = parseSearchNumber(input, caseCountry(c));
         if (c.containsKey('error')) {
           expect(result, isA<SearchNumberRefused>());
           final refused = result as SearchNumberRefused;
@@ -75,9 +89,54 @@ void main() {
       expect(resolveSearchCountry('ZZ', '+971').iso, 'AE');
     });
 
-    test('an unlisted default calling code: India', () {
-      expect(resolveSearchCountry(null, '+999').iso, 'IN');
+    test('an unlisted default calling code is a country of its own, never India', () {
+      for (final code in ['27', '+27']) {
+        final own = resolveSearchCountry(null, code);
+        expect(own.unlisted, isTrue);
+        expect(own.iso, '');
+        expect(own.name, '+27');
+        expect(own.callingCode, '27');
+        expect(own.numberLabel, '+27 number');
+        expect(own.groups, isEmpty);
+      }
+      expect(resolveSearchCountry('', '+27').callingCode, '27');
+      // A picked listed country still wins.
+      expect(resolveSearchCountry('IN', '+27').iso, 'IN');
+      expect(resolveSearchCountry(null, '+91').unlisted, isFalse);
     });
+
+    test('a default that is not a calling code at all: India', () {
+      for (final code in ['', '+', '0', '044', '1234', 'abc']) {
+        expect(resolveSearchCountry(null, code).iso, 'IN', reason: code);
+      }
+    });
+  });
+
+  test('the table has cases for an unlisted platform default', () {
+    final unlisted = [for (final c in cases) if (c['country'] == null) c];
+    expect(unlisted.where((c) => c.containsKey('e164')).length, greaterThanOrEqualTo(3));
+    expect({for (final c in unlisted) c['error']}..remove(null), {'too_short', 'invalid_for_country'});
+  });
+
+  test('searchCountryOptions: the unlisted default first, then the listed countries', () {
+    expect(searchCountryOptions('+91'), same(searchCountries));
+    final options = searchCountryOptions('+27');
+    expect([for (final c in options) c.name], ['+27', for (final c in searchCountries) c.name]);
+    expect(options.first, platformDefaultSearchCountry('+27'));
+  });
+
+  test('an unlisted default: 7 to 15 digits in all, as the roster ingest checks E.164', () {
+    final za = platformDefaultSearchCountry('+27');
+    expect(parseSearchNumber('2712345', za), const SearchNumberOk(e164: '+2712345', formatted: '+2712345'));
+    expect((parseSearchNumber('271234', za) as SearchNumberRefused).code, CustomerSearchNumberError.tooShort);
+    expect(
+      (parseSearchNumber('2782123456789012', za) as SearchNumberRefused).code,
+      CustomerSearchNumberError.invalidForCountry,
+    );
+    expect(
+      searchNumberErrorMessage(CustomerSearchNumberError.invalidForCountry, za),
+      "This doesn't look like a valid +27 number. Check the digits, or pick another country.",
+    );
   });
 
   test('the invalid-number message names the country, or a phone number', () {

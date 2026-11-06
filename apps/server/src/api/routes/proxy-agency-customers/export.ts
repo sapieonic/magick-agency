@@ -9,7 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import { requirePermission } from '../../../rbac/rbac.middleware.js';
 import { customerExportRequestSchema, toTimelineFilter } from '../../../agency/customer-history/requests.js';
-import { countCustomerEntries, loadTimelinePage, resolveViewer } from '../../../agency/customer-history/service.js';
+import { countCustomerEntries, loadTimelinePage } from '../../../agency/customer-history/service.js';
 import { customerHistoryCsv } from '../../../agency/customer-history/csv.js';
 import { csvAttachmentHeader } from '../helpers/csv-attachment.js';
 import { boundedSelector } from '../helpers/audit-bounds.js';
@@ -20,6 +20,7 @@ import {
   noStore,
   ownSearch,
   parseBody,
+  resolveDialerViewer,
   type CustomerRoutesDeps,
 } from './shared.js';
 
@@ -40,7 +41,7 @@ export async function registerCustomerExportRoute(app: FastifyInstance, deps: Cu
     // search's 404 first, then a viewer read that threw.
     const [recordRead, viewerRead] = await Promise.allSettled([
       ownSearch(deps.store, body.search_id, request, reply),
-      resolveViewer(request.user!.id, tenantId),
+      resolveDialerViewer(request.user!.id, tenantId),
     ]);
     const record = settledValue(recordRead);
     if (!record) return reply;
